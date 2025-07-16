@@ -51,20 +51,16 @@ if exist "%DIST_DIR%" (
 )
 
 mkdir "%DIST_DIR%"
-copy "%DRIVER_DIR%\*.*" %DIST_DIR%
-
-%NEFCON% --remove-device-node --hardware-id ROOT\MttVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
-echo 正在等待vdd卸载...
-timeout /t 5 /nobreak > nul
+copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
 @REM write registry
 reg add "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /v VDDPATH /t REG_SZ /d "%DIST_DIR%" /f
 
 @REM rem install cet
-set CERTIFICATE="%DIST_DIR%/MttVDD.cer"
-certutil -addstore -f root %CERTIFICATE%
+set "CERTIFICATE=%DIST_DIR%\MttVDD.cer"
+certutil -addstore -f root "%CERTIFICATE%"
 @REM certutil -addstore -f TrustedPublisher %CERTIFICATE%
 
 @REM install inf
-%NEFCON% --create-device-node --hardware-id Root\MttVDD --service-name IDD_HDR_FOR_SUNSHINE --class-name Display --class-guid 4D36E968-E325-11CE-BFC1-08002BE10318
-%NEFCON% --install-driver --inf-path "%DIST_DIR%\MttVDD.inf"
+"%NEFCON%" --create-device-node --hardware-id Root\MttVDD --service-name IDD_HDR_FOR_SUNSHINE --class-name Display --class-guid 4D36E968-E325-11CE-BFC1-08002BE10318
+"%NEFCON%" --install-driver --inf-path "%DIST_DIR%\MttVDD.inf"
