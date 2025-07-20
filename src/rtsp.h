@@ -37,6 +37,7 @@ namespace rtsp_stream {
     std::string surround_params;
     bool enable_hdr;
     bool enable_sops;
+    bool enable_mic;
     bool use_vdd;
     int custom_screen_mode;
 

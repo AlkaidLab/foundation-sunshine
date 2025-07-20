@@ -106,6 +106,7 @@ list(PREPEND PLATFORM_LIBRARIES
         minhook::minhook
         nlohmann_json::nlohmann_json
         ntdll
+        ole32
         setupapi
         shlwapi
         synchronization.lib

@@ -215,6 +215,18 @@ namespace stream {
     AUDIO_FEC_HEADER fecHeader;
   };
 
+  // 麦克风数据包头定义
+  struct microphone_packet_header_t {
+    std::uint8_t flags;
+    std::uint8_t packetType;
+    std::uint16_t sequenceNumber;
+    std::uint32_t timestamp;
+    std::uint32_t ssrc;
+  };
+
+  // 麦克风数据包类型
+  constexpr std::uint8_t MIC_PACKET_TYPE_OPUS = 0x61;  // 'a'
+
 #pragma pack(pop)
 
   constexpr std::size_t
@@ -329,6 +341,7 @@ namespace stream {
 
     udp::socket video_sock { io_context };
     udp::socket audio_sock { io_context };
+    udp::socket mic_sock { io_context };
 
     control_server_t control_server;
   };
@@ -1175,98 +1188,146 @@ namespace stream {
 
   void
   recvThread(broadcast_ctx_t &ctx) {
-    std::map<av_session_id_t, message_queue_t> peer_to_video_session;
-    std::map<av_session_id_t, message_queue_t> peer_to_audio_session;
+    std::unordered_map<av_session_id_t, message_queue_t> peer_to_video_session;
+    std::unordered_map<av_session_id_t, message_queue_t> peer_to_audio_session;
 
     auto &video_sock = ctx.video_sock;
     auto &audio_sock = ctx.audio_sock;
-
     auto &message_queue_queue = ctx.message_queue_queue;
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
-
     auto &io = ctx.io_context;
 
     udp::endpoint peer;
+    std::array<std::array<char, 2048>, 3> buffers;  // 增加麦克风缓冲区
+    std::array<std::function<void(const boost::system::error_code, size_t)>, 3> recv_funcs;  // 增加麦克风处理函数
 
-    std::array<char, 2048> buf[2];
-    std::function<void(const boost::system::error_code, size_t)> recv_func[2];
+    auto handle_common_errors = [](const boost::system::error_code &ec) {
+      if (ec == boost::system::errc::connection_refused ||
+          ec == boost::system::errc::connection_reset) {
+        return true;
+      }
+      if (ec) {
+        BOOST_LOG(error) << "Couldn't receive data from udp socket: "sv << ec.message();
+        return true;
+      }
+      return false;
+    };
 
-    auto populate_peer_to_session = [&]() {
+    // 统一处理PING包逻辑
+    auto handle_ping = [](auto &session_map, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
+      try {
+        if (bytes == 4) {
+          if (auto it = session_map.find(peer.address()); it != std::end(session_map)) {
+            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
+            it->second->raise(peer, std::string { buf.data(), bytes });
+          }
+        }
+        else if (bytes >= sizeof(SS_PING)) {
+          auto ping = (PSS_PING) buf.data();
+          if (auto it = session_map.find(std::string { ping->payload, sizeof(ping->payload) }); it != std::end(session_map)) {
+            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
+            it->second->raise(peer, std::string { buf.data(), bytes });
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Error processing packet: " << e.what();
+      }
+    };
+
+    // 更新会话映射
+    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map) {
       while (message_queue_queue->peek()) {
-        auto message_queue_opt = message_queue_queue->pop();
-        TUPLE_3D_REF(socket_type, session_id, message_queue, *message_queue_opt);
+        if (auto message_queue_opt = message_queue_queue->pop()) {
+          auto [socket_type, session_id, message_queue] = *message_queue_opt;
+          auto &target_map = socket_type == socket_e::video ? video_map :
+                                                              (socket_type == socket_e::audio ? audio_map : throw std::runtime_error("Unknown socket type"));
 
-        switch (socket_type) {
-          case socket_e::video:
-            if (message_queue) {
-              peer_to_video_session.emplace(session_id, message_queue);
-            }
-            else {
-              peer_to_video_session.erase(session_id);
-            }
-            break;
-          case socket_e::audio:
-            if (message_queue) {
-              peer_to_audio_session.emplace(session_id, message_queue);
-            }
-            else {
-              peer_to_audio_session.erase(session_id);
-            }
-            break;
+          if (message_queue) {
+            target_map.emplace(session_id, message_queue);
+          }
+          else {
+            target_map.erase(session_id);
+          }
         }
       }
     };
 
-    auto recv_func_init = [&](udp::socket &sock, int buf_elem, std::map<av_session_id_t, message_queue_t> &peer_to_session) {
-      recv_func[buf_elem] = [&, buf_elem](const boost::system::error_code &ec, size_t bytes) {
+    // 初始化接收函数
+    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
+      recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
         auto fg = util::fail_guard([&]() {
-          sock.async_receive_from(asio::buffer(buf[buf_elem]), peer, 0, recv_func[buf_elem]);
+          try {
+            sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Failed to restart async receive: " << e.what();
+          }
         });
 
-        auto type_str = buf_elem ? "AUDIO"sv : "VIDEO"sv;
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
 
-        populate_peer_to_session();
+        if (type_str != "MIC") {
+          update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
+        }
 
-        // No data, yet no error
-        if (ec == boost::system::errc::connection_refused || ec == boost::system::errc::connection_reset) {
+        if (handle_common_errors(ec) || bytes == 0) {
+          if (bytes == 0) BOOST_LOG(warning) << "Received empty packet";
           return;
         }
 
-        if (ec || !bytes) {
-          BOOST_LOG(error) << "Couldn't receive data from udp socket: "sv << ec.message();
-          return;
-        }
-
-        if (bytes == 4) {
-          // For legacy PING packets, find the matching session by address.
-          auto it = peer_to_session.find(peer.address());
-          if (it != std::end(peer_to_session)) {
-            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
-            it->second->raise(peer, std::string { buf[buf_elem].data(), bytes });
+        if (type_str == "MIC") {
+          try {
+            if (bytes >= sizeof(microphone_packet_header_t)) {
+              auto *header = (microphone_packet_header_t *) buffers[buf_idx].data();
+              if (header->packetType == MIC_PACKET_TYPE_OPUS) {
+                size_t header_size = sizeof(microphone_packet_header_t);
+                if (bytes > header_size) {
+                  const auto *audio_data = reinterpret_cast<const uint8_t *>(buffers[buf_idx].data()) + header_size;
+                  if (int result = audio::write_mic_data(audio_data, bytes - header_size); result < 0) {
+                    BOOST_LOG(error) << "Failed to write microphone data to stream";
+                  }
+                  else {
+                    BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
+                  }
+                }
+              }
+              else {
+                BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->packetType;
+              }
+            }
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Error processing mic packet: " << e.what();
           }
         }
-        else if (bytes >= sizeof(SS_PING)) {
-          auto ping = (PSS_PING) buf[buf_elem].data();
-
-          // For new PING packets that include a client identifier, search by payload.
-          auto it = peer_to_session.find(std::string { ping->payload, sizeof(ping->payload) });
-          if (it != std::end(peer_to_session)) {
-            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
-            it->second->raise(peer, std::string { buf[buf_elem].data(), bytes });
-          }
+        else {
+          handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
         }
       };
     };
 
-    recv_func_init(video_sock, 0, peer_to_video_session);
-    recv_func_init(audio_sock, 1, peer_to_audio_session);
+    try {
+      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
+      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
 
-    video_sock.async_receive_from(asio::buffer(buf[0]), peer, 0, recv_func[0]);
-    audio_sock.async_receive_from(asio::buffer(buf[1]), peer, 0, recv_func[1]);
+      if (ctx.mic_sock.is_open()) {
+        init_recv_func(ctx.mic_sock, 2, peer_to_audio_session, "MIC");
+      }
 
-    while (!broadcast_shutdown_event->peek()) {
-      io.run();
+      video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
+      audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
+
+      if (ctx.mic_sock.is_open()) {
+        ctx.mic_sock.async_receive_from(asio::buffer(buffers[2]), peer, 0, recv_funcs[2]);
+      }
+
+      while (!broadcast_shutdown_event->peek()) {
+        io.run();
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(fatal) << "recvThread exception: " << e.what();
     }
   }
 
@@ -1715,6 +1776,7 @@ namespace stream {
     auto control_port = net::map_port(CONTROL_PORT);
     auto video_port = net::map_port(VIDEO_STREAM_PORT);
     auto audio_port = net::map_port(AUDIO_STREAM_PORT);
+    auto mic_port = net::map_port(MIC_STREAM_PORT);
 
     if (ctx.control_server.bind(address_family, control_port)) {
       BOOST_LOG(error) << "Couldn't bind Control server to port ["sv << control_port << "], likely another process already bound to the port"sv;
@@ -1756,6 +1818,18 @@ namespace stream {
     if (ec) {
       BOOST_LOG(fatal) << "Couldn't bind Audio server to port ["sv << audio_port << "]: "sv << ec.message();
 
+      return -1;
+    }
+
+    // Open the microphone socket for receiving audio data
+    ctx.mic_sock.open(protocol, ec);
+    if (ec) {
+      BOOST_LOG(fatal) << "Couldn't open socket for Microphone server: "sv << ec.message();
+      return -1;
+    }
+    ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
+    if (ec) {
+      BOOST_LOG(fatal) << "Couldn't bind Microphone server to port ["sv << mic_port << "]: "sv << ec.message();
       return -1;
     }
 

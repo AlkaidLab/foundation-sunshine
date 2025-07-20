@@ -19,6 +19,7 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\add-firewall-rule.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-vdd.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-gamepad.bat\\\"'
+        nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-vsink.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-service.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\autostart-service.bat\\\"'
         NoController:
@@ -39,6 +40,11 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
             /SD IDNO IDNO NoGamepad
             nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\uninstall-gamepad.bat\\\"'; skipped if no
         NoGamepad:
+        MessageBox MB_YESNO|MB_ICONQUESTION \
+            'Do you want to remove Virtual Sink?' \
+            /SD IDNO IDNO NoSink
+            nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\uninstall-vsink.bat\\\"'; skipped if no
+        NoSink:
         MessageBox MB_YESNO|MB_ICONQUESTION \
             'Do you want to remove $INSTDIR (this includes the configuration, cover images, and settings)?' \
             /SD IDNO IDNO NoDelete

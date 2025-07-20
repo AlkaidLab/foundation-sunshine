@@ -594,6 +594,15 @@ namespace platf {
     virtual std::optional<sink_t>
     sink_info() = 0;
 
+    /**
+     * @brief Write microphone data to the virtual audio device.
+     * @param data Pointer to the audio data.
+     * @param size Size of the audio data in bytes.
+     * @returns Number of bytes written, or -1 on error.
+     */
+    virtual int
+    write_mic_data(const char *data, size_t size) = 0;
+
     virtual ~audio_control_t() = default;
   };
 

@@ -322,4 +322,15 @@ namespace audio {
     stream.coupledStreams = params.coupledStreams;
     stream.mapping = params.mapping;
   }
+
+  int write_mic_data(const std::uint8_t *data, size_t size) {
+    auto ref = get_audio_ctx_ref();
+    if (!ref || !ref->control) {
+      BOOST_LOG(error) << "Audio context not available for microphone data writing";
+      return -1;
+    }
+
+    // 直接调用基类的write_mic_data方法
+    return ref->control->write_mic_data(reinterpret_cast<const char*>(data), size);
+  }
 }  // namespace audio

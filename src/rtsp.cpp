@@ -834,6 +834,11 @@ namespace rtsp_stream {
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
     }
 
+    // 添加麦克风流支持
+    ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
+    ss << "a=rtpmap:96 opus/48000/2" << std::endl;
+    ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
+
     for (int x = 0; x < audio::MAX_STREAM_CONFIG; ++x) {
       auto &stream_config = audio::stream_configs[x];
       std::uint8_t mapping[platf::speaker::MAX_SPEAKERS];
@@ -892,6 +897,9 @@ namespace rtsp_stream {
     }
     else if (type == "control"sv) {
       port = net::map_port(stream::CONTROL_PORT);
+    }
+    else if (type == "mic"sv) {
+      port = net::map_port(stream::MIC_STREAM_PORT);
     }
     else {
       cmd_not_found(sock, session, std::move(req));
@@ -997,6 +1005,7 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
+    args.try_emplace("x-ml-mic.enableMic"sv, "0"sv);
 
     stream::config_t config;
 
