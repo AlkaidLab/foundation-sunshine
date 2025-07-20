@@ -899,6 +899,7 @@ namespace rtsp_stream {
       port = net::map_port(stream::CONTROL_PORT);
     }
     else if (type == "mic"sv) {
+      session.enable_mic = true;
       port = net::map_port(stream::MIC_STREAM_PORT);
     }
     else {
@@ -1005,7 +1006,6 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
-    args.try_emplace("x-ml-mic.enableMic"sv, "0"sv);
 
     stream::config_t config;
 

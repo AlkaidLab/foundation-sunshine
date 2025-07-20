@@ -344,6 +344,8 @@ namespace stream {
     udp::socket mic_sock { io_context };
 
     control_server_t control_server;
+
+    std::atomic<bool> mic_socket_enabled { false };
   };
 
   struct session_t {
@@ -392,6 +394,8 @@ namespace stream {
 
       audio_fec_packet_t fec_packet;
       std::unique_ptr<platf::deinit_t> qos;
+
+      bool enable_mic;
     } audio;
 
     struct {
@@ -1311,14 +1315,11 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
       init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
 
-      if (ctx.mic_sock.is_open()) {
-        init_recv_func(ctx.mic_sock, 2, peer_to_audio_session, "MIC");
-      }
-
       video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
       audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
 
       if (ctx.mic_sock.is_open()) {
+        init_recv_func(ctx.mic_sock, 2, peer_to_audio_session, "MIC");
         ctx.mic_sock.async_receive_from(asio::buffer(buffers[2]), peer, 0, recv_funcs[2]);
       }
 
@@ -1821,7 +1822,7 @@ namespace stream {
       return -1;
     }
 
-    // Open the microphone socket for receiving audio data
+    // 总是启动麦克风socket，后续根据会话需要决定是否关闭
     ctx.mic_sock.open(protocol, ec);
     if (ec) {
       BOOST_LOG(fatal) << "Couldn't open socket for Microphone server: "sv << ec.message();
@@ -1832,6 +1833,8 @@ namespace stream {
       BOOST_LOG(fatal) << "Couldn't bind Microphone server to port ["sv << mic_port << "]: "sv << ec.message();
       return -1;
     }
+    ctx.mic_socket_enabled.store(true);
+    BOOST_LOG(info) << "Microphone socket started on port " << mic_port;
 
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 
@@ -1862,6 +1865,10 @@ namespace stream {
 
     ctx.video_sock.close();
     ctx.audio_sock.close();
+
+    if (ctx.mic_socket_enabled.load()) {
+      ctx.mic_sock.close();
+    }
 
     video_packets.reset();
     audio_packets.reset();
@@ -2079,6 +2086,17 @@ namespace stream {
       session.audioThread = std::thread { audioThread, &session };
       session.videoThread = std::thread { videoThread, &session };
 
+      // 根据会话的麦克风启用标志决定是否关闭麦克风socket
+      if (!session.audio.enable_mic && session.broadcast_ref->mic_socket_enabled.load()) {
+        session.broadcast_ref->mic_sock.close();
+        session.broadcast_ref->mic_socket_enabled.store(false);
+        BOOST_LOG(debug) << "Microphone socket closed (session doesn't require it)";
+      }
+      else if (session.audio.enable_mic) {
+        session.broadcast_ref->mic_socket_enabled.store(true);
+        BOOST_LOG(debug) << "Microphone socket enabled for session";
+      }
+
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
 
       // If this is the first session, invoke the platform callbacks
@@ -2153,6 +2171,8 @@ namespace stream {
       session->audio.avRiKeyId = util::endian::big(*(std::uint32_t *) launch_session.iv.data());
       session->audio.sequenceNumber = 0;
       session->audio.timestamp = 0;
+
+      session->audio.enable_mic = launch_session.enable_mic;
 
       session->control.peer = nullptr;
       session->state.store(state_e::STOPPED, std::memory_order_relaxed);
