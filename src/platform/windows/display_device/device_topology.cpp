@@ -206,7 +206,7 @@ namespace display_device {
             // what will match the Windows' behaviour the closest if we need to create new topology in the end.
             boost::optional<std::size_t> path_index_candidate;
             UINT32 used_source_id {};
-            for (const auto [source_id, index] : device_data.source_id_to_path_index) {
+            for (const auto &[source_id, index] : device_data.source_id_to_path_index) {
               if (is_source_id_already_used(device_data.source_adapter_id, source_id)) {
                 continue;
               }

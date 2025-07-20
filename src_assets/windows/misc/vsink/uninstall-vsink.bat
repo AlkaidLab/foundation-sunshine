@@ -1,32 +1,32 @@
 @echo off
-:: 卸载VB-Cable虚拟音频设备
-:: 需要管理员权限运行
+:: Uninstall VB-Cable virtual audio device
+:: Requires administrator privileges
 
-:: 检查是否以管理员身份运行
+:: Check if running as administrator
 net session >nul 2>&1
 if %errorLevel% neq 0 (
-    echo 请以管理员身份运行此脚本
+    echo Please run this script as administrator
     pause
     exit /b
 )
 
-:: 停止并删除VB-Cable服务
-echo 正在停止VB-Cable服务...
+:: Stop and remove VB-Cable service
+echo Stopping VB-Cable service...
 net stop "VB-Audio Virtual Cable" >nul 2>&1
 
-echo 正在删除VB-Cable驱动...
+echo Removing VB-Cable driver...
 pnputil /delete-driver oem*.inf /uninstall /force >nul 2>&1
 
-:: 删除注册表项
-echo 正在清理注册表...
+:: Clean registry entries
+echo Cleaning registry...
 reg delete "HKLM\SYSTEM\CurrentControlSet\Services\VB-Audio Virtual Cable" /f >nul 2>&1
 reg delete "HKLM\SOFTWARE\VB-Audio" /f >nul 2>&1
 
-:: 删除程序文件
-echo 正在删除程序文件...
+:: Remove program files
+echo Removing program files...
 rd /s /q "%ProgramFiles%\VB\Cable" >nul 2>&1
 rd /s /q "%ProgramFiles(x86)%\VB\Cable" >nul 2>&1
 
-echo 卸载完成！
-echo 请重新启动计算机使更改生效
+echo Uninstallation complete!
+echo Please restart your computer for changes to take effect
 pause

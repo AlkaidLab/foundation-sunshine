@@ -1,0 +1,700 @@
+/**
+ * @file src/platform/windows/mic_write.cpp
+ * @brief Implementation for Windows microphone write functionality.
+ */
+#define INITGUID
+
+// Platform includes
+#include <audioclient.h>
+#include <avrt.h>
+#include <filesystem>
+#include <mmdeviceapi.h>
+#include <roapi.h>
+#include <synchapi.h>
+#include <urlmon.h>
+#include <winreg.h>
+
+// Local includes
+#include "mic_write.h"
+#include "misc.h"
+#include "src/config.h"
+#include "src/logging.h"
+#include "src/platform/common.h"
+
+
+// Lib includes
+#include <opus/opus.h>
+
+// Must be the last included file
+// clang-format off
+#include "PolicyConfig.h"
+// clang-format on
+
+// Property key definitions
+DEFINE_PROPERTYKEY(PKEY_Device_DeviceDesc, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0, 2);
+DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0, 14);
+DEFINE_PROPERTYKEY(PKEY_DeviceInterface_FriendlyName, 0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22, 2);
+
+namespace platf::audio {
+  template <class T>
+  void
+  Release(T *p) {
+    if (p) {
+      p->Release();
+    }
+  }
+
+  template <class T>
+  void
+  co_task_free(T *p) {
+    if (p) {
+      CoTaskMemFree(p);
+    }
+  }
+
+  using device_enum_t = util::safe_ptr<IMMDeviceEnumerator, Release<IMMDeviceEnumerator>>;
+  using device_t = util::safe_ptr<IMMDevice, Release<IMMDevice>>;
+  using collection_t = util::safe_ptr<IMMDeviceCollection, Release<IMMDeviceCollection>>;
+  using audio_client_t = util::safe_ptr<IAudioClient, Release<IAudioClient>>;
+  using wstring_t = util::safe_ptr<WCHAR, co_task_free<WCHAR>>;
+  using policy_t = util::safe_ptr<IPolicyConfig, Release<IPolicyConfig>>;
+  using prop_t = util::safe_ptr<IPropertyStore, Release<IPropertyStore>>;
+
+  class prop_var_t {
+  public:
+    prop_var_t() {
+      PropVariantInit(&prop);
+    }
+
+    ~prop_var_t() {
+      PropVariantClear(&prop);
+    }
+
+    PROPVARIANT prop;
+  };
+
+
+
+  // mic_write_wasapi_t implementation
+  mic_write_wasapi_t::~mic_write_wasapi_t() {
+    if (opus_decoder) {
+      opus_decoder_destroy(opus_decoder);
+    }
+    if (audio_client) {
+      audio_client->Stop();
+    }
+    if (mmcss_task_handle) {
+      AvRevertMmThreadCharacteristics(mmcss_task_handle);
+    }
+  }
+
+  capture_e
+  mic_write_wasapi_t::sample(std::vector<float> &sample_out) {
+    BOOST_LOG(error) << "mic_write_wasapi_t::sample() should not be called";
+    return capture_e::error;
+  }
+
+  int
+  mic_write_wasapi_t::init() {
+    // 初始化OPUS解码器
+    int opus_error;
+    opus_decoder = opus_decoder_create(48000, 1, &opus_error);  // 48kHz, 单声道
+    if (opus_error != OPUS_OK) {
+      BOOST_LOG(error) << "Failed to create OPUS decoder: " << opus_strerror(opus_error);
+      return -1;
+    }
+
+    // 初始化设备枚举器
+    HRESULT hr = CoCreateInstance(
+      CLSID_MMDeviceEnumerator,
+      nullptr,
+      CLSCTX_ALL,
+      IID_IMMDeviceEnumerator,
+      (void **) &device_enum);
+
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "Couldn't create Device Enumerator for mic write: [0x" << util::hex(hr).to_string_view() << "]";
+      return -1;
+    }
+
+    // 尝试创建或使用虚拟音频设备
+    if (create_virtual_audio_device() != 0) {
+      BOOST_LOG(warning) << "Virtual audio device not available, will try to use existing devices";
+    }
+
+    // 设置loopback
+    if (setup_virtual_mic_loopback() != 0) {
+      BOOST_LOG(warning) << "Failed to setup virtual microphone loopback";
+    }
+
+    // 对于麦克风重定向，我们需要使用虚拟音频输出设备
+    device_t device;
+
+    auto vb_matched = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (vb_matched) {
+      hr = device_enum->GetDevice(vb_matched->second.c_str(), &device);
+      if (SUCCEEDED(hr) && device) {
+        BOOST_LOG(info) << "Using VB-Audio Virtual Cable for client mic redirection";
+      }
+    }
+
+    // 最后尝试使用默认的扬声器设备
+    if (FAILED(hr) || !device) {
+      hr = device_enum->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+      if (SUCCEEDED(hr) && device) {
+        BOOST_LOG(info) << "Using default console audio output device for client mic redirection";
+      }
+    }
+
+    if (FAILED(hr) || !device) {
+      BOOST_LOG(error) << "No suitable audio output device available for client mic redirection";
+      return -1;
+    }
+
+    // 激活 IAudioClient
+    auto status = device->Activate(
+      IID_IAudioClient,
+      CLSCTX_ALL,
+      nullptr,
+      (void **) &audio_client);
+    if (FAILED(status) || !audio_client) {
+      BOOST_LOG(error) << "Failed to activate IAudioClient for mic write: [0x" << util::hex(status).to_string_view() << "]";
+
+      // 获取设备信息以便调试
+      wstring_t device_id;
+      device->GetId(&device_id);
+      BOOST_LOG(error) << "Device ID: " << platf::to_utf8(device_id.get());
+
+      return -1;
+    }
+
+    // 尝试多种音频格式，从最兼容的开始
+    std::vector<WAVEFORMATEX> formats_to_try = {
+      // 16位单声道，48kHz
+      { WAVE_FORMAT_PCM, 1, 48000, 96000, 2, 16, 0 },
+      // 16位单声道，44.1kHz
+      { WAVE_FORMAT_PCM, 1, 44100, 88200, 2, 16, 0 },
+      // 16位立体声，48kHz
+      { WAVE_FORMAT_PCM, 2, 48000, 192000, 4, 16, 0 },
+      // 16位立体声，44.1kHz
+      { WAVE_FORMAT_PCM, 2, 44100, 176400, 4, 16, 0 },
+    };
+
+    HRESULT init_status = E_FAIL;
+    WAVEFORMATEX *used_format = nullptr;
+
+    for (const auto &format : formats_to_try) {
+      BOOST_LOG(debug) << "Trying audio format: " << format.nChannels << " channels, "
+                       << format.nSamplesPerSec << " Hz, " << format.wBitsPerSample << " bits";
+
+      init_status = audio_client->Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        0,  // 不使用特殊标志
+        1000000,  // 100ms buffer (10000000 was 10 seconds)
+        0,
+        &format,
+        nullptr);
+
+      if (SUCCEEDED(init_status)) {
+        used_format = const_cast<WAVEFORMATEX *>(&format);
+        BOOST_LOG(info) << "Successfully initialized with format: " << format.nChannels << " channels, "
+                        << format.nSamplesPerSec << " Hz, " << format.wBitsPerSample << " bits";
+        break;
+      }
+      else {
+        BOOST_LOG(debug) << "Format failed: [0x" << util::hex(init_status).to_string_view() << "]";
+      }
+    }
+
+    if (FAILED(init_status)) {
+      BOOST_LOG(error) << "Failed to initialize IAudioClient with any supported format: [0x" << util::hex(init_status).to_string_view() << "]";
+      return -1;
+    }
+
+    // 保存使用的格式信息
+    current_format = *used_format;
+
+    // 启动音频客户端
+    status = audio_client->Start();
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to start IAudioClient for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      return -1;
+    }
+
+    // 获取 IAudioRenderClient - 用于写入音频数据
+    status = audio_client->GetService(IID_IAudioRenderClient, (void **) &audio_render);
+    if (FAILED(status) || !audio_render) {
+      BOOST_LOG(error) << "Failed to get IAudioRenderClient for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      audio_client->Stop();
+      return -1;
+    }
+
+    // 设置MMCSS优先级
+    {
+      DWORD task_index = 0;
+      mmcss_task_handle = AvSetMmThreadCharacteristics("Pro Audio", &task_index);
+      if (!mmcss_task_handle) {
+        BOOST_LOG(warning) << "Couldn't associate mic write thread with Pro Audio MMCSS task [0x" << util::hex(GetLastError()).to_string_view() << ']';
+      }
+    }
+
+    BOOST_LOG(info) << "Successfully initialized mic write device with OPUS decoder";
+    return 0;
+  }
+
+  int
+  mic_write_wasapi_t::write_data(const char *data, size_t len) {
+    if (!audio_client || !audio_render) {
+      BOOST_LOG(error) << "Mic write device not initialized";
+      return -1;
+    }
+
+    // 解码OPUS数据
+    int frame_size = opus_decoder_get_nb_samples(opus_decoder, (const unsigned char *) data, len);
+    if (frame_size < 0) {
+      BOOST_LOG(error) << "Failed to get OPUS frame size: " << opus_strerror(frame_size);
+      return -1;
+    }
+
+    std::vector<int16_t> pcm_mono_buffer;
+    pcm_mono_buffer.resize(frame_size);  // Resize to exactly fit the decoded mono samples
+
+    int samples_decoded = opus_decode(
+      opus_decoder,
+      (const unsigned char *) data,
+      len,
+      pcm_mono_buffer.data(),
+      frame_size,
+      0  // No FEC
+    );
+
+    if (samples_decoded < 0) {
+      BOOST_LOG(error) << "Failed to decode OPUS data: " << opus_strerror(samples_decoded);
+      return -1;
+    }
+
+    // Handle channel conversion if necessary
+    std::vector<int16_t> pcm_output_buffer;
+    UINT32 framesToWrite;
+
+    if (current_format.nChannels == 1) {
+      // Mono output, direct copy
+      pcm_output_buffer = std::move(pcm_mono_buffer);
+      framesToWrite = samples_decoded;
+    }
+    else if (current_format.nChannels == 2) {
+      // Stereo output, duplicate mono samples
+      pcm_output_buffer.resize(samples_decoded * 2);
+      for (int i = 0; i < samples_decoded; ++i) {
+        pcm_output_buffer[i * 2] = pcm_mono_buffer[i];  // Left channel
+        pcm_output_buffer[i * 2 + 1] = pcm_mono_buffer[i];  // Right channel
+      }
+      framesToWrite = samples_decoded;  // Each original mono sample becomes one stereo frame
+    }
+    else {
+      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
+      return -1;
+    }
+
+    // 获取缓冲区大小和当前填充的帧数
+    UINT32 bufferFrameCount = 0;
+    UINT32 padding = 0;
+    auto status = audio_client->GetBufferSize(&bufferFrameCount);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      return -1;
+    }
+    status = audio_client->GetCurrentPadding(&padding);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to get current padding for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      return -1;
+    }
+
+    UINT32 availableFrames = bufferFrameCount - padding;
+
+    // 确保我们不会写入超过可用空间的数据
+    if (framesToWrite > availableFrames) {
+      BOOST_LOG(warning) << "Mic write buffer overflow: " << framesToWrite << " frames to write, but only " << availableFrames << " available.";
+      framesToWrite = availableFrames;
+    }
+
+    if (framesToWrite == 0) {
+      return 0;
+    }
+
+    // 获取渲染缓冲区
+    BYTE *pData = nullptr;
+    status = audio_render->GetBuffer(framesToWrite, &pData);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to get render buffer for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      return -1;
+    }
+
+    // 拷贝解码后的PCM数据到缓冲区
+    memcpy(pData, pcm_output_buffer.data(), framesToWrite * current_format.nBlockAlign);
+
+    // 释放缓冲区
+    status = audio_render->ReleaseBuffer(framesToWrite, 0);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to release render buffer for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      return -1;
+    }
+
+    return framesToWrite * current_format.nBlockAlign;  // 返回实际写入的字节数
+  }
+
+  int
+  mic_write_wasapi_t::test_write() {
+    if (!audio_client || !audio_render) {
+      BOOST_LOG(error) << "Mic write device not initialized for test";
+      return -1;
+    }
+
+    // 创建一个简单的测试音频数据（静音）
+    const int test_frames = 480;  // 10ms at 48kHz
+    const int test_bytes = test_frames * current_format.nBlockAlign;
+    std::vector<BYTE> test_data(test_bytes, 0);  // 全零数据（静音）
+
+    BOOST_LOG(info) << "Testing client mic redirection with " << test_frames << " frames, " << test_bytes << " bytes";
+
+    return write_data(reinterpret_cast<const char *>(test_data.data()), test_bytes);
+  }
+
+  int
+  mic_write_wasapi_t::redirect_client_mic(const char *data, size_t len) {
+    if (!audio_client || !audio_render) {
+      BOOST_LOG(error) << "Client mic redirection device not initialized";
+      return -1;
+    }
+
+    BOOST_LOG(debug) << "Redirecting " << len << " bytes of client microphone data to host";
+
+    return write_data(data, len);
+  }
+
+  int
+  mic_write_wasapi_t::create_virtual_audio_device() {
+    BOOST_LOG(info) << "Attempting to create/use virtual audio device for client mic redirection";
+
+    // 检查VB-Cable虚拟设备
+    auto vb_matched = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (vb_matched) {
+      BOOST_LOG(info) << "Found existing VB-Audio Virtual Cable device";
+      virtual_device_type = VirtualDeviceType::VB_CABLE;
+      return 0;  // 设备已存在
+    }
+
+    BOOST_LOG(info) << "Attempting to install VB-Cable automatically";
+
+    // 检查是否已安装VB-Cable驱动程序
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\VB\\VBAudioVAC", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+      RegCloseKey(hKey);
+      BOOST_LOG(info) << "VB-Cable driver is already installed";
+      return -1;  // 已安装但未找到设备，可能是未启用
+    }
+
+    // 自动为用户安装VB-Cable
+    BOOST_LOG(info) << "Downloading VB-Cable installer...";
+
+    // 下载VB-Cable安装程序
+    std::wstring download_url = L"https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip";
+    std::wstring temp_path = std::filesystem::temp_directory_path().wstring() + L"\\VBCABLE_Driver_Pack43.zip";
+
+    HMODULE urlmon = LoadLibraryW(L"urlmon.dll");
+    if (!urlmon) {
+      BOOST_LOG(error) << "Failed to load urlmon.dll";
+      return -1;
+    }
+
+    auto URLDownloadToFileW_ptr = (decltype(URLDownloadToFileW) *) GetProcAddress(urlmon, "URLDownloadToFileW");
+    if (!URLDownloadToFileW_ptr || URLDownloadToFileW_ptr(nullptr, download_url.c_str(), temp_path.c_str(), 0, nullptr) != S_OK) {
+      BOOST_LOG(error) << "Failed to download VB-Cable installer";
+      FreeLibrary(urlmon);
+      return -1;
+    }
+    FreeLibrary(urlmon);
+
+    BOOST_LOG(info) << "Extracting VB-Cable installer...";
+
+    // 解压安装包
+    std::wstring extract_path = std::filesystem::temp_directory_path().wstring() + L"\\VBCABLE_Install";
+    if (!std::filesystem::create_directory(extract_path)) {
+      BOOST_LOG(error) << "Failed to create extraction directory";
+      return -1;
+    }
+
+    // 执行安装程序
+    BOOST_LOG(info) << "Installing VB-Cable...";
+    std::wstring install_cmd = L"powershell -command \"Expand-Archive -Path '" + temp_path + L"' -DestinationPath '" + extract_path + L"'; Start-Process -FilePath '" + extract_path + L"\\VBCABLE_Setup_x64.exe' -ArgumentList '/S' -Wait\"";
+
+    if (_wsystem(install_cmd.c_str()) != 0) {
+      BOOST_LOG(error) << "Failed to install VB-Cable";
+      return -1;
+    }
+
+    BOOST_LOG(info) << "VB-Cable installed successfully";
+
+    return 0;
+  }
+
+  std::optional<matched_field_t>
+  mic_write_wasapi_t::find_device_id(const match_fields_list_t &match_list) {
+    if (match_list.empty()) {
+      return std::nullopt;
+    }
+
+    collection_t collection;
+    auto status = device_enum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Couldn't enumerate render devices: [0x"sv << util::hex(status).to_string_view() << ']';
+      return std::nullopt;
+    }
+
+    return find_device_in_collection(collection.get(), match_list);
+  }
+
+  std::optional<matched_field_t>
+  mic_write_wasapi_t::find_capture_device_id(const match_fields_list_t &match_list) {
+    if (match_list.empty()) {
+      return std::nullopt;
+    }
+
+    collection_t collection;
+    auto status = device_enum->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &collection);
+    if (FAILED(status)) {
+      BOOST_LOG(error) << "Couldn't enumerate capture devices: [0x"sv << util::hex(status).to_string_view() << ']';
+      return std::nullopt;
+    }
+
+    return find_device_in_collection(collection.get(), match_list);
+  }
+
+  std::optional<matched_field_t>
+  mic_write_wasapi_t::find_device_in_collection(void *collection_ptr, const match_fields_list_t &match_list) {
+    auto collection = static_cast<IMMDeviceCollection*>(collection_ptr);
+    UINT count = 0;
+    collection->GetCount(&count);
+
+    std::vector<std::wstring> matched(match_list.size());
+    for (auto x = 0; x < count; ++x) {
+      device_t device;
+      collection->Item(x, &device);
+
+      wstring_t wstring_id;
+      device->GetId(&wstring_id);
+      std::wstring device_id = wstring_id.get();
+
+      prop_t prop;
+      device->OpenPropertyStore(STGM_READ, &prop);
+
+      prop_var_t adapter_friendly_name;
+      prop_var_t device_friendly_name;
+      prop_var_t device_desc;
+
+      prop->GetValue(PKEY_Device_FriendlyName, &device_friendly_name.prop);
+      prop->GetValue(PKEY_DeviceInterface_FriendlyName, &adapter_friendly_name.prop);
+      prop->GetValue(PKEY_Device_DeviceDesc, &device_desc.prop);
+
+      for (size_t i = 0; i < match_list.size(); i++) {
+        if (matched[i].empty()) {
+          const wchar_t *match_value = nullptr;
+          switch (match_list[i].first) {
+            case match_field_e::device_id:
+              match_value = device_id.c_str();
+              break;
+
+            case match_field_e::device_friendly_name:
+              match_value = device_friendly_name.prop.pwszVal;
+              break;
+
+            case match_field_e::adapter_friendly_name:
+              match_value = adapter_friendly_name.prop.pwszVal;
+              break;
+
+            case match_field_e::device_description:
+              match_value = device_desc.prop.pwszVal;
+              break;
+          }
+          if (match_value && std::wcscmp(match_value, match_list[i].second.c_str()) == 0) {
+            matched[i] = device_id;
+          }
+        }
+      }
+    }
+
+    for (size_t i = 0; i < match_list.size(); i++) {
+      if (!matched[i].empty()) {
+        return matched_field_t(match_list[i].first, matched[i]);
+      }
+    }
+
+    return std::nullopt;
+  }
+
+  int
+  mic_write_wasapi_t::setup_virtual_mic_loopback() {
+    if (virtual_device_type == VirtualDeviceType::NONE) {
+      BOOST_LOG(warning) << "No virtual device available for loopback setup";
+      return -1;
+    }
+
+    BOOST_LOG(info) << "Setting up virtual microphone loopback for client mic redirection";
+
+    // 根据虚拟设备类型设置循环
+    switch (virtual_device_type) {
+      case VirtualDeviceType::STEAM:
+        return setup_steam_mic_loopback();
+      case VirtualDeviceType::VB_CABLE:
+        return setup_vb_cable_mic_loopback();
+      default:
+        BOOST_LOG(warning) << "Unknown virtual device type for loopback setup";
+        return -1;
+    }
+  }
+
+  int
+  mic_write_wasapi_t::setup_steam_mic_loopback() {
+    BOOST_LOG(info) << "Setting up Steam virtual microphone loopback";
+
+    // Steam Streaming Speakers 会自动循环到 Steam Streaming Microphone
+    // 我们需要确保Steam Streaming Microphone被设置为默认录音设备
+
+    // 查找Steam Streaming Microphone设备
+    auto mic_matched = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"Steam Streaming Microphone" } });
+    if (mic_matched) {
+      BOOST_LOG(info) << "Found Steam Streaming Microphone, attempting to set as default";
+
+      // 这里可以添加设置默认录音设备的逻辑
+      // 使用IPolicyConfig::SetDefaultEndpoint
+      // 但需要先获取policy接口
+      IPolicyConfig *policy_raw = nullptr;
+      HRESULT hr = CoCreateInstance(
+        CLSID_CPolicyConfigClient,
+        nullptr,
+        CLSCTX_ALL,
+        IID_IPolicyConfig,
+        (void **) &policy_raw);
+
+      if (SUCCEEDED(hr) && policy_raw) {
+        policy_t policy(policy_raw);
+
+        hr = policy->SetDefaultEndpoint(mic_matched->second.c_str(), eCommunications);
+        if (FAILED(hr)) {
+          BOOST_LOG(error) << "Failed to set Steam Streaming Microphone as default communications device: [0x" << util::hex(hr).to_string_view() << "]";
+        }
+
+        hr = policy->SetDefaultEndpoint(mic_matched->second.c_str(), eConsole);
+        if (FAILED(hr)) {
+          BOOST_LOG(error) << "Failed to set Steam Streaming Microphone as default console device: [0x" << util::hex(hr).to_string_view() << "]";
+        }
+      }
+      else {
+        BOOST_LOG(error) << "Couldn't create PolicyConfig instance: [0x" << util::hex(hr).to_string_view() << "]";
+      }
+
+      BOOST_LOG(info) << "Steam virtual microphone loopback setup complete";
+      return 0;
+    }
+    else {
+      BOOST_LOG(warning) << "Steam Streaming Microphone not found, loopback may not work";
+      return -1;
+    }
+  }
+
+  int
+  mic_write_wasapi_t::setup_vb_cable_mic_loopback() {
+    BOOST_LOG(info) << "Setting up VB-Cable virtual microphone loopback";
+
+    // VB-Cable Output 会自动循环到 VB-Cable Input
+    // 我们需要确保VB-Cable Input被设置为默认录音设备， VB-Cable Output 不被设置为默认播放设备
+
+    // 查找VB-Cable Input设备
+    auto vb_input_matched = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (vb_input_matched) {
+      // 设置VB-Cable Input为默认录音设备
+      IPolicyConfig *policy_raw = nullptr;
+      HRESULT hr = CoCreateInstance(
+        CLSID_CPolicyConfigClient,
+        nullptr,
+        CLSCTX_ALL,
+        IID_IPolicyConfig,
+        (void **) &policy_raw);
+
+      if (SUCCEEDED(hr) && policy_raw) {
+        policy_t policy(policy_raw);
+
+        // 设置为默认通信设备
+        hr = policy->SetDefaultEndpoint(vb_input_matched->second.c_str(), eCommunications);
+        if (FAILED(hr)) {
+          BOOST_LOG(error) << "Failed to set VB-Cable Input as default communications device: [0x" << util::hex(hr).to_string_view() << "]";
+        }
+
+        // 设置为默认控制台设备
+        hr = policy->SetDefaultEndpoint(vb_input_matched->second.c_str(), eConsole);
+        if (FAILED(hr)) {
+          BOOST_LOG(error) << "Failed to set VB-Cable Input as default console device: [0x" << util::hex(hr).to_string_view() << "]";
+        }
+      }
+      else {
+        BOOST_LOG(error) << "Couldn't create PolicyConfig instance: [0x" << util::hex(hr).to_string_view() << "]";
+      }
+    }
+
+    // 确保VB-Cable Output不被设置为默认播放设备
+    auto vb_output_matched = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (vb_output_matched) {
+      // 获取第一个播放设备作为替代
+      device_t first_device;
+      HRESULT hr = device_enum->GetDefaultAudioEndpoint(eRender, eConsole, &first_device);
+      if (SUCCEEDED(hr) && first_device) {
+        wstring_t first_device_id;
+        first_device->GetId(&first_device_id);
+
+        // 如果当前默认设备是VB-Cable Output，则改为第一个设备
+        if (first_device_id.get() == vb_output_matched->second) {
+          IPolicyConfig *policy_raw = nullptr;
+          hr = CoCreateInstance(
+            CLSID_CPolicyConfigClient,
+            nullptr,
+            CLSCTX_ALL,
+            IID_IPolicyConfig,
+            (void **) &policy_raw);
+
+          if (SUCCEEDED(hr) && policy_raw) {
+            policy_t policy(policy_raw);
+
+            // 枚举所有播放设备
+            collection_t collection;
+            hr = device_enum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection);
+            if (SUCCEEDED(hr)) {
+              UINT count;
+              collection->GetCount(&count);
+
+              // 找到第一个非VB-Cable设备
+              for (UINT i = 0; i < count; i++) {
+                device_t device;
+                collection->Item(i, &device);
+                wstring_t device_id;
+                device->GetId(&device_id);
+
+                if (device_id.get() != vb_output_matched->second) {
+                  // 设置为默认设备
+                  hr = policy->SetDefaultEndpoint(device_id.get(), eConsole);
+                  if (SUCCEEDED(hr)) {
+                    BOOST_LOG(info) << "Set first available device as default playback device";
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    BOOST_LOG(info) << "VB-Cable virtual microphone loopback should be automatic";
+    return 0;
+  }
+
+}  // namespace platf::audio 
