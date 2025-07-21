@@ -223,7 +223,7 @@ body {
 
 /* 应用卡片网格 */
 .apps-grid-container {
-  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-xl);
 }
 
 .apps-grid {

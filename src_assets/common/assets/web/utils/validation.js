@@ -18,10 +18,10 @@ export const validationRules = {
   
   // 命令验证
   command: {
-    required: true,
-    minLength: 1,
+    required: false,
+    minLength: 0,
     maxLength: 1000,
-    message: '命令不能为空'
+    message: '命令不规范，请输入正确的命令'
   },
   
   // 工作目录验证

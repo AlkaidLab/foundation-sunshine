@@ -72,11 +72,10 @@
                           type="text" 
                           class="form-control form-control-enhanced monospace" 
                           id="appCmd" 
-                          v-model="formData.cmd" 
+                          v-model="formData.cmd"
                           :class="getFieldClass('cmd')"
                           @blur="validateField('cmd')"
                           :placeholder="getPlaceholderText('cmd')"
-                          required 
                         />
                         <button class="btn btn-outline-secondary" type="button" @click="selectFile('cmd')" :title="getButtonTitle('file')">
                           <i class="fas fa-folder-open"></i>
@@ -360,11 +359,10 @@ export default {
       this.fileSelector.resetState();
       this.fileSelector.cleanupFileInputs(this.$refs.fileInput, this.$refs.dirInput);
     }
+
+    this.restoreBodyScroll();
   },
   methods: {
-    /**
-     * 初始化模态框
-     */
     initializeModal() {
       // 避免重复初始化
       if (this.modalInstance) {
@@ -382,6 +380,12 @@ export default {
           backdrop: 'static',
           keyboard: false
         });
+        
+        // 添加模态框隐藏事件监听器，确保页面滚动恢复正常
+        this.$refs.modalElement.addEventListener('hidden.bs.modal', () => {
+          this.restoreBodyScroll();
+        });
+        
         console.log('Modal initialized successfully');
       } catch (error) {
         console.warn('Modal initialization failed:', error);
@@ -406,9 +410,6 @@ export default {
       });
     },
     
-    /**
-     * 显示模态框
-     */
     showModal() {
       console.log('Attempting to show modal');
       // 确保模态框已初始化
@@ -436,6 +437,7 @@ export default {
         this.modalInstance.hide();
       }
       this.resetFileSelection();
+      this.restoreBodyScroll();
       this.$emit('close');
     },
 
@@ -449,9 +451,19 @@ export default {
       }
     },
 
-    /**
-     * 显示错误消息
-     */
+    restoreBodyScroll() {
+      if (document.body) {
+        document.body.style.overflow = '';
+        document.body.style.paddingRight = '';
+      }
+      
+      // 移除所有模态框背景
+      const backdrops = document.querySelectorAll('.modal-backdrop');
+      backdrops.forEach(backdrop => {
+        backdrop.remove();
+      });
+    },
+
     showErrorMessage(message) {
       // 可以用更好的通知组件替换
       if (typeof window !== 'undefined' && window.showToast) {
@@ -462,9 +474,6 @@ export default {
       }
     },
 
-    /**
-     * 显示信息消息
-     */
     showInfoMessage(message) {
       // 可以用更好的通知组件替换
       if (typeof window !== 'undefined' && window.showToast) {
