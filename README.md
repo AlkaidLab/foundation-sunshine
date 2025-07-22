@@ -2,18 +2,17 @@
 
 基于LizardByte/Sunshine的分支，提供完整的文档支持 [Read the Docs](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)。
 
-## 项目简介
-
 **Sunshine-Foundation**  is a self-hosted game stream host for Moonlight，本分支版本在原始Sunshine基础上进行了重大改进，专注于提高各种串流终端设备与windows主机接入的游戏串流体验：
 
 ### 🌟 核心特性
 - **HDR友好支持** - 经过优化的HDR处理管线，提供真正的HDR游戏流媒体体验
 - **集成虚拟显示器** - 内置虚拟显示器管理，无需额外软件即可创建和管理虚拟显示器
+- **远程麦克风** - 支持接收客户端麦克风，提供高音质的语音直通功能
 - **高级控制面板** - 直观的Web控制界面，提供实时监控和配置管理
 - **低延迟传输** - 结合最新硬件能力优化的编码处理
 - **智能配对** - 智能管理配对设备的对应配置文件
 
-### 🖥️ 虚拟显示器集成
+### 🖥️ 虚拟显示器集成 (需win10 22H2 及更新的系统）
 - 动态虚拟显示器创建和销毁
 - 自定义分辨率和刷新率支持
 - 多显示器配置管理
