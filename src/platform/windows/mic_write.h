@@ -41,6 +41,8 @@ namespace platf::audio {
     mic_write_wasapi_t() = default;
     ~mic_write_wasapi_t() override;
 
+    std::atomic<bool> is_cleaning_up = false;
+
     // This class is not for sampling, only for writing
     capture_e
     sample(std::vector<float> &sample_out) override;
@@ -69,13 +71,17 @@ namespace platf::audio {
     test_write();
 
     /**
-     * @brief Redirect client microphone data to host
-     * @param data Pointer to the client microphone data
-     * @param len Length of the data in bytes
-     * @return Number of bytes written, or -1 on error
+     * @brief Restore audio devices to their original state
+     * @return 0 on success, -1 on error
      */
     int
-    redirect_client_mic(const char *data, size_t len);
+    restore_audio_devices();
+
+    /**
+     * @brief Cleanup and release resources
+     */
+    void
+    cleanup();
 
   private:
     // Virtual device type enumeration
@@ -138,6 +144,33 @@ namespace platf::audio {
     std::optional<matched_field_t>
     find_device_in_collection(void *collection, const match_fields_list_t &match_list);
 
+    /**
+     * @brief Set default device for all roles
+     * @param device_id Device ID to set as default
+     */
+    HRESULT
+    set_default_device_all_roles(const std::wstring &device_id);
+
+    /**
+     * @brief Store original audio device settings for restoration
+     */
+    void
+    store_original_audio_settings();
+
+    /**
+     * @brief Restore original default audio output device
+     * @return 0 on success, -1 on error
+     */
+    int
+    restore_original_output_device();
+
+    /**
+     * @brief Restore original default audio input device
+     * @return 0 on success, -1 on error
+     */
+    int
+    restore_original_input_device();
+
     // Member variables
     std::unique_ptr<IMMDeviceEnumerator> device_enum;
     std::unique_ptr<IAudioClient> audio_client;
@@ -146,6 +179,14 @@ namespace platf::audio {
     HANDLE mmcss_task_handle = nullptr;
     WAVEFORMATEX current_format = {};
     VirtualDeviceType virtual_device_type = VirtualDeviceType::NONE;
+
+    // Audio device restoration state
+    struct {
+      std::wstring original_input_device_id;
+      bool input_device_changed = false;
+      bool settings_stored = false;
+    } restoration_state;
   };
 
+  extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
 }  // namespace platf::audio 

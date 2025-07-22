@@ -603,6 +603,19 @@ namespace platf {
     virtual int
     write_mic_data(const char *data, size_t size) = 0;
 
+    /**
+     * @brief Initialize the microphone redirect device.
+     * @returns 0 on success, -1 on error.
+     */
+    virtual int
+    init_mic_redirect_device() = 0;
+
+    /**
+     * @brief Release the microphone redirect device.
+     */
+    virtual void
+    release_mic_redirect_device() = 0;
+
     virtual ~audio_control_t() = default;
   };
 

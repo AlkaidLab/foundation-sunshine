@@ -105,6 +105,19 @@ namespace audio {
   is_audio_ctx_sink_available(const audio_ctx_t &ctx);
 
   /**
+   * @brief Start the microphone redirect device.
+   * @returns 0 on success, -1 on error.
+   */
+  int
+  init_mic_redirect_device();
+
+  /**
+   * @brief Release the microphone redirect device.
+   */
+  void
+  release_mic_redirect_device();
+
+  /**
    * @brief Write microphone data to the virtual audio device.
    * @param data Pointer to the audio data.
    * @param size Size of the audio data in bytes.

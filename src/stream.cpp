@@ -336,6 +336,7 @@ namespace stream {
     std::thread video_thread;
     std::thread audio_thread;
     std::thread control_thread;
+    std::thread mic_thread;  // 新增麦克风接收线程
 
     asio::io_context io_context;
 
@@ -346,6 +347,7 @@ namespace stream {
     control_server_t control_server;
 
     std::atomic<bool> mic_socket_enabled { false };
+    std::atomic<int> mic_sessions_count { 0 };  // 需要麦克风的会话数
   };
 
   struct session_t {
@@ -1191,6 +1193,123 @@ namespace stream {
   }
 
   void
+  micRecvThread(broadcast_ctx_t &ctx) {
+    auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
+    auto &io = ctx.io_context;
+
+    udp::endpoint peer;
+    std::array<char, 2048> buffer;
+
+    auto handle_common_errors = [](const boost::system::error_code &ec) {
+      if (ec == boost::system::errc::connection_refused ||
+          ec == boost::system::errc::connection_reset) {
+        return true;
+      }
+      if (ec) {
+        BOOST_LOG(error) << "Couldn't receive data from mic socket: "sv << ec.message();
+        return true;
+      }
+      return false;
+    };
+
+    // 麦克风接收处理函数
+    std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    mic_recv_func = [&](const boost::system::error_code &ec, size_t bytes) {
+      // 检查麦克风socket是否仍然启用
+      if (!ctx.mic_socket_enabled.load()) {
+        BOOST_LOG(debug) << "Microphone socket disabled, stopping receive";
+        return;
+      }
+
+      auto fg = util::fail_guard([&]() {
+        try {
+          // 再次检查麦克风socket是否仍然启用
+          if (!ctx.mic_socket_enabled.load()) {
+            BOOST_LOG(debug) << "Microphone socket disabled, not restarting receive";
+            return;
+          }
+
+          ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to restart mic async receive: " << e.what();
+        }
+      });
+
+      BOOST_LOG(verbose) << "Mic Recv: "sv << peer.address().to_string() << ':' << peer.port();
+
+      if (handle_common_errors(ec) || bytes == 0) {
+        if (bytes == 0) BOOST_LOG(warning) << "Received empty mic packet";
+        return;
+      }
+
+      // 处理麦克风数据
+      try {
+        if (bytes >= sizeof(microphone_packet_header_t)) {
+          auto *header = (microphone_packet_header_t *) buffer.data();
+          if (header->packetType == MIC_PACKET_TYPE_OPUS) {
+            size_t header_size = sizeof(microphone_packet_header_t);
+            if (bytes > header_size) {
+              const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
+
+              // 检查麦克风socket是否仍然启用，避免在设备释放时继续处理
+              if (!ctx.mic_socket_enabled.load()) {
+                BOOST_LOG(debug) << "Microphone socket disabled, skipping data processing";
+                return;
+              }
+
+              if (int result = audio::write_mic_data(audio_data, bytes - header_size); result < 0) {
+                BOOST_LOG(error) << "Failed to write microphone data to stream";
+              }
+              else {
+                BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
+              }
+            }
+          }
+          else {
+            BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->packetType;
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Error processing mic packet: " << e.what();
+      }
+    };
+
+    try {
+      BOOST_LOG(debug) << "Starting microphone receive thread";
+
+      audio::init_mic_redirect_device();
+
+      while (!broadcast_shutdown_event->peek()) {
+        // 检查麦克风socket状态
+        if (ctx.mic_socket_enabled.load()) {
+          // 启动麦克风接收
+          ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
+
+          // 运行IO循环直到麦克风socket被禁用或关闭
+          while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
+            io.run();
+          }
+
+          BOOST_LOG(debug) << "Microphone receive stopped";
+        }
+        else {
+          // 麦克风socket未启用，等待一段时间后再次检查
+          std::this_thread::sleep_for(100ms);
+        }
+      }
+
+      audio::release_mic_redirect_device();
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(fatal) << "micRecvThread exception: " << e.what();
+    }
+
+    BOOST_LOG(debug) << "Microphone receive thread ended";
+  }
+
+  void
   recvThread(broadcast_ctx_t &ctx) {
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_video_session;
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_audio_session;
@@ -1202,9 +1321,8 @@ namespace stream {
     auto &io = ctx.io_context;
 
     udp::endpoint peer;
-    std::array<std::array<char, 2048>, 3> buffers;  // 增加麦克风缓冲区
-    std::array<std::function<void(const boost::system::error_code, size_t)>, 3> recv_funcs;  // 增加麦克风处理函数
-
+    std::array<std::array<char, 2048>, 2> buffers;
+    std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
     auto handle_common_errors = [](const boost::system::error_code &ec) {
       if (ec == boost::system::errc::connection_refused ||
           ec == boost::system::errc::connection_reset) {
@@ -1271,43 +1389,14 @@ namespace stream {
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
 
-        if (type_str != "MIC") {
-          update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
-        }
+        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
 
         if (handle_common_errors(ec) || bytes == 0) {
           if (bytes == 0) BOOST_LOG(warning) << "Received empty packet";
           return;
         }
 
-        if (type_str == "MIC") {
-          try {
-            if (bytes >= sizeof(microphone_packet_header_t)) {
-              auto *header = (microphone_packet_header_t *) buffers[buf_idx].data();
-              if (header->packetType == MIC_PACKET_TYPE_OPUS) {
-                size_t header_size = sizeof(microphone_packet_header_t);
-                if (bytes > header_size) {
-                  const auto *audio_data = reinterpret_cast<const uint8_t *>(buffers[buf_idx].data()) + header_size;
-                  if (int result = audio::write_mic_data(audio_data, bytes - header_size); result < 0) {
-                    BOOST_LOG(error) << "Failed to write microphone data to stream";
-                  }
-                  else {
-                    BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
-                  }
-                }
-              }
-              else {
-                BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->packetType;
-              }
-            }
-          }
-          catch (const std::exception &e) {
-            BOOST_LOG(error) << "Error processing mic packet: " << e.what();
-          }
-        }
-        else {
-          handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
-        }
+        handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
       };
     };
 
@@ -1317,11 +1406,6 @@ namespace stream {
 
       video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
       audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
-
-      if (ctx.mic_sock.is_open()) {
-        init_recv_func(ctx.mic_sock, 2, peer_to_audio_session, "MIC");
-        ctx.mic_sock.async_receive_from(asio::buffer(buffers[2]), peer, 0, recv_funcs[2]);
-      }
 
       while (!broadcast_shutdown_event->peek()) {
         io.run();
@@ -1843,6 +1927,7 @@ namespace stream {
     ctx.control_thread = std::thread { controlBroadcastThread, &ctx.control_server };
 
     ctx.recv_thread = std::thread { recvThread, std::ref(ctx) };
+    ctx.mic_thread = std::thread { micRecvThread, std::ref(ctx) };
 
     return 0;
   }
@@ -1866,8 +1951,12 @@ namespace stream {
     ctx.video_sock.close();
     ctx.audio_sock.close();
 
+    // 确保麦克风socket已关闭并重置计数器
     if (ctx.mic_socket_enabled.load()) {
+      ctx.mic_socket_enabled.store(false);
       ctx.mic_sock.close();
+      ctx.mic_sessions_count.store(0);
+      BOOST_LOG(debug) << "Microphone socket closed during broadcast shutdown";
     }
 
     video_packets.reset();
@@ -1881,6 +1970,8 @@ namespace stream {
     ctx.audio_thread.join();
     BOOST_LOG(debug) << "Waiting for main control thread to end..."sv;
     ctx.control_thread.join();
+    BOOST_LOG(debug) << "Waiting for microphone thread to end..."sv;
+    ctx.mic_thread.join();
     BOOST_LOG(debug) << "All broadcasting threads ended"sv;
 
     broadcast_shutdown_event->reset();
@@ -2036,6 +2127,14 @@ namespace stream {
 
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
+        // 最后一个会话结束时，确保麦克风socket已关闭
+        if (session.broadcast_ref->mic_socket_enabled.load()) {
+          session.broadcast_ref->mic_sock.close();
+          session.broadcast_ref->mic_socket_enabled.store(false);
+          session.broadcast_ref->mic_sessions_count.store(0);
+          BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
+        }
+
         bool restore_display_state { true };
         if (proc::proc.running()) {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -2051,6 +2150,21 @@ namespace stream {
         }
 
         platf::streaming_will_stop();
+      }
+      else {
+        // 非最后一个会话：如果当前会话启用了麦克风，减少计数
+        if (session.audio.enable_mic) {
+          int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
+          if (remaining_count == 0) {
+            // 没有会话需要麦克风了，关闭socket
+            session.broadcast_ref->mic_sock.close();
+            session.broadcast_ref->mic_socket_enabled.store(false);
+            BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
+          }
+          else {
+            BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count;
+          }
+        }
       }
 
       BOOST_LOG(debug) << "Session ended"sv;
@@ -2086,25 +2200,35 @@ namespace stream {
       session.audioThread = std::thread { audioThread, &session };
       session.videoThread = std::thread { videoThread, &session };
 
-      // 根据会话的麦克风启用标志决定是否关闭麦克风socket
-      if (!session.audio.enable_mic && session.broadcast_ref->mic_socket_enabled.load()) {
-        session.broadcast_ref->mic_sock.close();
-        session.broadcast_ref->mic_socket_enabled.store(false);
-        BOOST_LOG(debug) << "Microphone socket closed (session doesn't require it)";
-      }
-      else if (session.audio.enable_mic) {
-        session.broadcast_ref->mic_socket_enabled.store(true);
-        BOOST_LOG(debug) << "Microphone socket enabled for session";
-      }
-
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {
+        // 根据会话的麦克风启用标志管理麦克风socket
+        if (session.audio.enable_mic) {
+          session.broadcast_ref->mic_sessions_count.fetch_add(1);
+          session.broadcast_ref->mic_socket_enabled.store(true);
+          BOOST_LOG(debug) << "Microphone socket enabled for session";
+        }
+        else {
+          // 如果第一个会话不需要麦克风，关闭麦克风socket
+          session.broadcast_ref->mic_sock.close();
+          session.broadcast_ref->mic_socket_enabled.store(false);
+          BOOST_LOG(debug) << "Microphone socket closed (session doesn't require it)";
+        }
+
         platf::streaming_will_start();
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
         system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif
+      }
+      else {
+        // 非第一个会话：如果启用麦克风，增加计数
+        if (session.audio.enable_mic) {
+          session.broadcast_ref->mic_sessions_count.fetch_add(1);
+          session.broadcast_ref->mic_socket_enabled.store(true);
+          BOOST_LOG(debug) << "Microphone socket enabled for additional session";
+        }
       }
 
       return 0;

@@ -21,7 +21,6 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 
-
 // Lib includes
 #include <opus/opus.h>
 
@@ -73,19 +72,44 @@ namespace platf::audio {
     PROPVARIANT prop;
   };
 
-
-
   // mic_write_wasapi_t implementation
   mic_write_wasapi_t::~mic_write_wasapi_t() {
+    cleanup();
+  }
+
+  void
+  mic_write_wasapi_t::cleanup() {
+    is_cleaning_up.store(true);
+
+    // 等待音频处理完成
+    if (audio_client) {
+      // 停止音频客户端
+      audio_client->Stop();
+
+      // 等待缓冲区清空
+      UINT32 bufferFrameCount = 0;
+      UINT32 padding = 0;
+      HRESULT status = audio_client->GetBufferSize(&bufferFrameCount);
+      if (SUCCEEDED(status)) {
+        // 等待缓冲区完全清空
+        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0) {
+          Sleep(10);
+        }
+        BOOST_LOG(debug) << "Audio buffer cleared, padding: " << padding;
+      }
+    }
+
     if (opus_decoder) {
       opus_decoder_destroy(opus_decoder);
+      opus_decoder = nullptr;
     }
-    if (audio_client) {
-      audio_client->Stop();
-    }
+
     if (mmcss_task_handle) {
       AvRevertMmThreadCharacteristics(mmcss_task_handle);
+      mmcss_task_handle = nullptr;
     }
+
+    BOOST_LOG(info) << "Mic write device cleanup completed";
   }
 
   capture_e
@@ -116,6 +140,9 @@ namespace platf::audio {
       BOOST_LOG(error) << "Couldn't create Device Enumerator for mic write: [0x" << util::hex(hr).to_string_view() << "]";
       return -1;
     }
+
+    // 存储原始音频设备设置
+    store_original_audio_settings();
 
     // 尝试创建或使用虚拟音频设备
     if (create_virtual_audio_device() != 0) {
@@ -310,12 +337,39 @@ namespace platf::audio {
       return -1;
     }
 
+    // 确保padding不超过缓冲区大小
+    if (padding > bufferFrameCount) {
+      BOOST_LOG(warning) << "Invalid padding value: " << padding << " > " << bufferFrameCount << ", using 0";
+      padding = 0;
+    }
+
     UINT32 availableFrames = bufferFrameCount - padding;
 
-    // 确保我们不会写入超过可用空间的数据
+    // 等待缓冲区有足够空间
     if (framesToWrite > availableFrames) {
-      BOOST_LOG(warning) << "Mic write buffer overflow: " << framesToWrite << " frames to write, but only " << availableFrames << " available.";
-      framesToWrite = availableFrames;
+      BOOST_LOG(debug) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
+
+      // 等待一段时间让缓冲区清空
+      Sleep(10);  // 等待10ms
+
+      // 重新检查可用空间
+      status = audio_client->GetCurrentPadding(&padding);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
+        return -1;
+      }
+
+      if (padding > bufferFrameCount) {
+        padding = 0;
+      }
+
+      availableFrames = bufferFrameCount - padding;
+
+      // 如果仍然没有足够空间，则截断数据
+      if (framesToWrite > availableFrames) {
+        BOOST_LOG(warning) << "Mic write buffer overflow after wait: " << framesToWrite << " frames to write, but only " << availableFrames << " available.";
+        framesToWrite = availableFrames;
+      }
     }
 
     if (framesToWrite == 0) {
@@ -358,18 +412,6 @@ namespace platf::audio {
     BOOST_LOG(info) << "Testing client mic redirection with " << test_frames << " frames, " << test_bytes << " bytes";
 
     return write_data(reinterpret_cast<const char *>(test_data.data()), test_bytes);
-  }
-
-  int
-  mic_write_wasapi_t::redirect_client_mic(const char *data, size_t len) {
-    if (!audio_client || !audio_render) {
-      BOOST_LOG(error) << "Client mic redirection device not initialized";
-      return -1;
-    }
-
-    BOOST_LOG(debug) << "Redirecting " << len << " bytes of client microphone data to host";
-
-    return write_data(data, len);
   }
 
   int
@@ -472,7 +514,7 @@ namespace platf::audio {
 
   std::optional<matched_field_t>
   mic_write_wasapi_t::find_device_in_collection(void *collection_ptr, const match_fields_list_t &match_list) {
-    auto collection = static_cast<IMMDeviceCollection*>(collection_ptr);
+    auto collection = static_cast<IMMDeviceCollection *>(collection_ptr);
     UINT count = 0;
     collection->GetCount(&count);
 
@@ -532,6 +574,37 @@ namespace platf::audio {
     return std::nullopt;
   }
 
+  HRESULT
+  mic_write_wasapi_t::set_default_device_all_roles(const std::wstring &device_id) {
+    IPolicyConfig *policy_raw = nullptr;
+    HRESULT hr = CoCreateInstance(
+      CLSID_CPolicyConfigClient,
+      nullptr,
+      CLSCTX_ALL,
+      IID_IPolicyConfig,
+      (void **) &policy_raw);
+
+    if (FAILED(hr) || !policy_raw) {
+      BOOST_LOG(error) << "Couldn't create PolicyConfig instance: [0x" << util::hex(hr).to_string_view() << "]";
+      return hr;
+    }
+
+    policy_t policy(policy_raw);
+    hr = policy->SetDefaultEndpoint(device_id.c_str(), eCommunications);
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "Failed to set device as default communications device: [0x" << util::hex(hr).to_string_view() << "]";
+      return hr;
+    }
+
+    hr = policy->SetDefaultEndpoint(device_id.c_str(), eConsole);
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "Failed to set device as default console device: [0x" << util::hex(hr).to_string_view() << "]";
+      return hr;
+    }
+
+    return S_OK;
+  }
+
   int
   mic_write_wasapi_t::setup_virtual_mic_loopback() {
     if (virtual_device_type == VirtualDeviceType::NONE) {
@@ -559,142 +632,166 @@ namespace platf::audio {
 
     // Steam Streaming Speakers 会自动循环到 Steam Streaming Microphone
     // 我们需要确保Steam Streaming Microphone被设置为默认录音设备
-
-    // 查找Steam Streaming Microphone设备
-    auto mic_matched = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"Steam Streaming Microphone" } });
-    if (mic_matched) {
-      BOOST_LOG(info) << "Found Steam Streaming Microphone, attempting to set as default";
-
-      // 这里可以添加设置默认录音设备的逻辑
-      // 使用IPolicyConfig::SetDefaultEndpoint
-      // 但需要先获取policy接口
-      IPolicyConfig *policy_raw = nullptr;
-      HRESULT hr = CoCreateInstance(
-        CLSID_CPolicyConfigClient,
-        nullptr,
-        CLSCTX_ALL,
-        IID_IPolicyConfig,
-        (void **) &policy_raw);
-
-      if (SUCCEEDED(hr) && policy_raw) {
-        policy_t policy(policy_raw);
-
-        hr = policy->SetDefaultEndpoint(mic_matched->second.c_str(), eCommunications);
-        if (FAILED(hr)) {
-          BOOST_LOG(error) << "Failed to set Steam Streaming Microphone as default communications device: [0x" << util::hex(hr).to_string_view() << "]";
-        }
-
-        hr = policy->SetDefaultEndpoint(mic_matched->second.c_str(), eConsole);
-        if (FAILED(hr)) {
-          BOOST_LOG(error) << "Failed to set Steam Streaming Microphone as default console device: [0x" << util::hex(hr).to_string_view() << "]";
-        }
+    if (auto steam_mic = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"Steam Streaming Microphone" } })) {
+      HRESULT hr = set_default_device_all_roles(steam_mic->second);
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "Failed to set Steam Streaming Microphone as default device: [0x" << util::hex(hr).to_string_view() << "]";
+        return -1;
       }
-      else {
-        BOOST_LOG(error) << "Couldn't create PolicyConfig instance: [0x" << util::hex(hr).to_string_view() << "]";
-      }
-
-      BOOST_LOG(info) << "Steam virtual microphone loopback setup complete";
-      return 0;
     }
-    else {
-      BOOST_LOG(warning) << "Steam Streaming Microphone not found, loopback may not work";
-      return -1;
-    }
+    return 0;
   }
 
   int
   mic_write_wasapi_t::setup_vb_cable_mic_loopback() {
     BOOST_LOG(info) << "Setting up VB-Cable virtual microphone loopback";
 
-    // VB-Cable Output 会自动循环到 VB-Cable Input
-    // 我们需要确保VB-Cable Input被设置为默认录音设备， VB-Cable Output 不被设置为默认播放设备
+    // 1. 检查VB-Cable输入设备是否存在
+    auto vb_input = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (!vb_input) {
+      BOOST_LOG(warning) << "VB-Cable Input device not found";
+      return -1;
+    }
 
-    // 查找VB-Cable Input设备
-    auto vb_input_matched = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
-    if (vb_input_matched) {
-      // 设置VB-Cable Input为默认录音设备
-      IPolicyConfig *policy_raw = nullptr;
-      HRESULT hr = CoCreateInstance(
-        CLSID_CPolicyConfigClient,
-        nullptr,
-        CLSCTX_ALL,
-        IID_IPolicyConfig,
-        (void **) &policy_raw);
+    // 2. 设置VB-Cable为默认录音设备
+    HRESULT hr = set_default_device_all_roles(vb_input->second);
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "Failed to set VB-Cable as default device: [0x" << util::hex(hr).to_string_view() << "]";
+      return -1;
+    }
+    restoration_state.input_device_changed = true;
+    BOOST_LOG(info) << "Successfully set VB-Cable as default recording device";
 
-      if (SUCCEEDED(hr) && policy_raw) {
-        policy_t policy(policy_raw);
+    // 3. 检查VB-Cable输出设备
+    auto vb_output = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+    if (!vb_output) {
+      BOOST_LOG(info) << "VB-Cable output device not found, skipping output device check";
+      return 0;
+    }
 
-        // 设置为默认通信设备
-        hr = policy->SetDefaultEndpoint(vb_input_matched->second.c_str(), eCommunications);
-        if (FAILED(hr)) {
-          BOOST_LOG(error) << "Failed to set VB-Cable Input as default communications device: [0x" << util::hex(hr).to_string_view() << "]";
+    // 4. 检查VB-Cable是否是默认播放设备
+    device_t default_device;
+    if (FAILED(device_enum->GetDefaultAudioEndpoint(eRender, eConsole, &default_device)) || !default_device) {
+      BOOST_LOG(warning) << "Failed to get default playback device";
+      return 0;
+    }
+
+    wstring_t default_id;
+    if (FAILED(default_device->GetId(&default_id))) {
+      BOOST_LOG(warning) << "Failed to get default playback device ID";
+      return 0;
+    }
+
+    if (default_id.get() != vb_output->second) {
+      BOOST_LOG(info) << "VB-Cable is not the default playback device, no need to switch";
+      return 0;
+    }
+
+    // 5. 寻找替代播放设备
+    BOOST_LOG(info) << "VB-Cable is currently the default playback device, switching to alternative...";
+    collection_t collection;
+    if (FAILED(device_enum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection))) {
+      BOOST_LOG(error) << "Failed to enumerate audio endpoints";
+      return -1;
+    }
+
+    UINT count = 0;
+    collection->GetCount(&count);
+
+    for (UINT i = 0; i < count; ++i) {
+      device_t device;
+      if (FAILED(collection->Item(i, &device))) {
+        continue;
+      }
+
+      wstring_t device_id;
+      if (FAILED(device->GetId(&device_id))) {
+        continue;
+      }
+
+      if (device_id.get() != vb_output->second) {
+        if (SUCCEEDED(set_default_device_all_roles(device_id.get()))) {
+          BOOST_LOG(info) << "Successfully changed default playback device to: " << platf::to_utf8(device_id.get());
+          // restoration_state.output_device_changed = true;
+          BOOST_LOG(info) << "VB-Cable virtual microphone loopback successfully configured";
+          return 0;
         }
+      }
+    }
 
-        // 设置为默认控制台设备
-        hr = policy->SetDefaultEndpoint(vb_input_matched->second.c_str(), eConsole);
-        if (FAILED(hr)) {
-          BOOST_LOG(error) << "Failed to set VB-Cable Input as default console device: [0x" << util::hex(hr).to_string_view() << "]";
-        }
+    BOOST_LOG(error) << "No alternative playback device available";
+    return -1;
+  }
+
+  void
+  mic_write_wasapi_t::store_original_audio_settings() {
+    if (restoration_state.settings_stored) {
+      return;
+    }
+
+    // 获取并存储当前默认输入设备ID
+    device_t default_input;
+    if (SUCCEEDED(device_enum->GetDefaultAudioEndpoint(eCapture, eConsole, &default_input)) && default_input) {
+      wstring_t device_id;
+      if (SUCCEEDED(default_input->GetId(&device_id))) {
+        restoration_state.original_input_device_id = device_id.get();
+        BOOST_LOG(debug) << "已存储原始输入设备: " << platf::to_utf8(restoration_state.original_input_device_id);
       }
       else {
-        BOOST_LOG(error) << "Couldn't create PolicyConfig instance: [0x" << util::hex(hr).to_string_view() << "]";
+        BOOST_LOG(warning) << "获取输入设备ID失败";
+      }
+    }
+    else {
+      BOOST_LOG(warning) << "获取默认输入设备失败";
+    }
+
+    restoration_state.settings_stored = true;
+    BOOST_LOG(info) << "原始音频设备设置存储完成";
+  }
+
+  int
+  mic_write_wasapi_t::restore_audio_devices() {
+    if (!restoration_state.settings_stored) {
+      BOOST_LOG(debug) << "No audio device settings to restore";
+      return 0;
+    }
+
+    BOOST_LOG(info) << "Restoring audio devices to original state";
+
+    int result = 0;
+
+    // 恢复输入设备
+    if (restoration_state.input_device_changed) {
+      if (restore_original_input_device() != 0) {
+        result = -1;
       }
     }
 
-    // 确保VB-Cable Output不被设置为默认播放设备
-    auto vb_output_matched = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
-    if (vb_output_matched) {
-      // 获取第一个播放设备作为替代
-      device_t first_device;
-      HRESULT hr = device_enum->GetDefaultAudioEndpoint(eRender, eConsole, &first_device);
-      if (SUCCEEDED(hr) && first_device) {
-        wstring_t first_device_id;
-        first_device->GetId(&first_device_id);
+    // 重置恢复状态
+    restoration_state.input_device_changed = false;
+    restoration_state.settings_stored = false;
 
-        // 如果当前默认设备是VB-Cable Output，则改为第一个设备
-        if (first_device_id.get() == vb_output_matched->second) {
-          IPolicyConfig *policy_raw = nullptr;
-          hr = CoCreateInstance(
-            CLSID_CPolicyConfigClient,
-            nullptr,
-            CLSCTX_ALL,
-            IID_IPolicyConfig,
-            (void **) &policy_raw);
+    BOOST_LOG(info) << "Audio device restoration " << (result == 0 ? "completed successfully" : "completed with errors");
+    return result;
+  }
 
-          if (SUCCEEDED(hr) && policy_raw) {
-            policy_t policy(policy_raw);
-
-            // 枚举所有播放设备
-            collection_t collection;
-            hr = device_enum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection);
-            if (SUCCEEDED(hr)) {
-              UINT count;
-              collection->GetCount(&count);
-
-              // 找到第一个非VB-Cable设备
-              for (UINT i = 0; i < count; i++) {
-                device_t device;
-                collection->Item(i, &device);
-                wstring_t device_id;
-                device->GetId(&device_id);
-
-                if (device_id.get() != vb_output_matched->second) {
-                  // 设置为默认设备
-                  hr = policy->SetDefaultEndpoint(device_id.get(), eConsole);
-                  if (SUCCEEDED(hr)) {
-                    BOOST_LOG(info) << "Set first available device as default playback device";
-                  }
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
+  int
+  mic_write_wasapi_t::restore_original_input_device() {
+    if (restoration_state.original_input_device_id.empty()) {
+      BOOST_LOG(warning) << "No original input device ID stored";
+      return -1;
     }
 
-    BOOST_LOG(info) << "VB-Cable virtual microphone loopback should be automatic";
+    BOOST_LOG(info) << "Restoring original input device: " << platf::to_utf8(restoration_state.original_input_device_id);
+
+    HRESULT hr = set_default_device_all_roles(restoration_state.original_input_device_id);
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "Failed to restore original input device: [0x" << util::hex(hr).to_string_view() << "]";
+      return -1;
+    }
+
+    BOOST_LOG(info) << "Successfully restored original input device";
     return 0;
   }
 
-}  // namespace platf::audio 
+}  // namespace platf::audio
