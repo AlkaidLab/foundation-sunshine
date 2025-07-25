@@ -2,6 +2,7 @@
  * @file src/platform/windows/display_base.cpp
  * @brief Definitions for the Windows display base code.
  */
+#include <algorithm>
 #include <cmath>
 #include <initguid.h>
 #include <thread>
@@ -1112,41 +1113,76 @@ namespace platf {
    */
   std::shared_ptr<display_t>
   display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config) {
-    if (config::video.capture == "ddx" || config::video.capture.empty()) {
-      if (hwdevice_type == mem_type_e::dxgi) {
-        auto disp = std::make_shared<dxgi::display_ddup_vram_t>();
-
-        if (!disp->init(config, display_name)) {
-          return disp;
-        }
+    auto try_init = [&](auto disp) -> std::shared_ptr<display_t> {
+      if (!disp->init(config, display_name)) {
+        return disp;
       }
-      else if (hwdevice_type == mem_type_e::system) {
-        auto disp = std::make_shared<dxgi::display_ddup_ram_t>();
+      return nullptr;
+    };
 
-        if (!disp->init(config, display_name)) {
-          return disp;
+    // 优先级顺序：amd > ddx > wgc
+    const std::vector<std::string> capture_types = {
+      "amd", "ddx", "wgc"
+    };
+
+    // 如果capture为空，则依次尝试所有类型，否则只尝试指定类型
+    std::vector<std::string> try_types;
+    if (config::video.capture.empty()) {
+      try_types = capture_types;
+    }
+    else {
+      try_types.push_back(config::video.capture);
+    }
+
+    // Check GPU vendor to avoid trying AMD capture on non-AMD GPUs
+    bool is_amd_gpu = false;
+    if (std::find(try_types.begin(), try_types.end(), "amd") != try_types.end()) {
+      // Create a temporary factory to check GPU vendor
+      dxgi::factory1_t factory;
+      HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
+      if (SUCCEEDED(status)) {
+        dxgi::adapter_t adapter;
+        if (factory->EnumAdapters1(0, &adapter) != DXGI_ERROR_NOT_FOUND) {
+          DXGI_ADAPTER_DESC1 adapter_desc;
+          adapter->GetDesc1(&adapter_desc);
+          is_amd_gpu = (adapter_desc.VendorId == 0x1002);
         }
       }
     }
 
-    if (config::video.capture == "wgc" || config::video.capture.empty()) {
-      if (hwdevice_type == mem_type_e::dxgi) {
-        auto disp = std::make_shared<dxgi::display_wgc_vram_t>();
-
-        if (!disp->init(config, display_name)) {
-          return disp;
+    for (const auto &type : try_types) {
+      if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
+        // Only try AMD capture on AMD GPUs
+        if (!is_amd_gpu) {
+          BOOST_LOG(debug) << "Skipping AMD capture on non-AMD GPU";
+          continue;
+        }
+        auto disp = std::make_shared<dxgi::display_amd_vram_t>();
+        if (auto ret = try_init(disp)) return ret;
+      }
+      else if (type == "ddx") {
+        if (hwdevice_type == mem_type_e::dxgi) {
+          auto disp = std::make_shared<dxgi::display_ddup_vram_t>();
+          if (auto ret = try_init(disp)) return ret;
+        }
+        else if (hwdevice_type == mem_type_e::system) {
+          auto disp = std::make_shared<dxgi::display_ddup_ram_t>();
+          if (auto ret = try_init(disp)) return ret;
         }
       }
-      else if (hwdevice_type == mem_type_e::system) {
-        auto disp = std::make_shared<dxgi::display_wgc_ram_t>();
-
-        if (!disp->init(config, display_name)) {
-          return disp;
+      else if (type == "wgc") {
+        if (hwdevice_type == mem_type_e::dxgi) {
+          auto disp = std::make_shared<dxgi::display_wgc_vram_t>();
+          if (auto ret = try_init(disp)) return ret;
+        }
+        else if (hwdevice_type == mem_type_e::system) {
+          auto disp = std::make_shared<dxgi::display_wgc_ram_t>();
+          if (auto ret = try_init(disp)) return ret;
         }
       }
     }
 
-    // ddx and wgc failed
+    // 所有尝试均失败
     return nullptr;
   }
 

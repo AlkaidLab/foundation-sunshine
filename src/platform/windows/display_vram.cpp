@@ -19,8 +19,8 @@ extern "C" {
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
 #include "src/video.h"
 
-#include <AMF/core/Factory.h>
 #include <AMF/components/DisplayCapture.h>
+#include <AMF/core/Factory.h>
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -214,7 +214,7 @@ namespace platf::dxgi {
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
         util::buffer_t<std::uint8_t> cursor_img = img_data;
         std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
-          auto alpha = (std::uint8_t)((pixel >> 24) & 0xFF);
+          auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
           if (alpha == 0xFF) {
             // Pixels with 0xFF alpha will be XOR-blended as is.
           }
@@ -283,7 +283,7 @@ namespace platf::dxgi {
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
         util::buffer_t<std::uint8_t> cursor_img = img_data;
         std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
-          auto alpha = (std::uint8_t)((pixel >> 24) & 0xFF);
+          auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
           if (alpha == 0xFF) {
             // Pixels with 0xFF alpha will be XOR-blended by make_cursor_xor_image().
             // We make them transparent for the alpha-blended cursor image.
@@ -1627,11 +1627,9 @@ namespace platf::dxgi {
     return 0;
   }
 
-
   int
   display_amd_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
-    if (display_base_t::init(config, display_name) || dup.init(this, config, output_index))
-    {
+    if (display_base_t::init(config, display_name) || dup.init(this, config, output_index)) {
       BOOST_LOG(error) << "AMD VRAM() failed";
       return -1;
     }
@@ -1639,8 +1637,7 @@ namespace platf::dxgi {
     return 0;
   }
 
-
-/**
+  /**
    * @brief Get the next frame from the Windows.Graphics.Capture API and copy it into a new snapshot texture.
    * @param pull_free_image_cb call this to get a new free image from the video subsystem.
    * @param img_out the captured frame is returned here
@@ -1659,10 +1656,7 @@ namespace platf::dxgi {
     }
     dup.capturedSurface = output;
 
-    // // Line below breaks reinit
-    // dup.capturedSurface->Acquire();
-
-    texture2d_t src = (ID3D11Texture2D*) dup.capturedSurface->GetPlaneAt(0)->GetNative();
+    texture2d_t src = (ID3D11Texture2D *) dup.capturedSurface->GetPlaneAt(0)->GetNative();
     src->GetDesc(&desc);
 
     // It's possible for our display enumeration to race with mode changes and result in

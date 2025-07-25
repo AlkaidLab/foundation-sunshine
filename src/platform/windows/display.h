@@ -467,7 +467,8 @@ namespace platf::dxgi {
 
 
   /**
-   * Display backend that uses Windows.Graphics.Capture with a hardware encoder.
+   * Display backend that uses AMD Display Capture with a hardware encoder.
+   * Main purpose is to capture AMD Fluid Motion Frames (AFMF)
    */
   class display_amd_vram_t: public display_vram_t {
     amd_capture_t dup;
