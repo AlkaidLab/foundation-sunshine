@@ -632,7 +632,7 @@ namespace confighttp {
     }
 
     // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
-    std::filesystem::path idd_option_path = platf::appdata().parent_path() / "tools" / "vdd" / "vdd_settings.xml";
+    std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
 
     BOOST_LOG(info) << "VDD配置文件路径: " << idd_option_path.string();
 

@@ -43,18 +43,24 @@ rem Get sunshine root directory
 for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 
 set "DIST_DIR=%ROOT_DIR%\tools\vdd"
+set "CONFIG_DIR=%ROOT_DIR%\config"
 set "NEFCON=%DIST_DIR%\nefconw.exe"
+set "VDD_CONFIG=%CONFIG_DIR%\vdd_settings.xml"
 
 rem 如果目录存在则删除
 if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
 )
 
+if not exist "%VDD_CONFIG%" (
+    copy "%DRIVER_DIR%\vdd_settings.xml" "%VDD_CONFIG%"
+)
+
 mkdir "%DIST_DIR%"
 copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
 @REM write registry
-reg add "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /v VDDPATH /t REG_SZ /d "%DIST_DIR%" /f
+reg add "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /v VDDPATH /t REG_SZ /d "%CONFIG_DIR%" /f
 
 @REM rem install cet
 set "CERTIFICATE=%DIST_DIR%\MttVDD.cer"
