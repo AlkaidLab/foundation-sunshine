@@ -606,11 +606,18 @@ namespace confighttp {
   bool
   saveVddSettings(std::string resArray, std::string fpsArray, std::string gpu_name) {
     pt::ptree iddOptionTree;
+    pt::ptree global_node;
     pt::ptree resolutions_nodes;
 
     // prepare resolutions setting for vdd
     boost::regex pattern("\\[|\\]|\\s+");
     char delimiter = ',';
+
+    // 添加全局刷新率到global节点
+    for (const auto &fps : split(boost::regex_replace(fpsArray, pattern, ""), delimiter)) {
+      global_node.add("g_refresh_rate", fps);
+    }
+
     std::string str = boost::regex_replace(resArray, pattern, "");
     boost::algorithm::trim(str);
     for (const auto &resolution : split(str, delimiter)) {
@@ -621,9 +628,6 @@ namespace confighttp {
       pt::ptree res_node;
       res_node.put("width", resolution.substr(0, index));
       res_node.put("height", resolution.substr(index + 1));
-      for (const auto &fps : split(boost::regex_replace(fpsArray, pattern, ""), delimiter)) {
-        res_node.add("refresh_rate", fps);
-      }
       resolutions_nodes.push_back(std::make_pair("resolution"s, res_node));
     }
 
@@ -657,6 +661,7 @@ namespace confighttp {
         // 替换配置
         iddOptionTree.put_child("monitors", monitor_node);
         iddOptionTree.put_child("gpu", gpu_node);
+        iddOptionTree.put_child("global", global_node);
         iddOptionTree.put_child("resolutions", resolutions_nodes);
       } else {
         // 如果没有vdd_settings节点，创建新的
@@ -668,6 +673,7 @@ namespace confighttp {
 
         iddOptionTree.add_child("monitors", monitor_node);
         iddOptionTree.add_child("gpu", gpu_node);
+        iddOptionTree.add_child("global", global_node);
         iddOptionTree.add_child("resolutions", resolutions_nodes);
       }
     } catch(...) {
@@ -682,6 +688,7 @@ namespace confighttp {
 
       iddOptionTree.add_child("monitors", monitor_node);
       iddOptionTree.add_child("gpu", gpu_node);
+      iddOptionTree.add_child("global", global_node);
       iddOptionTree.add_child("resolutions", resolutions_nodes);
     }
 
