@@ -52,6 +52,10 @@ if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
 )
 
+rem 卸载旧的vdd
+"%NEFCON%" --remove-device-node --hardware-id ROOT\MttVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
+timeout /t 5 /nobreak 1>nul
+
 if not exist "%VDD_CONFIG%" (
     copy "%DRIVER_DIR%\vdd_settings.xml" "%VDD_CONFIG%"
 )
