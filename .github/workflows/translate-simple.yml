@@ -87,7 +87,7 @@ jobs:
 
               for lang_code, lang_name in languages:
                   try:
-                      if lang_code == 'en':
+                      if lang_code == 'zh_CN':
                           translated_content = content
                       else:
                           masked = mask_terms(content)
@@ -106,6 +106,8 @@ jobs:
           EOF
 
       - name: Run translation
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python translate_simple.py
 
       - name: Add language selector to README
