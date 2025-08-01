@@ -1080,7 +1080,7 @@ namespace platf {
       BOOST_LOG(warning) << "Couldn't open url ["sv << url << "]: System: "sv << ec.message();
     }
     else {
-      BOOST_LOG(info) << "Opened url ["sv << url << "]"sv;
+      BOOST_LOG(debug) << "Opened url ["sv << url << "]"sv;
       child.detach();
     }
   }

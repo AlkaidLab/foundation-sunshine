@@ -115,13 +115,14 @@ namespace platf::dxgi {
     DXGI_OUTDUPL_DESC dup_desc;
     dup->GetDesc(&dup_desc);
 
-    BOOST_LOG(info) << "Desktop resolution ["sv << dup_desc.ModeDesc.Width << 'x' << dup_desc.ModeDesc.Height << ']';
-    BOOST_LOG(info) << "Desktop format ["sv << display->dxgi_format_to_string(dup_desc.ModeDesc.Format) << ']';
 
     display->display_refresh_rate = dup_desc.ModeDesc.RefreshRate;
     double display_refresh_rate_decimal = (double) display->display_refresh_rate.Numerator / display->display_refresh_rate.Denominator;
-    BOOST_LOG(info) << "Display refresh rate [" << display_refresh_rate_decimal << "Hz]";
-    BOOST_LOG(info) << "Requested frame rate [" << display->client_frame_rate << "fps]";
+
+    BOOST_LOG(info) << "Desktop resolution ["sv << dup_desc.ModeDesc.Width << 'x' << dup_desc.ModeDesc.Height << ']'
+                    << ", Desktop format ["sv << display->dxgi_format_to_string(dup_desc.ModeDesc.Format) << ']'
+                    << ", Display refresh rate [" << display_refresh_rate_decimal << "Hz]"
+                    << ", Requested frame rate [" << display->client_frame_rate << "fps]";
     display->display_refresh_rate_rounded = lround(display_refresh_rate_decimal);
     return 0;
   }
@@ -592,17 +593,16 @@ namespace platf::dxgi {
 
     auto description = to_utf8(adapter_desc.Description);
     BOOST_LOG(info)
-      << std::endl
-      << "Device Description : " << description << std::endl
-      << "Device Vendor ID   : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view() << std::endl
-      << "Device Device ID   : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view() << std::endl
-      << "Device Video Mem   : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv << std::endl
-      << "Device Sys Mem     : "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv << std::endl
-      << "Share Sys Mem      : "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv << std::endl
-      << "Feature Level      : 0x"sv << util::hex(feature_level).to_string_view() << std::endl
-      << "Capture size       : "sv << width << 'x' << height << std::endl
-      << "Offset             : "sv << offset_x << 'x' << offset_y << std::endl
-      << "Virtual Desktop    : "sv << env_width << 'x' << env_height;
+      << "Device Description : " << description
+      << ", Device Vendor ID   : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
+      << ", Device Device ID   : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
+      << ", Device Video Mem   : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
+      << ", Device Sys Mem     : "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
+      << ", Share Sys Mem      : "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
+      << ", Feature Level      : 0x"sv << util::hex(feature_level).to_string_view()
+      << ", Capture size       : "sv << width << 'x' << height
+      << ", Offset             : "sv << offset_x << 'x' << offset_y
+      << ", Virtual Desktop    : "sv << env_width << 'x' << env_height;
 
     // Bump up thread priority
     {

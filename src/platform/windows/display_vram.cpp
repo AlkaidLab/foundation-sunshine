@@ -2026,7 +2026,7 @@ namespace platf::dxgi {
 
   int
   init() {
-    BOOST_LOG(info) << "Compiling shaders..."sv;
+    BOOST_LOG(debug) << "Compiling shaders..."sv;
 
 #define compile_vertex_shader_helper(x) \
   if (!(x##_hlsl = compile_vertex_shader(SUNSHINE_SHADERS_DIR "/" #x ".hlsl"))) return -1;
@@ -2059,7 +2059,7 @@ namespace platf::dxgi {
     compile_pixel_shader_helper(cursor_ps_normalize_white);
     compile_vertex_shader_helper(cursor_vs);
 
-    BOOST_LOG(info) << "Compiled shaders"sv;
+    BOOST_LOG(debug) << "Compiled shaders"sv;
 
 #undef compile_vertex_shader_helper
 #undef compile_pixel_shader_helper

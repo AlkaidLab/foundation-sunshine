@@ -1133,10 +1133,10 @@ namespace confighttp {
     server.config.address = net::af_to_any_address_string(address_family);
     server.config.port = port_https;
 
-    auto accept_and_run = [&](auto *server) {
+    auto accept_and_run = [&](https_server_t *server) {
       try {
         server->start([](unsigned short port) {
-          BOOST_LOG(info) << "Configuration UI available at [https://localhost:"sv << port << "]";
+          BOOST_LOG(debug) << "Configuration UI available at [https://localhost:"sv << port << "]"sv;
         });
       }
       catch (boost::system::system_error &err) {
@@ -1144,8 +1144,12 @@ namespace confighttp {
         if (shutdown_event->peek()) {
           return;
         }
-
         BOOST_LOG(fatal) << "Couldn't start Configuration HTTPS server on port ["sv << port_https << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
+      catch (std::exception &err) {
+        BOOST_LOG(fatal) << "Configuration HTTPS server failed to start: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }

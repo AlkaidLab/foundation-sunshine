@@ -1981,7 +1981,6 @@ namespace video {
     {
       auto encoder_name = encoder.codec_from_config(config).name;
 
-      BOOST_LOG(info) << "Creating encoder " << logging::bracket(encoder_name);
 
       auto color_coding = colorspace.colorspace == colorspace_e::bt2020    ? "HDR (Rec. 2020 + SMPTE 2084 PQ)" :
                           colorspace.colorspace == colorspace_e::rec601    ? "SDR (Rec. 601)" :
@@ -1989,9 +1988,10 @@ namespace video {
                           colorspace.colorspace == colorspace_e::bt2020sdr ? "SDR (Rec. 2020)" :
                                                                              "unknown";
 
-      BOOST_LOG(info) << "Color coding: " << color_coding;
-      BOOST_LOG(info) << "Color depth: " << colorspace.bit_depth << "-bit";
-      BOOST_LOG(info) << "Color range: " << (colorspace.full_range ? "JPEG" : "MPEG");
+      BOOST_LOG(info) << "Creating encoder " << logging::bracket(encoder_name)
+                      << ", Color coding: " << color_coding
+                      << ", Color depth: " << colorspace.bit_depth << "-bit"
+                      << ", Color range: " << (colorspace.full_range ? "JPEG" : "MPEG");
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
@@ -2656,7 +2656,7 @@ namespace video {
       }
     }
 
-    BOOST_LOG(info) << "// Testing for available encoders, this may generate errors. You can safely ignore those errors. //"sv;
+    BOOST_LOG(info) << "Testing for available encoders - Errors during this phase can be ignored (测试可用编码器 - 此阶段的错误可以忽略)";
 
     // If we haven't found an encoder yet, but we want one with specific codec support, search for that now.
     if (chosen_encoder == nullptr && (active_hevc_mode >= 2 || active_av1_mode >= 2)) {
@@ -2726,9 +2726,7 @@ namespace video {
       return -1;
     }
 
-    BOOST_LOG(info);
-    BOOST_LOG(info) << "// Ignore any errors mentioned above, they are not relevant. //"sv;
-    BOOST_LOG(info);
+    BOOST_LOG(info) << "Ignore any errors, Encoder testing completed (忽略任何错误，编码器测试完成)";
 
     auto &encoder = *chosen_encoder;
 

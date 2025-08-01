@@ -208,7 +208,7 @@ namespace nvhttp {
   void
   load_state() {
     if (!fs::exists(config::nvhttp.file_state)) {
-      BOOST_LOG(info) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
+      BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
       return;
     }
@@ -546,22 +546,35 @@ namespace nvhttp {
   template <class T>
   void
   print_req(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
-    BOOST_LOG(debug) << "TUNNEL :: "sv << tunnel<T>::to_string;
-
-    BOOST_LOG(debug) << "METHOD :: "sv << request->method;
-    BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
-
-    for (auto &[name, val] : request->header) {
-      BOOST_LOG(debug) << name << " -- " << val;
+    std::ostringstream log_stream;
+    log_stream << "Request - TUNNEL: " << tunnel<T>::to_string 
+               << ", METHOD: " << request->method 
+               << ", PATH: " << request->path;
+    
+    // Headers
+    if (!request->header.empty()) {
+      log_stream << ", HEADERS: ";
+      bool first = true;
+      for (auto &[name, val] : request->header) {
+        if (!first) log_stream << ", ";
+        log_stream << name << "=" << val;
+        first = false;
+      }
     }
-
-    BOOST_LOG(debug) << " [--] "sv;
-
-    for (auto &[name, val] : request->parse_query_string()) {
-      BOOST_LOG(debug) << name << " -- " << val;
+    
+    // Query parameters
+    auto query_params = request->parse_query_string();
+    if (!query_params.empty()) {
+      log_stream << ", PARAMS: ";
+      bool first = true;
+      for (auto &[name, val] : query_params) {
+        if (!first) log_stream << "&";
+        log_stream << name << "=" << val;
+        first = false;
+      }
     }
-
-    BOOST_LOG(debug) << " [--] "sv;
+    
+    BOOST_LOG(verbose) << log_stream.str();
   }
 
   template <class T>
@@ -618,7 +631,7 @@ namespace nvhttp {
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
         last_pair_name = get_arg(args, "clientname", "Named Zako");
 
-        BOOST_LOG(debug) << sess.client.cert;
+        BOOST_LOG(verbose) << "Client cert: " << sess.client.cert.substr(0, 100) << "...";
         auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
 
         ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
@@ -1211,7 +1224,7 @@ namespace nvhttp {
 #endif
       };
       if (!x509) {
-        BOOST_LOG(info) << "unknown -- denied"sv;
+        BOOST_LOG(info) << "SSL client unknown -- denied"sv;
         return 0;
       }
 

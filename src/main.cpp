@@ -123,9 +123,18 @@ main(int argc, char *argv[]) {
   // Log publisher metadata
   log_publisher_data();
 
-  // Log modified_config_settings
-  for (auto &[name, val] : config::modified_config_settings) {
-    BOOST_LOG(info) << "config: '"sv << name << "' = "sv << val;
+  // Log modified_config_settings as JSON
+  if (!config::modified_config_settings.empty()) {
+    std::ostringstream config_json;
+    config_json << "Modified config settings: {";
+    bool first = true;
+    for (auto &[name, val] : config::modified_config_settings) {
+      if (!first) config_json << ", ";
+      config_json << "\"" << name << "\": \"" << val << "\"";
+      first = false;
+    }
+    config_json << "}";
+    BOOST_LOG(info) << config_json.str();
   }
   config::modified_config_settings.clear();
 
