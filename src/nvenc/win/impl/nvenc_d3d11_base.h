@@ -30,6 +30,11 @@ namespace nvenc {
   public:
     explicit nvenc_d3d11_base(NV_ENC_DEVICE_TYPE device_type, shared_dll dll);
     ~nvenc_d3d11_base();
+    /**
+     * @brief Get input surface texture.
+     * @return Input surface texture.
+     */
+    virtual ID3D11Texture2D *get_input_texture() = 0;
   protected:
     bool init_library() override;
     bool wait_for_async_event(uint32_t timeout_ms) override;

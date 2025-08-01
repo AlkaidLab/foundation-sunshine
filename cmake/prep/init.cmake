@@ -8,7 +8,7 @@ elseif (UNIX)
     endif()
 
     if(SUNSHINE_BUILD_FLATPAK)
-        set(SUNSHINE_SERVICE_START_COMMAND "ExecStart=${PROJECT_FQDN}")
+        set(SUNSHINE_SERVICE_START_COMMAND "ExecStart=flatpak run --command=sunshine ${PROJECT_FQDN}")
         set(SUNSHINE_SERVICE_STOP_COMMAND "ExecStop=flatpak kill ${PROJECT_FQDN}")
     else()
         set(SUNSHINE_SERVICE_START_COMMAND "ExecStart=${SUNSHINE_EXECUTABLE_PATH}")

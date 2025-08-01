@@ -2,6 +2,7 @@
  * @file src/video.cpp
  * @brief Definitions for video.
  */
+ // standard includes
 #include <atomic>
 #include <bitset>
 #include <list>
@@ -16,6 +17,7 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 }
 
+// lib includes
 #include "cbs.h"
 #include "config.h"
 #include "display_device/display_device.h"
@@ -35,6 +37,38 @@ extern "C" {
 
 using namespace std::literals;
 namespace video {
+
+  namespace {
+    /**
+     * @brief Check if we can allow probing for the encoders.
+     * @return True if there should be no issues with the probing, false if we should prevent it.
+     */
+    bool allow_encoder_probing() {
+      const auto devices { display_device::enum_available_devices() };
+
+      // If there are no devices, then either the API is not working correctly or OS does not support the lib.
+      // Either way we should not block the probing in this case as we can't tell what's wrong.
+      if (devices.empty()) {
+        return true;
+      }
+
+      // Since Windows 11 24H2, it is possible that there will be no active devices present
+      // for some reason (probably a bug). Trying to probe encoders in such a state locks/breaks the DXGI
+      // and also the display device for Windows. So we must have at least 1 active device.
+      const bool at_least_one_device_is_active = std::any_of(std::begin(devices), std::end(devices), [](const auto &device) {
+        // If device has additional info, it is active.
+          return device.second.device_state == display_device::device_state_e::active ||
+                device.second.device_state == display_device::device_state_e::primary;
+      });
+
+      if (at_least_one_device_is_active) {
+        return true;
+      }
+
+      BOOST_LOG(error) << "No display devices are active at the moment! Cannot probe the encoders.";
+      return false;
+    }
+  }  // namespace
 
   void
   free_ctx(AVCodecContext *ctx) {
@@ -1620,7 +1654,8 @@ namespace video {
         }
       }
 
-      auto bitrate = config.bitrate * 1000;
+      auto bitrate = ((config::video.max_bitrate > 0) ? std::min(config.bitrate, config::video.max_bitrate) : config.bitrate) * 1000;
+      BOOST_LOG(info) << "Streaming bitrate is " << bitrate;
       ctx->rc_max_rate = bitrate;
       ctx->bit_rate = bitrate;
 
@@ -2555,6 +2590,10 @@ namespace video {
 
   int
   probe_encoders() {
+    if (!allow_encoder_probing()) {
+      // Error already logged
+      return -1;
+    }
     auto encoder_list = encoders;
 
     // If we already have a good encoder, check to see if another probe is required

@@ -153,6 +153,7 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${MINIUPNP_LIBRARIES}
         ${CMAKE_THREAD_LIBS_INIT}
         enet
+        nlohmann_json::nlohmann_json
         opus
         ${FFMPEG_LIBRARIES}
         ${Boost_LIBRARIES}

@@ -133,22 +133,25 @@ namespace nvenc {
     }
 
     NV_ENC_INITIALIZE_PARAMS init_params = { NV_ENC_INITIALIZE_PARAMS_VER };
-
+    std::string encode_guid_support = "";
     switch (client_config.videoFormat) {
       case 0:
         // H.264
         init_params.encodeGUID = NV_ENC_CODEC_H264_GUID;
+        encode_guid_support += "H.264";
         break;
 
       case 1:
         // HEVC
         init_params.encodeGUID = NV_ENC_CODEC_HEVC_GUID;
+        encode_guid_support += "HEVC";
         break;
 
 #if NVENC_INT_VERSION >= 1200
       case 2:
         // AV1
         init_params.encodeGUID = NV_ENC_CODEC_AV1_GUID;
+        encode_guid_support += "AV1";
         break;
 #endif
 
@@ -194,12 +197,16 @@ namespace nvenc {
     }
 
     if (buffer_is_10bit() && !get_encoder_cap(NV_ENC_CAPS_SUPPORT_10BIT_ENCODE)) {
-      BOOST_LOG(error) << "NvEnc: gpu doesn't support 10-bit encode";
+      BOOST_LOG(warning) << "NvEnc: gpu doesn't support 10-bit encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support;
       return false;
     }
 
     if (buffer_is_yuv444() && !get_encoder_cap(NV_ENC_CAPS_SUPPORT_YUV444_ENCODE)) {
-      BOOST_LOG(error) << "NvEnc: gpu doesn't support YUV444 encode";
+      BOOST_LOG(warning) << "NvEnc: gpu doesn't support YUV444 encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support;
+      if (async_event_handle) {
+        CloseHandle(async_event_handle);
+        async_event_handle = nullptr;
+      }
       return false;
     }
 

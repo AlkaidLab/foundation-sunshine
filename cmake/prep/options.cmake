@@ -9,7 +9,7 @@ set(SUNSHINE_PUBLISHER_ISSUE_URL "https://app.lizardbyte.dev/support"
 
 option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
-option(TESTS_ENABLE_PYTHON_TESTS "Enable Python tests" OFF)
+option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
 
@@ -28,6 +28,7 @@ else()
     option(BOOST_USE_STATIC "Use static boost libraries." ON)
 endif()
 
+option(CUDA_FAIL_ON_MISSING "Fail the build if CUDA is not found." ON)
 option(CUDA_INHERIT_COMPILE_OPTIONS
         "When building CUDA code, inherit compile options from the the main project. You may want to disable this if
         your IDE throws errors about unknown flags after running cmake." ON)
@@ -65,6 +66,4 @@ elseif(UNIX)  # Linux
             "Enable building wayland specific code." ON)
     option(SUNSHINE_ENABLE_X11
             "Enable X11 grab if available." ON)
-    option(SUNSHINE_USE_LEGACY_INPUT  # TODO: Remove this legacy option after the next stable release
-            "Use the legacy virtual input implementation." OFF)
 endif()

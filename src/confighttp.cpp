@@ -22,7 +22,7 @@
 #include <boost/asio/ssl/context.hpp>
 
 #include <boost/filesystem.hpp>
-
+#include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
 #include <boost/asio/ssl/context_base.hpp>
@@ -78,6 +78,19 @@ namespace confighttp {
     }
 
     BOOST_LOG(debug) << " [--] "sv;
+  }
+
+  /**
+   * @brief Send a response.
+   * @param response The HTTP response object.
+   * @param output_tree The JSON tree to send.
+   */
+  void send_response(resp_https_t response, const nlohmann::json &output_tree) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+    response->write(output_tree.dump(), headers);
   }
 
   void
@@ -941,21 +954,11 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
-
-    pt::ptree named_certs = nvhttp::get_all_clients();
-
-    pt::ptree outputTree;
-
-    outputTree.put("status", false);
-
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_json(data, outputTree);
-      response->write(data.str());
-    });
-
-    outputTree.add_child("named_certs", named_certs);
-    outputTree.put("status", true);
+    const nlohmann::json named_certs = nvhttp::get_all_clients();
+    nlohmann::json output_tree;
+    output_tree["named_certs"] = named_certs;
+    output_tree["status"] = "true";
+    send_response(response, output_tree);
   }
 
   void

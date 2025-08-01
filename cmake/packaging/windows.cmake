@@ -18,7 +18,10 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/service/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/migration/"
         DESTINATION "scripts"
         COMPONENT assets)
-
+# add sunshine enviroment to PATH
+# install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/path/"
+#         DESTINATION "scripts"
+#         COMPONENT assets)
 # Configurable options for the service
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
         DESTINATION "scripts"
@@ -52,9 +55,9 @@ file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${CMAKE_BINARY_DIR}/assets"
         PATTERN "shaders" EXCLUDE)
 # use junction for shaders directory
-file(TO_NATIVE_PATH "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders" shaders_in_build_src_native)
-file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/assets/shaders" shaders_in_build_dest_native)
-execute_process(COMMAND cp -rpf "${shaders_in_build_src_native}" "${shaders_in_build_dest_native}")
+cmake_path(CONVERT "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
+        TO_NATIVE_PATH_LIST shaders_in_build_src_native)
+cmake_path(CONVERT "${CMAKE_BINARY_DIR}/assets/shaders" TO_NATIVE_PATH_LIST shaders_in_build_dest_native)
 
 set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
 

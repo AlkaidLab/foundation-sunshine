@@ -7,22 +7,20 @@
 
 // standard includes
 #include <filesystem>
+#include <string>
 #include <utility>
 
 // lib includes
-#include <Simple-Web-Server/server_http.hpp>
-#include <Simple-Web-Server/server_https.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
-#include <string>
+#include <Simple-Web-Server/server_http.hpp>
 
 // local includes
 #include "config.h"
-#include "crypto.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "globals.h"
@@ -47,18 +45,6 @@ namespace nvhttp {
   namespace pt = boost::property_tree;
 
   crypto::cert_chain_t cert_chain;
-
-  class SunshineHTTPS: public SimpleWeb::HTTPS {
-  public:
-    SunshineHTTPS(boost::asio::io_context &io_context, boost::asio::ssl::context &ctx):
-        SimpleWeb::HTTPS(io_context, ctx) {}
-
-    virtual ~SunshineHTTPS() {
-      // Gracefully shutdown the TLS connection
-      SimpleWeb::error_code ec;
-      shutdown(ec);
-    }
-  };
 
   class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
   public:
@@ -146,29 +132,7 @@ namespace nvhttp {
   };
 
   struct client_t {
-    std::vector<std::string> certs;
     std::vector<named_cert_t> named_devices;
-  };
-
-  struct pair_session_t {
-    struct {
-      std::string uniqueID;
-      std::string cert;
-    } client;
-
-    std::unique_ptr<crypto::aes_t> cipher_key;
-    std::vector<uint8_t> clienthash;
-
-    std::string serversecret;
-    std::string serverchallenge;
-
-    struct {
-      util::Either<
-        std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>,
-        std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>>
-        response;
-      std::string salt;
-    } async_insert_pin;
   };
 
   // uniqueID, session
@@ -283,7 +247,6 @@ namespace nvhttp {
             named_cert.cert = el.get_value<std::string>();
             named_cert.uuid = uuid_util::uuid_t::generate().string();
             client.named_devices.emplace_back(named_cert);
-            client.certs.emplace_back(named_cert.cert);
           }
         }
       }
@@ -296,15 +259,11 @@ namespace nvhttp {
         named_cert.cert = el.get_child("cert").get_value<std::string>();
         named_cert.uuid = el.get_child("uuid").get_value<std::string>();
         client.named_devices.emplace_back(named_cert);
-        client.certs.emplace_back(named_cert.cert);
       }
     }
 
     // Empty certificate chain and import certs from file
     cert_chain.clear();
-    for (auto &cert : client.certs) {
-      cert_chain.add(crypto::x509(cert));
-    }
     for (auto &named_cert : client.named_devices) {
       cert_chain.add(crypto::x509(named_cert.cert));
     }
@@ -313,17 +272,13 @@ namespace nvhttp {
   }
 
   void
-  update_id_client(const std::string &uniqueID, std::string &&cert, op_e op) {
-    switch (op) {
-      case op_e::ADD: {
-        client_t &client = client_root;
-        client.certs.emplace_back(std::move(cert));
-      } break;
-      case op_e::REMOVE:
-        client_t client;
-        client_root = client;
-        break;
-    }
+  add_authorized_client(const std::string &name, std::string &&cert) {
+    client_t &client = client_root;
+    named_cert_t named_cert;
+    named_cert.name = name;
+    named_cert.cert = std::move(cert);
+    named_cert.uuid = uuid_util::uuid_t::generate().string();
+    client.named_devices.emplace_back(named_cert);
 
     if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
       save_state();
@@ -415,12 +370,26 @@ namespace nvhttp {
     return launch_session;
   }
 
-  void
-  getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
+  void remove_session(const pair_session_t &sess) {
+    map_id_sess.erase(sess.client.uniqueID);
+  }
+
+  void fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
+    tree.put("root.paired", 0);
+    tree.put("root.<xmlattr>.status_code", 400);
+    tree.put("root.<xmlattr>.status_message", status_msg);
+    remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
+  }
+
+  void getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
+    if (sess.last_phase != PAIR_PHASE::NONE) {
+      fail_pair(sess, tree, "Out of order call to getservercert");
+      return;
+    }
+    sess.last_phase = PAIR_PHASE::GETSERVERCERT;
+
     if (sess.async_insert_pin.salt.size() < 32) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Salt too short");
+      fail_pair(sess, tree, "Salt too short");
       return;
     }
 
@@ -438,30 +407,17 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void
-  serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const args_t &args) {
-    auto encrypted_response = util::from_hex_vec(get_arg(args, "serverchallengeresp"), true);
+  void clientchallenge(pair_session_t &sess, pt::ptree &tree, const std::string &challenge) {
+    if (sess.last_phase != PAIR_PHASE::GETSERVERCERT) {
+      fail_pair(sess, tree, "Out of order call to clientchallenge");
+      return;
+    }
+    sess.last_phase = PAIR_PHASE::CLIENTCHALLENGE;
 
-    std::vector<uint8_t> decrypted;
-    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
-
-    cipher.decrypt(encrypted_response, decrypted);
-
-    sess.clienthash = std::move(decrypted);
-
-    auto serversecret = sess.serversecret;
-    auto sign = crypto::sign256(crypto::pkey(conf_intern.pkey), serversecret);
-
-    serversecret.insert(std::end(serversecret), std::begin(sign), std::end(sign));
-
-    tree.put("root.pairingsecret", util::hex_vec(serversecret, true));
-    tree.put("root.paired", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void
-  clientchallenge(pair_session_t &sess, pt::ptree &tree, const args_t &args) {
-    auto challenge = util::from_hex_vec(get_arg(args, "clientchallenge"), true);
+    if (!sess.cipher_key) {
+      fail_pair(sess, tree, "Cipher key not set");
+      return;
+    }
 
     crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
 
@@ -495,22 +451,57 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void
-  clientpairingsecret(std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, pair_session_t &sess, pt::ptree &tree, const args_t &args) {
-    auto &client = sess.client;
+  void serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const std::string &encrypted_response) {
+    if (sess.last_phase != PAIR_PHASE::CLIENTCHALLENGE) {
+      fail_pair(sess, tree, "Out of order call to serverchallengeresp");
+      return;
+    }
+    sess.last_phase = PAIR_PHASE::SERVERCHALLENGERESP;
 
-    auto pairingsecret = util::from_hex_vec(get_arg(args, "clientpairingsecret"), true);
-    if (pairingsecret.size() <= 16) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Clientpairingsecret too short");
+    if (!sess.cipher_key || sess.serversecret.empty()) {
+      fail_pair(sess, tree, "Cipher key or serversecret not set");
       return;
     }
 
-    std::string_view secret { pairingsecret.data(), 16 };
-    std::string_view sign { pairingsecret.data() + secret.size(), pairingsecret.size() - secret.size() };
+    std::vector<uint8_t> decrypted;
+    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
+
+    cipher.decrypt(encrypted_response, decrypted);
+
+    sess.clienthash = std::move(decrypted);
+
+    auto serversecret = sess.serversecret;
+    auto sign = crypto::sign256(crypto::pkey(conf_intern.pkey), serversecret);
+
+    serversecret.insert(std::end(serversecret), std::begin(sign), std::end(sign));
+
+    tree.put("root.pairingsecret", util::hex_vec(serversecret, true));
+    tree.put("root.paired", 1);
+    tree.put("root.<xmlattr>.status_code", 200);
+  }
+
+  void clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, pt::ptree &tree, const std::string &client_pairing_secret) {
+    if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
+      fail_pair(sess, tree, "Out of order call to clientpairingsecret");
+      return;
+    }
+    sess.last_phase = PAIR_PHASE::CLIENTPAIRINGSECRET;
+
+    auto &client = sess.client;
+
+    if (client_pairing_secret.size() <= 16) {
+      fail_pair(sess, tree, "Client pairing secret too short");
+      return;
+    }
+
+    std::string_view secret {client_pairing_secret.data(), 16};
+    std::string_view sign {client_pairing_secret.data() + secret.size(), client_pairing_secret.size() - secret.size()};
 
     auto x509 = crypto::x509(client.cert);
+    if (!x509) {
+      fail_pair(sess, tree, "Invalid client certificate");
+      return;
+    }
     auto x509_sign = crypto::signature(x509);
 
     std::string data;
@@ -523,20 +514,19 @@ namespace nvhttp {
     auto hash = crypto::hash(data);
 
     // if hash not correct, probably MITM
-    if (!std::memcmp(hash.data(), sess.clienthash.data(), hash.size()) && crypto::verify256(crypto::x509(client.cert), secret, sign)) {
+    bool same_hash = hash.size() == sess.clienthash.size() && std::equal(hash.begin(), hash.end(), sess.clienthash.begin());
+    auto verify = crypto::verify256(crypto::x509(client.cert), secret, sign);
+    if (same_hash && verify) {
       tree.put("root.paired", 1);
       add_cert->raise(crypto::x509(client.cert));
 
-      auto it = map_id_sess.find(client.uniqueID);
-
-      update_id_client(client.uniqueID, std::move(client.cert), op_e::ADD);
-      map_id_sess.erase(it);
+      // The client is now successfully paired and will be authorized to connect
+      add_authorized_client(client.name, std::move(client.cert));
     }
     else {
-      map_id_sess.erase(client.uniqueID);
       tree.put("root.paired", 0);
     }
-
+    remove_session(sess);
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
@@ -618,7 +608,6 @@ namespace nvhttp {
     }
 
     auto uniqID { get_arg(args, "uniqueid") };
-    auto sess_it = map_id_sess.find(uniqID);
 
     args_t::const_iterator it;
     if (it = args.find("phrase"); it != std::end(args)) {
@@ -654,18 +643,28 @@ namespace nvhttp {
       else if (it->second == "pairchallenge"sv) {
         tree.put("root.paired", 1);
         tree.put("root.<xmlattr>.status_code", 200);
+        return;
       }
     }
-    else if (it = args.find("clientchallenge"); it != std::end(args)) {
-      clientchallenge(sess_it->second, tree, args);
+
+    auto sess_it = map_id_sess.find(uniqID);
+    if (sess_it == std::end(map_id_sess)) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Invalid uniqueid");
+
+      return;
     }
-    else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
-      serverchallengeresp(sess_it->second, tree, args);
-    }
-    else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
-      clientpairingsecret(add_cert, sess_it->second, tree, args);
-    }
-    else {
+
+    if (it = args.find("clientchallenge"); it != std::end(args)) {
+      auto challenge = util::from_hex_vec(it->second, true);
+      clientchallenge(sess_it->second, tree, challenge);
+    } else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
+      auto encrypted_response = util::from_hex_vec(it->second, true);
+      serverchallengeresp(sess_it->second, tree, encrypted_response);
+    } else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
+      auto pairingsecret = util::from_hex_vec(it->second, true);
+      clientpairingsecret(sess_it->second, add_cert, tree, pairingsecret);
+    } else {
       tree.put("root.<xmlattr>.status_code", 404);
       tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
     }
@@ -697,14 +696,7 @@ namespace nvhttp {
 
     auto &sess = std::begin(map_id_sess)->second;
     getservercert(sess, tree, pin, name);
-
-    // set up named cert
-    client_t &client = client_root;
-    named_cert_t named_cert;
-    named_cert.name = name;
-    named_cert.cert = sess.client.cert;
-    named_cert.uuid = uuid_util::uuid_t::generate().string();
-    client.named_devices.emplace_back(named_cert);
+    sess.client.name = name;
 
     // response to the request for pin
     std::ostringstream data;
@@ -848,15 +840,14 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  pt::ptree
-  get_all_clients() {
-    pt::ptree named_cert_nodes;
+  nlohmann::json get_all_clients() {
+    nlohmann::json named_cert_nodes = nlohmann::json::array();
     client_t &client = client_root;
     for (auto &named_cert : client.named_devices) {
-      pt::ptree named_cert_node;
-      named_cert_node.put("name"s, named_cert.name);
-      named_cert_node.put("uuid"s, named_cert.uuid);
-      named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
+      nlohmann::json named_cert_node;
+      named_cert_node["name"] = named_cert.name;
+      named_cert_node["uuid"] = named_cert.uuid;
+      named_cert_nodes.push_back(named_cert_node);
     }
 
     return named_cert_nodes;
@@ -1047,15 +1038,16 @@ namespace nvhttp {
     // Newer Moonlight clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
-    if (rtsp_stream::session_count() == 0 && args.find("localAudioPlayMode"s) != std::end(args)) {
+    const bool no_active_sessions {rtsp_stream::session_count() == 0};
+    if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
 
-    if (rtsp_stream::session_count() == 0) {
+    if (no_active_sessions) {
       // We want to prepare display only if there are no active sessions at
-      // the moment. This should to be done before probing encoders as it could
-      // change display device's state.
+      // the moment. This should be done before probing encoders as it could
+      // change the active displays.
       display_device::session_t::get().configure_display(config::video, *launch_session, false);
 
       // Probe encoders again before streaming to ensure our chosen
@@ -1178,8 +1170,12 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  void
-  start() {
+  void setup(const std::string &pkey, const std::string &cert) {
+    conf_intern.pkey = pkey;
+    conf_intern.servercert = cert;
+  }
+
+  void start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     auto port_http = net::map_port(PORT_HTTP);
@@ -1192,8 +1188,9 @@ namespace nvhttp {
       load_state();
     }
 
-    conf_intern.pkey = file_handler::read_file(config::nvhttp.pkey.c_str());
-    conf_intern.servercert = file_handler::read_file(config::nvhttp.cert.c_str());
+    auto pkey = file_handler::read_file(config::nvhttp.pkey.c_str());
+    auto cert = file_handler::read_file(config::nvhttp.cert.c_str());
+    setup(pkey, cert);
 
     auto add_cert = std::make_shared<safe::queue_t<crypto::x509_t>>(30);
 
@@ -1326,26 +1323,13 @@ namespace nvhttp {
 
   int
   unpair_client(std::string uuid) {
-    int removed = 0;
+    bool removed = false;
     client_t &client = client_root;
     for (auto it = client.named_devices.begin(); it != client.named_devices.end();) {
       if ((*it).uuid == uuid) {
-        // Find matching cert and remove it
-        for (auto cert = client.certs.begin(); cert != client.certs.end();) {
-          if ((*cert) == (*it).cert) {
-            cert = client.certs.erase(cert);
-            removed++;
-          }
-          else {
-            ++cert;
-          }
-        }
-
-        // And then remove the named cert
         it = client.named_devices.erase(it);
-        removed++;
-      }
-      else {
+        removed = true;
+      } else {
         ++it;
       }
     }
