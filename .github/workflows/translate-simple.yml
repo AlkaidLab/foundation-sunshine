@@ -92,14 +92,15 @@ jobs:
                       else:
                           masked = mask_terms(content)
                           translated = translate_with_deepseek(masked, lang_name)
-                          # 去除 DeepSeek 返回的多余提示，只保留 markdown 内容
                           translated = unmask_terms(translated)
-                          if '```markdown' in translated:
-                              translated_content = translated.split('```markdown',1)[-1]
-                              # 去除结尾的 ```
-                              translated_content = translated_content.replace('```','').strip()
+                          # 去除 DeepSeek 返回的多余提示，只保留第一个 Markdown 标题及后面内容
+                          lines = translated.splitlines()
+                          for idx, line in enumerate(lines):
+                              if line.strip().startswith('#'):
+                                translated_content = '\n'.join(lines[idx:])
+                                break
                           else:
-                              translated_content = translated.strip()
+                            translated_content = translated.strip()
 
                       filename = f'README.{lang_code}.md'
                       with open(filename, 'w', encoding='utf-8') as f:
@@ -211,4 +212,4 @@ jobs:
             fi
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✓ Language selector added to main README" >> $GITHUB_STEP_SUMMARY 
+          echo "✓ Language selector added to main README" >> $GITHUB_STEP_SUMMARY
