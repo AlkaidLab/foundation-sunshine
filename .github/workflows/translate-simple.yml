@@ -1,0 +1,111 @@
+name: Simple README Translation
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  translate-simple:
+    name: Simple README Translation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install translation dependencies
+        run: |
+          pip install googletrans==4.0.0rc1
+          pip install requests
+
+      - name: Create translation script
+        run: |
+          cat > translate_simple.py << 'EOF'
+          import os
+          import re
+          from googletrans import Translator
+
+          def translate_readme():
+              # Read the original README
+              with open('README.md', 'r', encoding='utf-8') as f:
+                  content = f.read()
+              
+              # Initialize translator
+              translator = Translator()
+              
+              # Languages to translate to
+              languages = [
+                  ('en', 'English'),
+                  ('zh-CN', 'Chinese Simplified'),
+                  ('fr', 'French'),
+                  ('de', 'German'),
+                  ('ja', 'Japanese')
+              ]
+              
+              for lang_code, lang_name in languages:
+                  try:
+                      if lang_code == 'en':
+                          # For English, copy the original content
+                          translated_content = content
+                      else:
+                          # Translate the content
+                          translated = translator.translate(content, dest=lang_code)
+                          translated_content = translated.text
+                      
+                      # Write translated file
+                      filename = f'README.{lang_code}.md'
+                      with open(filename, 'w', encoding='utf-8') as f:
+                          f.write(translated_content)
+                      
+                      print(f"✓ Translated to {lang_name} ({lang_code})")
+                      
+                  except Exception as e:
+                      print(f"✗ Failed to translate to {lang_name}: {e}")
+
+          if __name__ == "__main__":
+              translate_readme()
+          EOF
+
+      - name: Run translation
+        run: python translate_simple.py
+
+      - name: Commit translations
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add all translated files
+          git add README.*.md
+          
+          # Commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: add multi-language README translations [skip ci]"
+            git push
+          fi
+
+      - name: Create summary
+        run: |
+          echo "## Translation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following README translations were generated:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          for file in README.*.md; do
+            if [ -f "$file" ]; then
+              lang=$(echo $file | sed 's/README\.\(.*\)\.md/\1/')
+              echo "- $lang" >> $GITHUB_STEP_SUMMARY
+            fi
+          done 
