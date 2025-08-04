@@ -115,7 +115,6 @@ namespace platf::dxgi {
     DXGI_OUTDUPL_DESC dup_desc;
     dup->GetDesc(&dup_desc);
 
-
     display->display_refresh_rate = dup_desc.ModeDesc.RefreshRate;
     double display_refresh_rate_decimal = (double) display->display_refresh_rate.Numerator / display->display_refresh_rate.Denominator;
 
@@ -1011,10 +1010,9 @@ namespace platf {
       try_types.push_back(config::video.capture);
     }
 
-    // Check GPU vendor to avoid trying AMD capture on non-AMD GPUs
-    bool is_amd_gpu = false;
+    // Check if the primary GPU is a discrete AMD GPU that supports AFMF (not integrated)
+    bool is_amd_afmf_gpu = false;
     if (std::find(try_types.begin(), try_types.end(), "amd") != try_types.end()) {
-      // Create a temporary factory to check GPU vendor
       dxgi::factory1_t factory;
       HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
       if (SUCCEEDED(status)) {
@@ -1022,7 +1020,17 @@ namespace platf {
         if (factory->EnumAdapters1(0, &adapter) != DXGI_ERROR_NOT_FOUND) {
           DXGI_ADAPTER_DESC1 adapter_desc;
           adapter->GetDesc1(&adapter_desc);
-          is_amd_gpu = (adapter_desc.VendorId == 0x1002);
+          // 0x1002 is AMD vendor ID, check for discrete GPU (not integrated)
+          bool is_amd_gpu = (adapter_desc.VendorId == 0x1002) && !(adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+          // AFMF support: check for RDNA3 or newer (DeviceId range), not integrated
+          // RDNA3: Navi 3x, DeviceId 0x7440~0x74FF, 0x7D00~0x7DFF, etc.
+          // You may need to expand this range for future AFMF support
+          if (is_amd_gpu) {
+            uint32_t id = adapter_desc.DeviceId;
+            if ((id >= 0x7440 && id <= 0x74FF) || (id >= 0x7D00 && id <= 0x7DFF)) {
+              is_amd_afmf_gpu = true;
+            }
+          }
         }
       }
     }
@@ -1030,7 +1038,7 @@ namespace platf {
     for (const auto &type : try_types) {
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
         // Only try AMD capture on AMD GPUs
-        if (!is_amd_gpu) {
+        if (!is_amd_afmf_gpu) {
           BOOST_LOG(debug) << "Skipping AMD capture on non-AMD GPU";
           continue;
         }
