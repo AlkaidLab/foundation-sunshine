@@ -1217,10 +1217,8 @@ namespace rtsp_stream {
     auto seqnm = msg->sequenceNumber;
     std::string_view messageBuffer { msg->messageBuffer };
 
-    BOOST_LOG(debug) << "type ["sv << type << ']';
-    BOOST_LOG(debug) << "sequence number ["sv << seqnm << ']';
-    BOOST_LOG(debug) << "protocol :: "sv << protocol;
-    BOOST_LOG(debug) << "payload :: "sv << payload;
+    std::ostringstream log_stream;
+    log_stream << "type ["sv << type << "], sequence number ["sv << seqnm << "], protocol :: "sv << protocol << ", payload :: "sv << payload;
 
     if (msg->type == TYPE_RESPONSE) {
       auto &resp = msg->message.response;
@@ -1228,8 +1226,7 @@ namespace rtsp_stream {
       auto statuscode = resp.statusCode;
       std::string_view status { resp.statusString };
 
-      BOOST_LOG(debug) << "statuscode :: "sv << statuscode;
-      BOOST_LOG(debug) << "status :: "sv << status;
+      log_stream << "statuscode :: "sv << statuscode << ", status :: "sv << status;
     }
     else {
       auto &req = msg->message.request;
@@ -1237,19 +1234,20 @@ namespace rtsp_stream {
       std::string_view command { req.command };
       std::string_view target { req.target };
 
-      BOOST_LOG(debug) << "command :: "sv << command;
-      BOOST_LOG(debug) << "target :: "sv << target;
+      log_stream << "command :: "sv << command << ", target :: "sv << target;
     }
 
     for (auto option = msg->options; option != nullptr; option = option->next) {
       std::string_view content { option->content };
       std::string_view name { option->option };
 
-      BOOST_LOG(debug) << name << " :: "sv << content;
+      log_stream << name << " :: "sv << content;
     }
 
-    BOOST_LOG(debug) << "---Begin MessageBuffer---"sv << std::endl
-                     << messageBuffer << std::endl
-                     << "---End MessageBuffer---"sv << std::endl;
+    log_stream << std::endl
+               << "---Begin MessageBuffer---"sv << std::endl
+               << messageBuffer << std::endl
+               << "---End MessageBuffer---"sv;
+    BOOST_LOG(debug) << log_stream.str();
   }
 }  // namespace rtsp_stream

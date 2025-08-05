@@ -546,35 +546,49 @@ namespace nvhttp {
   template <class T>
   void
   print_req(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+    auto debug_flag = debug.open_record();
+    auto verbose_flag = verbose.open_record();
+    if (!debug_flag && !verbose_flag) {
+        return;
+    }
     std::ostringstream log_stream;
-    log_stream << "Request - TUNNEL: " << tunnel<T>::to_string 
+    log_stream << "Request - Protocol: " << tunnel<T>::to_string 
+               << ", IP: " << request->remote_endpoint().address().to_string()
+               << ", PORT: " << request->remote_endpoint().port()
                << ", METHOD: " << request->method 
                << ", PATH: " << request->path;
     
-    // Headers
-    if (!request->header.empty()) {
-      log_stream << ", HEADERS: ";
-      bool first = true;
-      for (auto &[name, val] : request->header) {
-        if (!first) log_stream << ", ";
-        log_stream << name << "=" << val;
-        first = false;
+    if (verbose_flag) {
+      // Headers
+      if (!request->header.empty()) {
+        log_stream << ", HEADERS: ";
+        bool first = true;
+        for (auto &[name, val] : request->header) {
+          if (!first) log_stream << ", ";
+          log_stream << name << "=" << val;
+          first = false;
+        }
+      }
+      
+      // Query parameters
+      auto query_params = request->parse_query_string();
+      if (!query_params.empty()) {
+        log_stream << ", PARAMS: ";
+        bool first = true;
+        for (auto &[name, val] : query_params) {
+          if (!first) log_stream << "&";
+          log_stream << name << "=" << val;
+          first = false;
+        }
       }
     }
-    
-    // Query parameters
-    auto query_params = request->parse_query_string();
-    if (!query_params.empty()) {
-      log_stream << ", PARAMS: ";
-      bool first = true;
-      for (auto &[name, val] : query_params) {
-        if (!first) log_stream << "&";
-        log_stream << name << "=" << val;
-        first = false;
-      }
-    }
-    
-    BOOST_LOG(verbose) << log_stream.str();
+    BOOST_LOG(debug) << log_stream.str();
+  }
+
+  template <class T>
+  void
+  print_request_ip(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request, const std::string &message) {
+    BOOST_LOG(info) << message << " from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
   }
 
   template <class T>
@@ -816,31 +830,31 @@ namespace nvhttp {
     }
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
-    pt::ptree display_nodes;
-    for (auto &resolution : config::nvhttp.resolutions) {
-      auto pred = [](auto ch) { return ch == ' ' || ch == '\t' || ch == 'x'; };
+    // pt::ptree display_nodes;
+    // for (auto &resolution : config::nvhttp.resolutions) {
+    //   auto pred = [](auto ch) { return ch == ' ' || ch == '\t' || ch == 'x'; };
 
-      auto middle = std::find_if(std::begin(resolution), std::end(resolution), pred);
-      if (middle == std::end(resolution)) {
-        BOOST_LOG(warning) << resolution << " is not in the proper format for a resolution: WIDTHxHEIGHT"sv;
-        continue;
-      }
+    //   auto middle = std::find_if(std::begin(resolution), std::end(resolution), pred);
+    //   if (middle == std::end(resolution)) {
+    //     BOOST_LOG(warning) << resolution << " is not in the proper format for a resolution: WIDTHxHEIGHT"sv;
+    //     continue;
+    //   }
 
-      auto width = util::from_chars(&*std::begin(resolution), &*middle);
-      auto height = util::from_chars(&*(middle + 1), &*std::end(resolution));
-      for (auto fps : config::nvhttp.fps) {
-        pt::ptree display_node;
-        display_node.put("Width", width);
-        display_node.put("Height", height);
-        display_node.put("RefreshRate", fps);
+    //   auto width = util::from_chars(&*std::begin(resolution), &*middle);
+    //   auto height = util::from_chars(&*(middle + 1), &*std::end(resolution));
+    //   for (auto fps : config::nvhttp.fps) {
+    //     pt::ptree display_node;
+    //     display_node.put("Width", width);
+    //     display_node.put("Height", height);
+    //     display_node.put("RefreshRate", fps);
 
-        display_nodes.add_child("DisplayMode", display_node);
-      }
-    }
+    //     display_nodes.add_child("DisplayMode", display_node);
+    //   }
+    // }
 
-    if (!config::nvhttp.resolutions.empty()) {
-      tree.add_child("root.SupportedDisplayMode", display_nodes);
-    }
+    // if (!config::nvhttp.resolutions.empty()) {
+    //   tree.add_child("root.SupportedDisplayMode", display_nodes);
+    // }
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
@@ -917,6 +931,8 @@ namespace nvhttp {
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
+    
+    print_request_ip<SunshineHTTPS>(request, "Launch request");
 
     pt::ptree tree;
     bool need_to_restore_display_state { false };
@@ -1018,6 +1034,8 @@ namespace nvhttp {
   void
   resume(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
+    
+    print_request_ip<SunshineHTTPS>(request, "Resume request");
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
@@ -1098,6 +1116,8 @@ namespace nvhttp {
   void
   cancel(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
+
+    print_request_ip<SunshineHTTPS>(request, "Cancel request");
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
@@ -1298,23 +1318,40 @@ namespace nvhttp {
     http_server.config.address = net::af_to_any_address_string(address_family);
     http_server.config.port = port_http;
 
-    auto accept_and_run = [&](auto *http_server) {
+    auto accept_and_run_https = [&](nvhttp::https_server_t *server) {
       try {
-        http_server->start();
+        BOOST_LOG(info) << "Starting nvhttps server on port ["sv << server->config.port << "]";
+        server->start();
       }
       catch (boost::system::system_error &err) {
-        // It's possible the exception gets thrown after calling http_server->stop() from a different thread
+        // It's possible the exception gets thrown after calling server->stop() from a different thread
         if (shutdown_event->peek()) {
           return;
         }
-
-        BOOST_LOG(fatal) << "Couldn't start http server on ports ["sv << port_https << ", "sv << port_https << "]: "sv << err.what();
+        BOOST_LOG(fatal) << "Couldn't start nvhttps server on ports ["sv << server->config.port << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }
     };
-    std::thread ssl { accept_and_run, &https_server };
-    std::thread tcp { accept_and_run, &http_server };
+
+    auto accept_and_run_http = [&](nvhttp::http_server_t *server) {
+      try {
+        BOOST_LOG(info) << "Starting nvhttp server on port ["sv << server->config.port << "]";
+        server->start();
+      }
+      catch (boost::system::system_error &err) {
+        // It's possible the exception gets thrown after calling server->stop() from a different thread
+        if (shutdown_event->peek()) {
+          return;
+        }
+
+        BOOST_LOG(fatal) << "Couldn't start nvhttp server on ports ["sv << server->config.port << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
+    };
+    std::thread ssl { accept_and_run_https, &https_server };
+    std::thread tcp { accept_and_run_http, &http_server };
 
     // Wait for any event
     shutdown_event->view();

@@ -64,20 +64,35 @@ namespace confighttp {
 
   void
   print_req(const req_https_t &request) {
-    BOOST_LOG(debug) << "METHOD :: "sv << request->method;
-    BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
-
-    for (auto &[name, val] : request->header) {
-      BOOST_LOG(debug) << name << " -- " << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
+    std::ostringstream log_stream;
+    log_stream << "Request - TUNNEL: HTTPS"
+               << ", METHOD: " << request->method
+               << ", PATH: " << request->path;
+    
+    // Headers
+    if (!request->header.empty()) {
+      log_stream << ", HEADERS: ";
+      bool first = true;
+      for (auto &[name, val] : request->header) {
+        if (!first) log_stream << ", ";
+        log_stream << name << "=" << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
+        first = false;
+      }
     }
-
-    BOOST_LOG(debug) << " [--] "sv;
-
-    for (auto &[name, val] : request->parse_query_string()) {
-      BOOST_LOG(debug) << name << " -- " << val;
+    
+    // Query parameters
+    auto query_params = request->parse_query_string();
+    if (!query_params.empty()) {
+      log_stream << ", PARAMS: ";
+      bool first = true;
+      for (auto &[name, val] : query_params) {
+        if (!first) log_stream << "&";
+        log_stream << name << "=" << val;
+        first = false;
+      }
     }
-
-    BOOST_LOG(debug) << " [--] "sv;
+    
+    BOOST_LOG(verbose) << log_stream.str();
   }
 
   /**
@@ -240,7 +255,7 @@ namespace confighttp {
    */
   void
   getStaticResource(resp_https_t response, req_https_t request, const std::string& path, const std::string& contentType) {
-    print_req(request);
+    // print_req(request);
 
     std::ifstream in(path, std::ios::binary);
     SimpleWeb::CaseInsensitiveMultimap headers;
@@ -301,7 +316,7 @@ namespace confighttp {
 
   void
   getNodeModules(resp_https_t response, req_https_t request) {
-    print_req(request);
+    // print_req(request);
     fs::path webDirPath(WEB_DIR);
     fs::path nodeModulesPath(webDirPath / "assets");
 
@@ -349,7 +364,7 @@ namespace confighttp {
   getLogs(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
-    print_req(request);
+    // print_req(request);
 
     std::string content = file_handler::read_file(config::sunshine.log_file.c_str());
     SimpleWeb::CaseInsensitiveMultimap headers;

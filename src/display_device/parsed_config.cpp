@@ -569,7 +569,7 @@ namespace display_device {
     }
 
     // 记录解析后的配置信息
-    BOOST_LOG(debug) << "解析后的显示设备配置:\n"sv
+    BOOST_LOG(debug) << "解析后的显示设备配置:"sv
                      << "\n设备ID: "sv << parsed_config.device_id
                      << "\n设备准备模式: "sv << static_cast<int>(parsed_config.device_prep)
                      << "\nHDR状态: "sv << (parsed_config.change_hdr_state ? (*parsed_config.change_hdr_state ? "启用" : "禁用") : "不变")

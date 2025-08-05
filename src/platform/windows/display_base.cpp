@@ -593,15 +593,15 @@ namespace platf::dxgi {
     auto description = to_utf8(adapter_desc.Description);
     BOOST_LOG(info)
       << "Device Description : " << description
-      << ", Device Vendor ID   : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
-      << ", Device Device ID   : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
-      << ", Device Video Mem   : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
-      << ", Device Sys Mem     : "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
-      << ", Share Sys Mem      : "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
-      << ", Feature Level      : 0x"sv << util::hex(feature_level).to_string_view()
-      << ", Capture size       : "sv << width << 'x' << height
-      << ", Offset             : "sv << offset_x << 'x' << offset_y
-      << ", Virtual Desktop    : "sv << env_width << 'x' << env_height;
+      << ", Device Vendor ID: 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
+      << ", Device Device ID: 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
+      << ", Device Video Mem: "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
+      << ", Device Sys Mem: "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
+      << ", Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
+      << ", Feature Level: 0x"sv << util::hex(feature_level).to_string_view()
+      << ", Capture size: "sv << width << 'x' << height
+      << ", Offset: "sv << offset_x << 'x' << offset_y
+      << ", Virtual Desktop: "sv << env_width << 'x' << env_height;
 
     // Bump up thread priority
     {
@@ -722,15 +722,14 @@ namespace platf::dxgi {
       output6->GetDesc1(&desc1);
 
       BOOST_LOG(info)
-        << std::endl
-        << "Colorspace         : "sv << colorspace_to_string(desc1.ColorSpace) << std::endl
-        << "Bits Per Color     : "sv << desc1.BitsPerColor << std::endl
-        << "Red Primary        : ["sv << desc1.RedPrimary[0] << ',' << desc1.RedPrimary[1] << ']' << std::endl
-        << "Green Primary      : ["sv << desc1.GreenPrimary[0] << ',' << desc1.GreenPrimary[1] << ']' << std::endl
-        << "Blue Primary       : ["sv << desc1.BluePrimary[0] << ',' << desc1.BluePrimary[1] << ']' << std::endl
-        << "White Point        : ["sv << desc1.WhitePoint[0] << ',' << desc1.WhitePoint[1] << ']' << std::endl
-        << "Min Luminance      : "sv << desc1.MinLuminance << " nits"sv << std::endl
-        << "Max Luminance      : "sv << desc1.MaxLuminance << " nits"sv << std::endl
+        << "Colorspace: "sv << colorspace_to_string(desc1.ColorSpace)
+        << "Bits Per Color: "sv << desc1.BitsPerColor
+        << "Red Primary: ["sv << desc1.RedPrimary[0] << ',' << desc1.RedPrimary[1] << ']'
+        << "Green Primary: ["sv << desc1.GreenPrimary[0] << ',' << desc1.GreenPrimary[1] << ']'
+        << "Blue Primary: ["sv << desc1.BluePrimary[0] << ',' << desc1.BluePrimary[1] << ']'
+        << "White Point: ["sv << desc1.WhitePoint[0] << ',' << desc1.WhitePoint[1] << ']'
+        << "Min Luminance: "sv << desc1.MinLuminance << " nits"sv
+        << "Max Luminance: "sv << desc1.MaxLuminance << " nits"sv
         << "Max Full Luminance : "sv << desc1.MaxFullFrameLuminance << " nits"sv;
     }
 
@@ -1100,15 +1099,15 @@ namespace platf {
 
       BOOST_LOG(debug)
         << std::endl
-        << "====== ADAPTER ====="sv << std::endl
-        << "Device Name      : "sv << to_utf8(adapter_desc.Description) << std::endl
-        << "Device Vendor ID : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view() << std::endl
-        << "Device Device ID : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view() << std::endl
-        << "Device Video Mem : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv << std::endl
-        << "Device Sys Mem   : "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv << std::endl
-        << "Share Sys Mem    : "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv << std::endl
+        << "ADAPTER:"sv
+        << "Device Name: "sv << to_utf8(adapter_desc.Description)
+        << "Device Vendor ID : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
+        << "Device Device ID : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
+        << "Device Video Mem : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
+        << "Device Sys Mem: "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
+        << "Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
         << std::endl
-        << "    ====== OUTPUT ======"sv << std::endl;
+        << "    ====== OUTPUT ======"sv;
 
       dxgi::output_t::pointer output_p {};
       for (int y = 0; adapter->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
@@ -1123,10 +1122,9 @@ namespace platf {
         auto height = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
 
         BOOST_LOG(debug)
-          << "    Output Name       : "sv << device_name << std::endl
-          << "    AttachedToDesktop : "sv << (desc.AttachedToDesktop ? "yes"sv : "no"sv) << std::endl
-          << "    Resolution        : "sv << width << 'x' << height << std::endl
-          << std::endl;
+          << "Output Name: "sv << device_name
+          << ",AttachedToDesktop : "sv << (desc.AttachedToDesktop ? "yes"sv : "no"sv)
+          << ",Resolution: "sv << width << 'x' << height;
 
         // Don't include the display in the list if we can't actually capture it
         if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {

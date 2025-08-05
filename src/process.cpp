@@ -432,6 +432,11 @@ namespace proc {
         BOOST_LOG(info) << "Executing cmd ["sv << cmd << "]"sv;
         child.detach();
       }
+    } else {
+      BOOST_LOG(warning) << "Couldn't find cmd ["sv << cmd_id << "]"sv;
+      for (auto &cmd : _app.menu_cmds) {
+        BOOST_LOG(warning) << "Menu cmd: ["sv << cmd.id << "]"sv;
+      }
     }
   }
 
