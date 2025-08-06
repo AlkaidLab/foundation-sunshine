@@ -365,7 +365,9 @@
     "wan_encryption_mode": "Modo de cifrado WAN",
     "wan_encryption_mode_1": "Activado para clientes compatibles (por defecto)",
     "wan_encryption_mode_2": "Requerido para todos los clientes",
-    "wan_encryption_mode_desc": "Esto determina cuándo se utilizará el cifrado al transmitir a través de Internet. El cifrado puede reducir el rendimiento de la transmisión, especialmente en hosts y clientes menos poderosos."
+    "wan_encryption_mode_desc": "Esto determina cuándo se utilizará el cifrado al transmitir a través de Internet. El cifrado puede reducir el rendimiento de la transmisión, especialmente en hosts y clientes menos poderosos.",
+    "close_verify_safe": "Verificación segura compatible con clientes antiguos",
+    "close_verify_safe_desc": "Los clientes antiguos pueden no poder conectarse a Sunshine, por favor, desactive esta opción o actualice el cliente"
   },
   "index": {
     "description": "Sunshine es un servidor de transmisión de juego autoalojado para Moonlight.",

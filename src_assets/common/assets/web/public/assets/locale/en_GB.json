@@ -364,7 +364,9 @@
     "wan_encryption_mode": "WAN Encryption Mode",
     "wan_encryption_mode_1": "Enabled for supported clients (default)",
     "wan_encryption_mode_2": "Required for all clients",
-    "wan_encryption_mode_desc": "This determines when encryption will be used when streaming over the Internet. Encryption can reduce streaming performance, particularly on less powerful hosts and clients."
+    "wan_encryption_mode_desc": "This determines when encryption will be used when streaming over the Internet. Encryption can reduce streaming performance, particularly on less powerful hosts and clients.",
+    "close_verify_safe": "Safe Verify Compatible with Old Clients",
+    "close_verify_safe_desc": "Old clients may not be able to connect to Sunshine, please disable this option or update the client"
   },
   "index": {
     "description": "Sunshine is a self-hosted game stream host for Moonlight.",

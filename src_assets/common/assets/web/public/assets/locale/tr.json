@@ -364,7 +364,9 @@
     "wan_encryption_mode": "WAN Şifreleme Modu",
     "wan_encryption_mode_1": "Desteklenen istemciler için etkin (varsayılan)",
     "wan_encryption_mode_2": "Tüm müşteriler için gereklidir",
-    "wan_encryption_mode_desc": "Bu, İnternet üzerinden akış yaparken şifrelemenin ne zaman kullanılacağını belirler. Şifreleme, özellikle daha az güçlü ana bilgisayarlarda ve istemcilerde akış performansını düşürebilir."
+    "wan_encryption_mode_desc": "Bu, İnternet üzerinden akış yaparken şifrelemenin ne zaman kullanılacağını belirler. Şifreleme, özellikle daha az güçlü ana bilgisayarlarda ve istemcilerde akış performansını düşürebilir.",
+    "close_verify_safe": "Güvenli Doğrulama Eski İstemcilerle Uyumlu",
+    "close_verify_safe_desc": "Eski istemciler Sunshine'a bağlanamayabilir, lütfen bu seçeneği kapatın veya istemciyi güncelleyin"
   },
   "index": {
     "description": "Sunshine, Moonlight için kendi kendine barındırılan bir oyun akışı sunucusudur.",

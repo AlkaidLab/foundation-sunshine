@@ -171,6 +171,7 @@ namespace config {
       FORCE_VIDEO_HEADER_REPLACE,  ///< force replacing headers inside video data
       UPNP,  ///< Try Universal Plug 'n Play
       CONST_PIN,  ///< Use "universal" pin
+      CLOSE_VERIFY_SAFE,  ///< Close verify certificate chain safely
       FLAG_SIZE  ///< Number of flags
     };
   }

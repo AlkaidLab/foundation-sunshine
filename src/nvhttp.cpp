@@ -1216,6 +1216,7 @@ namespace nvhttp {
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
     bool clean_slate = config::sunshine.flags[config::flag::FRESH_STATE];
+    bool close_verify_safe = config::sunshine.flags[config::flag::CLOSE_VERIFY_SAFE];
 
     if (!clean_slate) {
       load_state();
@@ -1235,7 +1236,7 @@ namespace nvhttp {
     http_server_t http_server;
 
     // Verify certificates after establishing connection
-    https_server.verify = [add_cert](SSL *ssl) {
+    https_server.verify = [add_cert, close_verify_safe](SSL *ssl) {
       crypto::x509_t x509 {
 #if OPENSSL_VERSION_MAJOR >= 3
         SSL_get1_peer_certificate(ssl)
@@ -1268,7 +1269,12 @@ namespace nvhttp {
         cert_chain.add(std::move(cert));
       }
 
-      auto err_str = cert_chain.verify(x509.get());
+      const char * err_str;
+      if (!close_verify_safe) {
+        err_str = cert_chain.verify_safe(x509.get());//default
+      } else {
+        err_str = cert_chain.verify(x509.get());
+      }
       if (err_str) {
         BOOST_LOG(warning) << "SSL Verification error :: "sv << err_str;
 

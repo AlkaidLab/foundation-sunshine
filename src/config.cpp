@@ -1213,6 +1213,13 @@ namespace config {
       config::sunshine.flags[config::flag::UPNP].flip();
     }
 
+    bool close_verify_safe = false;
+    bool_f(vars, "close_verify_safe"s, close_verify_safe);
+
+    if (close_verify_safe) {
+      config::sunshine.flags[config::flag::CLOSE_VERIFY_SAFE].flip();
+    }
+
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian
                                                                    "cs"sv,  // Czech

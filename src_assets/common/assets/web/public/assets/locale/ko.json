@@ -367,7 +367,9 @@
     "wan_encryption_mode": "WAN 암호화 모드",
     "wan_encryption_mode_1": "지원되는 클라이언트에 사용(기본값)",
     "wan_encryption_mode_2": "모든 사용자에게 필수",
-    "wan_encryption_mode_desc": "인터넷을 통해 스트리밍할 때 암호화를 사용할 시기를 결정합니다. 암호화는 특히 성능이 낮은 호스트와 클라이언트에서 스트리밍 성능을 저하시킬 수 있습니다."
+    "wan_encryption_mode_desc": "인터넷을 통해 스트리밍할 때 암호화를 사용할 시기를 결정합니다. 암호화는 특히 성능이 낮은 호스트와 클라이언트에서 스트리밍 성능을 저하시킬 수 있습니다.",
+    "close_verify_safe": "안전한 검증 호환 이전 클라이언트",
+    "close_verify_safe_desc": "이전 클라이언트는 Sunshine에 연결할 수 없을 수 있습니다. 이 옵션을 비활성화하거나 클라이언트를 업데이트하세요"
   },
   "index": {
     "description": "Sunshine은 Moonlight의 게임 스트리밍 프로그램입니다.",

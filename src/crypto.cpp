@@ -84,6 +84,45 @@ namespace crypto {
     return X509_verify_cert_error_string(err_code);
   }
 
+  const char* cert_chain_t::verify_safe(x509_t::element_type* cert) {
+      if (!cert) {
+          return "Invalid certificate: null pointer";
+      }
+      if (_certs.empty()) {
+          return "No certificate stores available";
+      }
+      int last_err_code = X509_V_ERR_UNSPECIFIED;
+      for (auto& [name, x509_store] : _certs) {
+          auto ctx_deleter = [](X509_STORE_CTX* ctx) {
+              if (ctx) {
+                  X509_STORE_CTX_free(ctx);
+              }
+          };
+          std::unique_ptr<X509_STORE_CTX, decltype(ctx_deleter)> ctx(
+              X509_STORE_CTX_new(), ctx_deleter);
+          
+          if (!ctx) {
+              last_err_code = X509_V_ERR_OUT_OF_MEM;
+              continue;
+          }
+          if (X509_STORE_CTX_init(ctx.get(), x509_store.get(), cert, nullptr) != 1) {
+              last_err_code = X509_V_ERR_STORE_LOOKUP;
+              continue;
+          }
+          X509_STORE_CTX_set_verify_cb(ctx.get(), openssl_verify_cb);
+          int verify_result = X509_verify_cert(ctx.get());
+          if (verify_result == 1) {
+              return nullptr;
+          }
+          int err_code = X509_STORE_CTX_get_error(ctx.get());
+          if (err_code != X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT) {
+              return X509_verify_cert_error_string(err_code);
+          }
+          last_err_code = err_code;
+      }
+      return X509_verify_cert_error_string(last_err_code);
+  }
+
   namespace cipher {
 
     static int

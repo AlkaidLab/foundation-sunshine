@@ -367,7 +367,9 @@
     "wan_encryption_mode": "WAN 加密模式",
     "wan_encryption_mode_1": "對支援的用戶端啟用（預設）",
     "wan_encryption_mode_2": "所有客戶都需要",
-    "wan_encryption_mode_desc": "這會決定在網際網路上串流時，何時會使用加密。加密可能會降低串流效能，尤其是在效能較低的主機和用戶端上。"
+    "wan_encryption_mode_desc": "這會決定在網際網路上串流時，何時會使用加密。加密可能會降低串流效能，尤其是在效能較低的主機和用戶端上。",
+    "close_verify_safe": "安全驗證相容舊版用戶端",
+    "close_verify_safe_desc": "舊版用戶端可能無法連線到 Sunshine, 請關閉此選項或升級用戶端"
   },
   "index": {
     "description": "Sunshine 是 Moonlight 的自架遊戲串流主機。",
