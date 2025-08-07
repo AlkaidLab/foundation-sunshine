@@ -1217,6 +1217,9 @@ namespace nvhttp {
 
     bool clean_slate = config::sunshine.flags[config::flag::FRESH_STATE];
     bool close_verify_safe = config::sunshine.flags[config::flag::CLOSE_VERIFY_SAFE];
+    if (close_verify_safe) {
+      BOOST_LOG(warning) << "SSL close safe verify: " << close_verify_safe;
+    }
 
     if (!clean_slate) {
       load_state();

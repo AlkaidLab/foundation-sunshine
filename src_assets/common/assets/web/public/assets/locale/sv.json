@@ -366,7 +366,9 @@
     "wan_encryption_mode_2": "Krävs för alla kunder",
     "wan_encryption_mode_desc": "Detta avgör när kryptering kommer att användas vid strömning över Internet. Kryptering kan minska strömningsprestanda, särskilt på mindre kraftfulla värdar och klienter.",
     "close_verify_safe": "Säker verifiering kompatibel med gamla klienter",
-    "close_verify_safe_desc": "Gamla klienter kan inte ansluta till Sunshine, vänligen stäng av detta alternativ eller uppdatera klienten"
+    "close_verify_safe_desc": "Gamla klienter kan inte ansluta till Sunshine, vänligen stäng av detta alternativ eller uppdatera klienten",
+    "mdns_broadcast": "Hitta denna dator i lokala nätverk",
+    "mdns_broadcast_desc": "Om detta alternativ är aktiverat kommer Sunshine att tillåta andra enheter att hitta denna dator automatiskt. Moonlight måste också vara inställd på att hitta denna dator automatiskt i lokala nätverk."
   },
   "index": {
     "description": "Solsken är en själv-värd spel ström värd för Moonlight.",

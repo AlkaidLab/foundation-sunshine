@@ -367,7 +367,9 @@
     "wan_encryption_mode_2": "Obligatoire pour tous les clients",
     "wan_encryption_mode_desc": "Ceci détermine quand le chiffrement sera utilisé lors du streaming par Internet. Le chiffrement peut réduire les performances de streaming, en particulier sur les hôtes et clients moins puissants.",
     "close_verify_safe": "Vérification sécurisée compatible avec les anciens clients",
-    "close_verify_safe_desc": "Les anciens clients peuvent ne pas pouvoir se connecter à Sunshine, veuillez désactiver cette option ou mettre à jour le client"
+    "close_verify_safe_desc": "Les anciens clients peuvent ne pas pouvoir se connecter à Sunshine, veuillez désactiver cette option ou mettre à jour le client",
+    "mdns_broadcast": "Trouver cet ordinateur dans le réseau local",
+    "mdns_broadcast_desc": "Si cette option est activée, Sunshine permettra à d'autres appareils de trouver automatiquement cet ordinateur. Moonlight doit également être configuré pour trouver automatiquement cet ordinateur dans le réseau local."
   },
   "index": {
     "description": "Sunshine est un serveur de streaming auto-hébergé pour Moonlight.",

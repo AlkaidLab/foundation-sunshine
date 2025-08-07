@@ -366,7 +366,9 @@
     "wan_encryption_mode_2": "Benötigt für alle Kunden",
     "wan_encryption_mode_desc": "Dies legt fest, wann Verschlüsselung beim Streaming über das Internet verwendet wird. Verschlüsselung kann die Streaming-Leistung senken, insbesondere auf weniger leistungsfähigen Hosts und Clients.",
     "close_verify_safe": "Sichere Überprüfung kompatibel mit alten Clients",
-    "close_verify_safe_desc": "Alte Clients können nicht mit Sunshine verbunden werden, bitte deaktivieren Sie diese Option oder aktualisieren Sie den Client"
+    "close_verify_safe_desc": "Alte Clients können nicht mit Sunshine verbunden werden, bitte deaktivieren Sie diese Option oder aktualisieren Sie den Client",
+    "mdns_broadcast": "Diesen Computer in der lokalen Netzwerk finden",
+    "mdns_broadcast_desc": "Wenn diese Option aktiviert ist, wird Sunshine anderen Geräten erlauben, diesen Computer automatisch zu finden. Moonlight muss ebenfalls so konfiguriert sein, dass er diesen Computer automatisch in der lokalen Netzwerk findet."
   },
   "index": {
     "description": "Sunshine ist ein selbst gehosteter Game-Stream-Host für Moonlight.",

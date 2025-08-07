@@ -369,7 +369,9 @@
     "wan_encryption_mode_2": "Wymagane dla wszystkich klientów",
     "wan_encryption_mode_desc": "Określa, kiedy szyfrowanie będzie używane podczas przesyłania strumieniowego przez Internet. Szyfrowanie może zmniejszyć wydajność przesyłania strumieniowego, szczególnie na mniej wydajnych hostach i klientach.",
     "close_verify_safe": "Bezpieczne weryfikowanie zgodne z starszymi klientami",
-    "close_verify_safe_desc": "Starsze klienty mogą nie łączyć się z Sunshine, proszę wyłączyć tę opcję lub zaktualizować klienta"
+    "close_verify_safe_desc": "Starsze klienty mogą nie łączyć się z Sunshine, proszę wyłączyć tę opcję lub zaktualizować klienta",
+    "mdns_broadcast": "Znajdź ten komputer w lokalnej sieci",
+    "mdns_broadcast_desc": "Jeśli ta opcja jest włączona, Sunshine pozwoli innym urządzeniom znaleźć ten komputer automatycznie. Moonlight musi być skonfigurowany, aby automatycznie znaleźć ten komputer w lokalnej sieci."
   },
   "index": {
     "description": "Sunshine jest samodzielnym hostem strumienia gry dla Moonlight.",

@@ -356,7 +356,9 @@
     "wan_encryption_mode_2": "强制所有客户端使用",
     "wan_encryption_mode_desc": "这决定了在公网串流时是否加密。加密会降低串流性能，尤其是在性能较弱的主机和客户端上。",
     "close_verify_safe": "安全验证兼容旧版客户端",
-    "close_verify_safe_desc": "旧版客户端可能无法连接到 Sunshine, 请关闭此选项或升级客户端"
+    "close_verify_safe_desc": "旧版客户端可能无法连接到 Sunshine, 请关闭此选项或升级客户端",
+    "mdns_broadcast": "本地网络发现此计算机",
+    "mdns_broadcast_desc": "开启后将允许未连接设备自动发现此计算机，需要 Moonlight开启自动在本地网络上查找计算机"
   },
   "index": {
     "description": "Sunshine 是供 Moonlight 使用的自建游戏串流服务。",

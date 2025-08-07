@@ -172,6 +172,7 @@ namespace config {
       UPNP,  ///< Try Universal Plug 'n Play
       CONST_PIN,  ///< Use "universal" pin
       CLOSE_VERIFY_SAFE,  ///< Close verify certificate chain safely
+      MDNS_BROADCAST,  ///< Enable mDNS broadcast
       FLAG_SIZE  ///< Number of flags
     };
   }

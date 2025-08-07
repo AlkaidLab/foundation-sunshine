@@ -369,7 +369,9 @@
     "wan_encryption_mode_2": "Vyžadováno pro všechny klienty",
     "wan_encryption_mode_desc": "Určuje, kdy bude šifrování použito při streamování přes internet. Šifrování může snížit streamovací výkon, zejména u méně výkonných hostitelů a klientů.",
     "close_verify_safe": "Bezpečná ověření kompatibilní s klienty starší",
-    "close_verify_safe_desc": "Starší klienti nemusí být schopni se připojit k Sunshine, prosím zakázat tuto volbu nebo aktualizovat klienta"
+    "close_verify_safe_desc": "Starší klienti nemusí být schopni se připojit k Sunshine, prosím zakázat tuto volbu nebo aktualizovat klienta",
+    "mdns_broadcast": "Najít tento počítač v místní síti",
+    "mdns_broadcast_desc": "Pokud je tato volba povolena, Sunshine umožní ostatním zařízením automaticky najít tento počítač. Moonlight musí být také nakonfigurován, aby automaticky najít tento počítač v místní síti."
   },
   "index": {
     "description": "Sluneční stream je hostitelem pro Měsíční světlo.",
