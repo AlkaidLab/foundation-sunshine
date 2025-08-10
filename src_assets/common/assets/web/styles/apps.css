@@ -393,8 +393,8 @@ body {
 }
 
 .app-tag {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.4);
+  color: #333;
   padding: 4px 8px;
   border-radius: var(--border-radius-md);
   font-size: var(--font-size-xs);
@@ -402,20 +402,20 @@ body {
 }
 
 .tag-exclude-global-prep-cmd {
-  background: rgba(255, 105, 180, 0.3);
-  color: #ff69b4;
+  background: rgba(255, 105, 180, 0.6);
+  color: #fff;
 }
 .tag-menu {
-  background: rgba(147, 112, 219, 0.3);
-  color: #9370db;
+  background: rgba(147, 112, 219, 0.6);
+  color: #fff;
 }
 .tag-elevated {
-  background: rgba(255, 165, 0, 0.3);
-  color: #ffa500;
+  background: rgba(255, 165, 0, 0.6);
+  color: #fff;
 }
 .tag-detach {
-  background: rgba(32, 178, 170, 0.3);
-  color: #20b2aa;
+  background: rgba(32, 178, 170, 0.6);
+  color: #fff;
 }
 
 /* 操作按钮 */

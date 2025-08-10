@@ -33,7 +33,7 @@
             <i class="fas fa-shield-alt me-1"></i>管理员
           </span>
           <span v-if="app['auto-detach'] && app['auto-detach'] !== 'false'" class="app-tag tag-detach">
-            <i class="fas fa-unlink me-1"></i>分离
+            <i class="fas fa-unlink me-1"></i>关闭时不退出串流
           </span>
         </div>
       </div>
