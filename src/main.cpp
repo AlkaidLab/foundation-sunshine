@@ -329,10 +329,11 @@ main(int argc, char *argv[]) {
     return -1;
   }
 
+  std::unique_ptr<platf::deinit_t> mDNS;
+  std::future<void> sync_mDNS;
   if (config::sunshine.flags[config::flag::MDNS_BROADCAST]) {
     BOOST_LOG(info) << "mDNS broadcast enabled"sv;
-    std::unique_ptr<platf::deinit_t> mDNS;
-    auto sync_mDNS = std::async(std::launch::async, [&mDNS]() {
+    sync_mDNS = std::async(std::launch::async, [&mDNS]() {
       mDNS = platf::publish::start();
     });
   }
