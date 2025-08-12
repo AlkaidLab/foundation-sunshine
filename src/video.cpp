@@ -2,7 +2,7 @@
  * @file src/video.cpp
  * @brief Definitions for video.
  */
- // standard includes
+// standard includes
 #include <atomic>
 #include <bitset>
 #include <list>
@@ -43,7 +43,8 @@ namespace video {
      * @brief Check if we can allow probing for the encoders.
      * @return True if there should be no issues with the probing, false if we should prevent it.
      */
-    bool allow_encoder_probing() {
+    bool
+    allow_encoder_probing() {
       const auto devices { display_device::enum_available_devices() };
 
       // If there are no devices, then either the API is not working correctly or OS does not support the lib.
@@ -57,8 +58,8 @@ namespace video {
       // and also the display device for Windows. So we must have at least 1 active device.
       const bool at_least_one_device_is_active = std::any_of(std::begin(devices), std::end(devices), [](const auto &device) {
         // If device has additional info, it is active.
-          return device.second.device_state == display_device::device_state_e::active ||
-                device.second.device_state == display_device::device_state_e::primary;
+        return device.second.device_state == display_device::device_state_e::active ||
+               device.second.device_state == display_device::device_state_e::primary;
       });
 
       if (at_least_one_device_is_active) {
@@ -326,6 +327,12 @@ namespace video {
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
+      // Flush any remaining frames in the encoder
+      if (avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
+        packet_raw_avcodec pkt;
+        while (avcodec_receive_packet(avcodec_ctx.get(), pkt.av_packet) == 0);
+      }
+
       // Order matters here because the context relies on the hwdevice still being valid
       avcodec_ctx.reset();
       device.reset();
@@ -518,7 +525,7 @@ namespace video {
       {},  // Fallback options
       "h264_nvenc"s,
     },
-    PARALLEL_ENCODING | REF_FRAMES_INVALIDATION | YUV444_SUPPORT | ASYNC_TEARDOWN // flags
+    PARALLEL_ENCODING | REF_FRAMES_INVALIDATION | YUV444_SUPPORT | ASYNC_TEARDOWN  // flags
   };
 #elif !defined(__APPLE__)
   encoder_t nvenc {
@@ -546,7 +553,7 @@ namespace video {
         { "forced-idr"s, 1 },
         { "zerolatency"s, 1 },
         { "surfaces"s, 1 },
-        { "filler_data"s, false },
+        { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
         { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
         { "rc"s, NV_ENC_PARAMS_RC_CBR },
@@ -567,6 +574,7 @@ namespace video {
         { "forced-idr"s, 1 },
         { "zerolatency"s, 1 },
         { "surfaces"s, 1 },
+        { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
         { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
         { "rc"s, NV_ENC_PARAMS_RC_CBR },
@@ -592,6 +600,7 @@ namespace video {
         { "forced-idr"s, 1 },
         { "zerolatency"s, 1 },
         { "surfaces"s, 1 },
+        { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
         { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
         { "rc"s, NV_ENC_PARAMS_RC_CBR },
@@ -730,8 +739,11 @@ namespace video {
         { "filler_data"s, false },
         { "forced_idr"s, 1 },
         { "latency"s, "lowest_latency"s },
+        { "async_depth"s, 1 },
         { "skip_frame"s, 0 },
-        { "log_to_dbg"s, []() { return config::sunshine.min_log_level < 2 ? 1 : 0; } },
+        { "log_to_dbg"s, []() {
+           return config::sunshine.min_log_level < 2 ? 1 : 0;
+         } },
         { "preencode"s, &config::video.amd.amd_preanalysis },
         { "quality"s, &config::video.amd.amd_quality_av1 },
         { "rc"s, &config::video.amd.amd_rc_av1 },
@@ -751,8 +763,11 @@ namespace video {
         { "filler_data"s, false },
         { "forced_idr"s, 1 },
         { "latency"s, 1 },
+        { "async_depth"s, 1 },
         { "skip_frame"s, 0 },
-        { "log_to_dbg"s, []() { return config::sunshine.min_log_level < 2 ? 1 : 0; } },
+        { "log_to_dbg"s, []() {
+           return config::sunshine.min_log_level < 2 ? 1 : 0;
+         } },
         { "gops_per_idr"s, 1 },
         { "header_insertion_mode"s, "idr"s },
         { "preencode"s, &config::video.amd.amd_preanalysis },
@@ -761,6 +776,19 @@ namespace video {
         { "usage"s, &config::video.amd.amd_usage_hevc },
         { "vbaq"s, &config::video.amd.amd_vbaq },
         { "enforce_hrd"s, &config::video.amd.amd_enforce_hrd },
+        { "level"s, [](const config_t &cfg) {
+           auto size = cfg.width * cfg.height;
+           // For 4K and below, try to use level 5.1 or 5.2 if possible
+           if (size <= 8912896) {
+             if (size * cfg.framerate <= 534773760) {
+               return "5.1"s;
+             }
+             else if (size * cfg.framerate <= 1069547520) {
+               return "5.2"s;
+             }
+           }
+           return "auto"s;
+         } },
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -775,8 +803,11 @@ namespace video {
         { "filler_data"s, false },
         { "forced_idr"s, 1 },
         { "latency"s, 1 },
+        { "async_depth"s, 1 },
         { "frame_skipping"s, 0 },
-        { "log_to_dbg"s, []() { return config::sunshine.min_log_level < 2 ? 1 : 0; } },
+        { "log_to_dbg"s, []() {
+           return config::sunshine.min_log_level < 2 ? 1 : 0;
+         } },
         { "preencode"s, &config::video.amd.amd_preanalysis },
         { "quality"s, &config::video.amd.amd_quality_h264 },
         { "rc"s, &config::video.amd.amd_rc_h264 },
@@ -1496,23 +1527,23 @@ namespace video {
         case 0:
           // 10-bit h264 encoding is not supported by our streaming protocol
           assert(!config.dynamicRange);
-          ctx->profile = (config.chromaSamplingType == 1) ? FF_PROFILE_H264_HIGH_444_PREDICTIVE : FF_PROFILE_H264_HIGH;
+          ctx->profile = (config.chromaSamplingType == 1) ? AV_PROFILE_H264_HIGH_444_PREDICTIVE : AV_PROFILE_H264_HIGH;
           break;
 
         case 1:
           if (config.chromaSamplingType == 1) {
             // HEVC uses the same RExt profile for both 8 and 10 bit YUV 4:4:4 encoding
-            ctx->profile = FF_PROFILE_HEVC_REXT;
+            ctx->profile = AV_PROFILE_HEVC_REXT;
           }
           else {
-            ctx->profile = config.dynamicRange ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
+            ctx->profile = config.dynamicRange ? AV_PROFILE_HEVC_MAIN_10 : AV_PROFILE_HEVC_MAIN;
           }
           break;
 
         case 2:
           // AV1 supports both 8 and 10 bit encoding with the same Main profile
           // but YUV 4:4:4 sampling requires High profile
-          ctx->profile = (config.chromaSamplingType == 1) ? FF_PROFILE_AV1_HIGH : FF_PROFILE_AV1_MAIN;
+          ctx->profile = (config.chromaSamplingType == 1) ? AV_PROFILE_AV1_HIGH : AV_PROFILE_AV1_MAIN;
           break;
       }
 
@@ -1624,15 +1655,34 @@ namespace video {
       ctx->thread_count = ctx->slices;
 
       AVDictionary *options { nullptr };
-      auto handle_option = [&options](const encoder_t::option_t &option) {
+      auto handle_option = [&options, &config](const encoder_t::option_t &option) {
         std::visit(
           util::overloaded {
-            [&](int v) { av_dict_set_int(&options, option.name.c_str(), v, 0); },
-            [&](int *v) { av_dict_set_int(&options, option.name.c_str(), *v, 0); },
-            [&](std::optional<int> *v) { if(*v) av_dict_set_int(&options, option.name.c_str(), **v, 0); },
-            [&](std::function<int()> v) { av_dict_set_int(&options, option.name.c_str(), v(), 0); },
-            [&](const std::string &v) { av_dict_set(&options, option.name.c_str(), v.c_str(), 0); },
-            [&](std::string *v) { if(!v->empty()) av_dict_set(&options, option.name.c_str(), v->c_str(), 0); } },
+            [&](int v) {
+              av_dict_set_int(&options, option.name.c_str(), v, 0);
+            },
+            [&](int *v) {
+              av_dict_set_int(&options, option.name.c_str(), *v, 0);
+            },
+            [&](std::optional<int> *v) {
+              if (*v) {
+                av_dict_set_int(&options, option.name.c_str(), **v, 0);
+              }
+            },
+            [&](const std::function<int()> &v) {
+              av_dict_set_int(&options, option.name.c_str(), v(), 0);
+            },
+            [&](const std::string &v) {
+              av_dict_set(&options, option.name.c_str(), v.c_str(), 0);
+            },
+            [&](std::string *v) {
+              if (!v->empty()) {
+                av_dict_set(&options, option.name.c_str(), v->c_str(), 0);
+              }
+            },
+            [&](const std::function<const std::string(const config_t &cfg)> &v) {
+              av_dict_set(&options, option.name.c_str(), v(config).c_str(), 0);
+            } },
           option.value);
       };
 
@@ -1840,17 +1890,17 @@ namespace video {
     // streaming to continue without requiring a full restart of Sunshine.
     auto fail_guard = util::fail_guard([&encoder, &session] {
       if (encoder.flags & ASYNC_TEARDOWN) {
-        std::thread encoder_teardown_thread {[session = std::move(session)]() mutable {
+        std::thread encoder_teardown_thread { [session = std::move(session)]() mutable {
           BOOST_LOG(info) << "Starting async encoder teardown";
           session.reset();
           BOOST_LOG(info) << "Async encoder teardown complete";
-        }};
+        } };
         encoder_teardown_thread.detach();
       }
     });
 
     // set minimum frame time based on client-requested target framerate
-    std::chrono::duration<double, std::milli> minimum_frame_time {2000.0 / config.framerate};
+    std::chrono::duration<double, std::milli> minimum_frame_time { 2000.0 / config.framerate };
     BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -1980,7 +2030,6 @@ namespace video {
 
     {
       auto encoder_name = encoder.codec_from_config(config).name;
-
 
       auto color_coding = colorspace.colorspace == colorspace_e::bt2020    ? "HDR (Rec. 2020 + SMPTE 2084 PQ)" :
                           colorspace.colorspace == colorspace_e::rec601    ? "SDR (Rec. 601)" :
