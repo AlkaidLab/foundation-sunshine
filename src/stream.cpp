@@ -50,6 +50,7 @@ extern "C" {
 #define IDX_SET_ADAPTIVE_TRIGGERS 15
 #define IDX_MIC_DATA 16
 #define IDX_MIC_CONFIG 17
+#define IDX_DYNAMIC_BITRATE_CHANGE 18  // 新增：动态码率调整消息类型
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -70,6 +71,7 @@ static const short packetTypes[] = {
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
   0x5504,  // Microphone data (Sunshine protocol extension)
   0x5505,  // Microphone config (Sunshine protocol extension)
+  0x5506,  // Dynamic bitrate change (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -338,6 +340,8 @@ namespace stream {
     // ENet peer to session mapping for sessions with a peer connected
     sync_util::sync_t<std::map<net::peer_t, session_t *>> _peer_to_session;
 
+
+
     ENetAddress _addr;
     net::host_t _host;
   };
@@ -390,6 +394,7 @@ namespace stream {
 
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
+      safe::mail_raw_t::event_t<int> dynamic_bitrate_change_events;  // 新增：动态码率调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
     } video;
@@ -998,6 +1003,24 @@ namespace stream {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
       session->video.idr_events->raise(true);
+    });
+
+    server->map(packetTypes[IDX_DYNAMIC_BITRATE_CHANGE], [&](session_t *session, const std::string_view &payload) {
+      BOOST_LOG(debug) << "type [IDX_DYNAMIC_BITRATE_CHANGE]"sv;
+
+      if (payload.size() >= sizeof(int)) {
+        auto new_bitrate = *(int *) payload.data();
+        BOOST_LOG(info) << "Dynamic bitrate change requested: " << new_bitrate << " Kbps";
+        
+        // 验证码率范围
+        if (new_bitrate > 0 && new_bitrate <= 800000) {  // 最大800Mbps
+          session->video.dynamic_bitrate_change_events->raise(new_bitrate);
+        } else {
+          BOOST_LOG(warning) << "Invalid bitrate value: " << new_bitrate << " Kbps";
+        }
+      } else {
+        BOOST_LOG(warning) << "Invalid payload size for dynamic bitrate change";
+      }
     });
 
     server->map(packetTypes[IDX_INVALIDATE_REF_FRAMES], [&](session_t *session, const std::string_view &payload) {

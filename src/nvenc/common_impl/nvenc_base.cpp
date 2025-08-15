@@ -239,10 +239,8 @@ namespace nvenc {
     }
 #endif
 
-    NV_ENC_PRESET_CONFIG preset_config = {
-      .version = NV_ENC_PRESET_CONFIG_VER,
-      .presetCfg = { .version = NV_ENC_CONFIG_VER },
-    };
+    NV_ENC_PRESET_CONFIG preset_config = { NV_ENC_PRESET_CONFIG_VER };
+    preset_config.presetCfg.version = NV_ENC_CONFIG_VER;
     if (nvenc_failed(nvenc->nvEncGetEncodePresetConfigEx(encoder, init_params.encodeGUID, init_params.presetGUID, init_params.tuningInfo, &preset_config))) {
       BOOST_LOG(error) << "NvEnc: NvEncGetEncodePresetConfigEx() failed: " << last_nvenc_error_string;
       return false;
@@ -467,6 +465,11 @@ namespace nvenc {
                       << video_format_string << quality_preset_string_from_guid(init_params.presetGUID) << extra;
     }
 
+    // 保存当前编码器配置和初始化参数，用于后续动态调整
+    saved_init_params = init_params;
+    current_enc_config = enc_config;
+    saved_init_params.encodeConfig = &current_enc_config;  // 确保指针指向我们的成员变量
+    
     encoder_state = {};
     fail_guard.disable();
     return true;
@@ -627,7 +630,51 @@ namespace nvenc {
     return true;
   }
 
-  bool
+  void
+  nvenc_base::set_bitrate(int bitrate_kbps) {
+    if (!encoder || !nvenc) {
+      BOOST_LOG(warning) << "NvEnc: Cannot set bitrate - encoder not initialized";
+      return;
+    }
+
+    // 检查NVENC API版本是否支持动态码率调整
+    if (NVENC_INT_VERSION < 1100) {
+      BOOST_LOG(error) << "NvEnc: Unsupported NVENC API version " << NVENC_INT_VERSION
+                       << ", need at least 1100 for dynamic bitrate adjustment";
+      return;
+    }
+
+    // 验证码率范围
+    if (bitrate_kbps <= 0 || bitrate_kbps > 800000) {
+      BOOST_LOG(error) << "NvEnc: Invalid bitrate value: " << bitrate_kbps << " Kbps (must be between 1 and 800000)";
+      return;
+    }
+
+    // 使用 nvEncReconfigureEncoder 来动态调整码率
+    NV_ENC_RECONFIGURE_PARAMS reconfigure_params = { NV_ENC_RECONFIGURE_PARAMS_VER };
+    
+    // 使用保存的当前配置，只修改码率
+    NV_ENC_CONFIG enc_config = current_enc_config;
+    enc_config.rcParams.averageBitRate = bitrate_kbps * 1000;
+    enc_config.rcParams.maxBitRate = bitrate_kbps * 1000;
+    
+    // 设置重新配置参数 - 使用保存的初始化参数
+    reconfigure_params.reInitEncodeParams = saved_init_params;
+    reconfigure_params.reInitEncodeParams.encodeConfig = &enc_config;  // 使用新的配置
+
+    if (nvenc_failed(nvenc->nvEncReconfigureEncoder(encoder, &reconfigure_params))) {
+      BOOST_LOG(error) << "NvEnc: Failed to set bitrate to " << bitrate_kbps << " Kbps: " << last_nvenc_error_string;
+      return;
+    }
+
+    // 更新保存的配置中的码率
+    current_enc_config.rcParams.averageBitRate = bitrate_kbps * 1000;
+    current_enc_config.rcParams.maxBitRate = bitrate_kbps * 1000;
+
+    BOOST_LOG(info) << "NvEnc: Bitrate successfully changed to " << bitrate_kbps << " Kbps";
+  }
+
+    bool
   nvenc_base::nvenc_failed(NVENCSTATUS status) {
     auto status_string = [](NVENCSTATUS status) -> std::string {
       switch (status) {

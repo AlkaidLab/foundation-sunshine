@@ -382,6 +382,18 @@ namespace video {
       request_idr_frame();
     }
 
+    void
+    set_bitrate(int bitrate_kbps) override {
+      if (avcodec_ctx) {
+        auto bitrate = bitrate_kbps * 1000;  // 转换为bps
+        avcodec_ctx->rc_max_rate = bitrate;
+        avcodec_ctx->bit_rate = bitrate;
+        avcodec_ctx->rc_min_rate = bitrate;  // Set min rate for CBR mode
+        
+        BOOST_LOG(info) << "AVCodec encoder bitrate changed to: " << bitrate_kbps << " Kbps";
+      }
+    }
+
     avcodec_ctx_t avcodec_ctx;
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
@@ -422,6 +434,14 @@ namespace video {
 
       if (!device->nvenc->invalidate_ref_frames(first_frame, last_frame)) {
         force_idr = true;
+      }
+    }
+
+    void
+    set_bitrate(int bitrate_kbps) override {
+      if (device && device->nvenc) {
+        device->nvenc->set_bitrate(bitrate_kbps);
+        BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << bitrate_kbps << " Kbps";
       }
     }
 
@@ -1907,6 +1927,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
+    auto dynamic_bitrate_events = mail::man->event<int>(mail::dynamic_bitrate_change);  // 使用全局mail系统
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -1942,6 +1963,14 @@ namespace video {
       if (idr_events->peek()) {
         requested_idr_frame = true;
         idr_events->pop();
+      }
+
+      // 处理动态码率调整
+      while (dynamic_bitrate_events->peek()) {
+        if (auto new_bitrate = dynamic_bitrate_events->pop(0ms)) {
+          BOOST_LOG(info) << "Applying dynamic bitrate change to: " << *new_bitrate << " Kbps";
+          session->set_bitrate(*new_bitrate);
+        }
       }
 
       if (requested_idr_frame) {

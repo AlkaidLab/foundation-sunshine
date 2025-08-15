@@ -929,6 +929,65 @@ namespace nvhttp {
   }
 
   void
+  changeBitrate(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    pt::ptree tree;
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_xml(data, tree);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+    });
+
+    try {
+      // 从查询参数中获取码率
+      auto args = request->parse_query_string();
+      auto bitrate_param = args.find("bitrate");
+
+      if (bitrate_param == args.end()) {
+        tree.put("root.bitrate", 0);
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "Missing bitrate parameter");
+        return;
+      }
+
+      int bitrate = std::stoi(bitrate_param->second);
+
+      // 验证码率范围
+      if (bitrate <= 0 || bitrate > 800000) {
+        tree.put("root.bitrate", 0);
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "Invalid bitrate value. Must be between 1 and 800000 Kbps");
+        return;
+      }
+
+      // 通过全局mail系统发送动态码率调整事件
+      auto dynamic_bitrate_event = mail::man->event<int>(mail::dynamic_bitrate_change);
+      dynamic_bitrate_event->raise(bitrate);
+      bool success = true;
+
+      if (success) {
+        tree.put("root.bitrate", 1);
+        tree.put("root.<xmlattr>.status_code", 200);
+        tree.put("root.<xmlattr>.bitrate", bitrate);
+        tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to active sessions");
+        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested: " << bitrate << " Kbps";
+      } else {
+        tree.put("root.bitrate", 0);
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "No active streaming sessions found");
+      }
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "ChangeBitrate: "sv << e.what();
+      tree.put("root.bitrate", 0);
+      tree.put("root.<xmlattr>.status_code", 500);
+      tree.put("root.<xmlattr>.status_message", e.what());
+    }
+  }
+
+  void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
     
@@ -1314,6 +1373,7 @@ namespace nvhttp {
     https_server.resource["^/cancel$"]["GET"] = cancel;
     https_server.resource["^/pcsleep$"]["GET"] = sleep;
     https_server.resource["^/supercmd$"]["GET"] = execSuperCmd;
+    https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::af_to_any_address_string(address_family);

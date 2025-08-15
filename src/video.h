@@ -213,6 +213,9 @@ namespace video {
 
     virtual void
     invalidate_ref_frames(int64_t first_frame, int64_t last_frame) = 0;
+
+    virtual void
+    set_bitrate(int bitrate_kbps) = 0;  // 新增：动态码率调整方法
   };
 
   // encoders

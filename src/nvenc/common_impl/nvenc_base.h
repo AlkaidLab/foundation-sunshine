@@ -46,6 +46,9 @@ namespace nvenc {
     bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
+    void
+    set_bitrate(int bitrate_kbps) override;
+
   protected:
     /**
      * @brief Required. Used for loading NvEnc library and setting `nvenc` variable with `NvEncodeAPICreateInstance()`.
@@ -117,5 +120,8 @@ namespace nvenc {
       std::pair<uint64_t, uint64_t> last_rfi_range;
       logging::min_max_avg_periodic_logger<double> frame_size_logger = { debug, "NvEnc: encoded frame sizes in kB", "" };
     } encoder_state;
+
+    NV_ENC_INITIALIZE_PARAMS saved_init_params;  // 保存初始化参数
+    NV_ENC_CONFIG current_enc_config;  // 保存当前的编码器配置
   };
 }

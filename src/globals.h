@@ -57,6 +57,7 @@ namespace mail {
   MAIL(invalidate_ref_frames);
   MAIL(gamepad_feedback);
   MAIL(hdr);
+  MAIL(dynamic_bitrate_change);  // 新增：动态码率调整事件
 #undef MAIL
 
 }  // namespace mail

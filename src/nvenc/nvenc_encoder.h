@@ -64,6 +64,13 @@ namespace nvenc {
      */
     virtual bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) = 0;
+
+    /**
+     * @brief Set the bitrate for the encoder.
+     * @param bitrate_kbps Bitrate in kilobits per second.
+     */
+    virtual void
+    set_bitrate(int bitrate_kbps) = 0;
   };
 
 }  // namespace nvenc
