@@ -354,7 +354,8 @@ namespace video {
   capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data);
+    void *channel_data,
+    std::optional<safe::mail_raw_t::event_t<int>> dynamic_bitrate_events = std::nullopt);
 
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure);

@@ -31,6 +31,7 @@
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"
+#include "stream.h"
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
@@ -941,9 +942,9 @@ namespace nvhttp {
     });
 
     try {
-      // 从查询参数中获取码率
       auto args = request->parse_query_string();
       auto bitrate_param = args.find("bitrate");
+      auto clientname_param = args.find("clientname");
 
       if (bitrate_param == args.end()) {
         tree.put("root.bitrate", 0);
@@ -952,9 +953,16 @@ namespace nvhttp {
         return;
       }
 
-      int bitrate = std::stoi(bitrate_param->second);
+      if (clientname_param == args.end()) {
+        tree.put("root.bitrate", 0);
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "Missing clientname parameter");
+        return;
+      }
 
-      // 验证码率范围
+      int bitrate = std::stoi(bitrate_param->second);
+      std::string client_name = clientname_param->second;
+
       if (bitrate <= 0 || bitrate > 800000) {
         tree.put("root.bitrate", 0);
         tree.put("root.<xmlattr>.status_code", 400);
@@ -962,21 +970,20 @@ namespace nvhttp {
         return;
       }
 
-      // 通过全局mail系统发送动态码率调整事件
-      auto dynamic_bitrate_event = mail::man->event<int>(mail::dynamic_bitrate_change);
-      dynamic_bitrate_event->raise(bitrate);
-      bool success = true;
+      bool success = stream::session::change_bitrate_for_client(client_name, bitrate);
 
       if (success) {
         tree.put("root.bitrate", 1);
         tree.put("root.<xmlattr>.status_code", 200);
         tree.put("root.<xmlattr>.bitrate", bitrate);
-        tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to active sessions");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested: " << bitrate << " Kbps";
+        tree.put("root.<xmlattr>.clientname", client_name);
+        tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to client session");
+        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '" 
+                       << client_name << "': " << bitrate << " Kbps";
       } else {
         tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "No active streaming sessions found");
+        tree.put("root.<xmlattr>.status_code", 404);
+        tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
       }
     }
     catch (std::exception &e) {
