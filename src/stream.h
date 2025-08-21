@@ -53,13 +53,15 @@ namespace stream {
     state_e
     state(session_t &session);
     
+
+
     /**
-     * @brief Send dynamic bitrate change event to a specific client session.
+     * @brief Send dynamic parameter change event to a specific client session.
      * @param client_name The name of the client to target.
-     * @param bitrate_kbps The new bitrate in Kbps.
+     * @param param The dynamic parameter to change.
      * @return true if the event was sent successfully, false otherwise.
      */
     bool
-    change_bitrate_for_client(const std::string &client_name, int bitrate_kbps);
+    change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
   }  // namespace session
 }  // namespace stream

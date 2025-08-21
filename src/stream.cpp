@@ -395,7 +395,7 @@ namespace stream {
 
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
-      safe::mail_raw_t::event_t<int> dynamic_bitrate_change_events;  // 新增：动态码率调整事件
+      safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
     } video;
@@ -1015,7 +1015,11 @@ namespace stream {
 
         // 验证码率范围
         if (new_bitrate > 0 && new_bitrate <= 800000) {  // 最大800Mbps
-          session->video.dynamic_bitrate_change_events->raise(new_bitrate);
+          video::dynamic_param_t param;
+          param.type = video::dynamic_param_type_e::BITRATE;
+          param.value.int_value = new_bitrate;
+          param.valid = true;
+          session->video.dynamic_param_change_events->raise(param);
         }
         else {
           BOOST_LOG(warning) << "Invalid bitrate value: " << new_bitrate << " Kbps";
@@ -1327,11 +1331,18 @@ namespace stream {
     try {
       BOOST_LOG(debug) << "Starting microphone receive thread";
 
-      audio::init_mic_redirect_device();
+      bool mic_device_initialized = false;
 
       while (!broadcast_shutdown_event->peek()) {
         // 检查麦克风socket状态
         if (ctx.mic_socket_enabled.load()) {
+          // 延迟初始化麦克风重定向设备，直到确认需要时才初始化
+          if (!mic_device_initialized) {
+            BOOST_LOG(debug) << "Initializing microphone redirect device";
+            audio::init_mic_redirect_device();
+            mic_device_initialized = true;
+          }
+
           // 启动麦克风接收
           ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
 
@@ -1348,7 +1359,10 @@ namespace stream {
         }
       }
 
-      audio::release_mic_redirect_device();
+      // 只有在设备被初始化过的情况下才释放
+      if (mic_device_initialized) {
+        audio::release_mic_redirect_device();
+      }
     }
     catch (const std::exception &e) {
       BOOST_LOG(fatal) << "micRecvThread exception: " << e.what();
@@ -2098,7 +2112,7 @@ namespace stream {
       session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
-    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_bitrate_change_events);
+    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
   }
 
   void
@@ -2303,7 +2317,7 @@ namespace stream {
 
       session->video.idr_events = mail->event<bool>(mail::idr);
       session->video.invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
-      session->video.dynamic_bitrate_change_events = mail->event<int>(mail::dynamic_bitrate_change);
+      session->video.dynamic_param_change_events = mail->event<video::dynamic_param_t>(mail::dynamic_param_change);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;
       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {
@@ -2356,7 +2370,7 @@ namespace stream {
     }
 
     bool
-    change_bitrate_for_client(const std::string &client_name, int bitrate_kbps) {
+    change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
       auto broadcast_ref = broadcast.ref();
       if (!broadcast_ref) {
         BOOST_LOG(warning) << "No broadcast context available";
@@ -2367,9 +2381,9 @@ namespace stream {
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name == client_name &&
             session_p->state.load(std::memory_order_relaxed) == state_e::RUNNING) {
-          session_p->video.dynamic_bitrate_change_events->raise(bitrate_kbps);
-          BOOST_LOG(info) << "Sent bitrate change event to client '" << client_name
-                          << "': " << bitrate_kbps << " Kbps";
+          session_p->video.dynamic_param_change_events->raise(param);
+          BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
+                          << "': type=" << (int) param.type;
           return true;
         }
       }

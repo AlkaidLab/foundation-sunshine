@@ -1208,7 +1208,6 @@ namespace platf::audio {
 
       if (mic_redirect_device) {
         mic_redirect_device->restore_audio_devices();
-        // mic_redirect_device.reset();
       }
     }
 

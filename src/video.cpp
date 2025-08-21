@@ -403,6 +403,41 @@ namespace video {
       }
     }
 
+    void
+    set_dynamic_param(const dynamic_param_t &param) override {
+      if (!avcodec_ctx) return;
+
+      switch (param.type) {
+        case dynamic_param_type_e::BITRATE: {
+          // 码率调整通过set_bitrate处理
+          set_bitrate(param.value.int_value);
+          break;
+        }
+        case dynamic_param_type_e::QP: {
+          // 设置量化参数
+          if (param.value.int_value >= 0 && param.value.int_value <= 51) {
+            avcodec_ctx->qmin = param.value.int_value;
+            avcodec_ctx->qmax = param.value.int_value;
+            BOOST_LOG(info) << "AVCodec encoder QP changed to: " << param.value.int_value;
+          } else {
+            BOOST_LOG(warning) << "Invalid QP value: " << param.value.int_value << " (must be 0-51)";
+          }
+          break;
+        }
+        case dynamic_param_type_e::VBV_BUFFER_SIZE: {
+          // 设置VBV缓冲区大小
+          if (param.value.int_value > 0) {
+            avcodec_ctx->rc_buffer_size = param.value.int_value * 1000;  // 转换为bps
+            BOOST_LOG(info) << "AVCodec encoder VBV buffer size changed to: " << param.value.int_value << " Kbps";
+          }
+          break;
+        }
+        default:
+          BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int)param.type;
+          break;
+      }
+    }
+
     avcodec_ctx_t avcodec_ctx;
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
@@ -460,6 +495,43 @@ namespace video {
         BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps 
                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: " 
                        << config::stream.fec_percentage << "%)";
+      }
+    }
+
+    void
+    set_dynamic_param(const dynamic_param_t &param) override {
+      if (!device || !device->nvenc) return;
+
+      switch (param.type) {
+        case dynamic_param_type_e::BITRATE: {
+          // 码率调整通过set_bitrate处理
+          set_bitrate(param.value.int_value);
+          break;
+        }
+        case dynamic_param_type_e::QP: {
+          // NVENC的QP调整需要通过重新配置编码器
+          BOOST_LOG(info) << "NVENC encoder QP change requested: " << param.value.int_value 
+                         << " (requires encoder reconfiguration)";
+          break;
+        }
+        case dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
+          // 自适应量化开关
+          BOOST_LOG(info) << "NVENC encoder adaptive quantization change requested: " << param.value.bool_value;
+          break;
+        }
+        case dynamic_param_type_e::MULTI_PASS: {
+          // 多遍编码设置
+          BOOST_LOG(info) << "NVENC encoder multi-pass change requested: " << param.value.int_value;
+          break;
+        }
+        case dynamic_param_type_e::VBV_BUFFER_SIZE: {
+          // VBV缓冲区大小
+          BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
+          break;
+        }
+        default:
+          BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int)param.type;
+          break;
       }
     }
 
@@ -1915,7 +1987,7 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<int>> dynamic_bitrate_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
@@ -1946,8 +2018,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
-    // 使用会话特定的动态码率调整事件，如果没有提供则使用全局事件
-    auto dynamic_bitrate_events_ptr = dynamic_bitrate_events.value_or(mail::man->event<int>(mail::dynamic_bitrate_change));
+    auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->event<dynamic_param_t>(mail::dynamic_param_change));
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -1985,11 +2056,11 @@ namespace video {
         idr_events->pop();
       }
 
-      // 处理动态码率调整
-      while (dynamic_bitrate_events_ptr->peek()) {
-        if (auto new_bitrate = dynamic_bitrate_events_ptr->pop(0ms)) {
-          BOOST_LOG(info) << "Applying dynamic bitrate change to: " << *new_bitrate << " Kbps";
-          session->set_bitrate(*new_bitrate);
+      // 处理动态参数调整
+      while (dynamic_param_events_ptr->peek()) {
+        if (auto param = dynamic_param_events_ptr->pop(0ms)) {
+          BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int)param->type;
+          session->set_dynamic_param(*param);
         }
       }
 
@@ -2333,7 +2404,7 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<int>> dynamic_bitrate_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<img_event_t::element_type>();
@@ -2406,7 +2477,7 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_bitrate_events);
+        channel_data, dynamic_param_events);
     }
   }
 
@@ -2415,12 +2486,12 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<int>> dynamic_bitrate_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_bitrate_events);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
     }
     else {
       safe::signal_t join_event;
