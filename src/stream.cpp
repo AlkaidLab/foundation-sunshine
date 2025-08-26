@@ -2391,5 +2391,74 @@ namespace stream {
       BOOST_LOG(warning) << "No active session found for client: " << client_name;
       return false;
     }
+
+    std::vector<session_info_t>
+    get_all_sessions_info() {
+      std::vector<session_info_t> sessions_info;
+      
+      auto broadcast_ref = broadcast.ref();
+      if (!broadcast_ref) {
+        BOOST_LOG(warning) << "No broadcast context available";
+        return sessions_info;
+      }
+
+      auto lg = broadcast_ref->control_server._sessions.lock();
+      for (auto session_p : *broadcast_ref->control_server._sessions) {
+        session_info_t info;
+        
+        info.client_name = session_p->client_name;
+        info.session_id = session_p->launch_session_id;
+        
+        // Get client address
+        if (session_p->control.peer) {
+          auto peer_addr = platf::from_sockaddr((sockaddr *) &session_p->control.peer->address.address);
+          info.client_address = peer_addr;
+        } else {
+          info.client_address = session_p->control.expected_peer_address;
+        }
+        
+        // Get session state
+        auto state = session_p->state.load(std::memory_order_relaxed);
+        switch (state) {
+          case state_e::STOPPED:
+            info.state = "STOPPED";
+            break;
+          case state_e::STOPPING:
+            info.state = "STOPPING";
+            break;
+          case state_e::STARTING:
+            info.state = "STARTING";
+            break;
+          case state_e::RUNNING:
+            info.state = "RUNNING";
+            break;
+          default:
+            info.state = "UNKNOWN";
+            break;
+        }
+        
+        // Get video configuration
+        info.width = session_p->config.monitor.width;
+        info.height = session_p->config.monitor.height;
+        info.fps = session_p->config.monitor.framerate;
+        
+        // Get audio and other settings
+        info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
+        info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
+        info.enable_mic = session_p->audio.enable_mic;
+        
+        // Get app information
+        info.app_id = proc::proc.running();
+        if (info.app_id > 0) {
+          info.app_name = proc::proc.get_last_run_app_name();
+        } else {
+          info.app_name = "None";
+        }
+        
+        sessions_info.push_back(info);
+      }
+      
+      return sessions_info;
+    }
   }  // namespace session
 }  // namespace stream

@@ -1149,6 +1149,72 @@ namespace nvhttp {
   }
 
   void
+  getSessionsInfo(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    // 检查是否为localhost请求
+    auto client_ip = request->remote_endpoint().address();
+    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+      json response_json;
+      response_json["success"] = false;
+      response_json["status_code"] = 403;
+      response_json["status_message"] = "Access denied. Only localhost requests are allowed.";
+      
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    try {
+      auto sessions_info = stream::session::get_all_sessions_info();
+      
+      json response_json;
+      response_json["success"] = true;
+      response_json["status_code"] = 200;
+      response_json["status_message"] = "Success";
+      response_json["total_sessions"] = sessions_info.size();
+      
+      json sessions_array = json::array();
+      
+      for (const auto &session_info : sessions_info) {
+        json session_obj;
+        session_obj["client_name"] = session_info.client_name;
+        session_obj["client_address"] = session_info.client_address;
+        session_obj["state"] = session_info.state;
+        session_obj["session_id"] = session_info.session_id;
+        session_obj["width"] = session_info.width;
+        session_obj["height"] = session_info.height;
+        session_obj["fps"] = session_info.fps;
+        session_obj["host_audio"] = session_info.host_audio;
+        session_obj["enable_hdr"] = session_info.enable_hdr;
+        session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["app_name"] = session_info.app_name;
+        session_obj["app_id"] = session_info.app_id;
+        
+        sessions_array.push_back(session_obj);
+      }
+      
+      response_json["sessions"] = sessions_array;
+      
+      BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
+      
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "GetSessionsInfo: "sv << e.what();
+      
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 500;
+      error_json["status_message"] = e.what();
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+    }
+  }
+
+  void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
     
@@ -1536,6 +1602,7 @@ namespace nvhttp {
     https_server.resource["^/supercmd$"]["GET"] = execSuperCmd;
     https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
     https_server.resource["^/stream/settings$"]["GET"] = changeDynamicParam;
+    https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::af_to_any_address_string(address_family);
