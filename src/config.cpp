@@ -1220,7 +1220,7 @@ namespace config {
       config::sunshine.flags[config::flag::CLOSE_VERIFY_SAFE].flip();
     }
 
-    bool mdns_broadcast = false;
+    bool mdns_broadcast = true;
     bool_f(vars, "mdns_broadcast"s, mdns_broadcast);
 
     if (mdns_broadcast) {

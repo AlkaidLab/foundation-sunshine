@@ -995,9 +995,9 @@ namespace platf {
       return nullptr;
     };
 
-    // 优先级顺序：amd > ddx > wgc
+    // 优先级顺序：ddx > wgc > amd
     const std::vector<std::string> capture_types = {
-      "amd", "ddx", "wgc"
+      "ddx", "wgc", "amd"
     };
 
     // 如果capture为空，则依次尝试所有类型，否则只尝试指定类型
@@ -1009,38 +1009,8 @@ namespace platf {
       try_types.push_back(config::video.capture);
     }
 
-    // Check if the primary GPU is a discrete AMD GPU that supports AFMF (not integrated)
-    bool is_amd_afmf_gpu = false;
-    if (std::find(try_types.begin(), try_types.end(), "amd") != try_types.end()) {
-      dxgi::factory1_t factory;
-      HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
-      if (SUCCEEDED(status)) {
-        dxgi::adapter_t adapter;
-        if (factory->EnumAdapters1(0, &adapter) != DXGI_ERROR_NOT_FOUND) {
-          DXGI_ADAPTER_DESC1 adapter_desc;
-          adapter->GetDesc1(&adapter_desc);
-          // 0x1002 is AMD vendor ID, check for discrete GPU (not integrated)
-          bool is_amd_gpu = (adapter_desc.VendorId == 0x1002) && !(adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
-          // AFMF support: check for RDNA3 or newer (DeviceId range), not integrated
-          // RDNA3: Navi 3x, DeviceId 0x7440~0x74FF, 0x7D00~0x7DFF, etc.
-          // You may need to expand this range for future AFMF support
-          if (is_amd_gpu) {
-            uint32_t id = adapter_desc.DeviceId;
-            if ((id >= 0x7440 && id <= 0x74FF) || (id >= 0x7D00 && id <= 0x7DFF)) {
-              is_amd_afmf_gpu = true;
-            }
-          }
-        }
-      }
-    }
-
     for (const auto &type : try_types) {
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
-        // Only try AMD capture on AMD GPUs
-        if (!is_amd_afmf_gpu) {
-          BOOST_LOG(debug) << "Skipping AMD capture on non-AMD GPU";
-          continue;
-        }
         auto disp = std::make_shared<dxgi::display_amd_vram_t>();
         if (auto ret = try_init(disp)) return ret;
       }
