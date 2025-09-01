@@ -26,7 +26,8 @@ extern bool display_cursor;
  */
 extern nvprefs::nvprefs_interface nvprefs_instance;
 
-extern std::string zako_name;
+extern const std::string VDD_NAME;
+extern const std::string ZAKO_NAME;
 extern std::string zako_device_id;
 #endif
 

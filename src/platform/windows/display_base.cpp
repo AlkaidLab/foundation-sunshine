@@ -475,9 +475,9 @@ namespace platf::dxgi {
       return -1;
     }
 
-    const auto device_name = config::video.preferUseVdd ? display_device::find_device_by_friendlyname(zako_name) : config::video.output_name;
-    auto adapter_name = from_utf8(config::video.adapter_name);
-    auto output_display_name = from_utf8(display_device::get_display_name(device_name));
+    std::wstring output_display_name = from_utf8(display_name);
+    std::wstring adapter_name = from_utf8(config::video.adapter_name);
+    BOOST_LOG(debug) << "[Display] 初始化显示器: " << display_name;
 
     adapter_t::pointer adapter_p;
     for (int tries = 0; tries < 2; ++tries) {
@@ -499,10 +499,12 @@ namespace platf::dxgi {
           output_tmp->GetDesc(&desc);
 
           if (!output_display_name.empty() && desc.DeviceName != output_display_name) {
+            BOOST_LOG(debug) << "[Display] 跳过不匹配的显示器: " << to_utf8(desc.DeviceName);
             continue;
           }
 
           if (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false)) {
+            BOOST_LOG(debug) << "[Display] 成功匹配到目标显示器: " << to_utf8(desc.DeviceName);
             output = std::move(output_tmp);
 
             offset_x = desc.DesktopCoordinates.left;
@@ -601,7 +603,8 @@ namespace platf::dxgi {
       << ", Feature Level: 0x"sv << util::hex(feature_level).to_string_view()
       << ", Capture size: "sv << width << 'x' << height
       << ", Offset: "sv << offset_x << 'x' << offset_y
-      << ", Virtual Desktop: "sv << env_width << 'x' << env_height;
+      << ", Virtual Desktop: "sv << env_width << 'x' << env_height
+      << ", Display Name: " << display_name;
 
     // Bump up thread priority
     {
@@ -723,14 +726,14 @@ namespace platf::dxgi {
 
       BOOST_LOG(info)
         << "Colorspace: "sv << colorspace_to_string(desc1.ColorSpace)
-        << "Bits Per Color: "sv << desc1.BitsPerColor
-        << "Red Primary: ["sv << desc1.RedPrimary[0] << ',' << desc1.RedPrimary[1] << ']'
-        << "Green Primary: ["sv << desc1.GreenPrimary[0] << ',' << desc1.GreenPrimary[1] << ']'
-        << "Blue Primary: ["sv << desc1.BluePrimary[0] << ',' << desc1.BluePrimary[1] << ']'
-        << "White Point: ["sv << desc1.WhitePoint[0] << ',' << desc1.WhitePoint[1] << ']'
-        << "Min Luminance: "sv << desc1.MinLuminance << " nits"sv
-        << "Max Luminance: "sv << desc1.MaxLuminance << " nits"sv
-        << "Max Full Luminance : "sv << desc1.MaxFullFrameLuminance << " nits"sv;
+        << ",Bits Per Color: "sv << desc1.BitsPerColor
+        << ",Red Primary: ["sv << desc1.RedPrimary[0] << ',' << desc1.RedPrimary[1] << ']'
+        << ",Green Primary: ["sv << desc1.GreenPrimary[0] << ',' << desc1.GreenPrimary[1] << ']'
+        << ",Blue Primary: ["sv << desc1.BluePrimary[0] << ',' << desc1.BluePrimary[1] << ']'
+        << ",White Point: ["sv << desc1.WhitePoint[0] << ',' << desc1.WhitePoint[1] << ']'
+        << ",Min Luminance: "sv << desc1.MinLuminance << " nits"sv
+        << ",Max Luminance: "sv << desc1.MaxLuminance << " nits"sv
+        << ",Max Full Luminance : "sv << desc1.MaxFullFrameLuminance << " nits"sv;
     }
 
     if (!timer || !*timer) {
@@ -1035,7 +1038,7 @@ namespace platf {
         }
       }
     }
-
+    BOOST_LOG(error) << "[Display] 所有类型创建失败: " << display_name;
     // 所有尝试均失败
     return nullptr;
   }
@@ -1070,14 +1073,12 @@ namespace platf {
       BOOST_LOG(debug)
         << std::endl
         << "ADAPTER:"sv
-        << "Device Name: "sv << to_utf8(adapter_desc.Description)
-        << "Device Vendor ID : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
-        << "Device Device ID : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
-        << "Device Video Mem : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
-        << "Device Sys Mem: "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
-        << "Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
-        << std::endl
-        << "    ====== OUTPUT ======"sv;
+        << ",Device Name: "sv << to_utf8(adapter_desc.Description)
+        << ",Device Vendor ID : 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
+        << ",Device Device ID : 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
+        << ",Device Video Mem : "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
+        << ",Device Sys Mem: "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
+        << ",Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv;
 
       dxgi::output_t::pointer output_p {};
       for (int y = 0; adapter->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
@@ -1099,10 +1100,15 @@ namespace platf {
         // Don't include the display in the list if we can't actually capture it
         if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {
           display_names.emplace_back(std::move(device_name));
+          BOOST_LOG(debug) << "[Display] 添加可用显示器: " << device_name;
+        } else if (!desc.AttachedToDesktop) {
+          BOOST_LOG(debug) << "[Display] 跳过 None AttachedToDesktop 不可用显示器: " << device_name;
+        } else {
+          BOOST_LOG(debug) << "[Display] 跳过 DXGI测试失败 不可用显示器: " << device_name;
         }
       }
     }
-
+    BOOST_LOG(debug) << "[Display] 显示器枚举完成，找到 " << display_names.size() << " 个可用显示器";
     return display_names;
   }
 

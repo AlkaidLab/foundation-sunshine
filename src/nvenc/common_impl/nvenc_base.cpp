@@ -165,7 +165,7 @@ namespace nvenc {
         return equal_guids(init_params.encodeGUID, guid);
       };
       if (std::find_if(encode_guids.begin(), encode_guids.end(), search_predicate) == encode_guids.end()) {
-        BOOST_LOG(error) << "NvEnc: encoding format is not supported by the gpu";
+        BOOST_LOG(error) << "NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: " << NVENCAPI_VERSION;
         return false;
       }
     }
@@ -197,12 +197,12 @@ namespace nvenc {
     }
 
     if (buffer_is_10bit() && !get_encoder_cap(NV_ENC_CAPS_SUPPORT_10BIT_ENCODE)) {
-      BOOST_LOG(warning) << "NvEnc: gpu doesn't support 10-bit encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support;
+      BOOST_LOG(warning) << "NvEnc: gpu doesn't support 10-bit encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support << ", NVENCAPI_VERSION: " << NVENCAPI_VERSION;
       return false;
     }
 
     if (buffer_is_yuv444() && !get_encoder_cap(NV_ENC_CAPS_SUPPORT_YUV444_ENCODE)) {
-      BOOST_LOG(warning) << "NvEnc: gpu doesn't support YUV444 encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support;
+      BOOST_LOG(warning) << "NvEnc: gpu doesn't support YUV444 encode, format: " << buffer_format << ", encode_guid_support: " << encode_guid_support << ", NVENCAPI_VERSION: " << NVENCAPI_VERSION;
       if (async_event_handle) {
         CloseHandle(async_event_handle);
         async_event_handle = nullptr;
@@ -211,7 +211,7 @@ namespace nvenc {
     }
 
     if (async_event_handle && !get_encoder_cap(NV_ENC_CAPS_ASYNC_ENCODE_SUPPORT)) {
-      BOOST_LOG(warning) << "NvEnc: gpu doesn't support async encode";
+      BOOST_LOG(warning) << "NvEnc: gpu doesn't support async encode, NVENCAPI_VERSION: " << NVENCAPI_VERSION;
       async_event_handle = nullptr;
     }
 

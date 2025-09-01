@@ -579,7 +579,7 @@ namespace display_device {
 
     // 检查是否需要使用VDD
     const auto requested_device_id = display_device::find_one_of_the_available_devices(config.output_name);
-    const bool is_vdd_device = (display_device::get_display_friendly_name(config.output_name) == zako_name);
+    const bool is_vdd_device = (display_device::get_display_friendly_name(config.output_name) == ZAKO_NAME);
 
     // 如果会话不需要VDD且指定设备存在且不是VDD设备，则跳过VDD准备
     if (!session.use_vdd && !requested_device_id.empty() && !is_vdd_device) {

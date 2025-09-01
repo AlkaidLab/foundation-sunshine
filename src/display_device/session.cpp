@@ -256,7 +256,7 @@ namespace display_device {
 
     if (has_new_resolution) update_vdd_resolution(config, vdd_settings);
 
-    auto device_zako = display_device::find_device_by_friendlyname(zako_name);
+    auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
     if (device_zako.empty()) {
       BOOST_LOG(info) << "没有找到VDD设备，开始创建虚拟显示器...";
       create_vdd_monitor();
@@ -265,7 +265,7 @@ namespace display_device {
 
     const bool device_found = vdd_utils::retry_with_backoff(
       [&device_zako]() {
-        device_zako = display_device::find_device_by_friendlyname(zako_name);
+        device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
         return !device_zako.empty();
       },
       { .max_attempts = 10,
@@ -293,7 +293,7 @@ namespace display_device {
 
         if (vdd_utils::retry_with_backoff(
               [&device_zako]() {
-                device_zako = display_device::find_device_by_friendlyname(zako_name);
+                device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
                 return !device_zako.empty();
               },
               { .max_attempts = 5,

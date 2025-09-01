@@ -204,7 +204,7 @@ namespace display_device {
 
     bool
     is_display_on() {
-      return !display_device::find_device_by_friendlyname(zako_name).empty();
+      return !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
     }
 
     void

@@ -1154,9 +1154,10 @@ namespace video {
       disp.reset();
       disp = platf::display(type, display_name, config);
       if (disp) {
+        BOOST_LOG(debug) << "[reset_display] 成功重置显示器: " << display_name;
         break;
       }
-
+      BOOST_LOG(debug) << "[reset_display] 显示器创建失败 (尝试 " << (x + 1) << "/2): " << display_name;
       // The capture code depends on us to sleep between failures
       std::this_thread::sleep_for(200ms);
     }
@@ -2435,6 +2436,7 @@ namespace video {
     while (!shutdown_event->peek() && images->running()) {
       // Wait for the main capture event when the display is being reinitialized
       if (ref->reinit_event.peek()) {
+        BOOST_LOG(debug) << "[Display] 检测到重新初始化事件，等待显示器准备就绪...";
         std::this_thread::sleep_for(20ms);
         continue;
       }
@@ -2443,6 +2445,7 @@ namespace video {
       {
         auto lg = ref->display_wp.lock();
         if (ref->display_wp->expired()) {
+          BOOST_LOG(verbose) << "[Display] 显示对象已过期，等待重新初始化...";
           continue;
         }
 
@@ -2699,9 +2702,9 @@ namespace video {
       }
 
       const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 0, 3, 1, 1, 0 };
-
+      const auto output_display_name { display_device::get_display_name(config::video.output_name) };
       // Reset the display since we're switching from SDR to HDR
-      reset_display(disp, encoder.platform_formats->dev_type, config::video.output_name, generic_hdr_config);
+      reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
       if (!disp) {
         return false;
       }

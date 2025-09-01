@@ -10,6 +10,7 @@ bool display_cursor = true;
 
 #ifdef _WIN32
 nvprefs::nvprefs_interface nvprefs_instance;
-std::string zako_name = "Zako HDR";
+const std::string VDD_NAME = "ZakoHDR";
+const std::string ZAKO_NAME = "Zako HDR";
 std::string zako_device_id;
 #endif

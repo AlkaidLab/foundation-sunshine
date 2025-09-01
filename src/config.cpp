@@ -23,6 +23,7 @@
 #include "nvhttp.h"
 #include "rtsp.h"
 #include "utility.h"
+#include "globals.h"
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
@@ -1015,7 +1016,7 @@ namespace config {
 
   void
   sync_idd_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    if (input == "ZakoHDR") {
+    if (input == VDD_NAME) {
       video.preferUseVdd = true;
     }
   }

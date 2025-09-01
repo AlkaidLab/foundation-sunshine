@@ -331,9 +331,9 @@
         serialize() {
           const nl = this.config === 'windows' ? '\r\n' : '\n'
           this.config.resolutions = JSON.stringify(this.resolutions)
-            .replace(/","/g, `,${nl}    `)
-            .replace(/\["/, `[${nl}    `)
-            .replace(/"\]/, `${nl}]`)
+            .replace(/","/g, `,`)
+            .replace(/\["/, `[`)
+            .replace(/"\]/, `]`)
 
           this.fps = this.fps.filter((item) => +item >= 30 && +item <= 500)
           this.config.fps = JSON.stringify(this.fps).replaceAll('"', '')

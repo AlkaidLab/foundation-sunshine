@@ -4,11 +4,17 @@
 // local includes
 #include "src/logging.h"
 #include "windows_utils.h"
+#include "src/globals.h"
 
 namespace display_device {
 
   std::string
   get_display_name(const std::string &device_id) {
+    std::string device_id_copy = device_id;
+    if (device_id_copy == VDD_NAME) {
+      device_id_copy = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    }
+
     if (device_id.empty()) {
       // Valid return, no error
       return {};
@@ -20,16 +26,16 @@ namespace display_device {
       return {};
     }
 
-    const auto path { w_utils::get_active_path(device_id, display_data->paths) };
+    const auto path { w_utils::get_active_path(device_id_copy, display_data->paths) };
     if (!path) {
       // Debug level, because inactive device is valid case for this function
-      BOOST_LOG(debug) << "Failed to find device for " << device_id << "!";
+      BOOST_LOG(debug) << "Failed to find device for " << device_id_copy << "!";
       return {};
     }
 
     const auto display_name { w_utils::get_display_name(*path) };
     if (display_name.empty()) {
-      BOOST_LOG(error) << "Device " << device_id << " has no display name assigned.";
+      BOOST_LOG(error) << "Device " << device_id_copy << " has no display name assigned.";
     }
 
     return display_name;
