@@ -169,6 +169,22 @@ jobs:
             "-xr!cpack_artifacts" `
             a "../artifacts/sunshine-win32-debuginfo.7z" "*.dbg"
 
+      - name: Rename release asset
+        shell: msys2 {0}
+        run: |
+          # Format tag to vYEAR.DATE where DATE is zero-padded to 4 digits
+          TAG="${{ needs.setup_release.outputs.release_tag }}"
+          NEWTAG="$TAG"
+
+          if [[ "$TAG" =~ ^v([0-9]{4})\.([0-9]+) ]]; then
+            YEAR="${BASH_REMATCH[1]}"
+            DATE_PART="${BASH_REMATCH[2]}"
+            DATE_PADDED=$(printf "%04d" "$DATE_PART")
+            NEWTAG="v${YEAR}.${DATE_PADDED}"
+          fi
+
+          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine-${NEWTAG}.exe"
+
       # - name: Upload Artifacts
       #   uses: actions/upload-artifact@v4
       #   with:
@@ -180,7 +196,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sunshine-founation
-          path: artifacts/sunshine-windows-installer.exe
+          path: artifacts/Sunshine-*.exe
           if-no-files-found: error
 
       - name: Create/Update GitHub Release
