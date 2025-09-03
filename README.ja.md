@@ -1,27 +1,41 @@
 # Sunshine 基地版
 
-LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュメントサポートを提供します [Read the Docs](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)。
+## 🌐 多言語サポート / Multi-language Support
 
-**Sunshine-Foundation** はMoonlight向けのセルフホスト型ゲームストリームホストです。このフォーク版はオリジナルのSunshineに重大な改良を加え、様々なストリーミング端末とWindowsホスト間のゲームストリーミング体験を向上させることに焦点を当てています：
+<div align="center">
+
+[![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
+[![中文简体](https://img.shields.io/badge/中文简体-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
+[![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
+[![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
+
+</div>
+
+---
+
+LizardByte/Sunshineをベースにしたフォークで、完全なドキュメントサポートを提供します [Read the Docs](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)。
+
+**Sunshine-Foundation** はMoonlight用のセルフホスト型ゲームストリームホストです。このフォークバージョンはオリジナルのSunshineに基づき、様々なストリーミング端末とWindowsホスト間のゲームストリーミング体験を向上させることに重点を置いた大幅な改良が加えられています：
 
 ### 🌟 コア機能
 - **HDRフレンドリーサポート** - 最適化されたHDR処理パイプラインにより、真のHDRゲームストリーミング体験を提供
-- **統合仮想ディスプレイ** - 追加ソフトウェア不要で仮想ディスプレイの作成・管理が可能
-- **リモートマイク** - クライアントマイクの受信をサポートし、高音質な音声パススルー機能を提供
-- **高度なコントロールパネル** - 直感的なWebコントロールインターフェースでリアルタイム監視と設定管理
-- **低遅延伝送** - 最新ハードウェア能力を活用した最適化エンコーディング処理
-- **インテリジェントペアリング** - ペアリングデバイスに対応するプロファイルをスマートに管理
+- **仮想ディスプレイ** - 内蔵の仮想ディスプレイ管理により、追加ソフトウェアなしで仮想ディスプレイの作成と管理が可能
+- **リモートマイク** - クライアントマイクの受信をサポートし、高音質の音声パススルー機能を提供
+- **高度なコントロールパネル** - 直感的なWebコントロールインターフェースで、リアルタイム監視と設定管理を提供
+- **低遅延伝送** - 最新のハードウェア能力を活用した最適化されたエンコード処理
+- **インテリジェントペアリング** - ペアリングデバイスの対応プロファイルをインテリジェントに管理
 
-### 🖥️ 仮想ディスプレイ統合 (win10 22H2以降のシステムが必要）
+### 🖥️ 仮想ディスプレイ統合 (win10 22H2 以降のシステムが必要）
 - 動的な仮想ディスプレイの作成と破棄
 - カスタム解像度とリフレッシュレートのサポート
 - マルチディスプレイ設定管理
-- 再起動不要なリアルタイム設定変更
+- 再起動不要のリアルタイム設定変更
 
 
-## 推奨Moonlightクライアント
+## 推奨されるMoonlightクライアント
 
-最適なストリーミング体験を得るためには以下の最適化されたMoonlightクライアントを使用することを推奨します（セット効果発動）：
+最適なストリーミング体験を得るために、以下の最適化されたMoonlightクライアントの使用を推奨します（セット効果を発動）：
 
 ### 🖥️ Windows(X86_64, Arm64), MacOS, Linux クライアント
 [![Moonlight-PC](https://img.shields.io/badge/Moonlight-PC-red?style=for-the-badge&logo=windows)](https://github.com/qiin2333/moonlight-qt)
@@ -31,7 +45,7 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
 [![王冠版 Moonlight-Android](https://img.shields.io/badge/王冠版-Moonlight--Android-blue?style=for-the-badge&logo=android)](https://github.com/WACrown/moonlight-android)
 
 ### 📱 iOSクライアント
-[![真砖家版 Moonlight-iOS](https://img.shields.io/badge/真砖家版-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/TrueZhuangJia/moonlight-ios-NativeMultiTouchPassthrough)
+[![虚空终端 Moonlight-iOS](https://img.shields.io/badge/Voidlink-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/The-Fried-Fish/VoidLink)
 
 
 ### 🛠️ その他のリソース 
@@ -41,11 +55,11 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
 
 
 > [!WARNING] 
-> これらの表は継続的に更新中です。この情報のみを基にハードウェアを購入しないでください。
+> これらの表は継続的に更新中です。この情報のみに基づいてハードウェアを購入しないでください。
 
 
 <table>
-    <caption id="minimum_requirements">最低システム要件</caption>
+    <caption id="minimum_requirements">最小システム要件</caption>
     <tr>
         <th>コンポーネント</th>
         <th>要件</th>
@@ -58,7 +72,7 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
         <td>Intel: VAAPI互換、参照: <a href="https://www.intel.com/content/www/us/en/developer/articles/technical/linuxmedia-vaapi.html">VAAPIハードウェアサポート</a></td>
     </tr>
     <tr>
-        <td>Nvidia: NVENC対応GPU、参照: <a href="https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new">nvencサポートマトリックス</a></td>
+        <td>Nvidia: NVENC対応グラフィックカード、参照: <a href="https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new">nvencサポートマトリックス</a></td>
     </tr>
     <tr>
         <td rowspan="2">CPU</td>
@@ -72,7 +86,7 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
         <td>4GB以上</td>
     </tr>
     <tr>
-        <td rowspan="5">OS</td>
+        <td rowspan="5">オペレーティングシステム</td>
         <td>Windows: 10 22H2+ (Windows Serverは仮想ゲームパッドをサポートしません)</td>
     </tr>
     <tr>
@@ -132,18 +146,24 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
 
 問題が発生した場合の解決手順：
 1. [使用ドキュメント](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) [LizardByteドキュメント](https://docs.lizardbyte.dev/projects/sunshine/latest/)を確認
-2. 設定で詳細なログレベルを有効にし関連情報を取得
-3. [QQグループに参加してヘルプを求める](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)
+2. 設定で詳細なログレベルを有効にして関連情報を見つける
+3. [QQグループに参加してヘルプを入手](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)
 4. [二文字を使おう！](https://uuyc.163.com/)
 
-**問題報告タグ：**
-- `hdr-support` - HDR関連問題
-- `virtual-display` - 仮想ディスプレイ問題  
-- `config-help` - 設定関連問題
+**問題フィードバックタグ：**
+- `hdr-support` - HDR関連の問題
+- `virtual-display` - 仮想ディスプレイの問題  
+- `config-help` - 設定関連の問題
+
+## 📚 開発ドキュメント
+
+- **[ビルド手順](docs/building.md)** - プロジェクトのコンパイルとビルド手順
+- **[設定ガイド](docs/configuration.md)** - 実行時設定オプションの説明
+- **[WebUI開発](docs/WEBUI_DEVELOPMENT.md)** - Vue 3 + Vite Webインターフェース開発完全ガイド
 
 ## コミュニティに参加
 
-ディスカッションやコード貢献を歓迎します！
+ディスカッションとコード貢献を歓迎します！
 [![QQグループに参加](https://pub.idqqimg.com/wpa/images/group.png 'QQグループに参加')](https://qm.qq.com/cgi-bin/qm/qr?k=WC2PSZ3Q6Hk6j8U_DG9S7522GPtItk0m&jump_from=webapi&authKey=zVDLFrS83s/0Xg3hMbkMeAqI7xoHXaM3sxZIF/u9JW7qO/D8xd0npytVBC2lOS+z)
 
 ## Star History
@@ -152,4 +172,5 @@ LizardByte/Sunshineをベースにしたフォーク版で、完全なドキュ�
 
 ---
 
-**Sunshine基地版 - ゲームストリーミングをよりシンプルに**
+**Sunshine基地版 - ゲームストリーミングをよりエレガントに**
+```

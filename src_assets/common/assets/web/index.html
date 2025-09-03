@@ -43,8 +43,8 @@
                   >{{ $t('index.download') }}</a
                 >
               </div>
-              <pre><b>{{preReleaseVersion.release.name}}</b></pre>
-              <pre>{{preReleaseVersion.release.body}}</pre>
+              <h3>{{preReleaseVersion.release.name}}</h3>
+              <div class="markdown-content" v-html="parsedPreReleaseBody"></div>
             </div>
           </div>
           <div v-if="stableBuildAvailable">
@@ -56,7 +56,7 @@
                 >
               </div>
               <h3>{{githubVersion.release.name}}</h3>
-              <pre v-html="githubVersion.release.body"></pre>
+              <div class="markdown-content" v-html="parsedStableBody"></div>
             </div>
           </div>
         </div>
@@ -74,6 +74,7 @@
     import Navbar from './Navbar.vue'
     import ResourceCard from './ResourceCard.vue'
     import SunshineVersion from './sunshine_version'
+    import { marked } from 'marked'
 
     console.log('Hello, Sunshine!')
     let app = createApp({
@@ -142,6 +143,28 @@
         buildVersionIsDirty() {
           return this.version.version?.split('.').length === 5 && this.version.version.indexOf('dirty') !== -1
         },
+        parsedStableBody() {
+          if (!this.githubVersion?.release?.body) return ''
+          // 预处理换行符，确保GitHub的换行符被正确解析
+          const processedText = this.githubVersion.release.body
+            .replace(/\r\n/g, '\n')  // 统一换行符
+            .replace(/\r/g, '\n')    // 处理旧式换行符
+          return marked(processedText, {
+            breaks: true,  // 启用换行符解析
+            gfm: true      // 启用GitHub风格Markdown
+          })
+        },
+        parsedPreReleaseBody() {
+          if (!this.preReleaseVersion?.release?.body) return ''
+          // 预处理换行符，确保GitHub的换行符被正确解析
+          const processedText = this.preReleaseVersion.release.body
+            .replace(/\r\n/g, '\n')  // 统一换行符
+            .replace(/\r/g, '\n')    // 处理旧式换行符
+          return marked(processedText, {
+            breaks: true,  // 启用换行符解析
+            gfm: true      // 启用GitHub风格Markdown
+          })
+        },
         /** Parse the text errors, calculating the text, the timestamp and the level */
         fancyLogs() {
           if (!this.logs) return []
@@ -162,4 +185,100 @@
 
     initApp(app)
   </script>
+
+  <style>
+    .markdown-content {
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 6px;
+      padding: 16px;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+    
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+      margin-top: 16px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    
+    .markdown-content h1 { font-size: 1.5em; }
+    .markdown-content h2 { font-size: 1.3em; }
+    .markdown-content h3 { font-size: 1.1em; }
+    
+    .markdown-content p {
+      margin-bottom: 12px;
+      white-space: pre-line; /* 保留换行符 */
+    }
+    
+    .markdown-content ul,
+    .markdown-content ol {
+      margin-bottom: 12px;
+      padding-left: 24px;
+    }
+    
+    .markdown-content li {
+      margin-bottom: 4px;
+    }
+    
+    .markdown-content code {
+      background: rgba(0, 0, 0, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9em;
+    }
+    
+    .markdown-content pre {
+      background: rgba(0, 0, 0, 0.1);
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+    
+    .markdown-content pre code {
+      background: none;
+      padding: 0;
+    }
+    
+    .markdown-content blockquote {
+      border-left: 4px solid #007bff;
+      margin: 12px 0;
+      padding-left: 16px;
+      color: #6c757d;
+    }
+    
+    .markdown-content a {
+      color: #007bff;
+      text-decoration: none;
+    }
+    
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+    
+    .markdown-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+    }
+    
+    .markdown-content th,
+    .markdown-content td {
+      border: 1px solid #dee2e6;
+      padding: 8px 12px;
+      text-align: left;
+    }
+    
+    .markdown-content th {
+      background: rgba(0, 0, 0, 0.05);
+      font-weight: 600;
+    }
+  </style>
 </html>

@@ -1,48 +1,58 @@
-# Sunshine Version Fondation
+# Sunshine Foundation
 
-Une branche basée sur LizardByte/Sunshine, offrant une documentation complète [Lire la documentation](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB).
+## 🌐 Support multilingue / Multi-language Support
 
-**Sunshine-Foundation** est un hôte de streaming de jeu auto-hébergé pour Moonlight. Cette version apporte des améliorations significatives par rapport à la version originale de Sunshine, en se concentrant sur l'amélioration de l'expérience de streaming de jeu entre divers appareils terminaux et un hôte Windows :
+<div align="center">
+
+[![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
+[![中文简体](https://img.shields.io/badge/简体中文-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
+[![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
+[![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
+
+</div>
+
+---
+
+Fork basé sur LizardByte/Sunshine, offrant une documentation complète [Lire la documentation](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB).
+
+**Sunshine-Foundation** est un hôte de streaming de jeu auto-hébergé pour Moonlight. Cette version forkée apporte des améliorations significatives par rapport à Sunshine original, en se concentrant sur l'amélioration de l'expérience de streaming de jeu entre divers appareils terminaux et l'hôte Windows :
 
 ### 🌟 Fonctionnalités principales
-- **Prise en charge HDR optimisée** - Pipeline de traitement HDR optimisé pour une véritable expérience de streaming HDR
-- **Écran virtuel intégré** - Gestion intégrée des écrans virtuels, sans logiciel supplémentaire
-- **Microphone distant** - Prise en charge du microphone client avec une qualité audio élevée
-- **Panneau de contrôle avancé** - Interface Web intuitive pour la surveillance et la configuration en temps réel
-- **Transmission à faible latence** - Optimisation du traitement d'encodage avec les dernières capacités matérielles
-- **Appairage intelligent** - Gestion intelligente des profils des appareils appairés
+- **Support convivial HDR** - Pipeline de traitement HDR optimisé pour une véritable expérience de streaming de jeux HDR
+- **Écran virtuel** - Gestion intégrée des écrans virtuels, permettant de créer et gérer des écrans virtuels sans logiciel supplémentaire
+- **Microphone distant** - Prise en charge de la réception du microphone client, offrant une fonction de transmission vocale de haute qualité
+- **Panneau de contrôle avancé** - Interface de contrôle Web intuitive avec surveillance en temps réel et gestion de configuration
+- **Transmission à faible latence** - Traitement de codage optimisé exploitant les dernières capacités matérielles
+- **Appairage intelligent** - Gestion intelligente des profils correspondants aux appareils appairés
 
 ### 🖥️ Intégration d'écran virtuel (nécessite Windows 10 22H2 ou plus récent)
-- Création et suppression dynamique d'écrans virtuels
-- Prise en charge de résolutions et taux de rafraîchissement personnalisés
-- Gestion de configurations multi-écrans
+- Création et destruction dynamique d'écrans virtuels
+- Prise en charge des résolutions et taux de rafraîchissement personnalisés
+- Gestion de configuration multi-écrans
 - Modifications de configuration en temps réel sans redémarrage
-
 
 ## Clients Moonlight recommandés
 
-Pour une expérience de streaming optimale, nous recommandons les clients Moonlight suivants (activation des propriétés du pack) :
+Il est recommandé d'utiliser les clients Moonlight suivants optimisés pour une expérience de streaming optimale (activation des propriétés du set) :
 
 ### 🖥️ Clients Windows(X86_64, Arm64), MacOS, Linux
 [![Moonlight-PC](https://img.shields.io/badge/Moonlight-PC-red?style=for-the-badge&logo=windows)](https://github.com/qiin2333/moonlight-qt)
 
 ### 📱 Client Android
-[![Version renforcée Moonlight-Android](https://img.shields.io/badge/Version_renforcée-Moonlight--Android-green?style=for-the-badge&logo=android)](https://github.com/qiin2333/moonlight-android/releases/tag/shortcut)
-[![Version Couronne Moonlight-Android](https://img.shields.io/badge/Version_Couronne-Moonlight--Android-blue?style=for-the-badge&logo=android)](https://github.com/WACrown/moonlight-android)
+[![Édition renforcée Moonlight-Android](https://img.shields.io/badge/Édition_renforcée-Moonlight--Android-green?style=for-the-badge&logo=android)](https://github.com/qiin2333/moonlight-android/releases/tag/shortcut)
+[![Édition Crown Moonlight-Android](https://img.shields.io/badge/Édition_Crown-Moonlight--Android-blue?style=for-the-badge&logo=android)](https://github.com/WACrown/moonlight-android)
 
 ### 📱 Client iOS
-[![Version Expert Moonlight-iOS](https://img.shields.io/badge/Version_Expert-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/TrueZhuangJia/moonlight-ios-NativeMultiTouchPassthrough)
+[![Terminal Void Moonlight-iOS](https://img.shields.io/badge/Voidlink-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/The-Fried-Fish/VoidLink)
 
-
-### 🛠️ Autres ressources 
+### 🛠️ Autres ressources
 [awesome-sunshine](https://github.com/LizardByte/awesome-sunshine)
 
-## Configuration requise
+## Configuration système requise
 
-
-> [!WARNING] 
-> Ces tableaux sont mis à jour régulièrement. Ne basez pas vos achats de matériel uniquement sur ces informations.
-
+> [!WARNING]
+> Ces tableaux sont continuellement mis à jour. Veuillez ne pas acheter de matériel uniquement sur la base de ces informations.
 
 <table>
     <caption id="minimum_requirements">Configuration minimale requise</caption>
@@ -52,13 +62,13 @@ Pour une expérience de streaming optimale, nous recommandons les clients Moonli
     </tr>
     <tr>
         <td rowspan="3">GPU</td>
-        <td>AMD : VCE 1.0 ou supérieur, voir : <a href="https://github.com/obsproject/obs-amd-encoder/wiki/Hardware-Support">obs-amd support matériel</a></td>
+        <td>AMD : VCE 1.0 ou version ultérieure, voir : <a href="https://github.com/obsproject/obs-amd-encoder/wiki/Hardware-Support">obs-amd support matériel</a></td>
     </tr>
     <tr>
         <td>Intel : Compatible VAAPI, voir : <a href="https://www.intel.com/content/www/us/en/developer/articles/technical/linuxmedia-vaapi.html">Support matériel VAAPI</a></td>
     </tr>
     <tr>
-        <td>Nvidia : Carte graphique avec NVENC, voir : <a href="https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new">Matrice de support NVENC</a></td>
+        <td>Nvidia : Carte graphique supportant NVENC, voir : <a href="https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new">Matrice de support nvenc</a></td>
     </tr>
     <tr>
         <td rowspan="2">CPU</td>
@@ -97,7 +107,7 @@ Pour une expérience de streaming optimale, nous recommandons les clients Moonli
 </table>
 
 <table>
-    <caption id="4k_suggestions">Configuration recommandée pour 4K</caption>
+    <caption id="4k_suggestions">Configuration recommandée pour la 4K</caption>
     <tr>
         <th>Composant</th>
         <th>Exigence</th>
@@ -110,7 +120,7 @@ Pour une expérience de streaming optimale, nous recommandons les clients Moonli
         <td>Intel : HD Graphics 510 ou supérieur</td>
     </tr>
     <tr>
-        <td>Nvidia : GeForce GTX 1080 ou modèle supérieur avec encodeurs multiples</td>
+        <td>Nvidia : GeForce GTX 1080 ou modèles supérieurs avec encodeurs multiples</td>
     </tr>
     <tr>
         <td rowspan="2">CPU</td>
@@ -130,27 +140,33 @@ Pour une expérience de streaming optimale, nous recommandons les clients Moonli
 
 ## Support technique
 
-Voici les étapes à suivre en cas de problème :
-1. Consultez la [documentation](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) [Documentation LizardByte](https://docs.lizardbyte.dev/projects/sunshine/latest/)
-2. Activez le niveau de journalisation détaillé dans les paramètres pour obtenir des informations pertinentes
+Procédure de résolution des problèmes :
+1. Consultez la [documentation d'utilisation](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) [Documentation LizardByte](https://docs.lizardbyte.dev/projects/sunshine/latest/)
+2. Activez le niveau de journalisation détaillé dans les paramètres pour trouver des informations pertinentes
 3. [Rejoignez le groupe QQ pour obtenir de l'aide](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)
 4. [Utilisez deux lettres !](https://uuyc.163.com/)
 
-**Étiquettes pour les retours de problèmes :**
+**Étiquettes de signalement des problèmes :**
 - `hdr-support` - Problèmes liés au HDR
-- `virtual-display` - Problèmes d'écran virtuel  
+- `virtual-display` - Problèmes d'écran virtuel
 - `config-help` - Problèmes de configuration
+
+## 📚 Documentation de développement
+
+- **[Instructions de compilation](docs/building.md)** - Instructions pour compiler et construire le projet
+- **[Guide de configuration](docs/configuration.md)** - Description des options de configuration d'exécution
+- **[Développement WebUI](docs/WEBUI_DEVELOPMENT.md)** - Guide complet du développement de l'interface Web Vue 3 + Vite
 
 ## Rejoignez la communauté
 
-Nous encourageons les discussions et les contributions !
+Nous accueillons favorablement les discussions et les contributions de code !
 [![Rejoindre le groupe QQ](https://pub.idqqimg.com/wpa/images/group.png 'Rejoindre le groupe QQ')](https://qm.qq.com/cgi-bin/qm/qr?k=WC2PSZ3Q6Hk6j8U_DG9S7522GPtItk0m&jump_from=webapi&authKey=zVDLFrS83s/0Xg3hMbkMeAqI7xoHXaM3sxZIF/u9JW7qO/D8xd0npytVBC2lOS+z)
 
-## Historique des étoiles
+## Historique des stars
 
-[![Graphique d'historique des étoiles](https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date)](https://www.star-history.com/#qiin2333/Sunshine-Foundation&Date)
+[![Graphique d'historique des stars](https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date)](https://www.star-history.com/#qiin2333/Sunshine-Foundation&Date)
 
 ---
 
-**Sunshine Version Fondation - Rendre le streaming de jeu plus simple**
+**Sunshine Foundation - Rendre le streaming de jeux plus élégant**
 ```

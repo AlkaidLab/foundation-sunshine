@@ -46,7 +46,7 @@
 [![王冠版 Moonlight-Android](https://img.shields.io/badge/王冠版-Moonlight--Android-blue?style=for-the-badge&logo=android)](https://github.com/WACrown/moonlight-android)
 
 ### 📱 iOS客户端
-[![真砖家版 Moonlight-iOS](https://img.shields.io/badge/真砖家版-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/TrueZhuangJia/moonlight-ios-NativeMultiTouchPassthrough)
+[![虚空终端 Moonlight-iOS](https://img.shields.io/badge/Voidlink-Moonlight--iOS-lightgrey?style=for-the-badge&logo=apple)](https://github.com/The-Fried-Fish/VoidLink)
 
 
 ### 🛠️ 其他资源 
@@ -155,6 +155,12 @@
 - `hdr-support` - HDR相关问题
 - `virtual-display` - 虚拟显示器问题  
 - `config-help` - 配置相关问题
+
+## 📚 开发文档
+
+- **[构建说明](docs/building.md)** - 项目编译和构建说明
+- **[配置指南](docs/configuration.md)** - 运行时配置选项说明
+- **[WebUI开发](docs/WEBUI_DEVELOPMENT.md)** - Vue 3 + Vite Web界面开发完整指南
 
 ## 加入社区
 

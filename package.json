@@ -11,6 +11,7 @@
     "@fortawesome/fontawesome-free": "6.6.0",
     "@popperjs/core": "2.11.8",
     "bootstrap": "5.3.3",
+    "marked": "^16.2.1",
     "nanoid": "^5.0.7",
     "vue": "3.5.18",
     "vue-i18n": "11.1.11",

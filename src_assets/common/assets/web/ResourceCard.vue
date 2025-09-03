@@ -51,10 +51,10 @@
         >
         <a
           class="btn btn-secondary m-1"
-          href="https://github.com/TrueZhuangJia/moonlight-ios-NativeMultiTouchPassthrough"
+          href="https://apps.apple.com/app/voidlink/id6747717070"
           target="_blank"
         >
-          <i class="fab fa-fw fa-github"></i> 真砖家版 Moonlight-iOS
+          <i class="fab fa-fw fa-github"></i> 虚空终端 Moonlight-iOS
           下载</a
         >
       </div>
