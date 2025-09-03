@@ -14,17 +14,18 @@ set "CONFIG_DIR=%ROOT_DIR%\config"
 set "NEFCON=%DIST_DIR%\nefconw.exe"
 set "VDD_CONFIG=%CONFIG_DIR%\vdd_settings.xml"
 
-rem Remove directory if it exists
+rem First, copy files to target directory so nefconw.exe can be used
 if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
 )
-
-rem Copy files to target directory first, so nefconw.exe can be used
 mkdir "%DIST_DIR%"
 copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
-rem Uninstall old VDD - using correct hardware ID old vdd
-echo Uninstalling old VDD adapter...
+rem Now we can use nefconw.exe to thoroughly clean up existing VDD adapters
+echo Thoroughly cleaning up existing VDD adapters...
+
+rem Remove all device nodes with the same hardware ID (multiple instances)
+echo Removing all existing device nodes...
 "%NEFCON%" --remove-device-node --hardware-id Root\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
 if %ERRORLEVEL% EQU 0 (
     echo Successfully removed device node
@@ -32,10 +33,10 @@ if %ERRORLEVEL% EQU 0 (
     echo Device node removal failed or not found
 )
 
-rem Wait a bit to ensure device is completely removed
+rem Wait to ensure device is completely removed
 timeout /t 3 /nobreak 1>nul
 
-rem Try to uninstall driver
+rem Try to uninstall driver completely
 echo Uninstalling VDD driver...
 "%NEFCON%" --uninstall-driver --inf-path "%DIST_DIR%\ZakoVDD.inf"
 if %ERRORLEVEL% EQU 0 (
@@ -44,7 +45,7 @@ if %ERRORLEVEL% EQU 0 (
     echo Driver uninstall failed or not found
 )
 
-rem Wait a bit to ensure driver is completely uninstalled
+rem Wait to ensure driver is completely uninstalled
 timeout /t 3 /nobreak 1>nul
 
 rem Clean up registry entries
@@ -55,6 +56,14 @@ if %ERRORLEVEL% EQU 0 (
 ) else (
     echo Registry cleanup failed or not found
 )
+
+rem Additional cleanup - remove any remaining device instances
+echo Performing additional cleanup...
+"%NEFCON%" --remove-device-node --hardware-id Root\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318 2>nul
+timeout /t 2 /nobreak 1>nul
+
+rem Wait a bit more to ensure everything is cleaned up
+timeout /t 5 /nobreak 1>nul
 
 if not exist "%VDD_CONFIG%" (
     copy "%DRIVER_DIR%\vdd_settings.xml" "%VDD_CONFIG%"
@@ -67,11 +76,6 @@ reg add "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /v VDDPATH /t REG_SZ /d "%CO
 set "CERTIFICATE=%DIST_DIR%\ZakoVDD.cer"
 certutil -addstore -f root "%CERTIFICATE%"
 @REM certutil -addstore -f TrustedPublisher %CERTIFICATE%
-
-@REM check if device with same name already exists, remove if found
-echo Checking for existing device with same name...
-"%NEFCON%" --remove-device-node --hardware-id Root\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318 2>nul
-timeout /t 2 /nobreak 1>nul
 
 @REM install inf
 echo Installing VDD adapter...

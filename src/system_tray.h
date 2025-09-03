@@ -106,6 +106,13 @@ namespace system_tray {
   void
   update_tray_require_pin(std::string pin_name);
 
-  void
-  update_tray_vmonitor_checked(int checked);
+  // Internationalization support
+  std::string get_localized_string(const std::string& key);
+  std::wstring get_localized_wstring(const std::string& key);
+  
+  // GUI process management
+  void terminate_gui_processes();
+  
+  // Tray menu management
+  void update_tray_vmonitor_checked(int checked);
 }  // namespace system_tray

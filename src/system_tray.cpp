@@ -9,7 +9,9 @@
     #define WIN32_LEAN_AND_MEAN
     #include <accctrl.h>
     #include <aclapi.h>
+    #include <tlhelp32.h>
     #include <windows.h>
+    #include <shellapi.h>  // 添加 ShellExecuteW 函数声明
     #define TRAY_ICON WEB_DIR "images/sunshine.ico"
     #define TRAY_ICON_PLAYING WEB_DIR "images/sunshine-playing.ico"
     #define TRAY_ICON_PAUSING WEB_DIR "images/sunshine-pausing.ico"
@@ -44,6 +46,7 @@
   #include "process.h"
   #include "src/display_device/display_device.h"
   #include "src/entry_handler.h"
+  #include "system_tray_i18n.h"
   #include "version.h"
   #include <chrono>
   #include <future>
@@ -55,25 +58,154 @@ using namespace std::literals;
 namespace system_tray {
   static std::atomic<bool> tray_initialized = false;
 
-  // 前向声明所有回调函数
-  void tray_open_ui_cb(struct tray_menu *item);
-  void tray_toggle_display_cb(struct tray_menu *item);
-  void tray_reset_display_device_config_cb(struct tray_menu *item);
-  void tray_restart_cb(struct tray_menu *item);
-  void tray_quit_cb(struct tray_menu *item);
+  // 前向声明全局变量
+  extern struct tray_menu tray_menus[];
+  extern struct tray tray;
 
-  // 菜单数组声明
-  static struct tray_menu tray_menus[] = {
+  auto tray_open_ui_cb = [](struct tray_menu *item) {
+    BOOST_LOG(debug) << "Opening UI from system tray"sv;
+    launch_ui();
+  };
+
+  auto tray_toggle_display_cb = [](struct tray_menu *item) {
+    // 添加状态检查和日志
+    if (!tray_initialized) {
+      BOOST_LOG(warning) << "Tray not initialized, ignoring toggle";
+      return;
+    }
+
+    if (tray_menus[2].disabled) {
+      BOOST_LOG(info) << "Toggle display is in cooldown, ignoring request";
+      return;
+    }
+
+    BOOST_LOG(info) << "Toggling display power from system tray"sv;
+    display_device::session_t::get().toggle_display_power();
+
+    // 添加10秒禁用状态
+    tray_menus[2].disabled = 1;
+    tray_update(&tray);
+
+    // use thread to restore button state
+    std::thread([&]() {
+      std::this_thread::sleep_for(10s);
+      tray_menus[2].disabled = 0;
+      tray_update(&tray);
+    }).detach();
+  };
+
+  auto tray_reset_display_device_config_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Resetting display device config from system tray"sv;
+    display_device::session_t::get().reset_persistence();
+  };
+
+  auto tray_restart_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Restarting from system tray"sv;
+    platf::restart();
+  };
+
+  auto terminate_gui_processes = []() {
+  #ifdef _WIN32
+    BOOST_LOG(info) << "Terminating sunshine-gui.exe processes..."sv;
+
+    // Find and terminate sunshine-gui.exe processes
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+      PROCESSENTRY32W pe32;
+      pe32.dwSize = sizeof(PROCESSENTRY32W);
+
+      if (Process32FirstW(snapshot, &pe32)) {
+        do {
+          // Check if this process is sunshine-gui.exe
+          if (wcscmp(pe32.szExeFile, L"sunshine-gui.exe") == 0) {
+            BOOST_LOG(info) << "Found sunshine-gui.exe (PID: " << pe32.th32ProcessID << "), terminating..."sv;
+
+            // Open process handle
+            HANDLE process_handle = OpenProcess(PROCESS_TERMINATE, FALSE, pe32.th32ProcessID);
+            if (process_handle != NULL) {
+              // Terminate the process
+              if (TerminateProcess(process_handle, 0)) {
+                BOOST_LOG(info) << "Successfully terminated sunshine-gui.exe"sv;
+              }
+              CloseHandle(process_handle);
+            }
+          }
+        } while (Process32NextW(snapshot, &pe32));
+      }
+      CloseHandle(snapshot);
+    }
+  #else
+    // For non-Windows platforms, this is a no-op
+    BOOST_LOG(debug) << "GUI process termination not implemented for this platform"sv;
+  #endif
+  };
+
+  auto tray_quit_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Quitting from system tray"sv;
+
+  #ifdef _WIN32
+    // Get localized strings
+    std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_TITLE));
+    std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_MESSAGE));
+
+    int msgboxID = MessageBoxW(
+      NULL,
+      message.c_str(),
+      title.c_str(),
+      MB_ICONQUESTION | MB_YESNO);
+
+    if (msgboxID == IDYES) {
+      // First, terminate sunshine-gui.exe if it's running
+      terminate_gui_processes();
+
+      // Stop the Windows service by sending special exit code
+      // This will terminate both the GUI program and the service
+      lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
+      return;
+    }
+  #else
+    // For non-Windows platforms, just exit normally
+    lifetime::exit_sunshine(0, true);
+  #endif
+  };
+
+  // 通用函数：使用系统默认浏览器打开URL
+  auto open_url_in_default_browser = [](const std::string &url) {
+  #ifdef _WIN32
+    // 使用 Windows ShellExecute 打开默认浏览器
+    std::wstring wide_url(url.begin(), url.end());
+    ShellExecuteW(NULL, L"open", wide_url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+  #else
+    // 其他平台使用 platf::open_url
+    platf::open_url(url);
+  #endif
+  };
+
+  auto tray_star_project_cb = [](struct tray_menu *item) {
+    open_url_in_default_browser("https://github.com/qiin2333/Sunshine-Foundation");
+  };
+
+  auto tray_donate_doctor_cb = [](struct tray_menu *item) {
+    open_url_in_default_browser("https://www.ifdian.net/a/Yundi339");
+  };
+
+  auto tray_donate_qiin_cb = [](struct tray_menu *item) {
+    open_url_in_default_browser("https://www.ifdian.net/a/qiin2333");
+  };
+
+  // 菜单数组定义
+  struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
     { .text = "VDD Monitor Toggle", .checked = 0, .cb = tray_toggle_display_cb },
-    // { .text = "Donate",
-    //   .submenu =
-    //     (struct tray_menu[]) {
-    //       { .text = "GitHub Sponsors", .cb = tray_donate_github_cb },
-    //       { .text = "Patreon", .cb = tray_donate_patreon_cb },
-    //       { .text = "PayPal", .cb = tray_donate_paypal_cb },
-    //       { .text = nullptr } } },
+    { .text = "-" },
+    { .text = "Star Project", .cb = tray_star_project_cb },
+    { .text = "Help Us",
+      .submenu =
+        (struct tray_menu[]) {
+          { .text = "Doctor", .cb = tray_donate_doctor_cb },
+          { .text = "Qiin", .cb = tray_donate_qiin_cb },
+          { .text = nullptr } } },
     { .text = "-" },
   #ifdef _WIN32
     { .text = "Reset Display Device Config", .cb = tray_reset_display_device_config_cb },
@@ -83,132 +215,13 @@ namespace system_tray {
     { .text = nullptr }
   };
 
-  static struct tray tray = {
+  struct tray tray = {
     .icon = TRAY_ICON,
     .tooltip = PROJECT_NAME,
     .menu = tray_menus,
     .iconPathCount = 4,
     .allIconPaths = { TRAY_ICON, TRAY_ICON_LOCKED, TRAY_ICON_PLAYING, TRAY_ICON_PAUSING },
   };
-
-  void
-  tray_open_ui_cb(struct tray_menu *item) {
-    BOOST_LOG(debug) << "Opening UI from system tray"sv;
-    launch_ui();
-  }
-
-  void
-  tray_donate_github_cb(struct tray_menu *item) {
-    platf::open_url("https://github.com/sponsors/LizardByte");
-  }
-
-  void
-  tray_donate_patreon_cb(struct tray_menu *item) {
-    platf::open_url("https://www.patreon.com/LizardByte");
-  }
-
-  void
-  tray_donate_paypal_cb(struct tray_menu *item) {
-    platf::open_url("https://www.paypal.com/paypalme/ReenigneArcher");
-  }
-
-  void
-  tray_reset_display_device_config_cb(struct tray_menu *item) {
-    BOOST_LOG(info) << "Resetting display device config from system tray"sv;
-
-    display_device::session_t::get().reset_persistence();
-  }
-
-  void
-  tray_restart_cb(struct tray_menu *item) {
-    BOOST_LOG(info) << "Restarting from system tray"sv;
-
-    platf::restart();
-  }
-
-  void
-  tray_quit_cb(struct tray_menu *item) {
-    BOOST_LOG(info) << "Quitting from system tray"sv;
-
-  #ifdef _WIN32
-    int msgboxID = MessageBoxW(
-      NULL,
-      L"你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~",
-      L" 真的要退出吗",
-      MB_ICONWARNING | MB_OKCANCEL);
-
-    if (msgboxID == IDOK) {
-      // If we're running in a service, return a special status to
-      // tell it to terminate too, otherwise it will just respawn us.
-      if (GetConsoleWindow() == NULL) {
-        lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
-        return;
-      }
-    }
-  #endif
-
-    lifetime::exit_sunshine(0, true);
-  }
-
-  class AsyncTask {
-  public:
-    ~AsyncTask() { 
-        // 添加超时处理,避免无限等待
-        if (fut.valid()) {
-            auto status = fut.wait_for(std::chrono::seconds(1));
-            if (status != std::future_status::ready) {
-                BOOST_LOG(warning) << "AsyncTask timeout on destruction";
-            }
-        }
-    }
-    
-    void launch(std::function<void()> task) {
-        try {
-            // 确保之前的任务已完成
-            if (fut.valid()) {
-                auto status = fut.wait_for(std::chrono::seconds(1));
-                if (status != std::future_status::ready) {
-                    BOOST_LOG(warning) << "Previous task timeout, forcing new task";
-                }
-            }
-            fut = std::async(std::launch::async, task);
-        }
-        catch (const std::exception& e) {
-            BOOST_LOG(error) << "Failed to launch async task: " << e.what();
-        }
-    }
-  private:
-    std::future<void> fut;
-  };
-
-  static AsyncTask async_task;
-
-  void
-  tray_toggle_display_cb(struct tray_menu *item) {
-    // 添加状态检查和日志
-    if (!tray_initialized) {
-        BOOST_LOG(warning) << "Tray not initialized, ignoring toggle";
-        return;
-    }
-    
-    if (system_tray::tray_menus[2].disabled) {
-        BOOST_LOG(info) << "Toggle display is in cooldown, ignoring request";
-        return;
-    }
-
-    BOOST_LOG(info) << "Toggling display power from system tray"sv;
-    display_device::session_t::get().toggle_display_power();
-    
-    // 添加10秒禁用状态
-    system_tray::tray_menus[2].disabled = 1;
-    tray_update(&tray);
-    
-    async_task.launch([]{
-      std::this_thread::sleep_for(10s);
-      system_tray::tray_menus[2].disabled = 0;
-      tray_update(&tray);
-    });
-  }
 
   int
   system_tray() {
