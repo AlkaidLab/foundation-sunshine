@@ -1,39 +1,6 @@
 @echo off
+chcp 65001 >nul
 setlocal enabledelayedexpansion
-
-@REM rem Get temp directory
-@REM set temp_dir=%temp%/Sunshine
-
-@REM rem Create temp directory if it doesn't exist
-@REM if not exist "%temp_dir%" mkdir "%temp_dir%"
-
-@REM rem Get system proxy setting
-@REM set proxy= 
-@REM for /f "tokens=3" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" ^| find /i "ProxyEnable"') do (
-@REM   set ProxyEnable=%%a
-
-@REM   if !ProxyEnable! equ 0x1 (
-@REM   for /f "tokens=3" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" ^| find /i "ProxyServer"') do (
-@REM       set proxy=%%a
-@REM       echo Using system proxy !proxy! to download Virtual Gamepad
-@REM       set proxy=-x !proxy!
-@REM     )
-@REM   ) else (
-@REM     rem Proxy is not enabled.
-@REM   )
-@REM )
-
-@REM rem Strip quotes
-@REM set browser_download_url="https://github.com/itsmikethetech/Virtual-Display-Driver/releases/download/23.12.2HDR/VDD.HDR.23.12.zip"
-
-@REM rem Download the zip
-@REM curl -s -L !proxy! -o "%temp_dir%\vdd.zip" %browser_download_url%
-
-@REM rem unzip
-@REM powershell -c "Expand-Archive '%temp_dir%\vdd.zip' '%temp_dir%'"
-
-@REM rem Delete temp file
-@REM del "%temp_dir%\vdd.zip"
 
 rem install
 set "DRIVER_DIR=%~dp0\driver"
@@ -47,21 +14,51 @@ set "CONFIG_DIR=%ROOT_DIR%\config"
 set "NEFCON=%DIST_DIR%\nefconw.exe"
 set "VDD_CONFIG=%CONFIG_DIR%\vdd_settings.xml"
 
-rem 如果目录存在则删除
+rem Remove directory if it exists
 if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
 )
 
-rem 卸载旧的vdd
-"%NEFCON%" --remove-device-node --hardware-id ROOT\MttVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
-timeout /t 5 /nobreak 1>nul
+rem Copy files to target directory first, so nefconw.exe can be used
+mkdir "%DIST_DIR%"
+copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
+
+rem Uninstall old VDD - using correct hardware ID old vdd
+echo Uninstalling old VDD adapter...
+"%NEFCON%" --remove-device-node --hardware-id Root\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
+if %ERRORLEVEL% EQU 0 (
+    echo Successfully removed device node
+) else (
+    echo Device node removal failed or not found
+)
+
+rem Wait a bit to ensure device is completely removed
+timeout /t 3 /nobreak 1>nul
+
+rem Try to uninstall driver
+echo Uninstalling VDD driver...
+"%NEFCON%" --uninstall-driver --inf-path "%DIST_DIR%\ZakoVDD.inf"
+if %ERRORLEVEL% EQU 0 (
+    echo Successfully uninstalled driver
+) else (
+    echo Driver uninstall failed or not found
+)
+
+rem Wait a bit to ensure driver is completely uninstalled
+timeout /t 3 /nobreak 1>nul
+
+rem Clean up registry entries
+echo Cleaning registry...
+reg delete "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /f 2>nul
+if %ERRORLEVEL% EQU 0 (
+    echo Successfully cleaned registry
+) else (
+    echo Registry cleanup failed or not found
+)
 
 if not exist "%VDD_CONFIG%" (
     copy "%DRIVER_DIR%\vdd_settings.xml" "%VDD_CONFIG%"
 )
-
-mkdir "%DIST_DIR%"
-copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
 @REM write registry
 reg add "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /v VDDPATH /t REG_SZ /d "%CONFIG_DIR%" /f
@@ -71,6 +68,14 @@ set "CERTIFICATE=%DIST_DIR%\ZakoVDD.cer"
 certutil -addstore -f root "%CERTIFICATE%"
 @REM certutil -addstore -f TrustedPublisher %CERTIFICATE%
 
+@REM check if device with same name already exists, remove if found
+echo Checking for existing device with same name...
+"%NEFCON%" --remove-device-node --hardware-id Root\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318 2>nul
+timeout /t 2 /nobreak 1>nul
+
 @REM install inf
-"%NEFCON%" --create-device-node --hardware-id Root\ZakoVDD --service-name IDD_HDR_FOR_SUNSHINE --class-name Display --class-guid 4D36E968-E325-11CE-BFC1-08002BE10318
+echo Installing VDD adapter...
+"%NEFCON%" --create-device-node --hardware-id Root\ZakoVDD --service-name ZAKO_HDR_FOR_SUNSHINE --class-name Display --class-guid 4D36E968-E325-11CE-BFC1-08002BE10318
 "%NEFCON%" --install-driver --inf-path "%DIST_DIR%\ZakoVDD.inf"
+
+echo VDD installation completed!
