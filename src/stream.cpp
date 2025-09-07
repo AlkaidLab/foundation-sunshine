@@ -242,6 +242,19 @@ namespace stream {
   // 麦克风数据包类型
   constexpr std::uint8_t MIC_PACKET_TYPE_OPUS = 0x61;  // 'a'
 
+  struct mic_packet_t {
+    RTP_PACKET rtp;
+  };
+
+  // 扩展的RTP包结构，支持16位包类型
+  struct rtp_packet_ext_t {
+    std::uint8_t header;
+    std::uint16_t packetType;  // 16位包类型
+    std::uint16_t sequenceNumber;
+    std::uint32_t timestamp;
+    std::uint32_t ssrc;
+  };
+
 #pragma pack(pop)
 
   constexpr std::size_t
@@ -1297,30 +1310,52 @@ namespace stream {
 
       // 处理麦克风数据
       try {
-        if (bytes >= sizeof(RTP_PACKET)) {
-          auto *header = (RTP_PACKET *) buffer.data();
-          if (header->packetType == MIC_PACKET_TYPE_OPUS || header->packetType == packetTypes[IDX_MIC_DATA]) {
-            size_t header_size = sizeof(RTP_PACKET);
-            if (bytes > header_size) {
-              const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
+        if (bytes < sizeof(RTP_PACKET)) {
+          return;
+        }
 
-              // 检查麦克风socket是否仍然启用，避免在设备释放时继续处理
-              if (!ctx.mic_socket_enabled.load()) {
-                BOOST_LOG(debug) << "Microphone socket disabled, skipping data processing";
-                return;
-              }
+        auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size) {
+          if (!ctx.mic_socket_enabled.load()) {
+            BOOST_LOG(debug) << "Microphone socket disabled, skipping data processing";
+            return;
+          }
 
-              if (int result = audio::write_mic_data(audio_data, bytes - header_size); result < 0) {
-                BOOST_LOG(error) << "Failed to write microphone data to stream";
-              }
-              else {
-                BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
-              }
-            }
+          if (int result = audio::write_mic_data(audio_data, data_size); result < 0) {
+            BOOST_LOG(error) << "Failed to write microphone data to stream";
           }
           else {
-            BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->packetType;
+            BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
           }
+        };
+
+        // 首先尝试作为扩展的16位包类型处理
+        if (bytes >= sizeof(rtp_packet_ext_t)) {
+          auto *header_ext = (rtp_packet_ext_t *) buffer.data();
+          BOOST_LOG(debug) << "Received mic packet (16-bit) with type: 0x" << std::hex << header_ext->packetType;
+
+          if (header_ext->packetType == packetTypes[IDX_MIC_DATA]) {
+            size_t header_size = sizeof(rtp_packet_ext_t);
+            if (bytes > header_size) {
+              const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
+              process_audio_data(audio_data, bytes - header_size);
+            }
+            return;
+          }
+        }
+
+        // 回退到8位包类型处理
+        auto *header = (mic_packet_t *) buffer.data();
+        BOOST_LOG(debug) << "Received mic packet (8-bit) with type: 0x" << std::hex << (int) header->rtp.packetType;
+
+        if (header->rtp.packetType == MIC_PACKET_TYPE_OPUS) {
+          size_t header_size = sizeof(mic_packet_t);
+          if (bytes > header_size) {
+            const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
+            process_audio_data(audio_data, bytes - header_size);
+          }
+        }
+        else {
+          BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->rtp.packetType;
         }
       }
       catch (const std::exception &e) {
@@ -2395,7 +2430,7 @@ namespace stream {
     std::vector<session_info_t>
     get_all_sessions_info() {
       std::vector<session_info_t> sessions_info;
-      
+
       auto broadcast_ref = broadcast.ref();
       if (!broadcast_ref) {
         BOOST_LOG(warning) << "No broadcast context available";
@@ -2405,18 +2440,19 @@ namespace stream {
       auto lg = broadcast_ref->control_server._sessions.lock();
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         session_info_t info;
-        
+
         info.client_name = session_p->client_name;
         info.session_id = session_p->launch_session_id;
-        
+
         // Get client address
         if (session_p->control.peer) {
           auto peer_addr = platf::from_sockaddr((sockaddr *) &session_p->control.peer->address.address);
           info.client_address = peer_addr;
-        } else {
+        }
+        else {
           info.client_address = session_p->control.expected_peer_address;
         }
-        
+
         // Get session state
         auto state = session_p->state.load(std::memory_order_relaxed);
         switch (state) {
@@ -2436,28 +2472,29 @@ namespace stream {
             info.state = "UNKNOWN";
             break;
         }
-        
+
         // Get video configuration
         info.width = session_p->config.monitor.width;
         info.height = session_p->config.monitor.height;
         info.fps = session_p->config.monitor.framerate;
-        
+
         // Get audio and other settings
         info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
         info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
         info.enable_mic = session_p->audio.enable_mic;
-        
+
         // Get app information
         info.app_id = proc::proc.running();
         if (info.app_id > 0) {
           info.app_name = proc::proc.get_last_run_app_name();
-        } else {
+        }
+        else {
           info.app_name = "None";
         }
-        
+
         sessions_info.push_back(info);
       }
-      
+
       return sessions_info;
     }
   }  // namespace session
