@@ -731,7 +731,7 @@ namespace display_device {
 
       // 尝试恢复设置（仅当未启用VDD偏好时）
       bool data_updated { false };
-      if (!config::video.preferUseVdd && try_revert_settings(*persistent_data, data_updated)) {
+      if (!config::video.preferUseVdd && !try_revert_settings(*persistent_data, data_updated)) {
         // 如果数据已更新，保存设置
         if (data_updated) {
           save_settings(filepath, *persistent_data);  // 忽略返回值
