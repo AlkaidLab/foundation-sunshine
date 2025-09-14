@@ -475,9 +475,9 @@ namespace platf::dxgi {
       return -1;
     }
 
-    std::wstring output_display_name = !display_name.empty() ? from_utf8(display_name) : from_utf8(config::video.output_name);
-    std::wstring adapter_name = from_utf8(config::video.adapter_name);
-    BOOST_LOG(debug) << "[Display] 初始化显示器: " << display_name;
+    auto adapter_name = from_utf8(config::video.adapter_name);
+    auto output_name = from_utf8(display_name);
+    BOOST_LOG(debug) << "[Display Init] 初始化显示器: " << display_name;
 
     adapter_t::pointer adapter_p;
     for (int tries = 0; tries < 2; ++tries) {
@@ -498,13 +498,13 @@ namespace platf::dxgi {
           DXGI_OUTPUT_DESC desc;
           output_tmp->GetDesc(&desc);
 
-          if (!output_display_name.empty() && desc.DeviceName != output_display_name) {
-            BOOST_LOG(debug) << "[Display] 跳过不匹配的显示器: " << to_utf8(desc.DeviceName);
+          if (!output_name.empty() && desc.DeviceName != output_name) {
+            BOOST_LOG(debug) << "[Display Init] 跳过不匹配的显示器: " << to_utf8(desc.DeviceName);
             continue;
           }
 
           if (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false)) {
-            BOOST_LOG(debug) << "[Display] 成功匹配到目标显示器: " << to_utf8(desc.DeviceName);
+            BOOST_LOG(debug) << "[Display Init] 成功匹配到目标显示器: " << to_utf8(desc.DeviceName);
             output = std::move(output_tmp);
 
             offset_x = desc.DesktopCoordinates.left;
@@ -550,8 +550,24 @@ namespace platf::dxgi {
     }
 
     if (!output) {
-      BOOST_LOG(error) << "Failed to locate an output device"sv;
-      return -1;
+      // 在“就是要”模式下，允许没有找到输出设备
+      if (config::video.preferUseVdd) {
+        BOOST_LOG(info) << "就是要模式：未找到输出设备，但允许继续运行";
+        // 设置默认的虚拟显示器参数
+        width = 1920;
+        height = 1080;
+        offset_x = 0;
+        offset_y = 0;
+        width_before_rotation = 1920;
+        height_before_rotation = 1080;
+        display_rotation = DXGI_MODE_ROTATION_UNSPECIFIED;
+
+        return 0;
+      }
+      else {
+        BOOST_LOG(error) << "Failed to locate an output device"sv;
+        return -1;
+      }
     }
 
     D3D_FEATURE_LEVEL featureLevels[] {
@@ -1101,9 +1117,11 @@ namespace platf {
         if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {
           display_names.emplace_back(std::move(device_name));
           BOOST_LOG(debug) << "[Display] 添加可用显示器: " << device_name;
-        } else if (!desc.AttachedToDesktop) {
+        }
+        else if (!desc.AttachedToDesktop) {
           BOOST_LOG(debug) << "[Display] 跳过 None AttachedToDesktop 不可用显示器: " << device_name;
-        } else {
+        }
+        else {
           BOOST_LOG(debug) << "[Display] 跳过 DXGI测试失败 不可用显示器: " << device_name;
         }
       }

@@ -1173,7 +1173,7 @@ namespace video {
   void
   refresh_displays(platf::mem_type_e dev_type, std::vector<std::string> &display_names, int &current_display_index) {
     // It is possible that the output display name may be empty even if it wasn't before (device disconnected)
-    const auto output_display_name { display_device::get_display_name(config::video.output_name) };
+    const auto output_name { display_device::get_display_name(config::video.output_name) };
     std::string current_display_name;
 
     // If we have a current display index, let's start with that
@@ -1192,7 +1192,7 @@ namespace video {
       return;
     }
     else if (display_names.empty()) {
-      display_names.emplace_back(output_display_name);
+      display_names.emplace_back(output_name);
     }
 
     // We now have a new display name list, so reset the index back to 0
@@ -1212,7 +1212,7 @@ namespace video {
     }
     else {
       for (int x = 0; x < display_names.size(); ++x) {
-        if (display_names[x] == output_display_name) {
+        if (display_names[x] == output_name) {
           current_display_index = x;
           return;
         }
