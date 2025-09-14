@@ -8,10 +8,8 @@ body {
   min-height: 100vh;
 }
 
-[data-bs-theme='dark'] {
-  body {
-    backdrop-filter: brightness(0.6);
-  }
+[data-bs-theme='dark'] body {
+  backdrop-filter: brightness(0.6);
 }
 
 /* 页面标题 */

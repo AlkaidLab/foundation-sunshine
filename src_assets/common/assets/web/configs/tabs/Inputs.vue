@@ -97,6 +97,21 @@ const config = ref(props.config)
               </select>
               <div class="form-text">{{ $t('config.touchpad_as_ds4_desc') }}</div>
             </div>
+            <div>
+              <label for="enable_dsu_server" class="form-label">{{ $t('config.enable_dsu_server') }}</label>
+              <select id="enable_dsu_server" class="form-select"
+                      v-model="config.enable_dsu_server">
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.enable_dsu_server_desc') }}</div>
+            </div>
+            <div v-if="config.enable_dsu_server === 'enabled'">
+              <label for="dsu_server_port" class="form-label">{{ $t('config.dsu_server_port') }}</label>
+              <input type="number" class="form-control" id="dsu_server_port" placeholder="26760"
+                     v-model="config.dsu_server_port" min="1024" max="65535" />
+              <div class="form-text">{{ $t('config.dsu_server_port_desc') }}</div>
+            </div>
           </div>
         </div>
       </div>

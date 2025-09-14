@@ -468,6 +468,8 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
+    false, // enable_dsu_server - disabled by default
+    26760, // dsu_server_port - default DSU server port
 
     true,  // keyboard enabled
     true,  // mouse enabled
@@ -1190,6 +1192,11 @@ namespace config {
     bool_f(vars, "ds4_back_as_touchpad_click", input.ds4_back_as_touchpad_click);
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
+    bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
+    
+    int temp_port = static_cast<int>(input.dsu_server_port);
+    int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });
+    input.dsu_server_port = static_cast<uint16_t>(temp_port);
 
     bool_f(vars, "mouse", input.mouse);
     bool_f(vars, "keyboard", input.keyboard);

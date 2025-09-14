@@ -154,6 +154,8 @@ namespace config {
     bool motion_as_ds4;
     bool touchpad_as_ds4;
     bool ds5_inputtino_randomize_mac;
+    bool enable_dsu_server;
+    uint16_t dsu_server_port;
 
     bool keyboard;
     bool mouse;

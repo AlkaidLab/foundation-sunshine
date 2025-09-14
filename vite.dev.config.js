@@ -161,11 +161,46 @@ export default defineConfig({
     },
   },
   build: {
+    chunkSizeWarningLimit: 1000, // 提高警告阈值到1MB
     rollupOptions: {
       input: htmlPages.reduce((acc, name) => {
         acc[name] = resolve(assetsSrcPath, `${name}.html`)
         return acc
       }, {}),
+      output: {
+        manualChunks: {
+          // 将Vue相关库分离到单独的chunk
+          'vue-vendor': ['vue', 'vue-i18n'],
+          // 将Bootstrap和FontAwesome分离
+          'ui-vendor': ['bootstrap', '@fortawesome/fontawesome-free', '@popperjs/core'],
+          // 将其他第三方库分离
+          'utils-vendor': ['marked', 'nanoid', 'vuedraggable'],
+        },
+        // 优化chunk命名
+        chunkFileNames: (chunkInfo) => {
+          const facadeModuleId = chunkInfo.facadeModuleId
+          if (facadeModuleId) {
+            const fileName = facadeModuleId.split('/').pop().replace(/\.[^/.]+$/, '')
+            return `assets/${fileName}-[hash].js`
+          }
+          return 'assets/[name]-[hash].js'
+        },
+        // 优化资源文件命名
+        assetFileNames: (assetInfo) => {
+          const info = assetInfo.name.split('.')
+          const ext = info[info.length - 1]
+          if (/\.(css)$/.test(assetInfo.name)) {
+            return `assets/[name]-[hash].${ext}`
+          }
+          if (/\.(woff2?|eot|ttf|otf)$/.test(assetInfo.name)) {
+            return `assets/fonts/[name]-[hash].${ext}`
+          }
+          if (/\.(png|jpe?g|gif|svg|webp|avif)$/.test(assetInfo.name)) {
+            return `assets/images/[name]-[hash].${ext}`
+          }
+          return `assets/[name]-[hash].${ext}`
+        },
+      },
     },
   },
   define: {
