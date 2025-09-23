@@ -67,7 +67,7 @@ rem Run the sc command to create/reconfigure the service
 set "SC_START_TYPE=!SERVICE_START_TYPE!"
 if /I "!SERVICE_START_TYPE!"=="delayed-auto" set "SC_START_TYPE=auto"
 
-sc !SC_CMD! %SERVICE_NAME% binPath= "%SERVICE_BIN%" start= !SC_START_TYPE! DisplayName= "Sunshine Service"
+sc !SC_CMD! %SERVICE_NAME% binPath= """%SERVICE_BIN%""" start= !SC_START_TYPE! DisplayName= "Sunshine Service"
 if errorlevel 1 (
     echo ERROR: Failed to !SC_CMD! %SERVICE_NAME%.
     exit /b 1
