@@ -14,11 +14,13 @@ const config = ref(props.config)
   <div id="input" class="config-page">
     <!-- Enable Gamepad Input -->
     <div class="mb-3">
-      <label for="controller" class="form-label">{{ $t('config.controller') }}</label>
-      <select id="controller" class="form-select" v-model="config.controller">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="controller" 
+               v-model="config.controller" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="controller">
+          {{ $t('config.controller') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.controller_desc') }}</div>
     </div>
 
@@ -79,34 +81,37 @@ const config = ref(props.config)
         <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show"
              aria-labelledby="panelsStayOpen-headingOne">
           <div class="accordion-body">
-            <div>
-              <label for="motion_as_ds4" class="form-label">{{ $t('config.motion_as_ds4') }}</label>
-              <select id="motion_as_ds4" class="form-select"
-                      v-model="config.motion_as_ds4">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="motion_as_ds4" 
+                       v-model="config.motion_as_ds4" true-value="enabled" false-value="disabled">
+                <label class="form-check-label" for="motion_as_ds4">
+                  {{ $t('config.motion_as_ds4') }}
+                </label>
+              </div>
               <div class="form-text">{{ $t('config.motion_as_ds4_desc') }}</div>
             </div>
-            <div>
-              <label for="touchpad_as_ds4" class="form-label">{{ $t('config.touchpad_as_ds4') }}</label>
-              <select id="touchpad_as_ds4" class="form-select"
-                      v-model="config.touchpad_as_ds4">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="touchpad_as_ds4" 
+                       v-model="config.touchpad_as_ds4" true-value="enabled" false-value="disabled">
+                <label class="form-check-label" for="touchpad_as_ds4">
+                  {{ $t('config.touchpad_as_ds4') }}
+                </label>
+              </div>
               <div class="form-text">{{ $t('config.touchpad_as_ds4_desc') }}</div>
             </div>
-            <div>
-              <label for="enable_dsu_server" class="form-label">{{ $t('config.enable_dsu_server') }}</label>
-              <select id="enable_dsu_server" class="form-select"
-                      v-model="config.enable_dsu_server">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-              </select>
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="enable_dsu_server" 
+                       v-model="config.enable_dsu_server" true-value="enabled" false-value="disabled">
+                <label class="form-check-label" for="enable_dsu_server">
+                  {{ $t('config.enable_dsu_server') }}
+                </label>
+              </div>
               <div class="form-text">{{ $t('config.enable_dsu_server_desc') }}</div>
             </div>
-            <div v-if="config.enable_dsu_server === 'enabled'">
+            <div class="mb-3" v-if="config.enable_dsu_server === 'enabled'">
               <label for="dsu_server_port" class="form-label">{{ $t('config.dsu_server_port') }}</label>
               <input type="number" class="form-control" id="dsu_server_port" placeholder="26760"
                      v-model="config.dsu_server_port" min="1024" max="65535" />
@@ -128,11 +133,13 @@ const config = ref(props.config)
     <!-- Enable Keyboard Input -->
     <hr>
     <div class="mb-3">
-      <label for="keyboard" class="form-label">{{ $t('config.keyboard') }}</label>
-      <select id="keyboard" class="form-select" v-model="config.keyboard">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="keyboard" 
+               v-model="config.keyboard" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="keyboard">
+          {{ $t('config.keyboard') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.keyboard_desc') }}</div>
     </div>
 
@@ -154,52 +161,62 @@ const config = ref(props.config)
 
     <!-- Always send scancodes -->
     <div class="mb-3" v-if="config.keyboard === 'enabled' && platform === 'windows'">
-      <label for="always_send_scancodes" class="form-label">{{ $t('config.always_send_scancodes') }}</label>
-      <select id="always_send_scancodes" class="form-select" v-model="config.always_send_scancodes">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="always_send_scancodes" 
+               v-model="config.always_send_scancodes" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="always_send_scancodes">
+          {{ $t('config.always_send_scancodes') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.always_send_scancodes_desc') }}</div>
     </div>
 
     <!-- Mapping Key AltRight to Key Windows -->
     <div class="mb-3" v-if="config.keyboard === 'enabled'">
-      <label for="key_rightalt_to_key_win" class="form-label">{{ $t('config.key_rightalt_to_key_win') }}</label>
-      <select id="key_rightalt_to_key_win" class="form-select" v-model="config.key_rightalt_to_key_win">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="key_rightalt_to_key_win" 
+               v-model="config.key_rightalt_to_key_win" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="key_rightalt_to_key_win">
+          {{ $t('config.key_rightalt_to_key_win') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.key_rightalt_to_key_win_desc') }}</div>
     </div>
 
     <!-- Enable Mouse Input -->
     <hr>
     <div class="mb-3">
-      <label for="mouse" class="form-label">{{ $t('config.mouse') }}</label>
-      <select id="mouse" class="form-select" v-model="config.mouse">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="mouse" 
+               v-model="config.mouse" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="mouse">
+          {{ $t('config.mouse') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.mouse_desc') }}</div>
     </div>
 
     <!-- High resolution scrolling support -->
     <div class="mb-3" v-if="config.mouse === 'enabled'">
-      <label for="high_resolution_scrolling" class="form-label">{{ $t('config.high_resolution_scrolling') }}</label>
-      <select id="high_resolution_scrolling" class="form-select" v-model="config.high_resolution_scrolling">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="high_resolution_scrolling" 
+               v-model="config.high_resolution_scrolling" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="high_resolution_scrolling">
+          {{ $t('config.high_resolution_scrolling') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.high_resolution_scrolling_desc') }}</div>
     </div>
 
     <!-- Native pen/touch support -->
     <div class="mb-3" v-if="config.mouse === 'enabled'">
-      <label for="native_pen_touch" class="form-label">{{ $t('config.native_pen_touch') }}</label>
-      <select id="native_pen_touch" class="form-select" v-model="config.native_pen_touch">
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-      </select>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="native_pen_touch" 
+               v-model="config.native_pen_touch" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="native_pen_touch">
+          {{ $t('config.native_pen_touch') }}
+        </label>
+      </div>
       <div class="form-text">{{ $t('config.native_pen_touch_desc') }}</div>
     </div>
 
