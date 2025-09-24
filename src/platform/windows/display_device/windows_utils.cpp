@@ -164,6 +164,7 @@ namespace display_device::w_utils {
 
   std::string
   get_error_string(LONG error_code) {
+    std::error_code ec(error_code, std::system_category());
     std::stringstream error;
     error << "[code: ";
     switch (error_code) {
@@ -189,7 +190,8 @@ namespace display_device::w_utils {
         error << error_code;
         break;
     }
-    error << ", message: " << std::system_category().message(static_cast<int>(error_code)) << "]";
+    
+    error << ", message: " << ec.message() << "]";
     return error.str();
   }
 

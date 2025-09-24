@@ -125,20 +125,20 @@ namespace platf {
     while (running_) {
       try {
         // 使用同步接收方式，匹配cemuhook的行为
-        boost::system::error_code error;
+        boost::system::error_code ec;
         std::size_t bytes_transferred = socket_.receive_from(
-          boost::asio::buffer(recv_buffer_), remote_endpoint_, 0, error);
+          boost::asio::buffer(recv_buffer_), remote_endpoint_, 0, ec);
 
-        if (!error) {
+        if (!ec) {
           // 处理接收到的数据包
-          handle_receive_sync(error, bytes_transferred);
+          handle_receive_sync(ec, bytes_transferred);
         }
-        else if (error != boost::asio::error::would_block) {
+        else if (ec != boost::asio::error::would_block) {
           // 忽略Windows UDP socket的10054错误（远程主机强制关闭连接）
           // 这是Windows的已知bug，客户端断开连接时会触发此错误
-          if (error.value() != 10054) {
-            BOOST_LOG(warning) << "DSU服务器接收数据错误: " << error.message()
-                               << " (错误代码: " << error.value() << ")";
+          if (ec.value() != 10054) {
+            BOOST_LOG(warning) << "DSU服务器接收数据错误: " << ec.message()
+                               << " (错误代码: " << ec.value() << ")";
           }
           else {
             BOOST_LOG(debug) << "DSU服务器忽略Windows UDP连接重置错误 (10054)";
@@ -157,7 +157,7 @@ namespace platf {
       }
       catch (const std::exception &e) {
         if (running_) {
-          BOOST_LOG(error) << "DSU服务器运行时错误: " << e.what();
+          BOOST_LOG(error) << "DSU服务器异常: " << e.what();
         }
       }
     }
@@ -166,15 +166,15 @@ namespace platf {
   }
 
   void
-  dsu_server_t::handle_receive_sync(const boost::system::error_code &error, std::size_t bytes_transferred) {
+  dsu_server_t::handle_receive_sync(const boost::system::error_code &ec, std::size_t bytes_transferred) {
     if (!running_) {
       return;
     }
 
-    if (error) {
-      if (error != boost::asio::error::operation_aborted) {
-        BOOST_LOG(warning) << "DSU服务器接收数据错误: " << error.message()
-                           << " (错误代码: " << error.value() << ")";
+    if (ec) {
+      if (ec != boost::asio::error::operation_aborted) {
+        BOOST_LOG(warning) << "DSU服务器接收数据错误: " << ec.message()
+                           << " (错误代码: " << ec.value() << ")";
       }
       return;
     }

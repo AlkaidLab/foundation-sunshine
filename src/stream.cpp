@@ -1464,6 +1464,10 @@ namespace stream {
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
+        if (ec) {
+          BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
+          return;
+        }
         auto fg = util::fail_guard([&]() {
           try {
             sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);

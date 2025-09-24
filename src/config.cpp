@@ -492,6 +492,7 @@ namespace config {
     47989,  // Base port number
     "ipv4",  // Address family
     platf::appdata().string() + "/sunshine.log",  // log file
+    false,  // restore_log - 默认不恢复日志文件
     false,  // notify_pre_releases
     {},  // prep commands
   };
@@ -1235,6 +1236,8 @@ namespace config {
     if (mdns_broadcast) {
       config::sunshine.flags[config::flag::MDNS_BROADCAST].flip();
     }
+
+    bool_f(vars, "restore_log"s, sunshine.restore_log);
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian

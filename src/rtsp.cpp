@@ -111,6 +111,9 @@ namespace rtsp_stream {
 
         boost::system::error_code ec;
         sock.close(ec);
+        if (ec) {
+          BOOST_LOG(debug) << "Error closing socket: "sv << ec.message();
+        }
 
         return;
       }
@@ -258,6 +261,9 @@ namespace rtsp_stream {
 
         boost::system::error_code ec;
         sock.close(ec);
+        if (ec) {
+          BOOST_LOG(debug) << "Error closing socket: "sv << ec.message();
+        }
 
         return;
       }
@@ -456,6 +462,9 @@ namespace rtsp_stream {
 
       boost::system::error_code ec;
       sock.shutdown(boost::asio::socket_base::shutdown_type::shutdown_both, ec);
+      if (ec) {
+        BOOST_LOG(debug) << "Error shutting down socket: "sv << ec.message();
+      }
     }
 
     void
@@ -483,6 +492,9 @@ namespace rtsp_stream {
         // If there is no session pending, close the connection immediately
         boost::system::error_code ec;
         socket->sock.close(ec);
+        if (ec) {
+          BOOST_LOG(debug) << "Error closing socket: "sv << ec.message();
+        }
       }
 
       // Queue another asynchronous accept for the next incoming connection
@@ -523,6 +535,8 @@ namespace rtsp_stream {
           if (discarded) {
             BOOST_LOG(debug) << "Event timeout: "sv << discarded->unique_id;
           }
+        } else {
+          BOOST_LOG(debug) << "Timer error: "sv << ec.message();
         }
       });
     }

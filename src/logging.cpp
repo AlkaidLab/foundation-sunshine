@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
+#include <ctime>
 
 // lib includes
 #include <boost/core/null_deleter.hpp>
@@ -53,6 +55,65 @@ namespace logging {
     sink.reset();
   }
 
+  /**
+   * @brief 将现有日志文件转写到带日期的备份文件中
+   * @param log_file 当前日志文件路径
+   */
+  void
+  archive_existing_log(const std::string &log_file) {
+    namespace fs = std::filesystem;
+    
+    // 检查日志文件是否存在
+    if (!fs::exists(log_file)) {
+      return;
+    }
+    
+    try {
+      // 获取当前时间
+      auto now = std::chrono::system_clock::now();
+      auto time_t = std::chrono::system_clock::to_time_t(now);
+      auto tm = *std::localtime(&time_t);
+      
+      // 生成带日期的备份文件名（只精确到日期）
+      std::ostringstream backup_name;
+      backup_name << "sunshine_" 
+                  << std::put_time(&tm, "%Y%m%d") 
+                  << ".log";
+      
+      // 构建备份文件路径
+      fs::path log_path(log_file);
+      fs::path backup_path = log_path.parent_path() / backup_name.str();
+      
+      // 如果备份文件已存在，则追加到文件尾部
+      if (fs::exists(backup_path)) {
+        std::ifstream source(log_file, std::ios::binary);
+        std::ofstream dest(backup_path, std::ios::binary | std::ios::app);
+        
+        if (source && dest) {
+          dest << source.rdbuf();
+          dest.close();
+          source.close();
+          
+          // 删除原日志文件
+          fs::remove(log_file);
+          
+          BOOST_LOG(info) << "Appended log file to: " << backup_path.string();
+        }
+        else {
+          BOOST_LOG(warning) << "Failed to open files for append operation";
+        }
+      }
+      else {
+        // 备份文件不存在，直接重命名
+        fs::rename(log_file, backup_path);
+        BOOST_LOG(info) << "Archived log file to: " << backup_path.string();
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to archive log file: " << e.what();
+    }
+  }
+
   void
   formatter(const boost::log::record_view &view, boost::log::formatting_ostream &os) {
     constexpr const char *message = "Message";
@@ -98,8 +159,18 @@ namespace logging {
        << log_type << view.attribute_values()[message].extract<std::string>();
   }
 
+  /**
+   * @brief Initialize the logging system.
+   * @param min_log_level The minimum log level to output.
+   * @param log_file The log file to write to.
+   * @param restore_log Whether to restore existing log file (true=restore, false=overwrite).
+   * @return An object that will deinitialize the logging system when it goes out of scope.
+   * @examples
+   * log_init(2, "sunshine.log", true);
+   * @examples_end
+   */
   [[nodiscard]] std::unique_ptr<deinit_t>
-  init(int min_log_level, const std::string &log_file) {
+  init(int min_log_level, const std::string &log_file, bool restore_log) {
     if (sink) {
       // Deinitialize the logging system before reinitializing it. This can probably only ever be hit in tests.
       deinit();
@@ -113,7 +184,14 @@ namespace logging {
     boost::shared_ptr<std::ostream> stream { &std::cout, boost::null_deleter() };
     sink->locked_backend()->add_stream(stream);
 #endif
-    sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_file));
+    
+    // 转写现有日志文件
+    if (config::sunshine.restore_log) {
+      archive_existing_log(log_file);
+    }
+
+    std::ios_base::openmode mode = std::ios_base::out;
+    sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_file, mode));
     sink->set_filter(severity >= min_log_level);
     sink->set_formatter(&formatter);
 

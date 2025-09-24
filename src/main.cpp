@@ -94,7 +94,8 @@ main(int argc, char *argv[]) {
   // by placing a user-writable directory in the system-wide PATH variable.
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
 
-  setlocale(LC_ALL, "C");
+  // Set locale to UTF-8 instead of C locale
+  setlocale(LC_ALL, ".UTF-8");
 #endif
 
 #pragma GCC diagnostic push
@@ -110,7 +111,7 @@ main(int argc, char *argv[]) {
     return 0;
   }
 
-  auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file);
+  auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file, config::sunshine.restore_log);
   if (!log_deinit_guard) {
     BOOST_LOG(error) << "Logging failed to initialize"sv;
   }

@@ -84,6 +84,9 @@ if(NOT Boost_FOUND)
     FetchContent_MakeAvailable(Boost)
     set(FETCH_CONTENT_BOOST_USED TRUE)
 
+    add_definitions(-DBOOST_SYSTEM_USE_UTF8)
+    message(STATUS "Boost.System UTF-8 support enabled: BOOST_SYSTEM_USE_UTF8")
+
     set(Boost_FOUND TRUE)  # cmake-lint: disable=C0103
     set(Boost_INCLUDE_DIRS  # cmake-lint: disable=C0103
             "$<BUILD_INTERFACE:${Boost_SOURCE_DIR}/libs/headers/include>")

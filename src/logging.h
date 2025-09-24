@@ -51,13 +51,14 @@ namespace logging {
    * @brief Initialize the logging system.
    * @param min_log_level The minimum log level to output.
    * @param log_file The log file to write to.
+   * @param restore_log Whether to restore existing log file (true=restore, false=overwrite).
    * @return An object that will deinitialize the logging system when it goes out of scope.
    * @examples
-   * log_init(2, "sunshine.log");
+   * log_init(2, "sunshine.log", true);
    * @examples_end
    */
   [[nodiscard]] std::unique_ptr<deinit_t>
-  init(int min_log_level, const std::string &log_file);
+  init(int min_log_level, const std::string &log_file, bool restore_log);
 
   /**
    * @brief Setup AV logging.
