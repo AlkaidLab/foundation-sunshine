@@ -319,6 +319,9 @@ namespace display_device {
       config.device_id = device_zako;
       config::video.output_name = device_zako;
       BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
+      
+      // 创建VDD后关闭虚拟显示器的HDR状态
+      vdd_utils::set_hdr_state(false);
     }
   }
 

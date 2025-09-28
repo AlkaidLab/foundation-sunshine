@@ -78,6 +78,10 @@ namespace display_device {
     bool
     is_display_on();
 
+    // 设置虚拟显示器的HDR状态
+    bool
+    set_hdr_state(bool enable_hdr);
+
     // 重试配置结构
     struct RetryConfig {
       int max_attempts;

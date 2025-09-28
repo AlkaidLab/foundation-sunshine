@@ -1,4 +1,5 @@
 // standard includes
+#include <chrono>
 #include <fstream>
 #include <thread>
 
@@ -280,6 +281,70 @@ namespace display_device {
       }
 
       return true;
+    }
+
+    /**
+     * @brief Wait for display operations to stabilize before HDR changes.
+     * 
+     * This function ensures that other display operations (topology changes, 
+     * mode changes, primary display changes) have stabilized before applying
+     * HDR state changes. This prevents conflicts and ensures proper HDR handling.
+     * 
+     * @param metadata Topology metadata containing information about current state.
+     * @return True if operations have stabilized, false if timeout occurred.
+     * 
+     * EXAMPLES:
+     * ```cpp
+     * topology_metadata_t metadata;
+     * if (wait_for_display_stability(metadata)) {
+     *   // Safe to apply HDR changes
+     * }
+     * ```
+     */
+    bool
+    wait_for_display_stability(const topology_metadata_t &metadata) {
+      constexpr int max_attempts = 10;
+      constexpr auto stability_check_interval = std::chrono::milliseconds(500);
+      constexpr auto max_wait_time = std::chrono::milliseconds(5000);
+      
+      BOOST_LOG(debug) << "等待显示器操作稳定，准备进行HDR切换...";
+      
+      auto start_time = std::chrono::steady_clock::now();
+      
+      for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        // 检查是否超时
+        auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed > max_wait_time) {
+          BOOST_LOG(warning) << "等待显示器稳定超时，继续执行HDR切换";
+          return false;
+        }
+        
+        // 检查当前拓扑是否稳定
+        auto current_topology = get_current_topology();
+        if (is_topology_the_same(current_topology, metadata.current_topology)) {
+          // 检查显示模式是否稳定
+          auto current_modes = get_current_display_modes(get_device_ids_from_topology(current_topology));
+          bool modes_stable = true;
+          
+          for (const auto &device_id : metadata.duplicated_devices) {
+            auto current_mode_it = current_modes.find(device_id);
+            if (current_mode_it == current_modes.end()) {
+              modes_stable = false;
+              break;
+            }
+          }
+          
+          if (modes_stable) {
+            BOOST_LOG(debug) << "显示器操作已稳定，可以进行HDR切换";
+            return true;
+          }
+        }
+        
+        std::this_thread::sleep_for(stability_check_interval);
+      }
+      
+      BOOST_LOG(warning) << "显示器稳定检查达到最大尝试次数，继续执行HDR切换";
+      return false;
     }
 
     /**
@@ -663,6 +728,14 @@ namespace display_device {
         return { apply_result_t::result_e::modes_fail };
       }
       current_settings.original_modes = *original_modes;
+
+      // 如果有HDR切换操作，等待其他操作稳定后再进行HDR切换
+      if (config.change_hdr_state) {
+        BOOST_LOG(info) << "检测到HDR切换操作，等待其他显示器操作稳定...";
+        if (!wait_for_display_stability(topology_result->metadata)) {
+          BOOST_LOG(warning) << "显示器稳定检查未完全通过，但继续执行HDR切换";
+        }
+      }
 
       const auto original_hdr_states { handle_hdr_state_configuration(config.change_hdr_state, current_settings.original_hdr_states, topology_result->metadata) };
       if (!original_hdr_states) {

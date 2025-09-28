@@ -312,5 +312,58 @@ namespace display_device {
 
       return { res_str, fps_str, needs_update };
     }
+
+    bool
+    set_hdr_state(bool enable_hdr) {
+      try {
+        // 获取虚拟显示器的设备ID
+        auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+        if (vdd_device_id.empty()) {
+          BOOST_LOG(debug) << "未找到虚拟显示器设备，跳过HDR状态设置";
+          return true;
+        }
+
+        const std::string action = enable_hdr ? "启用" : "关闭";
+        BOOST_LOG(info) << "正在" << action << "虚拟显示器 " << vdd_device_id << " 的HDR状态...";
+
+        // 获取虚拟显示器的当前HDR状态
+        std::unordered_set<std::string> vdd_device_ids = { vdd_device_id };
+        auto current_hdr_states = display_device::get_current_hdr_states(vdd_device_ids);
+
+        // 检查虚拟显示器是否支持HDR
+        auto hdr_state_it = current_hdr_states.find(vdd_device_id);
+        if (hdr_state_it == current_hdr_states.end()) {
+          BOOST_LOG(debug) << "虚拟显示器 " << vdd_device_id << " 不支持HDR或状态未知";
+          return true;
+        }
+
+        // 检查当前状态是否已经是目标状态
+        hdr_state_e target_state = enable_hdr ? hdr_state_e::enabled : hdr_state_e::disabled;
+        if (hdr_state_it->second == target_state) {
+          BOOST_LOG(debug) << "虚拟显示器 " << vdd_device_id << " 的HDR状态已经是目标状态";
+          return true;
+        }
+
+        // 创建HDR状态映射
+        hdr_state_map_t new_hdr_states;
+        new_hdr_states[vdd_device_id] = target_state;
+
+        BOOST_LOG(info) << "正在" << action << "虚拟显示器 " << vdd_device_id << " 的HDR状态";
+
+        // 设置HDR状态
+        if (display_device::set_hdr_states(new_hdr_states)) {
+          BOOST_LOG(info) << "成功" << action << "虚拟显示器HDR状态";
+          return true;
+        }
+        else {
+          BOOST_LOG(warning) << action << "虚拟显示器HDR状态失败";
+          return false;
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "设置虚拟显示器HDR状态时发生异常: " << e.what();
+        return false;
+      }
+    }
   }  // namespace vdd_utils
 }  // namespace display_device
