@@ -75,8 +75,13 @@
     import ResourceCard from './ResourceCard.vue'
     import SunshineVersion from './sunshine_version'
     import { marked } from 'marked'
+    import { initFirebase, trackEvents } from './firebase-config'
 
     console.log('Hello, Sunshine!')
+
+    // 初始化Firebase Analytics
+    const firebase = initFirebase()
+
     let app = createApp({
       components: {
         Navbar,
@@ -93,6 +98,9 @@
         }
       },
       async created() {
+        // 记录页面访问
+        trackEvents.pageView('home')
+
         try {
           let config = await fetch('/api/config').then((r) => r.json())
           this.notifyPreReleases = config.notify_pre_releases
@@ -110,8 +118,15 @@
             null
           )
           console.log('Pre-Release Version: ', this.preReleaseVersion.version)
+
+          // 记录版本检查事件
+          if (this.githubVersion && this.version) {
+            trackEvents.versionChecked(this.version.version, this.githubVersion.version)
+          }
         } catch (e) {
           console.error(e)
+          // 记录错误事件
+          trackEvents.errorOccurred('version_check', e.message)
         }
         try {
           this.logs = await fetch('/api/logs').then((r) => r.text())
@@ -147,22 +162,22 @@
           if (!this.githubVersion?.release?.body) return ''
           // 预处理换行符，确保GitHub的换行符被正确解析
           const processedText = this.githubVersion.release.body
-            .replace(/\r\n/g, '\n')  // 统一换行符
-            .replace(/\r/g, '\n')    // 处理旧式换行符
+            .replace(/\r\n/g, '\n') // 统一换行符
+            .replace(/\r/g, '\n') // 处理旧式换行符
           return marked(processedText, {
-            breaks: true,  // 启用换行符解析
-            gfm: true      // 启用GitHub风格Markdown
+            breaks: true, // 启用换行符解析
+            gfm: true, // 启用GitHub风格Markdown
           })
         },
         parsedPreReleaseBody() {
           if (!this.preReleaseVersion?.release?.body) return ''
           // 预处理换行符，确保GitHub的换行符被正确解析
           const processedText = this.preReleaseVersion.release.body
-            .replace(/\r\n/g, '\n')  // 统一换行符
-            .replace(/\r/g, '\n')    // 处理旧式换行符
+            .replace(/\r\n/g, '\n') // 统一换行符
+            .replace(/\r/g, '\n') // 处理旧式换行符
           return marked(processedText, {
-            breaks: true,  // 启用换行符解析
-            gfm: true      // 启用GitHub风格Markdown
+            breaks: true, // 启用换行符解析
+            gfm: true, // 启用GitHub风格Markdown
           })
         },
         /** Parse the text errors, calculating the text, the timestamp and the level */
@@ -194,7 +209,7 @@
       margin-top: 12px;
       line-height: 1.6;
     }
-    
+
     .markdown-content h1,
     .markdown-content h2,
     .markdown-content h3,
@@ -206,26 +221,32 @@
       font-weight: 600;
       line-height: 1.25;
     }
-    
-    .markdown-content h1 { font-size: 1.5em; }
-    .markdown-content h2 { font-size: 1.3em; }
-    .markdown-content h3 { font-size: 1.1em; }
-    
+
+    .markdown-content h1 {
+      font-size: 1.5em;
+    }
+    .markdown-content h2 {
+      font-size: 1.3em;
+    }
+    .markdown-content h3 {
+      font-size: 1.1em;
+    }
+
     .markdown-content p {
       margin-bottom: 12px;
       white-space: pre-line; /* 保留换行符 */
     }
-    
+
     .markdown-content ul,
     .markdown-content ol {
       margin-bottom: 12px;
       padding-left: 24px;
     }
-    
+
     .markdown-content li {
       margin-bottom: 4px;
     }
-    
+
     .markdown-content code {
       background: rgba(0, 0, 0, 0.1);
       padding: 2px 6px;
@@ -233,7 +254,7 @@
       font-family: 'Courier New', monospace;
       font-size: 0.9em;
     }
-    
+
     .markdown-content pre {
       background: rgba(0, 0, 0, 0.1);
       padding: 12px;
@@ -241,41 +262,41 @@
       overflow-x: auto;
       margin: 12px 0;
     }
-    
+
     .markdown-content pre code {
       background: none;
       padding: 0;
     }
-    
+
     .markdown-content blockquote {
       border-left: 4px solid #007bff;
       margin: 12px 0;
       padding-left: 16px;
       color: #6c757d;
     }
-    
+
     .markdown-content a {
       color: #007bff;
       text-decoration: none;
     }
-    
+
     .markdown-content a:hover {
       text-decoration: underline;
     }
-    
+
     .markdown-content table {
       border-collapse: collapse;
       width: 100%;
       margin: 12px 0;
     }
-    
+
     .markdown-content th,
     .markdown-content td {
       border: 1px solid #dee2e6;
       padding: 8px 12px;
       text-align: left;
     }
-    
+
     .markdown-content th {
       background: rgba(0, 0, 0, 0.05);
       font-weight: 600;

@@ -5,7 +5,9 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <string_view>
+#include <system_error>
 #include <windows.h>
 #include <winnt.h>
 
@@ -36,4 +38,28 @@ namespace platf {
    */
   std::string
   to_utf8(const std::wstring &string);
+
+  /**
+   * @brief Check if the current process is running as SYSTEM.
+   * @return true if running as SYSTEM, false otherwise.
+   */
+  bool
+  is_running_as_system();
+
+  /**
+   * @brief Retrieve the current logged-in user's token.
+   * @param elevated Whether to retrieve an elevated token if available.
+   * @return The user's token handle, or nullptr if not available.
+   */
+  HANDLE
+  retrieve_users_token(bool elevated);
+
+  /**
+   * @brief Impersonate the current user and execute a callback.
+   * @param user_token The user's token to impersonate.
+   * @param callback The callback function to execute while impersonating.
+   * @return Error code, if any.
+   */
+  std::error_code
+  impersonate_current_user(HANDLE user_token, std::function<void()> callback);
 }  // namespace platf

@@ -9,9 +9,12 @@
     #define WIN32_LEAN_AND_MEAN
     #include <accctrl.h>
     #include <aclapi.h>
+    #include <commdlg.h>  // 添加文件对话框支持
+    #include <shellapi.h>  // 添加 ShellExecuteW 函数声明
+    #include <shlobj.h>  // 添加 SHGetFolderPathW 函数声明
+    #include <shobjidl.h>  // 添加 IFileDialog COM接口声明
     #include <tlhelp32.h>
     #include <windows.h>
-    #include <shellapi.h>  // 添加 ShellExecuteW 函数声明
     #define TRAY_ICON WEB_DIR "images/sunshine.ico"
     #define TRAY_ICON_PLAYING WEB_DIR "images/sunshine-playing.ico"
     #define TRAY_ICON_PAUSING WEB_DIR "images/sunshine-pausing.ico"
@@ -30,8 +33,14 @@
   #endif
 
   // standard includes
+  #include <atomic>
+  #include <chrono>
   #include <csignal>
+  #include <ctime>
+  #include <fstream>
+  #include <future>
   #include <string>
+  #include <thread>
 
   // lib includes
   #include "tray/src/tray.h"
@@ -41,16 +50,15 @@
   // local includes
   #include "confighttp.h"
   #include "display_device/session.h"
+  #include "file_handler.h"
   #include "logging.h"
   #include "platform/common.h"
+  #include "platform/windows/misc.h"
   #include "process.h"
   #include "src/display_device/display_device.h"
   #include "src/entry_handler.h"
   #include "system_tray_i18n.h"
   #include "version.h"
-  #include <chrono>
-  #include <future>
-  #include <thread>
 
 using namespace std::literals;
 
@@ -193,11 +201,310 @@ namespace system_tray {
     open_url_in_default_browser("https://www.ifdian.net/a/qiin2333");
   };
 
+  // 配置导入功能
+  auto tray_import_config_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Importing configuration from system tray"sv;
+
+  #ifdef _WIN32
+    std::wstring file_path_wide;
+    bool file_selected = false;
+
+    // 如果以SYSTEM身份运行，需要模拟用户身份来避免访问系统配置文件夹的错误
+    HANDLE user_token = NULL;
+    if (platf::is_running_as_system()) {
+      user_token = platf::retrieve_users_token(false);
+      if (!user_token) {
+        BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
+        MessageBoxW(NULL, L"Cannot open file dialog: No active user session found.", L"Error", MB_OK | MB_ICONERROR);
+        return;
+      }
+    }
+
+    // 定义文件对话框逻辑为lambda，以便在模拟用户上下文中执行
+    auto show_file_dialog = [&]() {
+      // 初始化COM
+      HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+      bool com_initialized = SUCCEEDED(hr);
+
+      IFileOpenDialog *pFileOpen = NULL;
+
+      // 创建文件打开对话框
+      hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void **>(&pFileOpen));
+
+      if (SUCCEEDED(hr)) {
+        // 设置文件类型过滤器
+        COMDLG_FILTERSPEC rgSpec[] = {
+          { L"Configuration Files", L"*.conf" },
+          { L"All Files", L"*.*" }
+        };
+        pFileOpen->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
+        pFileOpen->SetFileTypeIndex(1);
+        pFileOpen->SetTitle(L"Select Configuration File to Import");
+
+        // 设置选项：禁用所有可能导致访问系统位置的功能
+        DWORD dwFlags;
+        pFileOpen->GetOptions(&dwFlags);
+        // FOS_FORCEFILESYSTEM: 强制只使用文件系统
+        // FOS_DONTADDTORECENT: 不添加到最近文件列表
+        // FOS_NOCHANGEDIR: 不改变当前工作目录
+        // FOS_HIDEPINNEDPLACES: 隐藏固定的位置（导航面板中的快速访问等）
+        // FOS_NOVALIDATE: 不验证文件路径（避免访问不存在的系统路径）
+        pFileOpen->SetOptions(dwFlags | FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT |
+                              FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
+
+        // 显示对话框
+        hr = pFileOpen->Show(NULL);
+
+        if (SUCCEEDED(hr)) {
+          IShellItem *pItem;
+          hr = pFileOpen->GetResult(&pItem);
+          if (SUCCEEDED(hr)) {
+            PWSTR pszFilePath;
+            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+            if (SUCCEEDED(hr)) {
+              file_path_wide = pszFilePath;
+              file_selected = true;
+              CoTaskMemFree(pszFilePath);
+            }
+            pItem->Release();
+          }
+        }
+        pFileOpen->Release();
+      }
+
+      if (com_initialized) {
+        CoUninitialize();
+      }
+    };
+
+    // 如果有用户令牌，在模拟用户身份的上下文中显示对话框
+    if (user_token) {
+      platf::impersonate_current_user(user_token, show_file_dialog);
+      CloseHandle(user_token);
+    }
+    else {
+      // 否则直接显示
+      show_file_dialog();
+    }
+
+    if (file_selected) {
+      std::string file_path = platf::to_utf8(file_path_wide);
+
+      try {
+        // 读取配置文件内容
+        std::string config_content = file_handler::read_file(file_path.c_str());
+        if (!config_content.empty()) {
+          // 备份当前配置
+          std::string backup_path = config::sunshine.config_file + ".backup";
+          std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+          file_handler::write_file(backup_path.c_str(), current_config);
+
+          // 写入新配置
+          int result = file_handler::write_file(config::sunshine.config_file.c_str(), config_content);
+          if (result == 0) {
+            BOOST_LOG(info) << "Configuration imported successfully from: " << file_path;
+            MessageBoxW(NULL, L"Configuration imported successfully!\nPlease restart Sunshine to apply changes.", L"Import Success", MB_OK | MB_ICONINFORMATION);
+          }
+          else {
+            BOOST_LOG(error) << "Failed to write imported configuration";
+            MessageBoxW(NULL, L"Failed to import configuration file.", L"Import Error", MB_OK | MB_ICONERROR);
+          }
+        }
+        else {
+          BOOST_LOG(error) << "Failed to read configuration file: " << file_path;
+          MessageBoxW(NULL, L"Failed to read the selected configuration file.", L"Import Error", MB_OK | MB_ICONERROR);
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Exception during config import: " << e.what();
+        MessageBoxW(NULL, L"An error occurred while importing configuration.", L"Import Error", MB_OK | MB_ICONERROR);
+      }
+    }
+  #else
+    // 非Windows平台的实现（可以后续添加）
+    BOOST_LOG(info) << "Config import not implemented for this platform yet";
+  #endif
+  };
+
+  // 配置导出功能
+  auto tray_export_config_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Exporting configuration from system tray"sv;
+
+  #ifdef _WIN32
+    std::wstring file_path_wide;
+    bool file_selected = false;
+
+    // 如果以SYSTEM身份运行，需要模拟用户身份来避免访问系统配置文件夹的错误
+    HANDLE user_token = NULL;
+    if (platf::is_running_as_system()) {
+      user_token = platf::retrieve_users_token(false);
+      if (!user_token) {
+        BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
+        MessageBoxW(NULL, L"Cannot open file dialog: No active user session found.", L"Error", MB_OK | MB_ICONERROR);
+        return;
+      }
+    }
+
+    // 定义文件对话框逻辑为lambda，以便在模拟用户上下文中执行
+    auto show_file_dialog = [&]() {
+      // 初始化COM
+      HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+      bool com_initialized = SUCCEEDED(hr);
+
+      IFileSaveDialog *pFileSave = NULL;
+
+      // 创建文件保存对话框
+      hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL, IID_IFileSaveDialog, reinterpret_cast<void **>(&pFileSave));
+
+      if (SUCCEEDED(hr)) {
+        // 设置文件类型过滤器
+        COMDLG_FILTERSPEC rgSpec[] = {
+          { L"Configuration Files", L"*.conf" },
+          { L"All Files", L"*.*" }
+        };
+        pFileSave->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
+        pFileSave->SetFileTypeIndex(1);
+        pFileSave->SetDefaultExtension(L"conf");
+        pFileSave->SetTitle(L"Save Configuration File As");
+
+        // 设置默认文件名
+        std::string default_name = "sunshine_config_" + std::to_string(std::time(nullptr)) + ".conf";
+        std::wstring wdefault_name(default_name.begin(), default_name.end());
+        pFileSave->SetFileName(wdefault_name.c_str());
+
+        // 设置选项：禁用所有可能导致访问系统位置的功能
+        DWORD dwFlags;
+        pFileSave->GetOptions(&dwFlags);
+        pFileSave->SetOptions(dwFlags | FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT |
+                              FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
+
+        // 显示对话框
+        hr = pFileSave->Show(NULL);
+
+        if (SUCCEEDED(hr)) {
+          IShellItem *pItem;
+          hr = pFileSave->GetResult(&pItem);
+          if (SUCCEEDED(hr)) {
+            PWSTR pszFilePath;
+            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+            if (SUCCEEDED(hr)) {
+              file_path_wide = pszFilePath;
+              file_selected = true;
+              CoTaskMemFree(pszFilePath);
+            }
+            pItem->Release();
+          }
+        }
+        pFileSave->Release();
+      }
+
+      if (com_initialized) {
+        CoUninitialize();
+      }
+    };
+
+    // 如果有用户令牌，在模拟用户身份的上下文中显示对话框
+    if (user_token) {
+      platf::impersonate_current_user(user_token, show_file_dialog);
+      CloseHandle(user_token);
+    }
+    else {
+      // 否则直接显示
+      show_file_dialog();
+    }
+
+    if (file_selected) {
+      std::string file_path = platf::to_utf8(file_path_wide);
+
+      try {
+        // 读取当前配置
+        std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
+        if (!config_content.empty()) {
+          // 写入到选择的文件
+          int result = file_handler::write_file(file_path.c_str(), config_content);
+          if (result == 0) {
+            BOOST_LOG(info) << "Configuration exported successfully to: " << file_path;
+            MessageBoxW(NULL, L"Configuration exported successfully!", L"Export Success", MB_OK | MB_ICONINFORMATION);
+          }
+          else {
+            BOOST_LOG(error) << "Failed to write exported configuration";
+            MessageBoxW(NULL, L"Failed to export configuration file.", L"Export Error", MB_OK | MB_ICONERROR);
+          }
+        }
+        else {
+          BOOST_LOG(error) << "No configuration to export";
+          MessageBoxW(NULL, L"No configuration found to export.", L"Export Error", MB_OK | MB_ICONERROR);
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Exception during config export: " << e.what();
+        MessageBoxW(NULL, L"An error occurred while exporting configuration.", L"Export Error", MB_OK | MB_ICONERROR);
+      }
+    }
+  #else
+    BOOST_LOG(info) << "Config export not implemented for this platform yet";
+  #endif
+  };
+
+  // 重置配置功能
+  auto tray_reset_config_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Resetting configuration from system tray"sv;
+
+  #ifdef _WIN32
+    // 获取本地化字符串
+    std::wstring title = system_tray_i18n::utf8_to_wstring("Reset Configuration");
+    std::wstring message = system_tray_i18n::utf8_to_wstring("This will reset all configuration to default values.\nThis action cannot be undone.\n\nDo you want to continue?");
+
+    int msgboxID = MessageBoxW(
+      NULL,
+      message.c_str(),
+      title.c_str(),
+      MB_ICONWARNING | MB_YESNO);
+
+    if (msgboxID == IDYES) {
+      try {
+        // 备份当前配置
+        std::string backup_path = config::sunshine.config_file + ".backup";
+        std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+        if (!current_config.empty()) {
+          file_handler::write_file(backup_path.c_str(), current_config);
+        }
+
+        // 创建空的配置文件（重置为默认值）
+        std::ofstream config_file(config::sunshine.config_file);
+        if (config_file.is_open()) {
+          config_file.close();
+          BOOST_LOG(info) << "Configuration reset successfully";
+          MessageBoxW(NULL, L"Configuration has been reset to default values.\nPlease restart Sunshine to apply changes.", L"Reset Success", MB_OK | MB_ICONINFORMATION);
+        }
+        else {
+          BOOST_LOG(error) << "Failed to reset configuration file";
+          MessageBoxW(NULL, L"Failed to reset configuration file.", L"Reset Error", MB_OK | MB_ICONERROR);
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Exception during config reset: " << e.what();
+        MessageBoxW(NULL, L"An error occurred while resetting configuration.", L"Reset Error", MB_OK | MB_ICONERROR);
+      }
+    }
+  #else
+    BOOST_LOG(info) << "Config reset not implemented for this platform yet";
+  #endif
+  };
+
   // 菜单数组定义
   struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
     { .text = "VDD Monitor Toggle", .checked = 0, .cb = tray_toggle_display_cb },
+    { .text = "-" },
+    { .text = "Configuration",
+      .submenu =
+        (struct tray_menu[]) {
+          { .text = "Import Config", .cb = tray_import_config_cb },
+          { .text = "Export Config", .cb = tray_export_config_cb },
+          { .text = "Reset to Default", .cb = tray_reset_config_cb },
+          { .text = nullptr } } },
     { .text = "-" },
     { .text = "Star Project", .cb = tray_star_project_cb },
     { .text = "Help Us",

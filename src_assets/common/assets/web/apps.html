@@ -216,6 +216,10 @@
   import { AppService } from './services/appService.js';
   import { APP_CONSTANTS, ENV_VARS_CONFIG } from './utils/constants.js';
   import { debounce, deepClone } from './utils/helpers.js';
+  import { initFirebase, trackEvents } from './firebase-config';
+
+  // 初始化Firebase Analytics
+  const firebase = initFirebase();
 
   const app = createApp({
     components: {
@@ -251,6 +255,9 @@
       }
     },
     async mounted() {
+      // 记录页面访问
+      trackEvents.pageView('applications');
+      
       // 初始化环境变量
       this.initEnvVars();
       
@@ -346,6 +353,9 @@
        * 新增应用
        */
       newApp() {
+        // 记录用户操作
+        trackEvents.userAction('new_app_clicked');
+        
         this.editingApp = {
           ...APP_CONSTANTS.DEFAULT_APP,
           index: -1
@@ -400,12 +410,18 @@
        */
       async deleteApp(index) {
         try {
+          const appName = this.apps[index].name;
           await AppService.deleteApp(index);
           this.apps.splice(index, 1);
           this.performSearch(); // 重新搜索
+          
+          // 记录应用删除事件
+          trackEvents.appDeleted(appName);
+          
           this.showMessage('应用删除成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS);
         } catch (error) {
           console.error('删除应用失败:', error);
+          trackEvents.errorOccurred('app_delete', error.message);
           this.showMessage('删除应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR);
         }
       },
