@@ -148,13 +148,19 @@ jobs:
           mkdir -p artifacts
           cd build
 
-          # package
+          # package - 生成 NSIS 安装包和 ZIP 便携版
           cpack -G NSIS --verbose
-          # cpack -G ZIP
+          cpack -G ZIP --verbose
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
-          # mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+          mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+
+      - name: Generate Checksums
+        shell: pwsh
+        run: |
+          # 生成 SHA256 校验和
+          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Package Windows Debug Info
         working-directory: build
@@ -169,7 +175,7 @@ jobs:
             "-xr!cpack_artifacts" `
             a "../artifacts/sunshine-win32-debuginfo.7z" "*.dbg"
 
-      - name: Rename release asset
+      - name: Rename release assets
         shell: msys2 {0}
         run: |
           # Format tag to vYEAR.DATE where DATE is zero-padded to 4 digits
@@ -183,20 +189,19 @@ jobs:
             NEWTAG="v${YEAR}.${DATE_PADDED}"
           fi
 
-          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine-${NEWTAG}.exe"
+          # 重命名安装包和便携版
+          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine-${NEWTAG}-Windows-Installer.exe"
+          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine-${NEWTAG}-Windows-Portable.zip"
 
-      # - name: Upload Artifacts
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: sunshine-windows
-      #     path: artifacts/
-      #     if-no-files-found: error
-
-      - name: Upload Single Executable
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sunshine-founation
-          path: artifacts/Sunshine-*.exe
+          name: sunshine-windows
+          path: |
+            artifacts/Sunshine-*-Windows-Installer.exe
+            artifacts/Sunshine-*-Windows-Portable.zip
+            artifacts/SHA256SUMS.txt
+            artifacts/checksums.json
           if-no-files-found: error
 
       - name: Create/Update GitHub Release
