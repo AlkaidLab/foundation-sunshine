@@ -1,0 +1,144 @@
+TITLE=Sunshine 便携版初始化工具
+ERROR_ADMIN=需要管理员权限才能运行此脚本
+ERROR_ADMIN_DESC=请右键点击此文件，选择"以管理员身份运行"
+INFO_ADMIN=检测到管理员权限，开始初始化...
+ERROR_EXE=未找到 sunshine.exe 文件
+ERROR_EXE_DESC=请确保此脚本位于便携版目录中
+INFO_EXE=找到 Sunshine 可执行文件
+INFO_CONFIG=创建配置目录
+INFO_LOG=创建日志目录
+TITLE_INSTALL=开始安装必要组件
+STEP_VDD=检查虚拟显示器
+INFO_VDD_INSTALL=安装虚拟显示器
+SUCCESS_VDD=虚拟显示器安装完成
+WARNING_VDD=虚拟显示器安装失败，但可以继续
+INFO_VDD_EXISTS=虚拟显示器已安装
+INFO_VDD_SKIP=跳过虚拟显示器安装
+VDD_PROMPT=是否安装虚拟显示器？(Y/N, 默认: Y)
+STEP_VSINK=检查虚拟麦克风
+INFO_VSINK_INSTALL=安装虚拟麦克风
+SUCCESS_VSINK=虚拟麦克风安装完成
+WARNING_VSINK=虚拟麦克风安装失败，但可以继续
+INFO_VSINK_EXISTS=虚拟麦克风已安装
+INFO_VSINK_SKIP=跳过虚拟麦克风安装
+VSINK_PROMPT=是否安装虚拟麦克风？(Y/N, 默认: Y)
+STEP_FIREWALL=配置防火墙规则
+INFO_FIREWALL_INSTALL=配置防火墙规则...
+SUCCESS_FIREWALL=防火墙规则配置完成
+WARNING_FIREWALL=防火墙规则配置失败，但可以继续
+INFO_FIREWALL_SKIP=跳过防火墙规则配置
+FIREWALL_PROMPT=是否配置防火墙规则？(Y/N, 默认: Y)
+STEP_GAMEPAD=安装游戏手柄支持
+INFO_GAMEPAD_INSTALL=安装游戏手柄支持
+SUCCESS_GAMEPAD=游戏手柄支持安装完成
+WARNING_GAMEPAD=游戏手柄支持安装失败，但可以继续
+INFO_GAMEPAD_EXISTS=游戏手柄支持已安装
+INFO_GAMEPAD_SKIP=跳过游戏手柄支持安装
+GAMEPAD_PROMPT=是否安装游戏手柄支持？(Y/N, 默认: Y)
+STEP_AUTOSTART=配置开机自启动
+AUTOSTART_PROMPT=是否配置开机自启动？(Y/N, 默认: Y)
+INFO_AUTOSTART_INSTALL=创建开机自启动快捷方式
+SUCCESS_AUTOSTART=开机自启动配置完成
+WARNING_AUTOSTART=开机自启动配置失败，但可以继续
+INFO_AUTOSTART_SKIP=跳过开机自启动配置
+TITLE_SUCCESS=初始化完成！
+SUCCESS_MAIN=Sunshine 便携版初始化完成！
+USAGE_1=运行 sunshine.exe 启动程序
+USAGE_2=使用浏览器访问 http://localhost:47989 进行配置
+CONFIG_LOCATION=配置文件位置
+LOG_LOCATION=日志文件位置
+NOTE_FIRST=首次启动后请通过托盘的Sunshine图标，右键点击Open Sunshine启动，并设置用户名和密码
+
+# 启动相关
+PROMPT_START=是否现在启动Sunshine？(Y/N, 默认: Y)
+INFO_STARTING=正在创建启动脚本...
+SUCCESS_STARTUP_SCRIPT=启动脚本创建完成，稍后可以直接运行start_sunshine.vbs来启动Sunshine
+INFO_LATER=请可以稍后直接运行sunshine.exe来启动Sunshine
+
+# 语言选择相关
+LANG_DETECTED=检测到系统语言
+LANG_CONFIRM=请确认是否使用此语言
+LANG_YES=是 (Y)
+LANG_NO=否 (N)
+LANG_SELECT=请选择语言
+LANG_SELECT_PROMPT=请选择语言 (1-7)
+LANG_CONFIRM_PROMPT=请选择 (Y/N, 默认: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_ZH_TRADITIONAL=繁體中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# 脚本执行确认
+SCRIPT_CONFIRM_TITLE=脚本执行确认
+SCRIPT_CONFIRM_DESC=即将执行以下操作
+SCRIPT_CONFIRM_VDD=安装虚拟显示器驱动
+SCRIPT_CONFIRM_VSINK=安装虚拟麦克风
+SCRIPT_CONFIRM_FIREWALL=配置防火墙规则
+SCRIPT_CONFIRM_GAMEPAD=安装游戏手柄支持
+SCRIPT_CONFIRM_AUTOSTART=配置开机自启动
+SCRIPT_CONFIRM_PROCEED=是否继续执行？(Y/N, 默认: Y)
+SCRIPT_CONFIRM_CANCEL=操作已取消
+SCRIPT_CONFIRM_PROCEEDING=开始执行初始化...
+
+# 错误消息
+ERROR_INVALID_SELECTION=无效选择，使用默认语言
+ERROR_LANG_FILE_NOT_FOUND=语言文件不存在
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# 卸载相关
+TITLE_UNINSTALL=Sunshine 便携版卸载工具
+TITLE_UNINSTALL_PROCESS=开始卸载组件
+STEP_UNINSTALL_VDD=卸载虚拟显示器
+STEP_UNINSTALL_VSINK=卸载虚拟麦克风
+STEP_UNINSTALL_FIREWALL=删除防火墙规则
+STEP_UNINSTALL_GAMEPAD=卸载游戏手柄支持
+STEP_UNINSTALL_AUTOSTART=删除开机自启动
+VDD_UNINSTALL_PROMPT=是否卸载虚拟显示器？(Y/N, 默认: Y)
+VSINK_UNINSTALL_PROMPT=是否卸载虚拟麦克风？(Y/N, 默认: Y)
+FIREWALL_UNINSTALL_PROMPT=是否删除防火墙规则？(Y/N, 默认: Y)
+GAMEPAD_UNINSTALL_PROMPT=是否卸载游戏手柄支持？(Y/N, 默认: Y)
+AUTOSTART_UNINSTALL_PROMPT=是否删除开机自启动？(Y/N, 默认: Y)
+INFO_VDD_UNINSTALL=卸载虚拟显示器...
+INFO_VSINK_UNINSTALL=卸载虚拟麦克风...
+INFO_FIREWALL_UNINSTALL=删除防火墙规则...
+INFO_GAMEPAD_UNINSTALL=卸载游戏手柄支持...
+INFO_AUTOSTART_UNINSTALL=删除开机自启动...
+SUCCESS_VDD_UNINSTALL=虚拟显示器卸载完成
+SUCCESS_VSINK_UNINSTALL=虚拟麦克风卸载完成
+SUCCESS_FIREWALL_UNINSTALL=防火墙规则删除完成
+SUCCESS_GAMEPAD_UNINSTALL=游戏手柄支持卸载完成
+SUCCESS_AUTOSTART_UNINSTALL=开机自启动删除完成
+WARNING_VDD_UNINSTALL=虚拟显示器卸载失败，但可以继续
+WARNING_VSINK_UNINSTALL=虚拟麦克风卸载失败，但可以继续
+WARNING_FIREWALL_UNINSTALL=防火墙规则删除失败，但可以继续
+WARNING_GAMEPAD_UNINSTALL=游戏手柄支持卸载失败，但可以继续
+WARNING_AUTOSTART_UNINSTALL=开机自启动删除失败，但可以继续
+INFO_VDD_SKIP=跳过虚拟显示器卸载
+INFO_VSINK_SKIP=跳过虚拟麦克风卸载
+INFO_FIREWALL_SKIP=跳过防火墙规则删除
+INFO_GAMEPAD_SKIP=跳过游戏手柄支持卸载
+INFO_AUTOSTART_SKIP=跳过开机自启动删除
+INFO_AUTOSTART_NOT_FOUND=开机自启动快捷方式不存在
+UNINSTALL_CONFIRM_TITLE=卸载确认
+UNINSTALL_CONFIRM_DESC=即将执行以下卸载操作
+UNINSTALL_CONFIRM_VDD=卸载虚拟显示器驱动
+UNINSTALL_CONFIRM_VSINK=卸载虚拟麦克风
+UNINSTALL_CONFIRM_FIREWALL=删除防火墙规则
+UNINSTALL_CONFIRM_GAMEPAD=卸载游戏手柄支持
+UNINSTALL_CONFIRM_AUTOSTART=删除开机自启动
+UNINSTALL_CONFIRM_PROCEED=是否继续执行卸载？(Y/N, 默认: Y)
+UNINSTALL_CANCEL=卸载操作已取消
+UNINSTALL_PROCEEDING=开始执行卸载...
+NOTE_UNINSTALL=注意：此操作不会删除便携版文件，如需完全删除请手动删除整个文件夹
+
+# 权限提权相关
+ADMIN_ELEVATE_PROMPT=是否以管理员权限重新运行此脚本？
+ADMIN_ELEVATE_CONFIRM=请选择 (Y/N, 默认: Y)
+ADMIN_ELEVATING=正在以管理员权限重新启动脚本...
+ADMIN_ELEVATE_CANCEL=已取消提权，脚本退出
+
+# 脚本完成提示
+SCRIPT_COMPLETE_PROMPT=脚本执行完成，按任意键退出

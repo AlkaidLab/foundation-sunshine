@@ -1,0 +1,138 @@
+TITLE=Outil d'initialisation portable Sunshine
+ERROR_ADMIN=Privilèges administrateur requis pour exécuter ce script
+ERROR_ADMIN_DESC=Veuillez cliquer avec le bouton droit sur ce fichier et sélectionner "Exécuter en tant qu'administrateur"
+INFO_ADMIN=Privilèges administrateur détectés, démarrage de l'initialisation...
+ERROR_EXE=Fichier sunshine.exe introuvable
+ERROR_EXE_DESC=Veuillez vous assurer que ce script se trouve dans le répertoire portable
+INFO_EXE=Exécutable Sunshine trouvé
+INFO_CONFIG=Création du répertoire de configuration
+INFO_LOG=Création du répertoire de journaux
+TITLE_INSTALL=Installation des composants requis
+STEP_VDD=Vérification de l'écran virtuel
+INFO_VDD_INSTALL=Installation de l'écran virtuel
+SUCCESS_VDD=Installation de l'écran virtuel terminée
+WARNING_VDD=Échec de l'installation de l'écran virtuel, mais continuation
+INFO_VDD_EXISTS=Écran virtuel déjà installé
+STEP_VSINK=Vérification du microphone virtuel
+INFO_VSINK_INSTALL=Installation du microphone virtuel
+SUCCESS_VSINK=Installation du microphone virtuel terminée
+WARNING_VSINK=Échec de l'installation du microphone virtuel, mais continuation
+INFO_VSINK_EXISTS=Microphone virtuel déjà installé
+STEP_FIREWALL=Configuration des règles de pare-feu
+INFO_FIREWALL_INSTALL=Configuration des règles de pare-feu...
+SUCCESS_FIREWALL=Règles de pare-feu configurées
+WARNING_FIREWALL=Échec de la configuration du pare-feu, mais continuation
+INFO_FIREWALL_SKIP=Ignorer la configuration du pare-feu
+STEP_GAMEPAD=Installation du support de manette de jeu
+INFO_GAMEPAD_INSTALL=Installation du support de manette de jeu
+SUCCESS_GAMEPAD=Installation du support de manette de jeu terminée
+WARNING_GAMEPAD=Échec de l'installation du support de manette de jeu, mais continuation
+INFO_GAMEPAD_EXISTS=Support de manette de jeu déjà installé
+INFO_GAMEPAD_SKIP=Ignorer l'installation du support de manette de jeu
+GAMEPAD_PROMPT=Installer le support de manette de jeu ? (Y/N, Par défaut: Y)
+STEP_AUTOSTART=Configuration du démarrage automatique au démarrage
+AUTOSTART_PROMPT=Configurer le démarrage automatique au démarrage ? (Y/N, Par défaut: Y)
+INFO_AUTOSTART_INSTALL=Création du raccourci de démarrage
+SUCCESS_AUTOSTART=Configuration du démarrage automatique au démarrage terminée
+WARNING_AUTOSTART=Échec de la configuration du démarrage automatique au démarrage, mais continuation
+INFO_AUTOSTART_SKIP=Ignorer la configuration du démarrage automatique au démarrage
+TITLE_SUCCESS=Initialisation terminée !
+SUCCESS_MAIN=Initialisation portable Sunshine terminée !
+USAGE_1=Lancez sunshine.exe pour démarrer le programme
+USAGE_2=Utilisez le navigateur pour accéder à http://localhost:47989 pour la configuration
+CONFIG_LOCATION=Emplacement du fichier de configuration
+LOG_LOCATION=Emplacement du fichier de journal
+NOTE_FIRST=Après le premier démarrage, veuillez cliquer avec le bouton droit sur l'icône Sunshine dans la barre système et sélectionner "Open Sunshine" pour lancer, puis définir le nom d'utilisateur et le mot de passe
+
+# Lancement
+PROMPT_START=Démarrer Sunshine maintenant ? (Y/N, Par défaut: Y)
+INFO_STARTING=Création du script de démarrage...
+SUCCESS_STARTUP_SCRIPT=Script de démarrage créé avec succès. Vous pouvez plus tard exécuter start_sunshine.vbs pour démarrer Sunshine
+INFO_LATER=Vous pouvez plus tard exécuter sunshine.exe directement pour démarrer Sunshine
+
+# Sélection de langue
+LANG_DETECTED=Langue du système détectée
+LANG_CONFIRM=Veuillez confirmer si vous voulez utiliser cette langue
+LANG_YES=Oui (Y)
+LANG_NO=Non (N)
+LANG_SELECT=Veuillez sélectionner la langue
+LANG_SELECT_PROMPT=Veuillez sélectionner la langue (1-6)
+LANG_CONFIRM_PROMPT=Veuillez sélectionner (Y/N, Par défaut: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# Confirmation d'exécution du script
+SCRIPT_CONFIRM_TITLE=Confirmation d'exécution du script
+SCRIPT_CONFIRM_DESC=Les opérations suivantes seront effectuées
+SCRIPT_CONFIRM_VDD=Installer le pilote d'écran virtuel
+SCRIPT_CONFIRM_VSINK=Installer le microphone virtuel
+SCRIPT_CONFIRM_FIREWALL=Configurer les règles de pare-feu
+SCRIPT_CONFIRM_GAMEPAD=Installer le support de manette de jeu
+SCRIPT_CONFIRM_AUTOSTART=Configurer le démarrage automatique au démarrage
+SCRIPT_CONFIRM_PROCEED=Voulez-vous continuer ? (Y/N, Par défaut: Y)
+SCRIPT_CONFIRM_CANCEL=Opération annulée
+SCRIPT_CONFIRM_PROCEEDING=Démarrage de l'initialisation...
+
+# Messages d'erreur
+ERROR_INVALID_SELECTION=Sélection invalide, utilisation de la langue par défaut
+ERROR_LANG_FILE_NOT_FOUND=Fichier de langue introuvable
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# Élévation d'administrateur
+ADMIN_ELEVATE_PROMPT=Voulez-vous redémarrer ce script avec les privilèges d'administrateur ?
+ADMIN_ELEVATE_CONFIRM=Veuillez sélectionner (Y/N, Par défaut: Y)
+ADMIN_ELEVATING=Redémarrage du script avec les privilèges d'administrateur...
+ADMIN_ELEVATE_CANCEL=Élévation annulée, sortie du script
+
+# Désinstallation
+TITLE_UNINSTALL=Outil de désinstallation Sunshine Portable
+TITLE_UNINSTALL_PROCESS=Commencer la désinstallation des composants
+STEP_UNINSTALL_VDD=Désinstaller l'écran virtuel
+STEP_UNINSTALL_VSINK=Désinstaller le microphone virtuel
+STEP_UNINSTALL_FIREWALL=Supprimer les règles de pare-feu
+STEP_UNINSTALL_GAMEPAD=Désinstaller le support de manette de jeu
+STEP_UNINSTALL_AUTOSTART=Supprimer le démarrage automatique au démarrage
+VDD_UNINSTALL_PROMPT=Désinstaller l'écran virtuel ? (Y/N, Par défaut: Y)
+VSINK_UNINSTALL_PROMPT=Désinstaller le microphone virtuel ? (Y/N, Par défaut: Y)
+FIREWALL_UNINSTALL_PROMPT=Supprimer les règles de pare-feu ? (Y/N, Par défaut: Y)
+GAMEPAD_UNINSTALL_PROMPT=Désinstaller le support de manette de jeu ? (Y/N, Par défaut: Y)
+AUTOSTART_UNINSTALL_PROMPT=Supprimer le démarrage automatique au démarrage ? (Y/N, Par défaut: Y)
+INFO_VDD_UNINSTALL=Désinstallation de l'écran virtuel...
+INFO_VSINK_UNINSTALL=Désinstallation du microphone virtuel...
+INFO_FIREWALL_UNINSTALL=Suppression des règles de pare-feu...
+INFO_GAMEPAD_UNINSTALL=Désinstallation du support de manette de jeu...
+INFO_AUTOSTART_UNINSTALL=Suppression du démarrage automatique au démarrage...
+SUCCESS_VDD_UNINSTALL=Désinstallation de l'écran virtuel terminée
+SUCCESS_VSINK_UNINSTALL=Désinstallation du microphone virtuel terminée
+SUCCESS_FIREWALL_UNINSTALL=Suppression des règles de pare-feu terminée
+SUCCESS_GAMEPAD_UNINSTALL=Désinstallation du support de manette de jeu terminée
+SUCCESS_AUTOSTART_UNINSTALL=Suppression du démarrage automatique au démarrage terminée
+WARNING_VDD_UNINSTALL=Échec de la désinstallation de l'écran virtuel, mais continuation
+WARNING_VSINK_UNINSTALL=Échec de la désinstallation du microphone virtuel, mais continuation
+WARNING_FIREWALL_UNINSTALL=Échec de la suppression des règles de pare-feu, mais continuation
+WARNING_GAMEPAD_UNINSTALL=Échec de la désinstallation du support de manette de jeu, mais continuation
+WARNING_AUTOSTART_UNINSTALL=Échec de la suppression du démarrage automatique au démarrage, mais continuation
+INFO_VDD_SKIP=Ignorer la désinstallation de l'écran virtuel
+INFO_VSINK_SKIP=Ignorer la désinstallation du microphone virtuel
+INFO_FIREWALL_SKIP=Ignorer la suppression des règles de pare-feu
+INFO_GAMEPAD_SKIP=Ignorer la désinstallation du support de manette de jeu
+INFO_AUTOSTART_SKIP=Ignorer la suppression du démarrage automatique au démarrage
+INFO_AUTOSTART_NOT_FOUND=Raccourci de démarrage automatique au démarrage introuvable
+UNINSTALL_CONFIRM_TITLE=Confirmation de désinstallation
+UNINSTALL_CONFIRM_DESC=Les opérations de désinstallation suivantes seront effectuées
+UNINSTALL_CONFIRM_VDD=Désinstaller le pilote d'écran virtuel
+UNINSTALL_CONFIRM_VSINK=Désinstaller le microphone virtuel
+UNINSTALL_CONFIRM_FIREWALL=Supprimer les règles de pare-feu
+UNINSTALL_CONFIRM_GAMEPAD=Désinstaller le support de manette de jeu
+UNINSTALL_CONFIRM_AUTOSTART=Supprimer le démarrage automatique au démarrage
+UNINSTALL_CONFIRM_PROCEED=Continuer avec la désinstallation ? (Y/N, Par défaut: Y)
+UNINSTALL_CANCEL=Opération de désinstallation annulée
+UNINSTALL_PROCEEDING=Démarrage de la désinstallation...
+NOTE_UNINSTALL=Note : Cette opération ne supprimera pas les fichiers portables. Veuillez supprimer manuellement le dossier entier si vous voulez le supprimer complètement.
+
+# Fin du script
+SCRIPT_COMPLETE_PROMPT=Exécution du script terminée, appuyez sur une touche pour quitter

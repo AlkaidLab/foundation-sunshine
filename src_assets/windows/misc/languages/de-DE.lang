@@ -1,0 +1,138 @@
+TITLE=Sunshine Portable Initialisierungstool
+ERROR_ADMIN=Administratorrechte erforderlich, um dieses Skript auszuführen
+ERROR_ADMIN_DESC=Bitte rechtsklicken Sie auf diese Datei und wählen Sie "Als Administrator ausführen"
+INFO_ADMIN=Administratorrechte erkannt, Initialisierung wird gestartet...
+ERROR_EXE=sunshine.exe Datei nicht gefunden
+ERROR_EXE_DESC=Bitte stellen Sie sicher, dass sich dieses Skript im tragbaren Verzeichnis befindet
+INFO_EXE=Sunshine ausführbare Datei gefunden
+INFO_CONFIG=Konfigurationsverzeichnis erstellen
+INFO_LOG=Protokollverzeichnis erstellen
+TITLE_INSTALL=Erforderliche Komponenten installieren
+STEP_VDD=Virtuellen Bildschirm überprüfen
+INFO_VDD_INSTALL=Virtuellen Bildschirm installieren
+SUCCESS_VDD=Virtueller Bildschirm erfolgreich installiert
+WARNING_VDD=Virtueller Bildschirm Installation fehlgeschlagen, aber fortfahren
+INFO_VDD_EXISTS=Virtueller Bildschirm bereits installiert
+STEP_VSINK=Virtuelles Mikrofon überprüfen
+INFO_VSINK_INSTALL=Virtuelles Mikrofon installieren
+SUCCESS_VSINK=Virtuelles Mikrofon erfolgreich installiert
+WARNING_VSINK=Virtuelles Mikrofon Installation fehlgeschlagen, aber fortfahren
+INFO_VSINK_EXISTS=Virtuelles Mikrofon bereits installiert
+STEP_FIREWALL=Firewall-Regeln konfigurieren
+INFO_FIREWALL_INSTALL=Firewall-Regeln konfigurieren...
+SUCCESS_FIREWALL=Firewall-Regeln erfolgreich konfiguriert
+WARNING_FIREWALL=Firewall-Konfiguration fehlgeschlagen, aber fortfahren
+INFO_FIREWALL_SKIP=Firewall-Konfiguration überspringen
+STEP_GAMEPAD=Gamepad-Unterstützung installieren
+INFO_GAMEPAD_INSTALL=Gamepad-Unterstützung installieren
+SUCCESS_GAMEPAD=Gamepad-Unterstützung erfolgreich installiert
+WARNING_GAMEPAD=Gamepad-Unterstützung Installation fehlgeschlagen, aber fortfahren
+INFO_GAMEPAD_EXISTS=Gamepad-Unterstützung bereits installiert
+INFO_GAMEPAD_SKIP=Gamepad-Unterstützung Installation überspringen
+GAMEPAD_PROMPT=Gamepad-Unterstützung installieren? (Y/N, Standard: Y)
+STEP_AUTOSTART=Startup-Autostart konfigurieren
+AUTOSTART_PROMPT=Startup-Autostart konfigurieren? (Y/N, Standard: Y)
+INFO_AUTOSTART_INSTALL=Startup-Verknüpfung erstellen
+SUCCESS_AUTOSTART=Startup-Autostart-Konfiguration abgeschlossen
+WARNING_AUTOSTART=Startup-Autostart-Konfiguration fehlgeschlagen, aber fortfahren
+INFO_AUTOSTART_SKIP=Startup-Autostart-Konfiguration überspringen
+TITLE_SUCCESS=Initialisierung abgeschlossen!
+SUCCESS_MAIN=Sunshine tragbare Initialisierung abgeschlossen!
+USAGE_1=Starten Sie sunshine.exe, um das Programm zu starten
+USAGE_2=Verwenden Sie den Browser, um http://localhost:47989 für die Konfiguration aufzurufen
+CONFIG_LOCATION=Konfigurationsdatei Speicherort
+LOG_LOCATION=Protokolldatei Speicherort
+NOTE_FIRST=Nach dem ersten Start bitte mit der rechten Maustaste auf das Sunshine-Symbol im System-Tray klicken und "Open Sunshine" auswählen, dann Benutzername und Passwort setzen
+
+# Start bezogen
+PROMPT_START=Sunshine jetzt starten? (Y/N, Standard: Y)
+INFO_STARTING=Erstelle Startskript...
+SUCCESS_STARTUP_SCRIPT=Startskript erfolgreich erstellt. Sie können später start_sunshine.vbs ausführen, um Sunshine zu starten
+INFO_LATER=Sie können später sunshine.exe direkt ausführen, um Sunshine zu starten
+
+# Sprachauswahl bezogen
+LANG_DETECTED=Systemsprache erkannt
+LANG_CONFIRM=Bitte bestätigen Sie, ob Sie diese Sprache verwenden möchten
+LANG_YES=Ja (Y)
+LANG_NO=Nein (N)
+LANG_SELECT=Bitte Sprache wählen
+LANG_SELECT_PROMPT=Bitte Sprache wählen (1-6)
+LANG_CONFIRM_PROMPT=Bitte wählen (Y/N, Standard: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# Skript-Ausführungsbestätigung
+SCRIPT_CONFIRM_TITLE=Skript-Ausführungsbestätigung
+SCRIPT_CONFIRM_DESC=Die folgenden Operationen werden ausgeführt
+SCRIPT_CONFIRM_VDD=Virtuellen Bildschirmtreiber installieren
+SCRIPT_CONFIRM_VSINK=Virtuelles Mikrofon installieren
+SCRIPT_CONFIRM_FIREWALL=Firewall-Regeln konfigurieren
+SCRIPT_CONFIRM_GAMEPAD=Gamepad-Unterstützung installieren
+SCRIPT_CONFIRM_AUTOSTART=Startup-Autostart konfigurieren
+SCRIPT_CONFIRM_PROCEED=Möchten Sie fortfahren? (Y/N, Standard: Y)
+SCRIPT_CONFIRM_CANCEL=Operation abgebrochen
+SCRIPT_CONFIRM_PROCEEDING=Initialisierung wird gestartet...
+
+# Fehlermeldungen
+ERROR_INVALID_SELECTION=Ungültige Auswahl, verwende Standardsprache
+ERROR_LANG_FILE_NOT_FOUND=Sprachdatei nicht gefunden
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# Admin-Eskalation
+ADMIN_ELEVATE_PROMPT=Möchten Sie dieses Skript mit Administratorrechten neu starten?
+ADMIN_ELEVATE_CONFIRM=Bitte wählen (Y/N, Standard: Y)
+ADMIN_ELEVATING=Starte Skript mit Administratorrechten neu...
+ADMIN_ELEVATE_CANCEL=Eskalation abgebrochen, Skript beendet
+
+# Deinstallationsbezogen
+TITLE_UNINSTALL=Sunshine Portable Deinstallations-Tool
+TITLE_UNINSTALL_PROCESS=Komponenten-Deinstallation starten
+STEP_UNINSTALL_VDD=Virtuellen Bildschirm deinstallieren
+STEP_UNINSTALL_VSINK=Virtuelles Mikrofon deinstallieren
+STEP_UNINSTALL_FIREWALL=Firewall-Regeln entfernen
+STEP_UNINSTALL_GAMEPAD=Gamepad-Unterstützung deinstallieren
+STEP_UNINSTALL_AUTOSTART=Startup-Autostart entfernen
+VDD_UNINSTALL_PROMPT=Virtuellen Bildschirm deinstallieren? (Y/N, Standard: Y)
+VSINK_UNINSTALL_PROMPT=Virtuelles Mikrofon deinstallieren? (Y/N, Standard: Y)
+FIREWALL_UNINSTALL_PROMPT=Firewall-Regeln entfernen? (Y/N, Standard: Y)
+GAMEPAD_UNINSTALL_PROMPT=Gamepad-Unterstützung deinstallieren? (Y/N, Standard: Y)
+AUTOSTART_UNINSTALL_PROMPT=Startup-Autostart entfernen? (Y/N, Standard: Y)
+INFO_VDD_UNINSTALL=Virtuellen Bildschirm deinstallieren...
+INFO_VSINK_UNINSTALL=Virtuelles Mikrofon deinstallieren...
+INFO_FIREWALL_UNINSTALL=Firewall-Regeln entfernen...
+INFO_GAMEPAD_UNINSTALL=Gamepad-Unterstützung deinstallieren...
+INFO_AUTOSTART_UNINSTALL=Startup-Autostart entfernen...
+SUCCESS_VDD_UNINSTALL=Virtueller Bildschirm Deinstallation abgeschlossen
+SUCCESS_VSINK_UNINSTALL=Virtuelles Mikrofon Deinstallation abgeschlossen
+SUCCESS_FIREWALL_UNINSTALL=Firewall-Regeln Entfernung abgeschlossen
+SUCCESS_GAMEPAD_UNINSTALL=Gamepad-Unterstützung Deinstallation abgeschlossen
+SUCCESS_AUTOSTART_UNINSTALL=Startup-Autostart Entfernung abgeschlossen
+WARNING_VDD_UNINSTALL=Virtueller Bildschirm Deinstallation fehlgeschlagen, aber fortfahren
+WARNING_VSINK_UNINSTALL=Virtuelles Mikrofon Deinstallation fehlgeschlagen, aber fortfahren
+WARNING_FIREWALL_UNINSTALL=Firewall-Regeln Entfernung fehlgeschlagen, aber fortfahren
+WARNING_GAMEPAD_UNINSTALL=Gamepad-Unterstützung Deinstallation fehlgeschlagen, aber fortfahren
+WARNING_AUTOSTART_UNINSTALL=Startup-Autostart Entfernung fehlgeschlagen, aber fortfahren
+INFO_VDD_SKIP=Virtueller Bildschirm Deinstallation überspringen
+INFO_VSINK_SKIP=Virtuelles Mikrofon Deinstallation überspringen
+INFO_FIREWALL_SKIP=Firewall-Regeln Entfernung überspringen
+INFO_GAMEPAD_SKIP=Gamepad-Unterstützung Deinstallation überspringen
+INFO_AUTOSTART_SKIP=Startup-Autostart Entfernung überspringen
+INFO_AUTOSTART_NOT_FOUND=Startup-Autostart Verknüpfung nicht gefunden
+UNINSTALL_CONFIRM_TITLE=Deinstallationsbestätigung
+UNINSTALL_CONFIRM_DESC=Die folgenden Deinstallationsoperationen werden ausgeführt
+UNINSTALL_CONFIRM_VDD=Virtuellen Bildschirmtreiber deinstallieren
+UNINSTALL_CONFIRM_VSINK=Virtuelles Mikrofon deinstallieren
+UNINSTALL_CONFIRM_FIREWALL=Firewall-Regeln entfernen
+UNINSTALL_CONFIRM_GAMEPAD=Gamepad-Unterstützung deinstallieren
+UNINSTALL_CONFIRM_AUTOSTART=Startup-Autostart entfernen
+UNINSTALL_CONFIRM_PROCEED=Mit Deinstallation fortfahren? (Y/N, Standard: Y)
+UNINSTALL_CANCEL=Deinstallationsoperation abgebrochen
+UNINSTALL_PROCEEDING=Deinstallation wird gestartet...
+NOTE_UNINSTALL=Hinweis: Diese Operation wird keine tragbaren Dateien löschen. Bitte löschen Sie den gesamten Ordner manuell, wenn Sie ihn vollständig entfernen möchten.
+
+# Skript-Abschluss
+SCRIPT_COMPLETE_PROMPT=Skript-Ausführung abgeschlossen, beliebige Taste zum Beenden drücken

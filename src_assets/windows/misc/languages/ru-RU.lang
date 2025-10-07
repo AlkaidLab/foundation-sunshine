@@ -1,0 +1,143 @@
+TITLE=Инструмент инициализации Sunshine Portable
+ERROR_ADMIN=Требуются права администратора для запуска этого скрипта
+ERROR_ADMIN_DESC=Пожалуйста, щелкните правой кнопкой мыши по этому файлу и выберите "Запуск от имени администратора"
+INFO_ADMIN=Обнаружены права администратора, начинаем инициализацию...
+ERROR_EXE=Файл sunshine.exe не найден
+ERROR_EXE_DESC=Убедитесь, что этот скрипт находится в папке портативной версии
+INFO_EXE=Найден исполняемый файл Sunshine
+INFO_CONFIG=Создание папки конфигурации
+INFO_LOG=Создание папки логов
+TITLE_INSTALL=Начало установки необходимых компонентов
+STEP_VDD=Проверка виртуального дисплея
+INFO_VDD_INSTALL=Установка виртуального дисплея
+SUCCESS_VDD=Установка виртуального дисплея завершена
+WARNING_VDD=Установка виртуального дисплея не удалась, но можно продолжить
+INFO_VDD_EXISTS=Виртуальный дисплей уже установлен
+INFO_VDD_SKIP=Пропуск установки виртуального дисплея
+VDD_PROMPT=Установить виртуальный дисплей? (Y/N, По умолчанию: Y)
+STEP_VSINK=Проверка виртуального микрофона
+INFO_VSINK_INSTALL=Установка виртуального микрофона
+SUCCESS_VSINK=Установка виртуального микрофона завершена
+WARNING_VSINK=Установка виртуального микрофона не удалась, но можно продолжить
+INFO_VSINK_EXISTS=Виртуальный микрофон уже установлен
+INFO_VSINK_SKIP=Пропуск установки виртуального микрофона
+VSINK_PROMPT=Установить виртуальный микрофон? (Y/N, По умолчанию: Y)
+STEP_FIREWALL=Настройка правил брандмауэра
+INFO_FIREWALL_INSTALL=Настройка правил брандмауэра...
+SUCCESS_FIREWALL=Настройка правил брандмауэра завершена
+WARNING_FIREWALL=Настройка правил брандмауэра не удалась, но можно продолжить
+INFO_FIREWALL_SKIP=Пропуск настройки правил брандмауэра
+FIREWALL_PROMPT=Настроить правила брандмауэра? (Y/N, По умолчанию: Y)
+STEP_GAMEPAD=Установка поддержки геймпада
+INFO_GAMEPAD_INSTALL=Установка поддержки геймпада
+SUCCESS_GAMEPAD=Установка поддержки геймпада завершена
+WARNING_GAMEPAD=Установка поддержки геймпада не удалась, но можно продолжить
+INFO_GAMEPAD_EXISTS=Поддержка геймпада уже установлена
+INFO_GAMEPAD_SKIP=Пропуск установки поддержки геймпада
+GAMEPAD_PROMPT=Установить поддержку геймпада? (Y/N, По умолчанию: Y)
+STEP_AUTOSTART=Настройка автозапуска при загрузке
+AUTOSTART_PROMPT=Настроить автозапуск при загрузке? (Y/N, По умолчанию: Y)
+INFO_AUTOSTART_INSTALL=Создание ярлыка автозапуска
+SUCCESS_AUTOSTART=Настройка автозапуска при загрузке завершена
+WARNING_AUTOSTART=Настройка автозапуска при загрузке не удалась, но можно продолжить
+INFO_AUTOSTART_SKIP=Пропуск настройки автозапуска при загрузке
+TITLE_SUCCESS=Инициализация завершена!
+SUCCESS_MAIN=Инициализация Sunshine Portable завершена!
+USAGE_1=Запустите sunshine.exe для запуска программы
+USAGE_2=Используйте браузер для доступа к http://localhost:47989 для настройки
+CONFIG_LOCATION=Расположение файла конфигурации
+LOG_LOCATION=Расположение файла логов
+NOTE_FIRST=После первого запуска щелкните правой кнопкой мыши по иконке Sunshine в системном трее и выберите "Open Sunshine" для запуска, затем настройте имя пользователя и пароль
+
+# Запуск
+PROMPT_START=Запустить Sunshine сейчас? (Y/N, По умолчанию: Y)
+INFO_STARTING=Создание скрипта запуска...
+SUCCESS_STARTUP_SCRIPT=Скрипт запуска успешно создан. Вы можете позже запустить start_sunshine.vbs для запуска Sunshine
+INFO_LATER=Вы можете позже запустить sunshine.exe напрямую для запуска Sunshine
+
+# Language selection related
+LANG_DETECTED=Обнаружен язык системы
+LANG_CONFIRM=Пожалуйста, подтвердите, хотите ли вы использовать этот язык
+LANG_YES=Да (Y)
+LANG_NO=Нет (N)
+LANG_SELECT=Пожалуйста, выберите язык
+LANG_SELECT_PROMPT=Пожалуйста, выберите язык (1-6)
+LANG_CONFIRM_PROMPT=Пожалуйста, выберите (Y/N, По умолчанию: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# Script execution confirmation
+SCRIPT_CONFIRM_TITLE=Подтверждение выполнения скрипта
+SCRIPT_CONFIRM_DESC=Будут выполнены следующие операции
+SCRIPT_CONFIRM_VDD=Установка драйвера виртуального дисплея
+SCRIPT_CONFIRM_VSINK=Установка виртуального микрофона
+SCRIPT_CONFIRM_FIREWALL=Настройка правил брандмауэра
+SCRIPT_CONFIRM_GAMEPAD=Установка поддержки геймпада
+SCRIPT_CONFIRM_AUTOSTART=Настройка автозапуска при загрузке
+SCRIPT_CONFIRM_PROCEED=Продолжить выполнение? (Y/N, По умолчанию: Y)
+SCRIPT_CONFIRM_CANCEL=Операция отменена
+SCRIPT_CONFIRM_PROCEEDING=Начинаем выполнение инициализации...
+
+# Error messages
+ERROR_INVALID_SELECTION=Неверный выбор, используется язык по умолчанию
+ERROR_LANG_FILE_NOT_FOUND=Файл языка не найден
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# Uninstall related
+TITLE_UNINSTALL=Инструмент удаления Sunshine Portable
+TITLE_UNINSTALL_PROCESS=Начало удаления компонентов
+STEP_UNINSTALL_VDD=Удаление виртуального дисплея
+STEP_UNINSTALL_VSINK=Удаление виртуального микрофона
+STEP_UNINSTALL_FIREWALL=Удаление правил брандмауэра
+STEP_UNINSTALL_GAMEPAD=Удаление поддержки геймпада
+STEP_UNINSTALL_AUTOSTART=Удаление автозапуска при загрузке
+VDD_UNINSTALL_PROMPT=Удалить виртуальный дисплей? (Y/N, По умолчанию: Y)
+VSINK_UNINSTALL_PROMPT=Удалить виртуальный микрофон? (Y/N, По умолчанию: Y)
+FIREWALL_UNINSTALL_PROMPT=Удалить правила брандмауэра? (Y/N, По умолчанию: Y)
+GAMEPAD_UNINSTALL_PROMPT=Удалить поддержку геймпада? (Y/N, По умолчанию: Y)
+AUTOSTART_UNINSTALL_PROMPT=Удалить автозапуск при загрузке? (Y/N, По умолчанию: Y)
+INFO_VDD_UNINSTALL=Удаление виртуального дисплея...
+INFO_VSINK_UNINSTALL=Удаление виртуального микрофона...
+INFO_FIREWALL_UNINSTALL=Удаление правил брандмауэра...
+INFO_GAMEPAD_UNINSTALL=Удаление поддержки геймпада...
+INFO_AUTOSTART_UNINSTALL=Удаление автозапуска при загрузке...
+SUCCESS_VDD_UNINSTALL=Удаление виртуального дисплея завершено
+SUCCESS_VSINK_UNINSTALL=Удаление виртуального микрофона завершено
+SUCCESS_FIREWALL_UNINSTALL=Удаление правил брандмауэра завершено
+SUCCESS_GAMEPAD_UNINSTALL=Удаление поддержки геймпада завершено
+SUCCESS_AUTOSTART_UNINSTALL=Удаление автозапуска при загрузке завершено
+WARNING_VDD_UNINSTALL=Удаление виртуального дисплея не удалось, но можно продолжить
+WARNING_VSINK_UNINSTALL=Удаление виртуального микрофона не удалось, но можно продолжить
+WARNING_FIREWALL_UNINSTALL=Удаление правил брандмауэра не удалось, но можно продолжить
+WARNING_GAMEPAD_UNINSTALL=Удаление поддержки геймпада не удалось, но можно продолжить
+WARNING_AUTOSTART_UNINSTALL=Удаление автозапуска при загрузке не удалось, но можно продолжить
+INFO_VDD_SKIP=Пропуск удаления виртуального дисплея
+INFO_VSINK_SKIP=Пропуск удаления виртуального микрофона
+INFO_FIREWALL_SKIP=Пропуск удаления правил брандмауэра
+INFO_GAMEPAD_SKIP=Пропуск удаления поддержки геймпада
+INFO_AUTOSTART_SKIP=Пропуск удаления автозапуска при загрузке
+INFO_AUTOSTART_NOT_FOUND=Ярлык автозапуска при загрузке не найден
+UNINSTALL_CONFIRM_TITLE=Подтверждение удаления
+UNINSTALL_CONFIRM_DESC=Будут выполнены следующие операции удаления
+UNINSTALL_CONFIRM_VDD=Удаление драйвера виртуального дисплея
+UNINSTALL_CONFIRM_VSINK=Удаление виртуального микрофона
+UNINSTALL_CONFIRM_FIREWALL=Удаление правил брандмауэра
+UNINSTALL_CONFIRM_GAMEPAD=Удаление поддержки геймпада
+UNINSTALL_CONFIRM_AUTOSTART=Удаление автозапуска при загрузке
+UNINSTALL_CONFIRM_PROCEED=Продолжить удаление? (Y/N, По умолчанию: Y)
+UNINSTALL_CANCEL=Операция удаления отменена
+UNINSTALL_PROCEEDING=Начинаем выполнение удаления...
+NOTE_UNINSTALL=Примечание: эта операция не удалит файлы портативной версии. Если вы хотите полностью удалить, пожалуйста, вручную удалите всю папку
+
+# Admin elevation related
+ADMIN_ELEVATE_PROMPT=Хотите перезапустить этот скрипт с правами администратора?
+ADMIN_ELEVATE_CONFIRM=Пожалуйста, выберите (Y/N, По умолчанию: Y)
+ADMIN_ELEVATING=Перезапуск скрипта с правами администратора...
+ADMIN_ELEVATE_CANCEL=Повышение прав отменено, скрипт завершается
+
+# Script completion prompt
+SCRIPT_COMPLETE_PROMPT=Выполнение скрипта завершено, нажмите любую клавишу для выхода

@@ -1,0 +1,138 @@
+TITLE=Sunshine ポータブル初期化ツール
+ERROR_ADMIN=このスクリプトを実行するには管理者権限が必要です
+ERROR_ADMIN_DESC=このファイルを右クリックして「管理者として実行」を選択してください
+INFO_ADMIN=管理者権限が検出されました。初期化を開始します...
+ERROR_EXE=sunshine.exe ファイルが見つかりません
+ERROR_EXE_DESC=このスクリプトがポータブルディレクトリにあることを確認してください
+INFO_EXE=Sunshine 実行ファイルが見つかりました
+INFO_CONFIG=設定ディレクトリを作成中
+INFO_LOG=ログディレクトリを作成中
+TITLE_INSTALL=必要なコンポーネントをインストール中
+STEP_VDD=仮想ディスプレイをチェック中
+INFO_VDD_INSTALL=仮想ディスプレイをインストール中
+SUCCESS_VDD=仮想ディスプレイのインストールが完了しました
+WARNING_VDD=仮想ディスプレイのインストールに失敗しましたが、続行します
+INFO_VDD_EXISTS=仮想ディスプレイは既にインストールされています
+STEP_VSINK=仮想マイクをチェック中
+INFO_VSINK_INSTALL=仮想マイクをインストール中
+SUCCESS_VSINK=仮想マイクのインストールが完了しました
+WARNING_VSINK=仮想マイクのインストールに失敗しましたが、続行します
+INFO_VSINK_EXISTS=仮想マイクは既にインストールされています
+STEP_FIREWALL=ファイアウォールルールを設定中
+INFO_FIREWALL_INSTALL=ファイアウォールルールを設定中...
+SUCCESS_FIREWALL=ファイアウォールルールの設定が完了しました
+WARNING_FIREWALL=ファイアウォールの設定に失敗しましたが、続行します
+INFO_FIREWALL_SKIP=ファイアウォールの設定をスキップします
+STEP_GAMEPAD=ゲームパッドサポートをインストール中
+INFO_GAMEPAD_INSTALL=ゲームパッドサポートをインストール中
+SUCCESS_GAMEPAD=ゲームパッドサポートのインストールが完了しました
+WARNING_GAMEPAD=ゲームパッドサポートのインストールに失敗しましたが、続行します
+INFO_GAMEPAD_EXISTS=ゲームパッドサポートは既にインストールされています
+INFO_GAMEPAD_SKIP=ゲームパッドサポートのインストールをスキップします
+GAMEPAD_PROMPT=ゲームパッドサポートをインストールしますか？(Y/N, デフォルト: Y)
+STEP_AUTOSTART=起動時自動起動を設定中
+AUTOSTART_PROMPT=起動時自動起動を設定しますか？(Y/N, デフォルト: Y)
+INFO_AUTOSTART_INSTALL=起動ショートカットを作成中
+SUCCESS_AUTOSTART=起動時自動起動の設定が完了しました
+WARNING_AUTOSTART=起動時自動起動の設定に失敗しましたが、続行します
+INFO_AUTOSTART_SKIP=起動時自動起動の設定をスキップします
+TITLE_SUCCESS=初期化完了！
+SUCCESS_MAIN=Sunshine ポータブルの初期化が完了しました！
+USAGE_1=sunshine.exe を実行してプログラムを起動
+USAGE_2=ブラウザで http://localhost:47989 にアクセスして設定
+CONFIG_LOCATION=設定ファイルの場所
+LOG_LOCATION=ログファイルの場所
+NOTE_FIRST=初回起動後、システムトレイのSunshineアイコンを右クリックして「Open Sunshine」を選択して起動し、ユーザー名とパスワードを設定してください
+
+# 起動関連
+PROMPT_START=今すぐSunshineを起動しますか？(Y/N, デフォルト: Y)
+INFO_STARTING=起動スクリプトを作成中...
+SUCCESS_STARTUP_SCRIPT=起動スクリプトが正常に作成されました。後でstart_sunshine.vbsを実行してSunshineを起動できます
+INFO_LATER=後でsunshine.exeを直接実行してSunshineを起動できます
+
+# 言語選択関連
+LANG_DETECTED=システム言語が検出されました
+LANG_CONFIRM=この言語を使用しますか？
+LANG_YES=はい (Y)
+LANG_NO=いいえ (N)
+LANG_SELECT=言語を選択してください
+LANG_SELECT_PROMPT=言語を選択してください (1-6)
+LANG_CONFIRM_PROMPT=選択してください (Y/N, デフォルト: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# スクリプト実行確認
+SCRIPT_CONFIRM_TITLE=スクリプト実行確認
+SCRIPT_CONFIRM_DESC=以下の操作が実行されます
+SCRIPT_CONFIRM_VDD=仮想ディスプレイドライバーをインストール
+SCRIPT_CONFIRM_VSINK=仮想マイクをインストール
+SCRIPT_CONFIRM_FIREWALL=ファイアウォールルールを設定
+SCRIPT_CONFIRM_GAMEPAD=ゲームパッドサポートをインストール
+SCRIPT_CONFIRM_AUTOSTART=起動時自動起動を設定
+SCRIPT_CONFIRM_PROCEED=続行しますか？(Y/N, デフォルト: Y)
+SCRIPT_CONFIRM_CANCEL=操作がキャンセルされました
+SCRIPT_CONFIRM_PROCEEDING=初期化を開始しています...
+
+# エラーメッセージ
+ERROR_INVALID_SELECTION=無効な選択、デフォルト言語を使用
+ERROR_LANG_FILE_NOT_FOUND=言語ファイルが見つかりません
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# 管理者権限の昇格
+ADMIN_ELEVATE_PROMPT=管理者権限でこのスクリプトを再起動しますか？
+ADMIN_ELEVATE_CONFIRM=選択してください (Y/N, デフォルト: Y)
+ADMIN_ELEVATING=管理者権限でスクリプトを再起動中...
+ADMIN_ELEVATE_CANCEL=昇格がキャンセルされました、スクリプトを終了します
+
+# アンインストール関連
+TITLE_UNINSTALL=Sunshine ポータブルアンインストールツール
+TITLE_UNINSTALL_PROCESS=コンポーネントのアンインストールを開始
+STEP_UNINSTALL_VDD=仮想ディスプレイをアンインストール
+STEP_UNINSTALL_VSINK=仮想マイクをアンインストール
+STEP_UNINSTALL_FIREWALL=ファイアウォールルールを削除
+STEP_UNINSTALL_GAMEPAD=ゲームパッドサポートをアンインストール
+STEP_UNINSTALL_AUTOSTART=起動時自動起動を削除
+VDD_UNINSTALL_PROMPT=仮想ディスプレイをアンインストールしますか？(Y/N, デフォルト: Y)
+VSINK_UNINSTALL_PROMPT=仮想マイクをアンインストールしますか？(Y/N, デフォルト: Y)
+FIREWALL_UNINSTALL_PROMPT=ファイアウォールルールを削除しますか？(Y/N, デフォルト: Y)
+GAMEPAD_UNINSTALL_PROMPT=ゲームパッドサポートをアンインストールしますか？(Y/N, デフォルト: Y)
+AUTOSTART_UNINSTALL_PROMPT=起動時自動起動を削除しますか？(Y/N, デフォルト: Y)
+INFO_VDD_UNINSTALL=仮想ディスプレイをアンインストール中...
+INFO_VSINK_UNINSTALL=仮想マイクをアンインストール中...
+INFO_FIREWALL_UNINSTALL=ファイアウォールルールを削除中...
+INFO_GAMEPAD_UNINSTALL=ゲームパッドサポートをアンインストール中...
+INFO_AUTOSTART_UNINSTALL=起動時自動起動を削除中...
+SUCCESS_VDD_UNINSTALL=仮想ディスプレイのアンインストールが完了しました
+SUCCESS_VSINK_UNINSTALL=仮想マイクのアンインストールが完了しました
+SUCCESS_FIREWALL_UNINSTALL=ファイアウォールルールの削除が完了しました
+SUCCESS_GAMEPAD_UNINSTALL=ゲームパッドサポートのアンインストールが完了しました
+SUCCESS_AUTOSTART_UNINSTALL=起動時自動起動の削除が完了しました
+WARNING_VDD_UNINSTALL=仮想ディスプレイのアンインストールに失敗しましたが、続行します
+WARNING_VSINK_UNINSTALL=仮想マイクのアンインストールに失敗しましたが、続行します
+WARNING_FIREWALL_UNINSTALL=ファイアウォールルールの削除に失敗しましたが、続行します
+WARNING_GAMEPAD_UNINSTALL=ゲームパッドサポートのアンインストールに失敗しましたが、続行します
+WARNING_AUTOSTART_UNINSTALL=起動時自動起動の削除に失敗しましたが、続行します
+INFO_VDD_SKIP=仮想ディスプレイのアンインストールをスキップします
+INFO_VSINK_SKIP=仮想マイクのアンインストールをスキップします
+INFO_FIREWALL_SKIP=ファイアウォールルールの削除をスキップします
+INFO_GAMEPAD_SKIP=ゲームパッドサポートのアンインストールをスキップします
+INFO_AUTOSTART_SKIP=起動時自動起動の削除をスキップします
+INFO_AUTOSTART_NOT_FOUND=起動時自動起動のショートカットが見つかりません
+UNINSTALL_CONFIRM_TITLE=アンインストール確認
+UNINSTALL_CONFIRM_DESC=以下のアンインストール操作が実行されます
+UNINSTALL_CONFIRM_VDD=仮想ディスプレイドライバーをアンインストール
+UNINSTALL_CONFIRM_VSINK=仮想マイクをアンインストール
+UNINSTALL_CONFIRM_FIREWALL=ファイアウォールルールを削除
+UNINSTALL_CONFIRM_GAMEPAD=ゲームパッドサポートをアンインストール
+UNINSTALL_CONFIRM_AUTOSTART=起動時自動起動を削除
+UNINSTALL_CONFIRM_PROCEED=アンインストールを続行しますか？(Y/N, デフォルト: Y)
+UNINSTALL_CANCEL=アンインストール操作がキャンセルされました
+UNINSTALL_PROCEEDING=アンインストールを開始しています...
+NOTE_UNINSTALL=注意：この操作はポータブルファイルを削除しません。完全に削除したい場合は、フォルダ全体を手動で削除してください
+
+# スクリプト完了
+SCRIPT_COMPLETE_PROMPT=スクリプトの実行が完了しました、任意のキーを押して終了してください

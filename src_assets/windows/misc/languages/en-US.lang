@@ -1,0 +1,143 @@
+TITLE=Sunshine Portable Initialization Tool
+ERROR_ADMIN=Administrator privileges required to run this script
+ERROR_ADMIN_DESC=Please right-click this file and select "Run as administrator"
+INFO_ADMIN=Administrator privileges detected, starting initialization...
+ERROR_EXE=sunshine.exe file not found
+ERROR_EXE_DESC=Please ensure this script is in the portable directory
+INFO_EXE=Found Sunshine executable
+INFO_CONFIG=Creating config directory
+INFO_LOG=Creating log directory
+TITLE_INSTALL=Installing Required Components
+STEP_VDD=Checking virtual display
+INFO_VDD_INSTALL=Installing virtual display
+SUCCESS_VDD=Virtual display installation completed
+WARNING_VDD=Virtual display installation failed, but continuing
+INFO_VDD_EXISTS=Virtual display already installed
+INFO_VDD_SKIP=Skipping virtual display installation
+VDD_PROMPT=Install virtual display? (Y/N, Default: Y)
+STEP_VSINK=Checking virtual microphone
+INFO_VSINK_INSTALL=Installing virtual microphone
+SUCCESS_VSINK=Virtual microphone installation completed
+WARNING_VSINK=Virtual microphone installation failed, but continuing
+INFO_VSINK_EXISTS=Virtual microphone already installed
+INFO_VSINK_SKIP=Skipping virtual microphone installation
+VSINK_PROMPT=Install virtual microphone? (Y/N, Default: Y)
+STEP_FIREWALL=Configuring firewall rules
+INFO_FIREWALL_INSTALL=Configuring firewall rules...
+SUCCESS_FIREWALL=Firewall rules configured
+WARNING_FIREWALL=Firewall configuration failed, but continuing
+INFO_FIREWALL_SKIP=Skipping firewall configuration
+FIREWALL_PROMPT=Configure firewall rules? (Y/N, Default: Y)
+STEP_GAMEPAD=Installing gamepad support
+INFO_GAMEPAD_INSTALL=Installing gamepad support
+SUCCESS_GAMEPAD=Gamepad support installation completed
+WARNING_GAMEPAD=Gamepad support installation failed, but continuing
+INFO_GAMEPAD_EXISTS=Gamepad support already installed
+INFO_GAMEPAD_SKIP=Skipping gamepad support installation
+GAMEPAD_PROMPT=Install gamepad support? (Y/N, Default: Y)
+STEP_AUTOSTART=Configuring startup autostart
+AUTOSTART_PROMPT=Configure startup autostart? (Y/N, Default: Y)
+INFO_AUTOSTART_INSTALL=Creating startup shortcut
+SUCCESS_AUTOSTART=Startup autostart configuration completed
+WARNING_AUTOSTART=Startup autostart configuration failed, but continuing
+INFO_AUTOSTART_SKIP=Skipping startup autostart configuration
+TITLE_SUCCESS=Initialization Complete!
+SUCCESS_MAIN=Sunshine portable initialization completed!
+USAGE_1=Run sunshine.exe to start the program
+USAGE_2=Use browser to access http://localhost:47989 for configuration
+CONFIG_LOCATION=Configuration file location
+LOG_LOCATION=Log file location
+NOTE_FIRST=After first startup, please right-click the Sunshine icon in system tray and select "Open Sunshine" to launch, then set username and password
+
+# Launch related
+PROMPT_START=Start Sunshine now? (Y/N, Default: Y)
+INFO_STARTING=Creating startup script...
+SUCCESS_STARTUP_SCRIPT=Startup script created successfully. You can later run start_sunshine.vbs to start Sunshine
+INFO_LATER=You can later run sunshine.exe directly to start Sunshine
+
+# Language selection related
+LANG_DETECTED=Detected system language
+LANG_CONFIRM=Please confirm if you want to use this language
+LANG_YES=Yes (Y)
+LANG_NO=No (N)
+LANG_SELECT=Please select language
+LANG_SELECT_PROMPT=Please select language (1-6)
+LANG_CONFIRM_PROMPT=Please select (Y/N, Default: Y)
+LANG_ZH_SIMPLE=简体中文
+LANG_EN=English
+LANG_DE=Deutsch
+LANG_FR=Français
+LANG_JA=日本語
+LANG_RU=Русский
+
+# Script execution confirmation
+SCRIPT_CONFIRM_TITLE=Script Execution Confirmation
+SCRIPT_CONFIRM_DESC=The following operations will be performed
+SCRIPT_CONFIRM_VDD=Install virtual display driver
+SCRIPT_CONFIRM_VSINK=Install virtual microphone
+SCRIPT_CONFIRM_FIREWALL=Configure firewall rules
+SCRIPT_CONFIRM_GAMEPAD=Install gamepad support
+SCRIPT_CONFIRM_AUTOSTART=Configure startup autostart
+SCRIPT_CONFIRM_PROCEED=Do you want to continue? (Y/N, Default: Y)
+SCRIPT_CONFIRM_CANCEL=Operation cancelled
+SCRIPT_CONFIRM_PROCEEDING=Starting initialization...
+
+# Error messages
+ERROR_INVALID_SELECTION=Invalid selection, using default language
+ERROR_LANG_FILE_NOT_FOUND=Language file not found
+ERROR_LANG_FILE_NOT_FOUND_EN=Language file not found
+
+# Uninstall related
+TITLE_UNINSTALL=Sunshine Portable Uninstall Tool
+TITLE_UNINSTALL_PROCESS=Starting component uninstallation
+STEP_UNINSTALL_VDD=Uninstalling virtual display
+STEP_UNINSTALL_VSINK=Uninstalling virtual microphone
+STEP_UNINSTALL_FIREWALL=Removing firewall rules
+STEP_UNINSTALL_GAMEPAD=Uninstalling gamepad support
+STEP_UNINSTALL_AUTOSTART=Removing startup autostart
+VDD_UNINSTALL_PROMPT=Uninstall virtual display? (Y/N, Default: Y)
+VSINK_UNINSTALL_PROMPT=Uninstall virtual microphone? (Y/N, Default: Y)
+FIREWALL_UNINSTALL_PROMPT=Remove firewall rules? (Y/N, Default: Y)
+GAMEPAD_UNINSTALL_PROMPT=Uninstall gamepad support? (Y/N, Default: Y)
+AUTOSTART_UNINSTALL_PROMPT=Remove startup autostart? (Y/N, Default: Y)
+INFO_VDD_UNINSTALL=Uninstalling virtual display...
+INFO_VSINK_UNINSTALL=Uninstalling virtual microphone...
+INFO_FIREWALL_UNINSTALL=Removing firewall rules...
+INFO_GAMEPAD_UNINSTALL=Uninstalling gamepad support...
+INFO_AUTOSTART_UNINSTALL=Removing startup autostart...
+SUCCESS_VDD_UNINSTALL=Virtual display uninstallation completed
+SUCCESS_VSINK_UNINSTALL=Virtual microphone uninstallation completed
+SUCCESS_FIREWALL_UNINSTALL=Firewall rules removal completed
+SUCCESS_GAMEPAD_UNINSTALL=Gamepad support uninstallation completed
+SUCCESS_AUTOSTART_UNINSTALL=Startup autostart removal completed
+WARNING_VDD_UNINSTALL=Virtual display uninstallation failed, but continuing
+WARNING_VSINK_UNINSTALL=Virtual microphone uninstallation failed, but continuing
+WARNING_FIREWALL_UNINSTALL=Firewall rules removal failed, but continuing
+WARNING_GAMEPAD_UNINSTALL=Gamepad support uninstallation failed, but continuing
+WARNING_AUTOSTART_UNINSTALL=Startup autostart removal failed, but continuing
+INFO_VDD_SKIP=Skipping virtual display uninstallation
+INFO_VSINK_SKIP=Skipping virtual microphone uninstallation
+INFO_FIREWALL_SKIP=Skipping firewall rules removal
+INFO_GAMEPAD_SKIP=Skipping gamepad support uninstallation
+INFO_AUTOSTART_SKIP=Skipping startup autostart removal
+INFO_AUTOSTART_NOT_FOUND=Startup autostart shortcut not found
+UNINSTALL_CONFIRM_TITLE=Uninstall Confirmation
+UNINSTALL_CONFIRM_DESC=The following uninstall operations will be performed
+UNINSTALL_CONFIRM_VDD=Uninstall virtual display driver
+UNINSTALL_CONFIRM_VSINK=Uninstall virtual microphone
+UNINSTALL_CONFIRM_FIREWALL=Remove firewall rules
+UNINSTALL_CONFIRM_GAMEPAD=Uninstall gamepad support
+UNINSTALL_CONFIRM_AUTOSTART=Remove startup autostart
+UNINSTALL_CONFIRM_PROCEED=Continue with uninstallation? (Y/N, Default: Y)
+UNINSTALL_CANCEL=Uninstall operation cancelled
+UNINSTALL_PROCEEDING=Starting uninstallation...
+NOTE_UNINSTALL=Note: This operation will not delete portable files. Please manually delete the entire folder if you want to completely remove it.
+
+# Admin elevation related
+ADMIN_ELEVATE_PROMPT=Do you want to restart this script with administrator privileges?
+ADMIN_ELEVATE_CONFIRM=Please select (Y/N, Default: Y)
+ADMIN_ELEVATING=Restarting script with administrator privileges...
+ADMIN_ELEVATE_CANCEL=Elevation cancelled, script exiting
+
+# Script completion prompt
+SCRIPT_COMPLETE_PROMPT=Script execution completed, press any key to exit
