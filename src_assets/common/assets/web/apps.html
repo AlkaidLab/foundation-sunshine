@@ -32,6 +32,26 @@
       
       <!-- 功能按钮组 -->
       <div class="action-buttons">
+        <!-- 视图切换按钮组 -->
+        <div class="view-toggle-group">
+          <button 
+            class="view-toggle-btn" 
+            :class="{ active: viewMode === 'grid' }"
+            @click="viewMode = 'grid'"
+            :title="'网格视图'"
+          >
+            <i class="fas fa-th"></i>
+          </button>
+          <button 
+            class="view-toggle-btn" 
+            :class="{ active: viewMode === 'list' }"
+            @click="viewMode = 'list'"
+            :title="'列表视图'"
+          >
+            <i class="fas fa-list"></i>
+          </button>
+        </div>
+        
         <button 
           class="cute-btn cute-btn-primary" 
           @click="newApp"
@@ -59,49 +79,98 @@
     
     <!-- 应用卡片列表 -->
     <div class="apps-grid-container">
-      <draggable 
-        v-if="!searchQuery" 
-        v-model="apps" 
-        item-key="name"
-        class="apps-grid"
-        :animation="300"
-        :delay="0"
-        :disabled="false"
-        ghost-class="app-card-ghost"
-        chosen-class="app-card-chosen"
-        drag-class="app-card-drag"
-        @start="onDragStart"
-        @end="onDragEnd"
-      >
-        <template #item="{element: app, index}">
+      <!-- 网格视图 -->
+      <template v-if="viewMode === 'grid'">
+        <draggable 
+          v-if="!searchQuery" 
+          v-model="apps" 
+          item-key="name"
+          class="apps-grid"
+          :animation="300"
+          :delay="0"
+          :disabled="false"
+          ghost-class="app-card-ghost"
+          chosen-class="app-card-chosen"
+          drag-class="app-card-drag"
+          @start="onDragStart"
+          @end="onDragEnd"
+        >
+          <template #item="{element: app, index}">
+            <app-card 
+              :app="app"
+              :draggable="true"
+              :is-drag-result="false"
+              :is-dragging="isDragging"
+              @edit="editApp(index)"
+              @delete="showDeleteForm(index)"
+              @copy-success="handleCopySuccess"
+              @copy-error="handleCopyError"
+            ></app-card>
+          </template>
+        </draggable>
+        
+        <!-- 搜索结果视图（不可拖拽） -->
+        <div v-else class="apps-grid">
           <app-card 
+            v-for="(app, index) in filteredApps" 
+            :key="'search-' + index"
             :app="app"
-            :draggable="true"
-            :is-drag-result="false"
-            :is-dragging="isDragging"
-            @edit="editApp(index)"
-            @delete="showDeleteForm(index)"
+            :draggable="false"
+            :is-search-result="true"
+            :is-dragging="false"
+            @edit="editApp(getOriginalIndex(app, index))"
+            @delete="showDeleteForm(getOriginalIndex(app, index))"
             @copy-success="handleCopySuccess"
             @copy-error="handleCopyError"
           ></app-card>
-        </template>
-      </draggable>
+        </div>
+      </template>
       
-      <!-- 搜索结果视图（不可拖拽） -->
-      <div v-else class="apps-grid">
-        <app-card 
-          v-for="(app, index) in filteredApps" 
-          :key="'search-' + index"
-          :app="app"
-          :draggable="false"
-          :is-search-result="true"
-          :is-dragging="false"
-          @edit="editApp(getOriginalIndex(app, index))"
-          @delete="showDeleteForm(getOriginalIndex(app, index))"
-          @copy-success="handleCopySuccess"
-          @copy-error="handleCopyError"
-        ></app-card>
-      </div>
+      <!-- 列表视图 -->
+      <template v-else>
+        <draggable 
+          v-if="!searchQuery" 
+          v-model="apps" 
+          item-key="name"
+          class="apps-list"
+          :animation="300"
+          :delay="0"
+          :disabled="false"
+          ghost-class="app-list-item-ghost"
+          chosen-class="app-list-item-chosen"
+          drag-class="app-list-item-drag"
+          @start="onDragStart"
+          @end="onDragEnd"
+        >
+          <template #item="{element: app, index}">
+            <app-list-item 
+              :app="app"
+              :draggable="true"
+              :is-dragging="isDragging"
+              @edit="editApp(index)"
+              @delete="showDeleteForm(index)"
+              @copy-success="handleCopySuccess"
+              @copy-error="handleCopyError"
+            ></app-list-item>
+          </template>
+        </draggable>
+        
+        <!-- 搜索结果列表视图（不可拖拽） -->
+        <div v-else class="apps-list">
+          <app-list-item 
+            v-for="(app, index) in filteredApps" 
+            :key="'search-' + index"
+            :app="app"
+            :draggable="false"
+            :is-search-result="true"
+            :is-dragging="false"
+            @edit="editApp(getOriginalIndex(app, index))"
+            @delete="showDeleteForm(getOriginalIndex(app, index))"
+            @copy-success="handleCopySuccess"
+            @copy-error="handleCopyError"
+          ></app-list-item>
+        </div>
+      </template>
       
       <!-- 空状态 -->
       <div v-if="(searchQuery && filteredApps.length === 0) || (!searchQuery && apps.length === 0)" class="empty-state">
@@ -211,6 +280,7 @@
   import Navbar from './Navbar.vue';
   import AppEditor from './components/AppEditor.vue';
   import AppCard from './components/AppCard.vue';
+  import AppListItem from './components/AppListItem.vue';
   import { Modal } from 'bootstrap';
   import draggable from 'vuedraggable';
   import { AppService } from './services/appService.js';
@@ -226,6 +296,7 @@
       Navbar,
       AppEditor,
       AppCard,
+      AppListItem,
       draggable,
     },
     data() {
@@ -241,7 +312,8 @@
         isSaving: false,
         isDragging: false,
         envVars: {},
-        debouncedSearch: null
+        debouncedSearch: null,
+        viewMode: 'grid' // 'grid' or 'list'
       };
     },
     computed: {

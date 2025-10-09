@@ -41,6 +41,12 @@ export const APP_CONSTANTS = {
     MACOS: 'macos'
   },
   
+  // 视图模式
+  VIEW_MODES: {
+    GRID: 'grid',
+    LIST: 'list'
+  },
+  
   // 消息自动隐藏时间
   MESSAGE_AUTO_HIDE_TIME: 3000,
   

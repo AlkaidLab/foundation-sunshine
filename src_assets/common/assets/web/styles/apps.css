@@ -104,6 +104,52 @@ body {
   flex-shrink: 0;
 }
 
+/* 视图切换按钮组样式 */
+.view-toggle-group {
+  display: flex;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 25px;
+  padding: 4px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: var(--box-shadow-sm);
+}
+
+.view-toggle-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.view-toggle-btn:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.view-toggle-btn.active {
+  background: var(--gradient-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transform: scale(1.05);
+}
+
+.view-toggle-btn i {
+  transition: transform 0.3s ease;
+}
+
+.view-toggle-btn:hover i {
+  transform: scale(1.1);
+}
+
 .cute-btn {
   width: 48px;
   height: 48px;
@@ -228,6 +274,13 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 20px;
+}
+
+/* 应用列表视图 */
+.apps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* 应用卡片 */
@@ -715,6 +768,7 @@ body {
   }
   .action-buttons {
     justify-content: center;
+    flex-wrap: wrap;
   }
   .cute-btn {
     width: 44px;
@@ -728,6 +782,42 @@ body {
     right: 10px;
     left: 10px;
     top: 10px;
+  }
+  
+  /* 列表视图响应式 */
+  .app-list-item-inner {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+  
+  .app-icon-container-list,
+  .app-icon-list,
+  .app-icon-placeholder-list {
+    width: 50px;
+    height: 50px;
+  }
+  
+  .app-icon-placeholder-list {
+    font-size: 1.2rem;
+  }
+  
+  .app-name-list {
+    font-size: var(--font-size-md);
+  }
+  
+  .app-tags-list {
+    gap: 4px;
+  }
+  
+  .app-tag-list {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+  }
+  
+  .view-toggle-group {
+    order: -1;
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -755,6 +845,286 @@ body {
   .action-buttons {
     gap: 8px;
   }
+  
+  /* 小屏幕列表视图 */
+  .app-list-item-inner {
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+  
+  .drag-handle-list {
+    width: 24px;
+    font-size: var(--font-size-md);
+  }
+  
+  .app-icon-container-list,
+  .app-icon-list,
+  .app-icon-placeholder-list {
+    width: 45px;
+    height: 45px;
+  }
+  
+  .app-info-list {
+    flex: 1 1 calc(100% - 200px);
+  }
+  
+  .app-actions-list {
+    margin-left: auto;
+  }
+  
+  .app-actions-list .btn {
+    width: 36px;
+    height: 36px;
+    font-size: var(--font-size-sm);
+  }
+  
+  .app-command-list,
+  .app-working-dir-list {
+    font-size: var(--font-size-xs);
+  }
+  
+  .view-toggle-btn {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+/* 列表项样式 */
+.app-list-item {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: var(--transition-default);
+  box-shadow: var(--box-shadow-sm);
+  animation: fadeIn 0.5s ease;
+}
+
+.app-list-item:hover {
+  transform: translateX(5px);
+  box-shadow: var(--box-shadow-lg);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.app-list-item-inner {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  gap: 16px;
+  position: relative;
+}
+
+/* 列表视图拖拽手柄 */
+.drag-handle-list {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: move;
+  font-size: var(--font-size-lg);
+  padding: 5px;
+  border-radius: 5px;
+  transition: var(--transition-default);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  flex-shrink: 0;
+}
+
+.drag-handle-list:hover {
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 列表视图图标容器 */
+.app-icon-container-list {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+}
+
+.app-icon-list {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--border-radius-md);
+  object-fit: cover;
+  box-shadow: var(--box-shadow-md);
+}
+
+.app-icon-placeholder-list {
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(135deg, #ff6b6b, #ffa500);
+  border-radius: var(--border-radius-md);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #fff;
+  font-size: 1.5rem;
+  box-shadow: var(--box-shadow-md);
+}
+
+/* 列表视图应用信息 */
+.app-info-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-name-list {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.app-command-list {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 12px;
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: var(--transition-default);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.app-command-list:hover {
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.9);
+  transform: translateX(3px);
+}
+
+.app-command-list.copy-success {
+  animation: copySuccess 0.4s ease;
+}
+
+.app-working-dir-list {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 列表视图标签 */
+.app-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.app-tag-list {
+  background: rgba(255, 255, 255, 0.4);
+  color: #333;
+  padding: 3px 8px;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 列表视图操作按钮 */
+.app-actions-list {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-actions-list .btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: none;
+  color: #fff;
+  font-size: var(--font-size-md);
+  transition: var(--transition-default);
+  backdrop-filter: blur(5px);
+}
+
+.btn-edit-list {
+  background: rgba(0, 123, 255, 0.3);
+  border: 1px solid rgba(0, 123, 255, 0.5);
+}
+
+.btn-edit-list:hover {
+  background: rgba(0, 123, 255, 0.5);
+  transform: scale(1.1);
+}
+
+.btn-delete-list {
+  background: rgba(220, 53, 69, 0.3);
+  border: 1px solid rgba(220, 53, 69, 0.5);
+}
+
+.btn-delete-list:hover {
+  background: rgba(220, 53, 69, 0.5);
+  transform: scale(1.1);
+}
+
+/* 列表视图搜索指示器 */
+.search-indicator-list {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 列表视图拖拽状态样式 */
+.app-list-item-dragging {
+  opacity: 0.8;
+}
+
+.app-list-item-ghost {
+  opacity: 0.3;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.app-list-item-chosen {
+  transform: scale(1.02);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3) !important;
+  z-index: 1000;
+}
+
+.app-list-item-drag {
+  transform: rotate(2deg) scale(1.03);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4) !important;
 }
 
 /* 旧样式兼容性 */
