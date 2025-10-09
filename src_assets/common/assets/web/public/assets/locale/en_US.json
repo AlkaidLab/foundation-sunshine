@@ -373,7 +373,20 @@
     "close_verify_safe": "Safe Verify Compatible with Old Clients",
     "close_verify_safe_desc": "Old clients may not be able to connect to Sunshine, please disable this option or update the client",
     "mdns_broadcast": "Find this computer in the local network",
-    "mdns_broadcast_desc": "If this option is enabled, Sunshine will allow other devices to find this computer automatically. Moonlight must also be configured to find this computer automatically in the local network."
+    "mdns_broadcast_desc": "If this option is enabled, Sunshine will allow other devices to find this computer automatically. Moonlight must also be configured to find this computer automatically in the local network.",
+    "webhook_group": "Webhook Notification Settings",
+    "webhook_enabled": "Webhook Notifications",
+    "webhook_enabled_desc": "When enabled, Sunshine will send event notifications to the specified Webhook URL",
+    "webhook_url": "Webhook URL",
+    "webhook_url_desc": "The URL to receive event notifications, supports HTTP/HTTPS protocols",
+    "webhook_test": "Test",
+    "webhook_skip_ssl_verify": "Skip SSL Certificate Verification",
+    "webhook_skip_ssl_verify_desc": "Skip SSL certificate verification for HTTPS connections, only for testing or self-signed certificates",
+    "webhook_test_url_required": "Please enter Webhook URL first",
+    "webhook_test_success": "Webhook test successful!",
+    "webhook_test_failed": "Webhook test failed",
+    "webhook_timeout": "Request Timeout",
+    "webhook_timeout_desc": "Timeout for webhook requests in milliseconds, range 100-5000ms"
   },
   "index": {
     "description": "Sunshine is a self-hosted game stream host for Moonlight.",

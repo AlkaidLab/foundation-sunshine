@@ -450,6 +450,13 @@ namespace config {
     { 60, 90, 120, 144 },  // supported fps
   };
 
+  webhook_t webhook {
+    false,  // enabled
+    {},     // url
+    false,  // skip_ssl_verify
+    1000ms, // timeout
+  };
+
   input_t input {
     {
       { 0x10, 0xA0 },
@@ -1238,6 +1245,15 @@ namespace config {
     }
 
     bool_f(vars, "restore_log"s, sunshine.restore_log);
+
+    // Webhook configuration
+    bool_f(vars, "webhook_enabled"s, webhook.enabled);
+    string_f(vars, "webhook_url"s, webhook.url);
+    bool_f(vars, "webhook_skip_ssl_verify"s, webhook.skip_ssl_verify);
+    
+    int webhook_timeout = 1000;
+    int_between_f(vars, "webhook_timeout"s, webhook_timeout, { 100, 5000 });
+    webhook.timeout = std::chrono::milliseconds(webhook_timeout);
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian

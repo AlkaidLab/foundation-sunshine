@@ -363,7 +363,20 @@
     "close_verify_safe": "安全验证兼容旧版客户端",
     "close_verify_safe_desc": "旧版客户端可能无法连接到 Sunshine, 请关闭此选项或升级客户端",
     "mdns_broadcast": "本地网络发现此计算机",
-    "mdns_broadcast_desc": "开启后将允许未连接设备自动发现此计算机，需要 Moonlight开启自动在本地网络上查找计算机"
+    "mdns_broadcast_desc": "开启后将允许未连接设备自动发现此计算机，需要 Moonlight开启自动在本地网络上查找计算机",
+    "webhook_group": "Webhook 通知设置",
+    "webhook_enabled": "Webhook 通知",
+    "webhook_enabled_desc": "启用后将向指定的 Webhook URL 发送事件通知",
+    "webhook_url": "Webhook URL",
+    "webhook_url_desc": "接收事件通知的 Webhook 地址，支持 HTTP/HTTPS 协议",
+    "webhook_test": "测试",
+    "webhook_skip_ssl_verify": "跳过 SSL 证书验证",
+    "webhook_skip_ssl_verify_desc": "跳过 HTTPS 连接的 SSL 证书验证，仅用于测试或自签名证书",
+    "webhook_test_url_required": "请先输入 Webhook URL",
+    "webhook_test_success": "Webhook 测试成功！",
+    "webhook_test_failed": "Webhook 测试失败",
+    "webhook_timeout": "请求超时时间",
+    "webhook_timeout_desc": "Webhook 请求的超时时间（毫秒），范围 100-5000ms"
   },
   "index": {
     "description": "Sunshine 是供 Moonlight 使用的自建游戏串流服务。",

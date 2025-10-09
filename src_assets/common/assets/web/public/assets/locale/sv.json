@@ -368,7 +368,20 @@
     "close_verify_safe": "Säker verifiering kompatibel med gamla klienter",
     "close_verify_safe_desc": "Gamla klienter kan inte ansluta till Sunshine, vänligen stäng av detta alternativ eller uppdatera klienten",
     "mdns_broadcast": "Hitta denna dator i lokala nätverk",
-    "mdns_broadcast_desc": "Om detta alternativ är aktiverat kommer Sunshine att tillåta andra enheter att hitta denna dator automatiskt. Moonlight måste också vara inställd på att hitta denna dator automatiskt i lokala nätverk."
+    "mdns_broadcast_desc": "Om detta alternativ är aktiverat kommer Sunshine att tillåta andra enheter att hitta denna dator automatiskt. Moonlight måste också vara inställd på att hitta denna dator automatiskt i lokala nätverk.",
+    "webhook_group": "Webhook-meddelandeinställningar",
+    "webhook_enabled": "Webhook-meddelanden",
+    "webhook_enabled_desc": "När aktiverat kommer Sunshine att skicka händelsemeddelanden till den angivna Webhook-URL:en",
+    "webhook_url": "Webhook-URL",
+    "webhook_url_desc": "URL:en för att ta emot händelsemeddelanden, stöder HTTP/HTTPS-protokoll",
+    "webhook_test": "Testa",
+    "webhook_skip_ssl_verify": "Hoppa över SSL-certifikatverifiering",
+    "webhook_skip_ssl_verify_desc": "Hoppa över SSL-certifikatverifiering för HTTPS-anslutningar, endast för testning eller självsignerade certifikat",
+    "webhook_test_url_required": "Vänligen ange Webhook-URL först",
+    "webhook_test_success": "Webhook-test lyckades!",
+    "webhook_test_failed": "Webhook-test misslyckades",
+    "webhook_timeout": "Förfrågan Timeout",
+    "webhook_timeout_desc": "Timeout för webhook-förfrågningar i millisekunder, intervall 100-5000ms"
   },
   "index": {
     "description": "Solsken är en själv-värd spel ström värd för Moonlight.",

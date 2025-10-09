@@ -142,6 +142,13 @@ namespace config {
     std::vector<int> fps;
   };
 
+  struct webhook_t {
+    bool enabled;
+    std::string url;
+    bool skip_ssl_verify;
+    std::chrono::milliseconds timeout;
+  };
+
   struct input_t {
     std::unordered_map<int, int> keybindings;
 
@@ -220,6 +227,7 @@ namespace config {
   extern audio_t audio;
   extern stream_t stream;
   extern nvhttp_t nvhttp;
+  extern webhook_t webhook;
   extern input_t input;
   extern sunshine_t sunshine;
 

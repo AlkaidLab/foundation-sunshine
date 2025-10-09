@@ -44,6 +44,7 @@
 #include "utility.h"
 #include "uuid.h"
 #include "version.h"
+#include "webhook.h"
 
 using namespace std::literals;
 
@@ -905,12 +906,39 @@ namespace confighttp {
       pt::read_json(ss, inputTree);
       std::string pin = inputTree.get<std::string>("pin");
       std::string name = inputTree.get<std::string>("name");
-      outputTree.put("status", nvhttp::pin(pin, name));
+      bool pin_result = nvhttp::pin(pin, name);
+      outputTree.put("status", pin_result);
+      
+      // Send webhook notification
+      webhook::send_event_async(webhook::event_t{
+        .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
+        .alert_type = pin_result ? "config_pair_success" : "config_pair_failed",
+        .timestamp = webhook::get_current_timestamp(),
+        .client_name = name,
+        .client_ip = "",
+        .app_name = "",
+        .app_id = 0,
+        .session_id = "",
+        .extra_data = {}
+      });
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();
       outputTree.put("status", false);
       outputTree.put("error", e.what());
+      
+      // Send webhook notification for pairing failure
+      webhook::send_event_async(webhook::event_t{
+        .type = webhook::event_type_t::CONFIG_PIN_FAILED,
+        .alert_type = "config_pair_failed",
+        .timestamp = webhook::get_current_timestamp(),
+        .client_name = "",
+        .client_ip = "",
+        .app_name = "",
+        .app_id = 0,
+        .session_id = "",
+        .extra_data = {{"error", e.what()}}
+      });
       return;
     }
   }

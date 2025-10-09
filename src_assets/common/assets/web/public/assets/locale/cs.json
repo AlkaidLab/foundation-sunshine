@@ -371,7 +371,20 @@
     "close_verify_safe": "Bezpečná ověření kompatibilní s klienty starší",
     "close_verify_safe_desc": "Starší klienti nemusí být schopni se připojit k Sunshine, prosím zakázat tuto volbu nebo aktualizovat klienta",
     "mdns_broadcast": "Najít tento počítač v místní síti",
-    "mdns_broadcast_desc": "Pokud je tato volba povolena, Sunshine umožní ostatním zařízením automaticky najít tento počítač. Moonlight musí být také nakonfigurován, aby automaticky najít tento počítač v místní síti."
+    "mdns_broadcast_desc": "Pokud je tato volba povolena, Sunshine umožní ostatním zařízením automaticky najít tento počítač. Moonlight musí být také nakonfigurován, aby automaticky najít tento počítač v místní síti.",
+    "webhook_group": "Nastavení oznámení Webhook",
+    "webhook_enabled": "Oznámení Webhook",
+    "webhook_enabled_desc": "Když je povoleno, Sunshine bude odesílat oznámení o událostech na zadanou Webhook URL",
+    "webhook_url": "Webhook URL",
+    "webhook_url_desc": "URL pro příjem oznámení o událostech, podporuje protokoly HTTP/HTTPS",
+    "webhook_test": "Test",
+    "webhook_skip_ssl_verify": "Přeskočit ověření SSL certifikátu",
+    "webhook_skip_ssl_verify_desc": "Přeskočit ověření SSL certifikátu pro HTTPS připojení, pouze pro testování nebo samopodepsané certifikáty",
+    "webhook_test_url_required": "Nejprve zadejte Webhook URL",
+    "webhook_test_success": "Webhook test úspěšný!",
+    "webhook_test_failed": "Webhook test selhal",
+    "webhook_timeout": "Timeout požadavku",
+    "webhook_timeout_desc": "Timeout pro webhook požadavky v milisekundách, rozmezí 100-5000ms"
   },
   "index": {
     "description": "Sluneční stream je hostitelem pro Měsíční světlo.",

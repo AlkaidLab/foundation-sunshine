@@ -368,7 +368,20 @@
     "close_verify_safe": "安全な検証互換性のある古いクライアント",
     "close_verify_safe_desc": "古いクライアントはSunshineに接続できない可能性があります。このオプションを無効にするか、クライアントを更新してください",
     "mdns_broadcast": "このコンピュータをローカルネットワークで見つける",
-    "mdns_broadcast_desc": "このオプションを有効にすると、Sunshineは自動的にこのコンピュータを見つけることができます。Moonlightもローカルネットワークでこのコンピュータを自動的に見つけるように設定する必要があります。"
+    "mdns_broadcast_desc": "このオプションを有効にすると、Sunshineは自動的にこのコンピュータを見つけることができます。Moonlightもローカルネットワークでこのコンピュータを自動的に見つけるように設定する必要があります。",
+    "webhook_group": "Webhook通知設定",
+    "webhook_enabled": "Webhook通知",
+    "webhook_enabled_desc": "有効にすると、Sunshineは指定されたWebhook URLにイベント通知を送信します",
+    "webhook_url": "Webhook URL",
+    "webhook_url_desc": "イベント通知を受信するURL、HTTP/HTTPSプロトコルをサポート",
+    "webhook_test": "テスト",
+    "webhook_skip_ssl_verify": "SSL証明書検証をスキップ",
+    "webhook_skip_ssl_verify_desc": "HTTPS接続のSSL証明書検証をスキップ、テストまたは自己署名証明書のみ",
+    "webhook_test_url_required": "まずWebhook URLを入力してください",
+    "webhook_test_success": "Webhookテスト成功！",
+    "webhook_test_failed": "Webhookテスト失敗",
+    "webhook_timeout": "リクエストタイムアウト",
+    "webhook_timeout_desc": "Webhookリクエストのタイムアウト時間（ミリ秒）、範囲100-5000ms"
   },
   "index": {
     "description": "サンシャインはムーンライトのための自己ホストゲームストリームホストです。",

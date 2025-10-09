@@ -371,7 +371,20 @@
     "close_verify_safe": "Verificação segura compatível com clientes antigos",
     "close_verify_safe_desc": "Clientes antigos podem não se conectar ao Sunshine, por favor, desative esta opção ou atualize o cliente",
     "mdns_broadcast": "Encontrar este computador na rede local",
-    "mdns_broadcast_desc": "Se esta opção estiver ativada, o Sunshine permitirá que outros dispositivos encontrem este computador automaticamente. O Moonlight deve ser configurado para encontrar este computador automaticamente na rede local."
+    "mdns_broadcast_desc": "Se esta opção estiver ativada, o Sunshine permitirá que outros dispositivos encontrem este computador automaticamente. O Moonlight deve ser configurado para encontrar este computador automaticamente na rede local.",
+    "webhook_group": "Configurações de notificação Webhook",
+    "webhook_enabled": "Notificações Webhook",
+    "webhook_enabled_desc": "Quando habilitado, o Sunshine enviará notificações de eventos para a URL Webhook especificada",
+    "webhook_url": "URL Webhook",
+    "webhook_url_desc": "A URL para receber notificações de eventos, suporta protocolos HTTP/HTTPS",
+    "webhook_test": "Testar",
+    "webhook_skip_ssl_verify": "Pular verificação de certificado SSL",
+    "webhook_skip_ssl_verify_desc": "Pular verificação de certificado SSL para conexões HTTPS, apenas para testes ou certificados auto-assinados",
+    "webhook_test_url_required": "Por favor, insira primeiro a URL Webhook",
+    "webhook_test_success": "Teste Webhook bem-sucedido!",
+    "webhook_test_failed": "Teste Webhook falhou",
+    "webhook_timeout": "Tempo limite da solicitação",
+    "webhook_timeout_desc": "Tempo limite para solicitações Webhook em milissegundos, intervalo 100-5000ms"
   },
   "index": {
     "description": "O Sunshine é um host de fluxo de jogos auto-hospedado para o Moonlight.",

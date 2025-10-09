@@ -368,7 +368,20 @@
     "close_verify_safe": "Sichere Überprüfung kompatibel mit alten Clients",
     "close_verify_safe_desc": "Alte Clients können nicht mit Sunshine verbunden werden, bitte deaktivieren Sie diese Option oder aktualisieren Sie den Client",
     "mdns_broadcast": "Diesen Computer in der lokalen Netzwerk finden",
-    "mdns_broadcast_desc": "Wenn diese Option aktiviert ist, wird Sunshine anderen Geräten erlauben, diesen Computer automatisch zu finden. Moonlight muss ebenfalls so konfiguriert sein, dass er diesen Computer automatisch in der lokalen Netzwerk findet."
+    "mdns_broadcast_desc": "Wenn diese Option aktiviert ist, wird Sunshine anderen Geräten erlauben, diesen Computer automatisch zu finden. Moonlight muss ebenfalls so konfiguriert sein, dass er diesen Computer automatisch in der lokalen Netzwerk findet.",
+    "webhook_group": "Webhook-Benachrichtigungseinstellungen",
+    "webhook_enabled": "Webhook-Benachrichtigungen",
+    "webhook_enabled_desc": "Wenn aktiviert, sendet Sunshine Ereignisbenachrichtigungen an die angegebene Webhook-URL",
+    "webhook_url": "Webhook-URL",
+    "webhook_url_desc": "Die URL zum Empfangen von Ereignisbenachrichtigungen, unterstützt HTTP/HTTPS-Protokolle",
+    "webhook_test": "Testen",
+    "webhook_skip_ssl_verify": "SSL-Zertifikatsverifizierung überspringen",
+    "webhook_skip_ssl_verify_desc": "SSL-Zertifikatsverifizierung für HTTPS-Verbindungen überspringen, nur für Tests oder selbstsignierte Zertifikate",
+    "webhook_test_url_required": "Bitte geben Sie zuerst eine Webhook-URL ein",
+    "webhook_test_success": "Webhook-Test erfolgreich!",
+    "webhook_test_failed": "Webhook-Test fehlgeschlagen",
+    "webhook_timeout": "Anfrage-Timeout",
+    "webhook_timeout_desc": "Timeout für Webhook-Anfragen in Millisekunden, Bereich 100-5000ms"
   },
   "index": {
     "description": "Sunshine ist ein selbst gehosteter Game-Stream-Host für Moonlight.",

@@ -10,6 +10,53 @@ const defaultMoonlightPort = 47989
 
 const config = ref(props.config)
 const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort)
+
+// Webhook test function
+const testWebhook = async () => {
+  if (!config.value.webhook_url) {
+    alert($t('config.webhook_test_url_required'))
+    return
+  }
+
+  // Check if URL is valid
+  try {
+    new URL(config.value.webhook_url)
+  } catch (error) {
+    alert($t('config.webhook_test_failed') + ': Invalid URL format')
+    return
+  }
+
+  try {
+    // Create AbortController for timeout
+    const controller = new AbortController()
+    const timeout = parseInt(config.value.webhook_timeout) || 1000 // Use configured timeout, default 1000ms
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+    const response = await fetch(config.value.webhook_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: '{"msgtype": "text", "text": {"content": "hello world"}}',
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    if (response.ok) {
+      alert($t('config.webhook_test_success'))
+    } else {
+      alert(`${$t('config.webhook_test_failed')}: ${response.status} ${response.statusText}`)
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      const timeout = parseInt(config.value.webhook_timeout) || 1000
+      alert($t('config.webhook_test_failed') + `: Request timeout (${timeout}ms)`)
+    } else {
+      alert(`${$t('config.webhook_test_failed')}: ${error.message}`)
+    }
+  }
+}
 </script>
 
 <template>
@@ -154,8 +201,8 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
     <div class="mb-3">
       <label for="mdns_broadcast" class="form-label">{{ $t('config.mdns_broadcast') }}</label>
       <select id="mdns_broadcast" class="form-select" v-model="config.mdns_broadcast">
-        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-        <option value="enabled">{{ $t('_common.enabled') }}</option>
+        <option value="disabled">{{ $t('_common.disabled') }}</option>
+        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
       </select>
       <div class="form-text">{{ $t('config.mdns_broadcast_desc') }}</div>
     </div>
@@ -165,6 +212,60 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
       <label for="ping_timeout" class="form-label">{{ $t('config.ping_timeout') }}</label>
       <input type="text" class="form-control" id="ping_timeout" placeholder="10000" v-model="config.ping_timeout" />
       <div class="form-text">{{ $t('config.ping_timeout_desc') }}</div>
+    </div>
+
+    <!-- Webhook Settings -->
+    <div class="accordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#webhook-collapse">
+            {{ $t('config.webhook_group') }}
+          </button>
+        </h2>
+        <div id="webhook-collapse" class="accordion-collapse collapse show">
+          <div class="accordion-body">
+            <!-- Webhook Enable -->
+            <div class="mb-3">
+              <label for="webhook_enabled" class="form-label">{{ $t('config.webhook_enabled') }}</label>
+              <select id="webhook_enabled" class="form-select" v-model="config.webhook_enabled">
+                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.webhook_enabled_desc') }}</div>
+            </div>
+
+            <!-- Webhook URL -->
+            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
+              <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
+              <div class="input-group">
+                <input type="url" class="form-control" id="webhook_url" placeholder="https://example.com/webhook" v-model="config.webhook_url" />
+                <button class="btn btn-outline-secondary" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
+                  {{ $t('config.webhook_test') }}
+                </button>
+              </div>
+              <div class="form-text">{{ $t('config.webhook_url_desc') }}</div>
+            </div>
+
+            <!-- Skip SSL Verify -->
+            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
+              <label for="webhook_skip_ssl_verify" class="form-label">{{ $t('config.webhook_skip_ssl_verify') }}</label>
+              <select id="webhook_skip_ssl_verify" class="form-select" v-model="config.webhook_skip_ssl_verify">
+                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.webhook_skip_ssl_verify_desc') }}</div>
+            </div>
+
+            <!-- Webhook Timeout -->
+            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
+              <label for="webhook_timeout" class="form-label">{{ $t('config.webhook_timeout') }}</label>
+              <input type="number" min="100" max="5000" class="form-control" id="webhook_timeout" placeholder="1000" v-model="config.webhook_timeout" />
+              <div class="form-text">{{ $t('config.webhook_timeout_desc') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>

@@ -371,7 +371,20 @@
     "close_verify_safe": "안전한 검증 호환 이전 클라이언트",
     "close_verify_safe_desc": "이전 클라이언트는 Sunshine에 연결할 수 없을 수 있습니다. 이 옵션을 비활성화하거나 클라이언트를 업데이트하세요",
     "mdns_broadcast": "이 컴퓨터를 로컬 네트워크에서 찾기",
-    "mdns_broadcast_desc": "이 옵션을 활성화하면 Sunshine이 자동으로 이 컴퓨터를 찾을 수 있도록 합니다. Moonlight도 로컬 네트워크에서 이 컴퓨터를 자동으로 찾도록 설정해야 합니다."
+    "mdns_broadcast_desc": "이 옵션을 활성화하면 Sunshine이 자동으로 이 컴퓨터를 찾을 수 있도록 합니다. Moonlight도 로컬 네트워크에서 이 컴퓨터를 자동으로 찾도록 설정해야 합니다.",
+    "webhook_group": "Webhook 알림 설정",
+    "webhook_enabled": "Webhook 알림",
+    "webhook_enabled_desc": "활성화되면 Sunshine이 지정된 Webhook URL로 이벤트 알림을 보냅니다",
+    "webhook_url": "Webhook URL",
+    "webhook_url_desc": "이벤트 알림을 받을 URL, HTTP/HTTPS 프로토콜 지원",
+    "webhook_test": "테스트",
+    "webhook_skip_ssl_verify": "SSL 인증서 확인 건너뛰기",
+    "webhook_skip_ssl_verify_desc": "HTTPS 연결에 대한 SSL 인증서 확인을 건너뛰기, 테스트 또는 자체 서명된 인증서에만 사용",
+    "webhook_test_url_required": "먼저 Webhook URL을 입력하세요",
+    "webhook_test_success": "Webhook 테스트 성공!",
+    "webhook_test_failed": "Webhook 테스트 실패",
+    "webhook_timeout": "요청 시간 초과",
+    "webhook_timeout_desc": "Webhook 요청의 시간 초과(밀리초), 범위 100-5000ms"
   },
   "index": {
     "description": "Sunshine은 Moonlight의 게임 스트리밍 프로그램입니다.",

@@ -371,7 +371,20 @@
     "close_verify_safe": "Безпечний замість замкненого перевірки",
     "close_verify_safe_desc": "Старий клієнт може не підтримувати Sunshine, будь ласка, вимкніть цей параметр або оновіть клієнт",
     "mdns_broadcast": "Автоматичне виявлення комп'ютера в локальній мережі",
-    "mdns_broadcast_desc": "Увімкнення цієї опції дозволяє автоматично виявляти комп'ютер в локальній мережі, якщо Moonlight налаштований на автоматичне виявлення комп'ютера в локальній мережі"
+    "mdns_broadcast_desc": "Увімкнення цієї опції дозволяє автоматично виявляти комп'ютер в локальній мережі, якщо Moonlight налаштований на автоматичне виявлення комп'ютера в локальній мережі",
+    "webhook_group": "Налаштування сповіщень Webhook",
+    "webhook_enabled": "Сповіщення Webhook",
+    "webhook_enabled_desc": "Коли увімкнено, Sunshine буде надсилати сповіщення про події до вказаного URL Webhook",
+    "webhook_url": "URL Webhook",
+    "webhook_url_desc": "URL для отримання сповіщень про події, підтримує протоколи HTTP/HTTPS",
+    "webhook_test": "Тест",
+    "webhook_skip_ssl_verify": "Пропустити перевірку SSL-сертифікату",
+    "webhook_skip_ssl_verify_desc": "Пропустити перевірку SSL-сертифікату для HTTPS-з'єднань, лише для тестування або самопідписаних сертифікатів",
+    "webhook_test_url_required": "Будь ласка, спочатку введіть URL Webhook",
+    "webhook_test_success": "Тест Webhook успішний!",
+    "webhook_test_failed": "Тест Webhook невдалий",
+    "webhook_timeout": "Таймаут запиту",
+    "webhook_timeout_desc": "Таймаут для запитів Webhook в мілісекундах, діапазон 100-5000ms"
   },
   "index": {
     "description": "Sunshine - це самостійний ігровий стримінговий хостинг для Moonlight.",

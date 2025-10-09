@@ -36,6 +36,7 @@
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"
+#include "webhook.h"
 
 using json = nlohmann::json;
 
@@ -1313,6 +1314,23 @@ namespace nvhttp {
 
     rtsp_stream::launch_session_raise(launch_session);
 
+    // Send webhook notification for successful launch
+    webhook::send_event_async(webhook::event_t{
+      .type = webhook::event_type_t::NV_APP_LAUNCH,
+      .alert_type = "nv_app_launch",
+      .timestamp = webhook::get_current_timestamp(),
+      .client_name = launch_session->client_name,
+      .client_ip = request->remote_endpoint().address().to_string(),
+      .app_name = proc::proc.get_app_name(appid),
+      .app_id = appid,
+      .session_id = std::to_string(launch_session->id),
+      .extra_data = {
+        {"resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height)},
+        {"fps", std::to_string(launch_session->fps)},
+        {"host_audio", launch_session->host_audio ? "true" : "false"}
+      }
+    });
+
     // Stream was started successfully, we will restore the state when the app or session terminates
     need_to_restore_display_state = false;
   }
@@ -1397,6 +1415,23 @@ namespace nvhttp {
     tree.put("root.resume", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
+
+    // Send webhook notification for successful resume
+    webhook::send_event_async(webhook::event_t{
+      .type = webhook::event_type_t::NV_APP_RESUME,
+      .alert_type = "nv_app_resume",
+      .timestamp = webhook::get_current_timestamp(),
+      .client_name = launch_session->client_name,
+      .client_ip = request->remote_endpoint().address().to_string(),
+      .app_name = proc::proc.get_app_name(proc::proc.running()),
+      .app_id = proc::proc.running(),
+      .session_id = std::to_string(launch_session->id),
+      .extra_data = {
+        {"resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height)},
+        {"fps", std::to_string(launch_session->fps)},
+        {"host_audio", launch_session->host_audio ? "true" : "false"}
+      }
+    });
   }
 
   void

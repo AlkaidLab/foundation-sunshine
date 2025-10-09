@@ -369,7 +369,20 @@
     "close_verify_safe": "Vérification sécurisée compatible avec les anciens clients",
     "close_verify_safe_desc": "Les anciens clients peuvent ne pas pouvoir se connecter à Sunshine, veuillez désactiver cette option ou mettre à jour le client",
     "mdns_broadcast": "Trouver cet ordinateur dans le réseau local",
-    "mdns_broadcast_desc": "Si cette option est activée, Sunshine permettra à d'autres appareils de trouver automatiquement cet ordinateur. Moonlight doit également être configuré pour trouver automatiquement cet ordinateur dans le réseau local."
+    "mdns_broadcast_desc": "Si cette option est activée, Sunshine permettra à d'autres appareils de trouver automatiquement cet ordinateur. Moonlight doit également être configuré pour trouver automatiquement cet ordinateur dans le réseau local.",
+    "webhook_group": "Paramètres de notification Webhook",
+    "webhook_enabled": "Notifications Webhook",
+    "webhook_enabled_desc": "Lorsqu'activé, Sunshine enverra des notifications d'événements à l'URL Webhook spécifiée",
+    "webhook_url": "URL Webhook",
+    "webhook_url_desc": "L'URL pour recevoir les notifications d'événements, prend en charge les protocoles HTTP/HTTPS",
+    "webhook_test": "Tester",
+    "webhook_skip_ssl_verify": "Ignorer la vérification du certificat SSL",
+    "webhook_skip_ssl_verify_desc": "Ignorer la vérification du certificat SSL pour les connexions HTTPS, uniquement pour les tests ou les certificats auto-signés",
+    "webhook_test_url_required": "Veuillez d'abord saisir l'URL Webhook",
+    "webhook_test_success": "Test Webhook réussi !",
+    "webhook_test_failed": "Test Webhook échoué",
+    "webhook_timeout": "Délai d'expiration de la requête",
+    "webhook_timeout_desc": "Délai d'expiration pour les requêtes Webhook en millisecondes, plage 100-5000ms"
   },
   "index": {
     "description": "Sunshine est un serveur de streaming auto-hébergé pour Moonlight.",

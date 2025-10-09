@@ -368,7 +368,20 @@
     "close_verify_safe": "Verifica sicura compatibile con client vecchi",
     "close_verify_safe_desc": "Client vecchi potrebbero non essere in grado di connettersi a Sunshine, si prega di disabilitare questa opzione o aggiornare il client",
     "mdns_broadcast": "Trova questo computer nella rete locale",
-    "mdns_broadcast_desc": "Se questa opzione è abilitata, Sunshine permetterà a altri dispositivi di trovare questo computer automaticamente. Moonlight deve essere configurato per trovare questo computer automaticamente nella rete locale."
+    "mdns_broadcast_desc": "Se questa opzione è abilitata, Sunshine permetterà a altri dispositivi di trovare questo computer automaticamente. Moonlight deve essere configurato per trovare questo computer automaticamente nella rete locale.",
+    "webhook_group": "Impostazioni notifiche Webhook",
+    "webhook_enabled": "Notifiche Webhook",
+    "webhook_enabled_desc": "Quando abilitato, Sunshine invierà notifiche di eventi all'URL Webhook specificato",
+    "webhook_url": "URL Webhook",
+    "webhook_url_desc": "L'URL per ricevere notifiche di eventi, supporta protocolli HTTP/HTTPS",
+    "webhook_test": "Testa",
+    "webhook_skip_ssl_verify": "Salta verifica certificato SSL",
+    "webhook_skip_ssl_verify_desc": "Salta la verifica del certificato SSL per le connessioni HTTPS, solo per test o certificati autofirmati",
+    "webhook_test_url_required": "Inserisci prima l'URL Webhook",
+    "webhook_test_success": "Test Webhook riuscito!",
+    "webhook_test_failed": "Test Webhook fallito",
+    "webhook_timeout": "Timeout richiesta",
+    "webhook_timeout_desc": "Timeout per le richieste Webhook in millisecondi, intervallo 100-5000ms"
   },
   "index": {
     "description": "Sunshine è una piattaforma autonoma di game stream per Moonlight.",
