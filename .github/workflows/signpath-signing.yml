@@ -1,0 +1,181 @@
+# SignPath 代码签名工作流
+# 在构建完成后,自动提交文件到SignPath进行签名
+
+name: SignPath Code Signing
+
+on:
+  workflow_run:
+    workflows: ["Build and Release"]
+    types:
+      - completed
+    branches:
+      - master
+
+jobs:
+  sign-artifacts:
+    name: Sign with SignPath
+    runs-on: windows-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download Artifacts from workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: sunshine-windows
+          path: artifacts
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: List downloaded files
+        shell: bash
+        run: |
+          echo "Downloaded files:"
+          ls -la artifacts/
+      
+      # 查找文件
+      - name: Find installer file
+        id: find-installer
+        shell: bash
+        run: |
+          INSTALLER=$(find artifacts -name "*.exe" -name "*Installer*" | head -n 1)
+          if [ -n "$INSTALLER" ]; then
+            echo "Found installer: $INSTALLER"
+            echo "installer-file=$INSTALLER" >> $GITHUB_OUTPUT
+            echo "has-installer=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-installer=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Find portable file
+        id: find-portable
+        shell: bash
+        run: |
+          PORTABLE=$(find artifacts -name "*.zip" -name "*Portable*" | head -n 1)
+          if [ -n "$PORTABLE" ]; then
+            echo "Found portable: $PORTABLE"
+            echo "portable-file=$PORTABLE" >> $GITHUB_OUTPUT
+            echo "has-portable=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-portable=false" >> $GITHUB_OUTPUT
+          fi
+      
+      # 解压 Portable ZIP 以减少一层嵌套
+      - name: Extract Portable ZIP
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        shell: bash
+        run: |
+          mkdir -p artifacts/portable-extracted
+          7z x "${{ steps.find-portable.outputs.portable-file }}" -o"artifacts/portable-extracted"
+          echo "Extracted portable files:"
+          ls -laR artifacts/portable-extracted/
+      
+      # 为 Installer 创建单独的 artifact
+      - name: Upload Installer for SignPath
+        id: upload-installer
+        if: ${{ steps.find-installer.outputs.has-installer == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-for-signing
+          path: ${{ steps.find-installer.outputs.installer-file }}
+      
+      # 为 Portable 创建单独的 artifact（上传解压后的文件夹）
+      - name: Upload Portable for SignPath
+        id: upload-portable
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-for-signing
+          path: artifacts/portable-extracted/
+      
+      # 使用SignPath提交签名请求 - Installer
+      - name: Submit to SignPath - Installer
+        id: sign-installer
+        if: ${{ steps.find-installer.outputs.has-installer == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Sunshine-Foundation
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-installer
+          github-artifact-id: '${{ steps.upload-installer.outputs.artifact-id }}'
+          output-artifact-directory: artifacts/signed/installer
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 600
+          service-unavailable-timeout-in-seconds: 600
+      
+      # 使用SignPath提交签名请求 - Portable  
+      - name: Submit to SignPath - Portable
+        id: sign-portable
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Sunshine-Foundation
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-portable
+          github-artifact-id: '${{ steps.upload-portable.outputs.artifact-id }}'
+          output-artifact-directory: artifacts/signed/portable
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 600
+          service-unavailable-timeout-in-seconds: 600
+      
+      # 验证签名
+      - name: List signed files
+        shell: bash
+        run: |
+          echo "Signed files:"
+          ls -laR artifacts/signed/
+      
+      - name: Verify Signatures
+        shell: pwsh
+        run: |
+          Write-Host "Verifying signatures..."
+          
+          # 查找并验证所有签名文件
+          $signedFiles = Get-ChildItem -Path "artifacts/signed" -Recurse -File
+          
+          if ($signedFiles.Count -eq 0) {
+            Write-Warning "No signed files found!"
+          } else {
+            foreach ($file in $signedFiles) {
+              Write-Host "`nChecking: $($file.FullName)"
+              $signature = Get-AuthenticodeSignature $file.FullName
+              
+              Write-Host "  Status: $($signature.Status)"
+              if ($signature.SignerCertificate) {
+                Write-Host "  Signer: $($signature.SignerCertificate.Subject)"
+              }
+              if ($signature.TimeStamperCertificate) {
+                Write-Host "  Timestamp: $($signature.TimeStamperCertificate.Subject)"
+              }
+              
+              if ($signature.Status -eq "Valid") {
+                Write-Host "  ✓ Signature is VALID"
+              } else {
+                Write-Warning "  ⚠ Signature status: $($signature.Status)"
+              }
+            }
+          }
+      
+      # 上传已签名的文件
+      - name: Upload Signed Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunshine-windows-signed
+          path: artifacts/signed/
+          if-no-files-found: warn
+      
+      # 如果是发布版本,更新Release
+      - name: Update Release with Signed Files
+        if: github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.workflow_run.head_branch }}
+          files: artifacts/signed/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

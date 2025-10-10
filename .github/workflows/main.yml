@@ -190,16 +190,16 @@ jobs:
           fi
 
           # 重命名安装包和便携版
-          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine-${NEWTAG}-Windows-Installer.exe"
-          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine-${NEWTAG}-Windows-Portable.zip"
+          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
+          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.WindowsPortable.zip"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sunshine-windows
           path: |
-            artifacts/Sunshine-*-Windows-Installer.exe
-            artifacts/Sunshine-*-Windows-Portable.zip
+            artifacts/Sunshine.*.WindowsInstaller.exe
+            artifacts/Sunshine.*.WindowsPortable.zip
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error

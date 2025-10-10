@@ -1,0 +1,202 @@
+# SignPath 测试工作流
+# 用于手动测试 SignPath 签名功能
+
+name: Test SignPath Signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact-name:
+        description: 'Artifact name to sign'
+        required: false
+        default: 'sunshine-windows'
+      run-id:
+        description: 'Run ID to download artifact from (leave empty for latest)'
+        required: false
+
+jobs:
+  test-sign:
+    name: Test SignPath
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      # 如果提供了 run-id，从指定的 run 下载
+      - name: Download specific artifact
+        if: ${{ github.event.inputs.run-id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact-name }}
+          path: artifacts
+          run-id: ${{ github.event.inputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      # 如果没有提供 run-id，尝试从最近的成功构建下载
+      - name: Download latest artifact
+        if: ${{ github.event.inputs.run-id == '' }}
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: main.yml
+          name: ${{ github.event.inputs.artifact-name }}
+          path: artifacts
+          check_artifacts: true
+          search_artifacts: true
+      
+      - name: List downloaded files
+        shell: bash
+        run: |
+          echo "Downloaded files:"
+          ls -lR artifacts/
+      
+      # 查找文件
+      - name: Find installer file
+        id: find-installer
+        shell: bash
+        run: |
+          INSTALLER=$(find artifacts -name "*.exe" -name "*Installer*" | head -n 1)
+          if [ -z "$INSTALLER" ]; then
+            echo "No installer found"
+            echo "has-installer=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found installer: $INSTALLER"
+            echo "installer-file=$INSTALLER" >> $GITHUB_OUTPUT
+            echo "has-installer=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Find portable file
+        id: find-portable
+        shell: bash
+        run: |
+          PORTABLE=$(find artifacts -name "*.zip" -name "*Portable*" | head -n 1)
+          if [ -z "$PORTABLE" ]; then
+            echo "No portable package found"
+            echo "has-portable=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found portable: $PORTABLE"
+            echo "portable-file=$PORTABLE" >> $GITHUB_OUTPUT
+            echo "has-portable=true" >> $GITHUB_OUTPUT
+          fi
+      
+      # 解压 Portable ZIP 以减少一层嵌套
+      - name: Extract Portable ZIP
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        shell: bash
+        run: |
+          mkdir -p artifacts/portable-extracted
+          7z x "${{ steps.find-portable.outputs.portable-file }}" -o"artifacts/portable-extracted"
+          echo "Extracted portable files:"
+          ls -laR artifacts/portable-extracted/
+      
+      # 为 Installer 创建单独的 artifact
+      - name: Upload Installer for SignPath
+        id: upload-installer
+        if: ${{ steps.find-installer.outputs.has-installer == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-for-signing
+          path: ${{ steps.find-installer.outputs.installer-file }}
+      
+      # 为 Portable 创建单独的 artifact（上传解压后的文件夹）
+      - name: Upload Portable for SignPath
+        id: upload-portable
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-for-signing
+          path: artifacts/portable-extracted/
+      
+      # 测试签名 - Installer
+      - name: Test SignPath - Installer
+        if: ${{ steps.find-installer.outputs.has-installer == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Sunshine-Foundation
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: windows-installer
+          github-artifact-id: '${{ steps.upload-installer.outputs.artifact-id }}'
+          output-artifact-directory: artifacts/signed/installer
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 600
+          service-unavailable-timeout-in-seconds: 600
+      
+      # 测试签名 - Portable
+      - name: Test SignPath - Portable
+        if: ${{ steps.find-portable.outputs.has-portable == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Sunshine-Foundation
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: windows-portable
+          github-artifact-id: '${{ steps.upload-portable.outputs.artifact-id }}'
+          output-artifact-directory: artifacts/signed/portable
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 600
+          service-unavailable-timeout-in-seconds: 600
+      
+      # 列出签名后的文件
+      - name: List signed files
+        shell: bash
+        run: |
+          echo "Signed files:"
+          if [ -d "artifacts/signed" ]; then
+            ls -laR artifacts/signed/
+          else
+            echo "No signed files directory found"
+          fi
+      
+      # 验证签名
+      - name: Verify Signatures
+        shell: pwsh
+        run: |
+          if (Test-Path "artifacts/signed") {
+            Write-Host "Verifying signatures..."
+            
+            # 递归搜索所有签名文件
+            $signedFiles = Get-ChildItem -Path "artifacts/signed" -Recurse -File
+            
+            if ($signedFiles.Count -eq 0) {
+              Write-Warning "No signed files found"
+            } else {
+              Write-Host "Found $($signedFiles.Count) signed file(s)"
+              
+              foreach ($file in $signedFiles) {
+                Write-Host "`n=== Checking: $($file.Name) ==="
+                Write-Host "Path: $($file.FullName)"
+                
+                $signature = Get-AuthenticodeSignature $file.FullName
+                
+                Write-Host "Status: $($signature.Status)"
+                if ($signature.SignerCertificate) {
+                  Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+                }
+                if ($signature.TimeStamperCertificate) {
+                  Write-Host "Timestamp: $($signature.TimeStamperCertificate.Subject)"
+                }
+                
+                if ($signature.Status -eq "Valid") {
+                  Write-Host "✓ Signature is VALID" -ForegroundColor Green
+                } elseif ($signature.Status -eq "NotSigned") {
+                  Write-Warning "⚠ File is NOT SIGNED"
+                } else {
+                  Write-Warning "⚠ Signature status: $($signature.Status)"
+                }
+              }
+            }
+          } else {
+            Write-Warning "Signed files directory not found"
+          }
+      
+      # 上传已签名的文件
+      - name: Upload Signed Files
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-test-signed
+          path: artifacts/signed/
+          if-no-files-found: warn
+
