@@ -5,8 +5,19 @@
   </head>
 
   <body id="app" v-cloak>
-    <Navbar></Navbar>
-    <div id="content" class="container">
+    <Navbar v-if="!showSetupWizard"></Navbar>
+    
+    <!-- 首次设置向导 -->
+    <setup-wizard 
+      v-if="showSetupWizard"
+      :adapters="adapters"
+      :display-devices="displayDevices"
+      :has-locale="hasLocale"
+      @setup-complete="onSetupComplete">
+    </setup-wizard>
+
+    <!-- 正常首页内容 -->
+    <div v-if="!showSetupWizard" id="content" class="container">
       <h1 class="my-4">{{ $t('index.welcome') }}</h1>
       <p>{{ $t('index.description') }}</p>
       <div class="alert alert-danger" v-if="fancyLogs.find(x => x.level === 'Fatal')">
@@ -73,6 +84,7 @@
     import { initApp } from './init'
     import Navbar from './Navbar.vue'
     import ResourceCard from './ResourceCard.vue'
+    import SetupWizard from './SetupWizard.vue'
     import SunshineVersion from './sunshine_version'
     import { marked } from 'marked'
     import { initFirebase, trackEvents } from './firebase-config'
@@ -86,6 +98,7 @@
       components: {
         Navbar,
         ResourceCard,
+        SetupWizard,
       },
       data() {
         return {
@@ -95,6 +108,11 @@
           preReleaseVersion: null,
           loading: true,
           logs: null,
+          // 设置向导相关
+          showSetupWizard: false,
+          adapters: [],
+          displayDevices: [],
+          hasLocale: false,
         }
       },
       async created() {
@@ -103,21 +121,46 @@
 
         try {
           let config = await fetch('/api/config').then((r) => r.json())
+          
+          // 检查是否是首次使用（没有配置显卡适配器）
+          const isFirstTime = !config.adapter_name || config.adapter_name === ''
+          
+          if (isFirstTime) {
+            // 首次使用，显示设置向导
+            console.log('首次使用检测：显示设置向导')
+            this.showSetupWizard = true
+            this.adapters = config.adapters || []
+            this.displayDevices = config.display_devices || []
+            this.hasLocale = !!(config.locale && config.locale !== '') // 检查是否已有语言配置
+            this.loading = false
+            return
+          }
+          
           this.notifyPreReleases = config.notify_pre_releases
           this.version = new SunshineVersion(null, config.version)
           console.log('Version: ', this.version.version)
-          this.githubVersion = new SunshineVersion(
-            await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases/latest').then((r) => r.json()),
-            null
-          )
-          console.log('GitHub Version: ', this.githubVersion.version)
-          this.preReleaseVersion = new SunshineVersion(
-            (await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases').then((r) => r.json())).find(
-              (release) => release.prerelease
-            ),
-            null
-          )
-          console.log('Pre-Release Version: ', this.preReleaseVersion.version)
+          
+          try {
+            this.githubVersion = new SunshineVersion(
+              await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases/latest').then((r) => r.json()),
+              null
+            )
+            console.log('GitHub Version: ', this.githubVersion.version)
+          } catch (e) {
+            console.error('Failed to fetch latest release:', e)
+          }
+          
+          try {
+            const releases = await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases').then((r) => r.json())
+            // 确保 releases 是数组
+            const preRelease = Array.isArray(releases) ? releases.find((release) => release.prerelease) : null
+            if (preRelease) {
+              this.preReleaseVersion = new SunshineVersion(preRelease, null)
+              console.log('Pre-Release Version: ', this.preReleaseVersion.version)
+            }
+          } catch (e) {
+            console.error('Failed to fetch pre-release:', e)
+          }
 
           // 记录版本检查事件
           if (this.githubVersion && this.version) {
@@ -195,6 +238,12 @@
           }
           return logLines
         },
+      },
+      methods: {
+        onSetupComplete(config) {
+          console.log('设置完成:', config)
+          // 用户点击"配置应用程序"按钮后会自动跳转到 /apps
+        }
       },
     })
 

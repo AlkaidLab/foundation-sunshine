@@ -4,8 +4,21 @@ import {createI18n} from "vue-i18n";
 import en from './public/assets/locale/en.json'
 
 export default async function() {
-    let r = await (await fetch("/api/configLocale")).json();
-    let locale = r.locale ?? "en";
+    // 先尝试从 /api/config 获取实时配置（会读取配置文件）
+    let locale = "en";
+    try {
+        let config = await (await fetch("/api/config")).json();
+        locale = config.locale ?? "en";
+    } catch (e) {
+        // 如果失败，回退到 /api/configLocale（从内存读取）
+        try {
+            let r = await (await fetch("/api/configLocale")).json();
+            locale = r.locale ?? "en";
+        } catch (e2) {
+            console.error("Failed to get locale config", e, e2);
+        }
+    }
+    
     document.querySelector('html').setAttribute('lang', locale);
     let messages = {
         en
