@@ -427,7 +427,10 @@
     "ensure_active": "确保激活",
     "ensure_active_desc": "如果显示器未激活则激活它",
     "no_operation": "无操作",
-    "no_operation_desc": "不对显示器进行任何操作，用户需自行确保显示器状态"
+    "no_operation_desc": "不对显示器进行任何操作，用户需自行确保显示器状态",
+    "download_clients": "下载客户端",
+    "android_client": "安卓客户端",
+    "ios_client": "iOS 客户端"
   },
   "navbar": {
     "applications": "应用程序",

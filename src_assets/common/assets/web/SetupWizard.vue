@@ -164,11 +164,11 @@
           <!-- 步骤 5: 完成 -->
           <div v-else-if="currentStep === 5">
             <div class="text-center">
-              <div class="mb-4" style="font-size: 4em; color: #28a745;">
+              <div class="mb-3" style="font-size: 3em; color: #28a745;">
                 <i class="fas fa-check-circle"></i>
               </div>
-              <h3 class="mb-3">{{ $t('setup.setup_complete') }}</h3>
-              <p class="mb-4">{{ $t('setup.setup_complete_desc') }}</p>
+              <h3 class="mb-2">{{ $t('setup.setup_complete') }}</h3>
+              <p class="mb-3">{{ $t('setup.setup_complete_desc') }}</p>
               
               <div class="alert alert-info" v-if="saveSuccess">
                 <i class="fas fa-info-circle"></i>
@@ -178,6 +178,34 @@
               <div class="alert alert-danger" v-if="saveError">
                 <i class="fas fa-exclamation-triangle"></i>
                 {{ saveError }}
+              </div>
+
+              <!-- 客户端下载二维码 -->
+              <div class="client-download-section mt-3">
+                <h5 class="mb-3">
+                  <i class="fas fa-mobile-alt"></i>
+                  {{ $t('setup.download_clients') }}
+                </h5>
+                <div class="qr-codes-container">
+                  <div class="qr-code-item">
+                    <div class="qr-code-box">
+                      <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
+                    </div>
+                    <div class="qr-code-label">
+                      <i class="fab fa-android"></i>
+                      {{ $t('setup.android_client') }}
+                    </div>
+                  </div>
+                  <div class="qr-code-item">
+                    <div class="qr-code-box">
+                      <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
+                    </div>
+                    <div class="qr-code-label">
+                      <i class="fab fa-apple"></i>
+                      {{ $t('setup.ios_client') }}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -243,6 +271,9 @@ export default {
       saveSuccess: false,
       saveError: null,
       saving: false,
+      // 客户端下载链接
+      androidQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://github.com/qiin2333/moonlight-android/releases/tag/shortcut'),
+      iosQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://apps.apple.com/us/app/voidlink/id6747717070'),
     }
   },
   mounted() {
@@ -620,6 +651,56 @@ export default {
 
 .step-content::-webkit-scrollbar-thumb:hover {
   background: rgba(102, 126, 234, 0.5);
+}
+
+/* 客户端下载二维码样式 */
+.client-download-section {
+  background: var(--bs-secondary-bg);
+  padding: 1em;
+  border-radius: 10px;
+}
+
+.client-download-section h5 {
+  font-size: 1em;
+  margin-bottom: 0.8em;
+  color: var(--bs-body-color);
+}
+
+.qr-codes-container {
+  display: flex;
+  justify-content: center;
+  gap: 2em;
+  flex-wrap: wrap;
+}
+
+.qr-code-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.qr-code-box {
+  background: white;
+  padding: 0.5em;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.qr-code-image {
+  width: 120px;
+  height: 120px;
+  display: block;
+}
+
+.qr-code-label {
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--bs-body-color);
+}
+
+.qr-code-label i {
+  margin-right: 0.3em;
 }
 </style>
 

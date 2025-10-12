@@ -1,8 +1,8 @@
 <template>
   <nav class="navbar navbar-light navbar-expand-lg navbar-background header">
     <div class="container-fluid">
-      <a class="navbar-brand" href="/" title="Sunshine">
-        <img src="/images/logo-sunshine-45.png" height="45" alt="Sunshine" />
+      <a class="navbar-brand brand-enhanced" href="/" title="这里不可以">
+        <img src="/images/logo-sunshine-45.png" height="50" alt="Sunshine-Foundation" class="brand-logo" />
       </a>
       <button
         class="navbar-toggler"
@@ -112,7 +112,17 @@ onUnmounted(() => {
 
 <style>
 .navbar-background {
-  background-color: #ffc400;
+  background-color: #f9d86bad;
+  backdrop-filter: blur(3px);
+}
+
+.brand-enhanced {
+  transition: all 0.3s ease;
+}
+
+.brand-enhanced:hover {
+  transform: translateY(-2px);
+  transform: scale(1.05) rotate(-5deg);
 }
 
 .header .nav-link {

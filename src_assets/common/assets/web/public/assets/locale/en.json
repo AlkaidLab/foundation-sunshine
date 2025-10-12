@@ -434,7 +434,10 @@
     "ensure_active": "Ensure Active",
     "ensure_active_desc": "Activate the device if needed",
     "no_operation": "No Operation",
-    "no_operation_desc": "No action on displays, user must ensure the display device is active"
+    "no_operation_desc": "No action on displays, user must ensure the display device is active",
+    "download_clients": "Download Clients",
+    "android_client": "Android Client",
+    "ios_client": "iOS Client"
   },
   "navbar": {
     "applications": "Applications",
