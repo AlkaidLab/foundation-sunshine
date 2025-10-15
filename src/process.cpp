@@ -600,6 +600,8 @@ namespace proc {
     std::vector<std::string> paths_to_check = {
       // 1. 检查assets目录中的相对路径
       (std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path).string(),
+      // 2. 检查covers目录中的相对路径
+      (std::filesystem::path(platf::appdata().string()) / "covers" / app_image_path).string(),
       // 2. 处理旧的steam默认图像定义
       app_image_path == "./assets/steam.png" ? SUNSHINE_ASSETS_DIR "/steam.png" : "",
       // 3. 检查绝对路径

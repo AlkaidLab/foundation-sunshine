@@ -41,14 +41,14 @@
     </div>
 
     <!-- 图片预览 -->
-     <div class="image-preview-container mt-3" v-if="!isDesktopImage && imagePath">
+    <div class="image-preview-container mt-3" v-if="!isDesktopImage && imagePath">
       <div class="image-preview">
         <img :src="getImagePreviewUrl()" alt="图片预览" @error="handleImageError" />
       </div>
       <div class="image-preview-circle">
         <img :src="getImagePreviewUrl()" alt="图片预览" @error="handleImageError" />
       </div>
-     </div>
+    </div>
 
     <div class="field-hint">{{ $t('apps.image_desc') }}</div>
 
@@ -115,19 +115,19 @@ export default {
     /**
      * 处理文件选择
      */
-    handleFileSelect(event) {
+    async handleFileSelect(event) {
       const file = event.target.files[0]
       if (file) {
         const validation = validateFile(file)
         if (validation.isValid) {
-          // 如果是Electron环境，使用webUtils获取路径
-          if (window.electron?.webUtils?.getPathForFile) {
-            this.$emit('update-image', window.electron.webUtils.getPathForFile(file))
-          } else {
-            // 否则创建临时URL用于预览
-            const url = URL.createObjectURL(file)
-            this.$emit('update-image', url)
-            this.$emit('image-error', '浏览器环境下无法获取完整路径，请检查并手动调整路径')
+          try {
+            this.$emit('image-error', '正在上传图片...')
+            const path = await this.uploadImageToSunshine(file)
+            this.$emit('update-image', path)
+            this.$emit('image-error', '')
+          } catch (error) {
+            console.error('上传图片失败:', error)
+            this.$emit('image-error', '上传图片失败: ' + error.message)
           }
         } else {
           this.$emit('image-error', validation.message)
@@ -158,7 +158,7 @@ export default {
     /**
      * 处理拖拽放置
      */
-    handleDrop(event) {
+    async handleDrop(event) {
       event.preventDefault()
       this.dragCounter = 0
 
@@ -169,16 +169,70 @@ export default {
           if (window.electron?.webUtils?.getPathForFile) {
             this.$emit('update-image', window.electron.webUtils.getPathForFile(file))
           } else {
-            const url = URL.createObjectURL(file)
-            this.$emit('update-image', url)
+            // 上传到 Sunshine API
+            try {
+              this.$emit('image-error', '正在上传图片...')
+              const path = await this.uploadImageToSunshine(file)
+              this.$emit('update-image', path)
+              this.$emit('image-error', '')
+            } catch (error) {
+              console.error('上传图片失败:', error)
+              this.$emit('image-error', '上传图片失败: ' + error.message)
+            }
           }
-          this.$emit('image-error', '')
         } else {
           this.$emit('image-error', validation.message)
         }
       } else {
         this.$emit('image-error', '其他地方不可以！')
       }
+    },
+
+    /**
+     * 上传图片到 Sunshine API
+     * @param {File} file - 要上传的文件
+     * @returns {Promise<string>} - 返回图片的 boxart 资源 ID（不含路径分隔符）
+     */
+    async uploadImageToSunshine(file) {
+      // 读取文件为 Base64
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          // 移除 data:image/xxx;base64, 前缀
+          const base64 = reader.result.split(',')[1]
+          resolve(base64)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      // 生成唯一的 key（不含路径分隔符，这样 getImagePreviewUrl 会自动加 /boxart/ 前缀）
+      const timestamp = Date.now()
+      const key = `app_${this.appName || 'custom'}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+
+      // 调用 Sunshine API 上传（保存到 appdata/covers/）
+      const response = await fetch('/api/covers/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          key: key,
+          data: base64Data,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      console.log('✅ Sunshine API 上传成功，文件路径:', result.path)
+
+      // 返回不含路径分隔符的 key
+      // getImagePreviewUrl 会自动转换为 /boxart/{key}.png
+      // getBoxArt 函数现在会自动从 covers/ 目录查找图片
+      return `${key}.png`
     },
 
     /**

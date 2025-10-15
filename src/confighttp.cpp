@@ -278,34 +278,72 @@ namespace confighttp {
   getBoxArt(resp_https_t response, req_https_t request) {
     print_req(request);
 
-    // 从请求路径中提取图片文件名
+    // Extract image filename from request path
     std::string path = request->path;
     if (path.find("/boxart/") == 0) {
-      path = path.substr(7); // 移除"/boxart"前缀
+      path = path.substr(8); // Remove "/boxart/" prefix
     }
 
-    // 构建完整的图片文件路径
-    std::string imagePath = SUNSHINE_ASSETS_DIR "" + path;
+    BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-    // 检查文件是否存在
+    // First try to find in SUNSHINE_ASSETS_DIR
+    std::string imagePath = SUNSHINE_ASSETS_DIR "/" + path;
+    BOOST_LOG(debug) << "Checking boxart path: " << imagePath;
+
+    // If not found in boxart, try covers directory
     if (!fs::exists(imagePath)) {
-      // 如果图片不存在,返回默认图片
-      imagePath = SUNSHINE_ASSETS_DIR "box.png";
+      BOOST_LOG(debug) << "Not found in boxart, checking covers...";
+      std::string coversPath = platf::appdata().string() + "/covers/" + path;
+      BOOST_LOG(debug) << "Checking covers path: " << coversPath;
+      
+      if (fs::exists(coversPath)) {
+        imagePath = coversPath;
+        BOOST_LOG(debug) << "Found in covers: " << imagePath;
+      } else {
+        // If still not found, use default image
+        BOOST_LOG(debug) << "Not found in covers, using default box.png";
+        imagePath = SUNSHINE_ASSETS_DIR "/box.png";
+      }
+    } else {
+      BOOST_LOG(debug) << "Found in boxart: " << imagePath;
     }
 
-    // 获取文件扩展名确定Content-Type
-    std::string ext = fs::path(imagePath).extension().string().substr(1);
-    auto mimeType = mime_types.find(ext);
-    std::string contentType = "image/png"; // 默认类型
+    // Get file size
+    std::error_code ec;
+    auto fileSize = fs::file_size(imagePath, ec);
+    if (ec) {
+      BOOST_LOG(warning) << "Failed to get file size for: " << imagePath;
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read image file");
+      return;
+    }
 
+    // Determine Content-Type from file extension
+    std::string ext = fs::path(imagePath).extension().string();
+    if (!ext.empty() && ext[0] == '.') {
+      ext = ext.substr(1);
+    }
+    
+    auto mimeType = mime_types.find(ext);
+    std::string contentType = "image/png"; // Default type
+    
     if (mimeType != mime_types.end()) {
       contentType = mimeType->second;
     }
+    
+    BOOST_LOG(debug) << "Serving boxart: " << imagePath << " (Content-Type: " << contentType << ", Size: " << fileSize << " bytes)";
 
-    // 返回图片资源
+    // Return image resource
     std::ifstream in(imagePath, std::ios::binary);
+    if (!in.is_open()) {
+      BOOST_LOG(warning) << "Failed to open image file: " << imagePath;
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open image file");
+      return;
+    }
+
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", contentType);
+    headers.emplace("Content-Length", std::to_string(fileSize));
+    
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
   }
 
@@ -551,8 +589,18 @@ namespace confighttp {
     else {
       auto data = SimpleWeb::Crypto::Base64::decode(inputTree.get<std::string>("data"));
 
-      std::ofstream imgfile(path);
+      std::ofstream imgfile(path, std::ios::binary);
+      if (!imgfile.is_open()) {
+        outputTree.put("error", "Failed to create file");
+        return;
+      }
       imgfile.write(data.data(), (int) data.size());
+      imgfile.close();
+      
+      if (imgfile.fail()) {
+        outputTree.put("error", "Failed to write file");
+        return;
+      }
     }
     outputTree.put("path", path);
   }

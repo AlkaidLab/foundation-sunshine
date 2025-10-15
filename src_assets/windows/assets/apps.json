@@ -38,13 +38,11 @@
       "image-path": "steam.png"
     },
     {
-      "name": "禁用虚拟显示器",
-      "cmd": ".\\tools\\device-toggler.exe 2 2 \"Zako Display Adapter\"",
-      "elevated": "true"
-    },
-    {
-      "name": "安全模式重启Sunshine",
-      "cmd": ".\\Sunshine.exe -1"
+      "name": "Xbox Game",
+      "cmd": "cmd \/c \"start xbox:\"",
+      "auto-detach": "true",
+      "wait-all": "true",
+      "image-path": "box.png"
     }
   ]
 }

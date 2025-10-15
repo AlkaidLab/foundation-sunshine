@@ -63,28 +63,42 @@
             </div>
           </div>
 
-          <!-- 步骤 2: 选择串流方式 -->
+          <!-- 步骤 2: 选择串流显示器 -->
           <div v-else-if="currentStep === 2">
             <h3 class="mb-4">{{ $t('setup.step1_description') }}</h3>
             
+            <!-- 虚拟显示器选项 -->
             <div class="option-card" 
-                 :class="{ selected: streamMode === 'physical' }"
-                 @click="streamMode = 'physical'">
-              <div class="option-icon">
-                <i class="fas fa-desktop"></i>
-              </div>
-              <h4>{{ $t('setup.physical_display') }}</h4>
-              <p>{{ $t('setup.physical_display_desc') }}</p>
-            </div>
-
-            <div class="option-card" 
-                 :class="{ selected: streamMode === 'virtual' }"
-                 @click="streamMode = 'virtual'">
+                 :class="{ selected: selectedDisplay === 'ZakoHDR' }"
+                 @click="selectedDisplay = 'ZakoHDR'">
               <div class="option-icon">
                 <i class="fas fa-tv"></i>
               </div>
               <h4>{{ $t('setup.virtual_display') }}</h4>
               <p>{{ $t('setup.virtual_display_desc') }}</p>
+            </div>
+
+            <!-- 物理显示器列表 -->
+            <div v-if="displayDevices && displayDevices.length > 0">
+              <h5 class="my-3">
+                <i class="fas fa-desktop"></i>
+                {{ $t('setup.physical_display') }}
+              </h5>
+              <div class="option-card" 
+                   v-for="device in displayDevices" 
+                   :key="device.device_id"
+                   :class="{ selected: selectedDisplay === device.device_id }"
+                   @click="selectedDisplay = device.device_id">
+                <div class="d-flex align-items-center">
+                  <div class="option-icon-small">
+                    <i class="fas fa-desktop"></i>
+                  </div>
+                  <div class="flex-grow-1">
+                    <h4>{{ getDisplayName(device) }}</h4>
+                    <p>{{ getDisplayInfo(device) }}</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -104,16 +118,16 @@
               </select>
             </div>
 
-            <div v-if="selectedAdapter" class="adapter-info">
-              <h5>
-                <i class="fas fa-info-circle"></i>
-                {{ $t('setup.adapter_info') }}
-              </h5>
-              <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
-              <p><strong>{{ $t('setup.stream_mode') }}:</strong> 
-                {{ streamMode === 'physical' ? $t('setup.physical_display') : $t('setup.virtual_display') }}
-              </p>
-            </div>
+              <div v-if="selectedAdapter" class="adapter-info">
+                <h5>
+                  <i class="fas fa-info-circle"></i>
+                  {{ $t('setup.adapter_info') }}
+                </h5>
+                <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
+                <p><strong>{{ $t('setup.selected_display') }}:</strong> 
+                  {{ isVirtualDisplay ? $t('setup.virtual_display') : selectedDisplay }}
+                </p>
+              </div>
           </div>
 
           <!-- 步骤 4: 选择显示器组合策略 -->
@@ -265,7 +279,7 @@ export default {
     return {
       currentStep: 1,
       selectedLocale: 'zh', // 默认中文
-      streamMode: null,
+      selectedDisplay: null, // 选择的显示器（虚拟或物理）
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器
       saveSuccess: false,
@@ -302,13 +316,16 @@ export default {
       if (this.currentStep === 1) {
         return this.selectedLocale !== null
       } else if (this.currentStep === 2) {
-        return this.streamMode !== null
+        return this.selectedDisplay !== null
       } else if (this.currentStep === 3) {
         return this.selectedAdapter !== ''
       } else if (this.currentStep === 4) {
         return this.displayDevicePrep !== null
       }
       return false
+    },
+    isVirtualDisplay() {
+      return this.selectedDisplay === 'ZakoHDR'
     }
   },
   methods: {
@@ -363,10 +380,8 @@ export default {
           config.locale = currentConfig.locale
         }
 
-        // 如果选择虚拟显示器，添加虚拟显示器相关配置
-        if (this.streamMode === 'virtual') {
-          config.output_name = 'ZakoHDR'
-        }
+        // 设置选择的显示器
+        config.output_name = this.selectedDisplay
 
         // 添加显示器组合策略
         config.display_device_prep = this.displayDevicePrep
@@ -387,10 +402,10 @@ export default {
           
           // 记录设置完成
           trackEvents.userAction('setup_wizard_completed', {
-            stream_mode: this.streamMode,
+            selected_display: this.selectedDisplay,
             adapter: this.selectedAdapter,
             display_device_prep: this.displayDevicePrep,
-            has_virtual_display: this.streamMode === 'virtual'
+            is_virtual_display: this.isVirtualDisplay
           })
           
           this.$emit('setup-complete', config)
@@ -414,6 +429,57 @@ export default {
         from_step: this.currentStep
       })
       window.location.href = '/apps'
+    },
+    getDisplayName(device) {
+      // 解析 device.data，提取友好名称
+      // 数据格式：
+      // DISPLAY NAME: \\.\\DISPLAY1
+      // FRIENDLY NAME: F32D80U
+      // DEVICE STATE: PRIMARY
+      // HDR STATE: ENABLED
+      try {
+        const data = device.data || ''
+        const name = data
+          .replace(
+            /.*?(DISPLAY\d+)?\nFRIENDLY NAME: (.*[^\n])*?\n.*\n.*/g,
+            "$2 ($1)"
+          )
+          .replace("()", "")
+        
+        return name || device.device_id || this.$t('setup.unknown_display')
+      } catch (e) {
+        return device.device_id || this.$t('setup.unknown_display')
+      }
+    },
+    getDisplayInfo(device) {
+      // 解析 device.data，提取详细信息
+      try {
+        const data = device.data || ''
+        
+        // 提取 DEVICE STATE
+        const stateMatch = data.match(/DEVICE STATE: (\w+)/)
+        const state = stateMatch ? stateMatch[1].toLowerCase() : 'unknown'
+        
+        // 提取 HDR STATE
+        const hdrMatch = data.match(/HDR STATE: (\w+)/)
+        const hdr = hdrMatch ? hdrMatch[1] : ''
+        
+        const stateKey = {
+          'primary': 'setup.state_primary',
+          'active': 'setup.state_active',
+          'inactive': 'setup.state_inactive'
+        }[state] || 'setup.state_unknown'
+        const stateText = this.$t(stateKey)
+        
+        let info = `${this.$t('setup.device_state')}: ${stateText}`
+        if (hdr) {
+          info += ` | HDR: ${hdr}`
+        }
+        
+        return info
+      } catch (e) {
+        return device.device_id
+      }
     }
   }
 }
@@ -701,6 +767,31 @@ export default {
 
 .qr-code-label i {
   margin-right: 0.3em;
+}
+
+/* 小图标样式 */
+.option-icon-small {
+  font-size: 1.5em;
+  color: #667eea;
+  margin-right: 0.8em;
+  flex-shrink: 0;
+}
+
+.d-flex {
+  display: flex;
+}
+
+.align-items-center {
+  align-items: center;
+}
+
+.flex-grow-1 {
+  flex-grow: 1;
+}
+
+.my-3 {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
 }
 </style>
 

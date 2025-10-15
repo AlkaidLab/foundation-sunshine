@@ -3,7 +3,6 @@
 
 /* 全局样式 */
 body {
-  background: var(--gradient-primary);
   font-family: var(--font-family-base);
   min-height: 100vh;
 }

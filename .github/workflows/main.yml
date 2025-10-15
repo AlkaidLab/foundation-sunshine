@@ -131,7 +131,41 @@ jobs:
             "mingw-w64-ucrt-x86_64-toolchain"
           )
 
+          # Note: mingw-w64-ucrt-x86_64-rust conflicts with fixed gcc-15.1.0-5
+          # We install Rust via rustup in a separate step
+
           pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+
+      - name: Install Rust (for Tauri GUI)
+        shell: msys2 {0}
+        run: |
+          echo "Installing Rust via rustup..."
+          
+          # Rust installs to Windows user directory
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          
+          # Check if cargo already exists
+          if command -v cargo &> /dev/null; then
+            echo "Rust already installed: $(cargo --version)"
+          else
+            # Download and install rustup
+            curl --proto '=https' --tlsv1.2 -sSf https://win.rustup.rs/x86_64 -o /tmp/rustup-init.exe
+            /tmp/rustup-init.exe -y --default-toolchain stable --profile minimal
+            
+            # Refresh PATH
+            sleep 3
+            export PATH="$CARGO_BIN:$PATH"
+            
+            # Verify installation
+            if [ -f "$CARGO_BIN/cargo.exe" ]; then
+              echo "Rust installed successfully: $(cargo --version)"
+            else
+              echo "Warning: Rust installed but cargo not found at $CARGO_BIN"
+              exit 1
+            fi
+          fi
 
       - name: Verify Build Tools
         shell: msys2 {0}
@@ -140,7 +174,19 @@ jobs:
           which cmake || (echo "cmake not found" && exit 1)
           which ninja || (echo "ninja not found" && exit 1)
           which gcc || (echo "gcc not found" && exit 1)
+          
+          # verify Rust is in PATH
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          
+          which cargo || (echo "cargo not found" && exit 1)
+          
           echo "All build tools verified successfully"
+          echo "  CMake: $(cmake --version | head -1)"
+          echo "  Ninja: $(ninja --version)"
+          echo "  GCC: $(gcc --version | head -1)"
+          echo "  Cargo: $(cargo --version)"
 
       - name: Build Windows
         shell: msys2 {0}
@@ -149,6 +195,11 @@ jobs:
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
         run: |
+          # add Rust to PATH for Tauri GUI build
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          
           mkdir -p build
           cmake \
             -B build \

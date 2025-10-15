@@ -83,6 +83,28 @@ export default defineConfig({
     proxy: {
       '/steam-api': createProxyLogger('🎮 Steam API', 'https://api.steampowered.com', /^\/steam-api/),
       '/steam-store': createProxyLogger('🛒 Steam Store', 'https://store.steampowered.com', /^\/steam-store/),
+      '/boxart': {
+        target: 'https://localhost:47990',
+        changeOrigin: true,
+        secure: false,
+        configure(proxy) {
+          proxy.on('error', (err, req, res) => {
+            console.log('❌ Boxart 代理错误:', err.message)
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'text/plain' })
+            }
+            res.end('Boxart proxy error: ' + err.message)
+          })
+          proxy.on('proxyReq', (proxyReq, req) => {
+            console.log('🖼️  Boxart 请求:', req.method, req.url, '-> https://localhost:47990' + req.url)
+          })
+          proxy.on('proxyRes', (proxyRes, req) => {
+            console.log('✅ Boxart 响应:', req.url, '状态码:', proxyRes.statusCode)
+            // 清理可能有问题的响应头
+            delete proxyRes.headers['content-encoding']
+          })
+        },
+      },
       '/api': {
         target: 'https://localhost:47990',
         changeOrigin: true,

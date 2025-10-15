@@ -59,6 +59,15 @@ if exist "%OLD_DIR%\covers\" (
     )
 )
 
+rem Create covers directory if it doesn't exist
+if not exist "%NEW_DIR%\covers\" mkdir "%NEW_DIR%\covers"
+
+rem Migrate local image files to covers directory and update apps.json
+if exist "%NEW_DIR%\apps.json" (
+    echo Migrating local image files to covers directory...
+    powershell -ExecutionPolicy Bypass -File "%~dp0migrate-images.ps1" "%NEW_DIR%"
+)
+
 rem Remove log files
 del "%OLD_DIR%\*.txt"
 del "%OLD_DIR%\*.log"
