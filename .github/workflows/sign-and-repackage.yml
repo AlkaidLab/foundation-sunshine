@@ -1,49 +1,73 @@
-# 签名并重新打包工作流
+# 签名并重新打包工作流（仅用于正式发布版本）
 # 1. 签名所有 EXE 和 DLL 文件
 # 2. 使用签名后的文件重新打包 NSIS 和 ZIP
+# 注意：只在正式发布（非预发布）时运行
 
-name: Sign and Repackage
+name: Sign and Repackage (Release Only)
 
 on:
-  workflow_run:
-    workflows: ["Build and Release"]
-    types:
-      - completed
-    branches:
-      - master
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       run-id:
-        description: 'Run ID to download artifact from'
+        description: "Run ID to download artifact from"
         required: false
+      release-tag:
+        description: "Release tag"
+        required: true
 
 jobs:
   sign-and-repackage:
     name: Sign Files and Repackage
     runs-on: windows-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    
+    # 只在正式发布时运行（不是预发布）
+    if: ${{ (github.event_name == 'release' && !github.event.release.prerelease) || github.event_name == 'workflow_dispatch' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       # 1. 下载原始构建产物
-      - name: Download build artifacts
+      - name: Download build artifacts (from release)
+        if: ${{ github.event_name == 'release' }}
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: main.yml
+          name: sunshine-windows
+          path: artifacts
+          check_artifacts: true
+          search_artifacts: true
+          workflow_conclusion: success
+
+      - name: Download build artifacts (manual with run-id)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run-id != '' }}
         uses: actions/download-artifact@v4
         with:
           name: sunshine-windows
           path: artifacts
-          run-id: ${{ github.event.inputs.run-id || github.event.workflow_run.id }}
+          run-id: ${{ github.event.inputs.run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      
+
+      - name: Download build artifacts (manual latest)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run-id == '' }}
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: main.yml
+          name: sunshine-windows
+          path: artifacts
+          check_artifacts: true
+          search_artifacts: true
+          workflow_conclusion: success
+
       - name: List downloaded files
         shell: bash
         run: |
           echo "Downloaded files:"
           ls -laR artifacts/
-      
+
       # 2. 解压 Portable ZIP 获取所有需要签名的文件
       - name: Extract Portable ZIP
         shell: bash
@@ -59,7 +83,7 @@ jobs:
             echo "No portable ZIP found"
             exit 1
           fi
-      
+
       # 3. 上传所有未签名的文件（只一层结构）
       - name: Upload unsigned files for signing
         id: upload-unsigned
@@ -67,29 +91,29 @@ jobs:
         with:
           name: files-for-signing
           path: unsigned-files/
-      
-      # 4. 提交到 SignPath 签名
+
+      # 4. 提交到 SignPath 签名（使用生产策略）
       - name: Submit to SignPath for signing
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: Sunshine-Foundation
-          signing-policy-slug: test-signing
+          signing-policy-slug: release-signing
           artifact-configuration-slug: windows-portable
-          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          github-artifact-id: "${{ steps.upload-unsigned.outputs.artifact-id }}"
           output-artifact-directory: signed-files
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 600
           service-unavailable-timeout-in-seconds: 600
-      
+
       # 5. 验证签名
       - name: Verify all signatures
         shell: pwsh
         run: |
           Write-Host "Verifying signatures..."
           $signedFiles = Get-ChildItem -Path "signed-files" -Recurse -File -Include *.exe,*.dll
-          
+
           foreach ($file in $signedFiles) {
             Write-Host "`n=== $($file.Name) ==="
             $signature = Get-AuthenticodeSignature $file.FullName
@@ -101,7 +125,7 @@ jobs:
             }
           }
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
-      
+
       # 6. 使用签名后的文件重新打包 ZIP 便携版
       - name: Repackage signed Portable ZIP
         shell: bash
@@ -112,33 +136,113 @@ jobs:
           cd ..
           echo "Created signed portable package:"
           ls -lh Sunshine-*-Portable-Signed.zip
-      
-      # 7. 使用签名后的文件重新打包 NSIS 安装包
-      - name: Setup MSYS2 for NSIS
+
+      # 7. 重新构建项目以创建带签名文件的 NSIS 安装包
+      - name: Setup MSYS2 for rebuild
         uses: msys2/setup-msys2@v2
         with:
           msystem: ucrt64
           update: false
-          install: mingw-w64-ucrt-x86_64-nsis
-      
-      - name: Repackage signed NSIS installer
+          install: >-
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nsis
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-curl-winssl
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-miniupnpc
+            mingw-w64-ucrt-x86_64-nlohmann-json
+            mingw-w64-ucrt-x86_64-nodejs
+            mingw-w64-ucrt-x86_64-onevpl
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-opus
+
+      - name: Install Rust (for Tauri GUI)
         shell: msys2 {0}
         run: |
-          # 复制签名后的文件到构建目录
-          cp -r signed-files/* build/
-          
-          # 重新运行 CPack 创建 NSIS 安装包
-          cd build
+          echo "Installing Rust via rustup..."
+
+          # Rust installs to Windows user directory
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
+          export PATH="$CARGO_BIN:$PATH"
+
+          # Check if cargo already exists
+          if command -v cargo &> /dev/null; then
+            echo "Rust already installed: $(cargo --version)"
+          else
+            # Download and install rustup
+            curl --proto '=https' --tlsv1.2 -sSf https://win.rustup.rs/x86_64 -o /tmp/rustup-init.exe
+            /tmp/rustup-init.exe -y --default-toolchain stable --profile minimal
+            
+            # Refresh PATH
+            sleep 3
+            export PATH="$CARGO_BIN:$PATH"
+            
+            # Verify installation
+            if [ -f "$CARGO_BIN/cargo.exe" ]; then
+              echo "Rust installed successfully: $(cargo --version)"
+            else
+              echo "Warning: Rust installed but cargo not found at $CARGO_BIN"
+              exit 1
+            fi
+          fi
+
+      - name: Rebuild and package with signed files
+        shell: msys2 {0}
+        run: |
+          echo "Rebuilding project with signed files..."
+
+          # Add Rust to PATH
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
+          export PATH="$CARGO_BIN:$PATH"
+
+          # 重新配置 CMake
+          mkdir -p build-signed
+          cmake \
+            -B build-signed \
+            -G Ninja \
+            -S . \
+            -DBUILD_DOCS=OFF \
+            -DSUNSHINE_ASSETS_DIR=assets
+
+          # 编译（只需要生成必要的文件）
+          ninja -C build-signed
+
+          # 替换为签名后的文件
+          echo "Replacing with signed files..."
+          cp -v signed-files/*.exe build-signed/ 2>/dev/null || true
+          cp -v signed-files/*.dll build-signed/ 2>/dev/null || true
+          cp -rv signed-files/tools/* build-signed/tools/ 2>/dev/null || true
+          cp -rv signed-files/assets/* build-signed/assets/ 2>/dev/null || true
+          cp -rv signed-files/scripts/* build-signed/scripts/ 2>/dev/null || true
+
+          # 创建 NSIS 安装包
+          echo "Creating NSIS installer..."
+          cd build-signed
           cpack -G NSIS --verbose
-          
-          # 移动新的安装包
+
+          # 查找并移动安装包
+          echo "Looking for installer..."
+          if [ -f ./cpack_artifacts/Sunshine.exe ]; then
+            INSTALLER=./cpack_artifacts/Sunshine.exe
+          elif [ -f ./Sunshine.exe ]; then
+            INSTALLER=./Sunshine.exe
+          else
+            echo "Error: Cannot find Sunshine.exe"
+            find . -name "*.exe" -type f
+            exit 1
+          fi
+
           VERSION=$(date +%Y.%m%d)
-          mv ./cpack_artifacts/Sunshine.exe "../Sunshine-${VERSION}-Windows-Installer-Signed.exe"
-          
+          mv "$INSTALLER" "../Sunshine-${VERSION}-Windows-Installer-Signed.exe"
+
           cd ..
           echo "Created signed installer:"
           ls -lh Sunshine-*-Installer-Signed.exe
-      
+
       # 8. 签名最终的 NSIS 安装包
       - name: Upload NSIS installer for final signing
         id: upload-nsis
@@ -146,21 +250,21 @@ jobs:
         with:
           name: nsis-for-final-signing
           path: Sunshine-*-Installer-Signed.exe
-      
+
       - name: Sign NSIS installer
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: Sunshine-Foundation
-          signing-policy-slug: test-signing
+          signing-policy-slug: release-signing
           artifact-configuration-slug: windows-installer
-          github-artifact-id: '${{ steps.upload-nsis.outputs.artifact-id }}'
+          github-artifact-id: "${{ steps.upload-nsis.outputs.artifact-id }}"
           output-artifact-directory: final-signed
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 600
           service-unavailable-timeout-in-seconds: 600
-      
+
       # 9. 验证最终签名
       - name: Verify final NSIS signature
         shell: pwsh
@@ -174,7 +278,7 @@ jobs:
               Write-Host "✓ NSIS installer signature is VALID!" -ForegroundColor Green
             }
           }
-      
+
       # 10. 上传最终的签名文件
       - name: Upload final signed packages
         uses: actions/upload-artifact@v4
@@ -184,7 +288,7 @@ jobs:
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
           if-no-files-found: error
-      
+
       # 11. 发布到 GitHub Release
       - name: Create Release
         if: github.event_name != 'workflow_dispatch'
