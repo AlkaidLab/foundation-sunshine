@@ -162,6 +162,7 @@
                       type="menu"
                       @add-command="addMenuCommand"
                       @remove-command="removeMenuCommand"
+                      @test-command="testMenuCommand"
                     />
 
                     <!-- 独立命令 -->
@@ -610,6 +611,45 @@ export default {
      */
     removeMenuCommand(index) {
       this.formData['menu-cmd'].splice(index, 1);
+    },
+
+    /**
+     * 测试菜单命令
+     */
+    async testMenuCommand(index) {
+      const menuCmd = this.formData['menu-cmd'][index];
+      
+      if (!menuCmd.cmd) {
+        this.showErrorMessage(this.$t('apps.test_menu_cmd_empty'));
+        return;
+      }
+
+      try {
+        this.showInfoMessage(this.$t('apps.test_menu_cmd_executing'));
+        
+        const response = await fetch('/api/apps/test-menu-cmd', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            cmd: menuCmd.cmd,
+            working_dir: this.formData['working-dir'] || '',
+            elevated: menuCmd.elevated === 'true' || menuCmd.elevated === true
+          })
+        });
+
+        const result = await response.json();
+        
+        if (result.status) {
+          this.showInfoMessage(this.$t('apps.test_menu_cmd_success'));
+        } else {
+          this.showErrorMessage(this.$t('apps.test_menu_cmd_failed') + ': ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Test menu command error:', error);
+        this.showErrorMessage(this.$t('apps.test_menu_cmd_failed') + ': ' + error.message);
+      }
     },
     
     /**

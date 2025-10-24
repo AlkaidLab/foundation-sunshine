@@ -86,14 +86,26 @@
             
             <!-- 操作按钮 -->
             <td>
-              <button 
-                type="button" 
-                class="btn btn-outline-danger btn-sm" 
-                @click="removeCommand(index)"
-                :title="type === 'prep' ? '删除准备命令' : '删除菜单命令'"
-              >
-                <i class="fas fa-trash"></i>
-              </button>
+              <div class="action-buttons-group">
+                <button 
+                  v-if="type === 'menu'"
+                  type="button" 
+                  class="btn btn-outline-primary btn-sm me-1" 
+                  @click="testCommand(index)"
+                  :title="$t('apps.test_menu_cmd')"
+                  :disabled="!command.cmd"
+                >
+                  <i class="fas fa-play"></i>
+                </button>
+                <button 
+                  type="button" 
+                  class="btn btn-outline-danger btn-sm" 
+                  @click="removeCommand(index)"
+                  :title="type === 'prep' ? '删除准备命令' : '删除菜单命令'"
+                >
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -165,6 +177,13 @@ export default {
      */
     removeCommand(index) {
       this.$emit('remove-command', index);
+    },
+
+    /**
+     * 测试菜单命令
+     */
+    testCommand(index) {
+      this.$emit('test-command', index);
     }
   }
 };
@@ -274,6 +293,13 @@ export default {
   font-size: 0.875rem;
   font-weight: 500;
   margin-left: 0.5rem;
+}
+
+.action-buttons-group {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
 }
 
 /* 动画效果 */
