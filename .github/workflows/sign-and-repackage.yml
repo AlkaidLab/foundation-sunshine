@@ -211,16 +211,61 @@ jobs:
           # 编译（只需要生成必要的文件）
           ninja -C build-signed
 
-          # 替换为签名后的文件
-          echo "Replacing with signed files..."
-          cp -v signed-files/*.exe build-signed/ 2>/dev/null || true
-          cp -v signed-files/*.dll build-signed/ 2>/dev/null || true
-          cp -rv signed-files/tools/* build-signed/tools/ 2>/dev/null || true
-          cp -rv signed-files/assets/* build-signed/assets/ 2>/dev/null || true
-          cp -rv signed-files/scripts/* build-signed/scripts/ 2>/dev/null || true
+          # 显示签名文件结构
+          echo "=== Signed files structure ==="
+          ls -laR signed-files/
+          
+          echo "=== Build directory structure ==="
+          ls -la build-signed/
+          
+          # 检查签名文件是否有额外的目录层级
+          if [ -d "signed-files/Sunshine" ]; then
+            echo "Found Sunshine subdirectory, adjusting path..."
+            SIGNED_SRC="signed-files/Sunshine"
+          else
+            SIGNED_SRC="signed-files"
+          fi
+          
+          # 递归复制所有签名后的文件
+          echo "Replacing with signed files from: $SIGNED_SRC"
+          
+          # 复制主程序
+          [ -f "$SIGNED_SRC/sunshine.exe" ] && cp -v "$SIGNED_SRC/sunshine.exe" build-signed/ && echo "✓ Replaced sunshine.exe"
+          [ -f "$SIGNED_SRC/zlib1.dll" ] && cp -v "$SIGNED_SRC/zlib1.dll" build-signed/ && echo "✓ Replaced zlib1.dll"
+          
+          # 复制 tools 目录
+          if [ -d "$SIGNED_SRC/tools" ]; then
+            echo "Copying tools directory..."
+            mkdir -p build-signed/tools
+            cp -rv "$SIGNED_SRC/tools/"* build-signed/tools/
+          fi
+          
+          # 复制 assets 目录（递归）
+          if [ -d "$SIGNED_SRC/assets" ]; then
+            echo "Copying assets directory..."
+            mkdir -p build-signed/assets
+            cp -rv "$SIGNED_SRC/assets/"* build-signed/assets/
+          fi
+          
+          # 复制 scripts 目录（递归）
+          if [ -d "$SIGNED_SRC/scripts" ]; then
+            echo "Copying scripts directory..."
+            mkdir -p build-signed/scripts
+            cp -rv "$SIGNED_SRC/scripts/"* build-signed/scripts/
+          fi
+          
+          echo "=== Verification: Check if files were replaced ==="
+          echo "Main executable:"
+          ls -lh build-signed/sunshine.exe 2>/dev/null || echo "sunshine.exe not found"
+          echo "DLL files:"
+          find build-signed -name "*.dll" -type f -exec ls -lh {} \;
+          echo "Tool executables:"
+          find build-signed/tools -name "*.exe" -type f -exec ls -lh {} \; 2>/dev/null || echo "tools directory empty"
+          echo "GUI executable:"
+          find build-signed/assets -name "sunshine-gui.exe" -type f -exec ls -lh {} \; 2>/dev/null || echo "GUI not found"
 
           # 创建 NSIS 安装包
-          echo "Creating NSIS installer..."
+          echo "Creating NSIS installer with signed files..."
           cd build-signed
           cpack -G NSIS --verbose
 
