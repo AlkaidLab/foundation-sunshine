@@ -514,7 +514,7 @@
     "confirm_password": "Confirm password",
     "create_creds": "Before Getting Started, we need you to make a new username and password for accessing the Web UI.",
     "create_creds_alert": "The credentials below are needed to access Sunshine's Web UI. Keep them safe, since you will never see them again!",
-    "greeting": "Welcome to Sunshine!",
+    "greeting": "Welcome to Sunshine Foundation!",
     "login": "Login",
     "welcome_success": "This page will reload soon, your browser will ask you for the new credentials"
   }

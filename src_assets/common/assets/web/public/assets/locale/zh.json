@@ -521,7 +521,7 @@
     "confirm_password": "确认密码",
     "create_creds": "在开始之前，我们需要您为访问 Web UI 设置一个新的用户名和密码。",
     "create_creds_alert": "需要下面的账户信息才能访问 Sunshine 的 Web UI 。请妥善保存，因为你再也不会见到它们！",
-    "greeting": "欢迎使用 Sunshine！",
+    "greeting": "欢迎使用 Sunshine Foundation！",
     "login": "登录",
     "welcome_success": "此页面将很快重新加载，您的浏览器将询问您新的账户信息"
   }
