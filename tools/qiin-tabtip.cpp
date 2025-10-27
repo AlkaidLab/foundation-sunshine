@@ -1,5 +1,5 @@
 /**
- * @file tools/qiin-taptip.cpp
+ * @file tools/qiin-tabtip.cpp
  * @brief 调出或隐藏 Windows 触摸虚拟键盘的工具
  * @note 优化版本 - 不使用 C++ 标准库以减小文件大小
  */
@@ -401,7 +401,7 @@ void ShowHelp() {
   Print(L"Windows 虚拟触摸键盘工具");
   Print(L"");
   Print(L"用法:");
-  Print(L"  qiin-taptip [选项]");
+  Print(L"  qiin-tabtip [选项]");
   Print(L"");
   Print(L"选项:");
   Print(L"  show      - 显示触摸键盘 (TabTip)");
@@ -413,10 +413,10 @@ void ShowHelp() {
   Print(L"  help      - 显示此帮助信息");
   Print(L"");
   Print(L"示例:");
-  Print(L"  qiin-taptip              # 切换键盘状态");
-  Print(L"  qiin-taptip show         # 显示触摸键盘");
-  Print(L"  qiin-taptip osk          # 显示屏幕键盘");
-  Print(L"  qiin-taptip diagnose     # 诊断问题");
+  Print(L"  qiin-tabtip              # 切换键盘状态");
+  Print(L"  qiin-tabtip show         # 显示触摸键盘");
+  Print(L"  qiin-tabtip osk          # 显示屏幕键盘");
+  Print(L"  qiin-tabtip diagnose     # 诊断问题");
 }
 
 int wmain(int argc, wchar_t* argv[]) {
@@ -468,7 +468,7 @@ int wmain(int argc, wchar_t* argv[]) {
     wchar_t errMsg[512];
     wsprintfW(errMsg, L"未知命令: %s", command);
     PrintError(errMsg);
-    PrintError(L"使用 'qiin-taptip help' 查看帮助");
+    PrintError(L"使用 'qiin-tabtip help' 查看帮助");
     return 1;
   }
 

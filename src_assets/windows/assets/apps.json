@@ -13,7 +13,7 @@
         {
           "id": "kcENAT5r9P",
           "name": "打开触摸键盘",
-          "cmd": ".\\tools\\qiin-taptip.exe",
+          "cmd": ".\\tools\\qiin-tabtip.exe",
           "elevated": "false"
         },
         {
