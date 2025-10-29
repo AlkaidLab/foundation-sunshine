@@ -70,6 +70,76 @@ namespace system_tray {
   extern struct tray_menu tray_menus[];
   extern struct tray tray;
 
+  // 静态字符串变量用于存储本地化的菜单文本
+  // 这些变量必须是静态的，以确保在 tray_menus 的生命周期内有效
+  static std::string s_open_sunshine;
+  static std::string s_vdd_monitor_toggle;
+  static std::string s_configuration;
+  static std::string s_import_config;
+  static std::string s_export_config;
+  static std::string s_reset_to_default;
+  static std::string s_language;
+  static std::string s_chinese;
+  static std::string s_english;
+  static std::string s_japanese;
+  static std::string s_star_project;
+  static std::string s_help_us;
+  static std::string s_doctor;
+  static std::string s_qiin;
+  static std::string s_reset_display_device_config;
+  static std::string s_restart;
+  static std::string s_quit;
+
+  // 初始化本地化字符串
+  void
+  init_localized_strings() {
+    s_open_sunshine = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_OPEN_SUNSHINE);
+    s_vdd_monitor_toggle = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_MONITOR_TOGGLE);
+    s_configuration = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CONFIGURATION);
+    s_import_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_CONFIG);
+    s_export_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_CONFIG);
+    s_reset_to_default = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_TO_DEFAULT);
+    s_language = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_LANGUAGE);
+    s_chinese = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CHINESE);
+    s_english = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ENGLISH);
+    s_japanese = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_JAPANESE);
+    s_star_project = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STAR_PROJECT);
+    s_help_us = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_HELP_US);
+    s_doctor = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DOCTOR);
+    s_qiin = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QIIN);
+    s_reset_display_device_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_DEVICE_CONFIG);
+    s_restart = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESTART);
+    s_quit = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT);
+  }
+
+  // 更新所有菜单项的文本
+  void
+  update_menu_texts() {
+    init_localized_strings();
+    tray_menus[0].text = s_open_sunshine.c_str();
+    tray_menus[2].text = s_vdd_monitor_toggle.c_str();
+    tray_menus[4].text = s_configuration.c_str();
+    tray_menus[4].submenu[0].text = s_import_config.c_str();
+    tray_menus[4].submenu[1].text = s_export_config.c_str();
+    tray_menus[4].submenu[2].text = s_reset_to_default.c_str();
+    tray_menus[6].text = s_language.c_str();
+    tray_menus[6].submenu[0].text = s_chinese.c_str();
+    tray_menus[6].submenu[1].text = s_english.c_str();
+    tray_menus[6].submenu[2].text = s_japanese.c_str();
+    tray_menus[8].text = s_star_project.c_str();
+    tray_menus[9].text = s_help_us.c_str();
+    tray_menus[9].submenu[0].text = s_doctor.c_str();
+    tray_menus[9].submenu[1].text = s_qiin.c_str();
+  #ifdef _WIN32
+    tray_menus[11].text = s_reset_display_device_config.c_str();
+    tray_menus[12].text = s_restart.c_str();
+    tray_menus[13].text = s_quit.c_str();
+  #else
+    tray_menus[11].text = s_restart.c_str();
+    tray_menus[12].text = s_quit.c_str();
+  #endif
+  }
+
   auto tray_open_ui_cb = [](struct tray_menu *item) {
     BOOST_LOG(debug) << "Opening UI from system tray"sv;
     launch_ui();
@@ -446,7 +516,47 @@ namespace system_tray {
   #endif
   };
 
-  // 重置配置功能
+  // 通用语言切换函数
+  auto change_tray_language = [](const std::string &locale, const std::string &language_name) {
+    BOOST_LOG(info) << "Changing tray language to " << language_name << " from system tray"sv;
+    system_tray_i18n::set_tray_locale(locale);
+    
+    // 保存到配置文件
+    try {
+      auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
+      std::stringstream configStream;
+      
+      // 更新或添加 tray_locale 配置项
+      vars["tray_locale"] = locale;
+      for (const auto &[key, value] : vars) {
+        if (!value.empty() && value != "null") {
+          configStream << key << " = " << value << std::endl;
+        }
+      }
+      
+      file_handler::write_file(config::sunshine.config_file.c_str(), configStream.str());
+      BOOST_LOG(info) << "Tray language setting saved to config file"sv;
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save tray language setting: "sv << e.what();
+    }
+    
+    update_menu_texts();
+    tray_update(&tray);
+  };
+
+  auto tray_language_chinese_cb = [&change_tray_language](struct tray_menu *item) {
+    change_tray_language("zh", "Chinese");
+  };
+
+  auto tray_language_english_cb = [&change_tray_language](struct tray_menu *item) {
+    change_tray_language("en", "English");
+  };
+
+  auto tray_language_japanese_cb = [&change_tray_language](struct tray_menu *item) {
+    change_tray_language("ja", "Japanese");
+  };
+
   auto tray_reset_config_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Resetting configuration from system tray"sv;
 
@@ -506,6 +616,14 @@ namespace system_tray {
           { .text = "Reset to Default", .cb = tray_reset_config_cb },
           { .text = nullptr } } },
     { .text = "-" },
+    { .text = "Language",
+      .submenu =
+        (struct tray_menu[]) {
+          { .text = "中文", .cb = tray_language_chinese_cb },
+          { .text = "English", .cb = tray_language_english_cb },
+          { .text = "日本語", .cb = tray_language_japanese_cb },
+          { .text = nullptr } } },
+    { .text = "-" },
     { .text = "Star Project", .cb = tray_star_project_cb },
     { .text = "Help Us",
       .submenu =
@@ -532,6 +650,9 @@ namespace system_tray {
 
   int
   system_tray() {
+    // 初始化本地化字符串并更新菜单文本
+    update_menu_texts();
+
   #ifdef _WIN32
     // If we're running as SYSTEM, Explorer.exe will not have permission to open our thread handle
     // to monitor for thread termination. If Explorer fails to open our thread, our tray icon
@@ -666,9 +787,14 @@ namespace system_tray {
     tray.icon = TRAY_ICON_PLAYING;
     tray_update(&tray);
     tray.icon = TRAY_ICON_PLAYING;
-    tray.notification_title = "Stream Started";
-    char msg[256];
-    snprintf(msg, std::size(msg), "Streaming started for %s", app_name.c_str());
+    
+    // 使用本地化字符串
+    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_STARTED);
+    std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_STARTED_FOR);
+    static char msg[256];
+    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
+    tray.notification_title = title.c_str();
     tray.notification_text = msg;
     tray.tooltip = msg;
     tray.notification_icon = TRAY_ICON_PLAYING;
@@ -687,10 +813,15 @@ namespace system_tray {
     tray.notification_icon = NULL;
     tray.icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
-    char msg[256];
-    snprintf(msg, std::size(msg), "Streaming paused for %s", app_name.c_str());
+    
+    // 使用本地化字符串
+    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_PAUSED);
+    std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_PAUSED_FOR);
+    static char msg[256];
+    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
     tray.icon = TRAY_ICON_PAUSING;
-    tray.notification_title = "Stream Paused";
+    tray.notification_title = title.c_str();
     tray.notification_text = msg;
     tray.tooltip = msg;
     tray.notification_icon = TRAY_ICON_PAUSING;
@@ -709,11 +840,16 @@ namespace system_tray {
     tray.notification_icon = NULL;
     tray.icon = TRAY_ICON;
     tray_update(&tray);
-    char msg[256];
-    snprintf(msg, std::size(msg), "Application %s successfully stopped", app_name.c_str());
+    
+    // 使用本地化字符串
+    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED);
+    std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED_MSG);
+    static char msg[256];
+    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
     tray.icon = TRAY_ICON;
     tray.notification_icon = TRAY_ICON;
-    tray.notification_title = "Application Stopped";
+    tray.notification_title = title.c_str();
     tray.notification_text = msg;
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
@@ -732,9 +868,15 @@ namespace system_tray {
     tray.icon = TRAY_ICON;
     tray_update(&tray);
     tray.icon = TRAY_ICON;
-    std::string title = "Incoming Pairing Request From: " + pin_name;
-    tray.notification_title = title.c_str();
-    tray.notification_text = "Click here to complete the pairing process";
+    
+    // 使用本地化字符串
+    std::string title_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_INCOMING_PAIRING_REQUEST);
+    static std::string notification_text = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLICK_TO_COMPLETE_PAIRING);
+    static char title[256];
+    snprintf(title, std::size(title), title_template.c_str(), pin_name.c_str());
+    
+    tray.notification_title = title;
+    tray.notification_text = notification_text.c_str();
     tray.notification_icon = TRAY_ICON_LOCKED;
     tray.tooltip = pin_name.c_str();
     tray.notification_cb = []() {

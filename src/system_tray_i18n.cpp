@@ -9,40 +9,151 @@ namespace system_tray_i18n {
   // String key constants
   const std::string KEY_QUIT_TITLE = "quit_title";
   const std::string KEY_QUIT_MESSAGE = "quit_message";
+  
+  // Menu item keys
+  const std::string KEY_OPEN_SUNSHINE = "open_sunshine";
+  const std::string KEY_VDD_MONITOR_TOGGLE = "vdd_monitor_toggle";
+  const std::string KEY_CONFIGURATION = "configuration";
+  const std::string KEY_IMPORT_CONFIG = "import_config";
+  const std::string KEY_EXPORT_CONFIG = "export_config";
+  const std::string KEY_RESET_TO_DEFAULT = "reset_to_default";
+  const std::string KEY_LANGUAGE = "language";
+  const std::string KEY_CHINESE = "chinese";
+  const std::string KEY_ENGLISH = "english";
+  const std::string KEY_JAPANESE = "japanese";
+  const std::string KEY_STAR_PROJECT = "star_project";
+  const std::string KEY_HELP_US = "help_us";
+  const std::string KEY_DOCTOR = "doctor";
+  const std::string KEY_QIIN = "qiin";
+  const std::string KEY_RESET_DISPLAY_DEVICE_CONFIG = "reset_display_device_config";
+  const std::string KEY_RESTART = "restart";
+  const std::string KEY_QUIT = "quit";
+  
+  // Notification message keys
+  const std::string KEY_STREAM_STARTED = "stream_started";
+  const std::string KEY_STREAMING_STARTED_FOR = "streaming_started_for";
+  const std::string KEY_STREAM_PAUSED = "stream_paused";
+  const std::string KEY_STREAMING_PAUSED_FOR = "streaming_paused_for";
+  const std::string KEY_APPLICATION_STOPPED = "application_stopped";
+  const std::string KEY_APPLICATION_STOPPED_MSG = "application_stopped_msg";
+  const std::string KEY_INCOMING_PAIRING_REQUEST = "incoming_pairing_request";
+  const std::string KEY_CLICK_TO_COMPLETE_PAIRING = "click_to_complete_pairing";
 
   // Default English strings
   const std::map<std::string, std::string> DEFAULT_STRINGS = {
-    { KEY_QUIT_TITLE, "Really Quit?" },
-    { KEY_QUIT_MESSAGE, "You can't quit!\nDo you really want to quit? I can't help you, keep clicking~\n\nThis will also close the Sunshine GUI application." }
+    { KEY_QUIT_TITLE, "Wait! Don't Leave Me! T_T" },
+    { KEY_QUIT_MESSAGE, "Nooo! You can't just quit like that!\nAre you really REALLY sure you want to leave?\nI'll miss you... but okay, if you must...\n\n(This will also close the Sunshine GUI application.)" },
+    { KEY_OPEN_SUNSHINE, "Open Sunshine" },
+    { KEY_VDD_MONITOR_TOGGLE, "VDD Monitor Toggle" },
+    { KEY_CONFIGURATION, "Configuration" },
+    { KEY_IMPORT_CONFIG, "Import Config" },
+    { KEY_EXPORT_CONFIG, "Export Config" },
+    { KEY_RESET_TO_DEFAULT, "Reset to Default" },
+    { KEY_LANGUAGE, "Language" },
+    { KEY_CHINESE, "中文" },
+    { KEY_ENGLISH, "English" },
+    { KEY_JAPANESE, "日本語" },
+    { KEY_STAR_PROJECT, "Star Project" },
+    { KEY_HELP_US, "Sponsor Us" },
+    { KEY_DOCTOR, "Doctor" },
+    { KEY_QIIN, "Qiin" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "Reset Display Device Config" },
+    { KEY_RESTART, "Restart" },
+    { KEY_QUIT, "Quit" },
+    { KEY_STREAM_STARTED, "Stream Started" },
+    { KEY_STREAMING_STARTED_FOR, "Streaming started for %s" },
+    { KEY_STREAM_PAUSED, "Stream Paused" },
+    { KEY_STREAMING_PAUSED_FOR, "Streaming paused for %s" },
+    { KEY_APPLICATION_STOPPED, "Application Stopped" },
+    { KEY_APPLICATION_STOPPED_MSG, "Application %s successfully stopped" },
+    { KEY_INCOMING_PAIRING_REQUEST, "Incoming Pairing Request From: %s" },
+    { KEY_CLICK_TO_COMPLETE_PAIRING, "Click here to complete the pairing process" }
   };
 
   // Chinese strings
   const std::map<std::string, std::string> CHINESE_STRINGS = {
     { KEY_QUIT_TITLE, "真的要退出吗" },
-    { KEY_QUIT_MESSAGE, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~\n\n这将同时关闭Sunshine GUI应用程序。" }
+    { KEY_QUIT_MESSAGE, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~\n\n这将同时关闭Sunshine GUI应用程序。" },
+    { KEY_OPEN_SUNSHINE, "打开 Sunshine" },
+    { KEY_VDD_MONITOR_TOGGLE, "虚拟显示器开关" },
+    { KEY_CONFIGURATION, "配置" },
+    { KEY_IMPORT_CONFIG, "导入配置" },
+    { KEY_EXPORT_CONFIG, "导出配置" },
+    { KEY_RESET_TO_DEFAULT, "重置为默认" },
+    { KEY_LANGUAGE, "语言" },
+    { KEY_CHINESE, "中文" },
+    { KEY_ENGLISH, "English" },
+    { KEY_JAPANESE, "日本語" },
+    { KEY_STAR_PROJECT, "Star项目" },
+    { KEY_HELP_US, "赞助我们" },
+    { KEY_DOCTOR, "Doctor" },
+    { KEY_QIIN, "Qiin" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "重置显示设备配置" },
+    { KEY_RESTART, "重启" },
+    { KEY_QUIT, "退出" },
+    { KEY_STREAM_STARTED, "串流已开始" },
+    { KEY_STREAMING_STARTED_FOR, "已开始串流 %s" },
+    { KEY_STREAM_PAUSED, "串流已暂停" },
+    { KEY_STREAMING_PAUSED_FOR, "已暂停串流 %s" },
+    { KEY_APPLICATION_STOPPED, "应用已停止" },
+    { KEY_APPLICATION_STOPPED_MSG, "应用 %s 已成功停止" },
+    { KEY_INCOMING_PAIRING_REQUEST, "来自的配对请求: %s" },
+    { KEY_CLICK_TO_COMPLETE_PAIRING, "点击此处完成配对过程" }
   };
 
   const std::map<std::string, std::string> JAPANESE_STRINGS = {
     { KEY_QUIT_TITLE, "本当に終了しますか？" },
-    { KEY_QUIT_MESSAGE, "終了できません！\n本当に終了したいですか？\n\nこれによりSunshine GUIアプリケーションも閉じられます。" }
+    { KEY_QUIT_MESSAGE, "終了できません！\n本当に終了したいですか？\n\nこれによりSunshine GUIアプリケーションも閉じられます。" },
+    { KEY_OPEN_SUNSHINE, "Sunshineを開く" },
+    { KEY_VDD_MONITOR_TOGGLE, "VDDモニタートグル" },
+    { KEY_CONFIGURATION, "設定" },
+    { KEY_IMPORT_CONFIG, "設定をインポート" },
+    { KEY_EXPORT_CONFIG, "設定をエクスポート" },
+    { KEY_RESET_TO_DEFAULT, "デフォルトにリセット" },
+    { KEY_LANGUAGE, "言語" },
+    { KEY_CHINESE, "中文" },
+    { KEY_ENGLISH, "English" },
+    { KEY_JAPANESE, "日本語" },
+    { KEY_STAR_PROJECT, "プロジェクトにスター" },
+    { KEY_HELP_US, "スポンサー" },
+    { KEY_DOCTOR, "Doctor" },
+    { KEY_QIIN, "Qiin" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "ディスプレイデバイス設定をリセット" },
+    { KEY_RESTART, "再起動" },
+    { KEY_QUIT, "終了" },
+    { KEY_STREAM_STARTED, "ストリーム開始" },
+    { KEY_STREAMING_STARTED_FOR, "%s のストリーミングを開始しました" },
+    { KEY_STREAM_PAUSED, "ストリーム一時停止" },
+    { KEY_STREAMING_PAUSED_FOR, "%s のストリーミングを一時停止しました" },
+    { KEY_APPLICATION_STOPPED, "アプリケーション停止" },
+    { KEY_APPLICATION_STOPPED_MSG, "アプリケーション %s が正常に停止しました" },
+    { KEY_INCOMING_PAIRING_REQUEST, "ペアリング要求: %s" },
+    { KEY_CLICK_TO_COMPLETE_PAIRING, "クリックしてペアリングプロセスを完了してください" }
   };
 
   // Get current locale from config
   std::string
   get_current_locale() {
-    // Try to get from config::sunshine.locale
+    // Try to get from config::sunshine.tray_locale
     try {
       // Check if config is available
-      if (!config::sunshine.locale.empty()) {
-        return config::sunshine.locale;
+      if (!config::sunshine.tray_locale.empty()) {
+        return config::sunshine.tray_locale;
       }
     }
     catch (...) {
       // If config is not available, fall back to default
     }
 
-    // Default to Chinese for now
-    return "zh";
+    // Default to English
+    return "en";
+  }
+
+  // Set tray locale
+  void
+  set_tray_locale(const std::string &locale) {
+    // Update config
+    config::sunshine.tray_locale = locale;
   }
 
   // Get localized string

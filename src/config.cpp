@@ -488,6 +488,7 @@ namespace config {
 
   sunshine_t sunshine {
     "en",  // locale
+    "en",  // tray_locale (托盘菜单语言)
     2,  // min_log_level
     0,  // flags
     {},  // User file
@@ -1272,6 +1273,13 @@ namespace config {
                                                                    "tr"sv,  // Turkish
                                                                    "zh"sv,  // Chinese
                                                                    "zh_TW"sv,  // Chinese (Traditional)
+                                                                 });
+
+    // 托盘菜单语言设置
+    string_restricted_f(vars, "tray_locale", config::sunshine.tray_locale, {
+                                                                   "en"sv,  // English
+                                                                   "zh"sv,  // Chinese (Simplified)
+                                                                   "ja"sv,  // Japanese
                                                                  });
 
     std::string log_level_string;
