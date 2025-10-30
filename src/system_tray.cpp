@@ -84,8 +84,8 @@ namespace system_tray {
   static std::string s_japanese;
   static std::string s_star_project;
   static std::string s_help_us;
-  static std::string s_doctor;
-  static std::string s_qiin;
+  static std::string s_developer_yundi339;
+  static std::string s_developer_qiin;
   static std::string s_reset_display_device_config;
   static std::string s_restart;
   static std::string s_quit;
@@ -105,8 +105,8 @@ namespace system_tray {
     s_japanese = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_JAPANESE);
     s_star_project = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STAR_PROJECT);
     s_help_us = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_HELP_US);
-    s_doctor = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DOCTOR);
-    s_qiin = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QIIN);
+    s_developer_yundi339 = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DEVELOPER_YUNDI339);
+    s_developer_qiin = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DEVELOPER_QIIN);
     s_reset_display_device_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_DEVICE_CONFIG);
     s_restart = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESTART);
     s_quit = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT);
@@ -128,8 +128,8 @@ namespace system_tray {
     tray_menus[6].submenu[2].text = s_japanese.c_str();
     tray_menus[8].text = s_star_project.c_str();
     tray_menus[9].text = s_help_us.c_str();
-    tray_menus[9].submenu[0].text = s_doctor.c_str();
-    tray_menus[9].submenu[1].text = s_qiin.c_str();
+    tray_menus[9].submenu[0].text = s_developer_yundi339.c_str();
+    tray_menus[9].submenu[1].text = s_developer_qiin.c_str();
   #ifdef _WIN32
     tray_menus[11].text = s_reset_display_device_config.c_str();
     tray_menus[12].text = s_restart.c_str();
@@ -263,7 +263,7 @@ namespace system_tray {
     open_url_in_default_browser("https://github.com/qiin2333/Sunshine-Foundation");
   };
 
-  auto tray_donate_doctor_cb = [](struct tray_menu *item) {
+  auto tray_donate_yundi339_cb = [](struct tray_menu *item) {
     open_url_in_default_browser("https://www.ifdian.net/a/Yundi339");
   };
 
@@ -285,7 +285,9 @@ namespace system_tray {
       user_token = platf::retrieve_users_token(false);
       if (!user_token) {
         BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
-        MessageBoxW(NULL, L"Cannot open file dialog: No active user session found.", L"Error", MB_OK | MB_ICONERROR);
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_TITLE));
+        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_NO_USER_SESSION));
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         return;
       }
     }
@@ -303,13 +305,16 @@ namespace system_tray {
 
       if (SUCCEEDED(hr)) {
         // 设置文件类型过滤器
+        std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
+        std::wstring all_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_ALL_FILES));
         COMDLG_FILTERSPEC rgSpec[] = {
-          { L"Configuration Files", L"*.conf" },
-          { L"All Files", L"*.*" }
+          { config_files.c_str(), L"*.conf" },
+          { all_files.c_str(), L"*.*" }
         };
         pFileOpen->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
         pFileOpen->SetFileTypeIndex(1);
-        pFileOpen->SetTitle(L"Select Configuration File to Import");
+        std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SELECT_IMPORT));
+        pFileOpen->SetTitle(dialog_title.c_str());
 
         // 设置选项：禁用所有可能导致访问系统位置的功能
         DWORD dwFlags;
@@ -373,21 +378,29 @@ namespace system_tray {
           int result = file_handler::write_file(config::sunshine.config_file.c_str(), config_content);
           if (result == 0) {
             BOOST_LOG(info) << "Configuration imported successfully from: " << file_path;
-            MessageBoxW(NULL, L"Configuration imported successfully!\nPlease restart Sunshine to apply changes.", L"Import Success", MB_OK | MB_ICONINFORMATION);
+            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_TITLE));
+            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_MSG));
+            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
           }
           else {
             BOOST_LOG(error) << "Failed to write imported configuration";
-            MessageBoxW(NULL, L"Failed to import configuration file.", L"Import Error", MB_OK | MB_ICONERROR);
+            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
           }
         }
         else {
           BOOST_LOG(error) << "Failed to read configuration file: " << file_path;
-          MessageBoxW(NULL, L"Failed to read the selected configuration file.", L"Import Error", MB_OK | MB_ICONERROR);
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_READ));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Exception during config import: " << e.what();
-        MessageBoxW(NULL, L"An error occurred while importing configuration.", L"Import Error", MB_OK | MB_ICONERROR);
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
       }
     }
   #else
@@ -410,7 +423,9 @@ namespace system_tray {
       user_token = platf::retrieve_users_token(false);
       if (!user_token) {
         BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
-        MessageBoxW(NULL, L"Cannot open file dialog: No active user session found.", L"Error", MB_OK | MB_ICONERROR);
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_TITLE));
+        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_NO_USER_SESSION));
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         return;
       }
     }
@@ -428,14 +443,17 @@ namespace system_tray {
 
       if (SUCCEEDED(hr)) {
         // 设置文件类型过滤器
+        std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
+        std::wstring all_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_ALL_FILES));
         COMDLG_FILTERSPEC rgSpec[] = {
-          { L"Configuration Files", L"*.conf" },
-          { L"All Files", L"*.*" }
+          { config_files.c_str(), L"*.conf" },
+          { all_files.c_str(), L"*.*" }
         };
         pFileSave->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
         pFileSave->SetFileTypeIndex(1);
         pFileSave->SetDefaultExtension(L"conf");
-        pFileSave->SetTitle(L"Save Configuration File As");
+        std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SAVE_EXPORT));
+        pFileSave->SetTitle(dialog_title.c_str());
 
         // 设置默认文件名
         std::string default_name = "sunshine_config_" + std::to_string(std::time(nullptr)) + ".conf";
@@ -494,21 +512,29 @@ namespace system_tray {
           int result = file_handler::write_file(file_path.c_str(), config_content);
           if (result == 0) {
             BOOST_LOG(info) << "Configuration exported successfully to: " << file_path;
-            MessageBoxW(NULL, L"Configuration exported successfully!", L"Export Success", MB_OK | MB_ICONINFORMATION);
+            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE));
+            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG));
+            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
           }
           else {
             BOOST_LOG(error) << "Failed to write exported configuration";
-            MessageBoxW(NULL, L"Failed to export configuration file.", L"Export Error", MB_OK | MB_ICONERROR);
+            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
           }
         }
         else {
           BOOST_LOG(error) << "No configuration to export";
-          MessageBoxW(NULL, L"No configuration found to export.", L"Export Error", MB_OK | MB_ICONERROR);
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_NO_CONFIG));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Exception during config export: " << e.what();
-        MessageBoxW(NULL, L"An error occurred while exporting configuration.", L"Export Error", MB_OK | MB_ICONERROR);
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_EXCEPTION));
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
       }
     }
   #else
@@ -517,7 +543,7 @@ namespace system_tray {
   };
 
   // 通用语言切换函数
-  auto change_tray_language = [](const std::string &locale, const std::string &language_name) {
+  static auto change_tray_language = [](const std::string &locale, const std::string &language_name) {
     BOOST_LOG(info) << "Changing tray language to " << language_name << " from system tray"sv;
     system_tray_i18n::set_tray_locale(locale);
     
@@ -545,15 +571,15 @@ namespace system_tray {
     tray_update(&tray);
   };
 
-  auto tray_language_chinese_cb = [&change_tray_language](struct tray_menu *item) {
+  auto tray_language_chinese_cb = [](struct tray_menu *item) {
     change_tray_language("zh", "Chinese");
   };
 
-  auto tray_language_english_cb = [&change_tray_language](struct tray_menu *item) {
+  auto tray_language_english_cb = [](struct tray_menu *item) {
     change_tray_language("en", "English");
   };
 
-  auto tray_language_japanese_cb = [&change_tray_language](struct tray_menu *item) {
+  auto tray_language_japanese_cb = [](struct tray_menu *item) {
     change_tray_language("ja", "Japanese");
   };
 
@@ -562,8 +588,8 @@ namespace system_tray {
 
   #ifdef _WIN32
     // 获取本地化字符串
-    std::wstring title = system_tray_i18n::utf8_to_wstring("Reset Configuration");
-    std::wstring message = system_tray_i18n::utf8_to_wstring("This will reset all configuration to default values.\nThis action cannot be undone.\n\nDo you want to continue?");
+    std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_TITLE));
+    std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_MSG));
 
     int msgboxID = MessageBoxW(
       NULL,
@@ -585,16 +611,22 @@ namespace system_tray {
         if (config_file.is_open()) {
           config_file.close();
           BOOST_LOG(info) << "Configuration reset successfully";
-          MessageBoxW(NULL, L"Configuration has been reset to default values.\nPlease restart Sunshine to apply changes.", L"Reset Success", MB_OK | MB_ICONINFORMATION);
+          std::wstring success_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_TITLE));
+          std::wstring success_msg = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_MSG));
+          MessageBoxW(NULL, success_msg.c_str(), success_title.c_str(), MB_OK | MB_ICONINFORMATION);
         }
         else {
           BOOST_LOG(error) << "Failed to reset configuration file";
-          MessageBoxW(NULL, L"Failed to reset configuration file.", L"Reset Error", MB_OK | MB_ICONERROR);
+          std::wstring error_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE));
+          std::wstring error_msg = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_MSG));
+          MessageBoxW(NULL, error_msg.c_str(), error_title.c_str(), MB_OK | MB_ICONERROR);
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Exception during config reset: " << e.what();
-        MessageBoxW(NULL, L"An error occurred while resetting configuration.", L"Reset Error", MB_OK | MB_ICONERROR);
+        std::wstring error_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE));
+        std::wstring error_msg = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_EXCEPTION));
+        MessageBoxW(NULL, error_msg.c_str(), error_title.c_str(), MB_OK | MB_ICONERROR);
       }
     }
   #else
@@ -628,8 +660,8 @@ namespace system_tray {
     { .text = "Help Us",
       .submenu =
         (struct tray_menu[]) {
-          { .text = "Doctor", .cb = tray_donate_doctor_cb },
-          { .text = "Qiin", .cb = tray_donate_qiin_cb },
+          { .text = "Developer: Yundi339", .cb = tray_donate_yundi339_cb },
+          { .text = "Developer: Qiin", .cb = tray_donate_qiin_cb },
           { .text = nullptr } } },
     { .text = "-" },
   #ifdef _WIN32
@@ -788,15 +820,20 @@ namespace system_tray {
     tray_update(&tray);
     tray.icon = TRAY_ICON_PLAYING;
     
-    // 使用本地化字符串
-    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_STARTED);
+    // 使用本地化字符串（每次都重新获取以支持语言切换）
+    static std::string title;
+    static std::string msg;
+    title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_STARTED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_STARTED_FOR);
-    static char msg[256];
-    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
+    // 使用 std::string 格式化消息
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
+    msg = buffer;
     
     tray.notification_title = title.c_str();
-    tray.notification_text = msg;
-    tray.tooltip = msg;
+    tray.notification_text = msg.c_str();
+    tray.tooltip = msg.c_str();
     tray.notification_icon = TRAY_ICON_PLAYING;
     tray_update(&tray);
   }
@@ -814,16 +851,21 @@ namespace system_tray {
     tray.icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
     
-    // 使用本地化字符串
-    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_PAUSED);
+    // 使用本地化字符串（每次都重新获取以支持语言切换）
+    static std::string title;
+    static std::string msg;
+    title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_PAUSED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_PAUSED_FOR);
-    static char msg[256];
-    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
+    // 使用 std::string 格式化消息
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
+    msg = buffer;
     
     tray.icon = TRAY_ICON_PAUSING;
     tray.notification_title = title.c_str();
-    tray.notification_text = msg;
-    tray.tooltip = msg;
+    tray.notification_text = msg.c_str();
+    tray.tooltip = msg.c_str();
     tray.notification_icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
   }
@@ -841,16 +883,21 @@ namespace system_tray {
     tray.icon = TRAY_ICON;
     tray_update(&tray);
     
-    // 使用本地化字符串
-    static std::string title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED);
+    // 使用本地化字符串（每次都重新获取以支持语言切换）
+    static std::string title;
+    static std::string msg;
+    title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED_MSG);
-    static char msg[256];
-    snprintf(msg, std::size(msg), msg_template.c_str(), app_name.c_str());
+    
+    // 使用 std::string 格式化消息
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
+    msg = buffer;
     
     tray.icon = TRAY_ICON;
     tray.notification_icon = TRAY_ICON;
     tray.notification_title = title.c_str();
-    tray.notification_text = msg;
+    tray.notification_text = msg.c_str();
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
   }
@@ -869,13 +916,18 @@ namespace system_tray {
     tray_update(&tray);
     tray.icon = TRAY_ICON;
     
-    // 使用本地化字符串
+    // 使用本地化字符串（每次都重新获取以支持语言切换）
+    static std::string title;
+    static std::string notification_text;
     std::string title_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_INCOMING_PAIRING_REQUEST);
-    static std::string notification_text = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLICK_TO_COMPLETE_PAIRING);
-    static char title[256];
-    snprintf(title, std::size(title), title_template.c_str(), pin_name.c_str());
+    notification_text = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLICK_TO_COMPLETE_PAIRING);
     
-    tray.notification_title = title;
+    // 使用 std::string 格式化标题
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), title_template.c_str(), pin_name.c_str());
+    title = buffer;
+    
+    tray.notification_title = title.c_str();
     tray.notification_text = notification_text.c_str();
     tray.notification_icon = TRAY_ICON_LOCKED;
     tray.tooltip = pin_name.c_str();
