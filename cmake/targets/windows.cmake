@@ -23,4 +23,4 @@ add_custom_target(sunshine-control-panel ALL
         # Step 3: Build Tauri backend with Cargo directly (bypass @tauri-apps/cli Node-API issue)
         COMMAND ${CMAKE_COMMAND} -E echo "Building Tauri backend with Cargo..."
         COMMAND ${CARGO} build --manifest-path src-tauri/Cargo.toml --release
-        VERBATIM)
+        USES_TERMINAL)
