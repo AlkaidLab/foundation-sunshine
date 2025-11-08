@@ -375,6 +375,9 @@ export default {
           adapter_name: this.selectedAdapter,
         }
 
+        // 标记引导流程已完成，避免重复进入
+        config.setup_completed = true
+
         // 保留已有的 locale 设置
         if (currentConfig.locale) {
           config.locale = currentConfig.locale
