@@ -315,4 +315,196 @@ int sws_t::load_ram(platf::img_t &img, cudaArray_t array) {
   return CU_CHECK_IGNORE(cudaMemcpy2DToArray(array, 0, 0, img.data, img.row_pitch, img.width * img.pixel_pitch, img.height, cudaMemcpyHostToDevice), "Couldn't copy to cuda array");
 }
 
-} // namespace cuda
+    return make_float2(u, v);
+  }
+
+  inline __device__ float calcY(float3 pixel, const cuda_color_t *const color_matrix) {
+    float4 vec_y = color_matrix->color_vec_y;
+
+    return (dot(pixel, make_float3(vec_y)) + vec_y.w) * color_matrix->range_y.x + color_matrix->range_y.y;
+  }
+
+  __global__ void RGBA_to_NV12(
+    cudaTextureObject_t srcImage,
+    std::uint8_t *dstY,
+    std::uint8_t *dstUV,
+    std::uint32_t dstPitchY,
+    std::uint32_t dstPitchUV,
+    float scale,
+    const viewport_t viewport,
+    const cuda_color_t *const color_matrix
+  ) {
+    int idX = (threadIdx.x + blockDim.x * blockIdx.x) * 2;
+    int idY = (threadIdx.y + blockDim.y * blockIdx.y) * 2;
+
+    if (idX >= viewport.width) {
+      return;
+    }
+    if (idY >= viewport.height) {
+      return;
+    }
+
+    float x = idX * scale;
+    float y = idY * scale;
+
+    idX += viewport.offsetX;
+    idY += viewport.offsetY;
+
+    uint8_t *dstY0 = dstY + idX + idY * dstPitchY;
+    uint8_t *dstY1 = dstY + idX + (idY + 1) * dstPitchY;
+    dstUV = dstUV + idX + (idY / 2 * dstPitchUV);
+
+    float3 rgb_lt = bgra_to_rgb(tex2D<float4>(srcImage, x, y));
+    float3 rgb_rt = bgra_to_rgb(tex2D<float4>(srcImage, x + scale, y));
+    float3 rgb_lb = bgra_to_rgb(tex2D<float4>(srcImage, x, y + scale));
+    float3 rgb_rb = bgra_to_rgb(tex2D<float4>(srcImage, x + scale, y + scale));
+
+    float2 uv_lt = calcUV(rgb_lt, color_matrix) * 256.0f;
+    float2 uv_rt = calcUV(rgb_rt, color_matrix) * 256.0f;
+    float2 uv_lb = calcUV(rgb_lb, color_matrix) * 256.0f;
+    float2 uv_rb = calcUV(rgb_rb, color_matrix) * 256.0f;
+
+    float2 uv = (uv_lt + uv_lb + uv_rt + uv_rb) * 0.25f;
+
+    dstUV[0] = uv.x;
+    dstUV[1] = uv.y;
+    dstY0[0] = calcY(rgb_lt, color_matrix) * 245.0f;  // 245.0f is a magic number to ensure slight changes in luminosity are more visible
+    dstY0[1] = calcY(rgb_rt, color_matrix) * 245.0f;  // 245.0f is a magic number to ensure slight changes in luminosity are more visible
+    dstY1[0] = calcY(rgb_lb, color_matrix) * 245.0f;  // 245.0f is a magic number to ensure slight changes in luminosity are more visible
+    dstY1[1] = calcY(rgb_rb, color_matrix) * 245.0f;  // 245.0f is a magic number to ensure slight changes in luminosity are more visible
+  }
+
+  int tex_t::copy(std::uint8_t *src, int height, int pitch) {
+    CU_CHECK(cudaMemcpy2DToArray(array, 0, 0, src, pitch, pitch, height, cudaMemcpyDeviceToDevice), "Couldn't copy to cuda array from deviceptr");
+
+    return 0;
+  }
+
+  std::optional<tex_t> tex_t::make(int height, int pitch) {
+    tex_t tex;
+
+    auto format = cudaCreateChannelDesc<uchar4>();
+    CU_CHECK_OPT(cudaMallocArray(&tex.array, &format, pitch, height, cudaArrayDefault), "Couldn't allocate cuda array");
+
+    cudaResourceDesc res {};
+    res.resType = cudaResourceTypeArray;
+    res.res.array.array = tex.array;
+
+    cudaTextureDesc desc {};
+
+    desc.readMode = cudaReadModeNormalizedFloat;
+    desc.filterMode = cudaFilterModePoint;
+    desc.normalizedCoords = false;
+
+    std::fill_n(std::begin(desc.addressMode), 2, cudaAddressModeClamp);
+
+    CU_CHECK_OPT(cudaCreateTextureObject(&tex.texture.point, &res, &desc, nullptr), "Couldn't create cuda texture that uses point interpolation");
+
+    desc.filterMode = cudaFilterModeLinear;
+
+    CU_CHECK_OPT(cudaCreateTextureObject(&tex.texture.linear, &res, &desc, nullptr), "Couldn't create cuda texture that uses linear interpolation");
+
+    return tex;
+  }
+
+  tex_t::tex_t():
+      array {},
+      texture {INVALID_TEXTURE, INVALID_TEXTURE} {
+  }
+
+  tex_t::tex_t(tex_t &&other):
+      array {other.array},
+      texture {other.texture} {
+    other.array = 0;
+    other.texture.point = INVALID_TEXTURE;
+    other.texture.linear = INVALID_TEXTURE;
+  }
+
+  tex_t &tex_t::operator=(tex_t &&other) {
+    std::swap(array, other.array);
+    std::swap(texture, other.texture);
+
+    return *this;
+  }
+
+  tex_t::~tex_t() {
+    if (texture.point != INVALID_TEXTURE) {
+      CU_CHECK_IGNORE(cudaDestroyTextureObject(texture.point), "Couldn't deallocate cuda texture that uses point interpolation");
+
+      texture.point = INVALID_TEXTURE;
+    }
+
+    if (texture.linear != INVALID_TEXTURE) {
+      CU_CHECK_IGNORE(cudaDestroyTextureObject(texture.linear), "Couldn't deallocate cuda texture that uses linear interpolation");
+
+      texture.linear = INVALID_TEXTURE;
+    }
+
+    if (array) {
+      CU_CHECK_IGNORE(cudaFreeArray(array), "Couldn't deallocate cuda array");
+
+      array = cudaArray_t {};
+    }
+  }
+
+  sws_t::sws_t(int in_width, int in_height, int out_width, int out_height, int pitch, int threadsPerBlock, ptr_t &&color_matrix):
+      threadsPerBlock {threadsPerBlock},
+      color_matrix {std::move(color_matrix)} {
+    // Ensure aspect ratio is maintained
+    auto scalar = std::fminf(out_width / (float) in_width, out_height / (float) in_height);
+    auto out_width_f = in_width * scalar;
+    auto out_height_f = in_height * scalar;
+
+    // result is always positive
+    auto offsetX_f = (out_width - out_width_f) / 2;
+    auto offsetY_f = (out_height - out_height_f) / 2;
+
+    viewport.width = out_width_f;
+    viewport.height = out_height_f;
+
+    viewport.offsetX = offsetX_f;
+    viewport.offsetY = offsetY_f;
+
+    scale = 1.0f / scalar;
+  }
+
+  std::optional<sws_t> sws_t::make(int in_width, int in_height, int out_width, int out_height, int pitch) {
+    cudaDeviceProp props;
+    int device;
+    CU_CHECK_OPT(cudaGetDevice(&device), "Couldn't get cuda device");
+    CU_CHECK_OPT(cudaGetDeviceProperties(&props, device), "Couldn't get cuda device properties");
+
+    auto ptr = make_ptr<cuda_color_t>();
+    if (!ptr) {
+      return std::nullopt;
+    }
+
+    return std::make_optional<sws_t>(in_width, in_height, out_width, out_height, pitch, props.maxThreadsPerMultiProcessor / props.maxBlocksPerMultiProcessor, std::move(ptr));
+  }
+
+  int sws_t::convert(std::uint8_t *Y, std::uint8_t *UV, std::uint32_t pitchY, std::uint32_t pitchUV, cudaTextureObject_t texture, stream_t::pointer stream) {
+    return convert(Y, UV, pitchY, pitchUV, texture, stream, viewport);
+  }
+
+  int sws_t::convert(std::uint8_t *Y, std::uint8_t *UV, std::uint32_t pitchY, std::uint32_t pitchUV, cudaTextureObject_t texture, stream_t::pointer stream, const viewport_t &viewport) {
+    int threadsX = viewport.width / 2;
+    int threadsY = viewport.height / 2;
+
+    dim3 block(threadsPerBlock);
+    dim3 grid(div_align(threadsX, threadsPerBlock), threadsY);
+
+    RGBA_to_NV12<<<grid, block, 0, stream>>>(texture, Y, UV, pitchY, pitchUV, scale, viewport, (cuda_color_t *) color_matrix.get());
+
+    return CU_CHECK_IGNORE(cudaGetLastError(), "RGBA_to_NV12 failed");
+  }
+
+  void sws_t::apply_colorspace(const video::sunshine_colorspace_t &colorspace) {
+    auto color_p = video::color_vectors_from_colorspace(colorspace, true);
+    CU_CHECK_IGNORE(cudaMemcpy(color_matrix.get(), color_p, sizeof(video::color_t), cudaMemcpyHostToDevice), "Couldn't copy color matrix to cuda");
+  }
+
+  int sws_t::load_ram(platf::img_t &img, cudaArray_t array) {
+    return CU_CHECK_IGNORE(cudaMemcpy2DToArray(array, 0, 0, img.data, img.row_pitch, img.width * img.pixel_pitch, img.height, cudaMemcpyHostToDevice), "Couldn't copy to cuda array");
+  }
+
+}  // namespace cuda
