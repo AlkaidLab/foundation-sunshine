@@ -452,7 +452,10 @@
     "unpair_single_no_devices": "ペアリングされたデバイスがありません。",
     "unpair_single_success": "ただし、デバイスはまだアクティブなセッションにいる可能性があります。上の「強制終了」ボタンを使用して、開いているセッションを終了します。",
     "unpair_single_unknown": "不明なクライアント",
-    "unpair_title": "デバイスのペアリングを解除"
+    "unpair_title": "デバイスのペアリングを解除",
+    "reopen_setup_wizard": "セットアップウィザードを再度開く",
+    "reopen_setup_wizard_desc": "セットアップウィザードページを再度開いて、初期設定を再構成できます。",
+    "reopen_setup_wizard_error": "セットアップウィザードの再開に失敗しました"
   },
   "welcome": {
     "confirm_password": "パスワードの確認",

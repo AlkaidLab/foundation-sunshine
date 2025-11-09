@@ -121,14 +121,9 @@
 
         try {
           let config = await fetch('/api/config').then((r) => r.json())
-          
-          // 检查是否是首次使用：优先检测 setup_completed 标记，其次回退检查显卡配置情况
-          const setupCompletedRaw = config.setup_completed
-          const setupCompleted = setupCompletedRaw === true || setupCompletedRaw === 'true'
-          const adapterConfigured = typeof config.adapter_name === 'string' && config.adapter_name.trim() !== ''
-          const isFirstTime = !setupCompleted && !adapterConfigured
-          
-          if (isFirstTime) {
+          // 检查是否是首次使用
+          const isFirstTime = config.setup_wizard_completed == true || config.setup_wizard_completed == 'true'
+          if (!isFirstTime) {
             // 首次使用，显示设置向导
             console.log('首次使用检测：显示设置向导')
             this.showSetupWizard = true

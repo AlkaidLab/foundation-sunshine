@@ -234,6 +234,14 @@
             <i class="fas fa-arrow-left"></i>
             {{ $t('setup.previous') }}
           </button>
+          <button class="btn btn-setup btn-setup-skip" 
+                  @click="skipWizard" 
+                  v-if="currentStep < 5"
+                  :disabled="saving"
+                  type="button">
+            <i class="fas fa-forward"></i>
+            {{ $t('setup.skip') }}
+          </button>
           <div v-else></div>
 
           <button class="btn btn-setup btn-setup-primary" 
@@ -250,6 +258,21 @@
             {{ $t('setup.go_to_apps') }}
             <i class="fas fa-arrow-right"></i>
           </button>
+        </div>
+      </div>
+    </div>
+    <div id="skipWizardModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5>{{ $t('setup.skip_confirm_title')}}</h5>
+          <span class="close" @click="closeSkipModal">&times;</span>
+        </div>
+        <div class="modal-body">
+          <p>{{ $t('setup.skip_confirm') }}</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
+          <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
         </div>
       </div>
     </div>
@@ -318,7 +341,7 @@ export default {
       } else if (this.currentStep === 2) {
         return this.selectedDisplay !== null
       } else if (this.currentStep === 3) {
-        return this.selectedAdapter !== ''
+        return this.selectedAdapter !== null
       } else if (this.currentStep === 4) {
         return this.displayDevicePrep !== null
       }
@@ -368,20 +391,24 @@ export default {
       this.saveError = null
 
       try {
-        // 先获取当前配置，保留已有的设置（如 locale）
+        // 先获取当前完整配置，保留所有已有设置
         const currentConfig = await fetch('/api/config').then(r => r.json())
         
-        const config = {
-          adapter_name: this.selectedAdapter,
-        }
+        // 从完整配置中复制所有字段，避免覆盖其他配置
+        const config = { ...currentConfig }
 
-        // 标记引导流程已完成，避免重复进入
-        config.setup_completed = true
-
-        // 保留已有的 locale 设置
-        if (currentConfig.locale) {
+        // 标记新手引导已完成
+        config.setup_wizard_completed = true
+        
+        // 确保 locale 被保存（如果用户在步骤1选择了语言，或者已有配置中有 locale）
+        if (this.selectedLocale) {
+          config.locale = this.selectedLocale
+        } else if (currentConfig.locale) {
           config.locale = currentConfig.locale
         }
+        
+        // 设置 adapter_name
+        config.adapter_name = this.selectedAdapter || ''
 
         // 设置选择的显示器
         config.output_name = this.selectedDisplay
@@ -389,7 +416,7 @@ export default {
         // 添加显示器组合策略
         config.display_device_prep = this.displayDevicePrep
 
-        console.log('保存配置（包含 locale 和 display_device_prep）:', config)
+        console.log('保存配置:', config)
 
         const response = await fetch('/api/config', {
           method: 'POST',
@@ -422,6 +449,79 @@ export default {
       } catch (error) {
         console.error('Failed to save configuration:', error)
         this.saveError = `${this.$t('setup.save_error')}: ${error.message}`
+      } finally {
+        this.saving = false
+      }
+    },
+    skipWizard(event) {
+      if (event) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      
+      if (this.saving) return
+      
+      this.showSkipModal()
+    },
+    showSkipModal() {
+      const modal = document.getElementById('skipWizardModal')
+      if (modal) {
+        modal.classList.add('show')
+      }
+    },
+    closeSkipModal() {
+      const modal = document.getElementById('skipWizardModal')
+      if (modal) {
+        modal.classList.remove('show')
+      }
+    },
+    async confirmSkipWizard() {
+      // 关闭模态框
+      this.closeSkipModal()
+      
+      if (this.saving) return
+
+      this.saving = true
+      this.saveError = null
+
+      try {
+        // 先获取当前完整配置，保留所有已有设置
+        const currentConfig = await fetch('/api/config').then(r => r.json())
+        
+        // 从完整配置中复制所有字段，避免覆盖其他配置
+        const config = { ...currentConfig }
+        // 标记新手引导已完成
+        config.setup_wizard_completed = true
+        console.log('跳过新手引导，保存配置:', config)
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(config),
+        })
+
+        if (response.ok) {
+          // 记录跳过事件
+          trackEvents.userAction('setup_wizard_skipped', {
+            from_step: this.currentStep
+          })
+          
+          // 触发完成事件，让父组件知道设置向导已完成
+          this.$emit('setup-complete', config)
+          
+          // 重新加载页面以隐藏设置向导
+          window.location.reload()
+        } else {
+          const errorText = await response.text()
+          this.saveError = `${this.$t('setup.skip_error')}: ${errorText}`
+          
+          // 记录跳过失败
+          trackEvents.errorOccurred('setup_wizard_skip_failed', errorText)
+        }
+      } catch (error) {
+        console.error('Failed to skip wizard:', error)
+        this.saveError = `${this.$t('setup.skip_error')}: ${error.message}`
       } finally {
         this.saving = false
       }
@@ -686,6 +786,26 @@ export default {
   color: var(--bs-body-color);
 }
 
+.btn-setup-secondary:hover:not(:disabled) {
+  background: var(--bs-tertiary-bg);
+  transform: translateY(-1px);
+}
+
+.btn-setup-skip {
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid rgba(102, 126, 234, 0.7);
+  color: rgba(70, 90, 200, 1);
+  font-weight: 500;
+}
+
+.btn-setup-skip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(102, 126, 234, 0.9);
+  color: rgba(50, 70, 180, 1);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
 .adapter-info {
   background: var(--bs-secondary-bg);
   padding: 0.8em;
@@ -795,6 +915,91 @@ export default {
 .my-3 {
   margin-top: 1rem;
   margin-bottom: 1rem;
+}
+
+/* 模态框样式 */
+.modal {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  display: none;
+}
+
+.modal.show {
+  display: flex;
+}
+
+.modal-content {
+  background-color: #ffffff !important;
+  margin: auto;
+  padding: 20px;
+  border: 1px solid #ddd;
+  max-height: 500px;
+  max-width: 500px;
+  width: 70% !important;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  position: relative;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.modal-header h5 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.close {
+  color: #aaa;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+  position: absolute;
+  right: 12px;
+  top: 8px;
+}
+
+.close:hover,
+.close:focus {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.modal-body {
+  margin: 8px 0;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.modal-footer button {
+  padding: 4px 12px;
+  font-size: 0.9rem;
 }
 </style>
 

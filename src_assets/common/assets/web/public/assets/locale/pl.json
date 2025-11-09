@@ -459,7 +459,10 @@
     "unpair_single_no_devices": "Nie ma sparowanych urządzeń.",
     "unpair_single_success": "Urządzenia mogą być jednak nadal w aktywnej sesji. Użyj przycisku \"Wymuś zamknięcie\" powyżej, aby zakończyć wszystkie otwarte sesje.",
     "unpair_single_unknown": "Nieznany klient",
-    "unpair_title": "Odparuj urządzenia"
+    "unpair_title": "Odparuj urządzenia",
+    "reopen_setup_wizard": "Ponownie otwórz kreator konfiguracji",
+    "reopen_setup_wizard_desc": "Ponownie otwórz stronę kreatora konfiguracji, aby ponownie skonfigurować ustawienia początkowe.",
+    "reopen_setup_wizard_error": "Nie udało się ponownie otworzyć kreatora konfiguracji"
   },
   "welcome": {
     "confirm_password": "Potwierdź hasło",

@@ -452,7 +452,10 @@
     "unpair_single_no_devices": "Non ci sono dispositivi accoppiati.",
     "unpair_single_success": "Tuttavia, il dispositivo o i dispositivi possono essere ancora in una sessione attiva. Usa il pulsante 'Force Close' sopra per terminare qualsiasi sessione aperta.",
     "unpair_single_unknown": "Client Sconosciuto",
-    "unpair_title": "Rimuovi Dispositivi"
+    "unpair_title": "Rimuovi Dispositivi",
+    "reopen_setup_wizard": "Riapri procedura guidata di configurazione",
+    "reopen_setup_wizard_desc": "Riapri la pagina della procedura guidata di configurazione per riconfigurare le impostazioni iniziali.",
+    "reopen_setup_wizard_error": "Errore durante la riapertura della procedura guidata di configurazione"
   },
   "welcome": {
     "confirm_password": "Conferma password",

@@ -146,6 +146,16 @@ export class AppService {
    * @returns {Object} 格式化后的应用数据
    */
   static formatAppData(app) {
+    // 过滤掉 do 和 undo 都为空或只包含空格的 prep-cmd 项
+    const filteredPrepCmd = Array.isArray(app['prep-cmd']) 
+      ? app['prep-cmd'].filter(cmd => {
+          const hasDo = cmd.do && cmd.do.trim() !== '';
+          const hasUndo = cmd.undo && cmd.undo.trim() !== '';
+          // 至少有一个不为空才保留
+          return hasDo || hasUndo;
+        })
+      : [];
+    
     return {
       name: app.name?.trim() || '',
       output: app.output?.trim() || '',
@@ -155,7 +165,7 @@ export class AppService {
       'auto-detach': Boolean(app['auto-detach']),
       'wait-all': Boolean(app['wait-all']),
       'exit-timeout': parseInt(app['exit-timeout']) || 5,
-      'prep-cmd': Array.isArray(app['prep-cmd']) ? app['prep-cmd'] : [],
+      'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],
       detached: Array.isArray(app.detached) ? app.detached : [],
       'image-path': app['image-path']?.trim() || '',

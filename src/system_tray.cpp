@@ -665,7 +665,7 @@ namespace system_tray {
           { .text = nullptr } } },
     { .text = "-" },
   #ifdef _WIN32
-    { .text = "Reset Display Device Config", .cb = tray_reset_display_device_config_cb },
+    { .text = "Reset Display Memory", .cb = tray_reset_display_device_config_cb },
   #endif
     { .text = "Restart", .cb = tray_restart_cb },
     { .text = "Quit", .cb = tray_quit_cb },

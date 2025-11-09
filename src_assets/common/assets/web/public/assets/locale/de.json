@@ -452,7 +452,10 @@
     "unpair_single_no_devices": "Es gibt keine gekoppelten Geräte.",
     "unpair_single_success": "Die Geräte(n) können sich jedoch immer noch in einer aktiven Sitzung befinden. Benutzen Sie die Schaltfläche \"Schließen erzwingen\", um alle geöffneten Sitzungen zu beenden.",
     "unpair_single_unknown": "Unbekannter Client",
-    "unpair_title": "Geräte trennen"
+    "unpair_title": "Geräte trennen",
+    "reopen_setup_wizard": "Setup-Assistent erneut öffnen",
+    "reopen_setup_wizard_desc": "Öffnen Sie die Setup-Assistenten-Seite erneut, um die anfänglichen Einstellungen neu zu konfigurieren.",
+    "reopen_setup_wizard_error": "Fehler beim erneuten Öffnen des Setup-Assistenten"
   },
   "welcome": {
     "confirm_password": "Passwort bestätigen",

@@ -421,7 +421,7 @@
     "state_inactive": "未激活",
     "state_unknown": "未知",
     "unknown_display": "未知显示器",
-    "choose_adapter": "-- 请选择显卡适配器 --",
+    "choose_adapter": "自动",
     "adapter_info": "配置摘要",
     "selected_adapter": "已选择的显卡",
     "stream_mode": "串流方式",
@@ -444,7 +444,11 @@
     "no_operation_desc": "不对显示器进行任何操作，用户需自行确保显示器状态",
     "download_clients": "下载客户端",
     "android_client": "安卓客户端",
-    "ios_client": "iOS 客户端"
+    "ios_client": "iOS 客户端",
+    "skip": "跳过新手引导",
+    "skip_confirm_title": "跳过新手引导",
+    "skip_confirm": "确定要跳过新手引导吗？稍后可以在设置页面中配置这些选项。",
+    "skip_error": "跳过失败"
   },
   "navbar": {
     "applications": "应用程序",
@@ -495,7 +499,7 @@
     "reset_display_device_desc_windows": "如果 Sunshine 无法按预期恢复更改的显示设备设置，您可以重置设置并继续手动恢复显示状态。\n发生这种情况的原因有多种：设备不再可用、插入了不同的端口等。",
     "reset_display_device_error_windows": "Error while resetting persistence!",
     "reset_display_device_success_windows": "Success resetting persistence!",
-    "reset_display_device_windows": "重置记忆显示设备组合态",
+    "reset_display_device_windows": "重置显示器记忆",
     "restart_sunshine": "重启 Sunshine",
     "restart_sunshine_desc": "如果 Sunshine 无法正常工作，可以尝试重新启动。这将终止任何正在运行的会话。",
     "restart_sunshine_success": "Sunhine 正在重启",
@@ -515,7 +519,10 @@
     "unpair_single_no_devices": "没有配对的设备。",
     "unpair_single_success": "然而，设备可能仍然处于活动会话中，使用上面的“强制关闭”按钮结束任何打开的会话。",
     "unpair_single_unknown": "未知客户端",
-    "unpair_title": "取消配对设备"
+    "unpair_title": "取消配对设备",
+    "reopen_setup_wizard": "重新打开新手引导",
+    "reopen_setup_wizard_desc": "重新打开新手引导页面，可以重新配置初始设置。",
+    "reopen_setup_wizard_error": "重新打开新手引导失败"
   },
   "welcome": {
     "confirm_password": "确认密码",

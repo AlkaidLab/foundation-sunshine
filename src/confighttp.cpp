@@ -825,7 +825,20 @@ namespace confighttp {
 
       saveVddSettings(resArray, fpsArray, gpu_name);
 
+      // 不需要保存到配置文件的只读字段
+      std::set<std::string> readonlyFields = {
+        "status",           // API响应状态，不是配置项
+        "platform",         // 平台信息，编译时确定，只读
+        "version",          // 版本号，只读
+        "display_devices",  // 显示设备列表，运行时枚举，只读
+        "adapters",         // 适配器列表，运行时枚举，只读
+        "pair_name"         // 配对名称，由系统生成，只读
+      };
+
       for (const auto &kv : inputTree) {
+        if (readonlyFields.find(kv.first) != readonlyFields.end()) {
+          continue;
+        }
         std::string value = inputTree.get<std::string>(kv.first);
         if (value.length() == 0 || value.compare("null") == 0) continue;
         configStream << kv.first << " = " << value << std::endl;

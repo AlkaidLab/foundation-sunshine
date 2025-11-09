@@ -459,7 +459,10 @@
     "unpair_single_no_devices": "페어링된 장치가 없습니다.",
     "unpair_single_success": "그러나 디바이스가 여전히 활성 세션에 있을 수 있습니다. 열려 있는 세션을 종료하려면 위의 '강제 종료' 버튼을 사용하세요.",
     "unpair_single_unknown": "알 수 없는 클라이언트",
-    "unpair_title": "장치 페어링 해제"
+    "unpair_title": "장치 페어링 해제",
+    "reopen_setup_wizard": "설정 마법사 다시 열기",
+    "reopen_setup_wizard_desc": "설정 마법사 페이지를 다시 열어 초기 설정을 다시 구성할 수 있습니다.",
+    "reopen_setup_wizard_error": "설정 마법사 다시 열기 실패"
   },
   "welcome": {
     "confirm_password": "비밀번호 확인",

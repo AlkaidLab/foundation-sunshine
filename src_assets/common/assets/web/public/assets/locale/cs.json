@@ -459,7 +459,10 @@
     "unpair_single_no_devices": "Neexistují žádná spárovaná zařízení.",
     "unpair_single_success": "Zařízení však mohou být stále v aktivní relaci. Použijte tlačítko 'Vynutit zavření' pro ukončení všech otevřených relací.",
     "unpair_single_unknown": "Neznámý klient",
-    "unpair_title": "Zrušit párování"
+    "unpair_title": "Zrušit párování",
+    "reopen_setup_wizard": "Znovu otevřít průvodce nastavením",
+    "reopen_setup_wizard_desc": "Znovu otevřít stránku průvodce nastavením pro opětovnou konfiguraci počátečních nastavení.",
+    "reopen_setup_wizard_error": "Chyba při opětovném otevření průvodce nastavením"
   },
   "welcome": {
     "confirm_password": "Potvrdit heslo",

@@ -459,7 +459,10 @@
     "unpair_single_no_devices": "Não há dispositivos emparelhados.",
     "unpair_single_success": "No entanto, o(s) dispositivo(s) ainda pode(m) estar em uma sessão ativa. Use o botão \"Forçar fechamento\" acima para encerrar todas as sessões abertas.",
     "unpair_single_unknown": "Cliente desconhecido",
-    "unpair_title": "Desemparelhar dispositivos"
+    "unpair_title": "Desemparelhar dispositivos",
+    "reopen_setup_wizard": "Reabrir assistente de configuração",
+    "reopen_setup_wizard_desc": "Reabrir a página do assistente de configuração para reconfigurar as configurações iniciais.",
+    "reopen_setup_wizard_error": "Erro ao reabrir o assistente de configuração"
   },
   "welcome": {
     "confirm_password": "Confirmar senha",

@@ -452,7 +452,10 @@
     "unpair_single_no_devices": "Eşleştirilmiş cihaz yok.",
     "unpair_single_success": "Ancak, cihaz(lar) hala aktif bir oturumda olabilir. Açık oturumları sonlandırmak için yukarıdaki 'Kapatmaya Zorla' düğmesini kullanın.",
     "unpair_single_unknown": "Bilinmeyen Müşteri",
-    "unpair_title": "Cihazların Eşleşmesini Kaldırma"
+    "unpair_title": "Cihazların Eşleşmesini Kaldırma",
+    "reopen_setup_wizard": "Kurulum sihirbazını yeniden aç",
+    "reopen_setup_wizard_desc": "Başlangıç ayarlarını yeniden yapılandırmak için kurulum sihirbazı sayfasını yeniden açın.",
+    "reopen_setup_wizard_error": "Kurulum sihirbazını yeniden açma hatası"
   },
   "welcome": {
     "confirm_password": "Şifreyi onayla",

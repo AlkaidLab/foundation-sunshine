@@ -195,6 +195,20 @@
         </div>
       </div>
     </div>
+    <!-- Reopen Setup Wizard -->
+    <div class="card p-2 my-4">
+      <div class="card-body">
+        <h2 id="reopen_setup_wizard">{{ $t('troubleshooting.reopen_setup_wizard') }}</h2>
+        <br>
+        <p>{{ $t('troubleshooting.reopen_setup_wizard_desc') }}</p>
+        <div>
+          <button class="btn btn-warning" @click="reopenSetupWizard">
+            <i class="fas fa-redo me-2"></i>
+            {{ $t('troubleshooting.reopen_setup_wizard') }}
+          </button>
+        </div>
+      </div>
+    </div>
     <!-- Logs -->
     <div class="card p-2 my-4">
       <div class="card-body">
@@ -350,6 +364,31 @@
                 .catch(err => {
                   console.error(this.$t('troubleshooting.copy_config_error'), err);
                 });
+            });
+        },
+        reopenSetupWizard() {
+          fetch('/api/config')
+            .then(response => response.json())
+            .then(config => {              
+              // 清除 setup_wizard_completed 标志
+              config.setup_wizard_completed = false;
+              return fetch('/api/config', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config),
+              });
+            })
+            .then(response => {
+              if (response.ok) {
+                window.location.href = '/';
+              } else {
+                alert(this.$t('troubleshooting.reopen_setup_wizard_error'));
+              }
+            })
+            .catch(err => {
+              alert(this.$t('troubleshooting.reopen_setup_wizard_error'));
             });
         },
       },

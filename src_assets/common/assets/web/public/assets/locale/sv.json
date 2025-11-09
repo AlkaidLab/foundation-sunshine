@@ -452,7 +452,10 @@
     "unpair_single_no_devices": "Det finns inga parkopplade enheter.",
     "unpair_single_success": "Enheten (er) kan dock fortfarande vara i en aktiv session. Använd knappen \"Tvinga nära\" ovan för att avsluta alla öppna sessioner.",
     "unpair_single_unknown": "Okänd klient",
-    "unpair_title": "Ta bort enheter"
+    "unpair_title": "Ta bort enheter",
+    "reopen_setup_wizard": "Öppna installationsguiden igen",
+    "reopen_setup_wizard_desc": "Öppna installationsguidens sida igen för att konfigurera om de initiala inställningarna.",
+    "reopen_setup_wizard_error": "Fel vid återöppning av installationsguiden"
   },
   "welcome": {
     "confirm_password": "Bekräfta lösenord",

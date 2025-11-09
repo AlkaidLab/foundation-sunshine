@@ -422,7 +422,7 @@
     "state_inactive": "Inactive",
     "state_unknown": "Unknown",
     "unknown_display": "Unknown Display",
-    "choose_adapter": "-- Please select a graphics adapter --",
+    "choose_adapter": "Auto",
     "adapter_info": "Configuration Summary",
     "selected_adapter": "Selected Adapter",
     "stream_mode": "Stream Mode",
@@ -445,7 +445,11 @@
     "no_operation_desc": "No action on displays, user must ensure the display device is active",
     "download_clients": "Download Clients",
     "android_client": "Android Client",
-    "ios_client": "iOS Client"
+    "ios_client": "iOS Client",
+    "skip": "Skip Setup Wizard",
+    "skip_confirm_title": "Skip Setup Wizard",
+    "skip_confirm": "Are you sure you want to skip the setup wizard? You can configure these options later in the settings page.",
+    "skip_error": "Failed to skip"
   },
   "navbar": {
     "applications": "Applications",
@@ -496,7 +500,7 @@
     "reset_display_device_desc_windows": "If Sunshine is stuck trying to restore the changed display device settings, you can reset the settings and proceed to restore the display state manually.\nThis could happen for various reasons: device is no longer available, has been plugged to a different port and so on.",
     "reset_display_device_error_windows": "Error while resetting persistence!",
     "reset_display_device_success_windows": "Success resetting persistence!",
-    "reset_display_device_windows": "Reset Persistent Display Device Settings",
+    "reset_display_device_windows": "Reset Display Memory",
     "restart_sunshine": "Restart Sunshine",
     "restart_sunshine_desc": "If Sunshine isn't working properly, you can try restarting it. This will terminate any running sessions.",
     "restart_sunshine_success": "Sunshine is restarting",
@@ -508,7 +512,10 @@
     "unpair_single_no_devices": "There are no paired devices.",
     "unpair_single_success": "However, the device(s) may still be in an active session. Use the 'Force Close' button above to end any open sessions.",
     "unpair_single_unknown": "Unknown Client",
-    "unpair_title": "Unpair Devices"
+    "unpair_title": "Unpair Devices",
+    "reopen_setup_wizard": "Reopen Setup Wizard",
+    "reopen_setup_wizard_desc": "Reopen the setup wizard page to reconfigure initial settings.",
+    "reopen_setup_wizard_error": "Failed to reopen setup wizard"
   },
   "welcome": {
     "confirm_password": "Confirm password",

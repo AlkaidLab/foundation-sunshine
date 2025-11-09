@@ -459,7 +459,10 @@
     "unpair_single_no_devices": "沒有已配對的裝置。",
     "unpair_single_success": "然而，該裝置仍可能處於使用中的工作階段。請使用上方的「強制關閉」按鈕結束任何使用中的工作階段。",
     "unpair_single_unknown": "未知的用戶端",
-    "unpair_title": "解除配對裝置"
+    "unpair_title": "解除配對裝置",
+    "reopen_setup_wizard": "重新開啟新手引導",
+    "reopen_setup_wizard_desc": "重新開啟新手引導頁面，可以重新設定初始設定。",
+    "reopen_setup_wizard_error": "重新開啟新手引導失敗"
   },
   "welcome": {
     "confirm_password": "確認密碼",

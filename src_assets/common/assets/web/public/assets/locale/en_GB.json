@@ -457,7 +457,10 @@
     "unpair_single_no_devices": "There are no paired devices.",
     "unpair_single_success": "However, the device(s) may still be in an active session. Use the 'Force Close' button above to end any open sessions.",
     "unpair_single_unknown": "Unknown Client",
-    "unpair_title": "Unpair Devices"
+    "unpair_title": "Unpair Devices",
+    "reopen_setup_wizard": "Reopen Setup Wizard",
+    "reopen_setup_wizard_desc": "Reopen the setup wizard page to reconfigure the initial settings.",
+    "reopen_setup_wizard_error": "Failed to reopen setup wizard"
   },
   "welcome": {
     "confirm_password": "Confirm password",

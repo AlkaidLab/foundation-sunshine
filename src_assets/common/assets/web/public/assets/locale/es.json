@@ -453,7 +453,10 @@
     "unpair_single_no_devices": "No hay dispositivos vinculados.",
     "unpair_single_success": "Sin embargo, los dispositivo(s) todavía pueden estar en una sesión activa. Utilice el botón \"Forzar cierre\" de arriba para terminar cualquier sesión abierta.",
     "unpair_single_unknown": "Cliente desconocido",
-    "unpair_title": "Desvincular dispositivos"
+    "unpair_title": "Desvincular dispositivos",
+    "reopen_setup_wizard": "Reabrir asistente de configuración",
+    "reopen_setup_wizard_desc": "Reabrir la página del asistente de configuración para reconfigurar la configuración inicial.",
+    "reopen_setup_wizard_error": "Error al reabrir el asistente de configuración"
   },
   "welcome": {
     "confirm_password": "Confirmar contraseña",

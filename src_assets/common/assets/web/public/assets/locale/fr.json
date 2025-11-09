@@ -453,7 +453,10 @@
     "unpair_single_no_devices": "Il n'y a aucun appareil associé.",
     "unpair_single_success": "Cependant, le(s) appareil(s) peuvent toujours être dans une session active. Utilisez le bouton 'Forcer la fermeture' ci-dessus pour mettre fin à toute session ouverte.",
     "unpair_single_unknown": "Client inconnu",
-    "unpair_title": "Délimiter les appareils"
+    "unpair_title": "Délimiter les appareils",
+    "reopen_setup_wizard": "Rouvrir l'assistant de configuration",
+    "reopen_setup_wizard_desc": "Rouvrir la page de l'assistant de configuration pour reconfigurer les paramètres initiaux.",
+    "reopen_setup_wizard_error": "Échec de la réouverture de l'assistant de configuration"
   },
   "welcome": {
     "confirm_password": "Confirmation du mot de passe",

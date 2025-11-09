@@ -169,10 +169,13 @@ export function validateAppForm(formData) {
   if (!imageResult.isValid) errors.push(`图片路径: ${imageResult.message}`);
   
   // 验证准备命令
+  // 只要打开时执行命令(do)或退出应用时要执行的命令(undo)中有一个填写了即可
   if (formData['prep-cmd'] && Array.isArray(formData['prep-cmd'])) {
     formData['prep-cmd'].forEach((cmd, index) => {
-      if (!cmd.do || cmd.do.trim() === '') {
-        errors.push(`准备命令 ${index + 1}: 执行命令不能为空`);
+      const hasDo = cmd.do && cmd.do.trim() !== '';
+      const hasUndo = cmd.undo && cmd.undo.trim() !== '';
+      if (!hasDo && !hasUndo) {
+        errors.push(`准备命令 ${index + 1}: 打开时执行命令或退出应用时要执行的命令至少需要填写一个`);
       }
     });
   }
