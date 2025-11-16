@@ -192,7 +192,7 @@ jobs:
           if [ -n "$PORTABLE" ]; then
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
-            7z x "$PORTABLE" -o"unsigned-files"
+            7z x "$PORTABLE" -o"unsigned-files" -y -aoa
             echo "Extracted files for signing:"
             ls -laR unsigned-files/
           else
@@ -255,7 +255,7 @@ jobs:
           else
             VERSION="v$(date +%Y.%m%d)"
           fi
-          7z a "../Sunshine-${VERSION}-Windows-Portable-Signed.zip" *
+          7z a "../Sunshine-${VERSION}-Windows-Portable-Signed.zip" * -y
           cd ..
           echo "Created signed portable package:"
           ls -lh Sunshine-*-Portable-Signed.zip
@@ -297,7 +297,7 @@ jobs:
 
           # 手动运行 makensis 重新打包
           echo "Running makensis to repackage installer..."
-          makensis "$CPACK_DIR/project.nsi"
+          makensis /INPUTCHARSET UTF8 "$CPACK_DIR/project.nsi"
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
