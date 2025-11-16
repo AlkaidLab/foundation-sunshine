@@ -297,7 +297,7 @@ jobs:
 
           # 手动运行 makensis 重新打包
           echo "Running makensis to repackage installer..."
-          makensis /INPUTCHARSET UTF8 "$CPACK_DIR/project.nsi"
+          makensis "$CPACK_DIR/project.nsi"
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
