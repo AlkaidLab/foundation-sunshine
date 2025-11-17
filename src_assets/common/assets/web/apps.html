@@ -467,8 +467,8 @@
       /**
        * 显示删除确认
        */
-      showDeleteForm(index) {
-        const confirmed = confirm(
+      async showDeleteForm(index) {
+        const confirmed = await confirm(
           `确定要删除应用 "${this.apps[index].name}" 吗？`
         );
         
