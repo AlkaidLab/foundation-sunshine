@@ -15,6 +15,10 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
+      ref:
+        description: "Branch or tag to checkout (e.g., master, v2025.1116)"
+        required: true
+        default: "master"
       release-tag:
         description: "Release tag for naming the output files"
         required: true
@@ -30,6 +34,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Setup Dependencies Windows
@@ -144,9 +149,9 @@ jobs:
       - name: Build Windows
         shell: msys2 {0}
         env:
-          BRANCH: ${{ github.head_ref || github.ref_name }}
-          BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+          BRANCH: master
+          BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
+          COMMIT: ${{ github.sha }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -360,15 +365,15 @@ jobs:
 
       # 发布到 GitHub Release
       - name: Create Release
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.event.release.tag_name }}
-          name: ${{ github.event.release.name }} (Signed)
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
           draft: true
           prerelease: true
+          allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
