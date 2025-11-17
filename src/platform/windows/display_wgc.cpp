@@ -13,7 +13,7 @@
 // Gross hack to work around MINGW-packages#22160
 #define ____FIReference_1_boolean_INTERFACE_DEFINED__
 
-#include <windows.graphics.capture.interop.h>
+#include <Windows.Graphics.Capture.Interop.h>
 #include <winrt/windows.foundation.h>
 #include <winrt/windows.foundation.metadata.h>
 #include <winrt/windows.graphics.directx.direct3d11.h>
@@ -29,7 +29,7 @@ namespace winrt {
   using namespace Windows::Graphics::DirectX::Direct3D11;
 
   extern "C" {
-  HRESULT __stdcall CreateDirect3D11DeviceFromDXGIDevice(::IDXGIDevice *dxgiDevice, ::IInspectable **graphicsDevice);
+    HRESULT __stdcall CreateDirect3D11DeviceFromDXGIDevice(::IDXGIDevice *dxgiDevice, ::IInspectable **graphicsDevice);
   }
 
   /**
@@ -50,13 +50,12 @@ static constexpr GUID GUID__IDirect3DDxgiInterfaceAccess = {
   0xA9B3D012,
   0x3DF2,
   0x4EE3,
-  { 0xB8, 0xD1, 0x86, 0x95, 0xF4, 0x57, 0xD3, 0xC1 }
+  {0xB8, 0xD1, 0x86, 0x95, 0xF4, 0x57, 0xD3, 0xC1}
   // compare with __declspec(uuid(...)) for the struct above.
 };
 
-template <>
-constexpr auto
-__mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID const & {
+template<>
+constexpr auto __mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID const & {
   return GUID__IDirect3DDxgiInterfaceAccess;
 }
 #endif
@@ -82,8 +81,7 @@ namespace platf::dxgi {
    * @brief Initialize the Windows.Graphics.Capture backend.
    * @return 0 on success, -1 on failure.
    */
-  int
-  wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+  int wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
     HRESULT status;
     dxgi::dxgi_t dxgi;
     winrt::com_ptr<::IInspectable> d3d_comhandle;
@@ -100,8 +98,7 @@ namespace platf::dxgi {
         BOOST_LOG(error) << "Failed to query WinRT DirectX interface from device [0x"sv << util::hex(status).to_string_view() << ']';
         return -1;
       }
-    }
-    catch (winrt::hresult_error &e) {
+    } catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to acquire device: [0x"sv << util::hex(e.code()).to_string_view() << ']';
       return -1;
     }
@@ -119,35 +116,39 @@ namespace platf::dxgi {
 
     if (config.dynamicRange) {
       display->capture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    }
-    else {
+    } else {
       display->capture_format = DXGI_FORMAT_B8G8R8A8_UNORM;
     }
 
     try {
       frame_pool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(uwp_device, static_cast<winrt::Windows::Graphics::DirectX::DirectXPixelFormat>(display->capture_format), 2, item.Size());
       capture_session = frame_pool.CreateCaptureSession(item);
-      frame_pool.FrameArrived({ this, &wgc_capture_t::on_frame_arrived });
-    }
-    catch (winrt::hresult_error &e) {
+      frame_pool.FrameArrived({this, &wgc_capture_t::on_frame_arrived});
+    } catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to create capture session: [0x"sv << util::hex(e.code()).to_string_view() << ']';
       return -1;
     }
     try {
       if (winrt::ApiInformation::IsPropertyPresent(L"Windows.Graphics.Capture.GraphicsCaptureSession", L"IsBorderRequired")) {
         capture_session.IsBorderRequired(false);
-      }
-      else {
+      } else {
         BOOST_LOG(warning) << "Can't disable colored border around capture area on this version of Windows";
       }
-    }
-    catch (winrt::hresult_error &e) {
+    } catch (winrt::hresult_error &e) {
       BOOST_LOG(warning) << "Screen capture may not be fully supported on this device for this release of Windows: failed to disable border around capture area: [0x"sv << util::hex(e.code()).to_string_view() << ']';
+    }
+    try{
+      if (winrt::ApiInformation::IsPropertyPresent(L"Windows.Graphics.Capture.GraphicsCaptureSession", L"MinUpdateInterval")) {
+        capture_session.MinUpdateInterval(4ms); //250Hz
+      }else {
+        BOOST_LOG(warning) << "Can't set MinUpdateInterval on this version of Windows";
+      }
+    }catch(winrt::hresult_error &e) {
+      BOOST_LOG(warning) << "Screen capture may be capped to 60fps on this device for this release of Windows: failed to set MinUpdateInterval: [0x"sv << util::hex(e.code()).to_string_view() << ']';
     }
     try {
       capture_session.StartCapture();
-    }
-    catch (winrt::hresult_error &e) {
+    } catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to start capture: [0x"sv << util::hex(e.code()).to_string_view() << ']';
       return -1;
     }
@@ -159,13 +160,11 @@ namespace platf::dxgi {
    * To maintain parity with the original display interface, this frame will be consumed by the capture thread.
    * Acquire a read-write lock, make the produced frame available to the capture thread, then wake the capture thread.
    */
-  void
-  wgc_capture_t::on_frame_arrived(winrt::Direct3D11CaptureFramePool const &sender, winrt::IInspectable const &) {
-    winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame { nullptr };
+  void wgc_capture_t::on_frame_arrived(winrt::Direct3D11CaptureFramePool const &sender, winrt::IInspectable const &) {
+    winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame {nullptr};
     try {
       frame = sender.TryGetNextFrame();
-    }
-    catch (winrt::hresult_error &e) {
+    } catch (winrt::hresult_error &e) {
       BOOST_LOG(warning) << "Failed to capture frame: "sv << e.code();
       return;
     }
@@ -188,8 +187,7 @@ namespace platf::dxgi {
    * @param out a texture containing the frame just captured
    * @param out_time the timestamp of the frame just captured
    */
-  capture_e
-  wgc_capture_t::next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_time) {
+  capture_e wgc_capture_t::next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_time) {
     // this CONSUMER runs in the capture thread
     release_frame();
 
@@ -198,8 +196,7 @@ namespace platf::dxgi {
       ReleaseSRWLockExclusive(&frame_lock);
       if (GetLastError() == ERROR_TIMEOUT) {
         return capture_e::timeout;
-      }
-      else {
+      } else {
         return capture_e::error;
       }
     }
@@ -221,8 +218,7 @@ namespace platf::dxgi {
     return capture_e::ok;
   }
 
-  capture_e
-  wgc_capture_t::release_frame() {
+  capture_e wgc_capture_t::release_frame() {
     if (consumed_frame != nullptr) {
       consumed_frame.Close();
       consumed_frame = nullptr;
@@ -230,21 +226,18 @@ namespace platf::dxgi {
     return capture_e::ok;
   }
 
-  int
-  wgc_capture_t::set_cursor_visible(bool x) {
+  int wgc_capture_t::set_cursor_visible(bool x) {
     try {
       if (capture_session.IsCursorCaptureEnabled() != x) {
         capture_session.IsCursorCaptureEnabled(x);
       }
       return 0;
-    }
-    catch (winrt::hresult_error &) {
+    } catch (winrt::hresult_error &) {
       return -1;
     }
   }
 
-  int
-  display_wgc_ram_t::init(const ::video::config_t &config, const std::string &display_name) {
+  int display_wgc_ram_t::init(const ::video::config_t &config, const std::string &display_name) {
     if (display_base_t::init(config, display_name) || dup.init(this, config)) {
       return -1;
     }
@@ -260,8 +253,7 @@ namespace platf::dxgi {
    * @param timeout how long to wait for the next frame
    * @param cursor_visible whether to capture the cursor
    */
-  capture_e
-  display_wgc_ram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
+  capture_e display_wgc_ram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
     HRESULT status;
     texture2d_t src;
     uint64_t frame_qpc;
@@ -346,8 +338,7 @@ namespace platf::dxgi {
     return capture_e::ok;
   }
 
-  capture_e
-  display_wgc_ram_t::release_snapshot() {
+  capture_e display_wgc_ram_t::release_snapshot() {
     return dup.release_frame();
   }
 }  // namespace platf::dxgi
