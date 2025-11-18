@@ -1220,6 +1220,7 @@ namespace config {
 
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
+    bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 

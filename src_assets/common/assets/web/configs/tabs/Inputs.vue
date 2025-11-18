@@ -220,6 +220,18 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.native_pen_touch_desc') }}</div>
     </div>
 
+    <!-- Draw mouse cursor in AMF -->
+    <div class="mb-3">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="amf_draw_mouse_cursor" 
+               v-model="config.amf_draw_mouse_cursor">
+        <label class="form-check-label" for="amf_draw_mouse_cursor">
+          {{ $t('config.amf_draw_mouse_cursor') }}
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.amf_draw_mouse_cursor_desc') }}</div>
+    </div>
+
   </div>
 </template>
 

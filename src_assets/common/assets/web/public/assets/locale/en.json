@@ -248,6 +248,8 @@
     "mouse_desc": "Allows guests to control the host system with the mouse",
     "native_pen_touch": "Native Pen/Touch Support",
     "native_pen_touch_desc": "When enabled, Sunshine will pass through native pen/touch events from Moonlight clients. This can be useful to disable for older applications without native pen/touch support.",
+    "amf_draw_mouse_cursor": "Draw a simple cursor when using AMF capture method",
+    "amf_draw_mouse_cursor_desc": "In some cases, using AMF capture will not display the mouse pointer. Enabling this option will draw a simple mouse pointer on the screen. Note: The position of the mouse pointer will only be updated when there is an update to the content screen, so in non-game scenarios such as on the desktop, you may observe sluggish mouse pointer movement.",
     "notify_pre_releases": "PreRelease Notifications",
     "notify_pre_releases_desc": "Whether to be notified of new pre-release versions of Sunshine",
     "nvenc_h264_cavlc": "Prefer CAVLC over CABAC in H.264",
