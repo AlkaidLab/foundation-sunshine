@@ -338,10 +338,14 @@ void Diagnose() {
   // 检查 Windows 版本
   OSVERSIONINFOEX osvi = { 0 };
   osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
+  #if defined(_MSC_VER)
   #pragma warning(push)
   #pragma warning(disable: 4996)
+  #endif
   GetVersionEx((LPOSVERSIONINFO)&osvi);
+  #if defined(_MSC_VER)
   #pragma warning(pop)
+  #endif
   wsprintfW(buffer, L"Windows 版本: %d.%d", osvi.dwMajorVersion, osvi.dwMinorVersion);
   Print(buffer);
   

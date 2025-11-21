@@ -46,12 +46,15 @@
 #include "rtsp.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/to_string.h"
+#include "stream.h"
 #include "utility.h"
 #include "uuid.h"
+#include "video.h"
 #include "version.h"
 #include "webhook.h"
 
 using namespace std::literals;
+using json = nlohmann::json;
 
 namespace confighttp {
   namespace fs = std::filesystem;
@@ -1089,6 +1092,196 @@ namespace confighttp {
   }
 
   void
+  getRuntimeSessions(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    // 可选：限制只允许 localhost 访问（增强安全性）
+    auto client_ip = request->remote_endpoint().address();
+    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 403;
+      error_json["status_message"] = "Access denied. Only localhost requests are allowed.";
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    try {
+      // 获取所有活动会话信息
+      auto sessions_info = stream::session::get_all_sessions_info();
+      
+      json response_json;
+      response_json["success"] = true;
+      response_json["status_code"] = 200;
+      response_json["status_message"] = "Success";
+      response_json["total_sessions"] = sessions_info.size();
+      
+      json sessions_array = json::array();
+      
+      for (const auto &session_info : sessions_info) {
+        json session_obj;
+        session_obj["client_name"] = session_info.client_name;
+        session_obj["client_address"] = session_info.client_address;
+        session_obj["state"] = session_info.state;
+        session_obj["session_id"] = session_info.session_id;
+        session_obj["width"] = session_info.width;
+        session_obj["height"] = session_info.height;
+        session_obj["fps"] = session_info.fps;
+        session_obj["host_audio"] = session_info.host_audio;
+        session_obj["enable_hdr"] = session_info.enable_hdr;
+        session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["app_name"] = session_info.app_name;
+        session_obj["app_id"] = session_info.app_id;
+        
+        sessions_array.push_back(session_obj);
+      }
+      
+      response_json["sessions"] = sessions_array;
+      
+      BOOST_LOG(info) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
+      
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "GetRuntimeSessions: "sv << e.what();
+      
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 500;
+      error_json["status_message"] = e.what();
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+    }
+  }
+
+  void
+  changeRuntimeBitrate(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    // 限制只允许 localhost 访问
+    auto client_ip = request->remote_endpoint().address();
+    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 403;
+      error_json["status_message"] = "Access denied. Only localhost requests are allowed.";
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    try {
+      auto args = request->parse_query_string();
+      auto bitrate_param = args.find("bitrate");
+      auto clientname_param = args.find("clientname");
+
+      // 验证参数
+      if (bitrate_param == args.end()) {
+        json error_json;
+        error_json["success"] = false;
+        error_json["status_code"] = 400;
+        error_json["status_message"] = "Missing bitrate parameter";
+        response->write(error_json.dump());
+        response->close_connection_after_response = true;
+        return;
+      }
+
+      if (clientname_param == args.end()) {
+        json error_json;
+        error_json["success"] = false;
+        error_json["status_code"] = 400;
+        error_json["status_message"] = "Missing clientname parameter";
+        response->write(error_json.dump());
+        response->close_connection_after_response = true;
+        return;
+      }
+
+      int bitrate = std::stoi(bitrate_param->second);
+      std::string client_name = clientname_param->second;
+
+      // 验证码率范围
+      if (bitrate <= 0 || bitrate > 800000) {
+        json error_json;
+        error_json["success"] = false;
+        error_json["status_code"] = 400;
+        error_json["status_message"] = "Invalid bitrate value. Must be between 1 and 800000 Kbps";
+        response->write(error_json.dump());
+        response->close_connection_after_response = true;
+        return;
+      }
+
+      // 获取所有活动会话以便调试
+      auto sessions_info = stream::session::get_all_sessions_info();
+      std::vector<std::string> available_clients;
+      for (const auto &session_info : sessions_info) {
+        if (session_info.state == "RUNNING") {
+          available_clients.push_back(session_info.client_name);
+        }
+      }
+      
+      BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name 
+                      << "' to " << bitrate << " Kbps";
+      BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+      
+      // 调用底层 API 修改码率
+      video::dynamic_param_t param;
+      param.type = video::dynamic_param_type_e::BITRATE;
+      param.value.int_value = bitrate;
+      param.valid = true;
+      
+      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
+
+      json response_json;
+      if (success) {
+        response_json["success"] = true;
+        response_json["status_code"] = 200;
+        response_json["status_message"] = "Bitrate change request sent to client session";
+        response_json["bitrate"] = bitrate;
+        response_json["client_name"] = client_name;
+        
+        BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '" 
+                       << client_name << "': " << bitrate << " Kbps";
+      } else {
+        std::string error_msg = "No active streaming session found for client: " + client_name;
+        if (!available_clients.empty()) {
+          error_msg += ". Available clients: " + boost::algorithm::join(available_clients, ", ");
+        } else {
+          error_msg += ". No RUNNING sessions available.";
+        }
+        
+        response_json["success"] = false;
+        response_json["status_code"] = 404;
+        response_json["status_message"] = error_msg;
+        
+        BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
+      }
+      
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "ChangeRuntimeBitrate: "sv << e.what();
+      
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 500;
+      error_json["status_message"] = e.what();
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+    }
+  }
+
+  void
   proxySteamApi(resp_https_t response, req_https_t request) {
     // 不需要认证，Steam API是公开的
     print_req(request);
@@ -1447,6 +1640,8 @@ namespace confighttp {
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
+    server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
+    server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
