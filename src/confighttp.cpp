@@ -1131,6 +1131,7 @@ namespace confighttp {
         session_obj["width"] = session_info.width;
         session_obj["height"] = session_info.height;
         session_obj["fps"] = session_info.fps;
+        session_obj["bitrate"] = session_info.bitrate;  // Current bitrate in Kbps
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;

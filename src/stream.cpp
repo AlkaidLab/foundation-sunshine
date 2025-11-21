@@ -2481,6 +2481,7 @@ namespace stream {
         info.width = session_p->config.monitor.width;
         info.height = session_p->config.monitor.height;
         info.fps = session_p->config.monitor.framerate;
+        info.bitrate = session_p->config.monitor.bitrate;  // Current bitrate in Kbps
 
         // Get audio and other settings
         info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];

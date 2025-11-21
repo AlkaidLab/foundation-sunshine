@@ -45,6 +45,7 @@ namespace stream {
     int width;
     int height;
     int fps;
+    int bitrate;  // Current bitrate in Kbps
     bool host_audio;
     bool enable_hdr;
     bool enable_mic;
