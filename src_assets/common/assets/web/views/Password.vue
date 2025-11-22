@@ -1,0 +1,131 @@
+<template>
+  <div>
+    <Navbar />
+    <div class="container">
+      <h1 class="my-4">{{ $t('password.password_change') }}</h1>
+      <form @submit.prevent="save">
+        <div class="card d-flex p-4 flex-row">
+          <div class="col-md-6 px-4">
+            <h4>{{ $t('password.current_creds') }}</h4>
+            <div class="mb-3">
+              <label for="currentUsername" class="form-label">{{ $t('_common.username') }}</label>
+              <input 
+                required 
+                type="text" 
+                class="form-control" 
+                id="currentUsername"
+                v-model="passwordData.currentUsername" 
+              />
+              <div class="form-text">&nbsp;</div>
+            </div>
+            <div class="mb-3">
+              <label for="currentPassword" class="form-label">{{ $t('_common.password') }}</label>
+              <input 
+                autocomplete="current-password" 
+                type="password" 
+                class="form-control" 
+                id="currentPassword"
+                v-model="passwordData.currentPassword" 
+              />
+            </div>
+          </div>
+          <div class="col-md-6 px-4">
+            <h4>{{ $t('password.new_creds') }}</h4>
+            <div class="mb-3">
+              <label for="newUsername" class="form-label">{{ $t('_common.username') }}</label>
+              <input 
+                type="text" 
+                class="form-control" 
+                id="newUsername" 
+                v-model="passwordData.newUsername" 
+              />
+              <div class="form-text">{{ $t('password.new_username_desc') }}</div>
+            </div>
+            <div class="mb-3">
+              <label for="newPassword" class="form-label">{{ $t('_common.password') }}</label>
+              <input 
+                autocomplete="new-password" 
+                required 
+                type="password" 
+                class="form-control" 
+                id="newPassword"
+                v-model="passwordData.newPassword" 
+              />
+            </div>
+            <div class="mb-3">
+              <label for="confirmNewPassword" class="form-label">{{ $t('password.confirm_password') }}</label>
+              <input 
+                autocomplete="new-password" 
+                required 
+                type="password" 
+                class="form-control" 
+                id="confirmNewPassword"
+                v-model="passwordData.confirmNewPassword" 
+              />
+            </div>
+          </div>
+        </div>
+        <div class="alert alert-danger" v-if="error">
+          <b>Error: </b>{{ error }}
+        </div>
+        <div class="alert alert-success" v-if="success">
+          <b>{{ $t('_common.success') }}</b> {{ $t('password.success_msg') }}
+        </div>
+        <div class="mb-3 buttons">
+          <button class="btn btn-primary">{{ $t('_common.save') }}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import Navbar from '../components/layout/Navbar.vue'
+
+const error = ref(null)
+const success = ref(false)
+const passwordData = ref({
+  currentUsername: '',
+  currentPassword: '',
+  newUsername: '',
+  newPassword: '',
+  confirmNewPassword: '',
+})
+
+const save = async () => {
+  error.value = null
+  try {
+    const response = await fetch('/api/password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(passwordData.value),
+    })
+    
+    if (response.status === 200) {
+      const result = await response.json()
+      if (result.status.toString() === 'true') {
+        success.value = true
+        setTimeout(() => {
+          document.location.reload()
+        }, 5000)
+      } else {
+        error.value = result.error
+      }
+    } else {
+      error.value = 'Internal Server Error'
+    }
+  } catch (err) {
+    error.value = err.message || 'Internal Server Error'
+  }
+}
+</script>
+
+<style scoped>
+.buttons {
+  padding: 1em 0;
+}
+</style>
+

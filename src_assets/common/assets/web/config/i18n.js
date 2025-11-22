@@ -1,7 +1,7 @@
 import {createI18n} from "vue-i18n";
 
 // Import only the fallback language files
-import en from './public/assets/locale/en.json'
+import en from '../public/assets/locale/en.json'
 
 export default async function() {
     // 先尝试从 /api/config 获取实时配置（会读取配置文件）
@@ -32,9 +32,11 @@ export default async function() {
         console.error("Failed to download translations", e);
     }
     const i18n = createI18n({
+        legacy: false, // 使用 Composition API 模式
         locale: locale, // set locale
         fallbackLocale: 'en', // set fallback locale
-        messages: messages
+        messages: messages,
+        globalInjection: true, // 允许在模板中使用 $t
     })
     return i18n;
 }

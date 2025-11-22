@@ -83,7 +83,10 @@ export const trackEvents = {
   streamEnded: (duration, reason) => trackEvent('stream_ended', { 
     duration, 
     reason 
-  })
+  }),
+  
+  // 硬件信息上报
+  gpuReported: (gpuInfo) => trackEvent('gpu_reported', gpuInfo),
 };
 
 export { analytics };

@@ -280,7 +280,7 @@
 </template>
 
 <script>
-import { trackEvents } from './firebase-config'
+import { trackEvents } from '../config/firebase.js'
 
 export default {
   name: 'SetupWizard',

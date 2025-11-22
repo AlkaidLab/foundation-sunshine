@@ -5,16 +5,16 @@
 import { createI18n } from "vue-i18n";
 
 // Import translation files
-import de from './locale/de.json'
-import en from './locale/en.json'
-import en_GB from './locale/en-GB.json'
-import en_US from './locale/en-US.json'
-import es from './locale/es.json'
-import fr from './locale/fr.json'
-import it from './locale/it.json'
-import ru from './locale/ru.json'
-import sv from './locale/sv.json'
-import zh from './locale/zh.json'
+import de from '../../public/assets/locale/de.json'
+import en from '../../public/assets/locale/en.json'
+import en_GB from '../../public/assets/locale/en_GB.json'
+import en_US from '../../public/assets/locale/en_US.json'
+import es from '../../public/assets/locale/es.json'
+import fr from '../../public/assets/locale/fr.json'
+import it from '../../public/assets/locale/it.json'
+import ru from '../../public/assets/locale/ru.json'
+import sv from '../../public/assets/locale/sv.json'
+import zh from '../../public/assets/locale/zh.json'
 
 // Create the i18n instance
 const i18n = createI18n({

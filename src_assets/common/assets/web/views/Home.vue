@@ -1,0 +1,191 @@
+<template>
+  <div>
+    <Navbar v-if="!showSetupWizard" />
+    
+    <!-- 首次设置向导 -->
+    <SetupWizard 
+      v-if="showSetupWizard"
+      :adapters="adapters"
+      :display-devices="displayDevices"
+      :has-locale="hasLocale"
+      @setup-complete="onSetupComplete"
+    />
+
+    <!-- 正常首页内容 -->
+    <div v-if="!showSetupWizard" id="content" class="container">
+      <h1 class="my-4">{{ $t('index.welcome') }}</h1>
+      <p>{{ $t('index.description') }}</p>
+      
+      <!-- 错误日志 -->
+      <ErrorLogs :fatal-logs="fatalLogs" />
+      
+      <!-- 版本信息 -->
+      <VersionCard
+        :version="version"
+        :github-version="githubVersion"
+        :pre-release-version="preReleaseVersion"
+        :notify-pre-releases="notifyPreReleases"
+        :loading="loading"
+        :installed-version-not-stable="installedVersionNotStable"
+        :stable-build-available="stableBuildAvailable"
+        :pre-release-build-available="preReleaseBuildAvailable"
+        :build-version-is-dirty="buildVersionIsDirty"
+        :parsed-stable-body="parsedStableBody"
+        :parsed-pre-release-body="parsedPreReleaseBody"
+      />
+      
+      <!-- 资源卡片 -->
+      <div class="my-4">
+        <ResourceCard />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from 'vue'
+import Navbar from '../components/layout/Navbar.vue'
+import SetupWizard from '../components/SetupWizard.vue'
+import ResourceCard from '../components/common/ResourceCard.vue'
+import ErrorLogs from '../components/common/ErrorLogs.vue'
+import VersionCard from '../components/common/VersionCard.vue'
+import { useVersion } from '../composables/useVersion.js'
+import { useLogs } from '../composables/useLogs.js'
+import { useSetupWizard } from '../composables/useSetupWizard.js'
+import { trackEvents } from '../config/firebase.js'
+
+// 使用组合式函数
+const {
+  version,
+  githubVersion,
+  preReleaseVersion,
+  notifyPreReleases,
+  loading,
+  installedVersionNotStable,
+  stableBuildAvailable,
+  preReleaseBuildAvailable,
+  buildVersionIsDirty,
+  parsedStableBody,
+  parsedPreReleaseBody,
+  fetchVersions,
+} = useVersion()
+
+const {
+  fatalLogs,
+  fetchLogs,
+} = useLogs()
+
+const {
+  showSetupWizard,
+  adapters,
+  displayDevices,
+  hasLocale,
+  checkSetupWizard,
+  onSetupComplete,
+} = useSetupWizard()
+
+// 上报显卡信息
+const reportGPUInfo = (config) => {
+  try {
+    // 检查是否已经上报过（使用 localStorage 避免重复上报）
+    const reportedKey = 'gpu_info_reported'
+    const lastReported = localStorage.getItem(reportedKey)
+    const now = Date.now()
+    
+    // 如果 24 小时内已上报过，则跳过
+    if (lastReported && (now - parseInt(lastReported)) < 24 * 60 * 60 * 1000) {
+      return
+    }
+    
+    // 获取显卡信息
+    const adapters = config.adapters || []
+    const platform = config.platform || 'unknown'
+    const adapterName = config.adapter_name || ''
+    
+    if (adapters.length > 0) {
+      // 处理适配器数据格式（可能是对象数组或字符串数组）
+      const adapterNames = adapters.map(adapter => {
+        if (typeof adapter === 'string') {
+          return adapter
+        } else if (adapter && adapter.name) {
+          return adapter.name
+        } else {
+          return String(adapter)
+        }
+      })
+      
+      // 构建显卡信息
+      const gpuInfo = {
+        platform: platform,
+        adapter_count: adapters.length,
+        adapters: adapterNames,
+        selected_adapter: adapterName || 'auto',
+        has_selected_adapter: !!adapterName,
+      }
+      
+      // 上报到 Firebase
+      trackEvents.gpuReported(gpuInfo)
+      
+      // 记录上报时间
+      localStorage.setItem(reportedKey, now.toString())
+      
+      console.log('显卡信息已上报:', gpuInfo)
+    } else {
+      // 即使没有适配器也上报，用于统计
+      const gpuInfo = {
+        platform: platform,
+        adapter_count: 0,
+        adapters: [],
+        selected_adapter: adapterName || 'none',
+        has_selected_adapter: false,
+      }
+      
+      trackEvents.gpuReported(gpuInfo)
+      localStorage.setItem(reportedKey, now.toString())
+      console.log('显卡信息已上报（无适配器）:', gpuInfo)
+    }
+  } catch (error) {
+    console.error('上报显卡信息失败:', error)
+    // 不抛出错误，避免影响正常功能
+  }
+}
+
+// 初始化
+onMounted(async () => {
+  // 记录页面访问
+  trackEvents.pageView('home')
+
+  try {
+    const config = await fetch('/api/config').then((r) => r.json())
+    
+    // 上报显卡信息
+    reportGPUInfo(config)
+    
+    // 检查是否需要显示设置向导
+    if (checkSetupWizard(config)) {
+      return
+    }
+    
+    // 获取版本信息
+    await fetchVersions(config)
+    
+    // 获取日志
+    await fetchLogs()
+    
+    // 更新页面标题
+    if (version.value) {
+      document.title += ` Ver ${version.value.version}`
+    }
+  } catch (e) {
+    console.error('Failed to initialize:', e)
+    trackEvents.errorOccurred('home_initialization', e.message)
+  }
+})
+</script>
+
+<style scoped>
+.container {
+  padding: 1rem;
+}
+</style>
+

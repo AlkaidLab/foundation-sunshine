@@ -6,6 +6,7 @@
 
 #include <future>
 #include <queue>
+#include <unordered_map>
 
 #include <fstream>
 #include <openssl/err.h>

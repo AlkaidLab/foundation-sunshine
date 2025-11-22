@@ -50,7 +50,7 @@
 
 <script setup>
 import { onMounted, onUnmounted } from 'vue'
-import ThemeToggle from './ThemeToggle.vue'
+import ThemeToggle from '../common/ThemeToggle.vue'
 
 const DEFAULT_BACKGROUND = 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'

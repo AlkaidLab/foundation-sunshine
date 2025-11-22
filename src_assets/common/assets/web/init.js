@@ -1,4 +1,4 @@
-import i18n from './locale'
+import i18n from './config/i18n.js'
 
 // must import even if not implicitly using here
 // https://github.com/aurelia/skeleton-navigation/issues/894
