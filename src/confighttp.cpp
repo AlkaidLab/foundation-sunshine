@@ -1097,7 +1097,7 @@ namespace confighttp {
 
     print_req(request);
 
-    // 可选：限制只允许 localhost 访问（增强安全性）
+    // 限制只允许 localhost 访问（增强安全性）
     auto client_ip = request->remote_endpoint().address();
     if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
       json error_json;
@@ -1131,7 +1131,7 @@ namespace confighttp {
         session_obj["width"] = session_info.width;
         session_obj["height"] = session_info.height;
         session_obj["fps"] = session_info.fps;
-        session_obj["bitrate"] = session_info.bitrate;  // Current bitrate in Kbps
+        session_obj["bitrate"] = session_info.bitrate;
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
@@ -1231,7 +1231,9 @@ namespace confighttp {
       
       BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name 
                       << "' to " << bitrate << " Kbps";
-      BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+      if (!available_clients.empty()) {
+        BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+      }
       
       // 调用底层 API 修改码率
       video::dynamic_param_t param;

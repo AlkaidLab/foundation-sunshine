@@ -454,6 +454,10 @@ namespace stream {
     safe::signal_t controlEnd;
 
     std::atomic<session::state_e> state;
+    
+    // Current total bitrate for this session (including FEC overhead) in Kbps
+    // This is the user-configured bitrate, not the encoding bitrate
+    std::atomic<int> current_total_bitrate { 0 };
   };
 
   /**
@@ -2345,6 +2349,20 @@ namespace stream {
       session->client_name = launch_session.client_name;
 
       session->config = config;
+      
+      // Initialize current total bitrate (including FEC) from config
+      // config.monitor.bitrate is the encoding bitrate (excluding FEC)
+      // We need to convert it to total bitrate (including FEC)
+      int encoding_bitrate = config.monitor.bitrate;
+      int fec_percentage = config::stream.fec_percentage;
+      if (fec_percentage > 0 && fec_percentage <= 80) {
+        // Convert encoding bitrate to total bitrate: total = encoding * 100 / (100 - fec_percentage)
+        session->current_total_bitrate = (int)(encoding_bitrate * 100.f / (100 - fec_percentage));
+      }
+      else {
+        // If FEC percentage is 0 or > 80%, encoding bitrate equals total bitrate
+        session->current_total_bitrate = encoding_bitrate;
+      }
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
@@ -2420,6 +2438,14 @@ namespace stream {
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name == client_name &&
             session_p->state.load(std::memory_order_relaxed) == state_e::RUNNING) {
+          // Update session's current total bitrate if this is a bitrate change
+          if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
+            // The param.value.int_value is the total bitrate (user-configured, including FEC)
+            session_p->current_total_bitrate = param.value.int_value;
+            BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
+                            << "': " << param.value.int_value << " Kbps (including FEC)";
+          }
+          
           session_p->video.dynamic_param_change_events->raise(param);
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
                           << "': type=" << (int) param.type;
@@ -2481,7 +2507,10 @@ namespace stream {
         info.width = session_p->config.monitor.width;
         info.height = session_p->config.monitor.height;
         info.fps = session_p->config.monitor.framerate;
-        info.bitrate = session_p->config.monitor.bitrate;  // Current bitrate in Kbps
+        
+        // Get current total bitrate (including FEC) from session-specific field
+        // This is the user-configured bitrate, which may have been changed dynamically
+        info.bitrate = session_p->current_total_bitrate.load(std::memory_order_relaxed);
 
         // Get audio and other settings
         info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
