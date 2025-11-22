@@ -12,20 +12,14 @@
       "menu-cmd": [
         {
           "id": "kcENAT5r9P",
-          "name": "打开触摸键盘",
+          "name": "触摸键盘",
           "cmd": ".\\tools\\qiin-tabtip.exe",
           "elevated": "false"
         },
         {
           "id": "rjeOKHmcdL",
-          "name": "DPI 250",
-          "cmd": ".\\tools\\SetDpi.exe 250",
-          "elevated": "false"
-        },
-        {
-          "id": "C_vunhdQwA",
-          "name": "DPI 100",
-          "cmd": ".\\tools\\SetDpi.exe 100",
+          "name": "桌宠",
+          "cmd": ".\\assets\\gui\\sunshine-gui.exe --toolbar",
           "elevated": "false"
         }
       ]
