@@ -153,6 +153,7 @@
                       type="prep"
                       @add-command="addPrepCommand"
                       @remove-command="removePrepCommand"
+                      @order-changed="handlePrepCommandOrderChanged"
                     />
 
                     <!-- 菜单命令 -->
@@ -163,6 +164,7 @@
                       @add-command="addMenuCommand"
                       @remove-command="removeMenuCommand"
                       @test-command="testMenuCommand"
+                      @order-changed="handleMenuCommandOrderChanged"
                     />
 
                     <!-- 独立命令 -->
@@ -611,6 +613,20 @@ export default {
      */
     removeMenuCommand(index) {
       this.formData['menu-cmd'].splice(index, 1);
+    },
+
+    /**
+     * 处理准备命令排序变化
+     */
+    handlePrepCommandOrderChanged(newOrder) {
+      this.formData['prep-cmd'] = newOrder;
+    },
+
+    /**
+     * 处理菜单命令排序变化
+     */
+    handleMenuCommandOrderChanged(newOrder) {
+      this.formData['menu-cmd'] = newOrder;
     },
 
     /**

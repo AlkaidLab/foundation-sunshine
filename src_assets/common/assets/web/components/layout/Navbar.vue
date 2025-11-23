@@ -51,73 +51,35 @@
 <script setup>
 import { onMounted, onUnmounted } from 'vue'
 import ThemeToggle from '../common/ThemeToggle.vue'
+import { useBackground } from '../../composables/useBackground.js'
 
-const DEFAULT_BACKGROUND = 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/sunshine-bg0.webp'
-const STORAGE_KEY = 'customBackground'
+// 使用背景管理 composable
+const { loadBackground, addDragListeners } = useBackground()
 
-/**
- * 设置背景图片
- * @param {string} imageUrl - 图片URL或base64
- */
-const setBackground = (imageUrl) => {
-  document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
-}
-
-const loadBackground = () => {
-  const savedBg = localStorage.getItem(STORAGE_KEY) ?? DEFAULT_BACKGROUND
-  setBackground(savedBg)
-}
-
-const handleDragOver = (e) => {
-  e.preventDefault()
-  document.body.classList.add('dragover')
-}
-
-const handleDragLeave = () => {
-  document.body.classList.remove('dragover')
-}
-
-const handleDrop = (e) => {
-  e.preventDefault()
-  document.body.classList.remove('dragover')
-
-  const file = e.dataTransfer?.files?.[0]
-  if (!file?.type.startsWith('image/')) return
-
-  const reader = new FileReader()
-  reader.onload = (event) => {
-    const imageData = event.target.result
-    setBackground(imageData)
-    localStorage.setItem(STORAGE_KEY, imageData)
-  }
-  reader.readAsDataURL(file)
-}
-
+// 高亮当前路由
 const highlightCurrentRoute = () => {
   const currentLink = document.querySelector(`a[href="${location.pathname}"]`)
   currentLink?.classList.add('active')
 }
 
-const addDragListeners = () => {
-  document.addEventListener('dragover', handleDragOver)
-  document.addEventListener('dragleave', handleDragLeave)
-  document.addEventListener('drop', handleDrop)
+// 错误处理函数
+const handleBackgroundError = (error) => {
+  alert(error.message || '处理图片时发生错误')
 }
 
-const removeDragListeners = () => {
-  document.removeEventListener('dragover', handleDragOver)
-  document.removeEventListener('dragleave', handleDragLeave)
-  document.removeEventListener('drop', handleDrop)
-}
+// 添加拖拽监听器并获取清理函数
+let removeDragListeners = null
 
 onMounted(() => {
   loadBackground()
   highlightCurrentRoute()
-  addDragListeners()
+  removeDragListeners = addDragListeners(handleBackgroundError)
 })
 
 onUnmounted(() => {
-  removeDragListeners()
+  if (removeDragListeners) {
+    removeDragListeners()
+  }
 })
 </script>
 

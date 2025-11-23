@@ -2,104 +2,109 @@
   <div class="form-group-enhanced">
     <label class="form-label-enhanced">{{ tableTitle }}</label>
     <div class="field-hint">{{ tableDescription }}</div>
-    
-    <div class="command-table" v-if="commands.length > 0">
+
+    <div class="command-table" v-if="localCommands.length > 0">
       <table class="table table-sm">
         <thead>
           <tr>
-            <th v-if="type === 'prep'">
-              <i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}
-            </th>
-            <th v-if="type === 'prep'">
-              <i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}
-            </th>
-            <th v-if="type === 'menu'">
-              <i class="fas fa-tag"></i> 展示名称
-            </th>
-            <th v-if="type === 'menu'">
-              <i class="fas fa-terminal"></i> 指令
-            </th>
-            <th v-if="platform === 'windows'">
-              <i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}
-            </th>
-            <th style="width: 100px;">操作</th>
+            <th style="width: 40px"></th>
+            <th v-if="type === 'prep'"><i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}</th>
+            <th v-if="type === 'prep'"><i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}</th>
+            <th v-if="type === 'menu'"><i class="fas fa-tag"></i> 展示名称</th>
+            <th v-if="type === 'menu'"><i class="fas fa-terminal"></i> 指令</th>
+            <th v-if="platform === 'windows'"><i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}</th>
+            <th style="width: 100px">操作</th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="(command, index) in commands" :key="getCommandKey(command, index)">
+        <draggable
+          tag="tbody"
+          v-model="localCommands"
+          :item-key="getItemKey"
+          :animation="300"
+          :delay="0"
+          handle=".drag-handle"
+          ghost-class="command-row-ghost"
+          chosen-class="command-row-chosen"
+          drag-class="command-row-drag"
+          :force-fallback="false"
+          @end="onDragEnd"
+        >
+          <template #item="{ element: command, index }">
+            <tr :key="getCommandKey(command, index)">
+              <!-- 拖拽手柄 -->
+              <td class="drag-handle-cell">
+                <div class="drag-handle" @dragstart.stop @dragend.stop :title="'拖拽排序'">
+                  <i class="fas fa-grip-vertical"></i>
+                </div>
+              </td>
             <!-- 准备命令字段 -->
             <template v-if="type === 'prep'">
               <td>
-                <input 
-                  type="text" 
-                  class="form-control form-control-sm monospace" 
-                  v-model="command.do" 
+                <input
+                  type="text"
+                  class="form-control form-control-sm monospace"
+                  v-model="command.do"
                   placeholder="执行命令"
                 />
               </td>
               <td>
-                <input 
-                  type="text" 
-                  class="form-control form-control-sm monospace" 
-                  v-model="command.undo" 
+                <input
+                  type="text"
+                  class="form-control form-control-sm monospace"
+                  v-model="command.undo"
                   placeholder="撤销命令"
                 />
               </td>
             </template>
-            
+
             <!-- 菜单命令字段 -->
             <template v-if="type === 'menu'">
               <td>
-                <input 
-                  type="text" 
-                  class="form-control form-control-sm" 
-                  v-model="command.name" 
-                  placeholder="显示名称"
-                />
+                <input type="text" class="form-control form-control-sm" v-model="command.name" placeholder="显示名称" />
               </td>
               <td>
-                <input 
-                  type="text" 
-                  class="form-control form-control-sm monospace" 
-                  v-model="command.cmd" 
+                <input
+                  type="text"
+                  class="form-control form-control-sm monospace"
+                  v-model="command.cmd"
                   placeholder="命令"
                 />
               </td>
             </template>
-            
+
             <!-- Windows权限设置 -->
             <td v-if="platform === 'windows'">
               <div class="form-check">
-                <input 
-                  type="checkbox" 
-                  class="form-check-input" 
-                  :id="`${type}-cmd-admin-${index}`" 
+                <input
+                  type="checkbox"
+                  class="form-check-input"
+                  :id="`${type}-cmd-admin-${index}`"
                   v-model="command.elevated"
-                  true-value="true" 
-                  false-value="false" 
+                  true-value="true"
+                  false-value="false"
                 />
                 <label :for="`${type}-cmd-admin-${index}`" class="form-check-label">
                   {{ $t('_common.elevated') }}
                 </label>
               </div>
             </td>
-            
+
             <!-- 操作按钮 -->
             <td>
               <div class="action-buttons-group">
-                <button 
+                <button
                   v-if="type === 'menu'"
-                  type="button" 
-                  class="btn btn-outline-primary btn-sm me-1" 
+                  type="button"
+                  class="btn btn-outline-primary btn-sm me-1"
                   @click="testCommand(index)"
                   :title="$t('apps.test_menu_cmd')"
                   :disabled="!command.cmd"
                 >
                   <i class="fas fa-play"></i>
                 </button>
-                <button 
-                  type="button" 
-                  class="btn btn-outline-danger btn-sm" 
+                <button
+                  type="button"
+                  class="btn btn-outline-danger btn-sm"
                   @click="removeCommand(index)"
                   :title="type === 'prep' ? '删除准备命令' : '删除菜单命令'"
                 >
@@ -107,86 +112,126 @@
                 </button>
               </div>
             </td>
-          </tr>
-        </tbody>
+            </tr>
+          </template>
+        </draggable>
       </table>
     </div>
-    
-    <button 
-      type="button" 
-      class="btn btn-outline-success add-command-btn" 
-      @click="addCommand"
-    >
+
+    <button type="button" class="btn btn-outline-success add-command-btn" @click="addCommand">
       <i class="fas fa-plus me-1"></i>{{ addButtonText }}
     </button>
   </div>
 </template>
 
 <script>
+import draggable from 'vuedraggable'
+
 export default {
   name: 'CommandTable',
+  components: {
+    draggable,
+  },
   props: {
     commands: {
       type: Array,
-      required: true
+      required: true,
     },
     platform: {
       type: String,
-      default: 'linux'
+      default: 'linux',
     },
     type: {
       type: String,
       required: true,
-      validator: value => ['prep', 'menu'].includes(value)
+      validator: (value) => ['prep', 'menu'].includes(value),
+    },
+  },
+  data() {
+    return {
+      localCommands: [],
     }
+  },
+  watch: {
+    commands: {
+      immediate: true,
+      deep: true,
+      handler(newVal) {
+        // 深拷贝以避免直接修改 props
+        this.localCommands = JSON.parse(JSON.stringify(newVal || []))
+      },
+    },
   },
   computed: {
     tableTitle() {
-      return this.type === 'prep' ? this.$t('apps.cmd_prep_name') : '炒鸡菜单命令';
+      return this.type === 'prep' ? this.$t('apps.cmd_prep_name') : '炒鸡菜单命令'
     },
     tableDescription() {
       if (this.type === 'prep') {
-        return this.$t('apps.cmd_prep_desc');
+        return this.$t('apps.cmd_prep_desc')
       }
-      return '配置后在客户端返回菜单中可见，用于在不打断串流的情况下快速执行特定操作，例如调出辅助程序。\n示例：展示名称-关闭你的颠佬；指令-shutdown -s -t 10';
+      return '配置后在客户端返回菜单中可见，用于在不打断串流的情况下快速执行特定操作，例如调出辅助程序。\n示例：展示名称-关闭你的颠佬；指令-shutdown -s -t 10'
     },
     addButtonText() {
-      return this.type === 'prep' ? this.$t('apps.add_cmds') : '添加菜单命令';
-    }
+      return this.type === 'prep' ? this.$t('apps.add_cmds') : '添加菜单命令'
+    },
   },
   methods: {
     /**
-     * 获取命令的唯一键
+     * 获取命令的唯一键（用于 draggable）
+     */
+    getItemKey(command) {
+      if (this.type === 'menu' && command.id) {
+        return `menu-${command.id}`
+      }
+      // 如果没有 id，使用索引和内容生成唯一键
+      const index = this.localCommands.indexOf(command)
+      const content = this.type === 'menu' 
+        ? `${command.name || ''}-${command.cmd || ''}` 
+        : `${command.do || ''}-${command.undo || ''}`
+      return `${this.type}-${index}-${content}`
+    },
+
+    /**
+     * 获取命令的唯一键（用于 v-for）
      */
     getCommandKey(command, index) {
       if (this.type === 'menu' && command.id) {
-        return `menu-${command.id}`;
+        return `menu-${command.id}`
       }
-      return `${this.type}-${index}`;
+      return `${this.type}-${index}`
     },
-    
+
     /**
      * 添加命令
      */
     addCommand() {
-      this.$emit('add-command');
+      this.$emit('add-command')
     },
-    
+
     /**
      * 移除命令
      */
     removeCommand(index) {
-      this.$emit('remove-command', index);
+      this.$emit('remove-command', index)
     },
 
     /**
      * 测试菜单命令
      */
     testCommand(index) {
-      this.$emit('test-command', index);
-    }
-  }
-};
+      this.$emit('test-command', index)
+    },
+
+    /**
+     * 拖拽结束处理
+     */
+    onDragEnd() {
+      // 通知父组件顺序已改变
+      this.$emit('order-changed', this.localCommands)
+    },
+  },
+}
 </script>
 
 <style scoped>
@@ -302,6 +347,47 @@ export default {
   justify-content: center;
 }
 
+/* 拖拽手柄样式 */
+.drag-handle-cell {
+  width: 40px;
+  padding: 0.5rem !important;
+  text-align: center;
+  cursor: move;
+  user-select: none;
+}
+
+.drag-handle {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 1rem;
+  transition: color 0.3s ease;
+  display: inline-block;
+  padding: 0.25rem;
+}
+
+.drag-handle:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* 拖拽状态样式 */
+.command-row-ghost {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.command-row-chosen {
+  background: rgba(255, 255, 255, 0.15);
+  z-index: 1000;
+  position: relative;
+}
+
+.command-row-drag {
+  opacity: 0.95;
+  transform: rotate(2deg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  z-index: 1001;
+  position: relative;
+}
+
 /* 动画效果 */
 @keyframes fadeIn {
   from {
@@ -320,26 +406,26 @@ export default {
     padding: 1rem;
     margin-top: 0.5rem;
   }
-  
+
   .table th,
   .table td {
     padding: 0.5rem;
     font-size: 0.8rem;
   }
-  
+
   .form-control-sm {
     font-size: 0.8rem;
     padding: 0.25rem 0.5rem;
   }
-  
+
   .btn-sm {
     padding: 0.25rem 0.5rem;
     font-size: 0.8rem;
   }
-  
+
   .add-command-btn {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
   }
 }
-</style> 
+</style>
