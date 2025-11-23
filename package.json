@@ -18,7 +18,7 @@
     "nanoid": "^5.0.7",
     "vue": "3.5.18",
     "vue-i18n": "11.1.11",
-    "vuedraggable": "^4.1.0"
+    "vuedraggable-es": "^4.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

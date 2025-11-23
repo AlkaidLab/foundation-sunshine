@@ -287,7 +287,6 @@
 <script>
 import { validateField, validateAppForm } from '../utils/validation.js';
 import { nanoid } from 'nanoid';
-import { Modal } from 'bootstrap';
 import CommandTable from './CommandTable.vue';
 import DetachedCommands from './DetachedCommands.vue';
 import ImageSelector from './ImageSelector.vue';
@@ -378,8 +377,12 @@ export default {
       }
 
       try {
-        // 使用全局的 bootstrap 对象
-        this.modalInstance = new Modal(this.$refs.modalElement, {
+        // 使用全局的 bootstrap 对象（已在 init.js 中导入并设置到 window.bootstrap）
+        if (!window.bootstrap?.Modal) {
+          console.warn('Bootstrap Modal not available')
+          return
+        }
+        this.modalInstance = new window.bootstrap.Modal(this.$refs.modalElement, {
           backdrop: 'static',
           keyboard: false
         });
