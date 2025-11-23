@@ -7,11 +7,13 @@ Sunshine 包含一个现代化的 Web 控制界面，基于 Vue 3 和 Compositio
 ## 🛠️ 技术栈
 
 - **前端框架**: Vue 3 + Composition API
-- **构建工具**: Vite
+- **构建工具**: Vite 5.4+ (支持 Rolldown)
+- **打包器**: Rolldown (实验性，更快)
 - **UI 组件**: Bootstrap 5
 - **图标库**: FontAwesome 6
 - **国际化**: Vue-i18n 11 (Composition API 模式)
 - **拖拽功能**: Vuedraggable 4
+- **模块系统**: ES Modules (`"type": "module"`)
 
 > **注意**: 本文档已更新以反映最新的项目结构优化。所有页面已重构为使用 Composition API 和模块化架构。
 
@@ -43,7 +45,12 @@ npm run build-clean
 
 # 预览生产构建
 npm run preview
+
+# 自动构建并预览生产版本（推荐）
+npm run preview:build
 ```
+
+> **注意**: 项目已配置为使用 Rolldown（Vite 5.1+ 的实验性打包器）以获得更快的构建速度。所有构建命令默认启用 Rolldown。
 
 ### 3. 开发服务器特性
 
@@ -499,7 +506,14 @@ initFirebase()
 // 使用
 trackEvents.pageView('page_name')
 trackEvents.userAction('action_name', { data })
+trackEvents.gpuReported({ platform: 'windows', adapters: [...] })
 ```
+
+**可用事件**:
+- `pageView(pageName)` - 页面访问
+- `userAction(actionName, data)` - 用户操作
+- `errorOccurred(errorType, message)` - 错误发生
+- `gpuReported(gpuInfo)` - 显卡信息上报（24小时内仅上报一次）
 
 ## 🎨 样式指南
 
@@ -537,6 +551,8 @@ trackEvents.userAction('action_name', { data })
 - **生产配置**: `vite.config.js` - 生产构建配置
 - **EJS模板**: 支持HTML模板预处理
 - **路径别名**: 配置了Vue和Bootstrap的路径别名
+- **Rolldown支持**: 使用 Rolldown 作为实验性打包器（更快）
+- **ESM模式**: 项目使用 ES 模块（`"type": "module"`）
 
 ### 代理配置
 
@@ -544,6 +560,29 @@ trackEvents.userAction('action_name', { data })
 - `/api/*` → `https://localhost:47990` (Sunshine API)
 - `/steam-api/*` → Steam API服务
 - `/steam-store/*` → Steam商店服务
+
+### 预览模式
+
+预览模式用于测试生产构建，但需要注意：
+
+1. **API 不可用**: 预览模式下没有后端 API 服务器
+2. **错误处理**: 代码已优化，在预览模式下会优雅降级
+3. **使用场景**: 主要用于验证构建产物和静态资源
+
+```bash
+# 构建并预览
+npm run preview:build
+
+# 或分步执行
+npm run build
+npm run preview
+```
+
+访问地址：`http://localhost:3000`
+
+### 代码分包策略
+
+> **注意**: 手动分包 (`manualChunks`) 当前已禁用，因为可能导致 Bootstrap 和 Popper.js 的依赖关系问题，影响下拉菜单等功能的正常工作。Vite 会自动进行代码分割优化。
 
 ## 🌍 国际化支持
 
@@ -573,6 +612,8 @@ trackEvents.userAction('action_name', { data })
 - 使用 Vue DevTools 进行组件调试
 
 ## 📦 构建和部署
+
+### 构建命令
 
 ```bash
 # 生产构建
@@ -727,3 +768,18 @@ import { trackEvents } from '../config/firebase.js'
 - ✅ 配置文件统一管理
 - ✅ Vue I18n 迁移到 Composition API 模式
 - ✅ 简化所有 HTML 入口文件
+- ✅ 升级 Vite 到 5.4+ 并支持 Rolldown
+- ✅ 修复 CJS Node API 弃用警告（添加 `"type": "module"`）
+- ✅ 添加生产环境预览功能
+- ✅ 优化预览模式下的 API 错误处理
+- ✅ 添加 GPU 信息上报功能（Firebase Analytics）
+- ✅ 改进国际化配置的错误处理
+- ✅ 跨平台环境变量支持（使用 `cross-env`）
+
+### 技术改进
+
+- **构建系统**: 升级到 Vite 5.4+，支持 Rolldown 实验性打包器
+- **模块系统**: 迁移到 ES 模块（`"type": "module"`）
+- **错误处理**: 改进预览模式下的 API 错误处理
+- **性能优化**: 使用 Rolldown 加速构建过程
+- **开发体验**: 改进预览功能，支持一键构建并预览

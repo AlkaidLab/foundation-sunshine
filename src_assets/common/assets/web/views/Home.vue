@@ -177,8 +177,13 @@ onMounted(async () => {
       document.title += ` Ver ${version.value.version}`
     }
   } catch (e) {
-    console.error('Failed to initialize:', e)
-    trackEvents.errorOccurred('home_initialization', e.message)
+    // 在预览模式下，API 不可用是正常的，只记录警告
+    if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) {
+      console.warn('API not available in preview mode:', e.message)
+    } else {
+      console.error('Failed to initialize:', e)
+      trackEvents.errorOccurred('home_initialization', e.message)
+    }
   }
 })
 </script>

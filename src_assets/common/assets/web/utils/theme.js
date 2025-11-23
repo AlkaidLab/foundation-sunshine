@@ -55,17 +55,38 @@ export const showActiveTheme = (theme, focus = false) => {
   }
 }
 
+// 单例标志，确保全局事件监听器只添加一次
+let isAutoThemeInitialized = false
+let mediaQueryHandler = null
+let domContentLoadedHandler = null
+
 export function loadAutoTheme() {
+  // 设置主题
   setTheme(getPreferredTheme())
 
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  // 只在第一次调用时添加全局事件监听器
+  if (!isAutoThemeInitialized) {
+    // 处理系统主题变化
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    mediaQueryHandler = () => {
     const storedTheme = getStoredTheme()
     if (storedTheme !== 'light' && storedTheme !== 'dark') {
       setTheme(getPreferredTheme())
     }
-  })
+    }
+    mediaQuery.addEventListener('change', mediaQueryHandler)
 
-  window.addEventListener('DOMContentLoaded', () => {
+    // 处理 DOMContentLoaded 事件（如果文档已经加载完成，则立即执行）
+    domContentLoadedHandler = () => {
     showActiveTheme(getPreferredTheme())
-  })
+    }
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', domContentLoadedHandler)
+    } else {
+      // 文档已经加载完成，直接执行
+      domContentLoadedHandler()
+    }
+
+    isAutoThemeInitialized = true
+  }
 }

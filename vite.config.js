@@ -1,4 +1,3 @@
-import { fileURLToPath, URL } from 'node:url'
 import fs from 'fs'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
@@ -29,7 +28,7 @@ if (process.env.SUNSHINE_BUILD_HOMEBREW) {
   }
 }
 
-let header = fs.readFileSync(resolve(assetsSrcPath, 'template_header.html'))
+const header = fs.readFileSync(resolve(assetsSrcPath, 'template_header.html'))
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -40,6 +39,11 @@ export default defineConfig({
   },
   plugins: [vue(), ViteEjsPlugin({ header })],
   root: resolve(assetsSrcPath),
+  preview: {
+    port: 3000,
+    host: '0.0.0.0',
+    open: false,
+  },
   build: {
     outDir: resolve(assetsDstPath),
     emptyOutDir: true,
@@ -55,39 +59,39 @@ export default defineConfig({
         welcome: resolve(assetsSrcPath, 'welcome.html'),
       },
       output: {
-        manualChunks: {
-          // 将Vue相关库分离到单独的chunk
-          'vue-vendor': ['vue', 'vue-i18n'],
-          // 将Bootstrap和FontAwesome分离
-          'ui-vendor': ['bootstrap', '@fortawesome/fontawesome-free', '@popperjs/core'],
-          // 将其他第三方库分离
-          'utils-vendor': ['marked', 'nanoid', 'vuedraggable'],
-        },
         // 优化chunk命名
-        chunkFileNames: (chunkInfo) => {
-          const facadeModuleId = chunkInfo.facadeModuleId
-          if (facadeModuleId) {
-            const fileName = facadeModuleId.split('/').pop().replace(/\.[^/.]+$/, '')
-            return `assets/${fileName}-[hash].js`
-          }
-          return 'assets/[name]-[hash].js'
-        },
+        chunkFileNames: 'assets/[name]-[hash].js',
+        // 优化入口文件命名
+        entryFileNames: 'assets/[name]-[hash].js',
         // 优化资源文件命名
         assetFileNames: (assetInfo) => {
-          const info = assetInfo.name.split('.')
-          const ext = info[info.length - 1]
-          if (/\.(css)$/.test(assetInfo.name)) {
-            return `assets/[name]-[hash].${ext}`
+          const name = assetInfo.name || ''
+          const ext = name.split('.').pop()
+          
+          if (/\.(css)$/.test(name)) {
+            return 'assets/[name]-[hash].[ext]'
           }
-          if (/\.(woff2?|eot|ttf|otf)$/.test(assetInfo.name)) {
-            return `assets/fonts/[name]-[hash].${ext}`
+          if (/\.(woff2?|eot|ttf|otf)$/.test(name)) {
+            return 'assets/fonts/[name]-[hash].[ext]'
           }
-          if (/\.(png|jpe?g|gif|svg|webp|avif)$/.test(assetInfo.name)) {
-            return `assets/images/[name]-[hash].${ext}`
+          if (/\.(png|jpe?g|gif|svg|webp|avif)$/.test(name)) {
+            return 'assets/images/[name]-[hash].[ext]'
           }
-          return `assets/[name]-[hash].${ext}`
+          return 'assets/[name]-[hash].[ext]'
         },
       },
     },
+    // 启用CSS代码分割
+    cssCodeSplit: true,
+    // 启用源码映射（生产环境可选）
+    sourcemap: false,
+    // 优化依赖预构建
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
+  },
+  // 优化依赖预构建
+  optimizeDeps: {
+    include: ['vue', 'vue-i18n', 'bootstrap', '@popperjs/core', 'marked', 'nanoid', 'vuedraggable'],
   },
 })
