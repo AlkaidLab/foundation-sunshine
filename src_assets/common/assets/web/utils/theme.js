@@ -1,5 +1,5 @@
 const getStoredTheme = () => localStorage.getItem('theme')
-const setStoredTheme = (theme) => localStorage.setItem('theme', theme)
+export const setStoredTheme = (theme) => localStorage.setItem('theme', theme)
 
 export const getPreferredTheme = () => {
   const storedTheme = getStoredTheme()
@@ -10,7 +10,7 @@ export const getPreferredTheme = () => {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-const setTheme = (theme) => {
+export const setTheme = (theme) => {
   if (theme === 'auto') {
     document.documentElement.setAttribute(
       'data-bs-theme',
@@ -53,35 +53,6 @@ export const showActiveTheme = (theme, focus = false) => {
   if (focus) {
     themeSwitcher.focus()
   }
-}
-
-let themeToggleHandlers = new Map()
-
-export function setupThemeToggleListener() {
-  themeToggleHandlers.forEach((handler, element) => {
-    element.removeEventListener('click', handler)
-  })
-  themeToggleHandlers.clear()
-
-  document.querySelectorAll('[data-bs-theme-value]').forEach((toggle) => {
-    const handler = () => {
-      const theme = toggle.getAttribute('data-bs-theme-value')
-      setStoredTheme(theme)
-      setTheme(theme)
-      showActiveTheme(theme, true)
-    }
-    toggle.addEventListener('click', handler)
-    themeToggleHandlers.set(toggle, handler)
-  })
-
-  showActiveTheme(getPreferredTheme(), false)
-}
-
-export function removeThemeToggleListener() {
-  themeToggleHandlers.forEach((handler, element) => {
-    element.removeEventListener('click', handler)
-  })
-  themeToggleHandlers.clear()
 }
 
 export function loadAutoTheme() {

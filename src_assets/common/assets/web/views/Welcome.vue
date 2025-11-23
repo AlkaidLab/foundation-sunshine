@@ -15,7 +15,7 @@
           <div class="card-body">
             <header class="text-center mb-4">
               <h1 class="mb-3">
-                <img src="./images/logo-sunshine-45.png" height="45" alt="" />
+                <img src="/images/logo-sunshine-45.png" height="45" alt="" />
                 {{ $t('welcome.greeting') }}
               </h1>
               <p class="lead text-muted">{{ $t('welcome.create_creds') }}</p>

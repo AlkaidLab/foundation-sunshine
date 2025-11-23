@@ -1,8 +1,18 @@
 <script setup>
-import { useTheme } from '../../composables/useTheme.js'
+import { onMounted } from 'vue'
+import { loadAutoTheme, setStoredTheme, setTheme, showActiveTheme, getPreferredTheme } from '../../utils/theme.js'
 
-// 使用主题组合式函数
-useTheme()
+// 处理主题切换
+const handleThemeChange = (theme) => {
+  setStoredTheme(theme)
+  setTheme(theme)
+  showActiveTheme(theme, true)
+}
+
+onMounted(() => {
+  loadAutoTheme()
+  showActiveTheme(getPreferredTheme(), false)
+})
 </script>
 
 <template>
@@ -27,6 +37,7 @@ useTheme()
           class="dropdown-item d-flex align-items-center"
           data-bs-theme-value="light"
           aria-pressed="false"
+          @click="handleThemeChange('light')"
         >
           <i class="bi me-2 theme-icon fas fa-fw fa-solid fa-sun"></i>
           {{ $t('navbar.theme_light') }}
@@ -38,6 +49,7 @@ useTheme()
           class="dropdown-item d-flex align-items-center"
           data-bs-theme-value="dark"
           aria-pressed="false"
+          @click="handleThemeChange('dark')"
         >
           <i class="bi me-2 theme-icon fas fa-fw fa-solid fa-moon"></i>
           {{ $t('navbar.theme_dark') }}
@@ -49,6 +61,7 @@ useTheme()
           class="dropdown-item d-flex align-items-center active"
           data-bs-theme-value="auto"
           aria-pressed="true"
+          @click="handleThemeChange('auto')"
         >
           <i class="bi me-2 theme-icon fas fa-fw fa-solid fa-circle-half-stroke"></i>
           {{ $t('navbar.theme_auto') }}
