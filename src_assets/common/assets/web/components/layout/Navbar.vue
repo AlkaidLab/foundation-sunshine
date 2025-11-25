@@ -136,9 +136,11 @@ body {
 
 [data-bs-theme='light'] {
   --bs-body-bg: rgba(255, 255, 255, 0.3);
+  --bs-dropdown-bg: rgba(255, 255, 255, 0.7);
 }
 [data-bs-theme='dark'] {
   --bs-body-bg: rgba(0, 0, 0, 0.65);
+  --bs-dropdown-bg: rgba(0, 0, 0, 0.7);
 }
 .dragover {
   outline: 4px dashed #ffc400;

@@ -141,7 +141,7 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
+<style>
 .config-page {
   padding: 1em;
   border: 1px solid transparent;

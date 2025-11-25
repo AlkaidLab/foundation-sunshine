@@ -10,7 +10,7 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
-const display_mode_remapping = ref(props.display_mode_remapping)
+const display_mode_remapping = ref(props.display_mode_remapping || [])
 
 // TODO: Sample for use in PR #2032
 function getRemappingType() {
@@ -178,7 +178,7 @@ function addRemapping(type) {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(c, i) in display_mode_remapping">
+                      <tr v-for="(c, i) in display_mode_remapping" :key="i">
                         <template v-if="c.type === '' && c.type === getRemappingType()">
                           <td>
                             <input type="text" class="form-control monospace" v-model="c.received_resolution"
