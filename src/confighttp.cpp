@@ -1098,12 +1098,18 @@ namespace confighttp {
     print_req(request);
 
     // 限制只允许 localhost 访问（增强安全性）
-    auto client_ip = request->remote_endpoint().address();
-    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+    auto client_address = request->remote_endpoint().address();
+    auto address = net::addr_to_normalized_string(client_address);
+    auto ip_type = net::from_address(address);
+    
+    if (ip_type != net::PC) {
+      std::ostringstream msg_stream;
+      msg_stream << "Access denied when getting runtime sessions. Only localhost requests are allowed. Client IP: " << client_address.to_string();
+      BOOST_LOG(warning) << msg_stream.str();
       json error_json;
       error_json["success"] = false;
       error_json["status_code"] = 403;
-      error_json["status_message"] = "Access denied. Only localhost requests are allowed.";
+      error_json["status_message"] = msg_stream.str();
       
       response->write(error_json.dump());
       response->close_connection_after_response = true;
@@ -1121,7 +1127,7 @@ namespace confighttp {
       response_json["total_sessions"] = sessions_info.size();
       
       json sessions_array = json::array();
-      
+
       for (const auto &session_info : sessions_info) {
         json session_obj;
         session_obj["client_name"] = session_info.client_name;
@@ -1148,13 +1154,24 @@ namespace confighttp {
       response->write(response_json.dump());
       response->close_connection_after_response = true;
     }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "GetRuntimeSessions: "sv << e.what();
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getRuntimeSessions: " << e.what();
       
       json error_json;
       error_json["success"] = false;
       error_json["status_code"] = 500;
-      error_json["status_message"] = e.what();
+      error_json["status_message"] = std::string(e.what());
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
+      
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 500;
+      error_json["status_message"] = "Unknown error";
       
       response->write(error_json.dump());
       response->close_connection_after_response = true;
@@ -1168,12 +1185,18 @@ namespace confighttp {
     print_req(request);
 
     // 限制只允许 localhost 访问
-    auto client_ip = request->remote_endpoint().address();
-    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+    auto client_address = request->remote_endpoint().address();
+    auto address = net::addr_to_normalized_string(client_address);
+    auto ip_type = net::from_address(address);
+    
+    if (ip_type != net::PC) {
+      std::ostringstream msg_stream;
+      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
+      BOOST_LOG(warning) << msg_stream.str();
       json error_json;
       error_json["success"] = false;
       error_json["status_code"] = 403;
-      error_json["status_message"] = "Access denied. Only localhost requests are allowed.";
+      error_json["status_message"] = msg_stream.str();
       
       response->write(error_json.dump());
       response->close_connection_after_response = true;
@@ -1187,46 +1210,74 @@ namespace confighttp {
 
       // 验证参数
       if (bitrate_param == args.end()) {
+        std::ostringstream msg_stream;
+        msg_stream << "Missing bitrate parameter when changing bitrate";
+        BOOST_LOG(warning) << msg_stream.str();
         json error_json;
         error_json["success"] = false;
         error_json["status_code"] = 400;
-        error_json["status_message"] = "Missing bitrate parameter";
+        error_json["status_message"] = msg_stream.str();
         response->write(error_json.dump());
         response->close_connection_after_response = true;
         return;
       }
 
       if (clientname_param == args.end()) {
+        std::ostringstream msg_stream;
+        msg_stream << "Missing clientname parameter when changing bitrate";
+        BOOST_LOG(warning) << msg_stream.str();
         json error_json;
         error_json["success"] = false;
         error_json["status_code"] = 400;
-        error_json["status_message"] = "Missing clientname parameter";
+        error_json["status_message"] = msg_stream.str();
         response->write(error_json.dump());
         response->close_connection_after_response = true;
         return;
       }
 
-      int bitrate = std::stoi(bitrate_param->second);
+      // 安全地解析码率参数
+      int bitrate = 0;
+      try {
+        bitrate = std::stoi(bitrate_param->second);
+      }
+      catch (...) {
+        json error_json;
+        error_json["success"] = false;
+        error_json["status_code"] = 400;
+        error_json["status_message"] = "Invalid bitrate parameter format";
+        response->write(error_json.dump());
+        response->close_connection_after_response = true;
+        return;
+      }
+
       std::string client_name = clientname_param->second;
 
       // 验证码率范围
       if (bitrate <= 0 || bitrate > 800000) {
+        std::ostringstream msg_stream;
+        msg_stream << "Invalid bitrate value when changing bitrate. Must be between 1 and 800000 Kbps";
+        BOOST_LOG(warning) << msg_stream.str();
         json error_json;
         error_json["success"] = false;
         error_json["status_code"] = 400;
-        error_json["status_message"] = "Invalid bitrate value. Must be between 1 and 800000 Kbps";
+        error_json["status_message"] = msg_stream.str();
         response->write(error_json.dump());
         response->close_connection_after_response = true;
         return;
       }
 
       // 获取所有活动会话以便调试
-      auto sessions_info = stream::session::get_all_sessions_info();
       std::vector<std::string> available_clients;
-      for (const auto &session_info : sessions_info) {
-        if (session_info.state == "RUNNING") {
-          available_clients.push_back(session_info.client_name);
+      try {
+        auto sessions_info = stream::session::get_all_sessions_info();
+        for (const auto &session_info : sessions_info) {
+          if (session_info.state == "RUNNING") {
+            available_clients.push_back(session_info.client_name);
+          }
         }
+      }
+      catch (...) {
+        // 继续执行，即使获取会话信息失败，仍然尝试修改码率
       }
       
       BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name 
@@ -1271,13 +1322,24 @@ namespace confighttp {
       response->write(response_json.dump());
       response->close_connection_after_response = true;
     }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "ChangeRuntimeBitrate: "sv << e.what();
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "changeRuntimeBitrate: " << e.what();
       
       json error_json;
       error_json["success"] = false;
       error_json["status_code"] = 500;
-      error_json["status_message"] = e.what();
+      error_json["status_message"] = std::string(e.what());
+      
+      response->write(error_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (...) {
+      BOOST_LOG(error) << "changeRuntimeBitrate: Unknown exception";
+      
+      json error_json;
+      error_json["success"] = false;
+      error_json["status_code"] = 500;
+      error_json["status_message"] = "Unknown error";
       
       response->write(error_json.dump());
       response->close_connection_after_response = true;
@@ -1303,7 +1365,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam API代理请求: " << targetUrl;
+    BOOST_LOG(info) << "Steam API proxy request: " << targetUrl;
 
     // 使用http模块下载数据
     std::string tempFile = platf::appdata().string() + "/temp_steam_api_" + std::to_string(std::time(nullptr));
@@ -1326,12 +1388,12 @@ namespace confighttp {
         // 清理临时文件
         std::remove(tempFile.c_str());
       } else {
-        BOOST_LOG(error) << "Steam API请求失败: " << targetUrl;
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API请求失败");
+        BOOST_LOG(error) << "Steam API request failed: " << targetUrl;
+        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API request failed");
       }
     } catch (const std::exception& e) {
-      BOOST_LOG(error) << "Steam API代理异常: " << e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API代理异常");
+      BOOST_LOG(error) << "Steam API proxy exception: " << e.what();
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API proxy exception");
       
       // 清理临时文件
       std::remove(tempFile.c_str());
@@ -1357,7 +1419,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam Store代理请求: " << targetUrl;
+    BOOST_LOG(info) << "Steam Store proxy request: " << targetUrl;
 
     // 使用http模块下载数据
     std::string tempFile = platf::appdata().string() + "/temp_steam_store_" + std::to_string(std::time(nullptr));
@@ -1380,12 +1442,12 @@ namespace confighttp {
         // 清理临时文件
         std::remove(tempFile.c_str());
       } else {
-        BOOST_LOG(error) << "Steam Store请求失败: " << targetUrl;
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store请求失败");
+        BOOST_LOG(error) << "Steam Store request failed: " << targetUrl;
+        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store request failed");
       }
     } catch (const std::exception& e) {
-      BOOST_LOG(error) << "Steam Store代理异常: " << e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store代理异常");
+      BOOST_LOG(error) << "Steam Store proxy exception: " << e.what();
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store proxy exception");
       
       // 清理临时文件
       std::remove(tempFile.c_str());

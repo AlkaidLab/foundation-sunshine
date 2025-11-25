@@ -7,6 +7,7 @@
 
 // standard includes
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -1155,14 +1156,18 @@ namespace nvhttp {
   getSessionsInfo(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    // 检查是否为localhost请求
-    auto client_ip = request->remote_endpoint().address();
-    if (!client_ip.is_loopback() && client_ip.to_string() != "127.0.0.1" && client_ip.to_string() != "::1") {
+    // 限制只允许 localhost 访问
+    auto client_address = request->remote_endpoint().address();
+    auto address = net::addr_to_normalized_string(client_address);
+    auto ip_type = net::from_address(address);
+    if (ip_type != net::PC) {
       json response_json;
       response_json["success"] = false;
       response_json["status_code"] = 403;
-      response_json["status_message"] = "Access denied. Only localhost requests are allowed.";
-      
+      std::ostringstream msg_stream;
+      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
+      response_json["status_message"] = msg_stream.str();
+
       response->write(response_json.dump());
       response->close_connection_after_response = true;
       return;

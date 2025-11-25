@@ -88,6 +88,14 @@ namespace audio {
   get_audio_ctx_ref();
 
   /**
+   * @brief Check if there are any active references to the audio context without creating a new one.
+   * @returns True if there are active references, false otherwise.
+   * @note This function does not trigger the audio context construction, unlike get_audio_ctx_ref().
+   */
+  bool
+  has_audio_ctx_ref();
+
+  /**
    * @brief Check if the audio sink held by audio context is available.
    * @returns True if available (and can probably be restored), false otherwise.
    * @note Useful for delaying the release of audio context shared pointer (which

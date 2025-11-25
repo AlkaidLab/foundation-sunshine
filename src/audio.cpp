@@ -130,6 +130,7 @@ namespace audio {
   void capture(safe::mail_t mail, config_t config, void *channel_data) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     if (!config::audio.stream) {
+      BOOST_LOG(info) << "Audio streaming is disabled in configuration";
       shutdown_event->view();
       return;
     }
@@ -138,10 +139,13 @@ namespace audio {
       apply_surround_params(stream, config.customStreamParams);
     }
 
+    BOOST_LOG(debug) << "Audio capture: acquiring context reference";
     auto ref = get_audio_ctx_ref();
     if (!ref) {
+      BOOST_LOG(error) << "Audio capture: failed to get context reference";
       return;
     }
+    BOOST_LOG(debug) << "Audio capture: context reference acquired successfully";
 
     auto init_failure_fg = util::fail_guard([&shutdown_event]() {
       BOOST_LOG(error) << "Unable to initialize audio capture. The stream will not have audio."sv;
@@ -153,6 +157,7 @@ namespace audio {
 
     auto &control = ref->control;
     if (!control) {
+      BOOST_LOG(error) << "Audio capture: control is null";
       return;
     }
 
@@ -195,11 +200,13 @@ namespace audio {
     auto frame_size = config.packetDuration * stream.sampleRate / 1000;
     auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size);
     if (!mic) {
+      BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
     }
 
     // Audio is initialized, so we don't want to print the failure message
     init_failure_fg.disable();
+    BOOST_LOG(info) << "Audio capture initialized successfully, entering sampling loop";
 
     // Capture takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::critical);
@@ -242,11 +249,22 @@ namespace audio {
 
       samples->raise(std::move(sample_buffer));
     }
+    
+    BOOST_LOG(info) << "Audio capture sampling loop ended (shutdown requested)";
+  }
+
+  // 确保唯一实例
+  namespace {
+    auto control_shared = safe::make_shared<audio_ctx_t>(start_audio_control, stop_audio_control);
   }
 
   audio_ctx_ref_t get_audio_ctx_ref() {
-    static auto control_shared {safe::make_shared<audio_ctx_t>(start_audio_control, stop_audio_control)};
     return control_shared.ref();
+  }
+
+  // 检查音频上下文是否有活动的引用，不触发构造
+  bool has_audio_ctx_ref() {
+    return control_shared.has_ref();
   }
 
   bool is_audio_ctx_sink_available(const audio_ctx_t &ctx) {
@@ -308,6 +326,12 @@ namespace audio {
       return;
     }
 
+    // 检查 control 是否存在，如果不存在则无法恢复 sink
+    if (!ctx.control) {
+      BOOST_LOG(debug) << "Audio control not available, skipping sink restoration";
+      return;
+    }
+
     // Change back to the host sink, unless there was none
     const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
     if (!sink.empty()) {
@@ -324,6 +348,13 @@ namespace audio {
   }
 
   int init_mic_redirect_device() {
+    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
+    // 如果没有活动的引用，说明音频上下文没有启动，不应该初始化麦克风设备
+    if (!has_audio_ctx_ref()) {
+      BOOST_LOG(debug) << "Audio context not active, skipping microphone device initialization";
+      return -1;
+    }
+    
     auto ref = get_audio_ctx_ref();
     if (!ref || !ref->control) {
       BOOST_LOG(error) << "Audio context not available for microphone data writing";
@@ -333,18 +364,34 @@ namespace audio {
   }
 
   void release_mic_redirect_device() {
+    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
+    // 如果没有活动的引用，说明音频上下文没有启动，不需要释放
+    if (!has_audio_ctx_ref()) {
+      BOOST_LOG(debug) << "Audio context not active, skipping microphone device release";
+      return;
+    }
+    
     auto ref = get_audio_ctx_ref();
     if (!ref || !ref->control) {
-      BOOST_LOG(error) << "Audio context not available for microphone data writing";
+      BOOST_LOG(warning) << "Audio context not available for microphone device release";
       return;
     }
     ref->control->release_mic_redirect_device();
   }
 
   int write_mic_data(const std::uint8_t *data, size_t size) {
+    // 先检查是否有活动引用，避免不必要地触发 start_audio_control
+    // 如果音频捕获线程正在运行，它会持有引用，这里会返回 true
+    if (!has_audio_ctx_ref()) {
+      BOOST_LOG(debug) << "Audio context not active, skipping microphone data write";
+      // 注意：这不是错误，而是正常情况
+      // 可能音频捕获还没有启动，或者已经停止
+      return -1;
+    }
+    
     auto ref = get_audio_ctx_ref();
     if (!ref || !ref->control) {
-      BOOST_LOG(error) << "Audio context not available for microphone data writing";
+      BOOST_LOG(warning) << "Audio context reference invalid for microphone data writing";
       return -1;
     }
 

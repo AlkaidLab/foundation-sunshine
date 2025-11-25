@@ -524,7 +524,7 @@ namespace stream {
   void
   end_broadcast(broadcast_ctx_t &ctx);
 
-  static auto broadcast = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
+  static auto broadcast_shared = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
 
   session_t *
   control_server_t::get_session(const net::peer_t peer, uint32_t connect_data) {
@@ -1377,10 +1377,17 @@ namespace stream {
         // 检查麦克风socket状态
         if (ctx.mic_socket_enabled.load()) {
           // 延迟初始化麦克风重定向设备，直到确认需要时才初始化
+          // 如果音频上下文还没有启动，会失败，需要重试
           if (!mic_device_initialized) {
             BOOST_LOG(debug) << "Initializing microphone redirect device";
-            audio::init_mic_redirect_device();
-            mic_device_initialized = true;
+            if (audio::init_mic_redirect_device() == 0) {
+              mic_device_initialized = true;
+            }
+            else {
+              // 初始化失败（可能是音频上下文还没有启动），等待一段时间后重试
+              BOOST_LOG(debug) << "Microphone device initialization failed, will retry later";
+              std::this_thread::sleep_for(100ms);
+            }
           }
 
           // 启动麦克风接收
@@ -2081,7 +2088,7 @@ namespace stream {
   }
 
   int
-  recv_ping(session_t *session, decltype(broadcast)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
+  recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
     av_session_id_t session_id = std::string { expected_payload };
 
@@ -2144,7 +2151,7 @@ namespace stream {
 
     while_starting_do_nothing(session->state);
 
-    auto ref = broadcast.ref();
+    auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
     if (error < 0) {
       return;
@@ -2167,7 +2174,7 @@ namespace stream {
 
     while_starting_do_nothing(session->state);
 
-    auto ref = broadcast.ref();
+    auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::audio, session->audio.ping_payload, session->audio.peer, config::stream.ping_timeout);
     if (error < 0) {
       return;
@@ -2277,7 +2284,7 @@ namespace stream {
     start(session_t &session, const std::string &addr_string) {
       session.input = input::alloc(session.mail);
 
-      session.broadcast_ref = broadcast.ref();
+      session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
         return -1;
       }
@@ -2429,9 +2436,9 @@ namespace stream {
 
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
-      auto broadcast_ref = broadcast.ref();
+      auto broadcast_ref = broadcast_shared.ref();
       if (!broadcast_ref) {
-        BOOST_LOG(warning) << "No broadcast context available";
+        BOOST_LOG(warning) << "No broadcast context available when changing dynamic parameter for client";
         return false;
       }
 
@@ -2462,72 +2469,100 @@ namespace stream {
     get_all_sessions_info() {
       std::vector<session_info_t> sessions_info;
 
-      auto broadcast_ref = broadcast.ref();
-      if (!broadcast_ref) {
-        BOOST_LOG(warning) << "No broadcast context available";
+      // 关键修复：先检查是否有活动的引用，避免触发 start_broadcast
+      // 如果没有活动的引用，说明没有活动的 session，直接返回空列表
+      if (!broadcast_shared.has_ref()) {
         return sessions_info;
       }
 
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) {
+        BOOST_LOG(warning) << "No broadcast context when getting all sessions info";
+        return sessions_info;
+      }
+
+      // 在持有锁的情况下，快速复制会话的基本信息
+      // 由于存储的是原始指针，我们需要在持有锁时快速访问
       auto lg = broadcast_ref->control_server._sessions.lock();
       for (auto session_p : *broadcast_ref->control_server._sessions) {
-        session_info_t info;
-
-        info.client_name = session_p->client_name;
-        info.session_id = session_p->launch_session_id;
-
-        // Get client address
-        if (session_p->control.peer) {
-          auto peer_addr = platf::from_sockaddr((sockaddr *) &session_p->control.peer->address.address);
-          info.client_address = peer_addr;
-        }
-        else {
-          info.client_address = session_p->control.expected_peer_address;
+        // 双重检查：确保会话指针仍然有效
+        if (!session_p) {
+          continue;
         }
 
-        // Get session state
+        try {
+          session_info_t info;
+
+          info.client_name = session_p->client_name;
+          info.session_id = session_p->launch_session_id;
+
+          // Get client address
+          if (session_p->control.peer) {
+            try {
+              info.client_address = platf::from_sockaddr((sockaddr *) &session_p->control.peer->address.address);
+            }
+            catch (...) {
+              info.client_address = session_p->control.expected_peer_address;
+            }
+          }
+          else {
+            info.client_address = session_p->control.expected_peer_address;
+          }
+
+          // Get session state
         auto state = session_p->state.load(std::memory_order_relaxed);
         switch (state) {
-          case state_e::STOPPED:
-            info.state = "STOPPED";
-            break;
-          case state_e::STOPPING:
-            info.state = "STOPPING";
-            break;
-          case state_e::STARTING:
-            info.state = "STARTING";
-            break;
-          case state_e::RUNNING:
-            info.state = "RUNNING";
-            break;
-          default:
-            info.state = "UNKNOWN";
-            break;
-        }
+            case state_e::STOPPED:
+              info.state = "STOPPED";
+              break;
+            case state_e::STOPPING:
+              info.state = "STOPPING";
+              break;
+            case state_e::STARTING:
+              info.state = "STARTING";
+              break;
+            case state_e::RUNNING:
+              info.state = "RUNNING";
+              break;
+            default:
+              info.state = "UNKNOWN";
+              break;
+          }
 
-        // Get video configuration
-        info.width = session_p->config.monitor.width;
-        info.height = session_p->config.monitor.height;
-        info.fps = session_p->config.monitor.framerate;
-        
+          // Get video configuration
+          info.width = session_p->config.monitor.width;
+          info.height = session_p->config.monitor.height;
+          info.fps = session_p->config.monitor.framerate;
+
         // Get current total bitrate (including FEC) from session-specific field
         // This is the user-configured bitrate, which may have been changed dynamically
-        info.bitrate = session_p->current_total_bitrate.load(std::memory_order_relaxed);
+          info.bitrate = session_p->current_total_bitrate.load(std::memory_order_relaxed);
 
-        // Get audio and other settings
-        info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
-        info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
-        info.enable_mic = session_p->audio.enable_mic;
+          // Get audio and other settings
+          info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
+          info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
+          info.enable_mic = session_p->audio.enable_mic;
 
-        // Get app information
-        info.app_id = proc::proc.running();
-        if (info.app_id > 0) {
-          info.app_name = proc::proc.get_last_run_app_name();
+          // Get app information
+          try {
+            info.app_id = proc::proc.running();
+            info.app_name = (info.app_id > 0) ? proc::proc.get_last_run_app_name() : "None";
+          }
+          catch (...) {
+            info.app_id = 0;
+            info.app_name = "None";
+          }
+
+          sessions_info.push_back(info);
         }
-        else {
-          info.app_name = "None";
+        catch (const std::exception &e) {
+          BOOST_LOG(warning) << "Error processing session: " << e.what() << " when getting all sessions info";
+          continue;
         }
-
-        sessions_info.push_back(info);
+        catch (...) {
+          BOOST_LOG(warning) << "Unknown error processing session when getting all sessions info";
+          continue;
+        }
       }
 
       return sessions_info;

@@ -27,6 +27,7 @@
 #include "webhook_httpsclient.h"
 #include "webhook.h"
 #include "webhook_format.h"
+#include "network.h"
 
 using namespace std::literals;
 
@@ -86,11 +87,15 @@ namespace webhook {
       
       for (auto it = results.begin(); it != results.end(); ++it) {
         boost::asio::ip::tcp::endpoint ep = *it;
-        if (!ep.address().is_loopback()) {
-          if (ep.address().is_v4() && ipv4_address.empty()) {
-            ipv4_address = ep.address().to_string();
-          } else if (ep.address().is_v6() && ipv6_address.empty()) {
-            ipv6_address = ep.address().to_string();
+        auto address = ep.address();
+        if (!address.is_loopback()) {
+          auto normalized_address = net::normalize_address(address);
+          auto address_str = normalized_address.to_string();
+          
+          if (normalized_address.is_v4() && ipv4_address.empty()) {
+            ipv4_address = address_str;
+          } else if (normalized_address.is_v6() && ipv6_address.empty()) {
+            ipv6_address = address_str;
           }
         }
       }

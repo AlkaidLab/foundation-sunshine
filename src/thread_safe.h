@@ -465,6 +465,16 @@ namespace safe {
       return ptr_t { this };
     }
 
+    /**
+     * @brief Check if there are any active references without creating a new one.
+     * @return true if there are active references, false otherwise.
+     */
+    [[nodiscard]] bool
+    has_ref() {
+      std::lock_guard lg { _lock };
+      return _count > 0;
+    }
+
   private:
     construct_f _construct;
     destruct_f _destruct;
