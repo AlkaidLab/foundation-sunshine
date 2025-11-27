@@ -2,7 +2,7 @@
   <div class="setup-container">
     <div class="setup-card">
       <div class="setup-header">
-        <img src="/images/logo-sunshine-45.png" height="60" alt="Sunshine">
+        <img src="/images/logo-sunshine-256.png" height="60" alt="Sunshine">
         <h1>{{ $t('setup.welcome') }}</h1>
         <p>{{ $t('setup.description') }}</p>
       </div>

@@ -13,20 +13,21 @@ set(CPACK_NSIS_INSTALLED_ICON_NAME "${PROJECT__DIR}\\\\${PROJECT_EXE}")
 # 自动卸载功能
 set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL "ON")
 
-# Windows Restart Manager 支持
+# Windows Restart Manager 支持和高DPI位图优化
 set(CPACK_NSIS_EXTRA_DEFINES "
 \${CPACK_NSIS_EXTRA_DEFINES}
 !define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
+ManifestDPIAware true
 ")
 
 # Basic installer configuration
 set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
 set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
 
-# 启用自定义欢迎页面图像
-# 使用 welcome.bmp 作为欢迎和完成页面图像
-# set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")
-# set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")
+# 设置DPI感知
+set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
+set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
+set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
 
 # 头部图像（需要150x57像素）
 # set(CPACK_NSIS_MUI_HEADERIMAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")

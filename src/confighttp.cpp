@@ -279,7 +279,7 @@ namespace confighttp {
 
   void
   getSunshineLogoImage(resp_https_t response, req_https_t request) {
-    getStaticResource(response, request, WEB_DIR "images/logo-sunshine-45.png", "image/png");
+    getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
   }
 
   void
@@ -1710,7 +1710,7 @@ namespace confighttp {
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
-    server.resource["^/images/logo-sunshine-45.png$"]["GET"] = getSunshineLogoImage;
+    server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
