@@ -455,7 +455,7 @@ namespace stream {
     safe::signal_t controlEnd;
 
     std::atomic<session::state_e> state;
-    
+
     // Current total bitrate for this session (including FEC overhead) in Kbps
     // This is the user-configured bitrate, not the encoding bitrate
     std::atomic<int> current_total_bitrate { 0 };
@@ -1277,142 +1277,90 @@ namespace stream {
 
     udp::endpoint peer;
     std::array<char, 2048> buffer;
+    bool mic_device_initialized = false;
 
-    // 麦克风接收处理函数
+    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size) {
+      if (!ctx.mic_socket_enabled.load()) {
+        return;
+      }
+
+      if (int result = audio::write_mic_data(audio_data, data_size); result < 0) {
+        BOOST_LOG(debug) << "Failed to write microphone data (audio context may not be active)";
+      }
+    };
+
     std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
     mic_recv_func = [&](const boost::system::error_code &ec, size_t bytes) {
-      // 检查麦克风socket是否仍然启用
       if (!ctx.mic_socket_enabled.load()) {
-        BOOST_LOG(debug) << "Microphone socket disabled, stopping receive";
         return;
       }
 
       auto fg = util::fail_guard([&]() {
-        try {
-          // 再次检查麦克风socket是否仍然启用
-          if (!ctx.mic_socket_enabled.load()) {
-            BOOST_LOG(debug) << "Microphone socket disabled, not restarting receive";
-            return;
-          }
-
+        if (ctx.mic_socket_enabled.load()) {
           ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to restart mic async receive: " << e.what();
         }
       });
 
-      BOOST_LOG(verbose) << "Mic Recv: "sv << peer.address().to_string() << ':' << peer.port();
-
-      if (ec == boost::system::errc::connection_refused ||
-          ec == boost::system::errc::connection_reset) {
-        return;
-      }
       if (ec) {
-        BOOST_LOG(error) << "Couldn't receive data from mic socket: "sv << ec.message();
+        if (ec != boost::system::errc::connection_refused &&
+            ec != boost::system::errc::connection_reset) {
+          BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
+        }
         return;
       }
 
-      // 处理麦克风数据
-      try {
-        if (bytes < sizeof(RTP_PACKET)) {
+      if (bytes < sizeof(RTP_PACKET)) {
+        return;
+      }
+
+      // 尝试16位扩展包类型
+      if (bytes >= sizeof(rtp_packet_ext_t)) {
+        auto *header_ext = (rtp_packet_ext_t *) buffer.data();
+        if (header_ext->packetType == packetTypes[IDX_MIC_DATA]) {
+          size_t header_size = sizeof(rtp_packet_ext_t);
+          if (bytes > header_size) {
+            process_audio_data(reinterpret_cast<const uint8_t *>(buffer.data()) + header_size, bytes - header_size);
+          }
           return;
         }
-
-        auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size) {
-          if (!ctx.mic_socket_enabled.load()) {
-            BOOST_LOG(debug) << "Microphone socket disabled, skipping data processing";
-            return;
-          }
-
-          if (int result = audio::write_mic_data(audio_data, data_size); result < 0) {
-            BOOST_LOG(error) << "Failed to write microphone data to stream";
-          }
-          else {
-            BOOST_LOG(debug) << "Successfully wrote " << result << " bytes to microphone stream";
-          }
-        };
-
-        // 首先尝试作为扩展的16位包类型处理
-        if (bytes >= sizeof(rtp_packet_ext_t)) {
-          auto *header_ext = (rtp_packet_ext_t *) buffer.data();
-          BOOST_LOG(debug) << "Received mic packet (16-bit) with type: 0x" << std::hex << header_ext->packetType;
-
-          if (header_ext->packetType == packetTypes[IDX_MIC_DATA]) {
-            size_t header_size = sizeof(rtp_packet_ext_t);
-            if (bytes > header_size) {
-              const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
-              process_audio_data(audio_data, bytes - header_size);
-            }
-            return;
-          }
-        }
-
-        // 回退到8位包类型处理
-        auto *header = (mic_packet_t *) buffer.data();
-        BOOST_LOG(debug) << "Received mic packet (8-bit) with type: 0x" << std::hex << (int) header->rtp.packetType;
-
-        if (header->rtp.packetType == MIC_PACKET_TYPE_OPUS) {
-          size_t header_size = sizeof(mic_packet_t);
-          if (bytes > header_size) {
-            const auto *audio_data = reinterpret_cast<const uint8_t *>(buffer.data()) + header_size;
-            process_audio_data(audio_data, bytes - header_size);
-          }
-        }
-        else {
-          BOOST_LOG(warning) << "Unknown microphone packet type: 0x" << std::hex << (int) header->rtp.packetType;
-        }
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(error) << "Error processing mic packet: " << e.what();
+
+      // 8位包类型
+      auto *header = (mic_packet_t *) buffer.data();
+      if (header->rtp.packetType == MIC_PACKET_TYPE_OPUS) {
+        size_t header_size = sizeof(mic_packet_t);
+        if (bytes > header_size) {
+          process_audio_data(reinterpret_cast<const uint8_t *>(buffer.data()) + header_size, bytes - header_size);
+        }
       }
     };
 
-    try {
-      BOOST_LOG(debug) << "Starting microphone receive thread";
+    BOOST_LOG(debug) << "Starting microphone receive thread";
 
-      bool mic_device_initialized = false;
-
-      while (!broadcast_shutdown_event->peek()) {
-        // 检查麦克风socket状态
-        if (ctx.mic_socket_enabled.load()) {
-          // 延迟初始化麦克风重定向设备，直到确认需要时才初始化
-          // 如果音频上下文还没有启动，会失败，需要重试
-          if (!mic_device_initialized) {
-            BOOST_LOG(debug) << "Initializing microphone redirect device";
-            if (audio::init_mic_redirect_device() == 0) {
-              mic_device_initialized = true;
-            }
-            else {
-              // 初始化失败（可能是音频上下文还没有启动），等待一段时间后重试
-              BOOST_LOG(debug) << "Microphone device initialization failed, will retry later";
-              std::this_thread::sleep_for(100ms);
-            }
-          }
-
-          // 启动麦克风接收
-          ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
-
-          // 运行IO循环直到麦克风socket被禁用或关闭
-          while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
-            io.run();
-          }
-
-          BOOST_LOG(debug) << "Microphone receive stopped";
-        }
-        else {
-          // 麦克风socket未启用，等待一段时间后再次检查
-          std::this_thread::sleep_for(100ms);
-        }
+    while (!broadcast_shutdown_event->peek()) {
+      if (!ctx.mic_socket_enabled.load()) {
+        std::this_thread::sleep_for(100ms);
+        continue;
       }
 
-      // 只有在设备被初始化过的情况下才释放
-      if (mic_device_initialized) {
-        audio::release_mic_redirect_device();
+      // 延迟初始化麦克风设备
+      if (!mic_device_initialized) {
+        if (audio::init_mic_redirect_device() != 0) {
+          std::this_thread::sleep_for(100ms);
+          continue;
+        }
+        mic_device_initialized = true;
+      }
+
+      ctx.mic_sock.async_receive_from(asio::buffer(buffer), peer, 0, mic_recv_func);
+
+      while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
+        io.run();
       }
     }
-    catch (const std::exception &e) {
-      BOOST_LOG(fatal) << "micRecvThread exception: " << e.what();
+
+    if (mic_device_initialized) {
+      audio::release_mic_redirect_device();
     }
 
     BOOST_LOG(debug) << "Microphone receive thread ended";
@@ -2357,7 +2305,7 @@ namespace stream {
       session->client_name = launch_session.client_name;
 
       session->config = config;
-      
+
       // Initialize current total bitrate (including FEC) from config
       // config.monitor.bitrate is the encoding bitrate (excluding FEC)
       // We need to convert it to total bitrate (including FEC)
@@ -2365,7 +2313,7 @@ namespace stream {
       int fec_percentage = config::stream.fec_percentage;
       if (fec_percentage > 0 && fec_percentage <= 80) {
         // Convert encoding bitrate to total bitrate: total = encoding * 100 / (100 - fec_percentage)
-        session->current_total_bitrate = (int)(encoding_bitrate * 100.f / (100 - fec_percentage));
+        session->current_total_bitrate = (int) (encoding_bitrate * 100.f / (100 - fec_percentage));
       }
       else {
         // If FEC percentage is 0 or > 80%, encoding bitrate equals total bitrate
@@ -2453,7 +2401,7 @@ namespace stream {
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
                             << "': " << param.value.int_value << " Kbps (including FEC)";
           }
-          
+
           session_p->video.dynamic_param_change_events->raise(param);
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
                           << "': type=" << (int) param.type;
@@ -2510,8 +2458,8 @@ namespace stream {
           }
 
           // Get session state
-        auto state = session_p->state.load(std::memory_order_relaxed);
-        switch (state) {
+          auto state = session_p->state.load(std::memory_order_relaxed);
+          switch (state) {
             case state_e::STOPPED:
               info.state = "STOPPED";
               break;
@@ -2534,8 +2482,8 @@ namespace stream {
           info.height = session_p->config.monitor.height;
           info.fps = session_p->config.monitor.framerate;
 
-        // Get current total bitrate (including FEC) from session-specific field
-        // This is the user-configured bitrate, which may have been changed dynamically
+          // Get current total bitrate (including FEC) from session-specific field
+          // This is the user-configured bitrate, which may have been changed dynamically
           info.bitrate = session_p->current_total_bitrate.load(std::memory_order_relaxed);
 
           // Get audio and other settings
