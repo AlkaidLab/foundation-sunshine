@@ -314,6 +314,88 @@ namespace display_device {
     }
 
     bool
+    ensure_vdd_extended_mode(const std::string &device_id) {
+      if (device_id.empty()) {
+        return false;
+      }
+
+      // 获取当前拓扑
+      auto current_topology = get_current_topology();
+      if (current_topology.empty()) {
+        BOOST_LOG(warning) << "无法获取当前显示器拓扑";
+        return false;
+      }
+
+      // 查找包含目标设备的拓扑组
+      bool is_duplicated = false;
+      std::size_t target_group_index = 0;
+
+      for (std::size_t i = 0; i < current_topology.size(); ++i) {
+        const auto &group = current_topology[i];
+        for (const auto &id : group) {
+          if (id == device_id) {
+            target_group_index = i;
+            // 如果组内有多个设备，说明是复制模式
+            is_duplicated = (group.size() > 1);
+            break;
+          }
+        }
+        if (is_duplicated) break;
+      }
+
+      if (!is_duplicated) {
+        BOOST_LOG(debug) << "VDD已经是扩展模式，无需更改";
+        return false;
+      }
+
+      BOOST_LOG(info) << "检测到VDD处于复制模式，正在切换到扩展模式...";
+
+      // 构建新拓扑：将目标设备从复制组中分离出来
+      active_topology_t new_topology;
+
+      for (std::size_t i = 0; i < current_topology.size(); ++i) {
+        const auto &group = current_topology[i];
+
+        if (i == target_group_index) {
+          // 处理包含目标设备的组
+          std::vector<std::string> other_devices;
+          for (const auto &id : group) {
+            if (id != device_id) {
+              other_devices.push_back(id);
+            }
+          }
+
+          // 如果还有其他设备，保留它们作为一个组
+          if (!other_devices.empty()) {
+            new_topology.push_back(other_devices);
+          }
+
+          // 将目标设备作为独立的扩展显示器
+          new_topology.push_back({ device_id });
+        }
+        else {
+          // 保持其他组不变
+          new_topology.push_back(group);
+        }
+      }
+
+      // 应用新拓扑
+      if (!is_topology_valid(new_topology)) {
+        BOOST_LOG(error) << "生成的新拓扑无效";
+        return false;
+      }
+
+      if (set_topology(new_topology)) {
+        BOOST_LOG(info) << "成功将VDD切换到扩展模式";
+        return true;
+      }
+      else {
+        BOOST_LOG(error) << "切换VDD到扩展模式失败";
+        return false;
+      }
+    }
+
+    bool
     set_hdr_state(bool enable_hdr) {
       try {
         // 获取虚拟显示器的设备ID

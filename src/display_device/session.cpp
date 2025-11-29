@@ -319,7 +319,12 @@ namespace display_device {
       config.device_id = device_zako;
       config::video.output_name = device_zako;
       BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
-      
+
+      // 检查VDD是否处于复制模式，如果是则改为扩展模式
+      if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
+        BOOST_LOG(info) << "已将VDD从复制模式切换到扩展模式";
+      }
+
       // 创建VDD后关闭虚拟显示器的HDR状态
       vdd_utils::set_hdr_state(false);
     }

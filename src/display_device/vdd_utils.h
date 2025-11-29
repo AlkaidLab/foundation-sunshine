@@ -82,6 +82,10 @@ namespace display_device {
     bool
     set_hdr_state(bool enable_hdr);
 
+    // 确保VDD处于扩展模式
+    bool
+    ensure_vdd_extended_mode(const std::string &device_id);
+
     // 重试配置结构
     struct RetryConfig {
       int max_attempts;
