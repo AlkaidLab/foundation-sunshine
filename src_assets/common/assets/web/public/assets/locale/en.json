@@ -483,6 +483,8 @@
   },
   "resource_card": {
     "github_discussions": "GitHub Discussions",
+    "gpl_license_text_1": "This software is licensed under GPL-3.0. You are free to use, modify, and distribute it.",
+    "gpl_license_text_2": "To protect the open source ecosystem, please avoid using software that violates the GPL-3.0 license.",
     "legal": "Legal",
     "legal_desc": "By continuing to use this software you agree to the terms and conditions in the following documents.",
     "license": "License",

@@ -1,141 +1,198 @@
 <template>
   <div>
     <Navbar />
-    <div class="container">
-      <h1 class="my-4">{{ $t('troubleshooting.troubleshooting') }}</h1>
-      
-      <!-- Force Close App -->
-      <div class="card p-2 my-4">
-        <div class="card-body">
-          <h2 id="close_apps">{{ $t('troubleshooting.force_close') }}</h2>
-          <br>
-          <p>{{ $t('troubleshooting.force_close_desc') }}</p>
-          <div class="alert alert-success" v-if="closeAppStatus === true">
-            {{ $t('troubleshooting.force_close_success') }}
-          </div>
-          <div class="alert alert-danger" v-if="closeAppStatus === false">
-            {{ $t('troubleshooting.force_close_error') }}
-          </div>
-          <div>
-            <button class="btn btn-warning" :disabled="closeAppPressed" @click="closeApp">
-              {{ $t('troubleshooting.force_close') }}
-            </button>
-          </div>
-        </div>
+    <div class="container py-4">
+      <div class="page-header mb-4">
+        <h1 class="page-title">
+          <i class="fas fa-tools me-3"></i>
+          {{ $t('troubleshooting.troubleshooting') }}
+        </h1>
       </div>
-      
-      <!-- Restart Sunshine -->
-      <div class="card p-2 my-4">
-        <div class="card-body">
-          <h2 id="restart">{{ $t('troubleshooting.restart_sunshine') }}</h2>
-          <br>
-          <p>{{ $t('troubleshooting.restart_sunshine_desc') }}</p>
-          <div class="alert alert-success" v-if="restartPressed === true">
-            {{ $t('troubleshooting.restart_sunshine_success') }}
-          </div>
-          <div>
-            <button class="btn btn-warning" :disabled="restartPressed" @click="restart">
-              {{ $t('troubleshooting.restart_sunshine') }}
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Boom Sunshine -->
-      <div class="card p-2 my-4">
-        <div class="card-body">
-          <h2 id="boom">{{ $t('troubleshooting.boom_sunshine') }}</h2>
-          <br>
-          <p>{{ $t('troubleshooting.boom_sunshine_desc') }}</p>
-          <div class="alert alert-success" v-if="boomPressed === true">
-            {{ $t('troubleshooting.boom_sunshine_success') }}
-          </div>
-          <div>
-            <button class="btn btn-warning" :disabled="boomPressed" @click="confirmBoom">
-              {{ $t('troubleshooting.boom_sunshine') }}
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Reset persistent display device settings -->
-      <div class="card p-2 my-4" v-if="platform === 'windows'">
-        <div class="card-body">
-          <h2 id="reset_display_device">{{ $t('troubleshooting.reset_display_device_windows') }}</h2>
-          <br>
-          <p style="white-space: pre-line">{{ $t('troubleshooting.reset_display_device_desc_windows') }}</p>
-          <div class="alert alert-success" v-if="resetDisplayDeviceStatus === true">
-            {{ $t('troubleshooting.reset_display_device_success_windows') }}
-          </div>
-          <div class="alert alert-danger" v-if="resetDisplayDeviceStatus === false">
-            {{ $t('troubleshooting.reset_display_device_error_windows') }}
-          </div>
-          <div>
-            <button class="btn btn-warning" :disabled="resetDisplayDevicePressed" @click="resetDisplayDevicePersistence">
-              {{ $t('troubleshooting.reset_display_device_windows') }}
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Reopen Setup Wizard -->
-      <div class="card p-2 my-4">
-        <div class="card-body">
-          <h2 id="reopen_setup_wizard">{{ $t('troubleshooting.reopen_setup_wizard') }}</h2>
-          <br>
-          <p>{{ $t('troubleshooting.reopen_setup_wizard_desc') }}</p>
-          <div>
-            <button class="btn btn-warning" @click="handleReopenSetupWizard">
-              <i class="fas fa-redo me-2"></i>
-              {{ $t('troubleshooting.reopen_setup_wizard') }}
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Logs -->
-      <div class="card p-2 my-4">
-        <div class="card-body">
-          <h2 id="logs">{{ $t('troubleshooting.logs') }}</h2>
-          <br>
-          <div>
-            <button class="btn btn-primary" @click="handleCopyConfig">{{ $t('troubleshooting.copy_config') }}</button>
-          </div>
-          <div class="d-flex justify-content-between align-items-baseline py-2">
-            <p>{{ $t('troubleshooting.logs_desc') }}</p>
-            <input 
-              type="text" 
-              class="form-control" 
-              v-model="logFilter" 
-              :placeholder="$t('troubleshooting.logs_find')" 
-              style="width: 300px"
-            >
-          </div>
-          <div>
-            <div class="troubleshooting-logs">
-              <button class="copy-icon" @click="copyLogs">
-                <i class="fas fa-copy"></i>
+
+      <div class="row">
+        <!-- Left Column -->
+        <div class="col-lg-6">
+          <!-- Force Close App -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-warning bg-opacity-10 border-bottom-0">
+              <h5 class="card-title mb-0">
+                <i class="fas fa-times-circle text-warning me-2"></i>
+                {{ $t('troubleshooting.force_close') }}
+              </h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted mb-3">{{ $t('troubleshooting.force_close_desc') }}</p>
+              <div class="alert alert-success d-flex align-items-center" v-if="closeAppStatus === true">
+                <i class="fas fa-check-circle me-2"></i>
+                {{ $t('troubleshooting.force_close_success') }}
+              </div>
+              <div class="alert alert-danger d-flex align-items-center" v-if="closeAppStatus === false">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                {{ $t('troubleshooting.force_close_error') }}
+              </div>
+              <button class="btn btn-warning" :disabled="closeAppPressed" @click="closeApp">
+                <i class="fas fa-times me-2"></i>
+                {{ $t('troubleshooting.force_close') }}
               </button>
-              {{ actualLogs }}
+            </div>
+          </div>
+
+          <!-- Restart Sunshine -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-info bg-opacity-10 border-bottom-0">
+              <h5 class="card-title mb-0">
+                <i class="fas fa-sync-alt text-info me-2"></i>
+                {{ $t('troubleshooting.restart_sunshine') }}
+              </h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted mb-3">{{ $t('troubleshooting.restart_sunshine_desc') }}</p>
+              <div class="alert alert-success d-flex align-items-center" v-if="restartPressed === true">
+                <i class="fas fa-check-circle me-2"></i>
+                {{ $t('troubleshooting.restart_sunshine_success') }}
+              </div>
+              <button class="btn btn-info text-white" :disabled="restartPressed" @click="restart">
+                <i class="fas fa-redo me-2"></i>
+                {{ $t('troubleshooting.restart_sunshine') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Boom Sunshine -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-danger bg-opacity-10 border-bottom-0">
+              <h5 class="card-title mb-0">
+                <i class="fas fa-bomb text-danger me-2"></i>
+                {{ $t('troubleshooting.boom_sunshine') }}
+              </h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted mb-3">{{ $t('troubleshooting.boom_sunshine_desc') }}</p>
+              <div class="alert alert-success d-flex align-items-center" v-if="boomPressed === true">
+                <i class="fas fa-check-circle me-2"></i>
+                {{ $t('troubleshooting.boom_sunshine_success') }}
+              </div>
+              <button class="btn btn-danger" :disabled="boomPressed" @click="confirmBoom">
+                <i class="fas fa-bomb me-2"></i>
+                {{ $t('troubleshooting.boom_sunshine') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="col-lg-6">
+          <!-- Reset persistent display device settings -->
+          <div class="card shadow-sm mb-4" v-if="platform === 'windows'">
+            <div class="card-header bg-secondary bg-opacity-10 border-bottom-0">
+              <h5 class="card-title mb-0">
+                <i class="fas fa-desktop text-secondary me-2"></i>
+                {{ $t('troubleshooting.reset_display_device_windows') }}
+              </h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted mb-3" style="white-space: pre-line">
+                {{ $t('troubleshooting.reset_display_device_desc_windows') }}
+              </p>
+              <div class="alert alert-success d-flex align-items-center" v-if="resetDisplayDeviceStatus === true">
+                <i class="fas fa-check-circle me-2"></i>
+                {{ $t('troubleshooting.reset_display_device_success_windows') }}
+              </div>
+              <div class="alert alert-danger d-flex align-items-center" v-if="resetDisplayDeviceStatus === false">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                {{ $t('troubleshooting.reset_display_device_error_windows') }}
+              </div>
+              <button
+                class="btn btn-secondary"
+                :disabled="resetDisplayDevicePressed"
+                @click="resetDisplayDevicePersistence"
+              >
+                <i class="fas fa-undo me-2"></i>
+                {{ $t('troubleshooting.reset_display_device_windows') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Reopen Setup Wizard -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary bg-opacity-10 border-bottom-0">
+              <h5 class="card-title mb-0">
+                <i class="fas fa-magic text-primary me-2"></i>
+                {{ $t('troubleshooting.reopen_setup_wizard') }}
+              </h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted mb-3">{{ $t('troubleshooting.reopen_setup_wizard_desc') }}</p>
+              <button class="btn btn-primary" @click="handleReopenSetupWizard">
+                <i class="fas fa-redo me-2"></i>
+                {{ $t('troubleshooting.reopen_setup_wizard') }}
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- Logs Section - Full Width -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark bg-opacity-10 border-bottom-0">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h5 class="card-title mb-0">
+              <i class="fas fa-file-alt text-dark me-2"></i>
+              {{ $t('troubleshooting.logs') }}
+            </h5>
+            <div class="d-flex align-items-center gap-2">
+              <div class="input-group" style="width: 280px">
+                <span class="input-group-text bg-white">
+                  <i class="fas fa-search text-muted"></i>
+                </span>
+                <input
+                  type="text"
+                  class="form-control"
+                  v-model="logFilter"
+                  :placeholder="$t('troubleshooting.logs_find')"
+                />
+              </div>
+              <button class="btn btn-outline-primary" @click="handleCopyConfig">
+                <i class="fas fa-cog me-1"></i>
+                {{ $t('troubleshooting.copy_config') }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="text-muted mb-3">{{ $t('troubleshooting.logs_desc') }}</p>
+          <div class="logs-container">
+            <button class="copy-btn" @click="copyLogs" title="Copy logs">
+              <i class="fas fa-copy"></i>
+            </button>
+            <pre class="logs-content">{{ actualLogs }}</pre>
+          </div>
+        </div>
+      </div>
     </div>
-    
+
     <!-- Confirmation Boom Sunshine Modal -->
-    <div id="boomModal" class="modal">
-      <div class="modal-content">
+    <div id="boomModal" class="modal-overlay">
+      <div class="modal-dialog">
         <div class="modal-header">
-          <h5>{{ $t('troubleshooting.confirm_boom') }}</h5>
-          <span class="close" @click="closeModal">&times;</span>
+          <h5 class="modal-title">
+            <i class="fas fa-exclamation-triangle text-danger me-2"></i>
+            {{ $t('troubleshooting.confirm_boom') }}
+          </h5>
+          <button type="button" class="btn-close" @click="closeModal"></button>
         </div>
         <div class="modal-body">
           <p>{{ $t('troubleshooting.confirm_boom_desc') }}</p>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" @click="closeModal">{{ $t('_common.cancel') }}</button>
-          <button type="button" class="btn btn-danger" @click="boom">{{ $t('troubleshooting.boom_sunshine') }}</button>
+          <button type="button" class="btn btn-secondary" @click="closeModal">
+            <i class="fas fa-times me-1"></i>
+            {{ $t('_common.cancel') }}
+          </button>
+          <button type="button" class="btn btn-danger" @click="boom">
+            <i class="fas fa-bomb me-1"></i>
+            {{ $t('troubleshooting.boom_sunshine') }}
+          </button>
         </div>
       </div>
     </div>
@@ -190,119 +247,228 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.troubleshooting-logs {
-  white-space: pre;
-  font-family: monospace;
-  overflow: auto;
-  max-height: 500px;
-  min-height: 500px;
-  font-size: 16px;
-  position: relative;
+.page-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 0.5rem;
 }
 
-.copy-icon {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 8px;
-  cursor: pointer;
-  color: rgba(0, 0, 0, 1);
-  appearance: none;
+.card {
   border: none;
-  background: none;
+  border-radius: 12px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.copy-icon:hover {
-  color: rgba(0, 0, 0, 0.75);
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1) !important;
 }
 
-.copy-icon:active {
-  color: rgba(0, 0, 0, 1);
+.card-header {
+  border-radius: 12px 12px 0 0 !important;
+  padding: 1rem 1.25rem;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.card-body {
+  padding: 1.25rem;
+}
+
+.card-body p {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.btn {
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.alert {
+  border-radius: 8px;
+  font-size: 0.9rem;
+  padding: 0.75rem 1rem;
+}
+
+.logs-container {
+  position: relative;
+  background: #1e1e1e;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.logs-content {
+  margin: 0;
+  padding: 1.25rem;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #d4d4d4;
+  overflow: auto;
+  max-height: 450px;
+  min-height: 300px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.copy-btn:active {
+  transform: scale(0.95);
 }
 
 /* Modal styles */
-.modal {
+.modal-overlay {
   position: fixed;
-  z-index: 1;
+  z-index: 1050;
   left: 0;
   top: 0;
   width: 100%;
   height: 100%;
   overflow: auto;
   background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
+  backdrop-filter: blur(4px);
+  display: none;
   align-items: center;
   justify-content: center;
-  display: none;
 }
 
-.modal.show {
+.modal-overlay.show {
   display: flex;
 }
 
-.modal-content {
-  background-color: #ffffff !important;
+.modal-dialog {
+  background-color: #ffffff;
   margin: auto;
-  padding: 20px;
-  border: 1px solid #ddd;
-  max-height: 500px;
-  max-width: 500px;
-  width: 70% !important;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  position: relative;
+  padding: 0;
+  border: none;
+  max-width: 450px;
+  width: 90%;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: modalSlideIn 0.3s ease;
 }
 
-.modal-header {
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-dialog .modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #e9ecef;
+  border-radius: 16px 16px 0 0;
 }
 
-.modal-header h5 {
+.modal-title {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 800;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #2c3e50;
 }
 
-.close {
-  color: #aaa;
-  font-size: 24px;
-  font-weight: bold;
+.btn-close {
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
   cursor: pointer;
-  line-height: 1;
-  padding: 0 2px;
-  position: absolute;
-  right: 12px;
-  top: 8px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
 }
 
-.close:hover,
-.close:focus {
-  color: black;
-  text-decoration: none;
-  cursor: pointer;
+.btn-close:hover {
+  opacity: 1;
 }
 
-.modal-body {
-  margin: 8px 0;
+.modal-dialog .modal-body {
+  padding: 1.5rem;
   font-size: 0.95rem;
-  line-height: 1.4;
+  line-height: 1.6;
+  color: #495057;
 }
 
-.modal-footer {
+.modal-dialog .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid #eee;
+  gap: 12px;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e9ecef;
+  border-radius: 0 0 16px 16px;
 }
 
-.modal-footer button {
-  padding: 4px 12px;
-  font-size: 0.9rem;
+.input-group-text {
+  border-right: none;
+}
+
+.input-group .form-control {
+  border-left: none;
+}
+
+.input-group .form-control:focus {
+  border-color: #ced4da;
+  box-shadow: none;
+}
+
+.input-group:focus-within {
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+  border-radius: 0.375rem;
+}
+
+.input-group:focus-within .input-group-text,
+.input-group:focus-within .form-control {
+  border-color: #86b7fe;
+}
+
+@media (max-width: 991.98px) {
+  .page-title {
+    font-size: 1.5rem;
+  }
+
+  .card-header .d-flex {
+    flex-direction: column;
+    align-items: flex-start !important;
+  }
+
+  .card-header .input-group {
+    width: 100% !important;
+    margin-top: 0.5rem;
+  }
 }
 </style>
-

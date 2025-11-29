@@ -1,9 +1,9 @@
 <template>
   <div>
     <Navbar v-if="!showSetupWizard" />
-    
+
     <!-- 首次设置向导 -->
-    <SetupWizard 
+    <SetupWizard
       v-if="showSetupWizard"
       :adapters="adapters"
       :display-devices="displayDevices"
@@ -13,12 +13,16 @@
 
     <!-- 正常首页内容 -->
     <div v-if="!showSetupWizard" id="content" class="container">
-      <h1 class="my-4">{{ $t('index.welcome') }}</h1>
+      <div class="page-header mb-4">
+        <h1 class="page-title">
+          {{ $t('index.welcome') }}
+        </h1>
+      </div>
       <p>{{ $t('index.description') }}</p>
-      
+
       <!-- 错误日志 -->
       <ErrorLogs :fatal-logs="fatalLogs" />
-      
+
       <!-- 版本信息 -->
       <VersionCard
         :version="version"
@@ -33,7 +37,7 @@
         :parsed-stable-body="parsedStableBody"
         :parsed-pre-release-body="parsedPreReleaseBody"
       />
-      
+
       <!-- 资源卡片 -->
       <div class="my-4">
         <ResourceCard />
@@ -70,19 +74,9 @@ const {
   fetchVersions,
 } = useVersion()
 
-const {
-  fatalLogs,
-  fetchLogs,
-} = useLogs()
+const { fatalLogs, fetchLogs } = useLogs()
 
-const {
-  showSetupWizard,
-  adapters,
-  displayDevices,
-  hasLocale,
-  checkSetupWizard,
-  onSetupComplete,
-} = useSetupWizard()
+const { showSetupWizard, adapters, displayDevices, hasLocale, checkSetupWizard, onSetupComplete } = useSetupWizard()
 
 // 上报显卡信息
 const reportGPUInfo = (config) => {
@@ -91,20 +85,20 @@ const reportGPUInfo = (config) => {
     const reportedKey = 'gpu_info_reported'
     const lastReported = localStorage.getItem(reportedKey)
     const now = Date.now()
-    
+
     // 如果 24 小时内已上报过，则跳过
-    if (lastReported && (now - parseInt(lastReported)) < 24 * 60 * 60 * 1000) {
+    if (lastReported && now - parseInt(lastReported) < 24 * 60 * 60 * 1000) {
       return
     }
-    
+
     // 获取显卡信息
     const adapters = config.adapters || []
     const platform = config.platform || 'unknown'
     const adapterName = config.adapter_name || ''
-    
+
     if (adapters.length > 0) {
       // 处理适配器数据格式（可能是对象数组或字符串数组）
-      const adapterNames = adapters.map(adapter => {
+      const adapterNames = adapters.map((adapter) => {
         if (typeof adapter === 'string') {
           return adapter
         } else if (adapter && adapter.name) {
@@ -113,7 +107,7 @@ const reportGPUInfo = (config) => {
           return String(adapter)
         }
       })
-      
+
       // 构建显卡信息
       const gpuInfo = {
         platform: platform,
@@ -122,13 +116,13 @@ const reportGPUInfo = (config) => {
         selected_adapter: adapterName || 'auto',
         has_selected_adapter: !!adapterName,
       }
-      
+
       // 上报到 Firebase
       trackEvents.gpuReported(gpuInfo)
-      
+
       // 记录上报时间
       localStorage.setItem(reportedKey, now.toString())
-      
+
       console.log('显卡信息已上报:', gpuInfo)
     } else {
       // 即使没有适配器也上报，用于统计
@@ -139,7 +133,7 @@ const reportGPUInfo = (config) => {
         selected_adapter: adapterName || 'none',
         has_selected_adapter: false,
       }
-      
+
       trackEvents.gpuReported(gpuInfo)
       localStorage.setItem(reportedKey, now.toString())
       console.log('显卡信息已上报（无适配器）:', gpuInfo)
@@ -157,21 +151,21 @@ onMounted(async () => {
 
   try {
     const config = await fetch('/api/config').then((r) => r.json())
-    
+
     // 上报显卡信息
     reportGPUInfo(config)
-    
+
     // 检查是否需要显示设置向导
     if (checkSetupWizard(config)) {
       return
     }
-    
+
     // 获取版本信息
     await fetchVersions(config)
-    
+
     // 获取日志
     await fetchLogs()
-    
+
     // 更新页面标题
     if (version.value) {
       document.title += ` Ver ${version.value.version}`
@@ -192,5 +186,12 @@ onMounted(async () => {
 .container {
   padding: 1rem;
 }
-</style>
 
+.page-title {
+  text-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15), 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+[data-bs-theme='dark'] .page-title {
+  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 0, 0, 0.3);
+}
+</style>

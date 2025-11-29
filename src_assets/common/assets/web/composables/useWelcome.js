@@ -14,25 +14,18 @@ export function useWelcome() {
     confirmNewPassword: '',
   })
 
-  // 密码是否匹配
-  const passwordsMatch = computed(() => {
-    if (!passwordData.newPassword || !passwordData.confirmNewPassword) {
-      return true
-    }
-    return passwordData.newPassword === passwordData.confirmNewPassword
-  })
+  const passwordsMatch = computed(
+    () =>
+      !passwordData.newPassword ||
+      !passwordData.confirmNewPassword ||
+      passwordData.newPassword === passwordData.confirmNewPassword
+  )
 
-  // 表单是否有效
-  const isFormValid = computed(() => {
-    return (
-      passwordData.newUsername &&
-      passwordData.newPassword &&
-      passwordData.confirmNewPassword &&
-      passwordsMatch.value
-    )
-  })
+  const isFormValid = computed(
+    () =>
+      passwordData.newUsername && passwordData.newPassword && passwordData.confirmNewPassword && passwordsMatch.value
+  )
 
-  // 保存密码
   const save = async () => {
     error.value = null
 
@@ -46,25 +39,19 @@ export function useWelcome() {
     try {
       const response = await fetch('/api/password', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(passwordData),
       })
 
-      if (response.status === 200) {
-        const result = await response.json()
+      const result = await response.json()
 
-        if (result.status?.toString() === 'true') {
-          success.value = true
-          setTimeout(() => {
-            window.location.href = '/'
-          }, 2000)
-        } else {
-          error.value = result.error || '未知错误'
-        }
+      if (response.ok && result.status?.toString() === 'true') {
+        success.value = true
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
       } else {
-        error.value = `服务器错误: ${response.status}`
+        error.value = result.error || `服务器错误: ${response.status}`
       }
     } catch (err) {
       console.error('保存密码失败:', err)
@@ -84,4 +71,3 @@ export function useWelcome() {
     save,
   }
 }
-

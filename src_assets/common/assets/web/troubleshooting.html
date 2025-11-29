@@ -1,19 +1,19 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="auto">
-<head>
-  <%- header %>
-</head>
+  <head>
+    <%- header %>
+  </head>
 
-<body id="app" v-cloak>
+  <body id="app" v-cloak>
     <!-- Vue 应用挂载点 -->
-</body>
+  </body>
 
-<script type="module">
-  import { createApp } from 'vue'
-  import { initApp } from './init'
+  <script type="module">
+    import { createApp } from 'vue'
+    import { initApp } from './init'
     import Troubleshooting from './views/Troubleshooting.vue'
 
     const app = createApp(Troubleshooting)
     initApp(app)
-</script>
+  </script>
 </html>

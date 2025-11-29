@@ -3,6 +3,29 @@ import { marked } from 'marked'
 import SunshineVersion from '../sunshine_version.js'
 import { trackEvents } from '../config/firebase.js'
 
+const GITHUB_API_BASE = 'https://api.github.com/repos/qiin2333/Sunshine/releases'
+
+/**
+ * 解析 Markdown 内容
+ */
+const parseMarkdown = (text) => {
+  if (!text) return ''
+  return marked(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'), { breaks: true, gfm: true })
+}
+
+/**
+ * 安全获取 GitHub 数据
+ */
+const fetchGitHub = async (url) => {
+  try {
+    const response = await fetch(url)
+    return await response.json()
+  } catch (e) {
+    console.error(`Failed to fetch ${url}:`, e)
+    return null
+  }
+}
+
 /**
  * 版本管理组合式函数
  */
@@ -14,53 +37,25 @@ export function useVersion() {
   const loading = ref(true)
 
   // 计算属性
-  const installedVersionNotStable = computed(() => {
-    if (!githubVersion.value || !version.value) {
-      return false
-    }
-    return version.value.isGreater(githubVersion.value)
-  })
+  const installedVersionNotStable = computed(() => 
+    githubVersion.value && version.value && version.value.isGreater(githubVersion.value)
+  )
 
-  const stableBuildAvailable = computed(() => {
-    if (!githubVersion.value || !version.value) {
-      return false
-    }
-    return githubVersion.value.isGreater(version.value)
-  })
+  const stableBuildAvailable = computed(() => 
+    githubVersion.value && version.value && githubVersion.value.isGreater(version.value)
+  )
 
-  const preReleaseBuildAvailable = computed(() => {
-    if (!preReleaseVersion.value || !githubVersion.value || !version.value) {
-      return false
-    }
-    return preReleaseVersion.value.isGreater(version.value)
-  })
+  const preReleaseBuildAvailable = computed(() => 
+    preReleaseVersion.value && version.value && preReleaseVersion.value.isGreater(version.value)
+  )
 
   const buildVersionIsDirty = computed(() => {
-    return version.value?.version?.split('.').length === 5 && 
-           version.value.version.indexOf('dirty') !== -1
+    const v = version.value?.version
+    return v?.split('.').length === 5 && v.includes('dirty')
   })
 
-  const parsedStableBody = computed(() => {
-    if (!githubVersion.value?.release?.body) return ''
-    const processedText = githubVersion.value.release.body
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-    return marked(processedText, {
-      breaks: true,
-      gfm: true,
-    })
-  })
-
-  const parsedPreReleaseBody = computed(() => {
-    if (!preReleaseVersion.value?.release?.body) return ''
-    const processedText = preReleaseVersion.value.release.body
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-    return marked(processedText, {
-      breaks: true,
-      gfm: true,
-    })
-  })
+  const parsedStableBody = computed(() => parseMarkdown(githubVersion.value?.release?.body))
+  const parsedPreReleaseBody = computed(() => parseMarkdown(preReleaseVersion.value?.release?.body))
 
   // 获取版本信息
   const fetchVersions = async (config) => {
@@ -68,31 +63,23 @@ export function useVersion() {
     try {
       notifyPreReleases.value = config.notify_pre_releases || false
       version.value = new SunshineVersion(null, config.version)
-      console.log('Version: ', version.value.version)
+      console.log('Version:', version.value.version)
 
-      // 获取最新稳定版
-      try {
-        const latestResponse = await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases/latest')
-        const latestData = await latestResponse.json()
+      // 并行获取 GitHub 版本信息
+      const [latestData, releases] = await Promise.all([
+        fetchGitHub(`${GITHUB_API_BASE}/latest`),
+        fetchGitHub(GITHUB_API_BASE)
+      ])
+
+      if (latestData) {
         githubVersion.value = new SunshineVersion(latestData, null)
-        console.log('GitHub Version: ', githubVersion.value.version)
-      } catch (e) {
-        console.error('Failed to fetch latest release:', e)
+        console.log('GitHub Version:', githubVersion.value.version)
       }
 
-      // 获取预发布版
-      try {
-        const releasesResponse = await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases')
-        const releases = await releasesResponse.json()
-        const preRelease = Array.isArray(releases) 
-          ? releases.find((release) => release.prerelease) 
-          : null
-        if (preRelease) {
-          preReleaseVersion.value = new SunshineVersion(preRelease, null)
-          console.log('Pre-Release Version: ', preReleaseVersion.value.version)
-        }
-      } catch (e) {
-        console.error('Failed to fetch pre-release:', e)
+      const preRelease = Array.isArray(releases) && releases.find((r) => r.prerelease)
+      if (preRelease) {
+        preReleaseVersion.value = new SunshineVersion(preRelease, null)
+        console.log('Pre-Release Version:', preReleaseVersion.value.version)
       }
 
       // 记录版本检查事件
@@ -122,4 +109,3 @@ export function useVersion() {
     fetchVersions,
   }
 }
-
