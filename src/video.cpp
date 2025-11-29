@@ -2011,9 +2011,18 @@ namespace video {
       }
     });
 
-    // set minimum frame time based on client-requested target framerate
-    std::chrono::duration<double, std::milli> minimum_frame_time { 2000.0 / config.framerate };
-    BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+    // set minimum frame time based on client-requested target framerate or minimum_fps_target
+    std::chrono::duration<double, std::milli> minimum_frame_time;
+    if (config::video.minimum_fps_target > 0) {
+      // Use minimum_fps_target if specified
+      minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
+      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
+    }
+    else {
+      // Default behavior: about half the stream FPS
+      minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
+      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+    }
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
@@ -2070,8 +2079,10 @@ namespace video {
       }
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      bool has_new_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
+      // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(minimum_frame_time)) {
           frame_timestamp = img->frame_timestamp;
@@ -2079,10 +2090,22 @@ namespace video {
             BOOST_LOG(error) << "Could not convert image"sv;
             return;
           }
+          has_new_frame = true;
         }
         else if (!images->running()) {
           break;
         }
+      }
+
+      // If variable refresh rate is enabled, skip encoding when no new frame is available
+      // This allows the stream framerate to match the render framerate for VRR support
+      // However, if minimum_fps_target is set, we still encode to maintain minimum FPS
+      if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
+        // Only skip if minimum_fps_target is 0 (disabled) or we've already met the minimum
+        if (config::video.minimum_fps_target == 0) {
+          continue;
+        }
+        // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
       }
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {

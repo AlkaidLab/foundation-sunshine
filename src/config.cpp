@@ -404,7 +404,9 @@ namespace config {
     (int) display_device::parsed_config_t::refresh_rate_change_e::automatic,  // refresh_rate_change
     {},  // manual_refresh_rate
     (int) display_device::parsed_config_t::hdr_prep_e::automatic,  // hdr_prep
-    {}  // display_mode_remapping
+    {},  // display_mode_remapping
+    false,  // variable_refresh_rate
+    0  // minimum_fps_target (0 = auto, about half the stream FPS)
   };
 
   audio_t audio {
@@ -1135,6 +1137,8 @@ namespace config {
     string_f(vars, "manual_refresh_rate", video.manual_refresh_rate);
     int_f(vars, "hdr_prep", video.hdr_prep, display_device::parsed_config_t::hdr_prep_from_view);
     int_f(vars, "max_bitrate", video.max_bitrate);
+    bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
+    int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

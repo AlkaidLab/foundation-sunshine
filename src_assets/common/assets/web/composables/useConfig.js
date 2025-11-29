@@ -61,6 +61,8 @@ const DEFAULT_TABS = [
       resolutions: '[1280x720,1920x1080,2560x1080,2560x1440,2560x1600,3440x1440,3840x2160]',
       fps: '[60,90,120,144]',
       max_bitrate: 0,
+      variable_refresh_rate: 'disabled',
+      minimum_fps_target: 0,
     },
   },
   {
