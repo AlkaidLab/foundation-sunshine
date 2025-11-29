@@ -1149,7 +1149,7 @@ namespace confighttp {
       
       response_json["sessions"] = sessions_array;
       
-      BOOST_LOG(info) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
+      BOOST_LOG(debug) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
       
       response->write(response_json.dump());
       response->close_connection_after_response = true;

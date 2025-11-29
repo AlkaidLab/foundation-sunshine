@@ -229,6 +229,11 @@ namespace nvenc {
     init_params.darHeight = encoder_params.height;
     init_params.frameRateNum = client_config.framerate;
     init_params.frameRateDen = 1;
+    if (client_config.framerateX100 > 0) {
+      AVRational fps = video::framerateX100_to_rational(client_config.framerateX100);
+      init_params.frameRateNum = fps.num;
+      init_params.frameRateDen = fps.den;
+    }
 
 #if NVENC_INT_VERSION >= 1202
     {
