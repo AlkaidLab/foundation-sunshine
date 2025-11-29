@@ -135,7 +135,7 @@ body {
 }
 
 [data-bs-theme='light'] {
-  --bs-body-bg: rgba(255, 255, 255, 0.3);
+  --bs-body-bg: rgba(255, 255, 255, 0.41);
   --bs-dropdown-bg: rgba(255, 255, 255, 0.7);
 }
 [data-bs-theme='dark'] {

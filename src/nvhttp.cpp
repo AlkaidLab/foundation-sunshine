@@ -7,6 +7,9 @@
 
 // standard includes
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -18,6 +21,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
+#include <openssl/ssl.h>
 #include <Simple-Web-Server/server_http.hpp>
 
 // local includes
@@ -50,6 +54,28 @@ namespace nvhttp {
   namespace pt = boost::property_tree;
 
   crypto::cert_chain_t cert_chain;
+
+  struct named_cert_t {
+    std::string name;
+    std::string uuid;
+    std::string cert;
+  };
+
+  struct client_t {
+    std::vector<named_cert_t> named_devices;
+  };
+
+  // uniqueID, session
+  std::unordered_map<std::string, pair_session_t> map_id_sess;
+  client_t client_root;
+  std::atomic<uint32_t> session_id_counter;
+
+  static std::string last_pair_name;
+
+  // Map to store certificate UUIDs keyed by request pointer
+  // Using weak_ptr to track request lifetime and prevent memory leaks
+  static std::map<const void*, std::pair<std::weak_ptr<void>, std::string>> request_cert_uuid_map;
+  static std::mutex request_cert_uuid_map_mutex;
 
   class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
   public:
@@ -107,6 +133,36 @@ namespace nvhttp {
             if (!lock)
               return;
             if (!ec) {
+              // Extract and store certificate UUID during handshake
+              try {
+                SSL *ssl = session->connection->socket->native_handle();
+                if (ssl) {
+                  crypto::x509_t x509 {
+#if OPENSSL_VERSION_MAJOR >= 3
+                    SSL_get1_peer_certificate(ssl)
+#else
+                    SSL_get_peer_certificate(ssl)
+#endif
+                  };
+                  if (x509) {
+                    std::string client_cert_pem = crypto::pem(x509);
+                    // Find matching certificate UUID
+                    for (const auto &named_cert : client_root.named_devices) {
+                      if (named_cert.cert == client_cert_pem) {
+                        // Store UUID in map using request pointer as key
+                        std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
+                        request_cert_uuid_map[session->request.get()] = 
+                          std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), named_cert.uuid);
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              catch (const std::exception &e) {
+                BOOST_LOG(debug) << "Failed to extract certificate UUID during handshake: " << e.what();
+              }
+
               if (verify && !verify(session->connection->socket->native_handle()))
                 this->write(session, on_verify_failed);
               else
@@ -130,28 +186,38 @@ namespace nvhttp {
     std::string pkey;
   } conf_intern;
 
-  struct named_cert_t {
-    std::string name;
-    std::string uuid;
-    std::string cert;
-  };
-
-  struct client_t {
-    std::vector<named_cert_t> named_devices;
-  };
-
-  // uniqueID, session
-  std::unordered_map<std::string, pair_session_t> map_id_sess;
-  client_t client_root;
-  std::atomic<uint32_t> session_id_counter;
-
-  static std::string last_pair_name;
-
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
   using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
   using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
   using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
+
+  // Get client certificate UUID from request
+  std::string
+  get_client_cert_uuid_from_request(req_https_t request) {
+    try {
+      // Retrieve UUID from map using request pointer as key
+      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
+      auto it = request_cert_uuid_map.find(request.get());
+      if (it != request_cert_uuid_map.end()) {
+        // Check if request is still valid (not expired)
+        if (!it->second.first.expired()) {
+          std::string uuid = it->second.second;
+          // Clean up after retrieval to prevent memory leaks
+          // (assuming UUID is only needed once per request)
+          request_cert_uuid_map.erase(it);
+          return uuid;
+        } else {
+          // Request expired, remove from map
+          request_cert_uuid_map.erase(it);
+        }
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(debug) << "获取客户端证书UUID失败: " << e.what();
+    }
+    return "";
+  }
 
   enum class op_e {
     ADD,  ///< Add certificate
@@ -1272,6 +1338,12 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    
+    // 获取客户端证书UUID（稳定的客户端标识符）
+    std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
+    if (!client_cert_uuid.empty()) {
+      launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    }
 
     if (rtsp_stream::session_count() == 0) {
       // We want to prepare display only if there are no active sessions at
@@ -1393,6 +1465,12 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    
+    // Get client certificate UUID (stable client identifier) and store it in env
+    std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
+    if (!client_cert_uuid.empty()) {
+      launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    }
 
     if (no_active_sessions) {
       // We want to prepare display only if there are no active sessions at

@@ -4,9 +4,13 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/process.hpp>
+#include <boost/uuid/name_generator_sha1.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
 #include <filesystem>
 #include <sstream>
 #include <thread>
+#include <vector>
 
 #include "src/confighttp.h"
 #include "src/globals.h"
@@ -27,6 +31,8 @@ namespace display_device {
     static std::chrono::steady_clock::time_point last_toggle_time { std::chrono::steady_clock::now() };
     // 防抖间隔
     static std::chrono::milliseconds debounce_interval { kDefaultDebounceInterval };
+    // 上一次使用的客户端UUID，用于在没有提供UUID时使用
+    static std::string last_used_client_uuid;
 
     std::chrono::milliseconds
     calculate_exponential_backoff(int attempt) {
@@ -159,13 +165,67 @@ namespace display_device {
       return execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
     }
 
+    std::string
+    generate_client_guid(const std::string &identifier) {
+      if (identifier.empty()) {
+        return "";
+      }
+
+      // 使用SHA1 name generator确保相同标识符生成相同GUID
+      static constexpr boost::uuids::uuid ns_id {};
+      const auto boost_uuid = boost::uuids::name_generator_sha1 { ns_id }(
+        reinterpret_cast<const unsigned char *>(identifier.c_str()),
+        identifier.size());
+
+      return "{" + boost::uuids::to_string(boost_uuid) + "}";
+    }
+
     bool
-    create_vdd_monitor() {
+    create_vdd_monitor(const std::string &client_identifier) {
       std::string response;
-      if (!execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response)) {
+      std::wstring command = L"CREATEMONITOR";
+
+      // 如果没有提供UUID，使用上一次的UUID
+      std::string identifier_to_use = client_identifier.empty() && !last_used_client_uuid.empty() 
+        ? last_used_client_uuid 
+        : client_identifier;
+
+      if (identifier_to_use != client_identifier && !identifier_to_use.empty()) {
+        BOOST_LOG(info) << "未提供客户端标识符，使用上一次的UUID: " << identifier_to_use;
+      }
+
+      // 生成GUID并构建命令
+      std::string guid_str = generate_client_guid(identifier_to_use);
+      if (!guid_str.empty()) {
+        // 转换为宽字符并添加到命令
+        int size_needed = MultiByteToWideChar(CP_UTF8, 0, guid_str.c_str(), -1, NULL, 0);
+        if (size_needed > 0) {
+          std::vector<wchar_t> guid_wide(size_needed);
+          MultiByteToWideChar(CP_UTF8, 0, guid_str.c_str(), -1, guid_wide.data(), size_needed);
+          command += L" " + std::wstring(guid_wide.data());
+        }
+        BOOST_LOG(info) << "创建虚拟显示器，客户端标识符: " << identifier_to_use << ", GUID: " << guid_str;
+      }
+
+      // 如果使用了有效的UUID，更新上一次使用的UUID
+      if (!identifier_to_use.empty()) {
+        last_used_client_uuid = identifier_to_use;
+      }
+
+      // 尝试发送命令（带GUID或不带GUID）
+      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response);
+
+      // 如果带GUID的命令失败，降级为不带GUID的命令（兼容旧版驱动）
+      if (!success && !guid_str.empty()) {
+        BOOST_LOG(warning) << "带GUID的命令失败，尝试降级为不带GUID的命令";
+        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response);
+      }
+
+      if (!success) {
         BOOST_LOG(error) << "创建虚拟显示器失败";
         return false;
       }
+
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_tray_vmonitor_checked(1);
 #endif
@@ -397,55 +457,40 @@ namespace display_device {
 
     bool
     set_hdr_state(bool enable_hdr) {
-      try {
-        // 获取虚拟显示器的设备ID
-        auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-        if (vdd_device_id.empty()) {
-          BOOST_LOG(debug) << "未找到虚拟显示器设备，跳过HDR状态设置";
-          return true;
-        }
-
-        const std::string action = enable_hdr ? "启用" : "关闭";
-        BOOST_LOG(info) << "正在" << action << "虚拟显示器 " << vdd_device_id << " 的HDR状态...";
-
-        // 获取虚拟显示器的当前HDR状态
-        std::unordered_set<std::string> vdd_device_ids = { vdd_device_id };
-        auto current_hdr_states = display_device::get_current_hdr_states(vdd_device_ids);
-
-        // 检查虚拟显示器是否支持HDR
-        auto hdr_state_it = current_hdr_states.find(vdd_device_id);
-        if (hdr_state_it == current_hdr_states.end()) {
-          BOOST_LOG(debug) << "虚拟显示器 " << vdd_device_id << " 不支持HDR或状态未知";
-          return true;
-        }
-
-        // 检查当前状态是否已经是目标状态
-        hdr_state_e target_state = enable_hdr ? hdr_state_e::enabled : hdr_state_e::disabled;
-        if (hdr_state_it->second == target_state) {
-          BOOST_LOG(debug) << "虚拟显示器 " << vdd_device_id << " 的HDR状态已经是目标状态";
-          return true;
-        }
-
-        // 创建HDR状态映射
-        hdr_state_map_t new_hdr_states;
-        new_hdr_states[vdd_device_id] = target_state;
-
-        BOOST_LOG(info) << "正在" << action << "虚拟显示器 " << vdd_device_id << " 的HDR状态";
-
-        // 设置HDR状态
-        if (display_device::set_hdr_states(new_hdr_states)) {
-          BOOST_LOG(info) << "成功" << action << "虚拟显示器HDR状态";
-          return true;
-        }
-        else {
-          BOOST_LOG(warning) << action << "虚拟显示器HDR状态失败";
-          return false;
-        }
+      auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      if (vdd_device_id.empty()) {
+        BOOST_LOG(debug) << "未找到虚拟显示器设备，跳过HDR状态设置";
+        return true;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(warning) << "设置虚拟显示器HDR状态时发生异常: " << e.what();
-        return false;
+
+      std::unordered_set<std::string> vdd_device_ids = { vdd_device_id };
+      auto current_hdr_states = display_device::get_current_hdr_states(vdd_device_ids);
+
+      auto hdr_state_it = current_hdr_states.find(vdd_device_id);
+      if (hdr_state_it == current_hdr_states.end()) {
+        BOOST_LOG(debug) << "虚拟显示器不支持HDR或状态未知";
+        return true;
       }
+
+      hdr_state_e target_state = enable_hdr ? hdr_state_e::enabled : hdr_state_e::disabled;
+      if (hdr_state_it->second == target_state) {
+        BOOST_LOG(debug) << "虚拟显示器HDR状态已是目标状态";
+        return true;
+      }
+
+      hdr_state_map_t new_hdr_states;
+      new_hdr_states[vdd_device_id] = target_state;
+
+      const std::string action = enable_hdr ? "启用" : "关闭";
+      BOOST_LOG(info) << "正在" << action << "虚拟显示器HDR...";
+
+      if (display_device::set_hdr_states(new_hdr_states)) {
+        BOOST_LOG(info) << "成功" << action << "虚拟显示器HDR";
+        return true;
+      }
+
+      BOOST_LOG(warning) << action << "虚拟显示器HDR失败";
+      return false;
     }
   }  // namespace vdd_utils
 }  // namespace display_device

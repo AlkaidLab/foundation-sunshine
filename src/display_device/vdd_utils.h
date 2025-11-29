@@ -12,6 +12,10 @@
 #include <thread>
 #include <windows.h>
 
+#include <boost/uuid/name_generator_sha1.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
 #include "parsed_config.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
@@ -50,9 +54,16 @@ namespace display_device {
     bool
     reload_driver();
 
+    // 从客户端标识符生成GUID字符串（用于驱动识别）
+    // @param identifier 客户端标识符，如果为空则返回空字符串
+    // @return GUID格式字符串: {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}，如果identifier为空则返回空字符串
+    std::string
+    generate_client_guid(const std::string &identifier);
+
     // 创建VDD监视器
+    // @param client_identifier 客户端标识符（可选），用于驱动识别客户端并启动对应的显示器
     bool
-    create_vdd_monitor();
+    create_vdd_monitor(const std::string &client_identifier = "");
 
     // 销毁VDD监视器
     bool

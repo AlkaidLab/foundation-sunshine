@@ -841,7 +841,8 @@ namespace display_device {
       const std::string requested_device_id = display_device::find_one_of_the_available_devices(config::video.output_name);
       if (requested_device_id.empty()) {
         BOOST_LOG(info) << "VDD偏好未启用且指定显示器不存在，尝试创建显示器";
-        session.create_vdd_monitor();
+        // revert_settings 在恢复状态时调用，此时可能没有活跃会话，传递空字符串使用默认值
+        session.create_vdd_monitor("");
 
         // 等待显示器创建完成，后续检测需要
         constexpr int max_attempts = 5;

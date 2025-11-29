@@ -33,7 +33,7 @@ export function usePin() {
     try {
       const response = await fetch('/api/clients/list')
       const data = await response.json()
-      
+
       if (data.status === 'true' && data.named_certs && data.named_certs.length) {
         clients.value = data.named_certs
       }
@@ -68,16 +68,16 @@ export function usePin() {
       const data = await response.json()
       showApplyMessage.value = true
       unpairAllStatus.value = data.status.toString() === 'true'
-      
+
       if (unpairAllStatus.value) {
         // 清理所有编辑状态
-        Object.keys(editingStates).forEach(uuid => {
+        Object.keys(editingStates).forEach((uuid) => {
           delete editingStates[uuid]
           delete originalValues[uuid]
         })
         await refreshClients()
       }
-      
+
       setTimeout(() => {
         unpairAllStatus.value = null
       }, 5000)
@@ -101,7 +101,9 @@ export function usePin() {
         body: JSON.stringify({ uuid }),
       })
       const data = await response.json()
-      if (data.status?.toString().toLowerCase() === 'true') {
+      const status = data.status?.toString().toLowerCase()
+      const isSuccess = status === '1' || status === 'true'
+      if (isSuccess) {
         showApplyMessage.value = true
         // 清理编辑状态
         delete editingStates[uuid]
@@ -121,7 +123,7 @@ export function usePin() {
   // 进入编辑模式
   const startEdit = (uuid) => {
     if (!originalValues[uuid]) {
-      const client = clients.value.find(c => c.uuid === uuid)
+      const client = clients.value.find((c) => c.uuid === uuid)
       if (client) {
         originalValues[uuid] = { ...client }
       }
@@ -132,7 +134,7 @@ export function usePin() {
   // 取消编辑
   const cancelEdit = (uuid) => {
     if (originalValues[uuid]) {
-      const client = clients.value.find(c => c.uuid === uuid)
+      const client = clients.value.find((c) => c.uuid === uuid)
       if (client) {
         Object.assign(client, originalValues[uuid])
       }
@@ -143,7 +145,7 @@ export function usePin() {
   // 保存单个客户端配置
   const saveClient = async (uuid) => {
     if (!config.value) return false
-    
+
     saving.value = true
     try {
       // 更新配置中的客户端信息
@@ -154,10 +156,10 @@ export function usePin() {
         tmpClients = []
       }
 
-      const client = clients.value.find(c => c.uuid === uuid)
+      const client = clients.value.find((c) => c.uuid === uuid)
       if (!client) return false
 
-      const index = tmpClients.findIndex(c => c.uuid === uuid)
+      const index = tmpClients.findIndex((c) => c.uuid === uuid)
       if (index >= 0) {
         tmpClients[index] = { ...client }
       } else {
@@ -165,7 +167,7 @@ export function usePin() {
       }
 
       config.value.clients = serialize(tmpClients)
-      
+
       const response = await fetch('/api/clients/list', {
         method: 'POST',
         headers: {
@@ -173,7 +175,7 @@ export function usePin() {
         },
         body: JSON.stringify(config.value),
       })
-      
+
       if (response.status === 200) {
         editingStates[uuid] = false
         originalValues[uuid] = { ...client }
@@ -191,7 +193,7 @@ export function usePin() {
   // 保存所有客户端配置（保留向后兼容）
   const save = async () => {
     if (!config.value) return false
-    
+
     saving.value = true
     try {
       config.value.clients = serialize(clients.value)
@@ -202,10 +204,10 @@ export function usePin() {
         },
         body: JSON.stringify(config.value),
       })
-      
+
       if (response.status === 200) {
         // 更新所有编辑状态
-        clients.value.forEach(client => {
+        clients.value.forEach((client) => {
           editingStates[client.uuid] = false
           originalValues[client.uuid] = { ...client }
         })
@@ -222,7 +224,7 @@ export function usePin() {
 
   // 检查客户端是否有未保存的更改
   const hasUnsavedChanges = (uuid) => {
-    const client = clients.value.find(c => c.uuid === uuid)
+    const client = clients.value.find((c) => c.uuid === uuid)
     const original = originalValues[uuid]
     if (!client || !original) return false
     return client.hdrProfile !== original.hdrProfile
@@ -244,7 +246,7 @@ export function usePin() {
       const pinInput = document.querySelector('#pin-input')
       const nameInput = document.querySelector('#name-input')
       const statusDiv = document.querySelector('#status')
-      
+
       if (!pinInput || !nameInput || !statusDiv) return
 
       const pin = pinInput.value
@@ -259,16 +261,18 @@ export function usePin() {
           },
           body: JSON.stringify({ pin, name }),
         })
-        
+
         const data = await response.json()
-        
+
         if (data.status.toString().toLowerCase() === 'true') {
-          statusDiv.innerHTML = '<div class="alert alert-success" role="alert">Success! Please check Moonlight to continue</div>'
+          statusDiv.innerHTML =
+            '<div class="alert alert-success" role="alert">Success! Please check Moonlight to continue</div>'
           pinInput.value = ''
           nameInput.value = ''
           if (onSuccess) onSuccess()
         } else {
-          statusDiv.innerHTML = '<div class="alert alert-danger" role="alert">Pairing Failed: Check if the PIN is typed correctly</div>'
+          statusDiv.innerHTML =
+            '<div class="alert alert-danger" role="alert">Pairing Failed: Check if the PIN is typed correctly</div>'
         }
       } catch (error) {
         console.error('Pairing failed:', error)
@@ -327,4 +331,3 @@ export function usePin() {
     loadConfig,
   }
 }
-
