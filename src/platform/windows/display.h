@@ -186,8 +186,6 @@ namespace platf::dxgi {
     int height_before_rotation;
 
     int client_frame_rate;
-    DXGI_RATIONAL client_frame_rate_strict;
-
     int adapter_index;
     int output_index;
 
