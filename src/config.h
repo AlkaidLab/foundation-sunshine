@@ -224,6 +224,7 @@ namespace config {
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）
     bool notify_pre_releases;
+    bool system_tray;
     std::vector<prep_cmd_t> prep_cmds;
   };
 

@@ -1,10 +1,11 @@
 <script setup>
 import { ref } from 'vue'
+import Checkbox from '../../components/Checkbox.vue'
 
 const props = defineProps({
   platform: String,
   config: Object,
-  globalPrepCmd: Array
+  globalPrepCmd: Array,
 })
 
 const config = ref(props.config)
@@ -12,18 +13,18 @@ const globalPrepCmd = ref(props.globalPrepCmd)
 
 function addCmd() {
   let template = {
-    do: "",
-    undo: "",
-  };
+    do: '',
+    undo: '',
+  }
 
   if (props.platform === 'windows') {
-    template = { ...template, elevated: false };
+    template = { ...template, elevated: false }
   }
-  globalPrepCmd.value.push(template);
+  globalPrepCmd.value.push(template)
 }
 
 function removeCmd(index) {
-  globalPrepCmd.value.splice(index,1)
+  globalPrepCmd.value.splice(index, 1)
 }
 </script>
 
@@ -56,8 +57,13 @@ function removeCmd(index) {
     <!-- Sunshine Name -->
     <div class="mb-3">
       <label for="sunshine_name" class="form-label">{{ $t('config.sunshine_name') }}</label>
-      <input type="text" class="form-control" id="sunshine_name" placeholder="Sunshine"
-             v-model="config.sunshine_name" />
+      <input
+        type="text"
+        class="form-control"
+        id="sunshine_name"
+        placeholder="Sunshine"
+        v-model="config.sunshine_name"
+      />
       <div class="form-text">{{ $t('config.sunshine_name_desc') }}</div>
     </div>
 
@@ -82,39 +88,45 @@ function removeCmd(index) {
       <div class="form-text">{{ $t('config.global_prep_cmd_desc') }}</div>
       <table class="table" v-if="globalPrepCmd.length > 0">
         <thead>
-        <tr>
-          <th scope="col"><i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}</th>
-          <th scope="col"><i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}</th>
-          <th scope="col" v-if="platform === 'windows'">
-            <i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}
-          </th>
-          <th scope="col"></th>
-        </tr>
+          <tr>
+            <th scope="col"><i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}</th>
+            <th scope="col"><i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}</th>
+            <th scope="col" v-if="platform === 'windows'">
+              <i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}
+            </th>
+            <th scope="col"></th>
+          </tr>
         </thead>
         <tbody>
-        <tr v-for="(c, i) in globalPrepCmd">
-          <td>
-            <input type="text" class="form-control monospace" v-model="c.do" />
-          </td>
-          <td>
-            <input type="text" class="form-control monospace" v-model="c.undo" />
-          </td>
-          <td v-if="platform === 'windows'">
-            <div class="form-check">
-              <input type="checkbox" class="form-check-input" :id="'prep-cmd-admin-' + i" v-model="c.elevated"
-                     true-value="true" false-value="false" />
-              <label :for="'prep-cmd-admin-' + i" class="form-check-label">{{ $t('config.elevated') }}</label>
-            </div>
-          </td>
-          <td>
-            <button class="btn btn-danger" @click="removeCmd(i)">
-              <i class="fas fa-trash"></i>
-            </button>
-            <button class="btn btn-success" @click="addCmd">
-              <i class="fas fa-plus"></i>
-            </button>
-          </td>
-        </tr>
+          <tr v-for="(c, i) in globalPrepCmd" :key="i">
+            <td>
+              <input type="text" class="form-control monospace" v-model="c.do" />
+            </td>
+            <td>
+              <input type="text" class="form-control monospace" v-model="c.undo" />
+            </td>
+            <td v-if="platform === 'windows'">
+              <div class="form-check">
+                <input
+                  type="checkbox"
+                  class="form-check-input"
+                  :id="'prep-cmd-admin-' + i"
+                  v-model="c.elevated"
+                  true-value="true"
+                  false-value="false"
+                />
+                <label :for="'prep-cmd-admin-' + i" class="form-check-label">{{ $t('config.elevated') }}</label>
+              </div>
+            </td>
+            <td>
+              <button class="btn btn-danger" @click="removeCmd(i)">
+                <i class="fas fa-trash"></i>
+              </button>
+              <button class="btn btn-success" @click="addCmd">
+                <i class="fas fa-plus"></i>
+              </button>
+            </td>
+          </tr>
         </tbody>
       </table>
       <button class="ms-0 mt-2 btn btn-success" style="margin: 0 auto" @click="addCmd">
@@ -123,17 +135,23 @@ function removeCmd(index) {
     </div>
 
     <!-- Notify Pre-Releases -->
-    <div class="mb-3">
-        <label for="notify_pre_releases" class="form-label">{{ $t('config.notify_pre_releases') }}</label>
-        <select id="notify_pre_releases" class="form-select" v-model="config.notify_pre_releases">
-            <option value="disabled">{{ $t('_common.disabled') }}</option>
-            <option value="enabled">{{ $t('_common.enabled') }}</option>
-        </select>
-        <div class="form-text">{{ $t('config.notify_pre_releases_desc') }}</div>
-    </div>
+    <Checkbox
+      class="mb-3"
+      id="notify_pre_releases"
+      locale-prefix="config"
+      v-model="config.notify_pre_releases"
+      default="false"
+    ></Checkbox>
+
+    <!-- Enable system tray -->
+    <Checkbox
+      class="mb-3"
+      id="system_tray"
+      locale-prefix="config"
+      v-model="config.system_tray"
+      default="true"
+    ></Checkbox>
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

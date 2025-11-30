@@ -58,19 +58,16 @@ namespace system_tray {
   tray_quit_cb(struct tray_menu *item);
 
   /**
-   * @brief Create the system tray.
-   * @details This function has an endless loop, so it should be run in a separate thread.
-   * @return 1 if the system tray failed to create, otherwise 0 once the tray has been terminated.
+   * @brief Initializes the system tray without starting a loop.
+   * @return 0 if initialization was successful, non-zero otherwise.
    */
-  int
-  system_tray();
+  int init_tray();
 
   /**
-   * @brief Run the system tray with platform specific options.
-   * @todo macOS requires that UI elements be created on the main thread, so the system tray is not currently implemented for macOS.
+   * @brief Processes a single tray event iteration.
+   * @return 0 if processing was successful, non-zero otherwise.
    */
-  int
-  run_tray();
+  int process_tray_events();
 
   /**
    * @brief Exit the system tray.
@@ -105,6 +102,12 @@ namespace system_tray {
    */
   void
   update_tray_require_pin(std::string pin_name);
+  
+  /**
+   * @brief Initializes and runs the system tray in a separate thread.
+   * @return 0 if initialization was successful, non-zero otherwise.
+   */
+  int init_tray_threaded();
 
   // Internationalization support
   std::string get_localized_string(const std::string& key);

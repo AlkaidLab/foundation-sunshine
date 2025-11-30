@@ -7,6 +7,7 @@ import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelecto
 import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
 import DisplayDeviceOptions from "./audiovideo/DisplayDeviceOptions.vue";
 import DisplayModesSettings from "./audiovideo/DisplayModesSettings.vue";
+import Checkbox from '../../components/Checkbox.vue';
 
 const props = defineProps([
   'platform',

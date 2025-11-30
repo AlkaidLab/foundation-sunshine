@@ -256,6 +256,8 @@
     "amf_draw_mouse_cursor_desc": "In some cases, using AMF capture will not display the mouse pointer. Enabling this option will draw a simple mouse pointer on the screen. Note: The position of the mouse pointer will only be updated when there is an update to the content screen, so in non-game scenarios such as on the desktop, you may observe sluggish mouse pointer movement.",
     "notify_pre_releases": "PreRelease Notifications",
     "notify_pre_releases_desc": "Whether to be notified of new pre-release versions of Sunshine",
+    "system_tray": "Enable System Tray",
+    "system_tray_desc": "Whether to enable system tray. If enabled, Sunshine will display an icon in the system tray and can be controlled from the system tray.",
     "nvenc_h264_cavlc": "Prefer CAVLC over CABAC in H.264",
     "nvenc_h264_cavlc_desc": "Simpler form of entropy coding. CAVLC needs around 10% more bitrate for same quality. Only relevant for really old decoding devices.",
     "nvenc_latency_over_power": "Prefer lower encoding latency over power savings",

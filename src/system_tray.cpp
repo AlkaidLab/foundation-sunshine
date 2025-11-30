@@ -66,6 +66,11 @@ using namespace std::literals;
 namespace system_tray {
   static std::atomic<bool> tray_initialized = false;
 
+  // Threading variables for all platforms
+  static std::thread tray_thread;
+  static std::atomic tray_thread_running = false;
+  static std::atomic tray_thread_should_exit = false;
+
   // 前向声明全局变量
   extern struct tray_menu tray_menus[];
   extern struct tray tray;
@@ -546,12 +551,12 @@ namespace system_tray {
   static auto change_tray_language = [](const std::string &locale, const std::string &language_name) {
     BOOST_LOG(info) << "Changing tray language to " << language_name << " from system tray"sv;
     system_tray_i18n::set_tray_locale(locale);
-    
+
     // 保存到配置文件
     try {
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       std::stringstream configStream;
-      
+
       // 更新或添加 tray_locale 配置项
       vars["tray_locale"] = locale;
       for (const auto &[key, value] : vars) {
@@ -559,14 +564,14 @@ namespace system_tray {
           configStream << key << " = " << value << std::endl;
         }
       }
-      
+
       file_handler::write_file(config::sunshine.config_file.c_str(), configStream.str());
       BOOST_LOG(info) << "Tray language setting saved to config file"sv;
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "Failed to save tray language setting: "sv << e.what();
     }
-    
+
     update_menu_texts();
     tray_update(&tray);
   };
@@ -681,7 +686,7 @@ namespace system_tray {
   };
 
   int
-  system_tray() {
+  init_tray() {
     // 初始化本地化字符串并更新菜单文本
     update_menu_texts();
 
@@ -773,30 +778,22 @@ namespace system_tray {
     tray_update(&tray);
 
     tray_initialized = true;
-    while (tray_loop(1) == 0) {
-      BOOST_LOG(debug) << "System tray loop"sv;
-    }
-
     return 0;
   }
 
-  void
-  run_tray() {
-    // create the system tray
-  #if defined(__APPLE__) || defined(__MACH__)
-    // macOS requires that UI elements be created on the main thread
-    // creating tray using dispatch queue does not work, although the code doesn't actually throw any (visible) errors
+  int
+  process_tray_events() {
+    if (!tray_initialized) {
+      return 1;
+    }
 
-    // dispatch_async(dispatch_get_main_queue(), ^{
-    //   system_tray();
-    // });
+    // Process one iteration of the tray loop with non-blocking mode (0)
+    if (const int result = tray_loop(0); result != 0) {
+      BOOST_LOG(warning) << "System tray loop failed"sv;
+      return result;
+    }
 
-    BOOST_LOG(info) << "system_tray() is not yet implemented for this platform."sv;
-  #else  // Windows, Linux
-    // create tray in separate thread
-    std::thread tray_thread(system_tray);
-    tray_thread.detach();
-  #endif
+    return 0;
   }
 
   int
@@ -819,18 +816,18 @@ namespace system_tray {
     tray.icon = TRAY_ICON_PLAYING;
     tray_update(&tray);
     tray.icon = TRAY_ICON_PLAYING;
-    
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string msg;
     title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_STARTED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_STARTED_FOR);
-    
+
     // 使用 std::string 格式化消息
     char buffer[256];
     snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
     msg = buffer;
-    
+
     tray.notification_title = title.c_str();
     tray.notification_text = msg.c_str();
     tray.tooltip = msg.c_str();
@@ -850,18 +847,18 @@ namespace system_tray {
     tray.notification_icon = NULL;
     tray.icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
-    
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string msg;
     title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAM_PAUSED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STREAMING_PAUSED_FOR);
-    
+
     // 使用 std::string 格式化消息
     char buffer[256];
     snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
     msg = buffer;
-    
+
     tray.icon = TRAY_ICON_PAUSING;
     tray.notification_title = title.c_str();
     tray.notification_text = msg.c_str();
@@ -882,18 +879,18 @@ namespace system_tray {
     tray.notification_icon = NULL;
     tray.icon = TRAY_ICON;
     tray_update(&tray);
-    
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string msg;
     title = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED);
     std::string msg_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_APPLICATION_STOPPED_MSG);
-    
+
     // 使用 std::string 格式化消息
     char buffer[256];
     snprintf(buffer, sizeof(buffer), msg_template.c_str(), app_name.c_str());
     msg = buffer;
-    
+
     tray.icon = TRAY_ICON;
     tray.notification_icon = TRAY_ICON;
     tray.notification_title = title.c_str();
@@ -915,18 +912,18 @@ namespace system_tray {
     tray.icon = TRAY_ICON;
     tray_update(&tray);
     tray.icon = TRAY_ICON;
-    
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string notification_text;
     std::string title_template = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_INCOMING_PAIRING_REQUEST);
     notification_text = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLICK_TO_COMPLETE_PAIRING);
-    
+
     // 使用 std::string 格式化标题
     char buffer[256];
     snprintf(buffer, sizeof(buffer), title_template.c_str(), pin_name.c_str());
     title = buffer;
-    
+
     tray.notification_title = title.c_str();
     tray.notification_text = notification_text.c_str();
     tray.notification_icon = TRAY_ICON_LOCKED;
@@ -947,6 +944,41 @@ namespace system_tray {
     // 同时更新禁用状态（冷却期间保持禁用）
     tray_menus[2].disabled = checked ? 0 : tray_menus[2].disabled;
     tray_update(&tray);
+  }
+
+  // Threading functions available on all platforms
+  static void
+  tray_thread_worker() {
+    BOOST_LOG(info) << "System tray thread started"sv;
+
+    // Initialize the tray in this thread
+    if (init_tray() != 0) {
+      BOOST_LOG(error) << "Failed to initialize tray in thread"sv;
+      return;
+    }
+
+    // Main tray event loop
+    while (process_tray_events() == 0);
+
+    BOOST_LOG(info) << "System tray thread ended"sv;
+  }
+
+  int
+  init_tray_threaded() {
+    try {
+      auto tray_thread = std::thread(tray_thread_worker);
+
+      // The tray thread doesn't require strong lifetime management.
+      // It will exit asynchronously when tray_exit() is called.
+      tray_thread.detach();
+
+      BOOST_LOG(info) << "System tray thread initialized successfully"sv;
+      return 0;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Failed to create tray thread: " << e.what();
+      return 1;
+    }
   }
 
 }  // namespace system_tray
