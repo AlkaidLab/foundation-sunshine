@@ -153,7 +153,7 @@
                 />
               </div>
               <button class="btn btn-outline-primary" @click="handleCopyConfig">
-                <i class="fas fa-cog me-1"></i>
+                <i class="fas fa-copy me-1"></i>
                 {{ $t('troubleshooting.copy_config') }}
               </button>
             </div>

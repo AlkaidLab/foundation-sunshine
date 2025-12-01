@@ -81,66 +81,20 @@ const { showSetupWizard, adapters, displayDevices, hasLocale, checkSetupWizard, 
 // 上报显卡信息
 const reportGPUInfo = (config) => {
   try {
-    // 检查是否已经上报过（使用 localStorage 避免重复上报）
-    const reportedKey = 'gpu_info_reported'
-    const lastReported = localStorage.getItem(reportedKey)
-    const now = Date.now()
-
-    // 如果 24 小时内已上报过，则跳过
-    if (lastReported && now - parseInt(lastReported) < 24 * 60 * 60 * 1000) {
-      return
-    }
-
-    // 获取显卡信息
     const adapters = config.adapters || []
-    const platform = config.platform || 'unknown'
-    const adapterName = config.adapter_name || ''
+    const adapterNames = adapters.map((a) => (typeof a === 'string' ? a : a?.name || String(a))).join(', ')
 
-    if (adapters.length > 0) {
-      // 处理适配器数据格式（可能是对象数组或字符串数组）
-      const adapterNames = adapters.map((adapter) => {
-        if (typeof adapter === 'string') {
-          return adapter
-        } else if (adapter && adapter.name) {
-          return adapter.name
-        } else {
-          return String(adapter)
-        }
-      })
-
-      // 构建显卡信息
-      const gpuInfo = {
-        platform: platform,
-        adapter_count: adapters.length,
-        adapters: adapterNames,
-        selected_adapter: adapterName || 'auto',
-        has_selected_adapter: !!adapterName,
-      }
-
-      // 上报到 Firebase
-      trackEvents.gpuReported(gpuInfo)
-
-      // 记录上报时间
-      localStorage.setItem(reportedKey, now.toString())
-
-      console.log('显卡信息已上报:', gpuInfo)
-    } else {
-      // 即使没有适配器也上报，用于统计
-      const gpuInfo = {
-        platform: platform,
-        adapter_count: 0,
-        adapters: [],
-        selected_adapter: adapterName || 'none',
-        has_selected_adapter: false,
-      }
-
-      trackEvents.gpuReported(gpuInfo)
-      localStorage.setItem(reportedKey, now.toString())
-      console.log('显卡信息已上报（无适配器）:', gpuInfo)
+    const gpuInfo = {
+      platform: config.platform || 'unknown',
+      adapter_count: adapters.length,
+      adapters: adapterNames,
+      selected_adapter: config.adapter_name || (adapters.length ? 'auto' : 'none'),
+      has_selected_adapter: !!config.adapter_name,
     }
+
+    trackEvents.gpuReported(gpuInfo)
   } catch (error) {
     console.error('上报显卡信息失败:', error)
-    // 不抛出错误，避免影响正常功能
   }
 }
 
@@ -152,8 +106,9 @@ onMounted(async () => {
   try {
     const config = await fetch('/api/config').then((r) => r.json())
 
-    // 上报显卡信息
-    reportGPUInfo(config)
+    setTimeout(() => {
+      reportGPUInfo(config)
+    }, 1000)
 
     // 检查是否需要显示设置向导
     if (checkSetupWizard(config)) {

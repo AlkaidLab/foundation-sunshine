@@ -328,7 +328,6 @@ namespace display_device {
 
   void
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
-    auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
     const std::string current_client_id = get_client_id_from_session(session);
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
@@ -342,7 +341,9 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
     }
 
-    if (vdd_settings.needs_update && config.resolution) {
+    // 更新VDD分辨率配置
+    if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
+        vdd_settings.needs_update && config.resolution) {
       update_vdd_resolution(config, vdd_settings);
     }
 
@@ -366,18 +367,20 @@ namespace display_device {
       }
     }
 
-    // 更新配置和状态
-    if (!device_zako.empty()) {
-      config.device_id = device_zako;
-      config::video.output_name = device_zako;
-      current_vdd_client_id = current_client_id;
-      BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
-
-      if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
-        BOOST_LOG(info) << "已将VDD切换到扩展模式";
-      }
-      vdd_utils::set_hdr_state(false);
+    if (device_zako.empty()) {
+      return;
     }
+
+    // 更新配置和状态
+    config.device_id = device_zako;
+    config::video.output_name = device_zako;
+    current_vdd_client_id = current_client_id;
+    BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
+
+    if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
+      BOOST_LOG(info) << "已将VDD切换到扩展模式";
+    }
+    vdd_utils::set_hdr_state(false);
   }
 
   void
