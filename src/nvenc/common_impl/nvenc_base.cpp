@@ -227,8 +227,18 @@ namespace nvenc {
     init_params.darWidth = encoder_params.width;
     init_params.encodeHeight = encoder_params.height;
     init_params.darHeight = encoder_params.height;
-    init_params.frameRateNum = client_config.framerate;
-    init_params.frameRateDen = 1;
+
+    // Use fractional framerate if available (for NTSC support)
+    if (client_config.frameRateNum > 0 && client_config.frameRateDen > 0) {
+      init_params.frameRateNum = client_config.frameRateNum;
+      init_params.frameRateDen = client_config.frameRateDen;
+      BOOST_LOG(debug) << "NvEnc: Using fractional framerate: " << client_config.frameRateNum << "/"
+                       << client_config.frameRateDen << " (" << client_config.get_effective_framerate() << "fps)";
+    }
+    else {
+      init_params.frameRateNum = client_config.framerate;
+      init_params.frameRateDen = 1;
+    }
 
 #if NVENC_INT_VERSION >= 1202
     {
@@ -262,7 +272,9 @@ namespace nvenc {
     enc_config.rcParams.averageBitRate = client_config.bitrate * 1000;
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
-      enc_config.rcParams.vbvBufferSize = client_config.bitrate * 1000 / client_config.framerate;
+      // Use effective framerate for VBV buffer calculation (supports NTSC fractional framerates)
+      double effective_fps = client_config.get_effective_framerate();
+      enc_config.rcParams.vbvBufferSize = static_cast<uint32_t>(client_config.bitrate * 1000 / effective_fps);
       if (config.vbv_percentage_increase > 0) {
         enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * config.vbv_percentage_increase / 100;
       }

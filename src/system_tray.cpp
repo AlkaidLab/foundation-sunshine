@@ -784,16 +784,12 @@ namespace system_tray {
   int
   process_tray_events() {
     if (!tray_initialized) {
+      BOOST_LOG(error) << "System tray is not initialized"sv;
       return 1;
     }
 
-    // Process one iteration of the tray loop with non-blocking mode (0)
-    if (const int result = tray_loop(0); result != 0) {
-      BOOST_LOG(warning) << "System tray loop failed"sv;
-      return result;
-    }
-
-    return 0;
+    // Block until an event is processed or tray_quit() is called
+    return tray_loop(1);
   }
 
   int
