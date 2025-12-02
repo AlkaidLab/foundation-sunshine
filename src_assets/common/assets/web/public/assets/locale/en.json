@@ -525,7 +525,13 @@
     "unpair_title": "Unpair Devices",
     "reopen_setup_wizard": "Reopen Setup Wizard",
     "reopen_setup_wizard_desc": "Reopen the setup wizard page to reconfigure initial settings.",
-    "reopen_setup_wizard_error": "Failed to reopen setup wizard"
+    "reopen_setup_wizard_error": "Failed to reopen setup wizard",
+    "copy_logs": "Copy logs",
+    "download_logs": "Download logs",
+    "match_contains": "Contains",
+    "match_regex": "Regex",
+    "match_exact": "Exact",
+    "ignore_case": "Ignore case"
   },
   "welcome": {
     "confirm_password": "Confirm password",

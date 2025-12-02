@@ -4,7 +4,34 @@ const LOG_REFRESH_INTERVAL = 5000
 const STATUS_RESET_DELAY = 5000
 
 /**
- * 故障排除组合式函数
+ * Creates a delayed status reset helper
+ */
+const createStatusResetter = (statusRef) => {
+  return setTimeout(() => {
+    statusRef.value = null
+  }, STATUS_RESET_DELAY)
+}
+
+/**
+ * Wraps an async action with pressed state management
+ */
+const withPressedState = async (pressedRef, action, autoReset = false) => {
+  pressedRef.value = true
+  try {
+    return await action()
+  } finally {
+    if (autoReset) {
+      setTimeout(() => {
+        pressedRef.value = false
+      }, STATUS_RESET_DELAY)
+    } else {
+      pressedRef.value = false
+    }
+  }
+}
+
+/**
+ * Troubleshooting composable
  */
 export function useTroubleshooting() {
   const platform = ref('')
@@ -16,15 +43,45 @@ export function useTroubleshooting() {
   const resetDisplayDeviceStatus = ref(null)
   const logs = ref('Loading...')
   const logFilter = ref(null)
+  const matchMode = ref('contains')
+  const ignoreCase = ref(true)
   const logInterval = ref(null)
 
   const actualLogs = computed(() => {
     if (!logFilter.value) return logs.value
-    return logs.value
-      .split('\n')
-      .filter((line) => line.includes(logFilter.value))
-      .join('\n')
+
+    const filter = ignoreCase.value ? logFilter.value.toLowerCase() : logFilter.value
+    const lines = logs.value.split('\n')
+
+    const filterFn = (() => {
+      switch (matchMode.value) {
+        case 'exact':
+          return (line) => {
+            const searchLine = ignoreCase.value ? line.toLowerCase() : line
+            return searchLine === filter
+          }
+        case 'regex':
+          try {
+            const regex = new RegExp(logFilter.value, ignoreCase.value ? 'i' : '')
+            return (line) => regex.test(line)
+          } catch {
+            return () => false
+          }
+        default:
+          return (line) => {
+            const searchLine = ignoreCase.value ? line.toLowerCase() : line
+            return searchLine.includes(filter)
+          }
+      }
+    })()
+
+    return lines.filter(filterFn).join('\n')
   })
+
+  const fetchJson = async (url, options = {}) => {
+    const response = await fetch(url, options)
+    return response.json()
+  }
 
   const refreshLogs = async () => {
     try {
@@ -35,58 +92,45 @@ export function useTroubleshooting() {
     }
   }
 
-  const closeApp = async () => {
-    closeAppPressed.value = true
-    try {
-      const response = await fetch('/api/apps/close', { method: 'POST' })
-      const data = await response.json()
-      closeAppStatus.value = data.status.toString() === 'true'
-      setTimeout(() => {
-        closeAppStatus.value = null
-      }, STATUS_RESET_DELAY)
-    } catch {
-      closeAppStatus.value = false
-    } finally {
-      closeAppPressed.value = false
-    }
-  }
+  const closeApp = () =>
+    withPressedState(closeAppPressed, async () => {
+      try {
+        const data = await fetchJson('/api/apps/close', { method: 'POST' })
+        closeAppStatus.value = data.status.toString() === 'true'
+        createStatusResetter(closeAppStatus)
+      } catch {
+        closeAppStatus.value = false
+      }
+    })
 
-  const restart = async () => {
-    restartPressed.value = true
-    try {
-      await fetch('/api/restart', { method: 'POST' })
-    } catch {}
-    setTimeout(() => {
-      restartPressed.value = false
-    }, STATUS_RESET_DELAY)
-  }
-
-  const confirmBoom = () => document.getElementById('boomModal')?.classList.add('show')
-  const closeModal = () => document.getElementById('boomModal')?.classList.remove('show')
+  const restart = () =>
+    withPressedState(
+      restartPressed,
+      async () => {
+        try {
+          await fetch('/api/restart', { method: 'POST' })
+        } catch {}
+      },
+      true
+    )
 
   const boom = async () => {
     boomPressed.value = true
-    closeModal()
     try {
       await fetch('/api/boom')
     } catch {}
   }
 
-  const resetDisplayDevicePersistence = async () => {
-    resetDisplayDevicePressed.value = true
-    try {
-      const response = await fetch('/api/reset-display-device-persistence', { method: 'POST' })
-      const data = await response.json()
-      resetDisplayDeviceStatus.value = data.status.toString() === 'true'
-      setTimeout(() => {
-        resetDisplayDeviceStatus.value = null
-      }, STATUS_RESET_DELAY)
-    } catch {
-      resetDisplayDeviceStatus.value = false
-    } finally {
-      resetDisplayDevicePressed.value = false
-    }
-  }
+  const resetDisplayDevicePersistence = () =>
+    withPressedState(resetDisplayDevicePressed, async () => {
+      try {
+        const data = await fetchJson('/api/reset-display-device-persistence', { method: 'POST' })
+        resetDisplayDeviceStatus.value = data.status.toString() === 'true'
+        createStatusResetter(resetDisplayDeviceStatus)
+      } catch {
+        resetDisplayDeviceStatus.value = false
+      }
+    })
 
   const copyLogs = async () => {
     try {
@@ -96,8 +140,7 @@ export function useTroubleshooting() {
 
   const copyConfig = async (t) => {
     try {
-      const response = await fetch('/api/config')
-      const data = await response.json()
+      const data = await fetchJson('/api/config')
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
       alert(t('troubleshooting.copy_config_success'))
     } catch {
@@ -107,8 +150,7 @@ export function useTroubleshooting() {
 
   const reopenSetupWizard = async (t) => {
     try {
-      const response = await fetch('/api/config')
-      const config = await response.json()
+      const config = await fetchJson('/api/config')
       config.setup_wizard_completed = false
 
       const saveResponse = await fetch('/api/config', {
@@ -129,8 +171,7 @@ export function useTroubleshooting() {
 
   const loadPlatform = async () => {
     try {
-      const response = await fetch('/api/config')
-      const data = await response.json()
+      const data = await fetchJson('/api/config')
       platform.value = data.platform || ''
     } catch {}
   }
@@ -158,12 +199,12 @@ export function useTroubleshooting() {
     resetDisplayDeviceStatus,
     logs,
     logFilter,
+    matchMode,
+    ignoreCase,
     actualLogs,
     refreshLogs,
     closeApp,
     restart,
-    confirmBoom,
-    closeModal,
     boom,
     resetDisplayDevicePersistence,
     copyLogs,
