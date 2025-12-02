@@ -112,6 +112,11 @@ export default defineConfig({
         configure(proxy) {
           proxy.on('error', (err, req, res) => {
             console.log('API proxy error:', err.message)
+            // 如果响应头已发送，不能再次发送
+            if (res.headersSent) {
+              return
+            }
+
             const mockResponses = {
               '/api/config': {
                 platform: 'windows',
@@ -159,12 +164,18 @@ export default defineConfig({
                   },
                 ],
               },
+              '/api/logs':
+                'Sunshine Development Server - Mock Logs\n[INFO] Server started\n[INFO] Development mode enabled\n',
+              '/api/restart': { status: 'ok', message: 'Restart initiated (mock)' },
             }
-            const mockData = mockResponses[req.url] || { error: 'Mock endpoint not found' }
+
+            // 处理特殊端点
             if (req.url === '/api/logs') {
+              const mockData = mockResponses[req.url] || 'No logs available (mock)'
               res.writeHead(200, { 'Content-Type': 'text/plain' })
-              res.end(mockData)
+              res.end(typeof mockData === 'string' ? mockData : String(mockData))
             } else {
+              const mockData = mockResponses[req.url] || { error: 'Mock endpoint not found' }
               res.writeHead(200, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify(mockData))
             }
@@ -202,7 +213,10 @@ export default defineConfig({
         chunkFileNames: (chunkInfo) => {
           const facadeModuleId = chunkInfo.facadeModuleId
           if (facadeModuleId) {
-            const fileName = facadeModuleId.split('/').pop().replace(/\.[^/.]+$/, '')
+            const fileName = facadeModuleId
+              .split('/')
+              .pop()
+              .replace(/\.[^/.]+$/, '')
             return `assets/${fileName}-[hash].js`
           }
           return 'assets/[name]-[hash].js'

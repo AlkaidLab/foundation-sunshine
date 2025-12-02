@@ -17,8 +17,8 @@
         <h1 class="page-title">
           {{ $t('index.welcome') }}
         </h1>
+        <p class="page-subtitle">{{ $t('index.description') }}</p>
       </div>
-      <p>{{ $t('index.description') }}</p>
 
       <!-- 错误日志 -->
       <ErrorLogs :fatal-logs="fatalLogs" />
@@ -137,16 +137,6 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.container {
-  padding: 1rem;
-}
-
-.page-title {
-  text-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15), 0 0 10px rgba(0, 0, 0, 0.1);
-}
-
-[data-bs-theme='dark'] .page-title {
-  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 0, 0, 0.3);
-}
+<style>
+@import '../styles/global.css';
 </style>

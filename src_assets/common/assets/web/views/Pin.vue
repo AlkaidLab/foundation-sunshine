@@ -2,7 +2,7 @@
   <div>
     <Navbar />
     <div id="content" class="container">
-      <h1 class="my-4 text-center">{{ $t('pin.pin_pairing') }}</h1>
+      <h1 class="my-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
       <form action="" class="form d-flex flex-column align-items-center" id="form">
         <div class="card flex-column d-flex p-4 mb-4">
           <input
@@ -36,11 +36,7 @@
           <div class="p-2">
             <div class="d-flex justify-content-end align-items-center mb-3">
               <h2 id="unpair" class="text-center me-auto mb-0">{{ $t('troubleshooting.unpair_title') }}</h2>
-              <button 
-                class="btn btn-danger" 
-                :disabled="unpairAllPressed || loading" 
-                @click="handleUnpairAll"
-              >
+              <button class="btn btn-danger" :disabled="unpairAllPressed || loading" @click="handleUnpairAll">
                 <span v-if="unpairAllPressed" class="spinner-border spinner-border-sm me-2" role="status"></span>
                 {{ $t('troubleshooting.unpair_all') }}
               </button>
@@ -48,7 +44,7 @@
             <div
               id="apply-alert"
               class="alert alert-success d-flex align-items-center mt-3"
-              :style="{ 'display': (showApplyMessage ? 'flex !important': 'none !important') }"
+              :style="{ display: showApplyMessage ? 'flex !important' : 'none !important' }"
             >
               <div class="me-2">
                 <b>{{ $t('_common.success') }}</b> {{ $t('troubleshooting.unpair_single_success') }}
@@ -75,43 +71,54 @@
           </div>
 
           <!-- 客户端列表 -->
-          <div
-            id="client-list"
-            v-else-if="clients && clients.length > 0"
-            class="client-list-container"
-          >
+          <div id="client-list" v-else-if="clients && clients.length > 0" class="client-list-container">
             <div class="table-responsive">
               <table class="table table-hover table-bordered align-middle mb-0">
                 <thead class="table-dark">
                   <tr>
-                    <th scope="col" width="25%" class="ps-3">Name</th>
+                    <th scope="col" width="20%" class="ps-3">Name</th>
                     <th scope="col" class="ps-3">HDR Profile</th>
+                    <th scope="col" class="ps-3">尺寸</th>
                     <th scope="col" width="30%" class="text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="client in clients" :key="client.uuid" :class="{ 'table-warning': editingStates[client.uuid] }">
-                    <td class="fw-medium ps-3">{{ client.name || "Unknown Client" }}</td>
+                  <tr
+                    v-for="client in clients"
+                    :key="client.uuid"
+                    :class="{ 'table-warning': editingStates[client.uuid] }"
+                  >
+                    <td class="fw-medium ps-3">{{ client.name || 'Unknown Client' }}</td>
                     <td class="ps-3">
-                      <select 
-                        class="form-select form-select-sm" 
-                        v-model="client.hdrProfile" 
+                      <select
+                        class="form-select form-select-sm"
+                        v-model="client.hdrProfile"
                         :disabled="!editingStates[client.uuid]"
                         @change="onProfileChange(client.uuid)"
                       >
-                        <option v-if="!hasIccFileList" value="" disabled>
-                          Please modify in GUI
-                        </option>
+                        <option v-if="!hasIccFileList" value="" disabled>Please modify in GUI</option>
                         <option v-else value="">-- None --</option>
                         <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
+                      </select>
+                    </td>
+                    <td class="ps-3">
+                      <select
+                        class="form-select form-select-sm"
+                        v-model="client.deviceSize"
+                        :disabled="!editingStates[client.uuid]"
+                        @change="onSizeChange(client.uuid)"
+                      >
+                        <option value="small">小 - 手机</option>
+                        <option value="medium">中 - 平板</option>
+                        <option value="large">大 - TV</option>
                       </select>
                     </td>
                     <td class="text-center">
                       <div class="btn-toolbar justify-content-center" role="toolbar">
                         <!-- 编辑模式按钮 -->
                         <template v-if="!editingStates[client.uuid]">
-                          <button 
-                            class="btn btn-sm btn-outline-primary me-1" 
+                          <button
+                            class="btn btn-sm btn-outline-primary me-1"
                             @click="startEdit(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             title="Edit client settings"
@@ -121,8 +128,8 @@
                         </template>
                         <!-- 保存/取消按钮 -->
                         <template v-else>
-                          <button 
-                            class="btn btn-sm btn-success me-1" 
+                          <button
+                            class="btn btn-sm btn-success me-1"
                             @click="handleSave(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             title="Save changes"
@@ -130,8 +137,8 @@
                             <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
                             <i v-else class="fas fa-check me-1"></i> Save
                           </button>
-                          <button 
-                            class="btn btn-sm btn-secondary me-1" 
+                          <button
+                            class="btn btn-sm btn-secondary me-1"
                             @click="handleCancelEdit(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             title="Cancel editing"
@@ -140,8 +147,8 @@
                           </button>
                         </template>
                         <!-- 删除按钮 -->
-                        <button 
-                          class="btn btn-sm btn-outline-danger" 
+                        <button
+                          class="btn btn-sm btn-outline-danger"
                           @click="handleDelete(client)"
                           :disabled="saving || deleting.has(client.uuid) || editingStates[client.uuid]"
                           :title="editingStates[client.uuid] ? 'Please save or cancel editing first' : 'Delete client'"
@@ -151,7 +158,10 @@
                         </button>
                       </div>
                       <!-- 未保存更改提示 -->
-                      <div v-if="editingStates[client.uuid] && hasUnsavedChanges(client.uuid)" class="text-warning small mt-2">
+                      <div
+                        v-if="editingStates[client.uuid] && hasUnsavedChanges(client.uuid)"
+                        class="text-warning small mt-2"
+                      >
                         <i class="fas fa-exclamation-triangle me-1"></i> Unsaved changes
                       </div>
                     </td>
@@ -164,18 +174,20 @@
           <div v-else-if="!loading" class="list-group list-group-flush list-group-item-light">
             <div class="list-group-item p-5 text-center">
               <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-              <p class="mb-0"><em>{{ $t('troubleshooting.unpair_single_no_devices') }}</em></p>
+              <p class="mb-0">
+                <em>{{ $t('troubleshooting.unpair_single_no_devices') }}</em>
+              </p>
             </div>
           </div>
         </div>
       </div>
 
       <!-- 删除确认对话框 -->
-      <div 
-        v-if="clientToDelete" 
-        class="modal fade show d-block" 
-        tabindex="-1" 
-        style="background-color: rgba(0,0,0,0.5);"
+      <div
+        v-if="clientToDelete"
+        class="modal fade show d-block"
+        tabindex="-1"
+        style="background-color: rgba(0, 0, 0, 0.5)"
         @click.self="clientToDelete = null"
       >
         <div class="modal-dialog modal-dialog-centered">
@@ -185,7 +197,10 @@
               <button type="button" class="btn-close" @click="clientToDelete = null"></button>
             </div>
             <div class="modal-body">
-              <p>Are you sure you want to delete <strong>{{ clientToDelete.name || 'Unknown Client' }}</strong>?</p>
+              <p>
+                Are you sure you want to delete <strong>{{ clientToDelete.name || 'Unknown Client' }}</strong
+                >?
+              </p>
               <p class="text-muted small mb-0">This action cannot be undone.</p>
             </div>
             <div class="modal-footer">
@@ -270,6 +285,11 @@ const onProfileChange = (uuid) => {
   // 可以在这里添加实时验证或其他逻辑
 }
 
+// 处理尺寸变更
+const onSizeChange = (uuid) => {
+  // 可以在这里添加实时验证或其他逻辑
+}
+
 // 处理取消所有配对
 const handleUnpairAll = async () => {
   if (confirm('Are you sure you want to unpair all clients? This action cannot be undone.')) {
@@ -280,11 +300,11 @@ const handleUnpairAll = async () => {
 onMounted(async () => {
   await loadConfig()
   await refreshClients()
-  
+
   initPinForm(() => {
     setTimeout(() => refreshClients(), 0)
   })
-  
+
   // 获取 HDR Profile 列表（如果 Electron 可用）
   if (window.electron?.getIccFileList) {
     hasIccFileList.value = true
@@ -297,11 +317,11 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.container {
-  padding: 1rem;
-}
+<style>
+@import '../styles/global.css';
+</style>
 
+<style scoped>
 .client-list-container {
   margin-top: 1rem;
 }
@@ -323,15 +343,14 @@ onMounted(async () => {
   .btn-toolbar {
     flex-direction: column;
   }
-  
+
   .btn-toolbar .btn {
     width: 100%;
     margin-bottom: 0.25rem;
   }
-  
+
   .table-responsive {
     font-size: 0.875rem;
   }
 }
 </style>
-

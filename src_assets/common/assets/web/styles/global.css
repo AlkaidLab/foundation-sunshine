@@ -1,0 +1,34 @@
+@import './var.css';
+
+body {
+  font-family: var(--font-family-base);
+  min-height: 100vh;
+  backdrop-filter: brightness(0.8);
+}
+
+[data-bs-theme='dark'] body {
+  backdrop-filter: brightness(0.4);
+}
+
+.container {
+  padding: 1rem;
+}
+
+.page-title {
+  font-size: 1.9rem;
+  font-weight: 100;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.02em;
+  color: #333333;
+}
+
+[data-bs-theme='dark'] .page-title {
+  color: #e0e0e0;
+}
+
+.page-subtitle {
+  font-size: 1rem;
+  font-weight: 100;
+  color: #ffffff;
+  margin-bottom: 0;
+}

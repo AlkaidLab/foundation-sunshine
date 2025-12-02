@@ -120,19 +120,10 @@
 <script setup>
 import { useWelcome } from '../composables/useWelcome.js'
 
-const {
-  error,
-  success,
-  loading,
-  passwordData,
-  passwordsMatch,
-  isFormValid,
-  save,
-} = useWelcome()
+const { error, success, loading, passwordData, passwordsMatch, isFormValid, save } = useWelcome()
 </script>
 
-<style scoped>
-/* 手绘风格颜色变量 */
+<style scoped>  
 :root {
   --sketch-black: #2c2c2c;
   --sketch-blue: #4169e1;
@@ -224,8 +215,7 @@ header img {
   background: linear-gradient(135deg, #fff9e6 0%, #fffaeb 100%);
   border: 3px solid #ff8c00;
   border-radius: 12px;
-  box-shadow: 5px 5px 0px rgba(255, 140, 0, 0.4), 3px 3px 0px rgba(255, 140, 0, 0.2),
-    0 0 20px rgba(255, 140, 0, 0.15);
+  box-shadow: 5px 5px 0px rgba(255, 140, 0, 0.4), 3px 3px 0px rgba(255, 140, 0, 0.2), 0 0 20px rgba(255, 140, 0, 0.15);
   transform: rotate(-0.3deg);
   position: relative;
   font-family: 'Kalam', cursive;
@@ -545,4 +535,3 @@ svg {
   }
 }
 </style>
-

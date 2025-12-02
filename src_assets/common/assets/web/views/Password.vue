@@ -6,9 +6,23 @@
         <div class="col-lg-8 col-xl-7">
           <div class="text-center mb-4">
             <div class="icon-wrapper mb-2">
-              <i class="bi bi-shield-lock fs-2 text-primary"></i>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="32"
+                height="32"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="text-primary"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
             </div>
-            <h1 class="h4 fw-bold">{{ $t('password.password_change') }}</h1>
+            <h1 class="h4 fw-bold page-title">{{ $t('password.password_change') }}</h1>
             <p class="text-muted small mb-0">{{ $t('password.new_username_desc') }}</p>
           </div>
 
@@ -32,8 +46,8 @@
                           stroke-linejoin="round"
                           class="text-primary"
                         >
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                          <circle cx="12" cy="12" r="10" />
+                          <polyline points="12 6 12 12 16 14" />
                         </svg>
                       </div>
                       <h6 class="mb-0 fw-semibold">{{ $t('password.current_creds') }}</h6>
@@ -91,7 +105,7 @@
                           class="text-success"
                         >
                           <path
-                            d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"
+                            d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"
                           />
                         </svg>
                       </div>
@@ -210,6 +224,10 @@ async function save() {
   }
 }
 </script>
+
+<style>
+@import '../styles/global.css';
+</style>
 
 <style scoped>
 .icon-wrapper {

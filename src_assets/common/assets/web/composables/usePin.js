@@ -62,6 +62,10 @@ export function usePin() {
       const tmpClients = parseClients()
       clients.value = clients.value.map((client) => {
         const merged = { ...client, ...tmpClients.find(({ uuid }) => uuid === client.uuid) }
+        // 如果客户端没有deviceSize，设置默认值为medium
+        if (!merged.deviceSize) {
+          merged.deviceSize = 'medium'
+        }
         initClientEditingState(merged)
         return merged
       })
@@ -205,7 +209,9 @@ export function usePin() {
   const hasUnsavedChanges = (uuid) => {
     const client = clients.value.find((c) => c.uuid === uuid)
     const original = originalValues[uuid]
-    return client && original && client.hdrProfile !== original.hdrProfile
+    return (
+      client && original && (client.hdrProfile !== original.hdrProfile || client.deviceSize !== original.deviceSize)
+    )
   }
 
   const initPinForm = (onSuccess) => {

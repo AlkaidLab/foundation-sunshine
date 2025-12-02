@@ -1,30 +1,5 @@
-@import './var.css';
+@import './global.css';
 @import './modal-glass.css';
-
-/* 全局样式 */
-body {
-  font-family: var(--font-family-base);
-  min-height: 100vh;
-}
-
-[data-bs-theme='dark'] body {
-  backdrop-filter: brightness(0.6);
-}
-
-/* 页面标题 */
-.page-title {
-  font-size: var(--font-size-xxl);
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  margin-bottom: var(--spacing-xs);
-}
-
-.page-subtitle {
-  font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.8);
-  margin-bottom: 0;
-}
 
 /* 搜索栏和功能按钮样式 */
 .search-container {
@@ -51,9 +26,10 @@ body {
   padding: 12px 20px 12px 50px;
   font-size: 1.1rem;
   color: #fff;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(4px);
   transition: var(--transition-default);
   box-shadow: var(--box-shadow-sm);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .search-input:focus {
@@ -288,7 +264,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--border-radius-xl);
   overflow: hidden;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(4px);
   transition: var(--transition-default);
   cursor: pointer;
   position: relative;
