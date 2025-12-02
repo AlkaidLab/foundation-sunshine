@@ -11,6 +11,43 @@
 
     <div class="row justify-content-center my-4">
       <div class="col-lg-10">
+        <!-- 语言选择器 -->
+        <div class="text-end mb-3">
+          <div class="language-selector">
+            <label for="localeSelect" class="form-label me-2">
+              <i class="fas fa-language"></i>
+            </label>
+            <select
+              id="localeSelect"
+              class="form-select form-select-sm d-inline-block"
+              style="width: auto;"
+              v-model="selectedLocale"
+              @change="changeLanguage"
+            >
+              <option value="en">English</option>
+              <option value="en_GB">English (UK)</option>
+              <option value="en_US">English (US)</option>
+              <option value="zh">简体中文</option>
+              <option value="zh_TW">繁體中文</option>
+              <option value="de">Deutsch</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="it">Italiano</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+              <option value="ru">Русский</option>
+              <option value="uk">Українська</option>
+              <option value="pt">Português</option>
+              <option value="pt_BR">Português (Brasil)</option>
+              <option value="pl">Polski</option>
+              <option value="sv">Svenska</option>
+              <option value="tr">Türkçe</option>
+              <option value="cs">Čeština</option>
+              <option value="bg">Български</option>
+            </select>
+          </div>
+        </div>
+
         <div class="card my-4">
           <div class="card-body">
             <header class="text-center mb-4">
@@ -31,7 +68,7 @@
                 <div class="col-md-8">
                   <div class="mb-3">
                     <label for="usernameInput" class="form-label">
-                      <i class="fas fa-user me-2"></i>{{ $t('_common.username') }}
+                      <i class="fas fa-user me-2"></i>{{ $t('welcome.username') }}
                     </label>
                     <input
                       type="text"
@@ -39,13 +76,13 @@
                       id="usernameInput"
                       autocomplete="username"
                       v-model="passwordData.newUsername"
-                      :placeholder="$t('_common.username')"
+                      :placeholder="$t('welcome.username')"
                     />
                   </div>
 
                   <div class="mb-3">
                     <label for="passwordInput" class="form-label">
-                      <i class="fas fa-lock me-2"></i>{{ $t('_common.password') }}
+                      <i class="fas fa-lock me-2"></i>{{ $t('welcome.password') }}
                     </label>
                     <input
                       type="password"
@@ -53,7 +90,7 @@
                       id="passwordInput"
                       autocomplete="new-password"
                       v-model="passwordData.newPassword"
-                      :placeholder="$t('_common.password')"
+                      :placeholder="$t('welcome.password')"
                       required
                     />
                   </div>
@@ -97,14 +134,16 @@
                   <transition name="fade">
                     <div class="alert alert-danger" v-if="error">
                       <i class="fas fa-exclamation-circle me-2"></i>
-                      <strong>{{ $t('_common.error') }}</strong> {{ error }}
+                      <strong>{{ $t('welcome.error') }}</strong>
+                      <span v-if="error.startsWith('welcome.')">{{ $t(error) }}</span>
+                      <span v-else>{{ error }}</span>
                     </div>
                   </transition>
 
                   <transition name="fade">
                     <div class="alert alert-success" v-if="success">
                       <i class="fas fa-check-circle me-2"></i>
-                      <strong>{{ $t('_common.success') }}</strong> {{ $t('welcome.welcome_success') }}
+                      <strong>{{ $t('welcome.success') }}</strong> {{ $t('welcome.welcome_success') }}
                     </div>
                   </transition>
                 </div>
@@ -118,9 +157,52 @@
 </template>
 
 <script setup>
+import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useWelcome } from '../composables/useWelcome.js'
 
+const { locale, setLocaleMessage } = useI18n()
+const selectedLocale = ref('en')
+
 const { error, success, loading, passwordData, passwordsMatch, isFormValid, save } = useWelcome()
+
+// 加载语言（使用静态嵌入的翻译数据）
+const loadLanguage = (lang) => {
+  const welcomeLocales = window.__WELCOME_LOCALES__
+  
+  if (welcomeLocales && welcomeLocales[lang]) {
+    // 使用嵌入的翻译数据设置到 i18n
+    setLocaleMessage(lang, welcomeLocales[lang])
+    locale.value = lang
+    document.querySelector('html').setAttribute('lang', lang)
+  } else {
+    // 如果没有找到，使用英文
+    locale.value = 'en'
+    document.querySelector('html').setAttribute('lang', 'en')
+  }
+}
+
+// 加载当前语言设置
+onMounted(async () => {
+  try {
+    // 使用 /api/configLocale，这个 API 不需要认证（在 welcome 页面时可能还没有账号）
+    const config = await fetch('/api/configLocale').then((r) => r.json())
+    if (config.locale) {
+      selectedLocale.value = config.locale
+      loadLanguage(config.locale)
+    } else {
+      loadLanguage('en')
+    }
+  } catch (e) {
+    console.error('Failed to load locale config', e)
+    loadLanguage('en')
+  }
+})
+
+// 切换语言
+const changeLanguage = () => {
+  loadLanguage(selectedLocale.value)
+}
 </script>
 
 <style scoped>  
@@ -525,12 +607,54 @@ svg {
   }
 }
 
+/* 语言选择器样式 */
+.language-selector {
+  display: inline-block;
+  position: relative;
+}
+
+.language-selector .form-label {
+  font-family: 'Patrick Hand', cursive;
+  color: var(--sketch-black);
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0;
+  vertical-align: middle;
+}
+
+.language-selector .form-select-sm {
+  font-family: 'Patrick Hand', cursive;
+  border: 2px solid var(--sketch-black);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.95rem;
+  color: var(--sketch-black);
+  background: #fff;
+  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.language-selector .form-select-sm:focus {
+  outline: none;
+  border-color: var(--sketch-blue);
+  background: #f0f8ff;
+  box-shadow: 3px 3px 0px rgba(65, 105, 225, 0.2);
+  transform: translateY(-1px);
+}
+
+.language-selector .form-select-sm:hover {
+  transform: translateY(-1px);
+  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.15);
+}
+
 /* 打印样式优化 */
 @media print {
   .card::after,
   .alert-warning::before,
   .alert-danger::before,
-  .alert-success::before {
+  .alert-success::before,
+  .language-selector {
     display: none;
   }
 }

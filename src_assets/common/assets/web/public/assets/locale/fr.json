@@ -464,6 +464,13 @@
     "create_creds_alert": "Les identifiants ci-dessous sont nécessaires pour accéder à l'interface Web de Sunshine. Gardez-les en sécurité, car vous ne les reverrez plus jamais !",
     "greeting": "Bienvenue dans Sunshine !",
     "login": "Connexion",
-    "welcome_success": "Cette page se rechargera bientôt, votre navigateur vous demandera les nouveaux identifiants"
+    "welcome_success": "Cette page se rechargera bientôt, votre navigateur vous demandera les nouveaux identifiants",
+    "username": "Nom d'utilisateur",
+    "password": "Mot de passe",
+    "error": "Erreur !",
+    "success": "Succès !",
+    "password_mismatch": "Les mots de passe ne correspondent pas",
+    "server_error": "Erreur serveur",
+    "network_error": "Erreur réseau, veuillez vérifier votre connexion"
   }
 }

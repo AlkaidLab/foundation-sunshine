@@ -470,6 +470,13 @@
     "create_creds_alert": "Poniższe dane uwierzytelniające są potrzebne do uzyskania dostępu do interfejsu użytkownika Sunshine. Zachowaj je w bezpiecznym miejscu, ponieważ nigdy więcej ich nie zobaczysz!",
     "greeting": "Witamy w Sunshine!",
     "login": "Login",
-    "welcome_success": "Strona zostanie wkrótce przeładowana, a przeglądarka poprosi o podanie nowych danych uwierzytelniających"
+    "welcome_success": "Strona zostanie wkrótce przeładowana, a przeglądarka poprosi o podanie nowych danych uwierzytelniających",
+    "username": "Nazwa użytkownika",
+    "password": "Hasło",
+    "error": "Błąd!",
+    "success": "Sukces!",
+    "password_mismatch": "Hasła nie pasują",
+    "server_error": "Błąd serwera",
+    "network_error": "Błąd sieci, sprawdź połączenie"
   }
 }

@@ -463,6 +463,13 @@
     "create_creds_alert": "As credenciais abaixo são necessárias para acessar a interface da Web do Sunshine. Mantenha-as seguras, já que você nunca vai vê-las novamente!",
     "greeting": "Bem-vindo ao Sol!",
     "login": "Conectar",
-    "welcome_success": "Esta página será recarregada em breve, seu navegador irá pedir novas credenciais"
+    "welcome_success": "Esta página será recarregada em breve, seu navegador irá pedir novas credenciais",
+    "username": "Usuário:",
+    "password": "Palavra-passe",
+    "error": "Erro!",
+    "success": "Sucesso!",
+    "password_mismatch": "As senhas não coincidem",
+    "server_error": "Erro do servidor",
+    "network_error": "Erro de rede, verifique sua conexão"
   }
 }

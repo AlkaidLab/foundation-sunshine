@@ -30,7 +30,7 @@ export function useWelcome() {
     error.value = null
 
     if (!passwordsMatch.value) {
-      error.value = '密码不匹配'
+      error.value = 'welcome.password_mismatch'
       return
     }
 
@@ -51,11 +51,12 @@ export function useWelcome() {
           window.location.href = '/'
         }, 2000)
       } else {
-        error.value = result.error || `服务器错误: ${response.status}`
+        // 如果服务器返回了错误消息，使用它；否则使用翻译键
+        error.value = result.error || 'welcome.server_error'
       }
     } catch (err) {
-      console.error('保存密码失败:', err)
-      error.value = '网络错误，请检查连接'
+      console.error('Failed to save password:', err)
+      error.value = 'welcome.network_error'
     } finally {
       loading.value = false
     }

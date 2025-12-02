@@ -470,6 +470,13 @@
     "create_creds_alert": "Níže uvedené přihlašovací údaje jsou potřebné pro přístup k webovému rozhraní Sunshine. Uchovávejte je v bezpečí, protože je už nikdy nebudete vidět!",
     "greeting": "Vítejte v Sunshine!",
     "login": "Přihlásit se",
-    "welcome_success": "Tato stránka se brzy obnoví, váš prohlížeč vás požádá o nové přihlašovací údaje."
+    "welcome_success": "Tato stránka se brzy obnoví, váš prohlížeč vás požádá o nové přihlašovací údaje.",
+    "username": "Uživatelské jméno",
+    "password": "Heslo",
+    "error": "Chyba!",
+    "success": "Úspěch!",
+    "password_mismatch": "Hesla se neshodují",
+    "server_error": "Chyba serveru",
+    "network_error": "Chyba sítě, zkontrolujte připojení"
   }
 }

@@ -463,6 +463,13 @@
     "create_creds_alert": "Användaruppgifterna nedan behövs för att komma åt Sunshines webbgränssnitt. Håll dem säkra, eftersom du aldrig kommer att se dem igen!",
     "greeting": "Välkommen till Sunshine!",
     "login": "Inloggning",
-    "welcome_success": "Denna sida kommer att laddas om snart, din webbläsare kommer att be dig om nya uppgifter"
+    "welcome_success": "Denna sida kommer att laddas om snart, din webbläsare kommer att be dig om nya uppgifter",
+    "username": "Användarnamn",
+    "password": "Lösenord",
+    "error": "Fel!",
+    "success": "Klart!",
+    "password_mismatch": "Lösenorden matchar inte",
+    "server_error": "Serverfel",
+    "network_error": "Nätverksfel, kontrollera din anslutning"
   }
 }

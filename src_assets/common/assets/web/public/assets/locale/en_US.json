@@ -474,6 +474,13 @@
     "create_creds_alert": "The credentials below are needed to access Sunshine's Web UI. Keep them safe, since you will never see them again!",
     "greeting": "Welcome to Sunshine!",
     "login": "Login",
-    "welcome_success": "This page will reload soon, your browser will ask you for the new credentials"
+    "welcome_success": "This page will reload soon, your browser will ask you for the new credentials",
+    "username": "Username",
+    "password": "Password",
+    "error": "Error!",
+    "success": "Success!",
+    "password_mismatch": "Passwords do not match",
+    "server_error": "Server error",
+    "network_error": "Network error, please check your connection"
   }
 }

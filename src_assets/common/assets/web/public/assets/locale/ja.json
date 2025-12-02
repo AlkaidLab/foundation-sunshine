@@ -463,6 +463,13 @@
     "create_creds_alert": "以下の資格情報は、SunshineのWeb UIにアクセスするために必要です。あなたが二度と見ることはありませんので、安全に保管してください！",
     "greeting": "Sunshineへようこそ！",
     "login": "ログイン",
-    "welcome_success": "このページはまもなく再読み込みされます。ブラウザーは新しい資格情報を要求します。"
+    "welcome_success": "このページはまもなく再読み込みされます。ブラウザーは新しい資格情報を要求します。",
+    "username": "ユーザー名",
+    "password": "パスワード",
+    "error": "エラー！",
+    "success": "成功！",
+    "password_mismatch": "パスワードが一致しません",
+    "server_error": "サーバーエラー",
+    "network_error": "ネットワークエラー、接続を確認してください"
   }
 }

@@ -168,7 +168,20 @@ namespace confighttp {
     }
 
     auto &rawAuth = auth->second;
-    auto authData = SimpleWeb::Crypto::Base64::decode(rawAuth.substr("Basic "sv.length()));
+    constexpr auto basicPrefix = "Basic "sv;
+    if (rawAuth.length() <= basicPrefix.length() || 
+        rawAuth.substr(0, basicPrefix.length()) != basicPrefix) {
+      return false;
+    }
+    
+    std::string authData;
+    try {
+      authData = SimpleWeb::Crypto::Base64::decode(rawAuth.substr(basicPrefix.length()));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(debug) << "Authentication: Base64 decode failed: " << e.what();
+      return false;
+    }
 
     int index = authData.find(':');
     if (index >= authData.size() - 1) {
@@ -248,10 +261,18 @@ namespace confighttp {
 
   void
   getWelcomePage(resp_https_t response, req_https_t request) {
-    getHtmlPage(response, request, "welcome.html", false);
+    // 如果已经有用户名，要求认证后才能访问（防止未授权访问）
+    // 认证通过后重定向到首页，认证失败则拒绝访问
     if (!config::sunshine.username.empty()) {
+      if (!authenticate(response, request)) {
+        return; // authenticate已经发送了401响应
+      }
+      // 认证通过，重定向到首页
       send_redirect(response, request, "/");
+      return;
     }
+    // 只有在没有用户名时才显示welcome页面（首次设置）
+    getHtmlPage(response, request, "welcome.html", false);
   }
 
   void

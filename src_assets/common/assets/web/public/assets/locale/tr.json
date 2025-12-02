@@ -463,6 +463,13 @@
     "create_creds_alert": "Sunshine'ın Web kullanıcı arayüzüne erişmek için aşağıdaki kimlik bilgileri gereklidir. Onları güvende tutun, çünkü bir daha asla görmeyeceksiniz!",
     "greeting": "Sunshine'a hoş geldiniz!",
     "login": "Giriş",
-    "welcome_success": "Bu sayfa yakında yeniden yüklenecek, tarayıcınız sizden yeni kimlik bilgilerinizi isteyecek"
+    "welcome_success": "Bu sayfa yakında yeniden yüklenecek, tarayıcınız sizden yeni kimlik bilgilerinizi isteyecek",
+    "username": "Kullanıcı Adı",
+    "password": "Şifre",
+    "error": "Hata!",
+    "success": "Başarılı!",
+    "password_mismatch": "Şifreler eşleşmiyor",
+    "server_error": "Sunucu hatası",
+    "network_error": "Ağ hatası, lütfen bağlantınızı kontrol edin"
   }
 }

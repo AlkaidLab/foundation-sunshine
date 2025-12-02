@@ -1,6 +1,7 @@
 {
   "type": "module",
   "scripts": {
+    "prebuild": "node ./src_assets/common/assets/web/scripts/extract-welcome-locales.js",
     "build": "cross-env VITE_USE_ROLldOWN=1 vite build --debug",
     "build-clean": "cross-env VITE_USE_ROLldOWN=1 vite build --debug --emptyOutDir",
     "dev": "cross-env VITE_USE_ROLldOWN=1 vite build --watch",
