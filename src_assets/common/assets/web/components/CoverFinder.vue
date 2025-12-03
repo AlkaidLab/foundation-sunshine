@@ -1,72 +1,136 @@
 <template>
-  <div class="dropdown-menu w-50 cover-finder overflow-hidden" :style="{ display: visible ? 'block' : 'none' }">
-    <div class="modal-header px-3">
-      <h4 class="modal-title">
-        {{ coverSource === 'steam' ? 'Steam Store' : $t('apps.covers_found') }}
-      </h4>
-      <button type="button" class="btn-close me-2" @click="closeFinder"></button>
-    </div>
+  <Transition name="finder-fade">
+    <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
+      <div class="cover-finder-panel" @click.stop>
+        <!-- 头部 -->
+        <div class="finder-header">
+          <div class="finder-title">
+            <i class="fas fa-image me-2"></i>
+            <span>{{ $t('apps.find_cover') || '查找封面' }}</span>
+          </div>
+          <button type="button" class="finder-close" @click="closeFinder">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
 
-    <!-- 封面来源选择器 -->
-    <div class="cover-source-selector px-3">
-      <div class="cover-source-tabs">
-        <button
-          class="cover-source-tab"
-          :class="{ active: coverSource === 'igdb' }"
-          @click.stop.prevent="setCoverSource('igdb')"
-        >
-          <i class="fas fa-gamepad me-1"></i>IGDB
-        </button>
-        <button
-          class="cover-source-tab"
-          :class="{ active: coverSource === 'steam' }"
-          @click.stop.prevent="setCoverSource('steam')"
-        >
-          <i class="fab fa-steam me-1"></i>Steam Store
-        </button>
-      </div>
-    </div>
+        <!-- 搜索框 -->
+        <div class="finder-search">
+          <div class="search-input-wrapper">
+            <i class="fas fa-search search-icon"></i>
+            <input
+              ref="searchInput"
+              v-model="localSearchTerm"
+              type="text"
+              class="search-input"
+              placeholder="输入游戏名称搜索..."
+              @keydown.enter="searchCovers"
+            />
+            <button v-if="localSearchTerm" class="search-clear" @click="clearSearch" type="button">
+              <i class="fas fa-times"></i>
+            </button>
+            <button class="search-btn" @click="searchCovers" :disabled="!localSearchTerm || loading" type="button">
+              <i class="fas fa-arrow-right"></i>
+            </button>
+          </div>
+        </div>
 
-    <div class="modal-body cover-results px-4 pt-2" :class="{ busy: loading }">
-      <div class="row">
-        <!-- 加载状态 -->
-        <div v-if="loading" class="col-12">
-          <div style="min-height: 100px">
-            <div class="spinner-border" role="status">
-              <span class="visually-hidden">{{ $t('apps.loading') }}</span>
+        <!-- 数据源筛选 -->
+        <div class="finder-tabs">
+          <button
+            class="finder-tab"
+            :class="{ active: coverFilter === 'all' }"
+            @click.stop.prevent="setCoverFilter('all')"
+          >
+            <i class="fas fa-globe"></i>
+            <span>全部</span>
+            <span class="tab-badge" v-if="coverFilter === 'all' && allCovers.length > 0">
+              {{ allCovers.length }}
+            </span>
+          </button>
+          <button
+            class="finder-tab"
+            :class="{ active: coverFilter === 'igdb' }"
+            @click.stop.prevent="setCoverFilter('igdb')"
+          >
+            <i class="fas fa-gamepad"></i>
+            <span>IGDB</span>
+            <span class="tab-badge" v-if="igdbCovers.length > 0">
+              {{ igdbCovers.length }}
+            </span>
+          </button>
+          <button
+            class="finder-tab"
+            :class="{ active: coverFilter === 'steam' }"
+            @click.stop.prevent="setCoverFilter('steam')"
+          >
+            <i class="fab fa-steam"></i>
+            <span>Steam</span>
+            <span class="tab-badge" v-if="steamCovers.length > 0">
+              {{ steamCovers.length }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 内容区域 -->
+        <div class="finder-content">
+          <!-- 加载状态 -->
+          <div v-if="loading" class="finder-loading">
+            <div class="loading-spinner"></div>
+            <p class="loading-text">正在搜索封面...</p>
+          </div>
+
+          <!-- 封面网格 -->
+          <div v-else-if="filteredCovers.length > 0" class="covers-grid">
+            <div
+              v-for="(cover, index) in filteredCovers"
+              :key="cover.key || `cover-${index}`"
+              class="cover-card"
+              @click="selectCover(cover)"
+            >
+              <div class="cover-image-wrapper">
+                <img :src="cover.url" :alt="cover.name" loading="lazy" @error="handleImageError" />
+                <div class="cover-overlay">
+                  <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="cover-source-badge" :class="cover.source">
+                  <i :class="cover.source === 'steam' ? 'fab fa-steam' : 'fas fa-gamepad'"></i>
+                </div>
+              </div>
+              <div class="cover-info">
+                <p class="cover-name" :title="cover.name">{{ cover.name }}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- 封面结果 -->
-        <div
-          v-for="(cover, index) in covers"
-          :key="cover.key || `cover-${index}`"
-          class="col-3 mb-3"
-          @click="selectCover(cover)"
-        >
-          <div class="cover-container result">
-            <img class="rounded" :src="cover.url" :alt="cover.name" />
+          <!-- 无结果 -->
+          <div v-else class="finder-empty">
+            <div class="empty-icon">
+              <i class="fas fa-search"></i>
+            </div>
+            <h4>未找到相关封面</h4>
+            <p>尝试使用不同的关键词搜索</p>
           </div>
-          <label class="steam-app-title d-block text-nowrap text-center text-truncate">
-            {{ cover.name }}
-          </label>
-          <div v-if="cover.source === 'steam'" class="steam-app-info text-center">Steam ID: {{ cover.appid }}</div>
         </div>
 
-        <!-- 无结果提示 -->
-        <div v-if="!loading && covers.length === 0" class="col-12 text-center py-4">
-          <i class="fas fa-search fa-3x text-muted mb-3"></i>
-          <p class="text-muted">未找到相关封面</p>
-          <p class="text-muted small">尝试使用不同的关键词或切换数据源</p>
+        <!-- 底部提示 -->
+        <div class="finder-footer">
+          <span class="footer-hint">
+            <i class="fas fa-info-circle me-1"></i>
+            点击封面即可应用
+          </span>
         </div>
       </div>
     </div>
-  </div>
+  </Transition>
 </template>
 
 <script>
 import { searchSteamCovers } from '../utils/steamApi.js'
+
+// 缓存已加载的bucket数据
+const bucketCache = new Map()
+// 缓存已加载的游戏详情
+const gameCache = new Map()
 
 export default {
   name: 'CoverFinder',
@@ -82,59 +146,110 @@ export default {
   },
   data() {
     return {
-      coverSource: 'igdb',
+      coverFilter: 'all',
       loading: false,
-      covers: [],
+      igdbCovers: [],
+      steamCovers: [],
+      localSearchTerm: '',
+      searchAbortController: null,
     }
+  },
+  computed: {
+    allCovers() {
+      // 交替合并两个来源的结果
+      const result = []
+      const maxLen = Math.max(this.igdbCovers.length, this.steamCovers.length)
+      for (let i = 0; i < maxLen; i++) {
+        if (i < this.igdbCovers.length) result.push(this.igdbCovers[i])
+        if (i < this.steamCovers.length) result.push(this.steamCovers[i])
+      }
+      return result
+    },
+    filteredCovers() {
+      if (this.coverFilter === 'igdb') return this.igdbCovers
+      if (this.coverFilter === 'steam') return this.steamCovers
+      return this.allCovers
+    },
   },
   watch: {
     visible(newVal) {
-      if (newVal && this.searchTerm) {
-        this.searchCovers()
-      }
-    },
-    searchTerm: {
-      handler(newVal) {
-        if (this.visible && newVal) {
-          clearTimeout(this.debounceTimer)
-          this.debounceTimer = setTimeout(() => {
-            this.searchCovers()
-          }, 500)
+      if (newVal) {
+        this.localSearchTerm = this.searchTerm
+        this.$nextTick(() => {
+          this.$refs.searchInput?.focus()
+          this.$refs.searchInput?.select()
+        })
+        if (this.localSearchTerm) {
+          this.searchCovers()
         }
-      },
-      immediate: true,
+      } else {
+        // 关闭时取消正在进行的请求
+        this.abortPendingSearch()
+      }
+      document.body.style.overflow = newVal ? 'hidden' : ''
     },
   },
+  beforeUnmount() {
+    document.body.style.overflow = ''
+    this.abortPendingSearch()
+  },
   methods: {
-    /**
-     * 设置封面来源
-     */
-    setCoverSource(source) {
-      this.coverSource = source
-      if (this.visible && this.searchTerm) {
-        this.searchCovers()
+    abortPendingSearch() {
+      if (this.searchAbortController) {
+        this.searchAbortController.abort()
+        this.searchAbortController = null
       }
     },
 
-    /**
-     * 搜索封面
-     */
+    clearSearch() {
+      this.localSearchTerm = ''
+      this.igdbCovers = []
+      this.steamCovers = []
+      this.abortPendingSearch()
+      this.$refs.searchInput?.focus()
+    },
+
+    setCoverFilter(filter) {
+      this.coverFilter = filter
+    },
+
     async searchCovers() {
-      if (!this.searchTerm) {
-        this.covers = []
+      if (!this.localSearchTerm) {
+        this.igdbCovers = []
+        this.steamCovers = []
         return
       }
 
+      // 取消之前的搜索请求
+      this.abortPendingSearch()
+      this.searchAbortController = new AbortController()
+
       this.loading = true
-      this.covers = []
+      this.igdbCovers = []
+      this.steamCovers = []
 
       try {
-        if (this.coverSource === 'steam') {
-          this.covers = await searchSteamCovers(this.searchTerm)
+        // 同时搜索两个来源
+        const [igdbResults, steamResults] = await Promise.allSettled([
+          this.searchIGDBCovers(this.localSearchTerm, this.searchAbortController.signal),
+          searchSteamCovers(this.localSearchTerm),
+        ])
+
+        if (igdbResults.status === 'fulfilled') {
+          this.igdbCovers = igdbResults.value
+        } else if (igdbResults.reason?.name !== 'AbortError') {
+          console.error('搜索IGDB封面失败:', igdbResults.reason)
+        }
+
+        if (steamResults.status === 'fulfilled') {
+          this.steamCovers = steamResults.value
         } else {
-          this.covers = await this.searchIGDBCovers(this.searchTerm)
+          console.error('搜索Steam封面失败:', steamResults.reason)
         }
       } catch (error) {
+        if (error.name === 'AbortError') {
+          return // 请求被取消，不处理
+        }
         console.error('搜索封面失败:', error)
         this.$emit('error', '搜索封面失败，请稍后重试')
       } finally {
@@ -142,53 +257,49 @@ export default {
       }
     },
 
-    /**
-     * 搜索IGDB封面
-     */
-    async searchIGDBCovers(name) {
-      if (!name) {
-        return []
-      }
+    async searchIGDBCovers(name, signal) {
+      if (!name) return []
 
       const searchName = name.replaceAll(/\s+/g, '.').toLowerCase()
       const bucket = this.getSearchBucket(name)
 
       try {
-        const response = await fetch(`https://db.lizardbyte.dev/buckets/${bucket}.json`)
-        if (!response.ok) {
-          throw new Error('Failed to search covers')
+        // 使用缓存的bucket数据
+        let maps = bucketCache.get(bucket)
+        if (!maps) {
+          const response = await fetch(`https://lizardbyte.github.io/GameDB/buckets/${bucket}.json`, { signal })
+          if (!response.ok) throw new Error('Failed to search covers')
+          maps = await response.json()
+          bucketCache.set(bucket, maps)
         }
 
-        const maps = await response.json()
-        const matchedIds = Object.keys(maps).filter((id) => {
-          const item = maps[id]
-          return item.name.replaceAll(/\s+/g, '.').toLowerCase().startsWith(searchName)
-        })
+        const matchedIds = Object.keys(maps)
+          .filter((id) => maps[id].name.replaceAll(/\s+/g, '.').toLowerCase().startsWith(searchName))
+          .slice(0, 20)
 
-        const gamePromises = matchedIds.map(async (id) => {
-          try {
-            const gameResponse = await fetch(`https://db.lizardbyte.dev/games/${id}.json`)
-            return await gameResponse.json()
-          } catch (error) {
-            console.warn(`无法获取游戏 ${id} 的详情:`, error)
-            return null
-          }
-        })
-
-        const games = await Promise.all(gamePromises)
-
-        return games
-          .filter((game) => game && game.cover && game.cover.url)
-          .map((game) => {
-            const thumb = game.cover.url
-            const dotIndex = thumb.lastIndexOf('.')
-            const slashIndex = thumb.lastIndexOf('/')
-
-            if (dotIndex < 0 || slashIndex < 0) {
+        // 并行获取游戏详情，使用缓存
+        const games = await Promise.all(
+          matchedIds.map(async (id) => {
+            // 检查缓存
+            if (gameCache.has(id)) {
+              return gameCache.get(id)
+            }
+            try {
+              const res = await fetch(`https://lizardbyte.github.io/GameDB/games/${id}.json`, { signal })
+              const game = await res.json()
+              gameCache.set(id, game)
+              return game
+            } catch {
               return null
             }
+          })
+        )
 
-            const hash = thumb.substring(slashIndex + 1, dotIndex)
+        return games
+          .filter((game) => game?.cover?.url)
+          .map((game) => {
+            const thumb = game.cover.url
+            const hash = thumb.substring(thumb.lastIndexOf('/') + 1, thumb.lastIndexOf('.'))
             return {
               name: game.name,
               key: `igdb_${game.id}`,
@@ -197,62 +308,52 @@ export default {
               saveUrl: `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${hash}.png`,
             }
           })
-          .filter((item) => item)
       } catch (error) {
+        if (error.name === 'AbortError') {
+          throw error
+        }
         console.error('搜索IGDB封面失败:', error)
         return []
       }
     },
 
-    /**
-     * 获取搜索分桶
-     */
     getSearchBucket(name) {
       const bucket = name
-        .substring(0, Math.min(name.length, 2))
+        .substring(0, 2)
         .toLowerCase()
-        .replaceAll(/[^a-z\d\u4e00-\u9fa5\u3400-\u4DBF\u20000-\u2A6DF]/g, '')
-
+        .replaceAll(/[^a-z\d\u4e00-\u9fa5]/g, '')
       return bucket || '@'
     },
 
-    /**
-     * 选择封面
-     */
+    handleImageError(event) {
+      event.target.src =
+        'data:image/svg+xml,' +
+        encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
+          <rect fill="#1a1a2e" width="200" height="300"/>
+          <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">无法加载</text>
+        </svg>
+      `)
+    },
+
     async selectCover(cover) {
       this.$emit('loading', true)
 
       try {
         if (cover.source === 'steam') {
-          // 直接使用Steam封面URL
-          this.$emit('cover-selected', {
-            path: cover.saveUrl,
-            source: 'steam',
-          })
+          this.$emit('cover-selected', { path: cover.saveUrl, source: 'steam' })
         } else {
-          // IGDB封面需要下载
           const response = await fetch('/api/covers/upload', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              key: cover.key,
-              url: cover.saveUrl,
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: cover.key, url: cover.saveUrl }),
           })
 
-          if (!response.ok) {
-            throw new Error('Failed to download cover')
-          }
+          if (!response.ok) throw new Error('Failed to download cover')
 
           const body = await response.json()
-          this.$emit('cover-selected', {
-            path: body.path,
-            source: 'igdb',
-          })
+          this.$emit('cover-selected', { path: body.path, source: 'igdb' })
         }
-
         this.closeFinder()
       } catch (error) {
         console.error('使用封面失败:', error)
@@ -262,9 +363,6 @@ export default {
       }
     },
 
-    /**
-     * 关闭查找器
-     */
     closeFinder() {
       this.$emit('close')
     },
@@ -273,92 +371,359 @@ export default {
 </script>
 
 <style scoped>
-.cover-finder {
-  max-height: 600px;
-  overflow-y: auto;
+.cover-finder-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1050;
+  padding: 2rem;
 }
 
-.cover-results {
-  max-height: 400px;
-  overflow-x: hidden;
-  overflow-y: auto;
+.cover-finder-panel {
+  background: linear-gradient(145deg, #1e1e2e 0%, #16161e 100%);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
 }
 
-.cover-results.busy * {
-  cursor: wait !important;
-  pointer-events: none;
+.finder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.cover-container {
-  padding-top: 133.33%;
-  position: relative;
+.finder-title {
+  display: flex;
+  align-items: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #e0e0e0;
 }
 
-.cover-container.result {
+.finder-title i {
+  color: #7c3aed;
+}
+
+.finder-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  color: #888;
   cursor: pointer;
+  transition: all 0.2s;
 }
 
-.cover-container.result:hover {
-  opacity: 0.8;
-  transform: scale(1.02);
-  transition: all 0.2s ease;
+.finder-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
 }
 
-.spinner-border {
-  position: absolute;
-  left: 0;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  margin: auto;
+.finder-search {
+  padding: 1rem 1.5rem;
 }
 
-.cover-container img {
-  display: block;
-  position: absolute;
-  top: 0;
+.search-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0 0.5rem;
+}
+
+.search-input-wrapper:focus-within {
+  border-color: rgba(124, 58, 237, 0.5);
+}
+
+.search-icon {
+  color: #666;
+  padding: 0 0.75rem;
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e0e0e0;
+  padding: 0.85rem 0.25rem;
+}
+
+.search-input::placeholder {
+  color: #555;
+}
+
+.search-clear,
+.search-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.search-clear {
+  background: transparent;
+  color: #666;
+}
+
+.search-clear:hover {
+  color: #aaa;
+}
+
+.search-btn {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  color: white;
+}
+
+.search-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.finder-tabs {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1.5rem 1rem;
+}
+
+.finder-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.03);
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.finder-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.finder-tab.active {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  color: white;
+}
+
+.tab-badge {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+}
+
+.finder-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+  min-height: 300px;
+}
+
+.finder-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(124, 58, 237, 0.2);
+  border-top-color: #7c3aed;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  margin-top: 1rem;
+  color: #888;
+}
+
+.covers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1.25rem;
+}
+
+.cover-card {
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.cover-card:hover {
+  transform: translateY(-4px);
+}
+
+.cover-card:hover .cover-overlay {
+  opacity: 1;
+}
+
+.cover-image-wrapper {
+  position: relative;
+  aspect-ratio: 2/3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d0d14;
+}
+
+.cover-image-wrapper img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.cover-source-selector {
-  margin-bottom: 1rem;
-}
-
-.cover-source-tabs {
+.cover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(124, 58, 237, 0.85);
   display: flex;
-  border-bottom: 1px solid #dee2e6;
-  margin-bottom: 1rem;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: white;
+  font-size: 2rem;
 }
 
-.cover-source-tab {
-  padding: 0.5rem 1rem;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  color: #6c757d;
-  transition: all 0.15s ease-in-out;
+.cover-source-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: white;
 }
 
-.cover-source-tab.active {
-  color: #0d6efd;
-  border-bottom-color: #0d6efd;
+.cover-source-badge.steam {
+  background: #1b2838;
 }
 
-.cover-source-tab:hover {
-  color: #0d6efd;
+.cover-source-badge.igdb {
+  background: #9147ff;
 }
 
-.steam-app-title {
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
+.cover-info {
+  padding: 0.5rem 0;
 }
 
-.steam-app-info {
-  font-size: 0.75rem;
-  color: #6c757d;
-  margin-top: 0.25rem;
+.cover-name {
+  font-size: 0.8rem;
+  color: #d0d0d0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finder-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.empty-icon i {
+  font-size: 2rem;
+  color: #4a4a6a;
+}
+
+.finder-empty h4 {
+  color: #aaa;
+  margin: 0 0 0.5rem;
+}
+
+.finder-empty p {
+  color: #666;
+  margin: 0;
+}
+
+.finder-footer {
+  padding: 0.75rem 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.footer-hint {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.footer-hint i {
+  color: #7c3aed;
+}
+
+.finder-fade-enter-active,
+.finder-fade-leave-active {
+  transition: opacity 0.3s;
+}
+
+.finder-fade-enter-from,
+.finder-fade-leave-to {
+  opacity: 0;
+}
+
+.finder-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.finder-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+  .cover-finder-overlay {
+    padding: 1rem;
+  }
+
+  .covers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 1rem;
+  }
 }
 </style>

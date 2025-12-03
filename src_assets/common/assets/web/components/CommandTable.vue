@@ -30,88 +30,96 @@
           @end="onDragEnd"
         >
           <template #item="{ element: command, index }">
-            <tr :key="getCommandKey(command, index)">
+            <tr :key="index">
               <!-- 拖拽手柄 -->
               <td class="drag-handle-cell">
                 <div class="drag-handle" @dragstart.stop @dragend.stop :title="'拖拽排序'">
                   <i class="fas fa-grip-vertical"></i>
                 </div>
               </td>
-            <!-- 准备命令字段 -->
-            <template v-if="type === 'prep'">
-              <td>
-                <input
-                  type="text"
-                  class="form-control form-control-sm monospace"
-                  v-model="command.do"
-                  placeholder="执行命令"
-                />
-              </td>
-              <td>
-                <input
-                  type="text"
-                  class="form-control form-control-sm monospace"
-                  v-model="command.undo"
-                  placeholder="撤销命令"
-                />
-              </td>
-            </template>
+              <!-- 准备命令字段 -->
+              <template v-if="type === 'prep'">
+                <td>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm monospace"
+                    :value="command.do"
+                    @input="updateCommandField(index, 'do', $event.target.value)"
+                    placeholder="执行命令"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm monospace"
+                    :value="command.undo"
+                    @input="updateCommandField(index, 'undo', $event.target.value)"
+                    placeholder="撤销命令"
+                  />
+                </td>
+              </template>
 
-            <!-- 菜单命令字段 -->
-            <template v-if="type === 'menu'">
-              <td>
-                <input type="text" class="form-control form-control-sm" v-model="command.name" placeholder="显示名称" />
-              </td>
-              <td>
-                <input
-                  type="text"
-                  class="form-control form-control-sm monospace"
-                  v-model="command.cmd"
-                  placeholder="命令"
-                />
-              </td>
-            </template>
+              <!-- 菜单命令字段 -->
+              <template v-if="type === 'menu'">
+                <td>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm"
+                    :value="command.name"
+                    @input="updateCommandField(index, 'name', $event.target.value)"
+                    placeholder="显示名称"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm monospace"
+                    :value="command.cmd"
+                    @input="updateCommandField(index, 'cmd', $event.target.value)"
+                    placeholder="命令"
+                  />
+                </td>
+              </template>
 
-            <!-- Windows权限设置 -->
-            <td v-if="platform === 'windows'">
-              <div class="form-check">
-                <input
-                  type="checkbox"
-                  class="form-check-input"
-                  :id="`${type}-cmd-admin-${index}`"
-                  v-model="command.elevated"
-                  true-value="true"
-                  false-value="false"
-                />
-                <label :for="`${type}-cmd-admin-${index}`" class="form-check-label">
-                  {{ $t('_common.elevated') }}
-                </label>
-              </div>
-            </td>
+              <!-- Windows权限设置 -->
+              <td v-if="platform === 'windows'">
+                <div class="form-check">
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    :id="`${type}-cmd-admin-${index}`"
+                    :checked="command.elevated === 'true' || command.elevated === true"
+                    @change="updateCommandField(index, 'elevated', $event.target.checked ? 'true' : 'false')"
+                  />
+                  <label :for="`${type}-cmd-admin-${index}`" class="form-check-label">
+                    {{ $t('_common.elevated') }}
+                  </label>
+                </div>
+              </td>
 
-            <!-- 操作按钮 -->
-            <td>
-              <div class="action-buttons-group">
-                <button
-                  v-if="type === 'menu'"
-                  type="button"
-                  class="btn btn-outline-primary btn-sm me-1"
-                  @click="testCommand(index)"
-                  :title="$t('apps.test_menu_cmd')"
-                  :disabled="!command.cmd"
-                >
-                  <i class="fas fa-play"></i>
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-outline-danger btn-sm"
-                  @click="removeCommand(index)"
-                  :title="type === 'prep' ? '删除准备命令' : '删除菜单命令'"
-                >
-                  <i class="fas fa-trash"></i>
-                </button>
-              </div>
-            </td>
+              <!-- 操作按钮 -->
+              <td>
+                <div class="action-buttons-group">
+                  <button
+                    v-if="type === 'menu'"
+                    type="button"
+                    class="btn btn-outline-primary btn-sm me-1"
+                    @click="testCommand(index)"
+                    :title="$t('apps.test_menu_cmd')"
+                    :disabled="!command.cmd"
+                  >
+                    <i class="fas fa-play"></i>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-outline-danger btn-sm"
+                    @click="removeCommand(index)"
+                    :title="type === 'prep' ? '删除准备命令' : '删除菜单命令'"
+                  >
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </td>
             </tr>
           </template>
         </draggable>
@@ -179,27 +187,19 @@ export default {
   methods: {
     /**
      * 获取命令的唯一键（用于 draggable）
+     * 使用稳定的索引作为 key，避免输入时重新渲染导致失焦
      */
     getItemKey(command) {
-      if (this.type === 'menu' && command.id) {
-        return `menu-${command.id}`
-      }
-      // 如果没有 id，使用索引和内容生成唯一键
       const index = this.localCommands.indexOf(command)
-      const content = this.type === 'menu' 
-        ? `${command.name || ''}-${command.cmd || ''}` 
-        : `${command.do || ''}-${command.undo || ''}`
-      return `${this.type}-${index}-${content}`
+      return `${this.type}-${index}`
     },
 
     /**
-     * 获取命令的唯一键（用于 v-for）
+     * 更新命令字段
      */
-    getCommandKey(command, index) {
-      if (this.type === 'menu' && command.id) {
-        return `menu-${command.id}`
-      }
-      return `${this.type}-${index}`
+    updateCommandField(index, field, value) {
+      this.localCommands[index][field] = value
+      this.$emit('order-changed', this.localCommands)
     },
 
     /**
