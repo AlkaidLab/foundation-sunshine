@@ -55,3 +55,6 @@ package-lock.json
 # Python
 *.pyc
 venv/
+
+# Generated files
+src_assets/common/assets/web/welcome.html
