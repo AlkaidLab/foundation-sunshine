@@ -1,10 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 
-const props = defineProps([
-  'platform',
-  'config',
-])
+const props = defineProps(['platform', 'config'])
 
 const config = ref(props.config)
 </script>
@@ -25,16 +22,23 @@ const config = ref(props.config)
     </div>
 
     <!-- AMD Rate Control group options -->
-    <div class="accordion">
+    <div class="accordion mb-3">
       <div class="accordion-item">
         <h2 class="accordion-header">
-          <button class="accordion-button" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#panelsStayOpen-collapseOne">
+          <button
+            class="accordion-button collapsed"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#panelsStayOpen-collapseOne"
+          >
             {{ $t('config.amd_rc_group') }}
           </button>
         </h2>
-        <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show"
-             aria-labelledby="panelsStayOpen-headingOne">
+        <div
+          id="panelsStayOpen-collapseOne"
+          class="accordion-collapse collapse"
+          aria-labelledby="panelsStayOpen-headingOne"
+        >
           <div class="accordion-body">
             <!-- AMF Rate Control -->
             <div class="mb-3">
@@ -63,16 +67,23 @@ const config = ref(props.config)
     </div>
 
     <!-- AMF Quality group options -->
-    <div class="accordion">
+    <div class="accordion mb-3">
       <div class="accordion-item">
         <h2 class="accordion-header">
-          <button class="accordion-button" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#panelsStayOpen-collapseTwo">
+          <button
+            class="accordion-button collapsed"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#panelsStayOpen-collapseTwo"
+          >
             {{ $t('config.amd_quality_group') }}
           </button>
         </h2>
-        <div id="panelsStayOpen-collapseTwo" class="accordion-collapse collapse show"
-             aria-labelledby="panelsStayOpen-headingTwo">
+        <div
+          id="panelsStayOpen-collapseTwo"
+          class="accordion-collapse collapse"
+          aria-labelledby="panelsStayOpen-headingTwo"
+        >
           <div class="accordion-body">
             <!-- AMF Quality -->
             <div class="mb-3">
@@ -122,6 +133,4 @@ const config = ref(props.config)
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

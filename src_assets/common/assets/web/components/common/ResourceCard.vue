@@ -35,11 +35,7 @@
               </a>
             </div>
             <div class="col-md-6">
-              <a
-                class="resource-link resource-link-info"
-                href="https://qm.qq.com/q/3tWBFVNZ"
-                target="_blank"
-              >
+              <a class="resource-link resource-link-info" href="https://qm.qq.com/q/3tWBFVNZ" target="_blank">
                 <div class="resource-icon">
                   <i class="fab fa-qq"></i>
                 </div>
@@ -176,7 +172,7 @@
           </div>
           <p class="text-center text-muted small mt-2 mb-0">
             {{ $t('resource_card.gpl_license_text_1') }}
-            <br>
+            <br />
             {{ $t('resource_card.gpl_license_text_2') }}
           </p>
         </div>
@@ -227,11 +223,6 @@
   border-radius: 12px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   backdrop-filter: blur(3px);
-}
-
-.resource-section .card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1) !important;
 }
 
 .resource-section .card-header {
@@ -507,42 +498,42 @@
 }
 
 /* Dark Mode */
-[data-bs-theme="dark"] .resource-link-primary,
-[data-bs-theme="dark"] .resource-link-info,
-[data-bs-theme="dark"] .resource-link-android,
-[data-bs-theme="dark"] .resource-link-danger {
+[data-bs-theme='dark'] .resource-link-primary,
+[data-bs-theme='dark'] .resource-link-info,
+[data-bs-theme='dark'] .resource-link-android,
+[data-bs-theme='dark'] .resource-link-danger {
   background: linear-gradient(135deg, rgba(var(--link-color), 0.25) 0%, rgba(var(--link-color), 0.12) 100%);
 }
 
-[data-bs-theme="dark"] .resource-link-apple {
+[data-bs-theme='dark'] .resource-link-apple {
   --link-color: 170, 170, 170;
   background: linear-gradient(135deg, rgba(var(--link-color), 0.2) 0%, rgba(var(--link-color), 0.1) 100%);
 }
 
-[data-bs-theme="dark"] .resource-link-apple .resource-icon {
+[data-bs-theme='dark'] .resource-link-apple .resource-icon {
   background: linear-gradient(135deg, #aaa 0%, #ccc 100%);
   color: #222;
 }
 
-[data-bs-theme="dark"] .resource-link-desktop,
-[data-bs-theme="dark"] .resource-link-github {
+[data-bs-theme='dark'] .resource-link-desktop,
+[data-bs-theme='dark'] .resource-link-github {
   --link-color: 150, 160, 170;
   background: linear-gradient(135deg, rgba(var(--link-color), 0.2) 0%, rgba(var(--link-color), 0.1) 100%);
 }
 
-[data-bs-theme="dark"] .resource-link-desktop .resource-icon {
+[data-bs-theme='dark'] .resource-link-desktop .resource-icon {
   background: linear-gradient(135deg, #8c959d 0%, #6c757d 100%);
 }
 
-[data-bs-theme="dark"] .resource-link-github .resource-icon {
+[data-bs-theme='dark'] .resource-link-github .resource-icon {
   background: linear-gradient(135deg, #8c959d 0%, #adb5bd 100%);
 }
 
-[data-bs-theme="dark"] .resource-link:hover {
+[data-bs-theme='dark'] .resource-link:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-[data-bs-theme="dark"] .resource-group {
+[data-bs-theme='dark'] .resource-group {
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
 </style>

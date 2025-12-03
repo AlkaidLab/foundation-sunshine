@@ -178,6 +178,8 @@
     "display_mode_remapping_received_resolution_windows": "接收的分辨率",
     "display_mode_remapping_resolution_only_mode_desc_windows": "注意：如果在Moonlight客户端上未启用\"优化游戏设置\"选项，则重新映射功能将被禁用。",
     "display_mode_remapping_windows": "重新映射显示模式",
+    "display_modes": "显示模式",
+    "virtual_display": "虚拟显示器",
     "ds4_back_as_touchpad_click": "映射回/选择触摸板点击",
     "ds4_back_as_touchpad_click_desc": "强制使用 DS4 模拟时，将“返回”/“选择”映射到触摸板点击",
     "encoder": "强制指定编码器",
@@ -552,6 +554,20 @@
     "reopen_setup_wizard": "重新打开新手引导",
     "reopen_setup_wizard_desc": "重新打开新手引导页面，可以重新配置初始设置。",
     "reopen_setup_wizard_error": "重新打开新手引导失败"
+  },
+  "tabs": {
+    "general": "常规",
+    "input": "输入",
+    "av": "音频/视频",
+    "network": "网络",
+    "files": "配置文件",
+    "advanced": "高级",
+    "nv": "NVIDIA NVENC 编码器",
+    "qsv": "Intel QuickSync 编码器",
+    "amd": "AMD AMF 编码器",
+    "vt": "VideoToolbox 编码器",
+    "sw": "软件编码器",
+    "vaapi": "VAAPI 编码器"
   },
   "welcome": {
     "confirm_password": "确认密码",

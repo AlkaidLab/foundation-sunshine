@@ -13,7 +13,7 @@
               href="#"
               @click.prevent="currentTab = tab.id"
             >
-              {{ tab.name }}
+              {{ $t(`tabs.${tab.id}`) || tab.name }}
             </a>
           </li>
         </ul>

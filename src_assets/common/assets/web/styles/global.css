@@ -19,16 +19,57 @@ body {
   font-weight: 100;
   margin-bottom: 0.5rem;
   letter-spacing: -0.02em;
-  color: #333333;
+  color: var(--text-title-color, #333333);
+  transition: color 0.5s ease;
 }
 
-[data-bs-theme='dark'] .page-title {
-  color: #e0e0e0;
+/* 确保主题切换时也使用动态颜色变量 */
+[data-bs-theme='dark'] .page-title,
+[data-bs-theme='light'] .page-title,
+body.bg-dark .page-title,
+body.bg-light .page-title {
+  color: var(--text-title-color) !important;
 }
 
 .page-subtitle {
   font-size: 1rem;
   font-weight: 100;
-  color: #ffffff;
+  color: var(--text-primary-color, #ffffff);
   margin-bottom: 0;
+  transition: color 0.5s ease;
+}
+
+/* 文字颜色过渡动画 */
+:root.text-color-transitioning * {
+  transition: color 0.5s ease !important;
+}
+
+.card {
+  border: none;
+  border-radius: 12px;
+  backdrop-filter: blur(3px);
+}
+
+.card-header {
+  border-radius: 12px 12px 0 0 !important;
+  padding: 1rem 1.25rem;
+  backdrop-filter: blur(1px);
+}
+
+.card-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.card-body {
+  padding: 1.25rem;
+}
+
+.card-body p {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.card-body p.pre-line {
+  white-space: pre-line;
 }

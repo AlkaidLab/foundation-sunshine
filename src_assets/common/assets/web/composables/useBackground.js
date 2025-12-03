@@ -1,15 +1,21 @@
+import ColorThief from 'colorthief'
+
 const DEFAULT_BACKGROUND = 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'
 
+const COLOR_CONFIG = {
+  textLightnessRange: { min: 15, max: 95 },
+  brightnessThreshold: 50,
+  paletteSize: 5,
+}
+
+const DEFAULT_COLOR_INFO = {
+  dominantColor: { r: 128, g: 128, b: 128 },
+  hsl: { h: 0, s: 0, l: 50 },
+}
+
 /**
  * 背景图片管理组合式函数
- * @param {Object} options - 配置选项
- * @param {string} options.defaultBackground - 默认背景URL
- * @param {string} options.storageKey - localStorage 存储键名
- * @param {number} options.maxWidth - 图片最大宽度
- * @param {number} options.maxHeight - 图片最大高度
- * @param {number} options.maxSizeMB - 最大文件大小（MB）
- * @returns {Object} 背景管理相关的函数和状态
  */
 export function useBackground(options = {}) {
   const {
@@ -17,101 +23,245 @@ export function useBackground(options = {}) {
     storageKey = STORAGE_KEY,
     maxWidth = 1920,
     maxHeight = 1080,
-    maxSizeMB = 2
+    maxSizeMB = 2,
   } = options
 
-  /**
-   * 设置背景图片
-   * @param {string} imageUrl - 图片URL或base64
-   */
-  const setBackground = (imageUrl) => {
-    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
-  }
+  const loadImage = (imageUrl) =>
+    new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('图片加载失败'))
+      img.src = imageUrl
+    })
 
-  /**
-   * 加载背景图片
-   */
-  const loadBackground = () => {
-    const savedBg = localStorage.getItem(storageKey) ?? defaultBackground
-    setBackground(savedBg)
-  }
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
-  /**
-   * 保存背景图片到 localStorage
-   * @param {string} imageData - base64 图片数据
-   */
-  const saveBackground = (imageData) => {
-    try {
-      localStorage.setItem(storageKey, imageData)
-      setBackground(imageData)
-    } catch (storageError) {
-      if (storageError.name === 'QuotaExceededError') {
-        // 如果超出配额，清除旧的背景并重试
-        localStorage.removeItem(storageKey)
-        try {
-          localStorage.setItem(storageKey, imageData)
-          setBackground(imageData)
-        } catch (retryError) {
-          console.error('无法存储背景图片:', retryError)
-          throw new Error('图片太大，无法存储。请选择更小的图片或降低图片质量。')
-        }
-      } else {
-        throw storageError
-      }
+  const rgbToHsl = (r, g, b) => {
+    r /= 255
+    g /= 255
+    b /= 255
+
+    const max = Math.max(r, g, b)
+    const min = Math.min(r, g, b)
+    const l = (max + min) / 2
+    const d = max - min
+
+    if (d === 0) return { h: 0, s: 0, l: Math.round(l * 100) }
+
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    let h = 0
+
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+    else if (max === g) h = ((b - r) / d + 2) / 6
+    else h = ((r - g) / d + 4) / 6
+
+    return {
+      h: Math.round(h * 360),
+      s: Math.round(s * 100),
+      l: Math.round(l * 100),
     }
   }
 
-  /**
-   * 压缩图片
-   * @param {File} file - 图片文件
-   * @param {number} initialQuality - 初始压缩质量 (0-1)
-   * @returns {Promise<string>} base64 字符串
-   */
-  const compressImage = (file, initialQuality = 0.8) => {
-    return new Promise((resolve, reject) => {
+  const hslToRgb = (h, s, l) => {
+    h /= 360
+    s /= 100
+    l /= 100
+
+    if (s === 0) {
+      const val = Math.round(l * 255)
+      return { r: val, g: val, b: val }
+    }
+
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1
+      if (t > 1) t -= 1
+      if (t < 1 / 6) return p + (q - p) * 6 * t
+      if (t < 1 / 2) return q
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+      return p
+    }
+
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+    const p = 2 * l - q
+
+    return {
+      r: Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+      g: Math.round(hue2rgb(p, q, h) * 255),
+      b: Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    }
+  }
+
+  const rgbToHex = (r, g, b) => {
+    const toHex = (x) => Math.round(x).toString(16).padStart(2, '0')
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+  }
+
+  const analyzeImageColors = (img) => {
+    if (!img.complete) return { ...DEFAULT_COLOR_INFO }
+
+    try {
+      const colorThief = new ColorThief()
+      const dominantColorArray = colorThief.getColor(img)
+
+      if (!dominantColorArray?.length === 3) return { ...DEFAULT_COLOR_INFO }
+
+      let selectedColor = dominantColorArray
+
+      try {
+        const palette = colorThief.getPalette(img, COLOR_CONFIG.paletteSize)
+        if (palette?.length > 0) {
+          let maxSaturation = 0
+          for (const color of palette) {
+            if (color?.length === 3) {
+              const hsl = rgbToHsl(color[0], color[1], color[2])
+              if (hsl.s > maxSaturation) {
+                maxSaturation = hsl.s
+                selectedColor = color
+              }
+            }
+          }
+        }
+      } catch {
+        // 使用主要颜色
+      }
+
+      const [r, g, b] = selectedColor
+      return {
+        dominantColor: { r, g, b },
+        hsl: rgbToHsl(r, g, b),
+      }
+    } catch {
+      return { ...DEFAULT_COLOR_INFO }
+    }
+  }
+
+  const detectImageColorInfo = async (imageUrl) => {
+    try {
+      const img = await loadImage(imageUrl)
+      return analyzeImageColors(img)
+    } catch {
+      return { ...DEFAULT_COLOR_INFO }
+    }
+  }
+
+  const calculateTextColors = (colorInfo) => {
+    const { hsl } = colorInfo
+    const { textLightnessRange, brightnessThreshold } = COLOR_CONFIG
+    const isLightBg = hsl.l > brightnessThreshold
+
+    const textH = hsl.h
+    let textS = hsl.s
+    let textL
+
+    if (isLightBg) {
+      textL = Math.max(textLightnessRange.min, hsl.l - 60)
+      if (hsl.s < 30) textS = Math.min(20, hsl.s)
+    } else {
+      textL = Math.min(textLightnessRange.max, hsl.l + 70)
+      textS = Math.min(40, hsl.s * 0.6)
+    }
+
+    const createColor = (s, l) => {
+      const rgb = hslToRgb(textH, s, l)
+      return rgbToHex(rgb.r, rgb.g, rgb.b)
+    }
+
+    return {
+      primary: createColor(textS, textL),
+      secondary: createColor(textS * 0.7, clamp(isLightBg ? textL - 15 : textL + 10, 10, 90)),
+      muted: createColor(textS * 0.4, clamp(isLightBg ? textL - 25 : textL + 20, 5, 85)),
+      title: createColor(textS * 0.3, isLightBg ? textLightnessRange.min : textLightnessRange.max),
+      bgClass: isLightBg ? 'bg-light' : 'bg-dark',
+    }
+  }
+
+  const setTextColorTheme = (colorInfo) => {
+    const root = document.documentElement
+    const textColors = calculateTextColors(colorInfo)
+
+    root.style.setProperty('--text-primary-color', textColors.primary)
+    root.style.setProperty('--text-secondary-color', textColors.secondary)
+    root.style.setProperty('--text-muted-color', textColors.muted)
+    root.style.setProperty('--text-title-color', textColors.title)
+
+    document.body.classList.remove('bg-light', 'bg-dark')
+    document.body.classList.add(textColors.bgClass)
+
+    root.classList.add('text-color-transitioning')
+    setTimeout(() => root.classList.remove('text-color-transitioning'), 500)
+  }
+
+  const setBackground = async (imageUrl) => {
+    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
+    try {
+      const colorInfo = await detectImageColorInfo(imageUrl)
+      setTextColorTheme(colorInfo)
+    } catch {
+      // 静默失败
+    }
+  }
+
+  const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
+
+  const recheckBackgroundBrightness = async () => {
+    try {
+      const colorInfo = await detectImageColorInfo(getCurrentBackground())
+      setTextColorTheme(colorInfo)
+    } catch {
+      // 静默失败
+    }
+  }
+
+  const loadBackground = () => setBackground(getCurrentBackground())
+
+  const saveBackground = async (imageData) => {
+    try {
+      localStorage.setItem(storageKey, imageData)
+    } catch (error) {
+      if (error.name === 'QuotaExceededError') {
+        localStorage.removeItem(storageKey)
+        try {
+          localStorage.setItem(storageKey, imageData)
+        } catch {
+          throw new Error('图片太大，无法存储。请选择更小的图片或降低图片质量。')
+        }
+      } else {
+        throw error
+      }
+    }
+    await setBackground(imageData)
+  }
+
+  const calculateResizedDimensions = (width, height) => {
+    if (width <= maxWidth && height <= maxHeight) return { width, height }
+    const ratio = Math.min(maxWidth / width, maxHeight / height)
+    return { width: width * ratio, height: height * ratio }
+  }
+
+  const compressWithQuality = (img, width, height, quality) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+
+    const dataUrl = canvas.toDataURL('image/jpeg', quality)
+    const sizeInMB = (dataUrl.length * 3) / 4 / 1024 / 1024
+
+    if (sizeInMB <= maxSizeMB) return dataUrl
+    if (quality > 0.3) return compressWithQuality(img, width, height, quality - 0.1)
+    return null
+  }
+
+  const compressImage = (file, initialQuality = 0.8) =>
+    new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = (event) => {
         const img = new Image()
         img.onload = () => {
-          // 计算新尺寸
-          let width = img.width
-          let height = img.height
-          
-          if (width > maxWidth || height > maxHeight) {
-            const ratio = Math.min(maxWidth / width, maxHeight / height)
-            width = width * ratio
-            height = height * ratio
-          }
-
-          // 尝试不同质量级别，直到找到合适的大小
-          const tryCompress = (quality) => {
-            const canvas = document.createElement('canvas')
-            canvas.width = width
-            canvas.height = height
-            const ctx = canvas.getContext('2d')
-            ctx.drawImage(img, 0, 0, width, height)
-
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', quality)
-            
-            // 检查大小
-            const sizeInMB = (compressedDataUrl.length * 3) / 4 / 1024 / 1024
-            
-            if (sizeInMB > maxSizeMB && quality > 0.3) {
-              // 如果还是太大且质量还可以降低，继续尝试
-              return tryCompress(quality - 0.1)
-            } else if (sizeInMB > maxSizeMB) {
-              // 如果质量已经很低但还是太大，拒绝
-              reject(new Error('图片太大，无法存储。请选择更小的图片。'))
-              return null
-            } else {
-              return compressedDataUrl
-            }
-          }
-
-          const result = tryCompress(initialQuality)
-          if (result) {
-            resolve(result)
-          }
+          const { width, height } = calculateResizedDimensions(img.width, img.height)
+          const result = compressWithQuality(img, width, height, initialQuality)
+          result ? resolve(result) : reject(new Error('图片太大，无法存储。请选择更小的图片。'))
         }
         img.onerror = () => reject(new Error('图片加载失败'))
         img.src = event.target.result
@@ -119,92 +269,53 @@ export function useBackground(options = {}) {
       reader.onerror = () => reject(new Error('文件读取失败'))
       reader.readAsDataURL(file)
     })
-  }
 
-  /**
-   * 处理拖拽悬停
-   * @param {DragEvent} e - 拖拽事件
-   */
   const handleDragOver = (e) => {
     e.preventDefault()
-    if (!e.dataTransfer?.types?.includes('Files')) {
-      return
+    if (e.dataTransfer?.types?.includes('Files')) {
+      document.body.classList.add('dragover')
     }
-    document.body.classList.add('dragover')
   }
 
-  /**
-   * 处理拖拽离开
-   */
-  const handleDragLeave = () => {
-    document.body.classList.remove('dragover')
-  }
+  const handleDragLeave = () => document.body.classList.remove('dragover')
 
-  /**
-   * 处理文件拖放
-   * @param {DragEvent} e - 拖拽事件
-   * @param {Function} onError - 错误回调函数
-   */
   const handleDrop = async (e, onError) => {
     e.preventDefault()
-    if (!e.dataTransfer?.types?.includes('Files')) {
-      return
-    }
     document.body.classList.remove('dragover')
 
     const file = e.dataTransfer?.files?.[0]
     if (!file?.type.startsWith('image/')) return
 
     try {
-      // 压缩图片
-      const compressedImageData = await compressImage(file)
-      
-      // 保存背景
-      saveBackground(compressedImageData)
+      await saveBackground(await compressImage(file))
     } catch (error) {
-      console.error('处理图片失败:', error)
-      if (onError) {
-        onError(error)
-      } else {
-        alert(error.message || '处理图片时发生错误')
-      }
+      onError?.(error) ?? alert(error.message || '处理图片时发生错误')
     }
   }
 
-  /**
-   * 添加拖拽监听器
-   */
   const addDragListeners = (onError) => {
-    const dragOverHandler = (e) => handleDragOver(e)
-    const dragLeaveHandler = () => handleDragLeave()
-    const dropHandler = (e) => handleDrop(e, onError)
-
-    document.addEventListener('dragover', dragOverHandler)
-    document.addEventListener('dragleave', dragLeaveHandler)
-    document.addEventListener('drop', dropHandler)
-
-    // 返回清理函数
-    return () => {
-      document.removeEventListener('dragover', dragOverHandler)
-      document.removeEventListener('dragleave', dragLeaveHandler)
-      document.removeEventListener('drop', dropHandler)
+    const handlers = {
+      dragover: handleDragOver,
+      dragleave: handleDragLeave,
+      drop: (e) => handleDrop(e, onError),
     }
+
+    Object.entries(handlers).forEach(([event, handler]) => document.addEventListener(event, handler))
+    return () => Object.entries(handlers).forEach(([event, handler]) => document.removeEventListener(event, handler))
   }
 
-  /**
-   * 清除背景图片
-   */
   const clearBackground = () => {
     localStorage.removeItem(storageKey)
-    setBackground(defaultBackground)
+    return setBackground(defaultBackground)
   }
 
-  /**
-   * 获取当前背景
-   * @returns {string} 当前背景URL或base64
-   */
-  const getCurrentBackground = () => {
-    return localStorage.getItem(storageKey) ?? defaultBackground
+  // 监听主题切换
+  if (typeof document !== 'undefined') {
+    const handleThemeChange = () => setTimeout(recheckBackgroundBrightness, 100)
+    const observerConfig = { attributes: true, attributeFilter: ['data-bs-theme'] }
+    const observer = new MutationObserver(handleThemeChange)
+    observer.observe(document.documentElement, observerConfig)
+    observer.observe(document.body, observerConfig)
   }
 
   return {
@@ -217,7 +328,7 @@ export function useBackground(options = {}) {
     handleDrop,
     addDragListeners,
     clearBackground,
-    getCurrentBackground
+    getCurrentBackground,
+    recheckBackgroundBrightness,
   }
 }
-

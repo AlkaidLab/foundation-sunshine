@@ -70,8 +70,8 @@ const handleBackgroundError = (error) => {
 // 添加拖拽监听器并获取清理函数
 let removeDragListeners = null
 
-onMounted(() => {
-  loadBackground()
+onMounted(async () => {
+  await loadBackground()
   highlightCurrentRoute()
   removeDragListeners = addDragListeners(handleBackgroundError)
 })

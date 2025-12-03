@@ -36,6 +36,12 @@
 
   --cute-btn-border-color: rgba(255, 255, 255, 0.3);
   --cute-btn-border-hover-color: rgba(255, 255, 255, 0.5);
+
+  /* 动态文字颜色变量 - 根据背景图片亮度自动设置 */
+  --text-primary-color: #333333;
+  --text-secondary-color: #666666;
+  --text-muted-color: #999999;
+  --text-title-color: #1a1a1a;
 }
 
 /* data-bs-theme="dark" 适配 */

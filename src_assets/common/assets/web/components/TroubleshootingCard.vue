@@ -48,40 +48,6 @@ const iconClass = computed(() => `fas ${props.icon} text-${props.color} me-2`)
 </script>
 
 <style scoped>
-.card {
-  border: none;
-  border-radius: 12px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1) !important;
-}
-
-.card-header {
-  border-radius: 12px 12px 0 0 !important;
-  padding: 1rem 1.25rem;
-}
-
-.card-title {
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.card-body {
-  padding: 1.25rem;
-}
-
-.card-body p {
-  font-size: 0.9rem;
-  line-height: 1.6;
-}
-
-.card-body p.pre-line {
-  white-space: pre-line;
-}
-
 .alert {
   border-radius: 8px;
   font-size: 0.9rem;

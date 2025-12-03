@@ -86,34 +86,6 @@ defineProps({
 </script>
 
 <style scoped>
-/* Card Base Styles */
-.card {
-  border: none;
-  border-radius: 12px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  backdrop-filter: blur(3px);
-}
-
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1) !important;
-}
-
-.card-header {
-  border-radius: 12px 12px 0 0 !important;
-  padding: 1rem 1.25rem;
-  backdrop-filter: blur(1px);
-}
-
-.card-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.card-body {
-  padding: 1.25rem;
-}
-
 /* Loading State */
 .version-loading {
   display: flex;

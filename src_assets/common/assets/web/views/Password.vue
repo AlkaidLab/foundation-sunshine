@@ -22,7 +22,7 @@
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
             </div>
-            <h1 class="h4 fw-bold page-title">{{ $t('password.password_change') }}</h1>
+            <h1 class="h4 page-title">{{ $t('password.password_change') }}</h1>
             <p class="text-muted small mb-0">{{ $t('password.new_username_desc') }}</p>
           </div>
 
