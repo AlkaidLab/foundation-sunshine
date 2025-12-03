@@ -70,6 +70,7 @@ namespace system_tray {
   static std::thread tray_thread;
   static std::atomic tray_thread_running = false;
   static std::atomic tray_thread_should_exit = false;
+  static std::atomic<bool> end_tray_called = false;
 
   // 前向声明全局变量
   extern struct tray_menu tray_menus[];
@@ -241,9 +242,14 @@ namespace system_tray {
       // First, terminate sunshine-gui.exe if it's running
       terminate_gui_processes();
 
-      // Stop the Windows service by sending special exit code
-      // This will terminate both the GUI program and the service
-      lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
+      // If running as service (no console window), use ERROR_SHUTDOWN_IN_PROGRESS
+      // Otherwise, use exit code 0 to prevent service restart
+      if (GetConsoleWindow() == NULL) {
+        lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
+      }
+      else {
+        lifetime::exit_sunshine(0, false);
+      }
       return;
     }
   #else
@@ -794,6 +800,15 @@ namespace system_tray {
 
   int
   end_tray() {
+    // Use atomic exchange to ensure only one call proceeds
+    if (end_tray_called.exchange(true)) {
+      return 0;
+    }
+
+    if (!tray_initialized) {
+      return 0;
+    }
+
     tray_initialized = false;
     tray_exit();
     return 0;
@@ -961,6 +976,9 @@ namespace system_tray {
 
   int
   init_tray_threaded() {
+    // Reset the end_tray flag for new tray instance
+    end_tray_called = false;
+
     try {
       auto tray_thread = std::thread(tray_thread_worker);
 
