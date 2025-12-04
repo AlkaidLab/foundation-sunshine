@@ -1,7 +1,7 @@
 <template>
   <nav class="navbar navbar-light navbar-expand-lg navbar-background header">
     <div class="container-fluid">
-      <a class="navbar-brand brand-enhanced" href="/" title="这里不可以">
+      <a class="navbar-brand brand-enhanced" href="/" title="Sunshine">
         <img src="/images/logo-sunshine-256.png" height="50" alt="Sunshine-Foundation" class="brand-logo" />
       </a>
       <button
@@ -17,27 +17,10 @@
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-          <li class="nav-item">
-            <a class="nav-link" href="/"><i class="fas fa-fw fa-home"></i> {{ $t('navbar.home') }}</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="/pin"><i class="fas fa-fw fa-unlock"></i> {{ $t('navbar.pin') }}</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="/apps"><i class="fas fa-fw fa-stream"></i> {{ $t('navbar.applications') }}</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="/config"><i class="fas fa-fw fa-cog"></i> {{ $t('navbar.configuration') }}</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="/password"
-              ><i class="fas fa-fw fa-user-shield"></i> {{ $t('navbar.password') }}</a
-            >
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="/troubleshooting"
-              ><i class="fas fa-fw fa-info"></i> {{ $t('navbar.troubleshoot') }}</a
-            >
+          <li v-for="item in navItems" :key="item.path" class="nav-item">
+            <a class="nav-link" :class="{ active: isActive(item.path) }" :href="item.path">
+              <i :class="['fas', 'fa-fw', item.icon]"></i> {{ $t(item.label) }}
+            </a>
           </li>
           <li class="nav-item">
             <ThemeToggle />
@@ -49,67 +32,95 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import ThemeToggle from '../common/ThemeToggle.vue'
 import { useBackground } from '../../composables/useBackground.js'
+
+// 导航项配置
+const navItems = Object.freeze([
+  { path: '/', icon: 'fa-home', label: 'navbar.home' },
+  { path: '/pin', icon: 'fa-unlock', label: 'navbar.pin' },
+  { path: '/apps', icon: 'fa-stream', label: 'navbar.applications' },
+  { path: '/config', icon: 'fa-cog', label: 'navbar.configuration' },
+  { path: '/password', icon: 'fa-user-shield', label: 'navbar.password' },
+  { path: '/troubleshooting', icon: 'fa-info', label: 'navbar.troubleshoot' },
+])
 
 // 使用背景管理 composable
 const { loadBackground, addDragListeners } = useBackground()
 
-// 高亮当前路由
-const highlightCurrentRoute = () => {
-  const currentLink = document.querySelector(`a[href="${location.pathname}"]`)
-  currentLink?.classList.add('active')
+// 当前路径（响应式）
+const currentPath = ref(window.location.pathname)
+
+// 检查路径是否激活
+const isActive = (path) => {
+  const current = currentPath.value
+  if (path === '/') {
+    return current === '/' || current === '/index.html'
+  }
+  const normalizedPath = path.replace(/\.html$/, '')
+  return current === normalizedPath || current.startsWith(normalizedPath)
+}
+
+// 更新当前路径
+const updateCurrentPath = () => {
+  currentPath.value = window.location.pathname
+}
+
+// 清理函数引用
+let removeDragListeners = null
+
+// 链接点击处理函数
+const handleLinkClick = (e) => {
+  if (e.target.closest('a.nav-link')?.href) {
+    setTimeout(updateCurrentPath, 0)
+  }
 }
 
 // 错误处理函数
 const handleBackgroundError = (error) => {
-  alert(error.message || '处理图片时发生错误')
+  console.error('Background error:', error)
 }
-
-// 添加拖拽监听器并获取清理函数
-let removeDragListeners = null
 
 onMounted(async () => {
   await loadBackground()
-  highlightCurrentRoute()
+  updateCurrentPath()
   removeDragListeners = addDragListeners(handleBackgroundError)
+  window.addEventListener('popstate', updateCurrentPath)
+  document.addEventListener('click', handleLinkClick)
 })
 
 onUnmounted(() => {
-  if (removeDragListeners) {
-    removeDragListeners()
-  }
+  window.removeEventListener('popstate', updateCurrentPath)
+  document.removeEventListener('click', handleLinkClick)
+  removeDragListeners?.()
 })
 </script>
 
-<style>
+<style scoped>
 .navbar-background {
   background-color: #f9d86bad;
   backdrop-filter: blur(3px);
 }
 
 .brand-enhanced {
-  transition: all 0.3s ease;
+  transition: transform 0.3s ease;
 }
 
 .brand-enhanced:hover {
-  transform: translateY(-2px);
   transform: scale(1.05) rotate(-5deg);
 }
+</style>
 
+<style>
 .header .nav-link {
   color: rgba(0, 0, 0, 0.65) !important;
+  transition: color 0.2s ease, font-weight 0.2s ease;
 }
 
+.header .nav-link:hover,
 .header .nav-link.active {
   color: rgb(0, 0, 0) !important;
-  font-weight: 500;
-}
-
-.header .nav-link:hover {
-  color: rgb(0, 0, 0) !important;
-  font-weight: 500;
 }
 
 .header .navbar-toggler {
@@ -123,27 +134,5 @@ onUnmounted(() => {
 
 .form-control::placeholder {
   opacity: 0.5;
-}
-
-body {
-  background-position: center;
-  background-repeat: no-repeat;
-  background-color: #5496dd;
-  background-size: cover;
-  background-attachment: fixed;
-  transition: background 0.3s ease;
-}
-
-[data-bs-theme='light'] {
-  --bs-body-bg: rgba(255, 255, 255, 0.41);
-  --bs-dropdown-bg: rgba(255, 255, 255, 0.7);
-}
-[data-bs-theme='dark'] {
-  --bs-body-bg: rgba(0, 0, 0, 0.65);
-  --bs-dropdown-bg: rgba(0, 0, 0, 0.7);
-}
-.dragover {
-  outline: 4px dashed #ffc400;
-  outline-offset: -20px;
 }
 </style>

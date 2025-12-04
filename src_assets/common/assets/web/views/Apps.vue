@@ -154,21 +154,22 @@
           </div>
         </template>
 
-        <!-- 空状态 -->
-        <div
-          v-if="(searchQuery && filteredApps.length === 0) || (!searchQuery && apps.length === 0)"
-          class="empty-state"
-        >
+        <!-- 空状态 - 仅在搜索无结果或已加载数据后无应用时显示 -->
+        <div v-if="searchQuery && filteredApps.length === 0" class="empty-state">
+          <div class="empty-icon">
+            <i class="fas fa-search"></i>
+          </div>
+          <h3 class="empty-title">未找到匹配的应用</h3>
+          <p class="empty-subtitle">尝试使用不同的搜索关键词</p>
+        </div>
+
+        <div v-if="!searchQuery && apps.length === 0 && isLoaded" class="empty-state">
           <div class="empty-icon">
             <i class="fas fa-rocket"></i>
           </div>
-          <h3 class="empty-title">
-            {{ searchQuery ? '未找到匹配的应用' : '暂无应用' }}
-          </h3>
-          <p class="empty-subtitle">
-            {{ searchQuery ? '尝试使用不同的搜索关键词' : '点击下方按钮添加第一个应用' }}
-          </p>
-          <button v-if="!searchQuery" class="btn btn-primary" @click="newApp">
+          <h3 class="empty-title">暂无应用</h3>
+          <p class="empty-subtitle">点击下方按钮添加第一个应用</p>
+          <button class="btn btn-primary" @click="newApp">
             <i class="fas fa-plus me-1"></i>{{ $t('apps.add_new') }}
           </button>
         </div>
@@ -275,7 +276,7 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
 </template>
 
 <script setup>
-import { onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable-es'
 import Navbar from '../components/layout/Navbar.vue'
 import AppEditor from '../components/AppEditor.vue'
@@ -286,6 +287,9 @@ import { initFirebase, trackEvents } from '../config/firebase.js'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+
+// 是否已加载数据
+const isLoaded = ref(false)
 
 // 使用组合式函数
 const {
@@ -323,18 +327,13 @@ const {
   init,
 } = useApps()
 
-// 初始化
 onMounted(async () => {
-  // 初始化Firebase Analytics
   initFirebase()
 
-  // 记录页面访问
   trackEvents.pageView('applications')
 
-  // 初始化组合式函数
   init(t)
 
-  // 初始化环境变量模态框
   try {
     const modalElement = document.getElementById('envVarsModal')
     if (modalElement && window.bootstrap?.Modal) {
@@ -345,12 +344,12 @@ onMounted(async () => {
     console.warn('Environment variables modal initialization failed:', error)
   }
 
-  // 加载数据
   await loadApps()
   await loadPlatform()
+
+  isLoaded.value = true
 })
 
-// 监听搜索查询变化
 watch(searchQuery, () => {
   if (debouncedSearch.value) {
     debouncedSearch.value()
