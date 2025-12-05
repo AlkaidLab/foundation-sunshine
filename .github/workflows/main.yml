@@ -219,8 +219,8 @@ jobs:
           cd build
 
           # package - 生成 NSIS 安装包和 ZIP 便携版
-          cpack -G NSIS --verbose
-          cpack -G ZIP --verbose
+          cpack -G NSIS --config ./CPackConfig.cmake --verbose
+          cpack -G ZIP --config ./CPackConfig.cmake --verbose
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
