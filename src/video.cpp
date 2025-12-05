@@ -18,6 +18,26 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 }
 
+// AMF SDK headers for direct encoder access (Windows only)
+#ifdef _WIN32
+  #include <AMF/components/Component.h>
+  #include <AMF/components/VideoEncoderAV1.h>
+  #include <AMF/components/VideoEncoderHEVC.h>
+  #include <AMF/components/VideoEncoderVCE.h>
+  #include <AMF/core/Interface.h>
+  #include <AMF/core/PropertyStorage.h>
+  #include <cstring>  // for strstr
+
+// Forward declaration of FFmpeg's internal AMFEncoderContext structure
+// This structure layout must match FFmpeg's libavcodec/amfenc.h
+// We only need the first few fields to access the encoder pointer
+struct AMFEncoderContext_Partial {
+  void *avclass;  // AVClass pointer
+  void *device_ctx_ref;  // AVBufferRef pointer
+  amf::AMFComponent *encoder;  // AMF encoder object
+};
+#endif
+
 // lib includes
 #include "cbs.h"
 #include "config.h"
@@ -385,23 +405,66 @@ namespace video {
 
     void
     set_bitrate(int bitrate_kbps) override {
-      if (avcodec_ctx) {
-        // 考虑FEC影响，调整编码码率
-        // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int)(bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
-        
-        auto bitrate = adjusted_bitrate_kbps * 1000;  // 转换为bps
-        avcodec_ctx->rc_max_rate = bitrate;
-        avcodec_ctx->bit_rate = bitrate;
-        avcodec_ctx->rc_min_rate = bitrate;  // Set min rate for CBR mode
-        
-        BOOST_LOG(info) << "AVCodec encoder bitrate changed to: " << adjusted_bitrate_kbps 
-                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: " 
-                       << config::stream.fec_percentage << "%)";
+      if (!avcodec_ctx) return;
+
+      // Adjust encoding bitrate considering FEC overhead
+      // When FEC percentage is X%, actual encoding bitrate should be (100-X)% of requested
+      auto adjusted_bitrate_kbps = bitrate_kbps;
+      if (config::stream.fec_percentage > 0 && config::stream.fec_percentage <= 80) {
+        adjusted_bitrate_kbps = bitrate_kbps * (100 - config::stream.fec_percentage) / 100;
       }
+
+      auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
+
+      // Update AVCodecContext fields (for software encoders and as fallback)
+      avcodec_ctx->bit_rate = bitrate;
+      avcodec_ctx->rc_max_rate = bitrate;
+      avcodec_ctx->rc_min_rate = bitrate;
+
+#ifdef _WIN32
+      // For AMF encoders, directly call AMF SDK to change bitrate dynamically
+      // AMF_VIDEO_ENCODER_TARGET_BITRATE, AMF_VIDEO_ENCODER_PEAK_BITRATE, and
+      // AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE are documented as "Dynamic properties -
+      // can be set at any time" in AMF SDK
+      const AVCodec *codec = avcodec_ctx->codec;
+      if (codec && codec->name && avcodec_ctx->priv_data && strstr(codec->name, "_amf")) {
+        auto *amf_ctx = reinterpret_cast<AMFEncoderContext_Partial *>(avcodec_ctx->priv_data);
+        if (amf_ctx && amf_ctx->encoder) {
+          // VBV buffer size: 1 second worth of data at the target bitrate
+          int64_t vbv_buffer_size = bitrate;
+          AMF_RESULT res = AMF_OK;
+
+          // Set properties based on codec type
+          if (strstr(codec->name, "h264_amf")) {
+            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_buffer_size);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+          }
+          else if (strstr(codec->name, "hevc_amf")) {
+            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_buffer_size);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+          }
+          else if (strstr(codec->name, "av1_amf")) {
+            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_buffer_size);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
+            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+          }
+
+          if (res == AMF_OK) {
+            BOOST_LOG(info) << "AMF encoder bitrate dynamically changed to: " << adjusted_bitrate_kbps
+                            << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
+                            << config::stream.fec_percentage << "%)";
+            return;
+          }
+          BOOST_LOG(warning) << "AMF SetProperty for bitrate failed with error: " << res;
+        }
+      }
+#endif
+
+      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
+                      << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
+                      << config::stream.fec_percentage << "%)";
     }
 
     void
@@ -420,7 +483,8 @@ namespace video {
             avcodec_ctx->qmin = param.value.int_value;
             avcodec_ctx->qmax = param.value.int_value;
             BOOST_LOG(info) << "AVCodec encoder QP changed to: " << param.value.int_value;
-          } else {
+          }
+          else {
             BOOST_LOG(warning) << "Invalid QP value: " << param.value.int_value << " (must be 0-51)";
           }
           break;
@@ -434,7 +498,7 @@ namespace video {
           break;
         }
         default:
-          BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int)param.type;
+          BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
       }
     }
@@ -489,13 +553,13 @@ namespace video {
         // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
         auto adjusted_bitrate_kbps = bitrate_kbps;
         if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int)(bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
+          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
         }
-        
+
         device->nvenc->set_bitrate(adjusted_bitrate_kbps);
-        BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps 
-                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: " 
-                       << config::stream.fec_percentage << "%)";
+        BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
+                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
+                        << config::stream.fec_percentage << "%)";
       }
     }
 
@@ -511,8 +575,8 @@ namespace video {
         }
         case dynamic_param_type_e::QP: {
           // NVENC的QP调整需要通过重新配置编码器
-          BOOST_LOG(info) << "NVENC encoder QP change requested: " << param.value.int_value 
-                         << " (requires encoder reconfiguration)";
+          BOOST_LOG(info) << "NVENC encoder QP change requested: " << param.value.int_value
+                          << " (requires encoder reconfiguration)";
           break;
         }
         case dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
@@ -531,7 +595,7 @@ namespace video {
           break;
         }
         default:
-          BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int)param.type;
+          BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
       }
     }
@@ -2176,7 +2240,7 @@ namespace video {
       // 处理动态参数调整
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
-          BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int)param->type;
+          BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
           session->set_dynamic_param(*param);
         }
       }
@@ -2772,8 +2836,8 @@ namespace video {
 
     // First, test encoder viability
     // Note: videoFormat starts at 0 (H.264), will be changed to 1 (HEVC) or 2 (AV1) later if needed
-    config_t config_max_ref_frames {1920, 1080, 60, 1000, 1, 1, 1, 0, 0, 0, 0};
-    config_t config_autoselect {1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 0};
+    config_t config_max_ref_frames { 1920, 1080, 60, 1000, 1, 1, 1, 0, 0, 0, 0 };
+    config_t config_autoselect { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 0 };
 
     // If the encoder isn't supported at all (not even H.264), bail early
     const auto output_display_name { display_device::get_display_name(config::video.output_name) };
@@ -2874,7 +2938,7 @@ namespace video {
     {
       // H.264 is special because encoders may support YUV 4:4:4 without supporting 10-bit color depth
       if (encoder.flags & YUV444_SUPPORT) {
-        config_t config_h264_yuv444 {1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 1};
+        config_t config_h264_yuv444 { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 1 };
         encoder.h264[encoder_t::YUV444] = disp->is_codec_supported(encoder.h264.name, config_h264_yuv444) &&
                                           validate_config(disp, encoder, config_h264_yuv444) >= 0;
       }
@@ -2882,7 +2946,7 @@ namespace video {
         encoder.h264[encoder_t::YUV444] = false;
       }
 
-      const config_t generic_hdr_config = {1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0};
+      const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
 
       // Reset the display since we're switching from SDR to HDR
       reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
