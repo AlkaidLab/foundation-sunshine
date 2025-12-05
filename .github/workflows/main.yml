@@ -210,6 +210,7 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
           ninja -C build
+          ninja -C build sunshine-control-panel
 
       - name: Package Windows
         shell: msys2 {0}

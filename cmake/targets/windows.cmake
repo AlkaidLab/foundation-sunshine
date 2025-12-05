@@ -7,11 +7,13 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         Wtsapi32.lib)
 
 #GUI build
-# Find required tools
+# Find required tools (always find, but only build if requested)
 find_program(NPM npm REQUIRED)
 find_program(CARGO cargo REQUIRED)
 
-add_custom_target(sunshine-control-panel ALL
+# GUI target is optional - not part of ALL target
+# Use 'ninja -C build sunshine-control-panel' to build it explicitly
+add_custom_target(sunshine-control-panel
         WORKING_DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/sunshine-control-panel"
         COMMENT "Building Sunshine Control Panel (Tauri GUI)"
         # Step 1: Install npm dependencies

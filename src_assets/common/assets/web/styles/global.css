@@ -13,13 +13,17 @@ html {
 body {
   min-height: 100vh;
   font-family: var(--font-family-base);
-  background: #5496dd center / cover no-repeat fixed;
-  backdrop-filter: brightness(0.8);
+  background-color: #5496dd;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  backdrop-filter: brightness(0.85);
   transition: background 0.3s ease;
 }
 
-[data-bs-theme='dark'] body {
-  backdrop-filter: brightness(0.4);
+body[data-bs-theme='dark'] {
+  backdrop-filter: brightness(0.5);
 }
 
 [data-bs-theme='light'] {

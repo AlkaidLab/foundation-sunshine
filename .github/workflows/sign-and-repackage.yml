@@ -169,6 +169,7 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
           ninja -C build
+          ninja -C build sunshine-control-panel
 
       # 生成未签名的打包产物
       - name: Package unsigned files
