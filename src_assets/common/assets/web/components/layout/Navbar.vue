@@ -99,8 +99,8 @@ onUnmounted(() => {
 
 <style scoped>
 .navbar-background {
-  background-color: #f9d86bad;
-  backdrop-filter: blur(3px);
+  background-color: #f9d86bee;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .brand-enhanced {

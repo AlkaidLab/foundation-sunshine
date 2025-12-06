@@ -217,29 +217,6 @@
 </template>
 
 <style scoped>
-/* Card Base Styles */
-.resource-section .card {
-  border: none;
-  border-radius: 12px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  backdrop-filter: blur(3px);
-}
-
-.resource-section .card-header {
-  border-radius: 12px 12px 0 0 !important;
-  padding: 1rem 1.25rem;
-}
-
-.resource-section .card-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.resource-section .card-body {
-  padding: 1.25rem;
-}
-
-/* Resource Group */
 .resource-group {
   padding-bottom: 1rem;
   border-bottom: 1px solid rgba(128, 128, 128, 0.15);

@@ -30,7 +30,7 @@
               class="view-toggle-btn"
               :class="{ active: viewMode === 'grid' }"
               @click="viewMode = 'grid'"
-              :title="'网格视图'"
+              title="网格视图"
             >
               <i class="fas fa-th"></i>
             </button>
@@ -38,7 +38,7 @@
               class="view-toggle-btn"
               :class="{ active: viewMode === 'list' }"
               @click="viewMode = 'list'"
-              :title="'列表视图'"
+              title="列表视图"
             >
               <i class="fas fa-list"></i>
             </button>
@@ -48,10 +48,19 @@
             <i class="fas fa-plus"></i>
           </button>
           <button
+            v-if="isTauriEnv()"
+            class="cute-btn cute-btn-info"
+            @click="scanDirectory(true)"
+            :disabled="isScanning"
+            title="扫描目录添加应用"
+          >
+            <i class="fas" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-folder-open'"></i>
+          </button>
+          <button
             class="cute-btn cute-btn-secondary"
             data-bs-toggle="modal"
             data-bs-target="#envVarsModal"
-            :title="'环境变量说明'"
+            title="环境变量说明"
           >
             <i class="fas fa-info-circle"></i>
           </button>
@@ -96,7 +105,7 @@
           <div v-else class="apps-grid">
             <AppCard
               v-for="(app, index) in filteredApps"
-              :key="'search-' + index"
+              :key="`search-${index}`"
               :app="app"
               :draggable="false"
               :is-search-result="true"
@@ -141,7 +150,7 @@
           <div v-else class="apps-list">
             <AppListItem
               v-for="(app, index) in filteredApps"
-              :key="'search-' + index"
+              :key="`search-${index}`"
               :app="app"
               :draggable="false"
               :is-search-result="true"
@@ -154,7 +163,7 @@
           </div>
         </template>
 
-        <!-- 空状态 - 仅在搜索无结果或已加载数据后无应用时显示 -->
+        <!-- 空状态 - 搜索无结果 -->
         <div v-if="searchQuery && filteredApps.length === 0" class="empty-state">
           <div class="empty-icon">
             <i class="fas fa-search"></i>
@@ -163,6 +172,7 @@
           <p class="empty-subtitle">尝试使用不同的搜索关键词</p>
         </div>
 
+        <!-- 空状态 - 无应用 -->
         <div v-if="!searchQuery && apps.length === 0 && isLoaded" class="empty-state">
           <div class="empty-icon">
             <i class="fas fa-rocket"></i>
@@ -194,12 +204,112 @@
         </button>
       </div>
 
+      <!-- 扫描结果模态框 -->
+      <Transition name="fade">
+        <div v-if="showScanResult" class="scan-result-overlay" @click.self="closeScanResult">
+          <div class="scan-result-modal">
+            <div class="scan-result-header">
+              <h5>
+                <i class="fas fa-search me-2"></i>扫描结果
+                <span class="badge bg-primary ms-2">{{ scannedApps.length }}</span>
+                <span v-if="scannedAppsSearchQuery" class="badge bg-info ms-2">
+                  匹配: {{ filteredScannedApps.length }}
+                </span>
+              </h5>
+              <button class="btn-close" @click="closeScanResult"></button>
+            </div>
+            <!-- 搜索框 -->
+            <div v-if="scannedApps.length > 0" class="scan-result-search">
+              <div class="search-box">
+                <i class="fas fa-search search-icon"></i>
+                <input
+                  type="text"
+                  class="form-control search-input"
+                  placeholder="搜索应用名称、命令或路径..."
+                  v-model="scannedAppsSearchQuery"
+                />
+                <button
+                  v-if="scannedAppsSearchQuery"
+                  class="btn-clear-search"
+                  @click="scannedAppsSearchQuery = ''"
+                  type="button"
+                >
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div class="scan-result-body">
+              <div v-if="scannedApps.length === 0" class="text-center text-muted py-4">
+                <i class="fas fa-folder-open fa-3x mb-3"></i>
+                <p>未找到可添加的应用程序</p>
+              </div>
+              <div v-else-if="filteredScannedApps.length === 0" class="text-center text-muted py-4">
+                <i class="fas fa-search fa-3x mb-3"></i>
+                <p>未找到匹配的应用</p>
+                <p class="small">尝试使用不同的搜索关键词</p>
+              </div>
+              <div v-else class="scan-result-list">
+                <div v-for="(app, index) in filteredScannedApps" :key="app.source_path" class="scan-result-item">
+                  <div class="scan-app-icon">
+                    <img
+                      v-if="app['image-path']"
+                      :src="app['image-path']"
+                      :alt="app.name"
+                      @error="$event.target.style.display = 'none'"
+                    />
+                    <svg v-else width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <rect width="100" height="100" fill="#667eea"/>
+                      <text x="50" y="50" font-size="40" font-weight="bold" fill="#fff" text-anchor="middle" dominant-baseline="central">{{ app.name.charAt(0).toUpperCase() }}</text>
+                    </svg>
+                  </div>
+                  <div class="scan-app-info">
+                    <div class="scan-app-name">{{ app.name }}</div>
+                    <div class="scan-app-cmd small">{{ app.cmd }}</div>
+                    <div class="scan-app-path small"><i class="fas fa-folder-open me-1"></i>{{ app.source_path }}</div>
+                  </div>
+                  <div class="scan-app-actions">
+                    <button
+                      class="btn btn-sm btn-outline-primary"
+                      @click="addScannedApp(app), closeScanResult()"
+                      title="添加并编辑"
+                    >
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-success"
+                      @click="quickAddScannedApp(app, scannedApps.indexOf(app))"
+                      title="直接添加"
+                    >
+                      <i class="fas fa-plus"></i>
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-danger"
+                      @click="removeScannedApp(scannedApps.indexOf(app))"
+                      title="从列表移除"
+                    >
+                      <i class="fas fa-times"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="scannedApps.length > 0" class="scan-result-footer">
+              <button class="btn btn-secondary" @click="closeScanResult"><i class="fas fa-times me-1"></i>关闭</button>
+              <button class="btn btn-primary" @click="addAllScannedApps" :disabled="isSaving">
+                <i class="fas" :class="isSaving ? 'fa-spinner fa-spin' : 'fa-check-double'"></i>
+                <span class="ms-1">全部添加</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+
       <!-- 环境变量说明模态框 -->
-      <div class="modal fade" id="envVarsModal" tabindex="-1">
+      <div id="envVarsModal" class="modal fade" tabindex="-1">
         <div class="modal-dialog modal-lg">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title" id="envVarsModalLabel">
+              <h5 id="envVarsModalLabel" class="modal-title">
                 <i class="fas fa-info-circle me-2"></i>{{ $t('apps.env_vars_about') }}
               </h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -234,26 +344,32 @@
                 </div>
               </div>
               <div class="mt-3">
-                <div class="form-text" v-if="platform === 'windows'">
-                  <strong>{{ $t('apps.env_qres_example') }}</strong>
-                  <pre class="code-example">
+                <template v-if="platform === 'windows'">
+                  <div class="form-text">
+                    <strong>{{ $t('apps.env_qres_example') }}</strong>
+                    <pre class="code-example">
 cmd /C &lt;{{
-                      $t('apps.env_qres_path')
-                    }}&gt;\QRes.exe /X:%SUNSHINE_CLIENT_WIDTH% /Y:%SUNSHINE_CLIENT_HEIGHT% /R:%SUNSHINE_CLIENT_FPS%</pre
-                  >
-                </div>
-                <div class="form-text" v-else-if="platform === 'linux'">
-                  <strong>{{ $t('apps.env_xrandr_example') }}</strong>
-                  <pre class="code-example">
+                        $t('apps.env_qres_path')
+                      }}&gt;\QRes.exe /X:%SUNSHINE_CLIENT_WIDTH% /Y:%SUNSHINE_CLIENT_HEIGHT% /R:%SUNSHINE_CLIENT_FPS%</pre
+                    >
+                  </div>
+                </template>
+                <template v-else-if="platform === 'linux'">
+                  <div class="form-text">
+                    <strong>{{ $t('apps.env_xrandr_example') }}</strong>
+                    <pre class="code-example">
 sh -c "xrandr --output HDMI-1 --mode \"${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT}\" --rate ${SUNSHINE_CLIENT_FPS}"</pre
-                  >
-                </div>
-                <div class="form-text" v-else-if="platform === 'macos'">
-                  <strong>{{ $t('apps.env_displayplacer_example') }}</strong>
-                  <pre class="code-example">
+                    >
+                  </div>
+                </template>
+                <template v-else-if="platform === 'macos'">
+                  <div class="form-text">
+                    <strong>{{ $t('apps.env_displayplacer_example') }}</strong>
+                    <pre class="code-example">
 sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT} hz:${SUNSHINE_CLIENT_FPS} scaling:on origin:(0,0) degree:0""</pre
-                  >
-                </div>
+                    >
+                  </div>
+                </template>
               </div>
             </div>
             <div class="modal-footer">
@@ -288,10 +404,8 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
-// 是否已加载数据
 const isLoaded = ref(false)
 
-// 使用组合式函数
 const {
   apps,
   filteredApps,
@@ -302,13 +416,16 @@ const {
   isDragging,
   viewMode,
   message,
-  messageType,
   envVars,
   debouncedSearch,
   messageClass,
+  isScanning,
+  scannedApps,
+  showScanResult,
+  scannedAppsSearchQuery,
+  filteredScannedApps,
   loadApps,
   loadPlatform,
-  performSearch,
   clearSearch,
   getOriginalIndex,
   newApp,
@@ -316,47 +433,48 @@ const {
   closeAppEditor,
   handleSaveApp,
   showDeleteForm,
-  deleteApp,
   save,
   onDragStart,
   onDragEnd,
-  showMessage,
+  scanDirectory,
+  addScannedApp,
+  addAllScannedApps,
+  closeScanResult,
+  removeScannedApp,
+  quickAddScannedApp,
+  isTauriEnv,
   getMessageIcon,
   handleCopySuccess,
   handleCopyError,
   init,
 } = useApps()
 
-onMounted(async () => {
-  initFirebase()
-
-  trackEvents.pageView('applications')
-
-  init(t)
-
+const initEnvVarsModal = () => {
   try {
     const modalElement = document.getElementById('envVarsModal')
     if (modalElement && window.bootstrap?.Modal) {
-      // 使用全局 Bootstrap 对象（已在 init.js 中导入并设置到 window.bootstrap）
       new window.bootstrap.Modal(modalElement)
     }
   } catch (error) {
     console.warn('Environment variables modal initialization failed:', error)
   }
+}
 
-  await loadApps()
-  await loadPlatform()
+onMounted(async () => {
+  initFirebase()
+  trackEvents.pageView('applications')
+  init(t)
+  initEnvVarsModal()
 
+  await Promise.all([loadApps(), loadPlatform()])
   isLoaded.value = true
 })
 
 watch(searchQuery, () => {
-  if (debouncedSearch.value) {
-    debouncedSearch.value()
-  }
+  debouncedSearch.value?.()
 })
 </script>
 
-<style scoped>
-@import '../styles/apps.css';
+<style>
+@import '../styles/apps.less';
 </style>

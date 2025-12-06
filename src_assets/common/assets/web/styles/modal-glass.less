@@ -1,0 +1,193 @@
+/* 统一模态框样式 */
+:root {
+  /* 背景与边框 */
+  --modal-backdrop-bg: rgba(0, 0, 0, 0.6);
+  --modal-content-bg: rgba(255, 255, 255, 0.1);
+  --modal-border-color: rgba(255, 255, 255, 0.2);
+  --modal-text-color: #fff;
+  --modal-shadow: rgba(0, 0, 0, 0.3);
+  --modal-footer-bg: rgba(255, 255, 255, 0.1);
+
+  /* 按钮渐变 */
+  --btn-primary-gradient: linear-gradient(135deg, #667eea, #764ba2);
+  --btn-danger-gradient: linear-gradient(135deg, #dc3545, #c82333);
+  --btn-success-gradient: linear-gradient(135deg, #28a745, #20c997);
+
+  /* 玻璃效果 */
+  --glass-light: rgba(255, 255, 255, 0.1);
+  --glass-medium: rgba(255, 255, 255, 0.2);
+  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-dark: rgba(0, 0, 0, 0.3);
+}
+
+/* 背景遮罩 */
+.modal-backdrop {
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: blur(4px);
+}
+
+/* 模态框内容 */
+.modal-content {
+  background: var(--modal-content-bg);
+  border: 1px solid var(--modal-border-color);
+  border-radius: 20px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 20px 40px var(--modal-shadow);
+  color: var(--modal-text-color);
+}
+
+.modal-title {
+  color: var(--modal-text-color);
+  font-weight: 600;
+}
+
+.modal-footer {
+  border-top: 1px solid var(--modal-border-color);
+  background: var(--modal-footer-bg);
+  border-radius: 0 0 20px 20px;
+}
+
+/* 关闭按钮 */
+.btn-close {
+  filter: invert(1);
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+/* 模态框按钮 */
+.modal {
+  .btn {
+    border: 1px solid var(--glass-border);
+    color: var(--modal-text-color);
+
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px var(--modal-shadow);
+    }
+
+    &-primary {
+      background: var(--btn-primary-gradient);
+    }
+
+    &-secondary {
+      background: var(--glass-medium);
+    }
+
+    &-danger {
+      background: var(--btn-danger-gradient);
+    }
+
+    &-success {
+      background: var(--btn-success-gradient);
+    }
+  }
+
+  /* 表单元素 */
+  .form-control,
+  .form-select {
+    background: var(--glass-light);
+    border: 1px solid var(--glass-border);
+    color: var(--modal-text-color);
+
+    &:focus {
+      background: var(--glass-medium);
+      border-color: rgba(255, 255, 255, 0.5);
+      box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.25);
+      color: var(--modal-text-color);
+    }
+  }
+
+  .form-label {
+    color: var(--modal-text-color);
+    font-weight: 600;
+  }
+
+  /* 警告框 */
+  .alert {
+    background: var(--glass-light);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    color: var(--modal-text-color);
+
+    &-info {
+      background: rgba(23, 162, 184, 0.2);
+      border-color: rgba(23, 162, 184, 0.5);
+    }
+
+    &-warning {
+      background: rgba(255, 193, 7, 0.2);
+      border-color: rgba(255, 193, 7, 0.5);
+    }
+
+    &-danger {
+      background: rgba(220, 53, 69, 0.2);
+      border-color: rgba(220, 53, 69, 0.5);
+    }
+  }
+
+  /* 选项卡 */
+  .nav-tabs {
+    border-bottom: 1px solid var(--glass-border);
+
+    .nav-link {
+      background: var(--glass-light);
+      border: 1px solid var(--modal-border-color);
+      color: rgba(255, 255, 255, 0.7);
+
+      &.active {
+        background: var(--glass-medium);
+        color: var(--modal-text-color);
+      }
+    }
+  }
+
+  /* 手风琴 */
+  .accordion-item {
+    background: var(--glass-light);
+    border: 1px solid var(--modal-border-color);
+  }
+
+  .accordion-button {
+    background: rgba(0, 0, 0, 0.1);
+    color: var(--modal-text-color);
+  }
+
+  .accordion-body {
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--modal-text-color);
+  }
+
+  /* 代码块 */
+  pre,
+  code {
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--modal-text-color);
+    border: 1px solid var(--modal-border-color);
+    border-radius: 8px;
+  }
+
+  /* 表格 */
+  .table {
+    color: var(--modal-text-color);
+
+    th {
+      background: var(--glass-medium);
+    }
+  }
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .modal-content {
+    margin: 10px;
+  }
+
+  .modal-header,
+  .modal-footer,
+  .modal-body {
+    padding: 1rem;
+  }
+}

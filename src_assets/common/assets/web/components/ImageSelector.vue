@@ -8,14 +8,14 @@
         type="checkbox"
         class="form-check-input"
         id="useDesktopImage"
-        v-model="isDesktopImage"
+        :checked="isDesktopImage"
         @change="handleDesktopImageChange"
       />
       <label for="useDesktopImage" class="form-check-label">{{ $t('apps.use_desktop_image') }}</label>
     </div>
 
     <!-- 图片路径输入 -->
-    <div class="input-group" v-if="!isDesktopImage">
+    <div v-if="!isDesktopImage" class="input-group">
       <input
         type="file"
         class="form-control"
@@ -31,22 +31,27 @@
         @input="updateImagePath"
         @dragenter="handleDragEnter"
         @dragleave="handleDragLeave"
-        @dragover.prevent=""
+        @dragover.prevent
         @drop.prevent.stop="handleDrop"
         placeholder="选择图片文件或拖拽到此处"
       />
-      <button class="btn btn-outline-secondary" type="button" @click="openCoverFinder" :disabled="!appName">
+      <button
+        class="btn btn-outline-secondary"
+        type="button"
+        @click="openCoverFinder"
+        :disabled="!appName"
+      >
         <i class="fas fa-search me-1"></i>{{ $t('apps.find_cover') }}
       </button>
     </div>
 
     <!-- 图片预览 -->
-    <div class="image-preview-container mt-3" v-if="!isDesktopImage && imagePath">
+    <div v-if="!isDesktopImage && imagePath" class="image-preview-container mt-3">
       <div class="image-preview">
-        <img :src="getImagePreviewUrl()" alt="图片预览" @error="handleImageError" />
+        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
       </div>
       <div class="image-preview-circle">
-        <img :src="getImagePreviewUrl()" alt="图片预览" @error="handleImageError" />
+        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
       </div>
     </div>
 
@@ -95,14 +100,16 @@ export default {
     isDesktopImage() {
       return this.imagePath === 'desktop'
     },
+    previewUrl() {
+      return getImagePreviewUrl(this.imagePath)
+    },
   },
   methods: {
     /**
      * 处理桌面图片选择变化
      */
     handleDesktopImageChange(event) {
-      const useDesktop = event.target.checked
-      this.$emit('update-image', useDesktop ? 'desktop' : '')
+      this.$emit('update-image', event.target.checked ? 'desktop' : '')
     },
 
     /**
@@ -117,22 +124,9 @@ export default {
      */
     async handleFileSelect(event) {
       const file = event.target.files[0]
-      if (file) {
-        const validation = validateFile(file)
-        if (validation.isValid) {
-          try {
-            this.$emit('image-error', '正在上传图片...')
-            const path = await this.uploadImageToSunshine(file)
-            this.$emit('update-image', path)
-            this.$emit('image-error', '')
-          } catch (error) {
-            console.error('上传图片失败:', error)
-            this.$emit('image-error', '上传图片失败: ' + error.message)
-          }
-        } else {
-          this.$emit('image-error', validation.message)
-        }
-      }
+      if (!file) return
+
+      await this.processFile(file)
     },
 
     /**
@@ -163,63 +157,46 @@ export default {
       this.dragCounter = 0
 
       const file = event.dataTransfer.files[0]
-      if (file) {
-        const validation = validateFile(file)
-        if (validation.isValid) {
-          if (window.electron?.webUtils?.getPathForFile) {
-            this.$emit('update-image', window.electron.webUtils.getPathForFile(file))
-          } else {
-            // 上传到 Sunshine API
-            try {
-              this.$emit('image-error', '正在上传图片...')
-              const path = await this.uploadImageToSunshine(file)
-              this.$emit('update-image', path)
-              this.$emit('image-error', '')
-            } catch (error) {
-              console.error('上传图片失败:', error)
-              this.$emit('image-error', '上传图片失败: ' + error.message)
-            }
-          }
-        } else {
-          this.$emit('image-error', validation.message)
-        }
-      } else {
+      if (!file) {
         this.$emit('image-error', '其他地方不可以！')
+        return
+      }
+
+      await this.processFile(file)
+    },
+
+    /**
+     * 处理文件上传
+     */
+    async processFile(file) {
+      const validation = validateFile(file)
+      if (!validation.isValid) {
+        this.$emit('image-error', validation.message)
+        return
+      }
+
+      try {
+        this.$emit('image-error', '正在上传图片...')
+        const path = await this.uploadImageToSunshine(file)
+        this.$emit('update-image', path)
+        this.$emit('image-error', '')
+      } catch (error) {
+        console.error('上传图片失败:', error)
+        this.$emit('image-error', `上传图片失败: ${error.message}`)
       }
     },
 
     /**
      * 上传图片到 Sunshine API
-     * @param {File} file - 要上传的文件
-     * @returns {Promise<string>} - 返回图片的 boxart 资源 ID（不含路径分隔符）
      */
     async uploadImageToSunshine(file) {
-      // 读取文件为 Base64
-      const base64Data = await new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          // 移除 data:image/xxx;base64, 前缀
-          const base64 = reader.result.split(',')[1]
-          resolve(base64)
-        }
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
+      const base64Data = await this.readFileAsBase64(file)
+      const key = this.generateImageKey()
 
-      // 生成唯一的 key（不含路径分隔符，这样 getImagePreviewUrl 会自动加 /boxart/ 前缀）
-      const timestamp = Date.now()
-      const key = `app_${this.appName || 'custom'}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
-
-      // 调用 Sunshine API 上传（保存到 appdata/covers/）
       const response = await fetch('/api/covers/upload', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          key: key,
-          data: base64Data,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, data: base64Data }),
       })
 
       if (!response.ok) {
@@ -229,10 +206,28 @@ export default {
       const result = await response.json()
       console.log('✅ Sunshine API 上传成功，文件路径:', result.path)
 
-      // 返回不含路径分隔符的 key
-      // getImagePreviewUrl 会自动转换为 /boxart/{key}.png
-      // getBoxArt 函数现在会自动从 covers/ 目录查找图片
       return `${key}.png`
+    },
+
+    /**
+     * 读取文件为 Base64
+     */
+    readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result.split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+    },
+
+    /**
+     * 生成图片 key
+     */
+    generateImageKey() {
+      const timestamp = Date.now()
+      const appName = this.appName || 'custom'
+      return `app_${appName}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
     },
 
     /**
@@ -257,7 +252,6 @@ export default {
         this.$emit('image-error', '请先输入应用名称')
         return
       }
-
       this.showCoverFinder = true
     },
 

@@ -2,7 +2,7 @@
 <html lang="en" data-bs-theme="auto">
   <head>
     <%- header %>
-    <link rel="stylesheet" href="./styles/welcome.css" />
+    <link rel="stylesheet" href="./styles/welcome.less" />
   </head>
 
   <body id="app" v-cloak>

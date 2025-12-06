@@ -37,36 +37,16 @@
         <!-- 数据源筛选 -->
         <div class="finder-tabs">
           <button
+            v-for="tab in tabs"
+            :key="tab.key"
             class="finder-tab"
-            :class="{ active: coverFilter === 'all' }"
-            @click.stop.prevent="setCoverFilter('all')"
+            :class="{ active: coverFilter === tab.key }"
+            @click.stop.prevent="coverFilter = tab.key"
           >
-            <i class="fas fa-globe"></i>
-            <span>全部</span>
-            <span class="tab-badge" v-if="coverFilter === 'all' && allCovers.length > 0">
-              {{ allCovers.length }}
-            </span>
-          </button>
-          <button
-            class="finder-tab"
-            :class="{ active: coverFilter === 'igdb' }"
-            @click.stop.prevent="setCoverFilter('igdb')"
-          >
-            <i class="fas fa-gamepad"></i>
-            <span>IGDB</span>
-            <span class="tab-badge" v-if="igdbCovers.length > 0">
-              {{ igdbCovers.length }}
-            </span>
-          </button>
-          <button
-            class="finder-tab"
-            :class="{ active: coverFilter === 'steam' }"
-            @click.stop.prevent="setCoverFilter('steam')"
-          >
-            <i class="fab fa-steam"></i>
-            <span>Steam</span>
-            <span class="tab-badge" v-if="steamCovers.length > 0">
-              {{ steamCovers.length }}
+            <i :class="tab.icon"></i>
+            <span>{{ tab.label }}</span>
+            <span class="tab-badge" v-if="getTabCount(tab.key) > 0">
+              {{ getTabCount(tab.key) }}
             </span>
           </button>
         </div>
@@ -125,12 +105,16 @@
 </template>
 
 <script>
-import { searchSteamCovers } from '../utils/steamApi.js'
+import { searchAllCovers } from '../utils/coverSearch.js'
 
-// 缓存已加载的bucket数据
-const bucketCache = new Map()
-// 缓存已加载的游戏详情
-const gameCache = new Map()
+const PLACEHOLDER_IMAGE =
+  'data:image/svg+xml,' +
+  encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
+    <rect fill="#1a1a2e" width="200" height="300"/>
+    <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">无法加载</text>
+  </svg>
+`)
 
 export default {
   name: 'CoverFinder',
@@ -144,6 +128,7 @@ export default {
       default: '',
     },
   },
+  emits: ['close', 'cover-selected', 'loading', 'error'],
   data() {
     return {
       coverFilter: 'all',
@@ -152,11 +137,15 @@ export default {
       steamCovers: [],
       localSearchTerm: '',
       searchAbortController: null,
+      tabs: [
+        { key: 'all', icon: 'fas fa-globe', label: '全部' },
+        { key: 'igdb', icon: 'fas fa-gamepad', label: 'IGDB' },
+        { key: 'steam', icon: 'fab fa-steam', label: 'Steam' },
+      ],
     }
   },
   computed: {
     allCovers() {
-      // 交替合并两个来源的结果
       const result = []
       const maxLen = Math.max(this.igdbCovers.length, this.steamCovers.length)
       for (let i = 0; i < maxLen; i++) {
@@ -166,24 +155,19 @@ export default {
       return result
     },
     filteredCovers() {
-      if (this.coverFilter === 'igdb') return this.igdbCovers
-      if (this.coverFilter === 'steam') return this.steamCovers
-      return this.allCovers
+      const filterMap = {
+        igdb: this.igdbCovers,
+        steam: this.steamCovers,
+        all: this.allCovers,
+      }
+      return filterMap[this.coverFilter] || this.allCovers
     },
   },
   watch: {
     visible(newVal) {
       if (newVal) {
-        this.localSearchTerm = this.searchTerm
-        this.$nextTick(() => {
-          this.$refs.searchInput?.focus()
-          this.$refs.searchInput?.select()
-        })
-        if (this.localSearchTerm) {
-          this.searchCovers()
-        }
+        this.onOpen()
       } else {
-        // 关闭时取消正在进行的请求
         this.abortPendingSearch()
       }
       document.body.style.overflow = newVal ? 'hidden' : ''
@@ -194,6 +178,26 @@ export default {
     this.abortPendingSearch()
   },
   methods: {
+    getTabCount(key) {
+      const countMap = {
+        all: this.allCovers.length,
+        igdb: this.igdbCovers.length,
+        steam: this.steamCovers.length,
+      }
+      return countMap[key] || 0
+    },
+
+    onOpen() {
+      this.localSearchTerm = this.searchTerm
+      this.$nextTick(() => {
+        this.$refs.searchInput?.focus()
+        this.$refs.searchInput?.select()
+      })
+      if (this.localSearchTerm) {
+        this.searchCovers()
+      }
+    },
+
     abortPendingSearch() {
       if (this.searchAbortController) {
         this.searchAbortController.abort()
@@ -209,10 +213,6 @@ export default {
       this.$refs.searchInput?.focus()
     },
 
-    setCoverFilter(filter) {
-      this.coverFilter = filter
-    },
-
     async searchCovers() {
       if (!this.localSearchTerm) {
         this.igdbCovers = []
@@ -220,7 +220,6 @@ export default {
         return
       }
 
-      // 取消之前的搜索请求
       this.abortPendingSearch()
       this.searchAbortController = new AbortController()
 
@@ -229,27 +228,11 @@ export default {
       this.steamCovers = []
 
       try {
-        // 同时搜索两个来源
-        const [igdbResults, steamResults] = await Promise.allSettled([
-          this.searchIGDBCovers(this.localSearchTerm, this.searchAbortController.signal),
-          searchSteamCovers(this.localSearchTerm),
-        ])
-
-        if (igdbResults.status === 'fulfilled') {
-          this.igdbCovers = igdbResults.value
-        } else if (igdbResults.reason?.name !== 'AbortError') {
-          console.error('搜索IGDB封面失败:', igdbResults.reason)
-        }
-
-        if (steamResults.status === 'fulfilled') {
-          this.steamCovers = steamResults.value
-        } else {
-          console.error('搜索Steam封面失败:', steamResults.reason)
-        }
+        const results = await searchAllCovers(this.localSearchTerm, this.searchAbortController.signal)
+        this.igdbCovers = results.igdb
+        this.steamCovers = results.steam
       } catch (error) {
-        if (error.name === 'AbortError') {
-          return // 请求被取消，不处理
-        }
+        if (error.name === 'AbortError') return
         console.error('搜索封面失败:', error)
         this.$emit('error', '搜索封面失败，请稍后重试')
       } finally {
@@ -257,83 +240,8 @@ export default {
       }
     },
 
-    async searchIGDBCovers(name, signal) {
-      if (!name) return []
-
-      const searchName = name.replaceAll(/\s+/g, '.').toLowerCase()
-      const bucket = this.getSearchBucket(name)
-
-      try {
-        // 使用缓存的bucket数据
-        let maps = bucketCache.get(bucket)
-        if (!maps) {
-          const response = await fetch(`https://lizardbyte.github.io/GameDB/buckets/${bucket}.json`, { signal })
-          if (!response.ok) throw new Error('Failed to search covers')
-          maps = await response.json()
-          bucketCache.set(bucket, maps)
-        }
-
-        const matchedIds = Object.keys(maps)
-          .filter((id) => maps[id].name.replaceAll(/\s+/g, '.').toLowerCase().startsWith(searchName))
-          .slice(0, 20)
-
-        // 并行获取游戏详情，使用缓存
-        const games = await Promise.all(
-          matchedIds.map(async (id) => {
-            // 检查缓存
-            if (gameCache.has(id)) {
-              return gameCache.get(id)
-            }
-            try {
-              const res = await fetch(`https://lizardbyte.github.io/GameDB/games/${id}.json`, { signal })
-              const game = await res.json()
-              gameCache.set(id, game)
-              return game
-            } catch {
-              return null
-            }
-          })
-        )
-
-        return games
-          .filter((game) => game?.cover?.url)
-          .map((game) => {
-            const thumb = game.cover.url
-            const hash = thumb.substring(thumb.lastIndexOf('/') + 1, thumb.lastIndexOf('.'))
-            return {
-              name: game.name,
-              key: `igdb_${game.id}`,
-              source: 'igdb',
-              url: `https://images.igdb.com/igdb/image/upload/t_cover_big/${hash}.jpg`,
-              saveUrl: `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${hash}.png`,
-            }
-          })
-      } catch (error) {
-        if (error.name === 'AbortError') {
-          throw error
-        }
-        console.error('搜索IGDB封面失败:', error)
-        return []
-      }
-    },
-
-    getSearchBucket(name) {
-      const bucket = name
-        .substring(0, 2)
-        .toLowerCase()
-        .replaceAll(/[^a-z\d\u4e00-\u9fa5]/g, '')
-      return bucket || '@'
-    },
-
     handleImageError(event) {
-      event.target.src =
-        'data:image/svg+xml,' +
-        encodeURIComponent(`
-        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
-          <rect fill="#1a1a2e" width="200" height="300"/>
-          <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">无法加载</text>
-        </svg>
-      `)
+      event.target.src = PLACEHOLDER_IMAGE
     },
 
     async selectCover(cover) {
@@ -351,8 +259,8 @@ export default {
 
           if (!response.ok) throw new Error('Failed to download cover')
 
-          const body = await response.json()
-          this.$emit('cover-selected', { path: body.path, source: 'igdb' })
+          const { path } = await response.json()
+          this.$emit('cover-selected', { path, source: 'igdb' })
         }
         this.closeFinder()
       } catch (error) {

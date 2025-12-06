@@ -6,21 +6,7 @@
         <div class="col-lg-8 col-xl-7">
           <div class="text-center mb-4">
             <div class="icon-wrapper mb-2">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="32"
-                height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="text-primary"
-              >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
+              <Icon name="lock" :size="32" icon-class="text-primary" />
             </div>
             <h1 class="h4 page-title">{{ $t('password.password_change') }}</h1>
             <p class="text-muted small mb-0">{{ $t('password.new_username_desc') }}</p>
@@ -34,21 +20,7 @@
                   <div class="col-12">
                     <div class="section-header d-flex align-items-center mb-3">
                       <div class="section-icon me-2">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="20"
-                          height="20"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          class="text-primary"
-                        >
-                          <circle cx="12" cy="12" r="10" />
-                          <polyline points="12 6 12 12 16 14" />
-                        </svg>
+                        <Icon name="clock" :size="20" icon-class="text-primary" />
                       </div>
                       <h6 class="mb-0 fw-semibold">{{ $t('password.current_creds') }}</h6>
                     </div>
@@ -92,22 +64,7 @@
                   <div class="col-12">
                     <div class="section-header d-flex align-items-center mb-3">
                       <div class="section-icon section-icon-success me-2">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="20"
-                          height="20"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          class="text-success"
-                        >
-                          <path
-                            d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"
-                          />
-                        </svg>
+                        <Icon name="star" :size="20" icon-class="text-success" />
                       </div>
                       <h6 class="mb-0 fw-semibold">{{ $t('password.new_creds') }}</h6>
                     </div>
@@ -192,6 +149,7 @@
 <script setup>
 import { ref } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
+import Icon from '../components/common/Icon.vue'
 
 const error = ref(null)
 const success = ref(false)
@@ -226,17 +184,22 @@ async function save() {
 </script>
 
 <style>
-@import '../styles/global.css';
+@import '../styles/global.less';
 </style>
 
-<style scoped>
+<style lang="less" scoped>
+@transition-duration: 0.2s;
+@transition-timing: ease;
+@primary-bg-opacity: 0.1;
+@success-bg-opacity: 0.1;
+
 .icon-wrapper {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 56px;
   height: 56px;
-  background: rgba(var(--bs-primary-rgb), 0.1);
+  background: rgba(var(--bs-primary-rgb), @primary-bg-opacity);
   border-radius: 50%;
 }
 
@@ -246,36 +209,38 @@ async function save() {
   justify-content: center;
   width: 32px;
   height: 32px;
-  background: rgba(var(--bs-primary-rgb), 0.1);
+  background: rgba(var(--bs-primary-rgb), @primary-bg-opacity);
   border-radius: 8px;
   font-size: 1rem;
-}
 
-.section-icon-success {
-  background: rgba(var(--bs-success-rgb), 0.1);
+  &-success {
+    background: rgba(var(--bs-success-rgb), @success-bg-opacity);
+  }
 }
 
 .form-control {
   padding: 0.5rem 0.75rem;
   border-radius: 0.375rem;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
+  transition: border-color @transition-duration @transition-timing,
+              box-shadow @transition-duration @transition-timing;
 
-.form-control:focus {
-  box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.15);
+  &:focus {
+    box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.15);
+  }
 }
 
 .card {
-  transition: transform 0.2s ease;
+  transition: transform @transition-duration @transition-timing;
 }
 
 .btn-primary {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
+  transition: transform @transition-duration @transition-timing,
+              box-shadow @transition-duration @transition-timing;
 
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(var(--bs-primary-rgb), 0.35);
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(var(--bs-primary-rgb), 0.35);
+  }
 }
 
 hr {

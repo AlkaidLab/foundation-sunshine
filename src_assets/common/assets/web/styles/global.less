@@ -1,13 +1,17 @@
 @import './var.css';
 
+// Scrollbar stability
 html {
   scrollbar-gutter: stable;
-}
 
-@supports not (scrollbar-gutter: stable) {
-  html {
+  @supports not (scrollbar-gutter: stable) {
     overflow-y: scroll;
   }
+}
+
+// Theme-specific body styles
+[data-bs-theme='dark'] body {
+  backdrop-filter: brightness(0.6);
 }
 
 body {
@@ -20,12 +24,13 @@ body {
   background-attachment: fixed;
   backdrop-filter: brightness(0.85);
   transition: background 0.3s ease;
+
+  &[data-bs-theme='dark'] {
+    backdrop-filter: brightness(0.6);
+  }
 }
 
-body[data-bs-theme='dark'] {
-  backdrop-filter: brightness(0.5);
-}
-
+// Theme variables
 [data-bs-theme='light'] {
   --bs-body-bg: rgba(255, 255, 255, 0.41);
   --bs-dropdown-bg: rgba(255, 255, 255, 0.7);
@@ -36,15 +41,18 @@ body[data-bs-theme='dark'] {
   --bs-dropdown-bg: rgba(0, 0, 0, 0.7);
 }
 
+// Drag and drop indicator
 .dragover {
   outline: 4px dashed #ffc400;
   outline-offset: -20px;
 }
 
+// Layout
 .container {
   padding: 1rem;
 }
 
+// Page typography
 .page-title {
   font-size: 1.9rem;
   font-weight: 100;
@@ -52,13 +60,13 @@ body[data-bs-theme='dark'] {
   letter-spacing: -0.02em;
   color: var(--text-title-color, #333);
   transition: color 0.5s ease;
-}
 
-[data-bs-theme='dark'] .page-title,
-[data-bs-theme='light'] .page-title,
-body.bg-dark .page-title,
-body.bg-light .page-title {
-  color: var(--text-title-color) !important;
+  [data-bs-theme='dark'] &,
+  [data-bs-theme='light'] &,
+  body.bg-dark &,
+  body.bg-light & {
+    color: var(--text-title-color) !important;
+  }
 }
 
 .page-subtitle {
@@ -69,36 +77,45 @@ body.bg-light .page-title {
   transition: color 0.5s ease;
 }
 
+// Color transition utility
 :root.text-color-transitioning * {
   transition: color 0.5s ease !important;
 }
 
+// Card component - shared backdrop styles
+@card-backdrop-base: {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+};
+
 .card {
   border: none;
   border-radius: 12px;
-  backdrop-filter: blur(3px);
-}
 
-.card-header {
-  border-radius: 12px 12px 0 0 !important;
-  padding: 1rem 1.25rem;
-  backdrop-filter: blur(1px);
-}
+  &-header {
+    border-radius: 12px 12px 0 0 !important;
+    padding: 1rem 1.25rem;
+    backdrop-filter: blur(4px) saturate(1.8);
+    @card-backdrop-base();
+  }
 
-.card-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
+  &-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
 
-.card-body {
-  padding: 1.25rem;
-}
+  &-body {
+    padding: 1.25rem;
+    backdrop-filter: blur(2px) saturate(1.8);
+    @card-backdrop-base();
 
-.card-body p {
-  font-size: 0.9rem;
-  line-height: 1.6;
-}
+    p {
+      font-size: 0.9rem;
+      line-height: 1.6;
 
-.card-body p.pre-line {
-  white-space: pre-line;
+      &.pre-line {
+        white-space: pre-line;
+      }
+    }
+  }
 }

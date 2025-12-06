@@ -1,0 +1,55 @@
+/* 导入手写字体 */
+@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&family=Patrick+Hand&family=Indie+Flower&display=swap');
+
+/* 手绘风格颜色变量 */
+:root {
+  --sketch-black: #2c2c2c;
+  --sketch-blue: #4169e1;
+  --sketch-green: #3cb371;
+  --sketch-red: #dc143c;
+  --sketch-yellow: #ffd700;
+  --paper-bg: #fffef9;
+  --paper-bg-alt: #faf9f6;
+  --pencil-gray: #8b8b8b;
+  --texture-opacity: 0.02;
+  --texture-size: 2px;
+}
+
+/* 纸张背景效果 */
+body {
+  background: linear-gradient(to bottom, var(--paper-bg), var(--paper-bg-alt));
+  font-family: 'Kalam', cursive;
+  position: relative;
+  min-height: 100vh;
+
+  /* 纸张纹理 */
+  &::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent var(--texture-size),
+        rgba(0, 0, 0, var(--texture-opacity)) var(--texture-size),
+        rgba(0, 0, 0, var(--texture-opacity)) calc(var(--texture-size) * 2)
+      ),
+      repeating-linear-gradient(
+        90deg,
+        transparent,
+        transparent var(--texture-size),
+        rgba(0, 0, 0, var(--texture-opacity)) var(--texture-size),
+        rgba(0, 0, 0, var(--texture-opacity)) calc(var(--texture-size) * 2)
+      );
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+/* 打印样式优化 */
+@media print {
+  body::before {
+    display: none;
+  }
+}

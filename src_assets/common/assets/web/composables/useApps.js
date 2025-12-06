@@ -3,11 +3,15 @@ import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
 import { trackEvents } from '../config/firebase.js'
+import { searchCoverImage, batchSearchCoverImages } from '../utils/coverSearch.js'
+
+const MESSAGE_DURATION = 3000
 
 /**
  * 应用管理组合式函数
  */
 export function useApps() {
+  // 状态
   const apps = ref([])
   const filteredApps = ref([])
   const searchQuery = ref('')
@@ -15,31 +19,54 @@ export function useApps() {
   const platform = ref('')
   const isSaving = ref(false)
   const isDragging = ref(false)
-  const viewMode = ref('grid') // 'grid' or 'list'
+  const viewMode = ref('grid')
   const message = ref('')
   const messageType = ref('success')
   const envVars = ref({})
   const debouncedSearch = ref(null)
+  const isScanning = ref(false)
+  const scannedApps = ref([])
+  const showScanResult = ref(false)
+  const scannedAppsSearchQuery = ref('')
 
-  // 消息样式类
-  const messageClass = computed(() => {
-    return {
-      'alert-success': messageType.value === 'success',
-      'alert-error': messageType.value === 'error',
-      'alert-warning': messageType.value === 'warning',
-      'alert-info': messageType.value === 'info'
-    }
-  })
+  // 计算属性
+  const messageClass = computed(() => ({
+    [`alert-${messageType.value}`]: true,
+  }))
 
-  // 初始化环境变量
-  const initEnvVars = (t) => {
-    envVars.value = {}
-    for (const [key, translationKey] of Object.entries(ENV_VARS_CONFIG)) {
-      envVars.value[key] = t(translationKey)
-    }
+  // 消息图标映射
+  const MESSAGE_ICONS = {
+    success: 'fa-check-circle',
+    error: 'fa-exclamation-circle',
+    warning: 'fa-exclamation-triangle',
+    info: 'fa-info-circle',
   }
 
-  // 加载应用列表
+  const showMessage = (msg, type = APP_CONSTANTS.MESSAGE_TYPES.SUCCESS) => {
+    message.value = msg
+    messageType.value = type
+    setTimeout(() => {
+      message.value = ''
+    }, MESSAGE_DURATION)
+  }
+
+  const getMessageIcon = () => MESSAGE_ICONS[messageType.value] || MESSAGE_ICONS.success
+
+  const createDefaultApp = (overrides = {}) => ({
+    ...APP_CONSTANTS.DEFAULT_APP,
+    index: -1,
+    ...overrides,
+  })
+
+  // 初始化
+  const init = (t) => {
+    envVars.value = Object.fromEntries(
+      Object.entries(ENV_VARS_CONFIG).map(([key, translationKey]) => [key, t(translationKey)])
+    )
+    debouncedSearch.value = debounce(performSearch, APP_CONSTANTS.SEARCH_DEBOUNCE_TIME)
+  }
+
+  // 数据加载
   const loadApps = async () => {
     try {
       apps.value = await AppService.getApps()
@@ -50,7 +77,6 @@ export function useApps() {
     }
   }
 
-  // 加载平台信息
   const loadPlatform = async () => {
     try {
       platform.value = await AppService.getPlatform()
@@ -60,43 +86,32 @@ export function useApps() {
     }
   }
 
-  // 执行搜索
+  // 搜索
   const performSearch = () => {
     filteredApps.value = AppService.searchApps(apps.value, searchQuery.value)
   }
 
-  // 清除搜索
   const clearSearch = () => {
     searchQuery.value = ''
     performSearch()
   }
 
-  // 获取原始索引
-  const getOriginalIndex = (app, filteredIndex) => {
-    return apps.value.findIndex(a => a === app)
-  }
+  // 应用操作
+  const getOriginalIndex = (app) => apps.value.indexOf(app)
 
-  // 新增应用
   const newApp = () => {
     trackEvents.userAction('new_app_clicked')
-    editingApp.value = {
-      ...APP_CONSTANTS.DEFAULT_APP,
-      index: -1
-    }
+    editingApp.value = createDefaultApp()
   }
 
-  // 编辑应用
   const editApp = (index) => {
-    editingApp.value = deepClone(apps.value[index])
-    editingApp.value.index = index
+    editingApp.value = { ...deepClone(apps.value[index]), index }
   }
 
-  // 关闭应用编辑器
   const closeAppEditor = () => {
     editingApp.value = null
   }
 
-  // 处理保存应用
   const handleSaveApp = async (appData) => {
     try {
       isSaving.value = true
@@ -112,31 +127,26 @@ export function useApps() {
     }
   }
 
-  // 显示删除确认
   const showDeleteForm = async (index) => {
-    const confirmed = await confirm(
-      `确定要删除应用 "${apps.value[index].name}" 吗？`
-    )
-    if (confirmed) {
+    if (await confirm(`确定要删除应用 "${apps.value[index].name}" 吗？`)) {
       await deleteApp(index)
     }
   }
 
-  // 删除应用
   const deleteApp = async (index) => {
+    const appName = apps.value[index]?.name || 'unknown'
     try {
       apps.value.splice(index, 1)
       await AppService.saveApps(apps.value, null)
       await loadApps()
       showMessage('应用删除成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
-      trackEvents.appDeleted(apps.value[index]?.name || 'unknown')
+      trackEvents.appDeleted(appName)
     } catch (error) {
       console.error('删除应用失败:', error)
       showMessage('删除应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     }
   }
 
-  // 保存应用列表
   const save = async () => {
     try {
       isSaving.value = true
@@ -151,55 +161,233 @@ export function useApps() {
     }
   }
 
-  // 拖拽开始
+  // 拖拽排序
   const onDragStart = () => {
     isDragging.value = true
   }
 
-  // 拖拽结束
   const onDragEnd = async () => {
     isDragging.value = false
-    // 拖拽后自动保存
     await save()
   }
 
-  // 显示消息
-  const showMessage = (msg, type = APP_CONSTANTS.MESSAGE_TYPES.SUCCESS) => {
-    message.value = msg
-    messageType.value = type
-    setTimeout(() => {
-      message.value = ''
-    }, 3000)
-  }
+  // 封面搜索相关（使用共享的 coverSearch 模块）
 
-  // 获取消息图标
-  const getMessageIcon = () => {
-    const icons = {
-      success: 'fa-check-circle',
-      error: 'fa-exclamation-circle',
-      warning: 'fa-exclamation-triangle',
-      info: 'fa-info-circle'
+  // Tauri 环境检测
+  const isTauriEnv = () => !!window.__TAURI__?.core?.invoke
+
+  // 扫描目录功能
+  const scanDirectory = async (extractIcons = true) => {
+    const tauri = window.__TAURI__
+    if (!tauri?.core?.invoke) {
+      showMessage('扫描功能仅在 Tauri 环境下可用', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      return
     }
-    return icons[messageType.value] || icons.success
+
+    if (!tauri?.dialog?.open) {
+      showMessage('无法打开文件对话框', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      return
+    }
+
+    try {
+      const selectedDir = await tauri.dialog.open({
+        directory: true,
+        multiple: false,
+        title: '选择要扫描的目录',
+      })
+
+      if (!selectedDir) return
+
+      isScanning.value = true
+      showMessage('正在扫描目录...', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+
+      const foundApps = await tauri.core.invoke('scan_directory_for_apps', {
+        directory: selectedDir,
+        extractIcons,
+      })
+
+      if (foundApps.length === 0) {
+        scannedApps.value = []
+        showScanResult.value = true
+        showMessage('未找到可添加的应用程序', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      } else {
+        // 先显示扫描结果（无封面）
+        scannedApps.value = foundApps
+        showScanResult.value = true
+        showMessage(`找到 ${foundApps.length} 个应用程序，正在搜索封面...`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+
+        // 异步更新封面图片
+        asyncUpdateCovers(foundApps)
+      }
+
+      trackEvents.userAction('directory_scanned', { count: foundApps.length, extractIcons })
+    } catch (error) {
+      console.error('扫描目录失败:', error)
+      showMessage(`扫描失败: ${error}`, APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    } finally {
+      isScanning.value = false
+    }
   }
 
-  // 处理复制成功
-  const handleCopySuccess = () => {
-    showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+  // 异步更新封面图片
+  const asyncUpdateCovers = async (appList) => {
+    let coversFound = 0
+    const total = appList.length
+
+    // 并行搜索所有封面，但逐个更新UI
+    const promises = appList.map(async (app, index) => {
+      try {
+        const imagePath = await searchCoverImage(encodeURIComponent(app.name))
+        if (imagePath && scannedApps.value[index]) {
+          // 更新对应位置的应用封面
+          scannedApps.value[index] = { ...scannedApps.value[index], 'image-path': imagePath }
+          coversFound++
+        }
+      } catch (error) {
+        console.warn(`搜索封面失败: ${app.name}`, error)
+      }
+    })
+
+    await Promise.allSettled(promises)
+
+    // 搜索完成后显示结果
+    showMessage(
+      `已匹配 ${coversFound}/${total} 个封面`,
+      coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
+    )
   }
 
-  // 处理复制错误
-  const handleCopyError = () => {
-    showMessage('复制失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+  // 扫描应用字段处理
+  const getScannedAppField = (app, field) => app[field] || app[field.replace(/-/g, '_')] || ''
+
+  const getScannedAppImage = (app) => getScannedAppField(app, 'image-path')
+
+  const createAppFromScanned = (scannedApp) => ({
+    ...APP_CONSTANTS.DEFAULT_APP,
+    name: scannedApp.name,
+    cmd: scannedApp.cmd,
+    'working-dir': getScannedAppField(scannedApp, 'working-dir'),
+    'image-path': getScannedAppField(scannedApp, 'image-path'),
+  })
+
+  const removeFromScannedList = (sourcePath) => {
+    const index = scannedApps.value.findIndex((a) => a.source_path === sourcePath)
+    if (index !== -1) {
+      scannedApps.value.splice(index, 1)
+      if (scannedApps.value.length === 0) {
+        showScanResult.value = false
+      }
+    }
   }
 
-  // 初始化
-  const init = (t) => {
-    initEnvVars(t)
-    debouncedSearch.value = debounce(performSearch, APP_CONSTANTS.SEARCH_DEBOUNCE_TIME)
+  const addScannedApp = (scannedApp) => {
+    editingApp.value = createDefaultApp({
+      name: scannedApp.name,
+      cmd: scannedApp.cmd,
+      'working-dir': getScannedAppField(scannedApp, 'working-dir'),
+      'image-path': getScannedAppField(scannedApp, 'image-path'),
+    })
+
+    removeFromScannedList(scannedApp.source_path)
+    showMessage(`正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+    trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
+
+  const quickAddScannedApp = async (scannedApp, index) => {
+    try {
+      apps.value.push(createAppFromScanned(scannedApp))
+      await AppService.saveApps(apps.value, null)
+      await loadApps()
+
+      scannedApps.value.splice(index, 1)
+      if (scannedApps.value.length === 0) {
+        showScanResult.value = false
+      }
+
+      showMessage(`已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name })
+    } catch (error) {
+      console.error('快速添加应用失败:', error)
+      showMessage('添加失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    }
+  }
+
+  const addAllScannedApps = async () => {
+    if (scannedApps.value.length === 0) return
+
+    try {
+      isSaving.value = true
+      const appsToAdd = scannedApps.value.map(createAppFromScanned)
+
+      apps.value.push(...appsToAdd)
+      await AppService.saveApps(apps.value, null)
+      await loadApps()
+
+      showMessage(`已添加 ${appsToAdd.length} 个应用`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      trackEvents.userAction('scanned_apps_batch_added', { count: appsToAdd.length })
+
+      scannedApps.value = []
+      showScanResult.value = false
+    } catch (error) {
+      console.error('批量添加应用失败:', error)
+      showMessage('批量添加失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  const closeScanResult = () => {
+    showScanResult.value = false
+    scannedApps.value = []
+    scannedAppsSearchQuery.value = ''
+  }
+
+  // 过滤扫描结果
+  const filteredScannedApps = computed(() => {
+    if (!scannedAppsSearchQuery.value) {
+      return scannedApps.value
+    }
+    const query = scannedAppsSearchQuery.value.toLowerCase()
+    return scannedApps.value.filter((app) => {
+      const name = (app.name || '').toLowerCase()
+      const cmd = (app.cmd || '').toLowerCase()
+      const sourcePath = (app.source_path || '').toLowerCase()
+      return name.includes(query) || cmd.includes(query) || sourcePath.includes(query)
+    })
+  })
+
+  const removeScannedApp = (index) => {
+    scannedApps.value.splice(index, 1)
+    if (scannedApps.value.length === 0) {
+      showScanResult.value = false
+    }
+  }
+
+  const searchCoverForScannedApp = async (index) => {
+    const app = scannedApps.value[index]
+    if (!app) return
+
+    try {
+      showMessage(`正在搜索封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      const imagePath = await searchCoverImage(app.name)
+
+      if (imagePath) {
+        scannedApps.value[index] = { ...app, 'image-path': imagePath }
+        showMessage(`已找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      } else {
+        showMessage(`未找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      }
+    } catch (error) {
+      console.error('搜索封面失败:', error)
+      showMessage('搜索封面失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    }
+  }
+
+  const handleCopySuccess = () => showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+  const handleCopyError = () => showMessage('复制失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
 
   return {
+    // 状态
     apps,
     filteredApps,
     searchQuery,
@@ -212,7 +400,15 @@ export function useApps() {
     messageType,
     envVars,
     debouncedSearch,
+    isScanning,
+    scannedApps,
+    showScanResult,
+    scannedAppsSearchQuery,
+    // 计算属性
     messageClass,
+    filteredScannedApps,
+    // 方法
+    init,
     loadApps,
     loadPlatform,
     performSearch,
@@ -227,11 +423,18 @@ export function useApps() {
     save,
     onDragStart,
     onDragEnd,
+    scanDirectory,
+    addScannedApp,
+    quickAddScannedApp,
+    addAllScannedApps,
+    closeScanResult,
+    removeScannedApp,
+    getScannedAppImage,
+    searchCoverForScannedApp,
+    isTauriEnv,
     showMessage,
     getMessageIcon,
     handleCopySuccess,
     handleCopyError,
-    init,
   }
 }
-
