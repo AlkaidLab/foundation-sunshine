@@ -26,8 +26,8 @@
               >
                 <FormField
                   id="appName"
-                  :label="$t('apps.app_name')"
-                  :hint="$t('apps.app_name_desc')"
+                  :label="t('apps.app_name')"
+                  :hint="t('apps.app_name_desc')"
                   :validation="validation.name"
                   :value="formData.name"
                   required
@@ -45,8 +45,8 @@
 
                 <FormField
                   id="appOutput"
-                  :label="$t('apps.output_name')"
-                  :hint="$t('apps.output_desc')"
+                  :label="t('apps.output_name')"
+                  :hint="t('apps.output_desc')"
                   :validation="validation.output"
                 >
                   <input
@@ -61,7 +61,7 @@
 
                 <FormField
                   id="appCmd"
-                  :label="$t('apps.cmd')"
+                  :label="t('apps.cmd')"
                   :validation="validation.cmd"
                   :value="formData.cmd"
                   required
@@ -88,15 +88,15 @@
                     </div>
                   </template>
                   <template #hint>
-                    {{ $t('apps.cmd_desc') }}<br />
-                    <strong>{{ $t('_common.note') }}</strong> {{ $t('apps.cmd_note') }}
+                    {{ t('apps.cmd_desc') }}<br />
+                    <strong>{{ t('_common.note') }}</strong> {{ t('apps.cmd_note') }}
                   </template>
                 </FormField>
 
                 <FormField
                   id="appWorkingDir"
-                  :label="$t('apps.working_dir')"
-                  :hint="$t('apps.working_dir_desc')"
+                  :label="t('apps.working_dir')"
+                  :hint="t('apps.working_dir_desc')"
                   :validation="validation['working-dir']"
                 >
                   <div class="input-group">
@@ -134,10 +134,10 @@
                       :false-value="'false'"
                     />
                     <label class="form-check-label" for="excludeGlobalPrepSwitch">
-                      {{ $t('apps.global_prep_name') }}
+                      {{ t('apps.global_prep_name') }}
                     </label>
                   </div>
-                  <div class="field-hint">{{ $t('apps.global_prep_desc') }}</div>
+                  <div class="field-hint">{{ t('apps.global_prep_desc') }}</div>
                 </div>
 
                 <CommandTable
@@ -172,28 +172,28 @@
                   v-if="platform === 'windows'"
                   id="appElevation"
                   v-model="formData.elevated"
-                  :label="$t('_common.run_as')"
-                  :hint="$t('apps.run_as_desc')"
+                  :label="t('_common.run_as')"
+                  :hint="t('apps.run_as_desc')"
                 />
 
                 <CheckboxField
                   id="autoDetach"
                   v-model="formData['auto-detach']"
-                  :label="$t('apps.auto_detach')"
-                  :hint="$t('apps.auto_detach_desc')"
+                  :label="t('apps.auto_detach')"
+                  :hint="t('apps.auto_detach_desc')"
                 />
 
                 <CheckboxField
                   id="waitAll"
                   v-model="formData['wait-all']"
-                  :label="$t('apps.wait_all')"
-                  :hint="$t('apps.wait_all_desc')"
+                  :label="t('apps.wait_all')"
+                  :hint="t('apps.wait_all_desc')"
                 />
 
                 <FormField
                   id="exitTimeout"
-                  :label="$t('apps.exit_timeout')"
-                  :hint="$t('apps.exit_timeout_desc')"
+                  :label="t('apps.exit_timeout')"
+                  :hint="t('apps.exit_timeout_desc')"
                   :validation="validation['exit-timeout']"
                 >
                   <input
@@ -230,10 +230,10 @@
           </div>
           <div>
             <button type="button" class="btn btn-secondary me-2" @click="closeModal">
-              <i class="fas fa-times me-1"></i>{{ $t('_common.cancel') }}
+              <i class="fas fa-times me-1"></i>{{ t('_common.cancel') }}
             </button>
             <button type="button" class="btn btn-primary" @click="saveApp" :disabled="disabled || !isFormValid">
-              <i class="fas fa-save me-1"></i>{{ $t('_common.save') }}
+              <i class="fas fa-save me-1"></i>{{ t('_common.save') }}
             </button>
           </div>
         </div>
@@ -242,8 +242,10 @@
   </div>
 </template>
 
-<script>
-import { validateField, validateAppForm } from '../utils/validation.js'
+<script setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
 import CommandTable from './CommandTable.vue'
 import DetachedCommands from './DetachedCommands.vue'
@@ -252,6 +254,7 @@ import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
+import { useModalScrollLock } from '../composables/useModalScrollLock.js'
 
 // 默认表单数据
 const DEFAULT_FORM_DATA = {
@@ -281,309 +284,322 @@ const FIELD_VALIDATION_MAP = {
   'image-path': 'imagePath',
 }
 
-export default {
-  name: 'AppEditor',
-  components: {
-    CommandTable,
-    DetachedCommands,
-    ImageSelector,
-    AccordionItem,
-    FormField,
-    CheckboxField,
-  },
-  props: {
-    app: { type: Object, default: null },
-    platform: { type: String, default: 'linux' },
-    disabled: { type: Boolean, default: false },
-  },
-  emits: ['close', 'save-app'],
-  data() {
-    return {
-      formData: null,
-      validation: {},
-      imageError: '',
-      modalInstance: null,
-      fileSelector: null,
+// Props
+const props = defineProps({
+  app: { type: Object, default: null },
+  platform: { type: String, default: 'linux' },
+  disabled: { type: Boolean, default: false },
+})
+
+// Emits
+const emit = defineEmits(['close', 'save-app'])
+
+// I18n
+const { t } = useI18n()
+
+// Refs
+const modalElement = ref(null)
+const fileInput = ref(null)
+const dirInput = ref(null)
+const formData = ref(null)
+const validation = ref({})
+const imageError = ref('')
+const modalInstance = ref(null)
+const fileSelector = ref(null)
+
+// 滚动锁定
+const isModalOpen = ref(false)
+const scrollLock = useModalScrollLock(isModalOpen, { scrollToTop: true, restoreScroll: true })
+
+// Computed
+const isNewApp = computed(() => !props.app || props.app.index === -1)
+const isFormValid = computed(() => validation.value.name?.isValid && validation.value.cmd?.isValid)
+
+// 初始化方法
+const initializeModal = () => {
+  if (modalInstance.value || !modalElement.value) return
+
+  const Modal = window.bootstrap?.Modal
+  if (!Modal) {
+    console.warn('Bootstrap Modal not available')
+    return
+  }
+
+  try {
+    modalInstance.value = new Modal(modalElement.value, {
+      backdrop: 'static',
+      keyboard: false,
+    })
+    // 监听模态框显示事件，锁定滚动并滚动到顶部
+    modalElement.value.addEventListener('shown.bs.modal', () => {
+      isModalOpen.value = true
+      scrollLock.lockBodyScroll()
+    })
+    // 监听模态框隐藏事件，恢复滚动
+    modalElement.value.addEventListener('hidden.bs.modal', () => {
+      isModalOpen.value = false
+      scrollLock.restoreBodyScroll()
+    })
+  } catch (error) {
+    console.warn('Modal initialization failed:', error)
+  }
+}
+
+const initializeFileSelector = () => {
+  const notify = (type) => (message) => showMessage(message, type)
+  fileSelector.value = createFileSelector({
+    platform: props.platform,
+    onSuccess: notify('info'),
+    onError: notify('error'),
+    onInfo: notify('info'),
+  })
+}
+
+const initializeForm = (app) => {
+  formData.value = { ...DEFAULT_FORM_DATA, ...JSON.parse(JSON.stringify(app)) }
+  ensureDefaultValues()
+  validation.value = {}
+  imageError.value = ''
+}
+
+const ensureDefaultValues = () => {
+  const defaults = {
+    'prep-cmd': [],
+    'menu-cmd': [],
+    detached: [],
+    'exclude-global-prep-cmd': false,
+    'working-dir': '',
+  }
+
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!formData.value[key]) formData.value[key] = value
+  })
+
+  const conditionalDefaults = {
+    elevated: props.platform === 'windows' ? false : undefined,
+    'auto-detach': true,
+    'wait-all': true,
+    'exit-timeout': 5,
+  }
+
+  Object.entries(conditionalDefaults).forEach(([key, value]) => {
+    if (formData.value[key] === undefined && value !== undefined) {
+      formData.value[key] = value
+    }
+  })
+}
+
+// 模态框操作
+const showModal = () => {
+  if (!modalInstance.value) initializeModal()
+  modalInstance.value?.show()
+}
+
+const closeModal = () => {
+  modalInstance.value?.hide()
+  resetFileSelection()
+  restoreBodyScroll()
+  emit('close')
+}
+
+const cleanup = () => {
+  modalInstance.value?.dispose()
+  if (fileSelector.value) {
+    fileSelector.value.resetState()
+    fileSelector.value.cleanupFileInputs(fileInput.value, dirInput.value)
+  }
+  restoreBodyScroll()
+}
+
+const resetFileSelection = () => {
+  if (fileSelector.value) {
+    fileSelector.value.resetState()
+    fileSelector.value.cleanupFileInputs(fileInput.value, dirInput.value)
+  }
+}
+
+// 恢复 body 滚动（在模态框隐藏后调用）
+const restoreBodyScroll = () => {
+  scrollLock.restoreBodyScroll()
+
+  // 清理残留的 backdrop
+  nextTick(() => {
+    document.querySelectorAll('.modal-backdrop:not(.show)').forEach((el) => el.remove())
+  })
+}
+
+// 消息提示
+const showMessage = (message, type = 'info') => {
+  if (window.showToast) {
+    window.showToast(message, type)
+  } else {
+    type === 'error' ? alert(message) : console.info(message)
+  }
+}
+
+// 验证方法
+const validateField = (fieldName) => {
+  const validationKey = FIELD_VALIDATION_MAP[fieldName] || fieldName
+  const result = validateFieldHelper(validationKey, formData.value[fieldName])
+  validation.value[fieldName] = result
+  return result
+}
+
+const getFieldClass = (fieldName) => {
+  const v = validation.value[fieldName]
+  if (!v) return ''
+  return { 'is-invalid': !v.isValid, 'is-valid': v.isValid && formData.value[fieldName] }
+}
+
+// 命令操作
+const addPrepCommand = () => {
+  const cmd = { do: '', undo: '' }
+  if (props.platform === 'windows') cmd.elevated = false
+  formData.value['prep-cmd'].push(cmd)
+}
+
+const removePrepCommand = (index) => {
+  formData.value['prep-cmd'].splice(index, 1)
+}
+
+const addMenuCommand = () => {
+  const cmd = { id: nanoid(10), name: '', cmd: '' }
+  if (props.platform === 'windows') cmd.elevated = false
+  formData.value['menu-cmd'].push(cmd)
+}
+
+const removeMenuCommand = (index) => {
+  formData.value['menu-cmd'].splice(index, 1)
+}
+
+const handlePrepCommandOrderChanged = (newOrder) => {
+  formData.value['prep-cmd'] = newOrder
+}
+
+const handleMenuCommandOrderChanged = (newOrder) => {
+  formData.value['menu-cmd'] = newOrder
+}
+
+const testMenuCommand = async (index) => {
+  const menuCmd = formData.value['menu-cmd'][index]
+  if (!menuCmd.cmd) {
+    showMessage(t('apps.test_menu_cmd_empty'), 'error')
+    return
+  }
+
+  try {
+    showMessage(t('apps.test_menu_cmd_executing'))
+    const response = await fetch('/api/apps/test-menu-cmd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cmd: menuCmd.cmd,
+        working_dir: formData.value['working-dir'] || '',
+        elevated: menuCmd.elevated === 'true' || menuCmd.elevated === true,
+      }),
+    })
+
+    const result = await response.json()
+    showMessage(
+      result.status
+        ? t('apps.test_menu_cmd_success')
+        : `${t('apps.test_menu_cmd_failed')}: ${result.error || 'Unknown error'}`,
+      result.status ? 'info' : 'error'
+    )
+  } catch (error) {
+    showMessage(`${t('apps.test_menu_cmd_failed')}: ${error.message}`, 'error')
+  }
+}
+
+const addDetachedCommand = () => {
+  formData.value.detached.push('')
+}
+
+const removeDetachedCommand = (index) => {
+  formData.value.detached.splice(index, 1)
+}
+
+// 图片操作
+const updateImage = (imagePath) => {
+  formData.value['image-path'] = imagePath
+  imageError.value = ''
+}
+
+const handleImageError = (error) => {
+  imageError.value = error
+}
+
+// 文件选择
+const selectFile = (fieldName) => {
+  if (!fileSelector.value) {
+    showMessage('文件选择器未初始化', 'error')
+    return
+  }
+  fileSelector.value.selectFile(fieldName, fileInput.value, onFilePathSelected)
+}
+
+const selectDirectory = (fieldName) => {
+  if (!fileSelector.value) {
+    showMessage('文件选择器未初始化', 'error')
+    return
+  }
+  fileSelector.value.selectDirectory(fieldName, dirInput.value, onFilePathSelected)
+}
+
+const onFilePathSelected = (fieldName, filePath) => {
+  formData.value[fieldName] = filePath
+  validateField(fieldName)
+}
+
+const getPlaceholderText = (fieldName) => {
+  return fileSelector.value?.getPlaceholderText(fieldName) || ''
+}
+
+const getButtonTitle = (type) => {
+  return fileSelector.value?.getButtonTitle(type) || '选择'
+}
+
+// 保存
+const saveApp = async () => {
+  const formValidation = validateAppForm(formData.value)
+  if (!formValidation.isValid) {
+    if (formValidation.errors.length) alert(formValidation.errors[0])
+    return
+  }
+
+  const editedApp = {
+    ...formData.value,
+    ...(formData.value['image-path'] && {
+      'image-path': formData.value['image-path'].toString().replace(/"/g, ''),
+    }),
+  }
+
+  emit('save-app', editedApp)
+}
+
+// Watch
+watch(
+  () => props.app,
+  (newApp) => {
+    if (newApp) {
+      initializeForm(newApp)
+      nextTick(showModal)
     }
   },
-  computed: {
-    isNewApp() {
-      return !this.app || this.app.index === -1
-    },
-    isFormValid() {
-      return this.validation.name?.isValid && this.validation.cmd?.isValid
-    },
-  },
-  watch: {
-    app: {
-      handler(newApp) {
-        if (newApp) {
-          this.initializeForm(newApp)
-          this.$nextTick(this.showModal)
-        }
-      },
-      immediate: true,
-    },
-  },
-  mounted() {
-    this.$nextTick(() => {
-      this.initializeModal()
-      this.initializeFileSelector()
-    })
-  },
-  beforeUnmount() {
-    this.cleanup()
-  },
-  methods: {
-    // 初始化方法
-    initializeModal() {
-      if (this.modalInstance || !this.$refs.modalElement) return
+  { immediate: true }
+)
 
-      const Modal = window.bootstrap?.Modal
-      if (!Modal) {
-        console.warn('Bootstrap Modal not available')
-        return
-      }
+// Lifecycle
+onMounted(() => {
+  nextTick(() => {
+    initializeModal()
+    initializeFileSelector()
+  })
+})
 
-      try {
-        this.modalInstance = new Modal(this.$refs.modalElement, {
-          backdrop: 'static',
-          keyboard: false,
-        })
-        this.$refs.modalElement.addEventListener('hidden.bs.modal', this.restoreBodyScroll)
-      } catch (error) {
-        console.warn('Modal initialization failed:', error)
-      }
-    },
-
-    initializeFileSelector() {
-      const notify = (type) => (message) => this.showMessage(message, type)
-      this.fileSelector = createFileSelector({
-        platform: this.platform,
-        onSuccess: notify('info'),
-        onError: notify('error'),
-        onInfo: notify('info'),
-      })
-    },
-
-    initializeForm(app) {
-      this.formData = { ...DEFAULT_FORM_DATA, ...JSON.parse(JSON.stringify(app)) }
-      this.ensureDefaultValues()
-      this.validation = {}
-      this.imageError = ''
-    },
-
-    ensureDefaultValues() {
-      const defaults = {
-        'prep-cmd': [],
-        'menu-cmd': [],
-        detached: [],
-        'exclude-global-prep-cmd': false,
-        'working-dir': '',
-      }
-
-      Object.entries(defaults).forEach(([key, value]) => {
-        if (!this.formData[key]) this.formData[key] = value
-      })
-
-      const conditionalDefaults = {
-        elevated: this.platform === 'windows' ? false : undefined,
-        'auto-detach': true,
-        'wait-all': true,
-        'exit-timeout': 5,
-      }
-
-      Object.entries(conditionalDefaults).forEach(([key, value]) => {
-        if (this.formData[key] === undefined && value !== undefined) {
-          this.formData[key] = value
-        }
-      })
-    },
-
-    // 模态框操作
-    showModal() {
-      if (!this.modalInstance) this.initializeModal()
-      this.modalInstance?.show()
-    },
-
-    closeModal() {
-      this.modalInstance?.hide()
-      this.resetFileSelection()
-      this.restoreBodyScroll()
-      this.$emit('close')
-    },
-
-    cleanup() {
-      this.modalInstance?.dispose()
-      if (this.fileSelector) {
-        this.fileSelector.resetState()
-        this.fileSelector.cleanupFileInputs(this.$refs.fileInput, this.$refs.dirInput)
-      }
-      this.restoreBodyScroll()
-    },
-
-    resetFileSelection() {
-      if (this.fileSelector) {
-        this.fileSelector.resetState()
-        this.fileSelector.cleanupFileInputs(this.$refs.fileInput, this.$refs.dirInput)
-      }
-    },
-
-    restoreBodyScroll() {
-      Object.assign(document.body.style, { overflow: '', paddingRight: '' })
-      document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove())
-    },
-
-    // 消息提示
-    showMessage(message, type = 'info') {
-      if (window.showToast) {
-        window.showToast(message, type)
-      } else {
-        type === 'error' ? alert(message) : console.info(message)
-      }
-    },
-
-    // 验证方法
-    validateField(fieldName) {
-      const validationKey = FIELD_VALIDATION_MAP[fieldName] || fieldName
-      const result = validateField(validationKey, this.formData[fieldName])
-      this.validation[fieldName] = result
-      return result
-    },
-
-    getFieldClass(fieldName) {
-      const v = this.validation[fieldName]
-      if (!v) return ''
-      return { 'is-invalid': !v.isValid, 'is-valid': v.isValid && this.formData[fieldName] }
-    },
-
-    // 命令操作
-    addPrepCommand() {
-      const cmd = { do: '', undo: '' }
-      if (this.platform === 'windows') cmd.elevated = false
-      this.formData['prep-cmd'].push(cmd)
-    },
-
-    removePrepCommand(index) {
-      this.formData['prep-cmd'].splice(index, 1)
-    },
-
-    addMenuCommand() {
-      const cmd = { id: nanoid(10), name: '', cmd: '' }
-      if (this.platform === 'windows') cmd.elevated = false
-      this.formData['menu-cmd'].push(cmd)
-    },
-
-    removeMenuCommand(index) {
-      this.formData['menu-cmd'].splice(index, 1)
-    },
-
-    handlePrepCommandOrderChanged(newOrder) {
-      this.formData['prep-cmd'] = newOrder
-    },
-
-    handleMenuCommandOrderChanged(newOrder) {
-      this.formData['menu-cmd'] = newOrder
-    },
-
-    async testMenuCommand(index) {
-      const menuCmd = this.formData['menu-cmd'][index]
-      if (!menuCmd.cmd) {
-        this.showMessage(this.$t('apps.test_menu_cmd_empty'), 'error')
-        return
-      }
-
-      try {
-        this.showMessage(this.$t('apps.test_menu_cmd_executing'))
-        const response = await fetch('/api/apps/test-menu-cmd', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cmd: menuCmd.cmd,
-            working_dir: this.formData['working-dir'] || '',
-            elevated: menuCmd.elevated === 'true' || menuCmd.elevated === true,
-          }),
-        })
-
-        const result = await response.json()
-        this.showMessage(
-          result.status
-            ? this.$t('apps.test_menu_cmd_success')
-            : `${this.$t('apps.test_menu_cmd_failed')}: ${result.error || 'Unknown error'}`,
-          result.status ? 'info' : 'error'
-        )
-      } catch (error) {
-        this.showMessage(`${this.$t('apps.test_menu_cmd_failed')}: ${error.message}`, 'error')
-      }
-    },
-
-    addDetachedCommand() {
-      this.formData.detached.push('')
-    },
-
-    removeDetachedCommand(index) {
-      this.formData.detached.splice(index, 1)
-    },
-
-    // 图片操作
-    updateImage(imagePath) {
-      this.formData['image-path'] = imagePath
-      this.imageError = ''
-    },
-
-    handleImageError(error) {
-      this.imageError = error
-    },
-
-    // 文件选择
-    selectFile(fieldName) {
-      if (!this.fileSelector) {
-        this.showMessage('文件选择器未初始化', 'error')
-        return
-      }
-      this.fileSelector.selectFile(fieldName, this.$refs.fileInput, this.onFilePathSelected)
-    },
-
-    selectDirectory(fieldName) {
-      if (!this.fileSelector) {
-        this.showMessage('文件选择器未初始化', 'error')
-        return
-      }
-      this.fileSelector.selectDirectory(fieldName, this.$refs.dirInput, this.onFilePathSelected)
-    },
-
-    onFilePathSelected(fieldName, filePath) {
-      this.formData[fieldName] = filePath
-      this.validateField(fieldName)
-    },
-
-    getPlaceholderText(fieldName) {
-      return this.fileSelector?.getPlaceholderText(fieldName) || ''
-    },
-
-    getButtonTitle(type) {
-      return this.fileSelector?.getButtonTitle(type) || '选择'
-    },
-
-    // 保存
-    async saveApp() {
-      const formValidation = validateAppForm(this.formData)
-      if (!formValidation.isValid) {
-        if (formValidation.errors.length) alert(formValidation.errors[0])
-        return
-      }
-
-      const editedApp = {
-        ...this.formData,
-        ...(this.formData['image-path'] && {
-          'image-path': this.formData['image-path'].toString().replace(/"/g, ''),
-        }),
-      }
-
-      this.$emit('save-app', editedApp)
-    },
-  },
-}
+onBeforeUnmount(() => {
+  cleanup()
+})
 </script>
 
 <style scoped>

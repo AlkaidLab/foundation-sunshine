@@ -20,6 +20,12 @@
   --glass-dark: rgba(0, 0, 0, 0.3);
 }
 
+/* 锁定 body 滚动（当模态框打开时） */
+body.modal-open {
+  overflow: hidden !important;
+  /* 防止布局偏移，滚动条宽度会在 JS 中动态计算 */
+}
+
 /* 背景遮罩 */
 .modal-backdrop {
   background: var(--modal-backdrop-bg);
