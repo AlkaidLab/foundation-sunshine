@@ -307,8 +307,8 @@ export default {
 }
 
 .btn-sm {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
   border-radius: 8px;
   transition: all 0.3s ease;
 }
@@ -419,13 +419,13 @@ export default {
   }
 
   .btn-sm {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.8rem;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.7rem;
   }
 
   .add-command-btn {
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
   }
 }
 </style>

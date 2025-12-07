@@ -5,12 +5,12 @@
         <!-- 标题栏 -->
         <div class="scan-result-header">
           <h5>
-            <i class="fas fa-search me-2"></i>扫描结果
+            <i class="fas fa-search me-2"></i>{{ t('apps.scan_result_title') }}
             <span class="badge bg-primary ms-2">{{ apps.length }}</span>
             <span v-if="stats.games > 0" class="badge bg-warning text-dark ms-2">
               <i class="fas fa-gamepad me-1"></i>{{ stats.games }}
             </span>
-            <span v-if="hasActiveFilter" class="badge bg-info ms-2"> 匹配: {{ filteredApps.length }} </span>
+            <span v-if="hasActiveFilter" class="badge bg-info ms-2"> {{ t('apps.scan_result_matched', { count: filteredApps.length }) }} </span>
           </h5>
           <button class="btn-close" @click="$emit('close')"></button>
         </div>
@@ -22,7 +22,7 @@
             <input
               type="text"
               class="form-control search-input"
-              placeholder="搜索应用名称、命令或路径..."
+              :placeholder="t('apps.scan_result_search_placeholder')"
               v-model="searchQuery"
             />
             <button v-if="searchQuery" class="btn-clear-search" @click="searchQuery = ''" type="button">
@@ -41,7 +41,7 @@
                   @click="selectedType = 'all'"
                   type="button"
                 >
-                  全部
+                  {{ t('apps.scan_result_filter_all') }}
                   <span class="badge bg-dark ms-1">{{ stats.all }}</span>
                 </button>
                 <button
@@ -50,9 +50,9 @@
                   :class="selectedType === 'shortcut' ? 'btn-info' : 'btn-outline-info'"
                   @click="selectedType = 'shortcut'"
                   type="button"
-                  title="快捷方式"
+                  :title="t('apps.scan_result_filter_shortcut_title')"
                 >
-                  <i class="fas fa-link me-1"></i>快捷方式
+                  <i class="fas fa-link me-1"></i>{{ t('apps.scan_result_filter_shortcut') }}
                   <span class="badge bg-dark ms-1">{{ stats.shortcut }}</span>
                 </button>
                 <button
@@ -61,9 +61,9 @@
                   :class="selectedType === 'executable' ? 'btn-primary' : 'btn-outline-primary'"
                   @click="selectedType = 'executable'"
                   type="button"
-                  title="可执行文件"
+                  :title="t('apps.scan_result_filter_executable_title')"
                 >
-                  <i class="fas fa-file-code me-1"></i>可执行
+                  <i class="fas fa-file-code me-1"></i>{{ t('apps.scan_result_filter_executable') }}
                   <span class="badge bg-dark ms-1">{{ stats.executable }}</span>
                 </button>
                 <button
@@ -74,9 +74,9 @@
                   "
                   @click="selectedType = stats.batch > 0 ? 'batch' : 'command'"
                   type="button"
-                  title="批处理/命令脚本"
+                  :title="t('apps.scan_result_filter_script_title')"
                 >
-                  <i class="fas fa-terminal me-1"></i>脚本
+                  <i class="fas fa-terminal me-1"></i>{{ t('apps.scan_result_filter_script') }}
                   <span class="badge bg-dark ms-1">{{ stats.batch + stats.command }}</span>
                 </button>
                 <button
@@ -85,9 +85,9 @@
                   :class="selectedType === 'url' ? 'btn-success' : 'btn-outline-success'"
                   @click="selectedType = 'url'"
                   type="button"
-                  title="URL链接"
+                  :title="t('apps.scan_result_filter_url_title')"
                 >
-                  <i class="fas fa-globe me-1"></i>URL
+                  <i class="fas fa-globe me-1"></i>{{ t('apps.scan_result_filter_url') }}
                   <span class="badge bg-dark ms-1">{{ stats.url }}</span>
                 </button>
               </div>
@@ -101,7 +101,7 @@
                 type="button"
               >
                 <i class="fas fa-gamepad me-1"></i>
-                {{ gamesOnly ? '显示全部' : '仅游戏' }}
+                {{ gamesOnly ? t('apps.scan_result_show_all') : t('apps.scan_result_games_only') }}
                 <span class="badge bg-dark ms-1">{{ stats.games }}</span>
               </button>
             </div>
@@ -112,12 +112,12 @@
         <div class="scan-result-body">
           <div v-if="apps.length === 0" class="text-center text-muted py-4">
             <i class="fas fa-folder-open fa-3x mb-3"></i>
-            <p>未找到可添加的应用程序</p>
+            <p>{{ t('apps.scan_result_no_apps') }}</p>
           </div>
           <div v-else-if="filteredApps.length === 0" class="text-center text-muted py-4">
             <i class="fas fa-search fa-3x mb-3"></i>
-            <p>未找到匹配的应用</p>
-            <p class="small">尝试使用不同的搜索关键词</p>
+            <p>{{ t('apps.scan_result_no_matches') }}</p>
+            <p class="small">{{ t('apps.scan_result_try_different_keywords') }}</p>
           </div>
           <div v-else class="scan-result-list">
             <div v-for="app in filteredApps" :key="app.source_path" class="scan-result-item">
@@ -148,13 +148,13 @@
               <!-- 应用信息 -->
               <div class="scan-app-info">
                 <div class="scan-app-name">
-                  <i v-if="app['is-game']" class="fas fa-gamepad me-1 text-warning" title="游戏"></i>
+                  <i v-if="app['is-game']" class="fas fa-gamepad me-1 text-warning" :title="t('apps.scan_result_game')"></i>
                   {{ app.name }}
                   <span v-if="app['app-type']" class="badge ms-2" :class="getAppTypeBadgeClass(app['app-type'])">
                     {{ getAppTypeLabel(app['app-type']) }}
                   </span>
                   <span v-if="app['is-game']" class="badge bg-warning text-dark ms-2">
-                    <i class="fas fa-gamepad me-1"></i>游戏
+                    <i class="fas fa-gamepad me-1"></i>{{ t('apps.scan_result_game') }}
                   </span>
                 </div>
                 <div class="scan-app-cmd small">{{ app.cmd }}</div>
@@ -163,20 +163,20 @@
 
               <!-- 操作按钮 -->
               <div class="scan-app-actions">
-                <button class="btn btn-sm btn-outline-primary" @click="$emit('edit', app)" title="添加并编辑">
+                <button class="btn btn-sm btn-outline-primary" @click="$emit('edit', app)" :title="t('apps.scan_result_edit_title')">
                   <i class="fas fa-edit"></i>
                 </button>
                 <button
                   class="btn btn-sm btn-outline-success"
                   @click="$emit('quick-add', app, apps.indexOf(app))"
-                  title="直接添加"
+                  :title="t('apps.scan_result_quick_add_title')"
                 >
                   <i class="fas fa-plus"></i>
                 </button>
                 <button
                   class="btn btn-sm btn-outline-danger"
                   @click="$emit('remove', apps.indexOf(app))"
-                  title="从列表移除"
+                  :title="t('apps.scan_result_remove_title')"
                 >
                   <i class="fas fa-times"></i>
                 </button>
@@ -187,10 +187,10 @@
 
         <!-- 底部操作栏 -->
         <div v-if="apps.length > 0" class="scan-result-footer">
-          <button class="btn btn-secondary" @click="$emit('close')"><i class="fas fa-times me-1"></i>关闭</button>
+          <button class="btn btn-secondary" @click="$emit('close')"><i class="fas fa-times me-1"></i>{{ t('_common.cancel') }}</button>
           <button class="btn btn-primary" @click="$emit('add-all')" :disabled="saving">
             <i class="fas" :class="saving ? 'fa-spinner fa-spin' : 'fa-check-double'"></i>
-            <span class="ms-1">全部添加</span>
+            <span class="ms-1">{{ t('apps.scan_result_add_all') }}</span>
           </button>
         </div>
       </div>
@@ -200,7 +200,10 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useModalScrollLock } from '../composables/useModalScrollLock.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   show: {
@@ -284,11 +287,11 @@ const filteredApps = computed(() => {
 // 应用类型标签
 const getAppTypeLabel = (appType) => {
   const typeMap = {
-    executable: '可执行文件',
-    shortcut: '快捷方式',
-    batch: '批处理',
-    command: '命令脚本',
-    url: 'URL链接',
+    executable: t('apps.scan_result_type_executable'),
+    shortcut: t('apps.scan_result_type_shortcut'),
+    batch: t('apps.scan_result_type_batch'),
+    command: t('apps.scan_result_type_command'),
+    url: t('apps.scan_result_type_url'),
   }
   return typeMap[appType] || appType
 }

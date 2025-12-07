@@ -90,8 +90,8 @@ export default {
 }
 
 .btn-sm {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.875rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.75rem;
 }
 
 .btn-outline-danger:hover {
