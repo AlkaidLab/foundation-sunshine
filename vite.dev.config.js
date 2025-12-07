@@ -80,6 +80,12 @@ export default defineConfig({
     host: '0.0.0.0',
     open: true,
     cors: true,
+    // HMR 配置：确保 WebSocket 直接连接到 Vite 服务器，而不是通过代理
+    hmr: {
+      protocol: 'wss',
+      host: 'localhost',
+      port: 3000,
+    },
     proxy: {
       '/steam-api': createProxyLogger('🎮 Steam API', 'https://api.steampowered.com', /^\/steam-api/),
       '/steam-store': createProxyLogger('🛒 Steam Store', 'https://store.steampowered.com', /^\/steam-store/),

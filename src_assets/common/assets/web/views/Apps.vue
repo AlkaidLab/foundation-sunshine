@@ -72,96 +72,94 @@
 
       <!-- 应用卡片列表 -->
       <div class="apps-grid-container">
-        <!-- 网格视图 -->
-        <template v-if="viewMode === 'grid'">
-          <draggable
-            v-if="!searchQuery"
-            v-model="apps"
-            item-key="name"
-            class="apps-grid"
-            :animation="300"
-            :delay="0"
-            :disabled="false"
-            ghost-class="app-card-ghost"
-            chosen-class="app-card-chosen"
-            drag-class="app-card-drag"
-            @start="onDragStart"
-            @end="onDragEnd"
-          >
-            <template #item="{ element: app, index }">
-              <AppCard
-                :app="app"
-                :draggable="true"
-                :is-drag-result="false"
-                :is-dragging="isDragging"
-                @edit="editApp(index)"
-                @delete="showDeleteForm(index)"
-                @copy-success="handleCopySuccess"
-                @copy-error="handleCopyError"
-              />
-            </template>
-          </draggable>
-
-          <div v-else class="apps-grid">
+        <!-- 网格视图 - 拖拽模式 -->
+        <draggable
+          v-if="viewMode === 'grid' && !searchQuery"
+          v-model="apps"
+          item-key="name"
+          class="apps-grid"
+          :animation="300"
+          :delay="0"
+          :disabled="false"
+          ghost-class="app-card-ghost"
+          chosen-class="app-card-chosen"
+          drag-class="app-card-drag"
+          @start="onDragStart"
+          @end="onDragEnd"
+        >
+          <template #item="{ element: app, index }">
             <AppCard
-              v-for="(app, index) in filteredApps"
-              :key="`search-${index}`"
               :app="app"
-              :draggable="false"
-              :is-search-result="true"
-              :is-dragging="false"
-              @edit="editApp(getOriginalIndex(app, index))"
-              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              :draggable="true"
+              :is-drag-result="false"
+              :is-dragging="isDragging"
+              @edit="editApp(index)"
+              @delete="showDeleteForm(index)"
               @copy-success="handleCopySuccess"
               @copy-error="handleCopyError"
             />
-          </div>
-        </template>
+          </template>
+        </draggable>
 
-        <!-- 列表视图 -->
-        <template v-else>
-          <draggable
-            v-if="!searchQuery"
-            v-model="apps"
-            item-key="name"
-            class="apps-list"
-            :animation="300"
-            :delay="0"
-            :disabled="false"
-            ghost-class="app-list-item-ghost"
-            chosen-class="app-list-item-chosen"
-            drag-class="app-list-item-drag"
-            @start="onDragStart"
-            @end="onDragEnd"
-          >
-            <template #item="{ element: app, index }">
-              <AppListItem
-                :app="app"
-                :draggable="true"
-                :is-dragging="isDragging"
-                @edit="editApp(index)"
-                @delete="showDeleteForm(index)"
-                @copy-success="handleCopySuccess"
-                @copy-error="handleCopyError"
-              />
-            </template>
-          </draggable>
+        <!-- 网格视图 - 搜索模式 -->
+        <div v-else-if="viewMode === 'grid' && searchQuery" class="apps-grid">
+          <AppCard
+            v-for="(app, index) in filteredApps"
+            :key="`search-grid-${app.name}-${index}`"
+            :app="app"
+            :draggable="false"
+            :is-search-result="true"
+            :is-dragging="false"
+            @edit="editApp(getOriginalIndex(app, index))"
+            @delete="showDeleteForm(getOriginalIndex(app, index))"
+            @copy-success="handleCopySuccess"
+            @copy-error="handleCopyError"
+          />
+        </div>
 
-          <div v-else class="apps-list">
+        <!-- 列表视图 - 拖拽模式 -->
+        <draggable
+          v-else-if="viewMode === 'list' && !searchQuery"
+          v-model="apps"
+          item-key="name"
+          class="apps-list"
+          :animation="300"
+          :delay="0"
+          :disabled="false"
+          ghost-class="app-list-item-ghost"
+          chosen-class="app-list-item-chosen"
+          drag-class="app-list-item-drag"
+          @start="onDragStart"
+          @end="onDragEnd"
+        >
+          <template #item="{ element: app, index }">
             <AppListItem
-              v-for="(app, index) in filteredApps"
-              :key="`search-${index}`"
               :app="app"
-              :draggable="false"
-              :is-search-result="true"
-              :is-dragging="false"
-              @edit="editApp(getOriginalIndex(app, index))"
-              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              :draggable="true"
+              :is-dragging="isDragging"
+              @edit="editApp(index)"
+              @delete="showDeleteForm(index)"
               @copy-success="handleCopySuccess"
               @copy-error="handleCopyError"
             />
-          </div>
-        </template>
+          </template>
+        </draggable>
+
+        <!-- 列表视图 - 搜索模式 -->
+        <div v-else-if="viewMode === 'list' && searchQuery" class="apps-list">
+          <AppListItem
+            v-for="(app, index) in filteredApps"
+            :key="`search-list-${app.name}-${index}`"
+            :app="app"
+            :draggable="false"
+            :is-search-result="true"
+            :is-dragging="false"
+            @edit="editApp(getOriginalIndex(app, index))"
+            @delete="showDeleteForm(getOriginalIndex(app, index))"
+            @copy-success="handleCopySuccess"
+            @copy-error="handleCopyError"
+          />
+        </div>
 
         <!-- 空状态 - 搜索无结果 -->
         <div v-if="searchQuery && filteredApps.length === 0" class="empty-state">
@@ -205,104 +203,16 @@
       </div>
 
       <!-- 扫描结果模态框 -->
-      <Transition name="fade">
-        <div v-if="showScanResult" class="scan-result-overlay" @click.self="closeScanResult">
-          <div class="scan-result-modal">
-            <div class="scan-result-header">
-              <h5>
-                <i class="fas fa-search me-2"></i>扫描结果
-                <span class="badge bg-primary ms-2">{{ scannedApps.length }}</span>
-                <span v-if="scannedAppsSearchQuery" class="badge bg-info ms-2">
-                  匹配: {{ filteredScannedApps.length }}
-                </span>
-              </h5>
-              <button class="btn-close" @click="closeScanResult"></button>
-            </div>
-            <!-- 搜索框 -->
-            <div v-if="scannedApps.length > 0" class="scan-result-search">
-              <div class="search-box">
-                <i class="fas fa-search search-icon"></i>
-                <input
-                  type="text"
-                  class="form-control search-input"
-                  placeholder="搜索应用名称、命令或路径..."
-                  v-model="scannedAppsSearchQuery"
-                />
-                <button
-                  v-if="scannedAppsSearchQuery"
-                  class="btn-clear-search"
-                  @click="scannedAppsSearchQuery = ''"
-                  type="button"
-                >
-                  <i class="fas fa-times"></i>
-                </button>
-              </div>
-            </div>
-            <div class="scan-result-body">
-              <div v-if="scannedApps.length === 0" class="text-center text-muted py-4">
-                <i class="fas fa-folder-open fa-3x mb-3"></i>
-                <p>未找到可添加的应用程序</p>
-              </div>
-              <div v-else-if="filteredScannedApps.length === 0" class="text-center text-muted py-4">
-                <i class="fas fa-search fa-3x mb-3"></i>
-                <p>未找到匹配的应用</p>
-                <p class="small">尝试使用不同的搜索关键词</p>
-              </div>
-              <div v-else class="scan-result-list">
-                <div v-for="(app, index) in filteredScannedApps" :key="app.source_path" class="scan-result-item">
-                  <div class="scan-app-icon">
-                    <img
-                      v-if="app['image-path']"
-                      :src="app['image-path']"
-                      :alt="app.name"
-                      @error="$event.target.style.display = 'none'"
-                    />
-                    <svg v-else width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-                      <rect width="100" height="100" fill="#667eea"/>
-                      <text x="50" y="50" font-size="40" font-weight="bold" fill="#fff" text-anchor="middle" dominant-baseline="central">{{ app.name.charAt(0).toUpperCase() }}</text>
-                    </svg>
-                  </div>
-                  <div class="scan-app-info">
-                    <div class="scan-app-name">{{ app.name }}</div>
-                    <div class="scan-app-cmd small">{{ app.cmd }}</div>
-                    <div class="scan-app-path small"><i class="fas fa-folder-open me-1"></i>{{ app.source_path }}</div>
-                  </div>
-                  <div class="scan-app-actions">
-                    <button
-                      class="btn btn-sm btn-outline-primary"
-                      @click="addScannedApp(app), closeScanResult()"
-                      title="添加并编辑"
-                    >
-                      <i class="fas fa-edit"></i>
-                    </button>
-                    <button
-                      class="btn btn-sm btn-outline-success"
-                      @click="quickAddScannedApp(app, scannedApps.indexOf(app))"
-                      title="直接添加"
-                    >
-                      <i class="fas fa-plus"></i>
-                    </button>
-                    <button
-                      class="btn btn-sm btn-outline-danger"
-                      @click="removeScannedApp(scannedApps.indexOf(app))"
-                      title="从列表移除"
-                    >
-                      <i class="fas fa-times"></i>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div v-if="scannedApps.length > 0" class="scan-result-footer">
-              <button class="btn btn-secondary" @click="closeScanResult"><i class="fas fa-times me-1"></i>关闭</button>
-              <button class="btn btn-primary" @click="addAllScannedApps" :disabled="isSaving">
-                <i class="fas" :class="isSaving ? 'fa-spinner fa-spin' : 'fa-check-double'"></i>
-                <span class="ms-1">全部添加</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
+      <ScanResultModal
+        :show="showScanResult"
+        :apps="scannedApps"
+        :saving="isSaving"
+        @close="closeScanResult"
+        @edit="handleScanEdit"
+        @quick-add="quickAddScannedApp"
+        @remove="removeScannedApp"
+        @add-all="addAllScannedApps"
+      />
 
       <!-- 环境变量说明模态框 -->
       <div id="envVarsModal" class="modal fade" tabindex="-1">
@@ -398,6 +308,7 @@ import Navbar from '../components/layout/Navbar.vue'
 import AppEditor from '../components/AppEditor.vue'
 import AppCard from '../components/AppCard.vue'
 import AppListItem from '../components/AppListItem.vue'
+import ScanResultModal from '../components/ScanResultModal.vue'
 import { useApps } from '../composables/useApps.js'
 import { initFirebase, trackEvents } from '../config/firebase.js'
 import { useI18n } from 'vue-i18n'
@@ -422,8 +333,6 @@ const {
   isScanning,
   scannedApps,
   showScanResult,
-  scannedAppsSearchQuery,
-  filteredScannedApps,
   loadApps,
   loadPlatform,
   clearSearch,
@@ -473,6 +382,12 @@ onMounted(async () => {
 watch(searchQuery, () => {
   debouncedSearch.value?.()
 })
+
+// 处理扫描结果编辑
+const handleScanEdit = (app) => {
+  addScannedApp(app)
+  closeScanResult()
+}
 </script>
 
 <style>

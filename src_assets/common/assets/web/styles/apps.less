@@ -1461,24 +1461,25 @@ td {
   min-width: 56px;
 
   img {
-    width: 100%;
-    height: 100%;
+    height: 80px;
     aspect-ratio: 1 / 1;
     object-fit: cover;
   }
 }
 
 .scan-app-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 2px);
   flex: 1;
   min-width: 0;
-  padding: var(--spacing-sm, 8px) 0;
+  padding: var(--spacing-xs, 2px) 0;
 }
 
 .scan-app-name {
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary, #fff);
-  margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1489,12 +1490,11 @@ td {
   color: var(--text-primary, rgba(255, 255, 255, 0.85));
   font-family: var(--font-mono, 'Courier New', monospace);
   background: var(--code-bg, rgba(0, 0, 0, 0.3));
-  padding: 6px var(--spacing-xs, 6px);
   border-radius: var(--border-radius-xs, 4px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
+  padding: var(--spacing-xs, 4px) var(--spacing-xs, 2px);
   display: inline-block;
   max-width: 100%;
   letter-spacing: 0.02em;

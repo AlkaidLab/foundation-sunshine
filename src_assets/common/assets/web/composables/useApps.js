@@ -28,6 +28,8 @@ export function useApps() {
   const scannedApps = ref([])
   const showScanResult = ref(false)
   const scannedAppsSearchQuery = ref('')
+  const showGamesOnly = ref(false)
+  const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
 
   // 计算属性
   const messageClass = computed(() => ({
@@ -340,20 +342,47 @@ export function useApps() {
     showScanResult.value = false
     scannedApps.value = []
     scannedAppsSearchQuery.value = ''
+    showGamesOnly.value = false
+    selectedAppType.value = 'all'
   }
+
+  // 获取各分类的统计信息
+  const scanResultStats = computed(() => ({
+    all: scannedApps.value.length,
+    games: scannedApps.value.filter((app) => app['is-game'] === true).length,
+    executable: scannedApps.value.filter((app) => app['app-type'] === 'executable').length,
+    shortcut: scannedApps.value.filter((app) => app['app-type'] === 'shortcut').length,
+    batch: scannedApps.value.filter((app) => app['app-type'] === 'batch').length,
+    command: scannedApps.value.filter((app) => app['app-type'] === 'command').length,
+    url: scannedApps.value.filter((app) => app['app-type'] === 'url').length,
+  }))
 
   // 过滤扫描结果
   const filteredScannedApps = computed(() => {
-    if (!scannedAppsSearchQuery.value) {
-      return scannedApps.value
+    let filtered = scannedApps.value
+    
+    // 先按应用类型过滤
+    if (selectedAppType.value !== 'all') {
+      filtered = filtered.filter((app) => app['app-type'] === selectedAppType.value)
     }
-    const query = scannedAppsSearchQuery.value.toLowerCase()
-    return scannedApps.value.filter((app) => {
-      const name = (app.name || '').toLowerCase()
-      const cmd = (app.cmd || '').toLowerCase()
-      const sourcePath = (app.source_path || '').toLowerCase()
-      return name.includes(query) || cmd.includes(query) || sourcePath.includes(query)
-    })
+    
+    // 再按游戏过滤
+    if (showGamesOnly.value) {
+      filtered = filtered.filter((app) => app['is-game'] === true)
+    }
+    
+    // 最后按搜索关键词过滤
+    if (scannedAppsSearchQuery.value) {
+      const query = scannedAppsSearchQuery.value.toLowerCase()
+      filtered = filtered.filter((app) => {
+        const name = (app.name || '').toLowerCase()
+        const cmd = (app.cmd || '').toLowerCase()
+        const sourcePath = (app.source_path || '').toLowerCase()
+        return name.includes(query) || cmd.includes(query) || sourcePath.includes(query)
+      })
+    }
+    
+    return filtered
   })
 
   const removeScannedApp = (index) => {
@@ -404,9 +433,12 @@ export function useApps() {
     scannedApps,
     showScanResult,
     scannedAppsSearchQuery,
+    showGamesOnly,
+    selectedAppType,
     // 计算属性
     messageClass,
     filteredScannedApps,
+    scanResultStats,
     // 方法
     init,
     loadApps,

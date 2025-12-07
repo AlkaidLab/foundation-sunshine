@@ -92,11 +92,15 @@ body {
   border: none;
   border-radius: 12px;
 
+  &-header,
+  &-body {
+    @card-backdrop-base();
+  }
+
   &-header {
     border-radius: 12px 12px 0 0 !important;
     padding: 1rem 1.25rem;
     backdrop-filter: blur(4px) saturate(1.8);
-    @card-backdrop-base();
   }
 
   &-title {
@@ -107,7 +111,6 @@ body {
   &-body {
     padding: 1.25rem;
     backdrop-filter: blur(2px) saturate(1.8);
-    @card-backdrop-base();
 
     p {
       font-size: 0.9rem;
@@ -116,6 +119,16 @@ body {
       &.pre-line {
         white-space: pre-line;
       }
+    }
+  }
+
+  [data-bs-theme='dark'] & {
+    &-header {
+      backdrop-filter: blur(2px);
+    }
+
+    &-body {
+      backdrop-filter: none;
     }
   }
 }

@@ -3,88 +3,88 @@
     <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
       <div class="cover-finder-panel" @click.stop>
         <!-- 头部 -->
-        <div class="finder-header">
-          <div class="finder-title">
+        <div class="cover-finder__header">
+          <div class="cover-finder__title">
             <i class="fas fa-image me-2"></i>
             <span>{{ $t('apps.find_cover') || '查找封面' }}</span>
           </div>
-          <button type="button" class="finder-close" @click="closeFinder">
+          <button type="button" class="cover-finder__close" @click="closeFinder">
             <i class="fas fa-times"></i>
           </button>
         </div>
 
         <!-- 搜索框 -->
-        <div class="finder-search">
-          <div class="search-input-wrapper">
-            <i class="fas fa-search search-icon"></i>
+        <div class="cover-finder__search">
+          <div class="cover-finder__search-wrapper">
+            <i class="fas fa-search cover-finder__search-icon"></i>
             <input
               ref="searchInput"
               v-model="localSearchTerm"
               type="text"
-              class="search-input"
+              class="cover-finder__search-input"
               placeholder="输入游戏名称搜索..."
               @keydown.enter="searchCovers"
             />
-            <button v-if="localSearchTerm" class="search-clear" @click="clearSearch" type="button">
+            <button v-if="localSearchTerm" class="cover-finder__search-clear" @click="clearSearch" type="button">
               <i class="fas fa-times"></i>
             </button>
-            <button class="search-btn" @click="searchCovers" :disabled="!localSearchTerm || loading" type="button">
+            <button class="cover-finder__search-btn" @click="searchCovers" :disabled="!localSearchTerm || loading" type="button">
               <i class="fas fa-arrow-right"></i>
             </button>
           </div>
         </div>
 
         <!-- 数据源筛选 -->
-        <div class="finder-tabs">
+        <div class="cover-finder__tabs">
           <button
             v-for="tab in tabs"
             :key="tab.key"
-            class="finder-tab"
-            :class="{ active: coverFilter === tab.key }"
+            class="cover-finder__tab"
+            :class="{ 'cover-finder__tab--active': coverFilter === tab.key }"
             @click.stop.prevent="coverFilter = tab.key"
           >
             <i :class="tab.icon"></i>
             <span>{{ tab.label }}</span>
-            <span class="tab-badge" v-if="getTabCount(tab.key) > 0">
+            <span class="cover-finder__tab-badge" v-if="getTabCount(tab.key) > 0">
               {{ getTabCount(tab.key) }}
             </span>
           </button>
         </div>
 
         <!-- 内容区域 -->
-        <div class="finder-content">
+        <div class="cover-finder__content">
           <!-- 加载状态 -->
-          <div v-if="loading" class="finder-loading">
-            <div class="loading-spinner"></div>
-            <p class="loading-text">正在搜索封面...</p>
+          <div v-if="loading" class="cover-finder__loading">
+            <div class="cover-finder__loading-spinner"></div>
+            <p class="cover-finder__loading-text">正在搜索封面...</p>
           </div>
 
           <!-- 封面网格 -->
-          <div v-else-if="filteredCovers.length > 0" class="covers-grid">
+          <div v-else-if="filteredCovers.length > 0" class="cover-finder__grid">
             <div
               v-for="(cover, index) in filteredCovers"
               :key="cover.key || `cover-${index}`"
-              class="cover-card"
+              class="cover-finder__card"
               @click="selectCover(cover)"
             >
-              <div class="cover-image-wrapper">
+              <div class="cover-finder__card-image">
                 <img :src="cover.url" :alt="cover.name" loading="lazy" @error="handleImageError" />
-                <div class="cover-overlay">
+                <div class="cover-finder__card-overlay">
                   <i class="fas fa-check-circle"></i>
                 </div>
-                <div class="cover-source-badge" :class="cover.source">
+                <div class="cover-finder__card-badge" :class="`cover-finder__card-badge--${cover.source}`">
                   <i :class="cover.source === 'steam' ? 'fab fa-steam' : 'fas fa-gamepad'"></i>
                 </div>
               </div>
-              <div class="cover-info">
-                <p class="cover-name" :title="cover.name">{{ cover.name }}</p>
+              <div class="cover-finder__card-info">
+                <p class="cover-finder__card-name" :title="cover.name">{{ cover.name }}</p>
               </div>
             </div>
           </div>
 
           <!-- 无结果 -->
-          <div v-else class="finder-empty">
-            <div class="empty-icon">
+          <div v-else class="cover-finder__empty">
+            <div class="cover-finder__empty-icon">
               <i class="fas fa-search"></i>
             </div>
             <h4>未找到相关封面</h4>
@@ -93,8 +93,8 @@
         </div>
 
         <!-- 底部提示 -->
-        <div class="finder-footer">
-          <span class="footer-hint">
+        <div class="cover-finder__footer">
+          <span class="cover-finder__footer-hint">
             <i class="fas fa-info-circle me-1"></i>
             点击封面即可应用
           </span>
@@ -278,7 +278,7 @@ export default {
 }
 </script>
 
-<style scoped>
+<style scoped lang="less">
 .cover-finder-overlay {
   position: fixed;
   inset: 0;
@@ -303,7 +303,7 @@ export default {
   overflow: hidden;
 }
 
-.finder-header {
+.cover-finder__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -311,19 +311,19 @@ export default {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.finder-title {
+.cover-finder__title {
   display: flex;
   align-items: center;
   font-size: 1.1rem;
   font-weight: 600;
   color: #e0e0e0;
+
+  i {
+    color: #7c3aed;
+  }
 }
 
-.finder-title i {
-  color: #7c3aed;
-}
-
-.finder-close {
+.cover-finder__close {
   width: 36px;
   height: 36px;
   border-radius: 10px;
@@ -332,50 +332,50 @@ export default {
   color: #888;
   cursor: pointer;
   transition: all 0.2s;
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+  }
 }
 
-.finder-close:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
-}
-
-.finder-search {
+.cover-finder__search {
   padding: 1rem 1.5rem;
 }
 
-.search-input-wrapper {
+.cover-finder__search-wrapper {
   display: flex;
   align-items: center;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   padding: 0 0.5rem;
+
+  &:focus-within {
+    border-color: rgba(124, 58, 237, 0.5);
+  }
 }
 
-.search-input-wrapper:focus-within {
-  border-color: rgba(124, 58, 237, 0.5);
-}
-
-.search-icon {
+.cover-finder__search-icon {
   color: #666;
   padding: 0 0.75rem;
 }
 
-.search-input {
+.cover-finder__search-input {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   color: #e0e0e0;
   padding: 0.85rem 0.25rem;
+
+  &::placeholder {
+    color: #555;
+  }
 }
 
-.search-input::placeholder {
-  color: #555;
-}
-
-.search-clear,
-.search-btn {
+.cover-finder__search-clear,
+.cover-finder__search-btn {
   width: 36px;
   height: 36px;
   border-radius: 8px;
@@ -387,32 +387,32 @@ export default {
   transition: all 0.2s;
 }
 
-.search-clear {
+.cover-finder__search-clear {
   background: transparent;
   color: #666;
+
+  &:hover {
+    color: #aaa;
+  }
 }
 
-.search-clear:hover {
-  color: #aaa;
-}
-
-.search-btn {
+.cover-finder__search-btn {
   background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
   color: white;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
-.search-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.finder-tabs {
+.cover-finder__tabs {
   display: flex;
   gap: 0.5rem;
   padding: 0 1.5rem 1rem;
 }
 
-.finder-tab {
+.cover-finder__tab {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -423,32 +423,41 @@ export default {
   color: #888;
   cursor: pointer;
   transition: all 0.2s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  &--active {
+    background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+    color: white;
+  }
 }
 
-.finder-tab:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.finder-tab.active {
-  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
-  color: white;
-}
-
-.tab-badge {
+.cover-finder__tab-badge {
   background: rgba(255, 255, 255, 0.2);
   padding: 0.1rem 0.5rem;
   border-radius: 10px;
   font-size: 0.75rem;
 }
 
-.finder-content {
+.cover-finder__content {
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
   min-height: 300px;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
 }
 
-.finder-loading {
+.cover-finder__loading {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -456,60 +465,60 @@ export default {
   padding: 4rem 2rem;
 }
 
-.loading-spinner {
+.cover-finder__loading-spinner {
   width: 40px;
   height: 40px;
   border: 3px solid rgba(124, 58, 237, 0.2);
   border-top-color: #7c3aed;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: cover-finder-spin 1s linear infinite;
 }
 
-@keyframes spin {
+@keyframes cover-finder-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.loading-text {
+.cover-finder__loading-text {
   margin-top: 1rem;
   color: #888;
 }
 
-.covers-grid {
+.cover-finder__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 1.25rem;
 }
 
-.cover-card {
+.cover-finder__card {
   cursor: pointer;
   transition: transform 0.2s;
+
+  &:hover {
+    transform: translateY(-4px);
+
+    .cover-finder__card-overlay {
+      opacity: 1;
+    }
+  }
 }
 
-.cover-card:hover {
-  transform: translateY(-4px);
-}
-
-.cover-card:hover .cover-overlay {
-  opacity: 1;
-}
-
-.cover-image-wrapper {
+.cover-finder__card-image {
   position: relative;
   aspect-ratio: 2/3;
   border-radius: 10px;
   overflow: hidden;
   background: #0d0d14;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
 }
 
-.cover-image-wrapper img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.cover-overlay {
+.cover-finder__card-overlay {
   position: absolute;
   inset: 0;
   background: rgba(124, 58, 237, 0.85);
@@ -522,7 +531,7 @@ export default {
   font-size: 2rem;
 }
 
-.cover-source-badge {
+.cover-finder__card-badge {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -534,21 +543,21 @@ export default {
   justify-content: center;
   font-size: 0.7rem;
   color: white;
+
+  &--steam {
+    background: #1b2838;
+  }
+
+  &--igdb {
+    background: #9147ff;
+  }
 }
 
-.cover-source-badge.steam {
-  background: #1b2838;
-}
-
-.cover-source-badge.igdb {
-  background: #9147ff;
-}
-
-.cover-info {
+.cover-finder__card-info {
   padding: 0.5rem 0;
 }
 
-.cover-name {
+.cover-finder__card-name {
   font-size: 0.8rem;
   color: #d0d0d0;
   margin: 0;
@@ -557,15 +566,25 @@ export default {
   white-space: nowrap;
 }
 
-.finder-empty {
+.cover-finder__empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 3rem 2rem;
   text-align: center;
+
+  h4 {
+    color: #aaa;
+    margin: 0 0 0.5rem;
+  }
+
+  p {
+    color: #666;
+    margin: 0;
+  }
 }
 
-.empty-icon {
+.cover-finder__empty-icon {
   width: 80px;
   height: 80px;
   border-radius: 50%;
@@ -574,35 +593,25 @@ export default {
   align-items: center;
   justify-content: center;
   margin-bottom: 1.5rem;
+
+  i {
+    font-size: 2rem;
+    color: #4a4a6a;
+  }
 }
 
-.empty-icon i {
-  font-size: 2rem;
-  color: #4a4a6a;
-}
-
-.finder-empty h4 {
-  color: #aaa;
-  margin: 0 0 0.5rem;
-}
-
-.finder-empty p {
-  color: #666;
-  margin: 0;
-}
-
-.finder-footer {
+.cover-finder__footer {
   padding: 0.75rem 1.5rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.footer-hint {
+.cover-finder__footer-hint {
   font-size: 0.8rem;
   color: #666;
-}
 
-.footer-hint i {
-  color: #7c3aed;
+  i {
+    color: #7c3aed;
+  }
 }
 
 .finder-fade-enter-active,
@@ -615,21 +624,12 @@ export default {
   opacity: 0;
 }
 
-.finder-content::-webkit-scrollbar {
-  width: 8px;
-}
-
-.finder-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
 @media (max-width: 768px) {
   .cover-finder-overlay {
     padding: 1rem;
   }
 
-  .covers-grid {
+  .cover-finder__grid {
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     gap: 1rem;
   }
