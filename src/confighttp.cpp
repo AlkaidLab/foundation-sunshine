@@ -998,14 +998,15 @@ namespace confighttp {
       std::string name = inputTree.get<std::string>("name");
       bool pin_result = nvhttp::pin(pin, name);
       outputTree.put("status", pin_result);
-      
+
       // Send webhook notification
       webhook::send_event_async(webhook::event_t{
         .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
         .alert_type = pin_result ? "config_pair_success" : "config_pair_failed",
         .timestamp = webhook::get_current_timestamp(),
         .client_name = name,
-        .client_ip = "",
+        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
         .app_name = "",
         .app_id = 0,
         .session_id = "",
@@ -1016,14 +1017,15 @@ namespace confighttp {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();
       outputTree.put("status", false);
       outputTree.put("error", e.what());
-      
+
       // Send webhook notification for pairing failure
       webhook::send_event_async(webhook::event_t{
         .type = webhook::event_type_t::CONFIG_PIN_FAILED,
         .alert_type = "config_pair_failed",
         .timestamp = webhook::get_current_timestamp(),
         .client_name = "",
-        .client_ip = "",
+        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
         .app_name = "",
         .app_id = 0,
         .session_id = "",

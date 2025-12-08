@@ -32,6 +32,7 @@ namespace webhook {
     std::string timestamp;
     std::string client_name;
     std::string client_ip;
+    std::string server_ip;
     std::string app_name;
     std::int64_t app_id = 0;
     std::string session_id;

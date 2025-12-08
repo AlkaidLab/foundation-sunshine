@@ -261,26 +261,30 @@
         </div>
       </div>
     </div>
-    <div id="skipWizardModal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5>{{ $t('setup.skip_confirm_title')}}</h5>
-          <span class="close" @click="closeSkipModal">&times;</span>
-        </div>
-        <div class="modal-body">
-          <p>{{ $t('setup.skip_confirm') }}</p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
-          <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
+    <!-- Skip Wizard Modal -->
+    <Transition name="fade">
+      <div v-if="showSkipModal" class="skip-wizard-overlay" @click.self="closeSkipModal">
+        <div class="skip-wizard-modal">
+          <div class="skip-wizard-header">
+            <h5>{{ $t('setup.skip_confirm_title')}}</h5>
+            <button class="btn-close" @click="closeSkipModal"></button>
+          </div>
+          <div class="skip-wizard-body">
+            <p>{{ $t('setup.skip_confirm') }}</p>
+          </div>
+          <div class="skip-wizard-footer">
+            <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
+          </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
 <script>
 import { trackEvents } from '../config/firebase.js'
+import { useModalScrollLock } from '../composables/useModalScrollLock.js'
 
 export default {
   name: 'SetupWizard',
@@ -308,10 +312,14 @@ export default {
       saveSuccess: false,
       saveError: null,
       saving: false,
+      showSkipModal: false, // 跳过向导确认弹窗
       // 客户端下载链接
       androidQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://github.com/qiin2333/moonlight-android/releases/tag/shortcut'),
       iosQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://apps.apple.com/us/app/voidlink/id6747717070'),
     }
+  },
+  setup() {
+    return {}
   },
   mounted() {
     // 记录进入设置向导
@@ -333,6 +341,9 @@ export default {
     if (this.adapters.length === 1) {
       this.selectedAdapter = this.adapters[0].name
     }
+    
+    // 使用滚动锁定 composable
+    useModalScrollLock(() => this.showSkipModal)
   },
   computed: {
     canProceed() {
@@ -464,16 +475,10 @@ export default {
       this.showSkipModal()
     },
     showSkipModal() {
-      const modal = document.getElementById('skipWizardModal')
-      if (modal) {
-        modal.classList.add('show')
-      }
+      this.showSkipModal = true
     },
     closeSkipModal() {
-      const modal = document.getElementById('skipWizardModal')
-      if (modal) {
-        modal.classList.remove('show')
-      }
+      this.showSkipModal = false
     },
     async confirmSkipWizard() {
       // 关闭模态框
@@ -917,89 +922,103 @@ export default {
   margin-bottom: 1rem;
 }
 
-/* 模态框样式 */
-.modal {
+/* Skip Wizard Modal - 使用 ScanResultModal 样式 */
+.skip-wizard-overlay {
   position: fixed;
-  z-index: 1000;
-  left: 0;
   top: 0;
-  width: 100%;
-  height: 100%;
-  overflow: auto;
-  background-color: rgba(0, 0, 0, 0.5);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  display: none;
+  padding: var(--spacing-lg, 20px);
+  overflow: hidden;
 }
 
-.modal.show {
-  display: flex;
-}
-
-.modal-content {
-  background-color: #ffffff !important;
-  margin: auto;
-  padding: 20px;
-  border: 1px solid #ddd;
-  max-height: 500px;
+.skip-wizard-modal {
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  border-radius: var(--border-radius-xl, 12px);
+  width: 100%;
   max-width: 500px;
-  width: 70% !important;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  position: relative;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  animation: modalSlideUp 0.3s ease;
 }
 
-.modal-header {
+@keyframes modalSlideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.skip-wizard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  h5 {
+    margin: 0;
+    color: var(--text-primary, #fff);
+    font-size: var(--font-size-lg, 1.1rem);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm, 8px);
+  }
 }
 
-.modal-header h5 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 800;
+.skip-wizard-body {
+  padding: var(--spacing-lg, 24px);
+  font-size: var(--font-size-md, 0.95rem);
+  line-height: 1.5;
+  overflow-y: auto;
+  flex: 1;
+  color: var(--text-primary, #fff);
 }
 
-.close {
-  color: #aaa;
-  font-size: 24px;
-  font-weight: bold;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 2px;
-  position: absolute;
-  right: 12px;
-  top: 8px;
-}
-
-.close:hover,
-.close:focus {
-  color: black;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.modal-body {
-  margin: 8px 0;
-  font-size: 0.95rem;
-  line-height: 1.4;
-}
-
-.modal-footer {
+.skip-wizard-footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid #eee;
+  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
 }
 
-.modal-footer button {
-  padding: 4px 12px;
+.skip-wizard-footer button {
+  padding: 8px 16px;
   font-size: 0.9rem;
+}
+
+/* Vue 过渡动画 */
+.fade-enter-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
 

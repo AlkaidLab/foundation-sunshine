@@ -164,6 +164,9 @@ namespace webhook {
         if (!event.client_ip.empty()) {
           content_stream << ">客户端IP:<font color=\"comment\">" << event.client_ip << "</font>\n";
         }
+        if (!event.server_ip.empty()) {
+          content_stream << ">服务器IP:<font color=\"comment\">" << event.server_ip << "</font>\n";
+        }
         break;
       }
       case event_type_t::NV_APP_LAUNCH:
@@ -180,6 +183,9 @@ namespace webhook {
         }
         if (!event.client_ip.empty()) {
           content_stream << ">客户端IP:<font color=\"comment\">" << event.client_ip << "</font>\n";
+        }
+        if (!event.server_ip.empty()) {
+          content_stream << ">服务器IP:<font color=\"comment\">" << event.server_ip << "</font>\n";
         }
         // 添加额外信息
         for (const auto& [key, value] : event.extra_data) {
@@ -244,6 +250,9 @@ namespace webhook {
         if (!event.client_ip.empty()) {
           content_stream << (is_chinese ? "客户端IP: " : "Client IP: ") << event.client_ip << "\n";
         }
+        if (!event.server_ip.empty()) {
+          content_stream << (is_chinese ? "服务器IP: " : "Server IP: ") << event.server_ip << "\n";
+        }
         break;
       }
       case event_type_t::NV_APP_LAUNCH:
@@ -260,6 +269,9 @@ namespace webhook {
         }
         if (!event.client_ip.empty()) {
           content_stream << (is_chinese ? "客户端IP: " : "Client IP: ") << event.client_ip << "\n";
+        }
+        if (!event.server_ip.empty()) {
+          content_stream << (is_chinese ? "服务器IP: " : "Server IP: ") << event.server_ip << "\n";
         }
         break;
       }
@@ -309,6 +321,9 @@ namespace webhook {
     }
     if (!event.client_ip.empty()) {
       json_stream << ",\"client_ip\":\"" << event.client_ip << "\"";
+    }
+    if (!event.server_ip.empty()) {
+      json_stream << ",\"server_ip\":\"" << event.server_ip << "\"";
     }
     if (!event.app_name.empty()) {
       json_stream << ",\"app_name\":\"" << event.app_name << "\"";
@@ -363,6 +378,7 @@ namespace webhook {
     result = std::regex_replace(result, std::regex("\\{\\{timestamp\\}\\}"), format_timestamp(event.timestamp));
     result = std::regex_replace(result, std::regex("\\{\\{client_name\\}\\}"), event.client_name);
     result = std::regex_replace(result, std::regex("\\{\\{client_ip\\}\\}"), event.client_ip);
+    result = std::regex_replace(result, std::regex("\\{\\{server_ip\\}\\}"), event.server_ip);
     result = std::regex_replace(result, std::regex("\\{\\{app_name\\}\\}"), event.app_name);
     result = std::regex_replace(result, std::regex("\\{\\{app_id\\}\\}"), std::to_string(event.app_id));
     result = std::regex_replace(result, std::regex("\\{\\{session_id\\}\\}"), event.session_id);
