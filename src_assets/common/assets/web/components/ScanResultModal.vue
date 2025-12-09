@@ -201,7 +201,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useModalScrollLock } from '../composables/useModalScrollLock.js'
 
 const { t } = useI18n()
 
@@ -226,9 +225,6 @@ defineEmits(['close', 'edit', 'quick-add', 'remove', 'add-all'])
 const searchQuery = ref('')
 const selectedType = ref('all')
 const gamesOnly = ref(false)
-
-// 使用滚动锁定 composable
-useModalScrollLock(() => props.show)
 
 // 重置过滤器
 watch(

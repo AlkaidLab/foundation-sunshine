@@ -274,7 +274,6 @@ import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
-import { useModalScrollLock } from '../composables/useModalScrollLock.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   name: '',
@@ -320,9 +319,6 @@ const validation = ref({})
 const imageError = ref('')
 const modalInstance = ref(null)
 const fileSelector = ref(null)
-const isModalOpen = ref(false)
-
-useModalScrollLock(isModalOpen)
 
 const isWindows = computed(() => props.platform === 'windows')
 const isNewApp = computed(() => !props.app || props.app.index === -1)
@@ -351,14 +347,6 @@ const initializeModal = () => {
     modalInstance.value = new Modal(modalElement.value, {
       backdrop: 'static',
       keyboard: false,
-    })
-
-    modalElement.value.addEventListener('shown.bs.modal', () => {
-      isModalOpen.value = true
-    })
-
-    modalElement.value.addEventListener('hidden.bs.modal', () => {
-      isModalOpen.value = false
     })
   } catch (error) {
     console.warn('Modal initialization failed:', error)

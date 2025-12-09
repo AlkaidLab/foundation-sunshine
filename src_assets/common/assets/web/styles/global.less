@@ -9,11 +9,6 @@ html {
   }
 }
 
-// Theme-specific body styles
-[data-bs-theme='dark'] body {
-  backdrop-filter: brightness(0.6);
-}
-
 body {
   min-height: 100vh;
   font-family: var(--font-family-base);
@@ -22,11 +17,19 @@ body {
   background-size: cover;
   background-repeat: no-repeat;
   background-attachment: fixed;
-  backdrop-filter: brightness(0.85);
   transition: background 0.3s ease;
 
-  &[data-bs-theme='dark'] {
-    backdrop-filter: brightness(0.6);
+  &::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    backdrop-filter: brightness(0.85);
+    pointer-events: none;
+    z-index: -1;
+
+    [data-bs-theme='dark'] & {
+      backdrop-filter: brightness(0.6);
+    }
   }
 }
 
