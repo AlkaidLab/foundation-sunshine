@@ -6,7 +6,7 @@
         <div class="cover-finder__header">
           <div class="cover-finder__title">
             <i class="fas fa-image me-2"></i>
-            <span>{{ $t('apps.find_cover') || '查找封面' }}</span>
+            <span>{{ $t('apps.find_cover') }}</span>
           </div>
           <button type="button" class="cover-finder__close" @click="closeFinder">
             <i class="fas fa-times"></i>

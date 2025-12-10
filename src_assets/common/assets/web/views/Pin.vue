@@ -59,15 +59,15 @@
             <div class="alert alert-danger" v-if="unpairAllStatus === false">
               {{ $t('troubleshooting.unpair_all_error') }}
             </div>
-            <p class="mb-3 text-muted">Remove your paired devices.</p>
+            <p class="mb-3 text-muted">{{ $t('pin.remove_paired_devices_desc') }}</p>
           </div>
 
           <!-- 加载状态 -->
           <div v-if="loading && clients.length === 0" class="text-center py-5">
             <div class="spinner-border text-primary" role="status">
-              <span class="visually-hidden">Loading...</span>
+              <span class="visually-hidden">{{ $t('pin.loading') }}</span>
             </div>
-            <p class="mt-3 text-muted">Loading clients...</p>
+            <p class="mt-3 text-muted">{{ $t('pin.loading_clients') }}</p>
           </div>
 
           <!-- 客户端列表 -->
@@ -76,10 +76,10 @@
               <table class="table table-hover table-bordered align-middle mb-0">
                 <thead class="table-dark">
                   <tr>
-                    <th scope="col" width="20%" class="ps-3">Name</th>
-                    <th scope="col" class="ps-3">HDR Profile</th>
-                    <th scope="col" class="ps-3">尺寸</th>
-                    <th scope="col" width="30%" class="text-center">Actions</th>
+                    <th scope="col" width="20%" class="ps-3">{{ $t('pin.client_name') }}</th>
+                    <th scope="col" class="ps-3">{{ $t('pin.hdr_profile') }}</th>
+                    <th scope="col" class="ps-3">{{ $t('pin.device_size') }}</th>
+                    <th scope="col" width="30%" class="text-center">{{ $t('pin.actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -88,7 +88,7 @@
                     :key="client.uuid"
                     :class="{ 'table-warning': editingStates[client.uuid] }"
                   >
-                    <td class="fw-medium ps-3">{{ client.name || 'Unknown Client' }}</td>
+                    <td class="fw-medium ps-3">{{ client.name || $t('pin.unknown_client') }}</td>
                     <td class="ps-3">
                       <select
                         class="form-select form-select-sm"
@@ -96,8 +96,8 @@
                         :disabled="!editingStates[client.uuid]"
                         @change="onProfileChange(client.uuid)"
                       >
-                        <option v-if="!hasIccFileList" value="" disabled>Please modify in GUI</option>
-                        <option v-else value="">-- None --</option>
+                        <option v-if="!hasIccFileList" value="" disabled>{{ $t('pin.modify_in_gui') }}</option>
+                        <option v-else value="">{{ $t('pin.none') }}</option>
                         <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
                       </select>
                     </td>
@@ -108,9 +108,9 @@
                         :disabled="!editingStates[client.uuid]"
                         @change="onSizeChange(client.uuid)"
                       >
-                        <option value="small">小 - 手机</option>
-                        <option value="medium">中 - 平板</option>
-                        <option value="large">大 - TV</option>
+                        <option value="small">{{ $t('pin.device_size_small') }}</option>
+                        <option value="medium">{{ $t('pin.device_size_medium') }}</option>
+                        <option value="large">{{ $t('pin.device_size_large') }}</option>
                       </select>
                     </td>
                     <td class="text-center">
@@ -212,9 +212,12 @@
 
 <script setup>
 import { onMounted, ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Navbar from '../components/layout/Navbar.vue'
 import { usePin } from '../composables/usePin.js'
 import { useModalScrollLock } from '../composables/useModalScrollLock.js'
+
+const { t } = useI18n()
 
 const {
   pairingDeviceName,
@@ -268,7 +271,7 @@ const confirmDelete = async () => {
 const handleSave = async (uuid) => {
   const success = await saveClient(uuid)
   if (!success) {
-    alert('Failed to save client settings. Please try again.')
+    alert(t('pin.save_failed'))
   }
 }
 
@@ -289,7 +292,7 @@ const onSizeChange = (uuid) => {
 
 // 处理取消所有配对
 const handleUnpairAll = async () => {
-  if (confirm('Are you sure you want to unpair all clients? This action cannot be undone.')) {
+  if (confirm(t('pin.unpair_all_confirm'))) {
     await unpairAll()
   }
 }

@@ -296,17 +296,43 @@ onMounted(() => {
 ```vue
 <template>
   <div>
-    <!-- 使用 $t (通过 globalInjection) -->
+    <!-- 在模板中使用 $t (通过 globalInjection) -->
     <h1>{{ $t('common.title') }}</h1>
+    <p>{{ $t('common.description') }}</p>
     
-    <!-- 或使用 t 函数（Composition API） -->
-    <p>{{ t('common.description') }}</p>
+    <!-- 在属性中使用 -->
+    <input :placeholder="$t('common.placeholder')" />
+    <button :title="$t('common.tooltip')">{{ $t('common.button') }}</button>
   </div>
 </template>
 
 <script setup>
 import { useI18n } from 'vue-i18n'
+// 在 script 中使用 useI18n() 获取 t 函数
 const { t } = useI18n()
+</script>
+```
+
+#### 在 `<script setup>` 中使用
+
+当需要在 JavaScript 代码中使用翻译（如 `alert()`, `confirm()` 等），必须使用 `useI18n()`：
+
+```vue
+<script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+// 在函数中使用
+const handleConfirm = () => {
+  if (confirm(t('common.confirm_message'))) {
+    // 处理确认
+  }
+}
+
+const showError = () => {
+  alert(t('common.error_message'))
+}
 </script>
 ```
 
@@ -590,6 +616,176 @@ npm run preview
 - 基于 Vue-i18n 11 (Composition API 模式)
 - 语言文件位于 `public/assets/locale/` 目录
 - 配置在 `config/i18n.js` 中
+
+### i18n 开发工作流
+
+项目提供了一套完整的国际化（i18n）工具链，用于确保翻译文件的质量和一致性。基准语言文件是 `en.json`，所有其他语言文件需要与其保持同步。
+
+#### 可用命令
+
+```bash
+# 验证所有语言文件的完整性
+npm run i18n:validate
+
+# 检查并自动同步缺失的翻译键（使用英文占位值）
+npm run i18n:sync
+
+# 格式化并排序所有语言文件（按字母顺序）
+npm run i18n:format
+
+# 检查文件格式
+npm run i18n:format:check
+
+# 验证翻译完整性
+npm run i18n:validate
+```
+
+#### 添加新的翻译键
+
+1. **在基准文件中添加新键**：首先在 `en.json` 中添加新的翻译键和英文值
+   ```json
+   {
+     "myfeature": {
+       "title": "My Feature Title",
+       "description": "My feature description",
+       "button_label": "Submit"
+     }
+   }
+   ```
+
+2. **同步到其他语言文件**：
+   ```bash
+   npm run i18n:sync
+   ```
+   这将自动在所有语言文件中添加缺失的键，并使用英文值作为占位符
+
+3. **格式化文件**：
+   ```bash
+   npm run i18n:format
+   ```
+   这将对所有语言文件进行统一排序和格式化，减少 Git 冲突
+
+4. **翻译占位符**：手动将自动添加的英文占位符翻译为对应语言
+
+5. **验证**：
+   ```bash
+   npm run i18n:validate
+   ```
+   确保所有语言文件都包含完整的翻译键
+
+#### 国际化现有组件示例
+
+以下是一个完整的国际化现有组件的示例：
+
+**步骤 1：识别硬编码文本**
+```vue
+<!-- 原始组件 -->
+<template>
+  <div>
+    <h2>客户端列表</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="client in clients" :key="client.id">
+          <td>{{ client.name || '未知客户端' }}</td>
+          <td>
+            <button @click="handleDelete">删除</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<script setup>
+const handleDelete = () => {
+  if (confirm('确定要删除吗？')) {
+    // 删除逻辑
+  }
+}
+</script>
+```
+
+**步骤 2：在 `en.json` 中添加翻译键**
+```json
+{
+  "client": {
+    "list_title": "Client List",
+    "name": "Name",
+    "actions": "Actions",
+    "unknown_client": "Unknown Client",
+    "delete": "Delete",
+    "confirm_delete": "Are you sure you want to delete?"
+  }
+}
+```
+
+**步骤 3：更新组件使用翻译**
+```vue
+<template>
+  <div>
+    <h2>{{ $t('client.list_title') }}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>{{ $t('client.name') }}</th>
+          <th>{{ $t('client.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="client in clients" :key="client.id">
+          <td>{{ client.name || $t('client.unknown_client') }}</td>
+          <td>
+            <button @click="handleDelete">{{ $t('client.delete') }}</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+const handleDelete = () => {
+  if (confirm(t('client.confirm_delete'))) {
+    // 删除逻辑
+  }
+}
+</script>
+```
+
+**步骤 4：同步和验证**
+```bash
+npm run i18n:sync
+npm run i18n:format
+npm run i18n:validate
+```
+
+#### 最佳实践
+
+- **提交前验证**：在提交代码前运行 `npm run i18n:validate` 确保没有缺失的翻译
+- **保持格式一致**：定期运行 `npm run i18n:format` 保持文件格式统一
+- **避免直接编辑**：不要直接删除或重命名翻译键，应先在 `en.json` 中修改，然后同步
+- **CI 集成**：CI 会自动检查翻译文件的完整性和格式，确保代码质量
+
+#### 脚本说明
+
+- **validate-i18n.js**：验证所有语言文件是否包含 `en.json` 中定义的所有键，并报告缺失或多余的键
+- **format-i18n.js**：对所有语言文件的键进行字母排序，并应用统一的格式化（2 空格缩进）
+
+这些工具确保了：
+- ✅ 所有语言文件具有相同的翻译键
+- ✅ 文件格式统一，减少不必要的 Git 冲突  
+- ✅ 翻译缺失可以快速被发现和修复
+- ✅ 代码审查更加容易
 
 ## 🎨 主题系统
 

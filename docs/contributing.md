@@ -67,25 +67,135 @@ The following is a simple example of how to use it.
   }
   ```
 
-  @note{The json keys should be sorted alphabetically. You can use [jsonabc](https://novicelab.org/jsonabc)
-  to sort the keys.}
+  @note{The json keys should be sorted alphabetically. You can use the provided i18n tools to automatically
+  format and sort all locale files: `npm run i18n:format`}
 
   @attention{Due to the integration with Crowdin, it is important to only add strings to the *en.json* file,
   and to not modify any other language files. After the PR is merged, the translations can take place
   on [CrowdIn][crowdin-url]. Once the translations are complete, a PR will be made
   to merge the translations into Sunshine.}
 
+##### i18n Development Tools
+
+The project provides several npm scripts to help maintain translation quality:
+
+```bash
+# Validate all locale files have the same keys as en.json
+npm run i18n:validate
+
+# Auto-sync missing keys to all locale files (uses English as placeholder)
+npm run i18n:sync
+
+# Format and sort all locale JSON files alphabetically
+npm run i18n:format
+
+# Check if files are properly formatted
+npm run i18n:format:check
+
+# Validate translations
+npm run i18n:validate
+```
+
+**Workflow when adding new translation keys:**
+
+1. Add new keys to `en.json` only
+2. Run `npm run i18n:sync` to add missing keys to all locale files
+3. Run `npm run i18n:format` to ensure consistent formatting
+4. Run `npm run i18n:validate` to verify completeness
+5. Commit your changes - CI will automatically validate the translations
+
+The i18n validation is integrated into the CI pipeline and will prevent merging PRs with
+incomplete or incorrectly formatted translation files.
+
 * Use the string in the Vue component.
   ```html
   <template>
     <div>
+      <!-- In template, use $t (global injection) -->
       <p>{{ $t('index.welcome') }}</p>
+      
+      <!-- Or use in attributes -->
+      <input :placeholder="$t('index.placeholder')" />
+      <button :title="$t('index.tooltip')">{{ $t('index.button') }}</button>
     </div>
   </template>
+  
+  <script setup>
+  import { useI18n } from 'vue-i18n'
+  
+  // In script, use useI18n() to get t function
+  const { t } = useI18n()
+  
+  const handleClick = () => {
+    alert(t('index.success_message'))
+    if (confirm(t('index.confirm_action'))) {
+      // Handle confirmation
+    }
+  }
+  </script>
   ```
 
   @tip{More formatting examples can be found in the
-  [Vue I18n guide](https://kazupon.github.io/vue-i18n/guide/formatting.html).}
+  [Vue I18n guide](https://vue-i18n.intlify.dev/guide/formatting.html).}
+
+##### Internationalizing Existing Components
+
+When internationalizing existing components with hardcoded text, follow these steps:
+
+1. **Identify hardcoded strings** in the component (both in template and script)
+
+2. **Add translation keys to `en.json`**:
+   ```json
+   {
+     "mycomponent": {
+       "title": "My Title",
+       "button_text": "Click Me",
+       "confirm_message": "Are you sure?"
+     }
+   }
+   ```
+
+3. **Replace hardcoded text in template**:
+   ```vue
+   <!-- Before -->
+   <h1>我的标题</h1>
+   <button>点击我</button>
+   
+   <!-- After -->
+   <h1>{{ $t('mycomponent.title') }}</h1>
+   <button>{{ $t('mycomponent.button_text') }}</button>
+   ```
+
+4. **Replace hardcoded text in script** (must use `useI18n()`):
+   ```vue
+   <script setup>
+   import { useI18n } from 'vue-i18n'
+   const { t } = useI18n()
+   
+   // Before
+   const handleClick = () => {
+     if (confirm('确定吗？')) {
+       // ...
+     }
+   }
+   
+   // After
+   const handleClick = () => {
+     if (confirm(t('mycomponent.confirm_message'))) {
+       // ...
+     }
+   }
+   </script>
+   ```
+
+5. **Sync translation keys**:
+   ```bash
+   npm run i18n:sync
+   npm run i18n:format
+   npm run i18n:validate
+   ```
+
+@note{Always use `useI18n()` in `<script setup>` when you need translations in JavaScript code (like `alert()`, `confirm()`, etc.). The `$t` function is only available in templates through global injection.}
 
 ##### C++
 

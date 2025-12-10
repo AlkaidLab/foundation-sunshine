@@ -8,7 +8,13 @@
     "dev-server": "cross-env VITE_USE_ROLldOWN=1 vite serve --config vite.dev.config.js",
     "dev-full": "node dev-server.js",
     "preview": "vite preview",
-    "preview:build": "npm run build && npm run preview"
+    "preview:build": "npm run build && npm run preview",
+    "i18n:validate": "node scripts/validate-i18n.js",
+    "i18n:sync": "node scripts/validate-i18n.js --sync",
+    "i18n:reverse-sync": "node scripts/reverse-sync-i18n.js --sync",
+    "i18n:reverse-check": "node scripts/reverse-sync-i18n.js",
+    "i18n:format": "node scripts/format-i18n.js",
+    "i18n:format:check": "node scripts/format-i18n.js --check"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "6.6.0",
