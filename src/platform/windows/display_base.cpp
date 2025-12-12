@@ -243,6 +243,33 @@ namespace platf::dxgi {
         return platf::capture_e::reinit;
       }
 
+      // Check for HDR metadata changes periodically
+      if (const auto now = std::chrono::steady_clock::now(); now - last_hdr_check_time >= hdr_check_interval) {
+        last_hdr_check_time = now;
+
+        if (is_hdr()) {
+          SS_HDR_METADATA current_metadata;
+          if (get_hdr_metadata(current_metadata)) {
+            if (!cached_hdr_metadata) {
+              // First check, cache the metadata
+              cached_hdr_metadata = current_metadata;
+            }
+            else if (cached_hdr_metadata->maxDisplayLuminance != current_metadata.maxDisplayLuminance ||
+                     cached_hdr_metadata->minDisplayLuminance != current_metadata.minDisplayLuminance ||
+                     cached_hdr_metadata->maxFullFrameLuminance != current_metadata.maxFullFrameLuminance) {
+              // HDR metadata changed
+              BOOST_LOG(info) << "HDR metadata changed, reinitializing capture";
+              cached_hdr_metadata = current_metadata;
+              return capture_e::reinit;
+            }
+          }
+        }
+        else if (cached_hdr_metadata) {
+          // Not in HDR mode, clear cache
+          cached_hdr_metadata.reset();
+        }
+      }
+
       platf::capture_e status = capture_e::ok;
       std::shared_ptr<img_t> img_out;
 
@@ -550,8 +577,8 @@ namespace platf::dxgi {
     }
 
     if (!output) {
-        BOOST_LOG(error) << "Failed to locate an output device"sv;
-        return -1;
+      BOOST_LOG(error) << "Failed to locate an output device"sv;
+      return -1;
     }
 
     D3D_FEATURE_LEVEL featureLevels[] {
@@ -740,6 +767,10 @@ namespace platf::dxgi {
       BOOST_LOG(error) << "Uninitialized high precision timer";
       return -1;
     }
+
+    // Initialize HDR metadata cache for change detection
+    cached_hdr_metadata.reset();
+    last_hdr_check_time = std::chrono::steady_clock::now();
 
     return 0;
   }

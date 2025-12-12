@@ -4,6 +4,9 @@
  */
 #pragma once
 
+#include <chrono>
+#include <optional>
+
 #include <d3d11.h>
 #include <d3d11_4.h>
 #include <d3dcommon.h>
@@ -253,6 +256,12 @@ namespace platf::dxgi {
     colorspace_to_string(DXGI_COLOR_SPACE_TYPE type);
     virtual std::vector<DXGI_FORMAT>
     get_supported_capture_formats() = 0;
+
+  private:
+    // Cached HDR metadata for change detection
+    std::optional<SS_HDR_METADATA> cached_hdr_metadata;
+    std::chrono::steady_clock::time_point last_hdr_check_time;
+    static constexpr std::chrono::milliseconds hdr_check_interval { 1000 };  // Check every 1 second
 
   protected:
     int

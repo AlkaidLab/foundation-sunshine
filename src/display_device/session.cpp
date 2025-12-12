@@ -159,14 +159,17 @@ namespace display_device {
   }
 
   namespace {
-    // Get client identifier from session
-    // Prioritize client certificate UUID (stored in env) over client_name as it is more stable
+    /**
+     * @brief Get client identifier from session.
+     * @details Prioritizes client certificate UUID (stored in env) over client_name as it is more stable.
+     * @param session The launch session containing client information.
+     * @return Client identifier string, or empty string if not available.
+     */
     std::string
     get_client_id_from_session(const rtsp_stream::launch_session_t &session) {
-      auto cert_uuid_it = session.env.find("SUNSHINE_CLIENT_CERT_UUID");
-      if (cert_uuid_it != session.env.end()) {
-        std::string cert_uuid = cert_uuid_it->to_string();
-        if (!cert_uuid.empty()) {
+      if (auto cert_uuid_it = session.env.find("SUNSHINE_CLIENT_CERT_UUID");
+        cert_uuid_it != session.env.end()) {
+        if (std::string cert_uuid = cert_uuid_it->to_string(); !cert_uuid.empty()) {
           return cert_uuid;
         }
       }
@@ -175,12 +178,21 @@ namespace display_device {
         return session.client_name;
       }
 
-      return "";
+      return {};
     }
 
-    // 等待VDD设备初始化
+    /**
+     * @brief Wait for VDD device to initialize.
+     * @param device_zako Output parameter for the device ID.
+     * @param max_attempts Maximum number of retry attempts.
+     * @param initial_delay Initial delay between retries.
+     * @param max_delay Maximum delay between retries.
+     * @return true if device was found, false otherwise.
+     */
     bool
-    wait_for_vdd_device(std::string &device_zako, int max_attempts, std::chrono::milliseconds initial_delay, std::chrono::milliseconds max_delay) {
+    wait_for_vdd_device(std::string &device_zako, int max_attempts,
+      std::chrono::milliseconds initial_delay,
+      std::chrono::milliseconds max_delay) {
       return vdd_utils::retry_with_backoff(
         [&device_zako]() {
           device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
@@ -192,19 +204,26 @@ namespace display_device {
           .context = "等待VDD设备初始化" });
     }
 
-    // 尝试恢复VDD设备
+    /**
+     * @brief Attempt to recover VDD device with retries.
+     * @param client_id Client identifier for the VDD monitor.
+     * @param hdr_brightness hdr_brightness_t.
+     * @param device_zako Output parameter for the device ID.
+     * @return true if recovery succeeded, false otherwise.
+     */
     bool
-    try_recover_vdd_device(const std::string &client_id, std::string &device_zako) {
-      for (int retry = 1; retry <= 3; ++retry) {
+    try_recover_vdd_device(const std::string &client_id, const vdd_utils::hdr_brightness_t &hdr_brightness, std::string &device_zako) {
+      constexpr int max_retries = 3;
+
+      for (int retry = 1; retry <= max_retries; ++retry) {
         BOOST_LOG(info) << "正在执行第" << retry << "次VDD恢复尝试...";
 
-        if (!vdd_utils::create_vdd_monitor(client_id)) {
-          BOOST_LOG(error) << "创建虚拟显示器失败，尝试" << retry << "/3";
-          if (retry < 3) {
+        if (!vdd_utils::create_vdd_monitor(client_id, hdr_brightness)) {
+          BOOST_LOG(error) << "创建虚拟显示器失败，尝试" << retry << "/" << max_retries;
+          if (retry < max_retries) {
             std::this_thread::sleep_for(std::chrono::seconds(1 << retry));
-            continue;
           }
-          break;
+          continue;
         }
 
         if (wait_for_vdd_device(device_zako, 5, 233ms, 2000ms)) {
@@ -212,23 +231,27 @@ namespace display_device {
           return true;
         }
 
-        BOOST_LOG(error) << "VDD设备检测失败，正在第" << retry << "/3次重试...";
-        if (retry < 3) {
+        BOOST_LOG(error) << "VDD设备检测失败，正在第" << retry << "/" << max_retries << "次重试...";
+        if (retry < max_retries) {
           std::this_thread::sleep_for(std::chrono::seconds(1 << retry));
         }
       }
+
       return false;
     }
   }  // namespace
 
   void
-  session_t::configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
+  session_t::configure_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session,
+    bool is_reconfigure) {
     std::lock_guard lock { mutex };
 
-    // 如果是新会话（非重新配置），检查是否需要清理VDD状态
+    // Clean up VDD state if this is a new session with a different client
     if (!is_reconfigure) {
-      const std::string new_client_id = get_client_id_from_session(session);
-      if (!current_vdd_client_id.empty() && !new_client_id.empty() && current_vdd_client_id != new_client_id) {
+      if (const std::string new_client_id = get_client_id_from_session(session);
+        !current_vdd_client_id.empty() && !new_client_id.empty() &&
+        current_vdd_client_id != new_client_id) {
         BOOST_LOG(info) << "New session detected with different client ID, cleaning up VDD state";
         stop_timer_and_clear_vdd_state();
       }
@@ -256,7 +279,9 @@ namespace display_device {
         return true;
       });
 
-      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
+      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. "
+                         << "Allowing stream to start without changing the settings, "
+                         << "but will retry changing settings later...";
       return;
     }
 
@@ -270,27 +295,12 @@ namespace display_device {
 
   bool
   session_t::create_vdd_monitor(const std::string &client_name) {
-    return vdd_utils::create_vdd_monitor(client_name);
+    return vdd_utils::create_vdd_monitor(client_name, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f });
   }
 
   bool
   session_t::destroy_vdd_monitor() {
     return vdd_utils::destroy_vdd_monitor();
-  }
-
-  void
-  session_t::enable_vdd() {
-    vdd_utils::enable_vdd();
-  }
-
-  void
-  session_t::disable_vdd() {
-    vdd_utils::disable_vdd();
-  }
-
-  void
-  session_t::disable_enable_vdd() {
-    vdd_utils::disable_enable_vdd();
   }
 
   bool
@@ -304,7 +314,8 @@ namespace display_device {
   }
 
   void
-  session_t::update_vdd_resolution(const parsed_config_t &config, const vdd_utils::VddSettings &vdd_settings) {
+  session_t::update_vdd_resolution(const parsed_config_t &config,
+    const vdd_utils::VddSettings &vdd_settings) {
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
     if (last_vdd_setting == new_setting) {
@@ -313,14 +324,14 @@ namespace display_device {
     }
 
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
-      BOOST_LOG(error) << "VDD配置保存失败 [resolutions: " << vdd_settings.resolutions << " fps: " << vdd_settings.fps << "]";
+      BOOST_LOG(error) << "VDD配置保存失败 [resolutions: " << vdd_settings.resolutions
+                       << " fps: " << vdd_settings.fps << "]";
       return;
     }
 
     last_vdd_setting = new_setting;
     BOOST_LOG(info) << "VDD配置更新完成: " << new_setting;
 
-    // 配置变更后执行驱动重载
     BOOST_LOG(info) << "重新加载VDD驱动...";
     vdd_utils::reload_driver();
     std::this_thread::sleep_for(1500ms);
@@ -329,40 +340,41 @@ namespace display_device {
   void
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
+    const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
-    // 客户端切换时重建VDD设备
+    // Rebuild VDD device on client switch
     if (!device_zako.empty() && !current_vdd_client_id.empty() &&
         !current_client_id.empty() && current_vdd_client_id != current_client_id) {
       BOOST_LOG(info) << "客户端切换，重建VDD设备";
-      destroy_vdd_monitor();
+      vdd_utils::destroy_vdd_monitor();
       clear_vdd_state();
       device_zako.clear();
       std::this_thread::sleep_for(500ms);
     }
 
-    // 更新VDD分辨率配置
+    // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-        vdd_settings.needs_update && config.resolution) {
+      vdd_settings.needs_update && config.resolution) {
       update_vdd_resolution(config, vdd_settings);
     }
 
-    // 创建VDD设备
+    // Create VDD device if not present
     if (device_zako.empty()) {
       BOOST_LOG(info) << "创建虚拟显示器...";
-      create_vdd_monitor(current_client_id);
+      vdd_utils::create_vdd_monitor(current_client_id, hdr_brightness);
       std::this_thread::sleep_for(233ms);
     }
 
-    // 等待设备就绪
+    // Wait for device to be ready
     if (!wait_for_vdd_device(device_zako, 10, 100ms, 500ms)) {
       BOOST_LOG(error) << "VDD设备初始化失败，尝试恢复";
-      disable_enable_vdd();
+      vdd_utils::disable_enable_vdd();
       std::this_thread::sleep_for(2s);
 
-      if (!try_recover_vdd_device(current_client_id, device_zako)) {
+      if (!try_recover_vdd_device(current_client_id, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
-        disable_enable_vdd();
+        vdd_utils::disable_enable_vdd();
         return;
       }
     }
@@ -371,7 +383,7 @@ namespace display_device {
       return;
     }
 
-    // 更新配置和状态
+    // Update configuration and state
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
