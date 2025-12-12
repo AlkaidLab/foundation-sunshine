@@ -212,6 +212,16 @@ namespace platf {
     }
   }
 
+  /**
+   * @brief Open a url directly in the system default browser.
+   * @param url The url to open.
+   */
+  void
+  open_url_in_browser(const std::string &url) {
+    // On macOS, the open command handles this correctly
+    open_url(url);
+  }
+
   void
   adjust_thread_priority(thread_priority_e priority) {
     // Unimplemented

@@ -804,6 +804,17 @@ namespace platf {
   open_url(const std::string &url);
 
   /**
+   * @brief Open a url directly in the system default browser.
+   * @details This function opens the URL directly using the system's default browser,
+   *          bypassing any intermediate applications. On Windows, it reads the registry
+   *          to find the default browser and launches it directly to avoid browser
+   *          selection dialogs.
+   * @param url The url to open.
+   */
+  void
+  open_url_in_browser(const std::string &url);
+
+  /**
    * @brief Attempt to gracefully terminate a process group.
    * @param native_handle The native handle of the process group.
    * @return `true` if termination was successfully requested.

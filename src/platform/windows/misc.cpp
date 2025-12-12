@@ -1085,6 +1085,27 @@ namespace platf {
     }
   }
 
+  /**
+   * @brief Open a url directly in the system default browser.
+   * @details Uses run_command to let the system handle URL opening directly.
+   * @param url The url to open.
+   */
+  void
+  open_url_in_browser(const std::string &url) {
+    boost::process::v1::environment _env = boost::this_process::environment();
+    auto working_dir = boost::filesystem::path();
+    std::error_code ec;
+
+    auto child = run_command(false, false, url, working_dir, _env, nullptr, ec, nullptr);
+    if (ec) {
+      BOOST_LOG(warning) << "Couldn't open url ["sv << url << "]: System: "sv << ec.message();
+    }
+    else {
+      BOOST_LOG(info) << "Opened url ["sv << url << "]"sv;
+      child.detach();
+    }
+  }
+
   void
   adjust_thread_priority(thread_priority_e priority) {
     int win32_priority;

@@ -258,28 +258,16 @@ namespace system_tray {
   #endif
   };
 
-  // 通用函数：使用系统默认浏览器打开URL
-  auto open_url_in_default_browser = [](const std::string &url) {
-  #ifdef _WIN32
-    // 使用 Windows ShellExecute 打开默认浏览器
-    std::wstring wide_url(url.begin(), url.end());
-    ShellExecuteW(NULL, L"open", wide_url.c_str(), NULL, NULL, SW_SHOWNORMAL);
-  #else
-    // 其他平台使用 platf::open_url
-    platf::open_url(url);
-  #endif
-  };
-
   auto tray_star_project_cb = [](struct tray_menu *item) {
-    open_url_in_default_browser("https://github.com/qiin2333/Sunshine-Foundation");
+    platf::open_url_in_browser("https://github.com/qiin2333/Sunshine-Foundation");
   };
 
   auto tray_donate_yundi339_cb = [](struct tray_menu *item) {
-    open_url_in_default_browser("https://www.ifdian.net/a/Yundi339");
+    platf::open_url_in_browser("https://www.ifdian.net/a/Yundi339");
   };
 
   auto tray_donate_qiin_cb = [](struct tray_menu *item) {
-    open_url_in_default_browser("https://www.ifdian.net/a/qiin2333");
+    platf::open_url_in_browser("https://www.ifdian.net/a/qiin2333");
   };
 
   // 配置导入功能
