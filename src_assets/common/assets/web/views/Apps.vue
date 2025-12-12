@@ -64,8 +64,15 @@
           >
             <i class="fas fa-info-circle"></i>
           </button>
-          <button class="cute-btn cute-btn-success" @click="save" :title="$t('_common.save')">
+          <button 
+            class="cute-btn cute-btn-success" 
+            :class="{ 'has-changes': hasUnsavedChanges() }"
+            @click="save" 
+            :disabled="!hasUnsavedChanges() || isSaving"
+            :title="hasUnsavedChanges() ? $t('_common.save') : $t('_common.no_changes')"
+          >
             <i class="fas fa-save"></i>
+            <span v-if="hasUnsavedChanges()" class="unsaved-indicator"></span>
           </button>
         </div>
       </div>
@@ -343,6 +350,7 @@ const {
   handleSaveApp,
   showDeleteForm,
   save,
+  hasUnsavedChanges,
   onDragStart,
   onDragEnd,
   scanDirectory,

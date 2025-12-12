@@ -51,3 +51,16 @@ if(MINGW)
         -Wl,--gc-sections  # 移除未使用的section
     )
 endif()
+
+# 测试工具：test_args - 仅用于开发测试，不会被打包
+add_executable(test_args test_args.cpp)
+set_target_properties(test_args PROPERTIES CXX_STANDARD 23)
+target_link_libraries(test_args
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${PLATFORM_LIBRARIES})
+if(WIN32)
+    target_link_libraries(test_args advapi32 userenv)
+endif()
+target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+# 明确标记为不安装（开发测试工具），但可以正常构建
+# 注意：不会在 cmake/packaging/windows.cmake 中安装，所以不会被打包

@@ -62,7 +62,6 @@
                   :label="t('apps.cmd')"
                   :validation="validation.cmd"
                   :value="formData.cmd"
-                  required
                 >
                   <template #default>
                     <div class="input-group">
@@ -73,6 +72,7 @@
                         v-model="formData.cmd"
                         :class="getFieldClass('cmd')"
                         @blur="validateField('cmd')"
+                        @input="handleCmdInput"
                         :placeholder="getPlaceholderText('cmd')"
                       />
                       <button
@@ -322,7 +322,15 @@ const fileSelector = ref(null)
 
 const isWindows = computed(() => props.platform === 'windows')
 const isNewApp = computed(() => !props.app || props.app.index === -1)
-const isFormValid = computed(() => validation.value.name?.isValid && validation.value.cmd?.isValid)
+const isFormValid = computed(() => {
+  // name 字段是必填的，必须验证通过
+  const nameValid = validation.value.name?.isValid === true
+  
+  // cmd 字段不是必填的，如果已验证则使用验证结果，如果未验证或为空则认为有效
+  const cmdValid = validation.value.cmd?.isValid !== false  // undefined 或 true 都认为有效
+  
+  return nameValid && cmdValid
+})
 
 const showMessage = (message, type = 'info') => {
   if (window.showToast) {
@@ -395,13 +403,16 @@ const initializeForm = (app) => {
   ensureDefaultValues()
   validation.value = {}
   imageError.value = ''
-  // 如果字段已有值，立即验证必填字段
+  // 立即验证所有字段，确保表单状态正确
   nextTick(() => {
-    if (formData.value.name) {
-      validateField('name')
-    }
-    if (formData.value.cmd) {
+    // 验证必填字段 name（总是验证）
+    validateField('name')
+    // 验证 cmd 字段（如果有值则验证，没有值则标记为有效）
+    if (formData.value.cmd && formData.value.cmd.trim()) {
       validateField('cmd')
+    } else {
+      // cmd 字段不是必填的，如果为空则标记为有效
+      validation.value.cmd = { isValid: true, message: '' }
     }
   })
 }
@@ -434,6 +445,14 @@ const validateField = (fieldName) => {
   const result = validateFieldHelper(validationKey, formData.value[fieldName])
   validation.value[fieldName] = result
   return result
+}
+
+// 处理 cmd 字段输入，如果清空则立即更新验证状态
+const handleCmdInput = () => {
+  // 如果 cmd 字段被清空，立即标记为有效（因为不是必填字段）
+  if (!formData.value.cmd || !formData.value.cmd.trim()) {
+    validation.value.cmd = { isValid: true, message: '' }
+  }
 }
 
 const getFieldClass = (fieldName) => {

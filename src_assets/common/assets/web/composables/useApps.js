@@ -13,6 +13,7 @@ const MESSAGE_DURATION = 3000
 export function useApps() {
   // 状态
   const apps = ref([])
+  const originalApps = ref([])
   const filteredApps = ref([])
   const searchQuery = ref('')
   const editingApp = ref(null)
@@ -72,6 +73,7 @@ export function useApps() {
   const loadApps = async () => {
     try {
       apps.value = await AppService.getApps()
+      originalApps.value = deepClone(apps.value)
       filteredApps.value = [...apps.value]
     } catch (error) {
       console.error('加载应用失败:', error)
@@ -149,10 +151,31 @@ export function useApps() {
     }
   }
 
+  // 检测是否有未保存的更改
+  const hasUnsavedChanges = () => {
+    if (apps.value.length !== originalApps.value.length) {
+      return true
+    }
+  
+    // 深度比较应用列表
+    const appsStr = JSON.stringify(apps.value.map(app => ({ ...app, index: undefined })))
+    const originalStr = JSON.stringify(originalApps.value.map(app => ({ ...app, index: undefined })))
+    
+    return appsStr !== originalStr
+  }
+
   const save = async () => {
+    // 如果没有更改，直接返回
+    if (!hasUnsavedChanges()) {
+      showMessage('没有需要保存的更改', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      return
+    }
+
     try {
       isSaving.value = true
       await AppService.saveApps(apps.value, null)
+      // 保存成功后更新原始列表
+      originalApps.value = deepClone(apps.value)
       showMessage('应用列表保存成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.userAction('apps_saved', { count: apps.value.length })
     } catch (error) {
@@ -453,6 +476,7 @@ export function useApps() {
     showDeleteForm,
     deleteApp,
     save,
+    hasUnsavedChanges,
     onDragStart,
     onDragEnd,
     scanDirectory,

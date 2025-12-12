@@ -95,6 +95,24 @@ function removeKey(obj, keyPath) {
 }
 
 /**
+ * Sort object keys recursively
+ */
+function sortObjectKeys(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+    return obj
+  }
+  
+  const sorted = {}
+  const keys = Object.keys(obj).sort()
+  
+  for (const key of keys) {
+    sorted[key] = sortObjectKeys(obj[key])
+  }
+  
+  return sorted
+}
+
+/**
  * Get list of keys that should remain in English (technical terms, protocols, etc.)
  * These keys will be automatically overwritten with English values in sync mode
  */
@@ -236,6 +254,7 @@ function validateLocales() {
       
       // Still overwrite English-only keys even if no other issues
       if (syncMode) {
+        let modified = false
         const englishOnlyKeys = getEnglishOnlyKeys()
         let overwrittenCount = 0
         for (const key of baseKeys) {
@@ -246,12 +265,41 @@ function validateLocales() {
             if (currentValue !== baseValue) {
               setValue(content, key, baseValue)
               overwrittenCount++
+              modified = true
             }
           }
         }
         if (overwrittenCount > 0) {
           console.log(`   🔄 Overwritten ${overwrittenCount} English-only keys with English values`)
-          fs.writeFileSync(localePath, JSON.stringify(content, null, 2) + '\n', 'utf8')
+        }
+        // Always sort and write in sync mode, even if no changes were made
+        const sorted = sortObjectKeys(content)
+        const formatted = JSON.stringify(sorted, null, 2) + '\n'
+        const original = fs.readFileSync(localePath, 'utf8')
+        
+        // Always write in sync mode to ensure consistent formatting
+        // Compare to detect if actual changes were made
+        let originalParsed
+        try {
+          originalParsed = JSON.parse(original)
+        } catch (e) {
+          originalParsed = null
+        }
+        
+        const keysChanged = originalParsed ? JSON.stringify(originalParsed) !== JSON.stringify(sorted) : true
+        const formatChanged = original.trim() !== formatted.trim()
+        
+        // Always write to ensure consistent formatting
+        fs.writeFileSync(localePath, formatted, 'utf8')
+        if (!modified) {
+          if (keysChanged) {
+            console.log(`   🔄 Sorted keys alphabetically`)
+          } else if (formatChanged) {
+            console.log(`   🔄 Reformatted file`)
+          } else {
+            // Even if no changes, we still write to ensure consistency
+            console.log(`   ✓ File is properly sorted and formatted`)
+          }
         }
       }
     } else {
@@ -343,7 +391,9 @@ function validateLocales() {
         }
         
         if (modified) {
-          fs.writeFileSync(localePath, JSON.stringify(content, null, 2) + '\n', 'utf8')
+          // Sort keys before writing
+          const sorted = sortObjectKeys(content)
+          fs.writeFileSync(localePath, JSON.stringify(sorted, null, 2) + '\n', 'utf8')
         }
       }
     }

@@ -211,9 +211,35 @@
 .cute-btn-success {
   background: var(--gradient-success);
   border: 2px solid var(--cute-btn-border-color);
+  position: relative;
+  
   &:hover {
     background: var(--gradient-success-hover);
     border-color: var(--cute-btn-border-hover-color);
+  }
+
+  // 未保存更改指示器
+  &.has-changes {
+    animation: pulse 2s infinite;
+    box-shadow: 0 4px 15px rgba(255, 193, 7, 0.6);
+
+    .unsaved-indicator {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      box-shadow: 0 0 8px rgba(255, 193, 7, 0.8);
+      animation: blink 1.5s infinite;
+    }
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
   }
 }
 
@@ -228,6 +254,24 @@
     opacity: 0.6;
     cursor: not-allowed;
     transform: none !important;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 4px 15px rgba(255, 193, 7, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 20px rgba(255, 193, 7, 0.8);
+  }
+}
+
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
   }
 }
 
@@ -1162,6 +1206,60 @@ td {
 .form-check-label {
   font-size: var(--font-size-md);
   color: var(--secondary-color);
+}
+
+.form-check-input {
+  position: relative;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.form-check-input:checked::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #dc3545;
+  font-size: 0.875rem;
+  font-weight: bold;
+  line-height: 1;
+}
+
+#appElevation {
+  position: relative;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+#appElevation:checked,
+[id^="menu-cmd-admin-"]:checked,
+[id^="prep-cmd-admin-"]:checked {
+  background-color: #ffffff !important;
+  border-color: #ffffff !important;
+  
+  &::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #dc3545 !important;
+    font-size: 0.875rem;
+    font-weight: bold;
+    line-height: 1;
+  }
+  
+  &:focus {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25) !important;
+  }
+  
+  &:hover {
+    background-color: #c82333 !important;
+    border-color: #bd2130 !important;
+  }
 }
 
 .command-table {
