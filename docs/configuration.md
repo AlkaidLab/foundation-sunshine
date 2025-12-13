@@ -2170,6 +2170,170 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>enabled</td>
         <td>Enabled</td>
     </tr>
+    <tr>
+        <td>two_strips</td>
+        <td>Force 2-strip split frame encoding (requires 2+ NVENC engines)</td>
+    </tr>
+    <tr>
+        <td>three_strips</td>
+        <td>Force 3-strip split frame encoding (requires 3+ NVENC engines)</td>
+    </tr>
+    <tr>
+        <td>four_strips</td>
+        <td>Force 4-strip split frame encoding (requires 4+ NVENC engines)</td>
+    </tr>
+</table>
+
+### [nvenc_lookahead_depth](https://localhost:47990/config/#nvenc_lookahead_depth)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Number of frames to look ahead during encoding.
+            Lookahead improves encoding quality, especially in complex scenes, by providing better motion estimation
+            and bitrate distribution. Higher values improve quality but increase encoding latency.
+            Set to 0 to disable lookahead.
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{Requires NVENC SDK 13.0 (1202) or newer.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Range</td>
+        <td colspan="2">0-32</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_lookahead_depth = 16
+            @endcode</td>
+    </tr>
+</table>
+
+### [nvenc_lookahead_level](https://localhost:47990/config/#nvenc_lookahead_level)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Lookahead quality level. Higher levels improve quality at the expense of performance.
+            This option only takes effect when lookahead_depth is greater than 0.
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{Requires NVENC SDK 13.0 (1202) or newer.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_lookahead_level = 2
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="6">Choices</td>
+        <td>disabled</td>
+        <td>Disabled (same as level 0)</td>
+    </tr>
+    <tr>
+        <td>0</td>
+        <td>Level 0 (lowest quality, fastest)</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>Level 1</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td>Level 2</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td>Level 3 (highest quality, slowest)</td>
+    </tr>
+    <tr>
+        <td>autoselect</td>
+        <td>Let NVIDIA driver auto-select the optimal level</td>
+    </tr>
+</table>
+
+### [nvenc_temporal_filter](https://localhost:47990/config/#nvenc_temporal_filter)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Temporal filtering strength applied before encoding.
+            Temporal filter reduces noise and improves compression efficiency, especially for natural content.
+            Higher levels provide better noise reduction but may introduce slight blurring.
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{Requires NVENC SDK 13.0 (1202) or newer.}
+            @warning{Requires frameIntervalP >= 5. Not compatible with zeroReorderDelay or stereo MVC.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_temporal_filter = 4
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="3">Choices</td>
+        <td>disabled</td>
+        <td>Disabled (no temporal filtering)</td>
+    </tr>
+    <tr>
+        <td>0</td>
+        <td>Disabled (same as disabled)</td>
+    </tr>
+    <tr>
+        <td>4</td>
+        <td>Level 4 (maximum strength)</td>
+    </tr>
+</table>
+
+### [nvenc_temporal_aq](https://localhost:47990/config/#nvenc_temporal_aq)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Enable temporal adaptive quantization.
+            Temporal AQ optimizes quantization across time, providing better bitrate distribution
+            and improved quality in motion scenes. This feature works in conjunction with spatial AQ
+            and requires lookahead to be enabled (lookahead_depth > 0).
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{Requires NVENC SDK 13.0 (1202) or newer.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_temporal_aq = enabled
+            @endcode</td>
+    </tr>
 </table>
 
 ### [nvenc_latency_over_power](https://localhost:47990/config/#nvenc_latency_over_power)

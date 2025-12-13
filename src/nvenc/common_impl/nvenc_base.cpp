@@ -243,9 +243,29 @@ namespace nvenc {
 #if NVENC_INT_VERSION >= 1202
     {
       using enum nvenc_split_frame_encoding;
-      init_params.splitEncodeMode = config.split_frame_encoding == disabled      ? NV_ENC_SPLIT_DISABLE_MODE :
-                                    config.split_frame_encoding == force_enabled ? NV_ENC_SPLIT_AUTO_FORCED_MODE :
-                                                                                   NV_ENC_SPLIT_AUTO_MODE;
+      switch (config.split_frame_encoding) {
+        case disabled:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_DISABLE_MODE;
+          break;
+        case driver_decides:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_AUTO_MODE;
+          break;
+        case force_enabled:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_AUTO_FORCED_MODE;
+          break;
+        case two_strips:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_TWO_FORCED_MODE;
+          break;
+        case three_strips:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_THREE_FORCED_MODE;
+          break;
+        case four_strips:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_FOUR_FORCED_MODE;
+          break;
+        default:
+          init_params.splitEncodeMode = NV_ENC_SPLIT_AUTO_MODE;
+          break;
+      }
     }
 #endif
 
@@ -262,13 +282,78 @@ namespace nvenc {
     enc_config.frameIntervalP = 1;
     enc_config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
     enc_config.rcParams.zeroReorderDelay = 1;
-    enc_config.rcParams.enableLookahead = 0;
     enc_config.rcParams.lowDelayKeyFrameScale = 1;
     enc_config.rcParams.multiPass = config.two_pass == nvenc_two_pass::quarter_resolution ? NV_ENC_TWO_PASS_QUARTER_RESOLUTION :
                                     config.two_pass == nvenc_two_pass::full_resolution    ? NV_ENC_TWO_PASS_FULL_RESOLUTION :
                                                                                             NV_ENC_MULTI_PASS_DISABLED;
 
+    // Configure lookahead
+    bool lookahead_supported = get_encoder_cap(NV_ENC_CAPS_SUPPORT_LOOKAHEAD) != 0;
+    bool lookahead_enabled = config.lookahead_depth > 0 && lookahead_supported;
+    enc_config.rcParams.enableLookahead = lookahead_enabled ? 1 : 0;
+    
+    if (lookahead_enabled) {
+      enc_config.rcParams.lookaheadDepth = config.lookahead_depth;
+      // Clamp lookahead depth to reasonable range (0-32)
+      if (enc_config.rcParams.lookaheadDepth > 32) {
+        enc_config.rcParams.lookaheadDepth = 32;
+        BOOST_LOG(warning) << "NvEnc: lookahead_depth clamped to 32";
+      }
+      
+      // Set lookahead level if supported (NVENC SDK 13.0+)
+#if NVENC_INT_VERSION >= 1202
+      if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_LOOKAHEAD_LEVEL) != 0) {
+        switch (config.lookahead_level) {
+          case nvenc_lookahead_level::disabled:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_0;
+            break;
+          case nvenc_lookahead_level::level_1:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_1;
+            break;
+          case nvenc_lookahead_level::level_2:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_2;
+            break;
+          case nvenc_lookahead_level::level_3:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_3;
+            break;
+          case nvenc_lookahead_level::autoselect:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_AUTOSELECT;
+            break;
+          default:
+            enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_0;
+            break;
+        }
+      }
+      else {
+        enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_0;
+      }
+#else
+      // Lookahead level not supported in older SDK versions, skip setting it
+#endif
+    }
+    else {
+      enc_config.rcParams.lookaheadDepth = 0;
+#if NVENC_INT_VERSION >= 1202
+      enc_config.rcParams.lookaheadLevel = NV_ENC_LOOKAHEAD_LEVEL_0;
+#endif
+      if (config.lookahead_depth > 0 && !lookahead_supported) {
+        BOOST_LOG(warning) << "NvEnc: lookahead requested but not supported by GPU";
+      }
+    }
+
     enc_config.rcParams.enableAQ = config.adaptive_quantization;
+    
+    // Enable temporal AQ if supported and lookahead is enabled
+    if (config.enable_temporal_aq && lookahead_enabled) {
+      if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_AQ) != 0) {
+        // Temporal AQ is enabled through enableAQ when lookahead is active
+        // The encoder will use temporal AQ automatically if supported
+        BOOST_LOG(debug) << "NvEnc: Temporal AQ enabled (requires lookahead)";
+      }
+      else {
+        BOOST_LOG(warning) << "NvEnc: Temporal AQ requested but not supported by GPU";
+      }
+    }
     enc_config.rcParams.averageBitRate = client_config.bitrate * 1000;
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
@@ -347,6 +432,31 @@ namespace nvenc {
         set_ref_frames(format_config.maxNumRefFrames, format_config.numRefL0, 5);
         set_minqp_if_enabled(config.min_qp_h264);
         fill_h264_hevc_vui(format_config.h264VUIParameters);
+        
+        // Configure temporal filter for H.264 (NVENC SDK 13.0+)
+#if NVENC_INT_VERSION >= 1202
+        if (config.temporal_filter_level != nvenc_temporal_filter_level::disabled) {
+          if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_FILTER) != 0) {
+            if (enc_config.frameIntervalP >= 5) {
+              switch (config.temporal_filter_level) {
+                case nvenc_temporal_filter_level::level_4:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_4;
+                  break;
+                case nvenc_temporal_filter_level::disabled:
+                default:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_0;
+                  break;
+              }
+            }
+            else {
+              BOOST_LOG(warning) << "NvEnc: Temporal filter requires frameIntervalP >= 5, but current value is " << enc_config.frameIntervalP << ". Disabling temporal filter.";
+            }
+          }
+          else {
+            BOOST_LOG(warning) << "NvEnc: Temporal filter requested but not supported by GPU";
+          }
+        }
+#endif
         break;
       }
 
@@ -365,6 +475,32 @@ namespace nvenc {
         set_ref_frames(format_config.maxNumRefFramesInDPB, format_config.numRefL0, 5);
         set_minqp_if_enabled(config.min_qp_hevc);
         fill_h264_hevc_vui(format_config.hevcVUIParameters);
+        
+        // Configure temporal filter for HEVC (NVENC SDK 13.0+)
+#if NVENC_INT_VERSION >= 1202
+        if (config.temporal_filter_level != nvenc_temporal_filter_level::disabled) {
+          if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_FILTER) != 0) {
+            if (enc_config.frameIntervalP >= 5) {
+              switch (config.temporal_filter_level) {
+                case nvenc_temporal_filter_level::level_4:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_4;
+                  break;
+                case nvenc_temporal_filter_level::disabled:
+                default:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_0;
+                  break;
+              }
+            }
+            else {
+              BOOST_LOG(warning) << "NvEnc: Temporal filter requires frameIntervalP >= 5, but current value is " << enc_config.frameIntervalP << ". Disabling temporal filter.";
+            }
+          }
+          else {
+            BOOST_LOG(warning) << "NvEnc: Temporal filter requested but not supported by GPU";
+          }
+        }
+#endif
+        
         if (client_config.enableIntraRefresh == 1) {
           if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_INTRA_REFRESH)) {
             format_config.enableIntraRefresh = 1;
@@ -410,6 +546,31 @@ namespace nvenc {
         format_config.chromaSamplePosition = buffer_is_yuv444() ? 0 : 1;
         set_ref_frames(format_config.maxNumRefFramesInDPB, format_config.numFwdRefs, 8);
         set_minqp_if_enabled(config.min_qp_av1);
+        
+        // Configure temporal filter for AV1 (NVENC SDK 13.0+)
+#if NVENC_INT_VERSION >= 1202
+        if (config.temporal_filter_level != nvenc_temporal_filter_level::disabled) {
+          if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_FILTER) != 0) {
+            if (enc_config.frameIntervalP >= 5) {
+              switch (config.temporal_filter_level) {
+                case nvenc_temporal_filter_level::level_4:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_4;
+                  break;
+                case nvenc_temporal_filter_level::disabled:
+                default:
+                  format_config.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_0;
+                  break;
+              }
+            }
+            else {
+              BOOST_LOG(warning) << "NvEnc: Temporal filter requires frameIntervalP >= 5, but current value is " << enc_config.frameIntervalP << ". Disabling temporal filter.";
+            }
+          }
+          else {
+            BOOST_LOG(warning) << "NvEnc: Temporal filter requested but not supported by GPU";
+          }
+        }
+#endif
 
         if (client_config.slicesPerFrame > 1) {
           // NVENC only supports slice counts that are powers of two, so we'll pick powers of two
@@ -557,7 +718,15 @@ namespace nvenc {
     pic_params.outputBitstream = output_bitstream;
     pic_params.completionEvent = async_event_handle;
 
-    if (nvenc_failed(nvenc->nvEncEncodePicture(encoder, &pic_params))) {
+    NVENCSTATUS encode_status = nvenc->nvEncEncodePicture(encoder, &pic_params);
+    if (encode_status == NV_ENC_ERR_NEED_MORE_INPUT) {
+      // This is not a fatal error - encoder needs more input frames before it can produce output.
+      // This can happen with B-frame reordering or lookahead. Return empty frame to signal
+      // the caller should continue without treating this as an error.
+      BOOST_LOG(debug) << "NvEnc: frame " << frame_index << " buffered (need more input)";
+      return { {}, frame_index, false, false };
+    }
+    if (nvenc_failed(encode_status)) {
       BOOST_LOG(error) << "NvEnc: NvEncEncodePicture() failed: " << last_nvenc_error_string;
       return {};
     }

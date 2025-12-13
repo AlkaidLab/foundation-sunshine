@@ -16,6 +16,22 @@ namespace nvenc {
     disabled,  ///< Disable
     driver_decides,  ///< Let driver decide
     force_enabled,  ///< Force-enable
+    two_strips,  ///< Force 2-strip split (requires 2+ NVENC engines)
+    three_strips,  ///< Force 3-strip split (requires 3+ NVENC engines)
+    four_strips,  ///< Force 4-strip split (requires 4+ NVENC engines)
+  };
+
+  enum class nvenc_lookahead_level {
+    disabled = 0,  ///< Disable lookahead
+    level_1 = 1,  ///< Lookahead level 1
+    level_2 = 2,  ///< Lookahead level 2
+    level_3 = 3,  ///< Lookahead level 3
+    autoselect = 15,  ///< Let driver auto-select level
+  };
+
+  enum class nvenc_temporal_filter_level {
+    disabled = 0,  ///< Disable temporal filter
+    level_4 = 4,  ///< Temporal filter level 4
   };
 
   /**
@@ -37,6 +53,9 @@ namespace nvenc {
     // Allocate more bitrate to flat regions since they're visually more perceptible, uses CUDA cores
     bool adaptive_quantization = false;
 
+    // Enable temporal adaptive quantization (requires lookahead)
+    bool enable_temporal_aq = false;
+
     // Don't use QP below certain value, limits peak image quality to save bitrate
     bool enable_min_qp = false;
 
@@ -57,6 +76,15 @@ namespace nvenc {
 
     // Enable split-frame encoding if the gpu has multiple NVENC hardware clusters
     nvenc_split_frame_encoding split_frame_encoding = nvenc_split_frame_encoding::driver_decides;
+
+    // Lookahead level (0-3, higher = better quality but more latency). Requires enable_lookahead=true
+    nvenc_lookahead_level lookahead_level = nvenc_lookahead_level::disabled;
+
+    // Lookahead depth (number of frames to look ahead, 0-32). 0 = disabled
+    int lookahead_depth = 0;
+
+    // Temporal filter level (reduces noise, improves compression). Requires frameIntervalP >= 5
+    nvenc_temporal_filter_level temporal_filter_level = nvenc_temporal_filter_level::disabled;
   };
 
 }  // namespace nvenc

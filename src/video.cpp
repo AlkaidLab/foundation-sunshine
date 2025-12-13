@@ -1618,6 +1618,12 @@ namespace video {
   encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
+      // Empty data with valid frame_index means encoder needs more input (NV_ENC_ERR_NEED_MORE_INPUT).
+      // This is not an error - just return success and continue with next frame.
+      if (encoded_frame.frame_index == static_cast<uint64_t>(frame_nr)) {
+        BOOST_LOG(debug) << "NvENC: frame " << frame_nr << " buffered, waiting for more input";
+        return 0;
+      }
       BOOST_LOG(error) << "NvENC returned empty packet";
       return -1;
     }

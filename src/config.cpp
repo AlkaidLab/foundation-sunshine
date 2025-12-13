@@ -64,8 +64,32 @@ namespace config {
       if (preset == "disabled") return disabled;
       if (preset == "driver_decides") return driver_decides;
       if (preset == "enabled") return force_enabled;
+      if (preset == "two_strips") return two_strips;
+      if (preset == "three_strips") return three_strips;
+      if (preset == "four_strips") return four_strips;
       BOOST_LOG(warning) << "config: unknown nvenc_split_encode value: " << preset;
       return driver_decides;
+    }
+
+    nvenc::nvenc_lookahead_level
+    lookahead_level_from_view(const std::string_view &level) {
+      using enum nvenc::nvenc_lookahead_level;
+      if (level == "disabled" || level == "0") return disabled;
+      if (level == "1") return level_1;
+      if (level == "2") return level_2;
+      if (level == "3") return level_3;
+      if (level == "autoselect" || level == "auto") return autoselect;
+      BOOST_LOG(warning) << "config: unknown nvenc_lookahead_level value: " << level;
+      return disabled;
+    }
+
+    nvenc::nvenc_temporal_filter_level
+    temporal_filter_level_from_view(const std::string_view &level) {
+      using enum nvenc::nvenc_temporal_filter_level;
+      if (level == "disabled" || level == "0") return disabled;
+      if (level == "4") return level_4;
+      BOOST_LOG(warning) << "config: unknown nvenc_temporal_filter_level value: " << level;
+      return disabled;
     }
 
   }  // namespace nv
@@ -1068,9 +1092,13 @@ namespace config {
     int_between_f(vars, "nvenc_preset", video.nv.quality_preset, { 1, 7 });
     int_between_f(vars, "nvenc_vbv_increase", video.nv.vbv_percentage_increase, { 0, 400 });
     bool_f(vars, "nvenc_spatial_aq", video.nv.adaptive_quantization);
+    bool_f(vars, "nvenc_temporal_aq", video.nv.enable_temporal_aq);
     generic_f(vars, "nvenc_twopass", video.nv.two_pass, nv::twopass_from_view);
     bool_f(vars, "nvenc_h264_cavlc", video.nv.h264_cavlc);
     generic_f(vars, "nvenc_split_encode", video.nv.split_frame_encoding, nv::split_encode_from_view);
+    int_between_f(vars, "nvenc_lookahead_depth", video.nv.lookahead_depth, { 0, 32 });
+    generic_f(vars, "nvenc_lookahead_level", video.nv.lookahead_level, nv::lookahead_level_from_view);
+    generic_f(vars, "nvenc_temporal_filter", video.nv.temporal_filter_level, nv::temporal_filter_level_from_view);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
