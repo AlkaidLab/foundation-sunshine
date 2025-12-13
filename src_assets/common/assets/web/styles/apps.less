@@ -1,6 +1,71 @@
 @import './global.less';
 @import './modal-glass.less';
 
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+  text-decoration: none;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  border: 1.5px solid rgba(102, 126, 234, 0.6);
+  border-radius: 0.375rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* btn-primary 样式 */
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #fff;
+  
+  &:hover {
+    background: linear-gradient(135deg, #764ba2, #667eea);
+    border-color: rgba(102, 126, 234, 0.8);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+  }
+  
+  &:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+  }
+  
+  &:focus {
+    outline: 0;
+    box-shadow: 0 0 0 0.25rem rgba(102, 126, 234, 0.25);
+  }
+  
+  &:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  /* 绝对定位样式（用于容器内的复制按钮） */
+  &.absolute {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+  }
+  
+  /* 深色模式适配 */
+  [data-bs-theme='dark'] & {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-color: rgba(102, 126, 234, 0.7);
+    
+    &:hover {
+      background: linear-gradient(135deg, #764ba2, #667eea);
+      border-color: rgba(102, 126, 234, 0.9);
+    }
+  }
+}
+
 /* 搜索栏和功能按钮样式 */
 .search-container {
   display: flex;
@@ -675,6 +740,92 @@
   }
 }
 
+.btn-outline-secondary {
+  background: transparent;
+  border: 1.5px solid rgba(108, 117, 125, 0.6);
+  color: #6c757d;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  &:hover {
+    background: rgba(108, 117, 125, 0.15);
+    border-color: rgba(108, 117, 125, 0.8);
+    color: #6c757d;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(108, 117, 125, 0.25);
+  }
+  
+  &:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(108, 117, 125, 0.2);
+  }
+  
+  &:focus {
+    outline: 0;
+    box-shadow: 0 0 0 0.25rem rgba(108, 117, 125, 0.25);
+  }
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  [data-bs-theme='dark'] & {
+    border-color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.85);
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.6);
+      color: #fff;
+    }
+  }
+}
+
+.btn-outline-info {
+  background: transparent;
+  border: 1.5px solid rgba(13, 202, 240, 0.6);
+  color: #0dcaf0;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  &:hover {
+    background: rgba(13, 202, 240, 0.15);
+    border-color: rgba(13, 202, 240, 0.8);
+    color: #0dcaf0;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(13, 202, 240, 0.3);
+  }
+  
+  &:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(13, 202, 240, 0.25);
+  }
+  
+  &:focus {
+    outline: 0;
+    box-shadow: 0 0 0 0.25rem rgba(13, 202, 240, 0.25);
+  }
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  [data-bs-theme='dark'] & {
+    border-color: rgba(13, 202, 240, 0.7);
+    color: #5dd5f8;
+    
+    &:hover {
+      background: rgba(13, 202, 240, 0.2);
+      border-color: rgba(13, 202, 240, 0.9);
+      color: #0dcaf0;
+    }
+  }
+}
+
 .glass-panel {
   background: rgba(255, 255, 255, 0.1) !important;
   border: 1px solid rgba(255, 255, 255, 0.2) !important;
@@ -709,6 +860,13 @@
   padding: 4px 8px !important;
   border-radius: 6px !important;
   font-family: 'Courier New', monospace !important;
+  
+  /* 浅色模式适配 */
+  [data-bs-theme='light'] & {
+    background: rgba(108, 117, 125, 0.2) !important;
+    color: #000000 !important;
+    border: 1px solid rgba(108, 117, 125, 0.3) !important;
+  }
 }
 
 .code-example {
@@ -719,6 +877,13 @@
   border: 1px solid rgba(255, 255, 255, 0.2) !important;
   font-family: 'Courier New', monospace !important;
   font-size: var(--font-size-sm) !important;
+  
+  /* 浅色模式适配 */
+  [data-bs-theme='light'] & {
+    background: rgba(248, 249, 250, 0.8) !important;
+    color: #000000 !important;
+    border: 1px solid rgba(0, 0, 0, 0.15) !important;
+  }
 }
 
 /* 动画 */
@@ -1208,60 +1373,6 @@ td {
   color: var(--secondary-color);
 }
 
-.form-check-input {
-  position: relative;
-  appearance: none;
-  -webkit-appearance: none;
-}
-
-.form-check-input:checked::after {
-  content: '✓';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: #dc3545;
-  font-size: 0.875rem;
-  font-weight: bold;
-  line-height: 1;
-}
-
-#appElevation {
-  position: relative;
-  appearance: none;
-  -webkit-appearance: none;
-}
-
-#appElevation:checked,
-[id^="menu-cmd-admin-"]:checked,
-[id^="prep-cmd-admin-"]:checked {
-  background-color: #ffffff !important;
-  border-color: #ffffff !important;
-  
-  &::after {
-    content: '✓';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: #dc3545 !important;
-    font-size: 0.875rem;
-    font-weight: bold;
-    line-height: 1;
-  }
-  
-  &:focus {
-    background-color: #dc3545 !important;
-    border-color: #dc3545 !important;
-    box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25) !important;
-  }
-  
-  &:hover {
-    background-color: #c82333 !important;
-    border-color: #bd2130 !important;
-  }
-}
-
 .command-table {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -1400,6 +1511,12 @@ td {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
   animation: modalSlideUp 0.3s ease;
+  
+  [data-bs-theme='light'] & {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  }
 }
 
 @keyframes modalSlideUp {
@@ -1428,6 +1545,14 @@ td {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm, 8px);
+  }
+  
+  [data-bs-theme='light'] & {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    
+    h5 {
+      color: #000000;
+    }
   }
 }
 

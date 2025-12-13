@@ -1,7 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useModalScrollLock } from '../../composables/useModalScrollLock.js'
 
 const props = defineProps([
   'platform',
@@ -16,9 +15,6 @@ const config = ref(props.config)
 const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort)
 const showCurlModal = ref(false)
 const copied = ref(false)
-
-// 使用滚动锁定 composable，弹出后滚动到顶部
-useModalScrollLock(() => showCurlModal.value)
 
 const curlCommand = computed(() => {
   if (!config.value.webhook_url) {
@@ -341,11 +337,11 @@ const testWebhook = async () => {
               <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
               <div class="input-group">
                 <input type="url" class="form-control" id="webhook_url" placeholder="https://example.com/webhook" v-model="config.webhook_url" />
-                <button class="btn btn-outline-secondary" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
-                  {{ $t('config.webhook_test') }}
+                <button class="btn btn-outline-info" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
+                  <i class="fas fa-paper-plane me-1"></i>{{ $t('config.webhook_test') }}
                 </button>
                 <button class="btn btn-outline-info" type="button" @click="showCurlCommand" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
-                  <i class="fas fa-terminal me-1"></i>{{ $t('config.webhook_curl_command') || '命令' }}
+                  <i class="fas fa-terminal me-1"></i>{{ $t('config.webhook_curl_command') }}
                 </button>
               </div>
               <div class="form-text">{{ $t('config.webhook_url_desc') }}</div>
@@ -388,15 +384,15 @@ const testWebhook = async () => {
           <p class="text-muted mb-3">{{ $t('config.webhook_curl_command_desc') || '复制以下命令到终端中执行，可以测试 webhook 是否正常工作：' }}</p>
           <div class="curl-command-container">
             <pre class="curl-command" id="curlCommandText">{{ curlCommand }}</pre>
-            <button class="btn btn-sm btn-primary copy-btn" @click="copyCurlCommand" type="button">
-              <i class="fas fa-copy me-1"></i>{{ $t('_common.copy') || '复制' }}
-            </button>
           </div>
           <div class="alert alert-info mt-3" v-if="copied">
             <i class="fas fa-check-circle me-2"></i>{{ $t('_common.copied') || '已复制到剪贴板' }}
           </div>
         </div>
         <div class="curl-command-footer">
+          <button class="copy-btn" @click="copyCurlCommand" type="button">
+            <i class="fas fa-copy me-1"></i>{{ $t('_common.copy') }}
+          </button>
           <button type="button" class="btn btn-secondary" @click="closeCurlModal">{{ $t('_common.close') || '关闭' }}</button>
         </div>
       </div>
@@ -423,6 +419,10 @@ const testWebhook = async () => {
   justify-content: center;
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
+  
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
 }
 
 .curl-command-modal {
@@ -437,6 +437,12 @@ const testWebhook = async () => {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
   animation: modalSlideUp 0.3s ease;
+  
+  [data-bs-theme='light'] & {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  }
 }
 
 @keyframes modalSlideUp {
@@ -466,6 +472,14 @@ const testWebhook = async () => {
     align-items: center;
     gap: var(--spacing-sm, 8px);
   }
+  
+  [data-bs-theme='light'] & {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    
+    h5 {
+      color: #000000;
+    }
+  }
 }
 
 .curl-command-body {
@@ -473,14 +487,57 @@ const testWebhook = async () => {
   overflow-y: auto;
   flex: 1;
   color: var(--text-primary, #fff);
+  
+  p, span, div {
+    color: var(--text-primary, #fff);
+  }
+  
+  .text-muted {
+    color: rgba(255, 255, 255, 0.6);
+  }
+  
+  .alert {
+    color: var(--text-primary, #fff);
+    
+    &-info {
+      background: rgba(23, 162, 184, 0.2);
+      border-color: rgba(23, 162, 184, 0.5);
+    }
+  }
+  
+  [data-bs-theme='light'] & {
+    color: #000000;
+    
+    p, span, div {
+      color: #000000;
+    }
+    
+    .text-muted {
+      color: rgba(0, 0, 0, 0.6);
+    }
+    
+    .alert {
+      color: #000000;
+      
+      &-info {
+        background: rgba(23, 162, 184, 0.15);
+        border-color: rgba(23, 162, 184, 0.4);
+      }
+    }
+  }
 }
 
 .curl-command-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
   border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  
+  [data-bs-theme='light'] & {
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
 }
 
 .curl-command-container {
@@ -489,6 +546,11 @@ const testWebhook = async () => {
   border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
   border-radius: 4px;
   padding: 15px;
+  
+  [data-bs-theme='light'] & {
+    background-color: rgba(248, 249, 250, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+  }
 }
 
 .curl-command {
@@ -504,13 +566,12 @@ const testWebhook = async () => {
   overflow-x: auto;
   max-height: 300px;
   overflow-y: auto;
+  
+  [data-bs-theme='light'] & {
+    color: #000000;
+  }
 }
 
-.copy-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-}
 
 /* Vue 过渡动画 */
 .fade-enter-active {

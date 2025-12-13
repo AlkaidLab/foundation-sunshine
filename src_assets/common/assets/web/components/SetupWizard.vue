@@ -284,7 +284,6 @@
 
 <script>
 import { trackEvents } from '../config/firebase.js'
-import { useModalScrollLock } from '../composables/useModalScrollLock.js'
 
 export default {
   name: 'SetupWizard',
@@ -341,9 +340,6 @@ export default {
     if (this.adapters.length === 1) {
       this.selectedAdapter = this.adapters[0].name
     }
-    
-    // 使用滚动锁定 composable
-    useModalScrollLock(() => this.showSkipModal)
   },
   computed: {
     canProceed() {
@@ -940,6 +936,10 @@ export default {
   justify-content: center;
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
+  
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
 }
 
 .skip-wizard-modal {
@@ -954,6 +954,12 @@ export default {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
   animation: modalSlideUp 0.3s ease;
+  
+  [data-bs-theme='light'] & {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  }
 }
 
 @keyframes modalSlideUp {
@@ -983,6 +989,14 @@ export default {
     align-items: center;
     gap: var(--spacing-sm, 8px);
   }
+  
+  [data-bs-theme='light'] & {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    
+    h5 {
+      color: #000000;
+    }
+  }
 }
 
 .skip-wizard-body {
@@ -992,6 +1006,10 @@ export default {
   overflow-y: auto;
   flex: 1;
   color: var(--text-primary, #fff);
+  
+  [data-bs-theme='light'] & {
+    color: #000000;
+  }
 }
 
 .skip-wizard-footer {
@@ -1000,6 +1018,10 @@ export default {
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
   border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  
+  [data-bs-theme='light'] & {
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
 }
 
 .skip-wizard-footer button {

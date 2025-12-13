@@ -1,29 +1,73 @@
 /* 统一模态框样式 */
 :root {
   /* 背景与边框 */
-  --modal-backdrop-bg: rgba(0, 0, 0, 0.6);
-  --modal-content-bg: rgba(255, 255, 255, 0.1);
+  --modal-backdrop-bg: rgba(0, 0, 0, 0.7);
+  --modal-content-bg: rgba(30, 30, 50, 0.95);
   --modal-border-color: rgba(255, 255, 255, 0.2);
-  --modal-text-color: #fff;
-  --modal-shadow: rgba(0, 0, 0, 0.3);
-  --modal-footer-bg: rgba(255, 255, 255, 0.1);
+  --modal-text-color: #ffffff;
+  --modal-text-secondary: rgba(255, 255, 255, 0.85);
+  --modal-text-muted: rgba(255, 255, 255, 0.6);
+  --modal-shadow: rgba(0, 0, 0, 0.5);
+  --modal-footer-bg: rgba(0, 0, 0, 0.2);
 
   /* 按钮渐变 */
   --btn-primary-gradient: linear-gradient(135deg, #667eea, #764ba2);
+  --btn-primary-gradient-hover: linear-gradient(135deg, #764ba2, #667eea);
+  --btn-secondary-gradient: rgba(255, 255, 255, 0.2);
+  --btn-secondary-gradient-hover: rgba(255, 255, 255, 0.3);
   --btn-danger-gradient: linear-gradient(135deg, #dc3545, #c82333);
+  --btn-danger-gradient-hover: linear-gradient(135deg, #c82333, #dc3545);
   --btn-success-gradient: linear-gradient(135deg, #28a745, #20c997);
+  --btn-success-gradient-hover: linear-gradient(135deg, #20c997, #28a745);
+  --btn-outline-primary-border: rgba(102, 126, 234, 0.5);
+  --btn-outline-primary-hover: rgba(102, 126, 234, 0.2);
 
   /* 玻璃效果 */
-  --glass-light: rgba(255, 255, 255, 0.1);
-  --glass-medium: rgba(255, 255, 255, 0.2);
-  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-light: rgba(255, 255, 255, 0.06);
+  --glass-medium: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.2);
   --glass-dark: rgba(0, 0, 0, 0.3);
+}
+
+/* 浅色模式适配 */
+[data-bs-theme='light'] {
+  --modal-content-bg: rgba(255, 255, 255, 0.95);
+  --modal-border-color: rgba(0, 0, 0, 0.15);
+  --modal-shadow: rgba(0, 0, 0, 0.2);
+  --modal-footer-bg: rgba(248, 249, 250, 0.8);
+  --modal-text-color: #000000;
+  --modal-text-secondary: #000000;
+  --modal-text-muted: #000000;
+  
+  --glass-light: rgba(0, 0, 0, 0.05);
+  --glass-medium: rgba(0, 0, 0, 0.08);
+  --glass-border: rgba(0, 0, 0, 0.15);
+  
+  --btn-secondary-gradient: rgba(0, 0, 0, 0.1);
+  --btn-secondary-gradient-hover: rgba(0, 0, 0, 0.15);
+  --btn-outline-primary-border: rgba(102, 126, 234, 0.6);
+  --btn-outline-primary-hover: rgba(102, 126, 234, 0.1);
+}
+
+/* 深色模式适配 */
+[data-bs-theme='dark'] {
+  --modal-content-bg: rgba(20, 20, 35, 0.98);
+  --modal-border-color: rgba(255, 255, 255, 0.15);
+  --modal-shadow: rgba(0, 0, 0, 0.6);
+  --modal-footer-bg: rgba(0, 0, 0, 0.3);
+  --modal-text-color: #ffffff;
+  --modal-text-secondary: rgba(255, 255, 255, 0.9);
+  --modal-text-muted: rgba(255, 255, 255, 0.65);
+  
+  --glass-light: rgba(255, 255, 255, 0.05);
+  --glass-medium: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.15);
 }
 
 /* 背景遮罩 */
 .modal-backdrop {
   background: var(--modal-backdrop-bg);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
 }
 
 /* 模态框内容 */
@@ -34,11 +78,36 @@
   backdrop-filter: blur(20px);
   box-shadow: 0 20px 40px var(--modal-shadow);
   color: var(--modal-text-color);
+  
+  /* 确保所有文字都使用正确的颜色 */
+  * {
+    color: inherit;
+  }
+  
+  p, span, div, label {
+    color: var(--modal-text-color);
+  }
+  
+  small, .text-muted {
+    color: var(--modal-text-muted);
+  }
 }
 
 .modal-title {
   color: var(--modal-text-color);
   font-weight: 600;
+}
+
+.modal-body {
+  color: var(--modal-text-color);
+  
+  p, span, div {
+    color: var(--modal-text-color);
+  }
+  
+  .text-muted, small {
+    color: var(--modal-text-muted);
+  }
 }
 
 .modal-footer {
@@ -49,11 +118,19 @@
 
 /* 关闭按钮 */
 .btn-close {
-  filter: invert(1);
   opacity: 0.7;
+  transition: opacity 0.2s;
 
   &:hover {
     opacity: 1;
+  }
+  
+  [data-bs-theme='light'] & {
+    filter: invert(0);
+  }
+  
+  [data-bs-theme='dark'] & {
+    filter: invert(1);
   }
 }
 
@@ -63,6 +140,7 @@
   .btn {
     border: 1px solid var(--glass-border);
     color: var(--modal-text-color);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
     &:hover {
       transform: translateY(-1px);
@@ -71,18 +149,75 @@
 
     &-primary {
       background: var(--btn-primary-gradient);
+      border-color: rgba(102, 126, 234, 0.5);
+      
+      &:hover {
+        background: var(--btn-primary-gradient-hover);
+        border-color: rgba(102, 126, 234, 0.7);
+      }
+    }
+
+    &-outline-primary {
+      background: transparent;
+      border-color: var(--btn-outline-primary-border);
+      color: #667eea;
+      
+      &:hover {
+        background: var(--btn-outline-primary-hover);
+        border-color: rgba(102, 126, 234, 0.7);
+        color: #667eea;
+      }
+      
+      [data-bs-theme='dark'] & {
+        color: #8b9aff;
+        
+        &:hover {
+          color: var(--modal-text-color);
+        }
+      }
     }
 
     &-secondary {
-      background: var(--glass-medium);
+      background: var(--btn-secondary-gradient);
+      border: 1.5px solid var(--glass-border);
+      font-weight: 500;
+      
+      &:hover {
+        background: var(--btn-secondary-gradient-hover);
+        border-color: var(--glass-border);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+      
+      &:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      }
+      
+      &:focus {
+        outline: 0;
+        box-shadow: 0 0 0 0.25rem rgba(255, 255, 255, 0.25);
+      }
     }
 
     &-danger {
       background: var(--btn-danger-gradient);
+      border-color: rgba(220, 53, 69, 0.5);
+      
+      &:hover {
+        background: var(--btn-danger-gradient-hover);
+        border-color: rgba(220, 53, 69, 0.7);
+      }
     }
 
     &-success {
       background: var(--btn-success-gradient);
+      border-color: rgba(40, 167, 69, 0.5);
+      
+      &:hover {
+        background: var(--btn-success-gradient-hover);
+        border-color: rgba(40, 167, 69, 0.7);
+      }
     }
   }
 
@@ -92,12 +227,22 @@
     background: var(--glass-light);
     border: 1px solid var(--glass-border);
     color: var(--modal-text-color);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &:hover {
+      background: var(--glass-medium);
+      border-color: var(--glass-border);
+    }
 
     &:focus {
       background: var(--glass-medium);
-      border-color: rgba(255, 255, 255, 0.5);
-      box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.25);
+      border-color: rgba(102, 126, 234, 0.6);
+      box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.15);
       color: var(--modal-text-color);
+    }
+
+    &::placeholder {
+      color: var(--modal-text-muted);
     }
   }
 
@@ -136,7 +281,11 @@
     .nav-link {
       background: var(--glass-light);
       border: 1px solid var(--modal-border-color);
-      color: rgba(255, 255, 255, 0.7);
+      color: var(--modal-text-muted);
+
+      &:hover {
+        color: var(--modal-text-secondary);
+      }
 
       &.active {
         background: var(--glass-medium);
@@ -152,19 +301,23 @@
   }
 
   .accordion-button {
-    background: rgba(0, 0, 0, 0.1);
+    background: var(--glass-light);
     color: var(--modal-text-color);
+    
+    &:hover {
+      background: var(--glass-medium);
+    }
   }
 
   .accordion-body {
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--glass-light);
     color: var(--modal-text-color);
   }
 
   /* 代码块 */
   pre,
   code {
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--glass-light);
     color: var(--modal-text-color);
     border: 1px solid var(--modal-border-color);
     border-radius: 8px;

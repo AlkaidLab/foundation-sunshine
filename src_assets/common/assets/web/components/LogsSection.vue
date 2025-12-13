@@ -8,7 +8,7 @@
         </h5>
         <div class="d-flex align-items-center gap-2">
           <div class="input-group" style="width: 480px">
-            <span class="input-group-text bg-white">
+            <span class="input-group-text">
               <i class="fas fa-search text-muted"></i>
             </span>
             <input
@@ -246,6 +246,12 @@ const downloadLogs = () => {
 
 .input-group-text {
   border-right: none;
+  background-color: #fff;
+  
+  [data-bs-theme='dark'] & {
+    background-color: #212529;
+    color: #fff;
+  }
 }
 
 .input-group .form-control {
