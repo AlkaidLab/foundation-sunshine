@@ -32,6 +32,12 @@ namespace display_device::vdd_utils {
     float max_full_nits = 1000.0f;
   };
 
+  // 物理尺寸结构（厘米）
+  struct physical_size_t {
+    float width_cm = 0.0f;   // 宽度（厘米），0表示未指定
+    float height_cm = 0.0f;  // 高度（厘米），0表示未指定
+  };
+
   // 重试配置结构
   struct RetryConfig {
     int max_attempts = kMaxRetryCount;
@@ -75,13 +81,22 @@ namespace display_device::vdd_utils {
   generate_client_guid(const std::string &identifier);
 
   /**
+   * @brief 从客户端配置中获取物理尺寸
+   * @param client_name 客户端名称
+   * @return 物理尺寸结构，如果未找到则返回默认值（0,0）
+   */
+  physical_size_t
+  get_client_physical_size(const std::string &client_name);
+
+  /**
    * @brief 创建VDD监视器
    * @param client_identifier 客户端标识符（可选），用于驱动识别客户端并启动对应的显示器
    * @param hdr_brightness HDR亮度配置
+   * @param physical_size 物理尺寸配置（厘米），可选
    * @return 创建是否成功
    */
   bool
-  create_vdd_monitor(const std::string &client_identifier = "", const hdr_brightness_t &hdr_brightness = {});
+  create_vdd_monitor(const std::string &client_identifier = "", const hdr_brightness_t &hdr_brightness = {}, const physical_size_t &physical_size = {});
 
   bool
   destroy_vdd_monitor();

@@ -4,6 +4,8 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/process.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <boost/uuid/name_generator_sha1.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -18,6 +20,8 @@
 #include "src/rtsp.h"
 #include "src/system_tray.h"
 #include "to_string.h"
+
+namespace pt = boost::property_tree;
 
 namespace display_device {
   namespace vdd_utils {
@@ -180,8 +184,46 @@ namespace display_device {
       return "{" + boost::uuids::to_string(boost_uuid) + "}";
     }
 
+    /**
+     * @brief 从客户端配置中获取物理尺寸
+     * @param client_name 客户端名称
+     * @return 物理尺寸结构，如果未找到则返回默认值（0,0）
+     */
+    physical_size_t
+    get_client_physical_size(const std::string &client_name) {
+      if (client_name.empty()) {
+        return {};
+      }
+
+      // 预定义尺寸映射表
+      static const std::unordered_map<std::string, physical_size_t> size_map = {
+        {"small",  {13.3f, 7.5f}},    // 小型设备：约6英寸，16:9比例
+        {"medium", {34.5f, 19.4f}},   // 中型设备：约15.6英寸，16:9比例
+        {"large",  {70.8f, 39.8f}}    // 大型设备：约32英寸，16:9比例
+      };
+
+      try {
+        pt::ptree clientArray;
+        std::stringstream ss(config::nvhttp.clients);
+        pt::read_json(ss, clientArray);
+
+        for (const auto &client : clientArray) {
+          if (client.second.get<std::string>("name", "") == client_name) {
+            const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
+            auto it = size_map.find(device_size);
+            return (it != size_map.end()) ? it->second : size_map.at("medium");
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(debug) << "获取客户端物理尺寸失败: " << e.what();
+      }
+
+      return {};
+    }
+
     bool
-    create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness) {
+    create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
       std::string response;
       std::wstring command = L"CREATEMONITOR";
 
@@ -195,9 +237,15 @@ namespace display_device {
       // 生成GUID并构建命令
       std::string guid_str = generate_client_guid(identifier_to_use);
       if (!guid_str.empty()) {
-        // 构建完整参数: {GUID}:[max_nits,min_nits]
+        // 构建完整参数: {GUID}:[max_nits,min_nits,maxFALL][widthCm,heightCm]
         std::ostringstream param_stream;
         param_stream << guid_str << ":[" << hdr_brightness.max_nits << "," << hdr_brightness.min_nits << "," << hdr_brightness.max_full_nits << "]";
+        
+        // 如果提供了物理尺寸，添加到参数中
+        if (physical_size.width_cm > 0.0f && physical_size.height_cm > 0.0f) {
+          param_stream << "[" << physical_size.width_cm << "," << physical_size.height_cm << "]";
+        }
+        
         std::string param_str = param_stream.str();
 
         // 转换为宽字符并添加到命令
@@ -210,6 +258,9 @@ namespace display_device {
         BOOST_LOG(info) << "创建虚拟显示器，客户端标识符: " << identifier_to_use
                         << ", GUID: " << guid_str
                         << ", HDR亮度范围: [" << hdr_brightness.max_nits << ", " << hdr_brightness.min_nits << ", " << hdr_brightness.max_full_nits << "]";
+        if (physical_size.width_cm > 0.0f && physical_size.height_cm > 0.0f) {
+          BOOST_LOG(info) << ", 物理尺寸: [" << physical_size.width_cm << "cm, " << physical_size.height_cm << "cm]";
+        }
       }
 
       // 如果使用了有效的UUID，更新上一次使用的UUID
@@ -288,7 +339,7 @@ namespace display_device {
       last_toggle_time = now;
 
       if (!is_display_on()) {
-        if (create_vdd_monitor()) {
+        if (create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
           std::thread([]() {
             // Windows弹窗确认
             auto future = std::async(std::launch::async, []() {
