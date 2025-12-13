@@ -111,62 +111,69 @@ const DEFAULT_TABS = [
     },
   },
   {
-    id: 'nv',
-    name: 'NVIDIA NVENC Encoder',
-    options: {
-      nvenc_preset: 1,
-      nvenc_twopass: 'quarter_res',
-      nvenc_spatial_aq: 'disabled',
-      nvenc_temporal_aq: 'disabled',
-      nvenc_vbv_increase: 0,
-      nvenc_lookahead_depth: 0,
-      nvenc_lookahead_level: 'disabled',
-      nvenc_temporal_filter: 'disabled',
-      nvenc_realtime_hags: 'enabled',
-      nvenc_split_encode: 'driver_decides',
-      nvenc_latency_over_power: 'enabled',
-      nvenc_opengl_vulkan_on_dxgi: 'enabled',
-      nvenc_h264_cavlc: 'disabled',
-    },
-  },
-  {
-    id: 'qsv',
-    name: 'Intel QuickSync Encoder',
-    options: {
-      qsv_preset: 'medium',
-      qsv_coder: 'auto',
-      qsv_slow_hevc: 'disabled',
-    },
-  },
-  {
-    id: 'amd',
-    name: 'AMD AMF Encoder',
-    options: {
-      amd_usage: 'ultralowlatency',
-      amd_rc: 'vbr_latency',
-      amd_enforce_hrd: 'disabled',
-      amd_quality: 'balanced',
-      amd_preanalysis: 'disabled',
-      amd_vbaq: 'enabled',
-      amd_coder: 'auto',
-    },
-  },
-  {
-    id: 'vt',
-    name: 'VideoToolbox Encoder',
-    options: {
-      vt_coder: 'auto',
-      vt_software: 'auto',
-      vt_realtime: 'enabled',
-    },
-  },
-  {
-    id: 'sw',
-    name: 'Software Encoder',
-    options: {
-      sw_preset: 'superfast',
-      sw_tune: 'zerolatency',
-    },
+    id: 'encoders',
+    name: 'Encoders',
+    type: 'group',
+    children: [
+      {
+        id: 'nv',
+        name: 'NVIDIA NVENC Encoder',
+        options: {
+          nvenc_preset: 1,
+          nvenc_twopass: 'quarter_res',
+          nvenc_spatial_aq: 'disabled',
+          nvenc_temporal_aq: 'disabled',
+          nvenc_vbv_increase: 0,
+          nvenc_lookahead_depth: 0,
+          nvenc_lookahead_level: 'disabled',
+          nvenc_temporal_filter: 'disabled',
+          nvenc_realtime_hags: 'enabled',
+          nvenc_split_encode: 'driver_decides',
+          nvenc_latency_over_power: 'enabled',
+          nvenc_opengl_vulkan_on_dxgi: 'enabled',
+          nvenc_h264_cavlc: 'disabled',
+        },
+      },
+      {
+        id: 'qsv',
+        name: 'Intel QuickSync Encoder',
+        options: {
+          qsv_preset: 'medium',
+          qsv_coder: 'auto',
+          qsv_slow_hevc: 'disabled',
+        },
+      },
+      {
+        id: 'amd',
+        name: 'AMD AMF Encoder',
+        options: {
+          amd_usage: 'ultralowlatency',
+          amd_rc: 'vbr_latency',
+          amd_enforce_hrd: 'disabled',
+          amd_quality: 'balanced',
+          amd_preanalysis: 'disabled',
+          amd_vbaq: 'enabled',
+          amd_coder: 'auto',
+        },
+      },
+      {
+        id: 'vt',
+        name: 'VideoToolbox Encoder',
+        options: {
+          vt_coder: 'auto',
+          vt_software: 'auto',
+          vt_realtime: 'enabled',
+        },
+      },
+      {
+        id: 'sw',
+        name: 'Software Encoder',
+        options: {
+          sw_preset: 'superfast',
+          sw_tune: 'zerolatency',
+        },
+      },
+    ],
   },
 ]
 
@@ -225,39 +232,66 @@ export function useConfig() {
     try {
       const response = await fetch('/api/config')
       const data = await response.json()
-      
+
       platform.value = data.platform || ''
-      
+
       // 根据平台过滤标签页
       const exclusions = PLATFORM_EXCLUSIONS[platform.value] || []
-      tabs.value = tabs.value.filter((tab) => !exclusions.includes(tab.id))
-      
+      tabs.value = tabs.value
+        .map((tab) => {
+          // 处理分组标签页（编码器）
+          if (tab.type === 'group' && tab.children) {
+            return {
+              ...tab,
+              children: tab.children.filter((child) => !exclusions.includes(child.id)),
+            }
+          }
+          // 处理普通标签页
+          if (!exclusions.includes(tab.id)) {
+            return tab
+          }
+          return null
+        })
+        .filter(Boolean)
+
       // 移除不需要的字段
       const { platform: _, status, version, ...configData } = data
       config.value = configData
-      
+
       // 填充默认值
       for (const tab of tabs.value) {
-        for (const [key, defaultVal] of Object.entries(tab.options)) {
-          if (config.value[key] === undefined) {
-            config.value[key] = defaultVal
+        // 处理分组标签页
+        if (tab.type === 'group' && tab.children) {
+          for (const childTab of tab.children) {
+            for (const [key, defaultVal] of Object.entries(childTab.options)) {
+              if (config.value[key] === undefined) {
+                config.value[key] = defaultVal
+              }
+            }
+          }
+        } else if (tab.options) {
+          // 处理普通标签页
+          for (const [key, defaultVal] of Object.entries(tab.options)) {
+            if (config.value[key] === undefined) {
+              config.value[key] = defaultVal
+            }
           }
         }
       }
-      
+
       // 解析特殊字段
       fps.value = safeParseJSON(config.value.fps)
-      
+
       try {
         const resStr = (config.value.resolutions || '').replace(/(\d+)x(\d+)/g, '"$1x$2"')
         resolutions.value = JSON.parse(resStr)
       } catch {
         resolutions.value = []
       }
-      
+
       global_prep_cmd.value = safeParseJSON(config.value.global_prep_cmd)
       display_mode_remapping.value = safeParseJSON(config.value.display_mode_remapping)
-      
+
       // 确保配置中有默认值
       config.value.global_prep_cmd = config.value.global_prep_cmd || []
       config.value.display_mode_remapping = config.value.display_mode_remapping || []
@@ -277,7 +311,7 @@ export function useConfig() {
     // 过滤并序列化 FPS
     fps.value = fps.value.filter((item) => +item >= 30 && +item <= 500)
     config.value.fps = JSON.stringify(fps.value).replace(/"/g, '')
-    
+
     config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
     config.value.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
   }
@@ -292,9 +326,21 @@ export function useConfig() {
 
     // 删除默认值
     for (const tab of tabs.value) {
-      for (const optionKey of Object.keys(tab.options)) {
-        if (shouldDeleteDefault(configData, tab, optionKey)) {
-          delete configData[optionKey]
+      // 处理分组标签页
+      if (tab.type === 'group' && tab.children) {
+        for (const childTab of tab.children) {
+          for (const optionKey of Object.keys(childTab.options)) {
+            if (shouldDeleteDefault(configData, childTab, optionKey)) {
+              delete configData[optionKey]
+            }
+          }
+        }
+      } else if (tab.options) {
+        // 处理普通标签页
+        for (const optionKey of Object.keys(tab.options)) {
+          if (shouldDeleteDefault(configData, tab, optionKey)) {
+            delete configData[optionKey]
+          }
         }
       }
     }
@@ -305,13 +351,13 @@ export function useConfig() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(configData),
       })
-      
+
       saved.value = response.ok
-      
+
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')
       }
-      
+
       return saved.value
     } catch (error) {
       console.error('Save failed:', error)
@@ -324,17 +370,17 @@ export function useConfig() {
   const apply = async () => {
     saved.value = false
     restarted.value = false
-    
+
     const result = await save()
-    
+
     if (!result) return
-    
+
     restarted.value = true
     setTimeout(() => {
       saved.value = false
       restarted.value = false
     }, 5000)
-    
+
     try {
       await fetch('/api/restart', { method: 'POST' })
       trackEvents.userAction('config_applied')
@@ -348,9 +394,23 @@ export function useConfig() {
     const hash = window.location.hash.slice(1)
     if (!hash) return
 
-    const targetTab = tabs.value.find(
-      (tab) => tab.id === hash || Object.keys(tab.options).includes(hash)
+    // 查找普通标签页
+    let targetTab = tabs.value.find(
+      (tab) => tab.id === hash || (tab.options && Object.keys(tab.options).includes(hash))
     )
+
+    // 如果在分组标签页中查找
+    if (!targetTab) {
+      for (const tab of tabs.value) {
+        if (tab.type === 'group' && tab.children) {
+          const childTab = tab.children.find((child) => child.id === hash || Object.keys(child.options).includes(hash))
+          if (childTab) {
+            targetTab = childTab
+            break
+          }
+        }
+      }
+    }
 
     if (targetTab) {
       currentTab.value = targetTab.id
