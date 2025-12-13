@@ -1382,6 +1382,41 @@ td {
   backdrop-filter: blur(20px);
   box-shadow: var(--box-shadow-lg);
   animation: fadeIn 0.6s ease-out;
+  
+  /* 浅色模式适配 */
+  [data-bs-theme='light'] & {
+    background: rgba(248, 249, 250, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    
+    /* 表格文字颜色 */
+    color: #000000;
+    
+    /* 表格头部和单元格文字 */
+    th, td {
+      color: #000000;
+    }
+    
+    /* 输入框文字 */
+    .form-control, .form-control-sm {
+      color: #000000;
+      background-color: #ffffff;
+      border-color: rgba(0, 0, 0, 0.2);
+      
+      &::placeholder {
+        color: rgba(0, 0, 0, 0.5);
+      }
+    }
+    
+    /* 标签文字 */
+    label, .form-label, .form-check-label {
+      color: #000000;
+    }
+    
+    /* 文本内容 */
+    span, p, div:not(.btn):not(.badge) {
+      color: #000000;
+    }
+  }
 }
 
 .add-command-btn {
