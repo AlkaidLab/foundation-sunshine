@@ -280,7 +280,44 @@ namespace nvenc {
     enc_config.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
     enc_config.gopLength = NVENC_INFINITE_GOPLENGTH;
     enc_config.frameIntervalP = 1;
-    enc_config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+    
+    // Configure rate control mode (CBR or VBR)
+    auto supported_rc_modes = get_encoder_cap(NV_ENC_CAPS_SUPPORTED_RATECONTROL_MODES);
+    bool vbr_supported = (supported_rc_modes & NV_ENC_PARAMS_RC_VBR) != 0;
+    
+    if (config.rate_control_mode == nvenc_rate_control_mode::vbr && vbr_supported) {
+      enc_config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
+      // Set max bitrate for VBR (typically 1.5x average bitrate for better quality)
+      enc_config.rcParams.maxBitRate = static_cast<uint32_t>(client_config.bitrate * 1500);
+      
+      // Set target quality for VBR mode (0 = automatic)
+      if (config.target_quality > 0) {
+        // Clamp target quality based on codec
+        unsigned max_quality = 51;  // H.264/HEVC
+        if (client_config.videoFormat == 2) {  // AV1
+          max_quality = 63;
+        }
+        if (config.target_quality > static_cast<int>(max_quality)) {
+          enc_config.rcParams.targetQuality = static_cast<uint8_t>(max_quality);
+          BOOST_LOG(warning) << "NvEnc: target_quality clamped to " << max_quality;
+        }
+        else {
+          enc_config.rcParams.targetQuality = static_cast<uint8_t>(config.target_quality);
+        }
+        BOOST_LOG(info) << "NvEnc: VBR mode with target quality " << enc_config.rcParams.targetQuality;
+      }
+      else {
+        enc_config.rcParams.targetQuality = 0;  // Automatic
+        BOOST_LOG(info) << "NvEnc: VBR mode with automatic target quality";
+      }
+    }
+    else {
+      enc_config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+      if (config.rate_control_mode == nvenc_rate_control_mode::vbr && !vbr_supported) {
+        BOOST_LOG(warning) << "NvEnc: VBR mode requested but not supported by GPU, using CBR";
+      }
+    }
+    
     enc_config.rcParams.zeroReorderDelay = 1;
     enc_config.rcParams.lowDelayKeyFrameScale = 1;
     enc_config.rcParams.multiPass = config.two_pass == nvenc_two_pass::quarter_resolution ? NV_ENC_TWO_PASS_QUARTER_RESOLUTION :
@@ -624,6 +661,18 @@ namespace nvenc {
       if (init_params.enableEncodeAsync) extra += " async";
       if (buffer_is_yuv444()) extra += " yuv444";
       if (buffer_is_10bit()) extra += " 10-bit";
+      if (enc_config.rcParams.rateControlMode == NV_ENC_PARAMS_RC_VBR) {
+        extra += " vbr";
+        if (enc_config.rcParams.targetQuality > 0) {
+          extra += " quality=" + std::to_string(enc_config.rcParams.targetQuality);
+        }
+        else {
+          extra += " quality=auto";
+        }
+      }
+      else {
+        extra += " cbr";
+      }
       if (enc_config.rcParams.multiPass != NV_ENC_MULTI_PASS_DISABLED) extra += " two-pass";
       if (config.vbv_percentage_increase > 0 && get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
         extra += " vbv+" + std::to_string(config.vbv_percentage_increase);

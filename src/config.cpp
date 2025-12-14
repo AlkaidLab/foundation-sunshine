@@ -92,6 +92,15 @@ namespace config {
       return disabled;
     }
 
+    nvenc::nvenc_rate_control_mode
+    rate_control_mode_from_view(const std::string_view &mode) {
+      using enum nvenc::nvenc_rate_control_mode;
+      if (mode == "cbr") return cbr;
+      if (mode == "vbr") return vbr;
+      BOOST_LOG(warning) << "config: unknown nvenc_rate_control_mode value: " << mode;
+      return cbr;
+    }
+
   }  // namespace nv
 
   namespace amd {
@@ -1099,6 +1108,8 @@ namespace config {
     int_between_f(vars, "nvenc_lookahead_depth", video.nv.lookahead_depth, { 0, 32 });
     generic_f(vars, "nvenc_lookahead_level", video.nv.lookahead_level, nv::lookahead_level_from_view);
     generic_f(vars, "nvenc_temporal_filter", video.nv.temporal_filter_level, nv::temporal_filter_level_from_view);
+    generic_f(vars, "nvenc_rate_control", video.nv.rate_control_mode, nv::rate_control_mode_from_view);
+    int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);

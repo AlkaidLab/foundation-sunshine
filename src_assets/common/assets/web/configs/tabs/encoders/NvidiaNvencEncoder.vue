@@ -48,25 +48,25 @@ const config = ref(props.config)
     </div>
 
     <!-- Temporal AQ -->
-    <div class="mb-3">
+    <!-- <div class="mb-3">
       <label for="nvenc_temporal_aq" class="form-label">{{ $t('config.nvenc_temporal_aq') }}</label>
       <select id="nvenc_temporal_aq" class="form-select" v-model="config.nvenc_temporal_aq">
         <option value="disabled">{{ $t('_common.disabled_def') }}</option>
         <option value="enabled">{{ $t('_common.enabled') }}</option>
       </select>
       <div class="form-text">{{ $t('config.nvenc_temporal_aq_desc') }}</div>
-    </div>
+    </div> -->
 
     <!-- Lookahead depth -->
-    <div class="mb-3">
+    <!-- <div class="mb-3">
       <label for="nvenc_lookahead_depth" class="form-label">{{ $t('config.nvenc_lookahead_depth') }}</label>
       <input type="number" min="0" max="32" class="form-control" id="nvenc_lookahead_depth" placeholder="0"
              v-model.number="config.nvenc_lookahead_depth" />
       <div class="form-text">{{ $t('config.nvenc_lookahead_depth_desc') }}</div>
-    </div>
+    </div> -->
 
     <!-- Lookahead level -->
-    <div class="mb-3" v-if="config.nvenc_lookahead_depth > 0">
+    <!-- <div class="mb-3" v-if="config.nvenc_lookahead_depth > 0">
       <label for="nvenc_lookahead_level" class="form-label">{{ $t('config.nvenc_lookahead_level') }}</label>
       <select id="nvenc_lookahead_level" class="form-select" v-model="config.nvenc_lookahead_level">
         <option value="disabled">{{ $t('config.nvenc_lookahead_level_disabled') }}</option>
@@ -77,10 +77,10 @@ const config = ref(props.config)
         <option value="autoselect">{{ $t('config.nvenc_lookahead_level_autoselect') }}</option>
       </select>
       <div class="form-text">{{ $t('config.nvenc_lookahead_level_desc') }}</div>
-    </div>
+    </div> -->
 
     <!-- Temporal filter -->
-    <div class="mb-3">
+    <!-- <div class="mb-3">
       <label for="nvenc_temporal_filter" class="form-label">{{ $t('config.nvenc_temporal_filter') }}</label>
       <select id="nvenc_temporal_filter" class="form-select" v-model="config.nvenc_temporal_filter">
         <option value="disabled">{{ $t('_common.disabled_def') }}</option>
@@ -88,6 +88,24 @@ const config = ref(props.config)
         <option value="4">{{ $t('config.nvenc_temporal_filter_4') }}</option>
       </select>
       <div class="form-text">{{ $t('config.nvenc_temporal_filter_desc') }}</div>
+    </div> -->
+
+    <!-- Rate control mode -->
+    <div class="mb-3">
+      <label for="nvenc_rate_control" class="form-label">{{ $t('config.nvenc_rate_control') }}</label>
+      <select id="nvenc_rate_control" class="form-select" v-model="config.nvenc_rate_control">
+        <option value="cbr">{{ $t('config.nvenc_rate_control_cbr') }}</option>
+        <option value="vbr">{{ $t('config.nvenc_rate_control_vbr') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.nvenc_rate_control_desc') }}</div>
+    </div>
+
+    <!-- Target quality (VBR mode only) -->
+    <div class="mb-3" v-if="config.nvenc_rate_control === 'vbr'">
+      <label for="nvenc_target_quality" class="form-label">{{ $t('config.nvenc_target_quality') }}</label>
+      <input type="number" min="0" max="63" class="form-control" id="nvenc_target_quality" placeholder="0"
+             v-model.number="config.nvenc_target_quality" />
+      <div class="form-text">{{ $t('config.nvenc_target_quality_desc') }}</div>
     </div>
 
     <!-- Single-frame VBV/HRD percentage increase -->

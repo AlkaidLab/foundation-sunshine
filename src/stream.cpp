@@ -1424,10 +1424,6 @@ namespace stream {
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
-        if (ec) {
-          BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
-          return;
-        }
         auto fg = util::fail_guard([&]() {
           try {
             sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
@@ -1437,18 +1433,21 @@ namespace stream {
           }
         });
 
-        BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
-
-        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
-
+        // 静默处理网络错误
         if (ec == boost::system::errc::connection_refused ||
             ec == boost::system::errc::connection_reset) {
           return;
         }
+
+        // 如果有其他错误，记录并返回
         if (ec) {
-          BOOST_LOG(error) << "Couldn't receive data from udp socket: "sv << ec.message();
+          BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
           return;
         }
+
+        BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
+
+        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
         if (bytes == 0) {
           BOOST_LOG(warning) << "Received empty packet";
           return;

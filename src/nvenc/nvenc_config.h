@@ -34,6 +34,11 @@ namespace nvenc {
     level_4 = 4,  ///< Temporal filter level 4
   };
 
+  enum class nvenc_rate_control_mode {
+    cbr,  ///< Constant Bitrate - fixed bitrate, best for low latency streaming
+    vbr,  ///< Variable Bitrate - variable bitrate, better quality for complex scenes
+  };
+
   /**
    * @brief NVENC encoder configuration.
    */
@@ -85,6 +90,13 @@ namespace nvenc {
 
     // Temporal filter level (reduces noise, improves compression). Requires frameIntervalP >= 5
     nvenc_temporal_filter_level temporal_filter_level = nvenc_temporal_filter_level::disabled;
+
+    // Rate control mode (CBR for low latency, VBR for better quality)
+    nvenc_rate_control_mode rate_control_mode = nvenc_rate_control_mode::cbr;
+
+    // Target quality for VBR mode (0-51 for H.264/HEVC, 0-63 for AV1, 0=auto). Lower value = higher quality
+    // Only used when rate_control_mode is VBR
+    int target_quality = 0;  // 0 = automatic
   };
 
 }  // namespace nvenc

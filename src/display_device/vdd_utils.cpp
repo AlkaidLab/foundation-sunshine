@@ -197,9 +197,9 @@ namespace display_device {
 
       // 预定义尺寸映射表
       static const std::unordered_map<std::string, physical_size_t> size_map = {
-        {"small",  {13.3f, 7.5f}},    // 小型设备：约6英寸，16:9比例
-        {"medium", {34.5f, 19.4f}},   // 中型设备：约15.6英寸，16:9比例
-        {"large",  {70.8f, 39.8f}}    // 大型设备：约32英寸，16:9比例
+        { "small", { 13.3f, 7.5f } },  // 小型设备：约6英寸，16:9比例
+        { "medium", { 34.5f, 19.4f } },  // 中型设备：约15.6英寸，16:9比例
+        { "large", { 70.8f, 39.8f } }  // 大型设备：约32英寸，16:9比例
       };
 
       try {
@@ -240,12 +240,12 @@ namespace display_device {
         // 构建完整参数: {GUID}:[max_nits,min_nits,maxFALL][widthCm,heightCm]
         std::ostringstream param_stream;
         param_stream << guid_str << ":[" << hdr_brightness.max_nits << "," << hdr_brightness.min_nits << "," << hdr_brightness.max_full_nits << "]";
-        
+
         // 如果提供了物理尺寸，添加到参数中
         if (physical_size.width_cm > 0.0f && physical_size.height_cm > 0.0f) {
           param_stream << "[" << physical_size.width_cm << "," << physical_size.height_cm << "]";
         }
-        
+
         std::string param_str = param_stream.str();
 
         // 转换为宽字符并添加到命令
@@ -338,48 +338,68 @@ namespace display_device {
 
       last_toggle_time = now;
 
-      if (!is_display_on()) {
-        if (create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
-          std::thread([]() {
-            // Windows弹窗确认
-            auto future = std::async(std::launch::async, []() {
-              return MessageBoxW(nullptr,
-                       L"已创建虚拟显示器，是否继续使用？\n\n"
-                       L"如不确认，20秒后将自动关闭显示器",
-                       L"显示器确认",
-                       MB_YESNO | MB_ICONQUESTION) == IDYES;
-            });
-
-            // 等待20秒超时
-            if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready || !future.get()) {
-              BOOST_LOG(info) << "用户未确认或超时，自动销毁虚拟显示器";
-              HWND hwnd = FindWindowW(L"#32770", L"显示器确认");
-              if (hwnd && IsWindow(hwnd)) {
-                // 发送退出命令并等待窗口关闭
-                PostMessage(hwnd, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
-                PostMessage(hwnd, WM_CLOSE, 0, 0);
-
-                for (int i = 0; i < 5 && IsWindow(hwnd); ++i) {
-                  std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                }
-
-                // 如果窗口还存在，尝试强制关闭
-                if (IsWindow(hwnd)) {
-                  BOOST_LOG(warning) << "无法正常关闭确认窗口，尝试终止窗口进程";
-                  EndDialog(hwnd, IDNO);
-                }
-              }
-              destroy_vdd_monitor();
-            }
-            else {
-              BOOST_LOG(info) << "用户确认保留虚拟显示器";
-            }
-          }).detach();
-        }
-      }
-      else {
+      if (is_display_on()) {
         destroy_vdd_monitor();
+        return;
       }
+
+      int result = MessageBoxW(NULL,
+        L"？只不过是创建了个虚拟显示器，看到屏幕变黑就吓得手忙脚乱了吗？\n"
+        L"杂鱼❤真是没见过世面的杂鱼大叔呢❤\n"
+        L"这可是Windows记住了你那些乱七八糟的多显示器设置才变成这样的，这完全是正常现象哦？\n"
+        L"真是的，别在那边丢人现眼地慌张了，看着好丢人。\n"
+        L"听好了，本小姐大发慈悲教你这一遍——按两次 Win+P 就能变回来了。\n"
+        L"这么简单的操作都要人教，你的脑子是装饰品吗？哼~。\n\n"
+        L"After creating a virtual display, based on Windows' remembered multi-display combination strategy, "
+        L"you may see a black screen which is normal. Don't panic. You can press Win+P twice to return to a visible display.",
+        L"❗Zako Display Notice",
+        MB_OKCANCEL | MB_ICONINFORMATION);
+
+      if (result == IDCANCEL) {
+        BOOST_LOG(info) << "用户取消创建虚拟显示器";
+        return;
+      }
+
+      if (!create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
+        return;
+      }
+
+      std::thread([]() {
+        constexpr auto timeout = std::chrono::seconds(20);
+        constexpr auto dialog_title = L"显示器确认";
+
+        auto future = std::async(std::launch::async, []() {
+          return MessageBoxW(nullptr,
+                   L"已创建虚拟显示器，是否继续使用？\n\n"
+                   L"如不确认，20秒后将自动关闭显示器",
+                   dialog_title,
+                   MB_YESNO | MB_ICONQUESTION) == IDYES;
+        });
+
+        if (future.wait_for(timeout) == std::future_status::ready && future.get()) {
+          BOOST_LOG(info) << "用户确认保留虚拟显示器";
+          return;
+        }
+
+        BOOST_LOG(info) << "用户未确认或超时，自动销毁虚拟显示器";
+
+        HWND hwnd = FindWindowW(L"#32770", dialog_title);
+        if (hwnd && IsWindow(hwnd)) {
+          PostMessage(hwnd, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
+          PostMessage(hwnd, WM_CLOSE, 0, 0);
+
+          for (int i = 0; i < 5 && IsWindow(hwnd); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+          }
+
+          if (IsWindow(hwnd)) {
+            BOOST_LOG(warning) << "无法正常关闭确认窗口，尝试终止窗口进程";
+            EndDialog(hwnd, IDNO);
+          }
+        }
+
+        destroy_vdd_monitor();
+      }).detach();
     }
 
     VddSettings

@@ -2267,6 +2267,65 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [nvenc_rate_control](https://localhost:47990/config/#nvenc_rate_control)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Rate control mode for NVENC encoding. CBR (Constant Bitrate) provides fixed bitrate for low latency streaming. VBR (Variable Bitrate) allows bitrate to vary based on scene complexity, providing better quality for complex scenes at the cost of variable bitrate.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            cbr
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_rate_control = vbr
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="2">Choices</td>
+        <td>cbr</td>
+        <td>Constant Bitrate - Fixed bitrate, best for low latency streaming</td>
+    </tr>
+    <tr>
+        <td>vbr</td>
+        <td>Variable Bitrate - Variable bitrate, better quality for complex scenes</td>
+    </tr>
+</table>
+
+### [nvenc_target_quality](https://localhost:47990/config/#nvenc_target_quality)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Target quality level for VBR mode. Lower values = higher quality. Set to 0 for automatic quality selection. Only used when rate control mode is VBR. Range: 0-51 for H.264/HEVC, 0-63 for AV1.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Range</td>
+        <td colspan="2">0-63</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_target_quality = 28
+            @endcode</td>
+    </tr>
+</table>
+
 ### [nvenc_temporal_filter](https://localhost:47990/config/#nvenc_temporal_filter)
 
 <table>
