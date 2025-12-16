@@ -468,9 +468,9 @@ export default {
       
       if (this.saving) return
       
-      this.showSkipModal()
+      this.openSkipModal()
     },
-    showSkipModal() {
+    openSkipModal() {
       this.showSkipModal = true
     },
     closeSkipModal() {

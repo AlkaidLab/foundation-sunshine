@@ -73,4 +73,10 @@
 
   --cute-btn-border-color: rgba(0, 0, 0, 0.2);
   --cute-btn-border-hover-color: rgba(0, 0, 0, 0.1);
+
+  /* 深色模式文字颜色 - 使用浅色 */
+  --text-primary-color: #ffffff;
+  --text-secondary-color: rgba(255, 255, 255, 0.85);
+  --text-muted-color: rgba(255, 255, 255, 0.6);
+  --text-title-color: #ffffff;
 }

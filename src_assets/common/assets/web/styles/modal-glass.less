@@ -29,27 +29,26 @@
   --glass-dark: rgba(0, 0, 0, 0.3);
 }
 
-/* 浅色模式适配 */
 [data-bs-theme='light'] {
-  --modal-content-bg: rgba(255, 255, 255, 0.95);
-  --modal-border-color: rgba(0, 0, 0, 0.15);
-  --modal-shadow: rgba(0, 0, 0, 0.2);
-  --modal-footer-bg: rgba(248, 249, 250, 0.8);
-  --modal-text-color: #000000;
-  --modal-text-secondary: #000000;
-  --modal-text-muted: #000000;
+  --modal-content-bg: #f0f4ff;
+  --modal-border-color: rgba(99, 102, 241, 0.25);
+  --modal-shadow: rgba(99, 102, 241, 0.15);
+  --modal-footer-bg: #e0e7ff;
+  --modal-text-color: #1e293b;
+  --modal-text-secondary: #475569;
+  --modal-text-muted: #64748b;
   
-  --glass-light: rgba(0, 0, 0, 0.05);
-  --glass-medium: rgba(0, 0, 0, 0.08);
-  --glass-border: rgba(0, 0, 0, 0.15);
+  --glass-light: #f5f8ff;
+  --glass-medium: #e8efff;
+  --glass-border: rgba(99, 102, 241, 0.2);
+  --glass-dark: rgba(99, 102, 241, 0.08);
   
-  --btn-secondary-gradient: rgba(0, 0, 0, 0.1);
-  --btn-secondary-gradient-hover: rgba(0, 0, 0, 0.15);
-  --btn-outline-primary-border: rgba(102, 126, 234, 0.6);
-  --btn-outline-primary-hover: rgba(102, 126, 234, 0.1);
+  --btn-secondary-gradient: #ffffff;
+  --btn-secondary-gradient-hover: #f5f8ff;
+  --btn-outline-primary-border: rgba(99, 102, 241, 0.4);
+  --btn-outline-primary-hover: rgba(99, 102, 241, 0.12);
 }
 
-/* 深色模式适配 */
 [data-bs-theme='dark'] {
   --modal-content-bg: rgba(20, 20, 35, 0.98);
   --modal-border-color: rgba(255, 255, 255, 0.15);
@@ -259,18 +258,36 @@
     color: var(--modal-text-color);
 
     &-info {
-      background: rgba(23, 162, 184, 0.2);
-      border-color: rgba(23, 162, 184, 0.5);
+      background: rgba(23, 162, 184, 0.15);
+      border-color: rgba(23, 162, 184, 0.4);
+      
+      [data-bs-theme='light'] & {
+        background: #e0f7fa;
+        border-color: #4dd0e1;
+        color: #006064;
+      }
     }
 
     &-warning {
-      background: rgba(255, 193, 7, 0.2);
-      border-color: rgba(255, 193, 7, 0.5);
+      background: rgba(255, 193, 7, 0.15);
+      border-color: rgba(255, 193, 7, 0.4);
+      
+      [data-bs-theme='light'] & {
+        background: #fff8e1;
+        border-color: #ffca28;
+        color: #795548;
+      }
     }
 
     &-danger {
-      background: rgba(220, 53, 69, 0.2);
-      border-color: rgba(220, 53, 69, 0.5);
+      background: rgba(220, 53, 69, 0.15);
+      border-color: rgba(220, 53, 69, 0.4);
+      
+      [data-bs-theme='light'] & {
+        background: #ffebee;
+        border-color: #ef5350;
+        color: #b71c1c;
+      }
     }
   }
 
@@ -298,20 +315,59 @@
   .accordion-item {
     background: var(--glass-light);
     border: 1px solid var(--modal-border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+    
+    [data-bs-theme='light'] & {
+      background: #f5f8ff;
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      box-shadow: 0 3px 8px rgba(99, 102, 241, 0.08);
+    }
   }
 
   .accordion-button {
     background: var(--glass-light);
     color: var(--modal-text-color);
+    border-radius: 12px !important;
+    font-weight: 500;
     
     &:hover {
       background: var(--glass-medium);
+    }
+    
+    &:not(.collapsed) {
+      background: var(--glass-medium);
+    }
+    
+    [data-bs-theme='light'] & {
+      background: #e8efff;
+      color: #1e293b;
+      
+      &:hover {
+        background: #dce4ff;
+      }
+      
+      &:not(.collapsed) {
+        background: #dce4ff;
+        color: #6366f1;
+        font-weight: 600;
+      }
+      
+      &::after {
+        filter: none;
+      }
     }
   }
 
   .accordion-body {
     background: var(--glass-light);
     color: var(--modal-text-color);
+    
+    [data-bs-theme='light'] & {
+      background: #f8faff;
+      color: #1e293b;
+    }
   }
 
   /* 代码块 */
@@ -321,14 +377,50 @@
     color: var(--modal-text-color);
     border: 1px solid var(--modal-border-color);
     border-radius: 8px;
+    
+    [data-bs-theme='light'] & {
+      background: #e8efff;
+      color: #6366f1;
+      border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+  }
+  
+  pre {
+    [data-bs-theme='light'] & {
+      padding: 1rem;
+      color: #475569;
+    }
   }
 
   /* 表格 */
   .table {
     color: var(--modal-text-color);
+    
+    [data-bs-theme='light'] & {
+      color: #1e293b;
+    }
 
     th {
       background: var(--glass-medium);
+      
+      [data-bs-theme='light'] & {
+        background: #e0e7ff;
+        color: #6366f1;
+        font-weight: 600;
+        border-bottom: 2px solid rgba(99, 102, 241, 0.2);
+      }
+    }
+    
+    td {
+      [data-bs-theme='light'] & {
+        border-color: rgba(99, 102, 241, 0.1);
+      }
+    }
+    
+    tbody tr {
+      [data-bs-theme='light'] &:hover {
+        background: rgba(99, 102, 241, 0.05);
+      }
     }
   }
 }

@@ -22,7 +22,8 @@
           :item-key="getItemKey"
           :animation="300"
           :delay="0"
-          handle=".drag-handle"
+          filter="input, button, .form-check-input"
+          :prevent-on-filter="false"
           ghost-class="command-row-ghost"
           chosen-class="command-row-chosen"
           drag-class="command-row-drag"
@@ -33,7 +34,7 @@
             <tr :key="index">
               <!-- 拖拽手柄 -->
               <td class="drag-handle-cell">
-                <div class="drag-handle" @dragstart.stop @dragend.stop :title="$t('apps.menu_cmd_drag_sort')">
+                <div class="drag-handle" :title="$t('apps.menu_cmd_drag_sort')">
                   <i class="fas fa-grip-vertical"></i>
                 </div>
               </td>
@@ -345,10 +346,17 @@ export default {
 
 .drag-handle {
   color: rgba(255, 255, 255, 0.5);
-  font-size: 1rem;
-  transition: color 0.3s ease;
+  font-size: 1.2rem;
+  transition: all 0.3s ease;
   display: inline-block;
-  padding: 0.25rem;
+  padding: 0.5rem;
+  opacity: 0;
+  cursor: move;
+}
+
+/* 鼠标悬停在行上时显示拖动手柄 */
+.table tbody tr:hover .drag-handle {
+  opacity: 1;
 }
 
 .drag-handle:hover {
