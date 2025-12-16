@@ -47,6 +47,13 @@ namespace rtsp_stream {
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;
     uint32_t rtsp_iv_counter;
+
+    // 跟踪已设置的流类型
+    bool setup_video { false };
+    bool setup_audio { false };
+    bool setup_control { false };
+    bool setup_mic { false };
+    bool control_only { false };
   };
 
   void

@@ -904,16 +904,20 @@ namespace rtsp_stream {
 
     std::uint16_t port;
     if (type == "audio"sv) {
+      session.setup_audio = true;
       port = net::map_port(stream::AUDIO_STREAM_PORT);
     }
     else if (type == "video"sv) {
+      session.setup_video = true;
       port = net::map_port(stream::VIDEO_STREAM_PORT);
     }
     else if (type == "control"sv) {
+      session.setup_control = true;
       port = net::map_port(stream::CONTROL_PORT);
     }
     else if (type == "mic"sv) {
       session.enable_mic = true;
+      session.setup_mic = true;
       port = net::map_port(stream::MIC_STREAM_PORT);
     }
     else {
@@ -1141,14 +1145,23 @@ namespace rtsp_stream {
       return;
     }
 
-    // Check that any required encryption is enabled
-    auto encryption_mode = net::encryption_mode_for_address(sock.remote_endpoint().address());
-    if (encryption_mode == config::ENCRYPTION_MODE_MANDATORY &&
-        (config.encryptionFlagsEnabled & (SS_ENC_VIDEO | SS_ENC_AUDIO)) != (SS_ENC_VIDEO | SS_ENC_AUDIO)) {
-      BOOST_LOG(error) << "Rejecting client that cannot comply with mandatory encryption requirement"sv;
+    // 检测是否仅控制流会话（只有 control 流被设置，没有 video 和 audio）
+    session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
+    if (session.control_only) {
+      BOOST_LOG(info) << "Control-only session detected: client ["sv << session.client_name << "] will only provide input control"sv;
+    }
 
-      respond(sock, session, &option, 403, "Forbidden", req->sequenceNumber, {});
-      return;
+    // Check that any required encryption is enabled
+    // 对于仅控制流会话，跳过视频/音频加密检查
+    if (!session.control_only) {
+      auto encryption_mode = net::encryption_mode_for_address(sock.remote_endpoint().address());
+      if (encryption_mode == config::ENCRYPTION_MODE_MANDATORY &&
+          (config.encryptionFlagsEnabled & (SS_ENC_VIDEO | SS_ENC_AUDIO)) != (SS_ENC_VIDEO | SS_ENC_AUDIO)) {
+        BOOST_LOG(error) << "Rejecting client that cannot comply with mandatory encryption requirement"sv;
+
+        respond(sock, session, &option, 403, "Forbidden", req->sequenceNumber, {});
+        return;
+      }
     }
 
     auto stream_session = stream::session::alloc(config, session);

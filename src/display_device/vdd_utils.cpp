@@ -10,6 +10,7 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <filesystem>
+#include <future>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -320,7 +321,7 @@ namespace display_device {
 
     bool
     is_display_on() {
-      return !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+      return !find_device_by_friendlyname(ZAKO_NAME).empty();
     }
 
     void
@@ -343,37 +344,72 @@ namespace display_device {
         return;
       }
 
-      int result = MessageBoxW(NULL,
-        L"？只不过是创建了个虚拟显示器，看到屏幕变黑就吓得手忙脚乱了吗？\n"
-        L"杂鱼❤真是没见过世面的杂鱼大叔呢❤\n"
-        L"这可是Windows记住了你那些乱七八糟的多显示器设置才变成这样的，这完全是正常现象哦？\n"
-        L"真是的，别在那边丢人现眼地慌张了，看着好丢人。\n"
-        L"听好了，本小姐大发慈悲教你这一遍——按两次 Win+P 就能变回来了。\n"
-        L"这么简单的操作都要人教，你的脑子是装饰品吗？哼~。\n\n"
-        L"After creating a virtual display, based on Windows' remembered multi-display combination strategy, "
-        L"you may see a black screen which is normal. Don't panic. You can press Win+P twice to return to a visible display.",
-        L"❗Zako Display Notice",
-        MB_OKCANCEL | MB_ICONINFORMATION);
+      // since we enable the extended mode by default, we don't need to show the notice message
+      // constexpr auto notice_message =
+      //   L"？只不过是创建了个虚拟显示器，看到屏幕变黑就吓得手忙脚乱了吗？\n"
+      //   L"杂鱼❤真是没见过世面的杂鱼大叔呢❤\n"
+      //   L"这可是Windows记住了你那些乱七八糟的多显示器设置才变成这样的，这完全是正常现象哦？\n"
+      //   L"真是的，别在那边丢人现眼地慌张了，看着好丢人。\n"
+      //   L"听好了，本小姐大发慈悲教你这一遍——按两次 Win+P 就能变回来了。\n"
+      //   L"这么简单的操作都要人教，你的脑子是装饰品吗？哼~。\n\n"
+      //   L"After creating a virtual display, based on Windows' remembered multi-display combination strategy, "
+      //   L"you may see a black screen which is normal. Don't panic. You can press Win+P twice to return to a visible display.";
 
-      if (result == IDCANCEL) {
-        BOOST_LOG(info) << "用户取消创建虚拟显示器";
-        return;
-      }
+      // if (MessageBoxW(NULL, notice_message, L"❗Zako Display Notice", MB_OKCANCEL | MB_ICONINFORMATION) == IDCANCEL) {
+      //   BOOST_LOG(info) << "用户取消创建虚拟显示器";
+      //   return;
+      // }
 
       if (!create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
         return;
       }
 
       std::thread([]() {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        std::string vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
+        if (vdd_device_id.empty()) {
+          BOOST_LOG(warning) << "无法找到虚拟显示器设备，跳过配置";
+        }
+        else {
+          BOOST_LOG(info) << "找到虚拟显示器设备: " << vdd_device_id;
+
+          bool topology_changed = ensure_vdd_extended_mode(vdd_device_id);
+          if (topology_changed) {
+            BOOST_LOG(info) << "已确保虚拟显示器处于扩展模式";
+            // 等待系统稳定，拓扑更改可能会自动解决主屏幕问题
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          }
+
+          if (is_primary_device(vdd_device_id)) {
+            BOOST_LOG(info) << "检测到虚拟显示器是主屏幕，正在查找其他显示器并设置为主屏幕";
+
+            auto devices = enum_available_devices();
+            std::string alternative_primary;
+            for (const auto &[device_id, device_info] : devices) {
+              if (device_id != vdd_device_id && device_info.device_state != device_state_e::inactive) {
+                alternative_primary = device_id;
+                BOOST_LOG(info) << "找到替代主屏幕设备: " << device_id;
+                break;
+              }
+            }
+
+            if (!alternative_primary.empty()) {
+              if (set_as_primary_device(alternative_primary)) {
+                BOOST_LOG(info) << "成功将主屏幕设置为: " << alternative_primary;
+              }
+            }
+          }
+        }
+
         constexpr auto timeout = std::chrono::seconds(20);
         constexpr auto dialog_title = L"显示器确认";
+        constexpr auto confirm_message =
+          L"已创建虚拟显示器，是否继续使用？\n\n"
+          L"如不确认，20秒后将自动关闭显示器";
 
-        auto future = std::async(std::launch::async, []() {
-          return MessageBoxW(nullptr,
-                   L"已创建虚拟显示器，是否继续使用？\n\n"
-                   L"如不确认，20秒后将自动关闭显示器",
-                   dialog_title,
-                   MB_YESNO | MB_ICONQUESTION) == IDYES;
+        auto future = std::async(std::launch::async, [&]() {
+          return MessageBoxW(nullptr, confirm_message, dialog_title, MB_YESNO | MB_ICONQUESTION) == IDYES;
         });
 
         if (future.wait_for(timeout) == std::future_status::ready && future.get()) {
@@ -383,8 +419,7 @@ namespace display_device {
 
         BOOST_LOG(info) << "用户未确认或超时，自动销毁虚拟显示器";
 
-        HWND hwnd = FindWindowW(L"#32770", dialog_title);
-        if (hwnd && IsWindow(hwnd)) {
+        if (HWND hwnd = FindWindowW(L"#32770", dialog_title); hwnd && IsWindow(hwnd)) {
           PostMessage(hwnd, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
           PostMessage(hwnd, WM_CLOSE, 0, 0);
 
@@ -533,14 +568,14 @@ namespace display_device {
 
     bool
     set_hdr_state(bool enable_hdr) {
-      auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      auto vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
       if (vdd_device_id.empty()) {
         BOOST_LOG(debug) << "未找到虚拟显示器设备，跳过HDR状态设置";
         return true;
       }
 
       std::unordered_set<std::string> vdd_device_ids = { vdd_device_id };
-      auto current_hdr_states = display_device::get_current_hdr_states(vdd_device_ids);
+      auto current_hdr_states = get_current_hdr_states(vdd_device_ids);
 
       auto hdr_state_it = current_hdr_states.find(vdd_device_id);
       if (hdr_state_it == current_hdr_states.end()) {
@@ -560,7 +595,7 @@ namespace display_device {
       const std::string action = enable_hdr ? "启用" : "关闭";
       BOOST_LOG(info) << "正在" << action << "虚拟显示器HDR...";
 
-      if (display_device::set_hdr_states(new_hdr_states)) {
+      if (set_hdr_states(new_hdr_states)) {
         BOOST_LOG(info) << "成功" << action << "虚拟显示器HDR";
         return true;
       }

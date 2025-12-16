@@ -459,6 +459,9 @@ namespace stream {
     // Current total bitrate for this session (including FEC overhead) in Kbps
     // This is the user-configured bitrate, not the encoding bitrate
     std::atomic<int> current_total_bitrate { 0 };
+
+    // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
+    bool control_only { false };
   };
 
   /**
@@ -2138,6 +2141,7 @@ namespace stream {
 
   namespace session {
     std::atomic_uint running_sessions;
+    std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
 
     state_e
     state(session_t &session) {
@@ -2172,54 +2176,70 @@ namespace stream {
         task_pool.cancel(force_kill);
       });
 
-      BOOST_LOG(debug) << "Waiting for video to end..."sv;
-      session.videoThread.join();
-      BOOST_LOG(debug) << "Waiting for audio to end..."sv;
-      session.audioThread.join();
+      // 仅控制流会话没有视频/音频线程
+      if (!session.control_only) {
+        BOOST_LOG(debug) << "Waiting for video to end..."sv;
+        session.videoThread.join();
+        BOOST_LOG(debug) << "Waiting for audio to end..."sv;
+        session.audioThread.join();
+      }
+      else {
+        BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
+      }
       BOOST_LOG(debug) << "Waiting for control to end..."sv;
       session.controlEnd.view();
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
 
-      // If this is the last session, invoke the platform callbacks
-      if (--running_sessions == 0) {
-        // 最后一个会话结束时，确保麦克风socket已关闭
-        if (session.broadcast_ref->mic_socket_enabled.load()) {
-          session.broadcast_ref->mic_sock.close();
-          session.broadcast_ref->mic_socket_enabled.store(false);
-          session.broadcast_ref->mic_sessions_count.store(0);
-          BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
-        }
-
-        bool restore_display_state { true };
-        if (proc::proc.running()) {
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-          system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
-#endif
-
-          // TODO: make this configurable per app
-          restore_display_state = false;
-        }
-
-        if (restore_display_state) {
-          display_device::session_t::get().restore_state();
-        }
-
-        platf::streaming_will_stop();
+      // 对于仅控制流会话，只减少总会话计数，不调用 streaming_will_stop
+      // 只有当所有非控制流会话都结束时才调用 streaming_will_stop
+      if (session.control_only) {
+        --running_sessions;
+        BOOST_LOG(debug) << "Control-only session ended (remaining sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
-        // 非最后一个会话：如果当前会话启用了麦克风，减少计数
-        if (session.audio.enable_mic) {
-          int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
-          if (remaining_count == 0) {
-            // 没有会话需要麦克风了，关闭socket
+        // 非仅控制流会话：减少两个计数器
+        --running_sessions;
+        // If this is the last non-control-only session, invoke the platform callbacks
+        if (--running_non_control_only_sessions == 0) {
+          // 最后一个会话结束时，确保麦克风socket已关闭
+          if (session.broadcast_ref->mic_socket_enabled.load()) {
             session.broadcast_ref->mic_sock.close();
             session.broadcast_ref->mic_socket_enabled.store(false);
-            BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
+            session.broadcast_ref->mic_sessions_count.store(0);
+            BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
           }
-          else {
-            BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count;
+
+          bool restore_display_state { true };
+          if (proc::proc.running()) {
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+            system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
+#endif
+
+            // TODO: make this configurable per app
+            restore_display_state = false;
+          }
+
+          if (restore_display_state) {
+            display_device::session_t::get().restore_state();
+          }
+
+          platf::streaming_will_stop();
+        }
+        else {
+          // 非最后一个会话：如果当前会话启用了麦克风，减少计数
+          if (session.audio.enable_mic) {
+            int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
+            if (remaining_count == 0) {
+              // 没有会话需要麦克风了，关闭socket
+              session.broadcast_ref->mic_sock.close();
+              session.broadcast_ref->mic_socket_enabled.store(false);
+              BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
+            }
+            else {
+              BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count;
+            }
           }
         }
       }
@@ -2237,7 +2257,12 @@ namespace stream {
       }
 
       session.control.expected_peer_address = addr_string;
-      BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
+      if (session.control_only) {
+        BOOST_LOG(info) << "Starting control-only session from ["sv << addr_string << "] - will only handle input control"sv;
+      }
+      else {
+        BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
+      }
 
       // Insert this session into the session list
       {
@@ -2254,37 +2279,54 @@ namespace stream {
 
       session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
 
-      session.audioThread = std::thread { audioThread, &session };
-      session.videoThread = std::thread { videoThread, &session };
+      // 仅控制流会话不启动视频/音频线程
+      if (!session.control_only) {
+        session.audioThread = std::thread { audioThread, &session };
+        session.videoThread = std::thread { videoThread, &session };
+      }
+      else {
+        BOOST_LOG(debug) << "Control-only session: skipping video and audio thread creation"sv;
+      }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
 
-      // If this is the first session, invoke the platform callbacks
-      if (++running_sessions == 1) {
-        // 根据会话的麦克风启用标志管理麦克风socket
-        if (session.audio.enable_mic) {
-          session.broadcast_ref->mic_sessions_count.fetch_add(1);
-          session.broadcast_ref->mic_socket_enabled.store(true);
-          BOOST_LOG(debug) << "Microphone socket enabled for session";
-        }
-        else {
-          // 如果第一个会话不需要麦克风，关闭麦克风socket
-          session.broadcast_ref->mic_sock.close();
-          session.broadcast_ref->mic_socket_enabled.store(false);
-          BOOST_LOG(debug) << "Microphone socket closed (session doesn't require it)";
-        }
-
-        platf::streaming_will_start();
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-        system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
-#endif
+      // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
+      // 但它们仍然需要被计入 running_sessions，以便正确管理会话
+      if (session.control_only) {
+        // 仅控制流会话：只增加总会话计数，不调用平台回调
+        ++running_sessions;
+        BOOST_LOG(debug) << "Control-only session started (total sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
-        // 非第一个会话：如果启用麦克风，增加计数
-        if (session.audio.enable_mic) {
-          session.broadcast_ref->mic_sessions_count.fetch_add(1);
-          session.broadcast_ref->mic_socket_enabled.store(true);
-          BOOST_LOG(debug) << "Microphone socket enabled for additional session";
+        // 非仅控制流会话：增加两个计数器
+        ++running_sessions;
+        // If this is the first non-control-only session, invoke the platform callbacks
+        if (++running_non_control_only_sessions == 1) {
+          // 根据会话的麦克风启用标志管理麦克风socket
+          if (session.audio.enable_mic) {
+            session.broadcast_ref->mic_sessions_count.fetch_add(1);
+            session.broadcast_ref->mic_socket_enabled.store(true);
+            BOOST_LOG(debug) << "Microphone socket enabled for session";
+          }
+          else {
+            // 如果第一个会话不需要麦克风，关闭麦克风socket
+            session.broadcast_ref->mic_sock.close();
+            session.broadcast_ref->mic_socket_enabled.store(false);
+            BOOST_LOG(debug) << "Microphone socket closed (session doesn't require it)";
+          }
+
+          platf::streaming_will_start();
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+          system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
+#endif
+        }
+        else {
+          // 非第一个会话：如果启用麦克风，增加计数
+          if (session.audio.enable_mic) {
+            session.broadcast_ref->mic_sessions_count.fetch_add(1);
+            session.broadcast_ref->mic_socket_enabled.store(true);
+            BOOST_LOG(debug) << "Microphone socket enabled for additional session";
+          }
         }
       }
 
@@ -2372,6 +2414,8 @@ namespace stream {
       session->audio.timestamp = 0;
 
       session->audio.enable_mic = launch_session.enable_mic;
+
+      session->control_only = launch_session.control_only;
 
       session->control.peer = nullptr;
       session->state.store(state_e::STOPPED, std::memory_order_relaxed);
