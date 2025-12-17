@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <windows.h>
 
 #include "parsed_config.h"
@@ -120,7 +121,7 @@ namespace display_device::vdd_utils {
   set_hdr_state(bool enable_hdr);
 
   bool
-  ensure_vdd_extended_mode(const std::string &device_id);
+  ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve = {});
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
