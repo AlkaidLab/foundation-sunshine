@@ -7,6 +7,61 @@ namespace display_device {
 
   namespace {
     /**
+     * @brief 基于当前可用的显示设备，尝试为目标拓扑补全那些当前不在拓扑中但仍然“存在”的显示器。
+     *
+     * Windows 会在内部记住某些曾经使用过的「仅启用某屏」拓扑，导致部分物理显示器被标记为 inactive，
+     * 之后我们的组合计算又只基于当前活动拓扑 `get_current_topology()` 来排布，结果就永远不会再把这些
+     * inactive 显示器重新拉起来。
+     *
+     * 这里我们通过 `enum_available_devices()` 获取所有可用设备（包含 inactive），将那些：
+     *   - 出现在可用设备列表中；
+     *   - 当前不在目标拓扑中；
+     *   - 设备状态为 inactive；
+     * 的设备以独立分组的形式追加到拓扑尾部，从而“尽可能地把那些找不到的显示器开起来”。
+     *
+     * @param base_topology 已根据配置计算出的目标拓扑。
+     * @param requested_device_id 当前配置中要保证激活的设备 id（目前仅用于日志，逻辑上不强依赖）。
+     * @return 补全后的拓扑；若无需补全或补全后拓扑非法，则返回原始拓扑。
+     */
+    active_topology_t
+    augment_topology_with_inactive_devices(const active_topology_t &base_topology, const std::string &requested_device_id) {
+      // 先拷贝一份作为候选结果
+      active_topology_t augmented_topology { base_topology };
+
+      // 收集当前拓扑中的设备 id，避免重复添加
+      const auto existing_ids { get_device_ids_from_topology(augmented_topology) };
+
+      const auto available_devices { enum_available_devices() };
+      if (available_devices.empty()) {
+        return base_topology;
+      }
+
+      for (const auto &[device_id, info] : available_devices) {
+        // 已经在拓扑中的设备不需要再处理
+        if (existing_ids.count(device_id) > 0) {
+          continue;
+        }
+
+        // 只尝试拉起处于 inactive 状态的设备
+        if (info.device_state != device_state_e::inactive) {
+          continue;
+        }
+
+        BOOST_LOG(debug) << "Augmenting topology for requested device " << requested_device_id
+                         << " by adding inactive display device: " << device_id;
+        augmented_topology.push_back({ device_id });
+      }
+
+      // 如果补全后的拓扑不合法，则保守地退回原始拓扑，避免把系统弄到奇怪状态
+      if (!augmented_topology.empty() && !is_topology_valid(augmented_topology)) {
+        BOOST_LOG(warning) << "Augmented display topology is invalid, falling back to original topology.";
+        return base_topology;
+      }
+
+      return augmented_topology;
+    }
+
+    /**
      * @brief Get all device ids that belong in the same group as provided ids (duplicated displays).
      * @param device_id Device id to search for in the topology.
      * @param topology Topology to search.
@@ -204,7 +259,13 @@ namespace display_device {
       // user has changed the settings while the stream was paused. For the proper "evaluation" order,
       // see logic outside this conditional.
       const auto prev_duplicated_devices { get_duplicate_devices(requested_device_id, previously_configured_topology->initial) };
-      const auto prev_final_topology { determine_final_topology(config.device_prep, primary_device_requested, prev_duplicated_devices, previously_configured_topology->initial) };
+      auto prev_final_topology { determine_final_topology(config.device_prep, primary_device_requested, prev_duplicated_devices, previously_configured_topology->initial) };
+
+      // 与当前实现保持一致：在非「仅启用」模式下，也对“历史期望拓扑”做一次补全，
+      // 这样在比较是否需要回滚时，不会因为我们额外补上的 inactive 设备导致无意义的回滚与再次切换。
+      if (config.device_prep != parsed_config_t::device_prep_e::ensure_only_display) {
+        prev_final_topology = augment_topology_with_inactive_devices(prev_final_topology, requested_device_id);
+      }
 
       // There is also an edge case where we can have a different number of primary duplicated devices, which wasn't the case
       // during the initial topology configuration. If the user requested to use the primary device,
@@ -213,7 +274,11 @@ namespace display_device {
       // same final topology as the prev_final_topology.
       const auto current_topology { get_current_topology() };
       const auto duplicated_devices { get_duplicate_devices(requested_device_id, current_topology) };
-      const auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, current_topology) };
+      auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, current_topology) };
+
+      if (config.device_prep != parsed_config_t::device_prep_e::ensure_only_display) {
+        final_topology = augment_topology_with_inactive_devices(final_topology, requested_device_id);
+      }
 
       // If the topology we are switching to is the same as the final topology we had before, that means
       // user did not change anything, and we don't need to revert changes.
@@ -240,7 +305,12 @@ namespace display_device {
     // in mind that it could belong to a duplicated display and thus all of them
     // need to be taken into account, which complicates everything...
     auto duplicated_devices { get_duplicate_devices(requested_device_id, current_topology) };
-    const auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, current_topology) };
+    auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, current_topology) };
+
+    // 如果当前不是「仅启用」模式，则尝试基于 Windows 记忆的可用设备，把 inactive 的物理显示器尽量拉回拓扑
+    if (config.device_prep != parsed_config_t::device_prep_e::ensure_only_display) {
+      final_topology = augment_topology_with_inactive_devices(final_topology, requested_device_id);
+    }
 
     BOOST_LOG(debug) << "Current display topology: " << to_string(current_topology);
     if (!is_topology_the_same(current_topology, final_topology)) {
