@@ -1063,6 +1063,16 @@ namespace rtsp_stream {
       config.monitor.enableIntraRefresh = util::from_view(args.at("x-ss-video[0].intraRefresh"sv));
 
       configuredBitrateKbps = util::from_view(args.at("x-ml-video.configuredBitrateKbps"sv));
+      
+      // Set display_name from session environment or use global configuration
+      if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+        config.monitor.display_name = it->to_string();
+        BOOST_LOG(info) << "Session using specified display: " << config.monitor.display_name;
+      }
+      else {
+        // Use global configuration if not specified by session
+        config.monitor.display_name = config::video.output_name;
+      }
     }
     catch (std::out_of_range &) {
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});

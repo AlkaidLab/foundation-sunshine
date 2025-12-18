@@ -1319,7 +1319,32 @@ namespace video {
     std::vector<std::string> display_names;
     int display_p = -1;
     refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
-    auto disp = platf::display(encoder.platform_formats->dev_type, display_names[display_p], capture_ctxs.front().config);
+    
+    // Use client-specified display_name if provided, otherwise use the selected display
+    std::string target_display_name;
+    const auto &config = capture_ctxs.front().config;
+    if (!config.display_name.empty()) {
+      // Try to find the client-specified display in the list
+      bool found = false;
+      for (int x = 0; x < display_names.size(); ++x) {
+        if (display_names[x] == config.display_name) {
+          display_p = x;
+          target_display_name = config.display_name;
+          found = true;
+          BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
+          break;
+        }
+      }
+      if (!found) {
+        BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+        target_display_name = display_names[display_p];
+      }
+    }
+    else {
+      target_display_name = display_names[display_p];
+    }
+    
+    auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
     if (!disp) {
       return;
     }
@@ -1512,8 +1537,27 @@ namespace video {
               display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
             }
 
+            // Use client-specified display_name if provided
+            const auto &config = capture_ctxs.front().config;
+            std::string target_display_name = display_names[display_p];
+            if (!config.display_name.empty()) {
+              // Try to find the client-specified display in the list
+              bool found = false;
+              for (int x = 0; x < display_names.size(); ++x) {
+                if (display_names[x] == config.display_name) {
+                  display_p = x;
+                  target_display_name = config.display_name;
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) {
+                BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+              }
+            }
+
             // reset_display() will sleep between retries
-            reset_display(disp, encoder.platform_formats->dev_type, display_names[display_p], capture_ctxs.front().config);
+            reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
               break;
             }
@@ -2457,8 +2501,27 @@ namespace video {
         display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
       }
 
+      // Use client-specified display_name if provided
+      const auto &config = synced_session_ctxs.front()->config;
+      std::string target_display_name = display_names[display_p];
+      if (!config.display_name.empty()) {
+        // Try to find the client-specified display in the list
+        bool found = false;
+        for (int x = 0; x < display_names.size(); ++x) {
+          if (display_names[x] == config.display_name) {
+            display_p = x;
+            target_display_name = config.display_name;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+        }
+      }
+
       // reset_display() will sleep between retries
-      reset_display(disp, encoder.platform_formats->dev_type, display_names[display_p], synced_session_ctxs.front()->config);
+      reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
         break;
       }

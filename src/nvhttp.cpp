@@ -12,6 +12,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 // lib includes
@@ -26,6 +27,7 @@
 
 // local includes
 #include "config.h"
+#include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "globals.h"
@@ -389,6 +391,13 @@ namespace nvhttp {
     launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
     launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
     launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
+
+    // Get display_name from query parameter if provided
+    std::string display_name = get_arg(args, "display_name", "");
+    if (!display_name.empty()) {
+      launch_session->env["SUNSHINE_CLIENT_DISPLAY_NAME"] = display_name;
+      BOOST_LOG(info) << "Launch session will use specified display: " << display_name;
+    }
 
     // Encrypted RTSP is enabled with client reported corever >= 1
     auto corever = util::from_view(get_arg(args, "corever", "0"));
@@ -1623,6 +1632,88 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
+  void
+  get_displays(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    json response_json;
+    response_json["status_code"] = 200;
+    response_json["status_message"] = "OK";
+
+    try {
+      // Get display names using platform-specific device types
+      std::vector<std::string> display_names;
+      
+#ifdef _WIN32
+      display_names = platf::display_names(platf::mem_type_e::dxgi);
+#elif defined(__linux__)
+      for (auto mem_type : {platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system}) {
+        display_names = platf::display_names(mem_type);
+        if (!display_names.empty()) break;
+      }
+#elif defined(__APPLE__)
+      display_names = platf::display_names(platf::mem_type_e::videotoolbox);
+#else
+      display_names = platf::display_names(platf::mem_type_e::system);
+#endif
+
+      json displays_array = json::array();
+      
+#ifdef _WIN32
+      // On Windows, try to get friendly names from display_device API
+      std::unordered_map<std::string, std::string> friendly_name_map;
+      try {
+        auto devices = display_device::enum_available_devices();
+        for (const auto &[device_id, device_info] : devices) {
+          std::string name = display_device::get_display_name(device_id);
+          if (!name.empty()) {
+            friendly_name_map[name] = display_device::get_display_friendly_name(device_id);
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Failed to get display friendly names: " << e.what();
+      }
+      
+      for (size_t i = 0; i < display_names.size(); ++i) {
+        const std::string &name = display_names[i];
+        auto it = friendly_name_map.find(name);
+        displays_array.push_back({
+          {"index", static_cast<int>(i)},
+          {"display_name", name},
+          {"device_id", name},
+          {"friendly_name", (it != friendly_name_map.end() && !it->second.empty()) ? it->second : name}
+        });
+      }
+#else
+      for (size_t i = 0; i < display_names.size(); ++i) {
+        const std::string &name = display_names[i];
+        displays_array.push_back({
+          {"index", static_cast<int>(i)},
+          {"display_name", name},
+          {"device_id", name},
+          {"friendly_name", name}
+        });
+      }
+#endif
+
+      response_json["displays"] = displays_array;
+      response_json["count"] = static_cast<int>(display_names.size());
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Error getting display list: " << e.what();
+      response_json["status_code"] = 500;
+      response_json["status_message"] = "Internal server error";
+      response_json["displays"] = json::array();
+      response_json["count"] = 0;
+    }
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+    response->close_connection_after_response = true;
+  }
+
   void setup(const std::string &pkey, const std::string &cert) {
     conf_intern.pkey = pkey;
     conf_intern.servercert = cert;
@@ -1729,6 +1820,7 @@ namespace nvhttp {
     https_server.resource["^/pair$"]["GET"] = [&add_cert](auto resp, auto req) { pair<SunshineHTTPS>(add_cert, resp, req); };
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
+    https_server.resource["^/displays$"]["GET"] = get_displays;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
     https_server.resource["^/cancel$"]["GET"] = cancel;

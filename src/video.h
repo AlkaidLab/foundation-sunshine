@@ -76,6 +76,10 @@ namespace video {
     int frameRateNum = 0;  // Framerate numerator (0 = use integer framerate)
     int frameRateDen = 1;  // Framerate denominator
 
+    // Display name for screen capture (specified by client)
+    // If empty, use the default display from global configuration
+    std::string display_name;
+
     // Helper to get effective framerate as double
     double get_effective_framerate() const {
       if (frameRateNum > 0 && frameRateDen > 0) {

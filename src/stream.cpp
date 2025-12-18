@@ -2113,6 +2113,8 @@ namespace stream {
       session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
+    // Debug: Log the display_name before calling video::capture
+    BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
     video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
   }
 
