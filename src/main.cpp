@@ -304,6 +304,11 @@ main(int argc, char *argv[]) {
     // Break out of the main loop
     shutdown_event->raise(true);
     system_tray::end_tray();
+    try {
+      display_device::session_t::get().restore_state();
+    }
+    catch (...) {
+    }
 
     display_device_deinit_guard = nullptr;
   });
@@ -321,6 +326,11 @@ main(int argc, char *argv[]) {
     // Break out of the main loop
     shutdown_event->raise(true);
     system_tray::end_tray();
+    try {
+      display_device::session_t::get().restore_state();
+    }
+    catch (...) {
+    }
 
     display_device_deinit_guard = nullptr;
   });

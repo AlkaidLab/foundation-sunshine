@@ -128,9 +128,9 @@ namespace display_device {
   };
 
   session_t::deinit_t::~deinit_t() {
-    // Stop vdd timer before destruction
-    // session_t::get().vdd_timer->setup_timer(nullptr);
-    session_t::get().restore_state();
+    // 不在析构函数中调用 restore_state()
+    // 原因：析构函数在程序退出时被调用，此时 boost::log、timer 等资源可能已被销毁
+    // 解决方案：在 main.cpp 的信号处理程序中显式调用 restore_state()
   }
 
   session_t &

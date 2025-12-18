@@ -208,11 +208,6 @@ namespace {
 using namespace std::literals;
 
 namespace platf::audio {
-  template <class T>
-  void
-  Release(T *p) {
-    p->Release();
-  }
 
   template <class T>
   void

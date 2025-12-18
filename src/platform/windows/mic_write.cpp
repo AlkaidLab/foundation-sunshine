@@ -35,13 +35,6 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0
 DEFINE_PROPERTYKEY(PKEY_DeviceInterface_FriendlyName, 0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22, 2);
 
 namespace platf::audio {
-  template <class T>
-  void
-  Release(T *p) {
-    if (p) {
-      p->Release();
-    }
-  }
 
   template <class T>
   void
@@ -91,13 +84,26 @@ namespace platf::audio {
       UINT32 padding = 0;
       HRESULT status = audio_client->GetBufferSize(&bufferFrameCount);
       if (SUCCEEDED(status)) {
-        // 等待缓冲区完全清空
-        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0) {
+        // 等待缓冲区完全清空，最多等待 500ms
+        int max_wait = 50;
+        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0 && max_wait-- > 0) {
           Sleep(10);
         }
-        BOOST_LOG(debug) << "Audio buffer cleared, padding: " << padding;
       }
     }
+
+    // COM 接口释放顺序很重要：
+    // 1. audio_render (从 audio_client 获取的子接口)
+    // 2. audio_client
+    // 3. device_enum
+    if (audio_render) {
+      audio_render->Release();
+      audio_render = nullptr;
+    }
+
+    // 显式释放 audio_client 和 device_enum，确保正确的释放顺序
+    audio_client.reset();
+    device_enum.reset();
 
     if (opus_decoder) {
       opus_decoder_destroy(opus_decoder);
@@ -109,7 +115,7 @@ namespace platf::audio {
       mmcss_task_handle = nullptr;
     }
 
-    BOOST_LOG(info) << "Mic write device cleanup completed";
+    // 注意: 不在析构函数的 cleanup 中使用 BOOST_LOG，避免静态对象析构顺序问题
   }
 
   capture_e

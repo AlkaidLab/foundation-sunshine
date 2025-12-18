@@ -19,6 +19,16 @@
 struct OpusDecoder;
 
 namespace platf::audio {
+  
+  // COM interface Release helper for safe_ptr
+  template<typename T>
+  inline void Release(T *p) {
+    if (p) p->Release();
+  }
+  
+  // COM interface smart pointer types
+  using device_enum_t = util::safe_ptr<IMMDeviceEnumerator, Release<IMMDeviceEnumerator>>;
+  using audio_client_t = util::safe_ptr<IAudioClient, Release<IAudioClient>>;
 
   // Forward declarations for types used in mic_write_wasapi_t
   enum class match_field_e {
@@ -172,8 +182,8 @@ namespace platf::audio {
     restore_original_input_device();
 
     // Member variables
-    std::unique_ptr<IMMDeviceEnumerator> device_enum;
-    std::unique_ptr<IAudioClient> audio_client;
+    device_enum_t device_enum;
+    audio_client_t audio_client;
     IAudioRenderClient *audio_render = nullptr;
     OpusDecoder *opus_decoder = nullptr;
     HANDLE mmcss_task_handle = nullptr;
