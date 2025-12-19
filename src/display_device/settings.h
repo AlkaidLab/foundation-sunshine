@@ -10,6 +10,17 @@
 namespace display_device {
 
   /**
+   * @brief Reason for reverting display settings.
+   * @note Used to distinguish different scenarios when reverting settings.
+   */
+  enum class revert_reason_e {
+    stream_ended,      /**< Reverting after stream ended (normal cleanup). */
+    topology_switch,   /**< Reverting before topology switch during config application. */
+    config_cleanup,    /**< Cleaning up when no modifications are needed. */
+    persistence_reset  /**< Resetting persistence data. */
+  };
+
+  /**
    * @brief A platform specific class that can apply configuration to the display device and later revert it.
    *
    * Main goals of this class:
@@ -146,6 +157,7 @@ namespace display_device {
 
     /**
      * @brief Revert the applied configuration and restore the previous settings.
+     * @param reason The reason for reverting settings, used to determine appropriate cleanup behavior.
      * @note It automatically loads the settings from persistence file if cached settings do not exist.
      * @returns True if settings were reverted or there was nothing to revert, false otherwise.
      *
@@ -158,12 +170,12 @@ namespace display_device {
      * const auto result = settings.apply_config(video_config, *launch_session);
      * if (result) {
      *   // Wait for some time
-     *   settings.revert_settings();
+     *   settings.revert_settings(revert_reason_e::stream_ended);
      * }
      * ```
      */
     bool
-    revert_settings();
+    revert_settings(revert_reason_e reason = revert_reason_e::stream_ended);
 
     /**
      * @brief Reset the persistence and currently held initial display state.

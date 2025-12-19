@@ -2085,10 +2085,56 @@ namespace platf::dxgi {
 
   std::unique_ptr<nvenc_encode_device_t>
   display_vram_t::make_nvenc_encode_device(pix_fmt_e pix_fmt) {
+    // For hybrid graphics laptops, NVENC encoder requires NVIDIA GPU,
+    // but display capture may use integrated graphics (built-in screen).
+    // We need to find the NVIDIA adapter for encoding, not the capture adapter.
+    adapter_t::pointer nvenc_adapter_p = nullptr;
+    adapter_t nvenc_adapter;  // Smart pointer to manage adapter lifetime if we find a different one
+    
+    // Check if current adapter is NVIDIA
+    DXGI_ADAPTER_DESC adapter_desc;
+    adapter->GetDesc(&adapter_desc);
+    
+    if (adapter_desc.VendorId == 0x10de) {  // NVIDIA
+      // Current adapter is already NVIDIA, use it
+      nvenc_adapter_p = adapter.get();
+    }
+    else {
+      // Current adapter is not NVIDIA (likely integrated graphics),
+      // find the NVIDIA adapter for encoding
+      factory1_t factory;
+      HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
+      if (SUCCEEDED(status)) {
+        adapter_t::pointer adapter_p;
+        for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+          dxgi::adapter_t adapter_tmp { adapter_p };
+          DXGI_ADAPTER_DESC1 adapter_desc1;
+          adapter_tmp->GetDesc1(&adapter_desc1);
+          
+          if (adapter_desc1.VendorId == 0x10de) {  // NVIDIA
+            // Found NVIDIA adapter, use it
+            nvenc_adapter = std::move(adapter_tmp);
+            nvenc_adapter_p = nvenc_adapter.get();
+            BOOST_LOG(info) << "Found NVIDIA GPU for NVENC encoding: " << platf::to_utf8(adapter_desc1.Description)
+                            << " (display capture uses: " << platf::to_utf8(adapter_desc.Description) << ")";
+            break;
+          }
+        }
+      }
+      
+      if (!nvenc_adapter_p) {
+        BOOST_LOG(error) << "Failed to find NVIDIA GPU adapter for NVENC encoding. "
+                         << "Current adapter (VendorId: 0x" << util::hex(adapter_desc.VendorId).to_string_view()
+                         << ") does not support NVENC.";
+        return nullptr;
+      }
+    }
+    
     auto device = std::make_unique<d3d_nvenc_encode_device_t>();
-    if (!device->init_device(shared_from_this(), adapter.get(), pix_fmt)) {
+    if (!device->init_device(shared_from_this(), nvenc_adapter_p, pix_fmt)) {
       return nullptr;
     }
+    
     return device;
   }
 

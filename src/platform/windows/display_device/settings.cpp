@@ -638,7 +638,7 @@ namespace display_device {
       // to the topology we want to modify before we actually start applying settings.
       const auto topology_result { handle_device_topology_configuration(config, previously_configured_topology, [&]() {
         const bool audio_sink_was_captured { audio_data != nullptr };
-        if (!revert_settings()) {
+        if (!revert_settings(revert_reason_e::topology_switch)) {
           failed_while_reverting_settings = true;
           return false;
         }
@@ -682,7 +682,7 @@ namespace display_device {
           }
         }
         else if (persistent_data) {
-          if (!revert_settings()) {
+          if (!revert_settings(revert_reason_e::config_cleanup)) {
             // Sanity check, as the revert_settings should always pass
             // at this point since our settings contain no modifications.
             return { apply_result_t::result_e::revert_fail };
@@ -791,7 +791,11 @@ namespace display_device {
   }
 
   bool
-  settings_t::revert_settings() {
+  settings_t::revert_settings(revert_reason_e reason) {
+    static const char *reason_strs[] = { "串流结束", "拓扑切换", "配置清理", "重置持久化" };
+    const char *reason_str = reason_strs[static_cast<int>(reason)];
+    BOOST_LOG(info) << "正在恢复显示设备设置 (原因: " << reason_str << ")";
+
     // 加载持久化设置数据
     if (!persistent_data) {
       BOOST_LOG(info) << "加载显示设备持久化设置";
@@ -800,15 +804,11 @@ namespace display_device {
 
     // 如果存在持久化数据，尝试恢复设置
     if (persistent_data) {
-      BOOST_LOG(info) << "正在恢复显示设备设置";
-
-      // 尝试恢复设置（仅当未启用VDD偏好时）
+      // 尝试恢复设置
       bool data_updated { false };
-      if (!config::video.preferUseVdd && !try_revert_settings(*persistent_data, data_updated)) {
-        // 如果数据已更新，保存设置
-        if (data_updated) {
+      if (!try_revert_settings(*persistent_data, data_updated)) {
+        if (data_updated)
           save_settings(filepath, *persistent_data);  // 忽略返回值
-        }
 
         BOOST_LOG(fatal) << "恢复显示设备设置失败！建议立即使用重置记忆术~";
       }
@@ -817,32 +817,33 @@ namespace display_device {
       remove_file(filepath);
       persistent_data = nullptr;
 
-      // 释放音频数据（如果存在）
-      if (audio_data) {
-        BOOST_LOG(debug) << "释放捕获的音频接收器";
-        audio_data = nullptr;
+      // 释放音频数据
+      if (reason != revert_reason_e::topology_switch) {
+        if (audio_data) {
+          BOOST_LOG(debug) << "释放捕获的音频接收器";
+          audio_data = nullptr;
+        }
       }
 
       BOOST_LOG(info) << "显示设备配置已恢复";
     }
 
-    auto &session = display_device::session_t::get();
-    auto devices = display_device::enum_available_devices();
-    if (devices.size() > 1 && session.is_display_on()) {
-      BOOST_LOG(info) << "Multiple displays detected, closing VDD";
-      session.destroy_vdd_monitor();
-    }
-    else if (devices.size() < 1) {
-      // headless host case
-      BOOST_LOG(info) << "No display device found, creating Zako Monitor";
-      session.create_vdd_monitor("");
-
-      // wait for the display device to be created
-      constexpr int max_attempts = 5;
-      constexpr auto wait_time = std::chrono::milliseconds(233);
-
-      for (int i = 0; i < max_attempts && !session.is_display_on(); ++i) {
-        std::this_thread::sleep_for(wait_time);
+    // 仅在串流结束时处理VDD管理
+    if (reason == revert_reason_e::stream_ended) {
+      auto &session = display_device::session_t::get();
+      auto devices = display_device::enum_available_devices();
+      if (devices.size() > 1 && session.is_display_on()) {
+        BOOST_LOG(info) << "Multiple displays detected, closing VDD";
+        session.destroy_vdd_monitor();
+      }
+      else if (devices.empty()) {
+        // headless host case
+        BOOST_LOG(info) << "No display device found, creating Zako Monitor";
+        session.create_vdd_monitor("");
+        constexpr int max_attempts = 5;
+        constexpr auto wait_time = std::chrono::milliseconds(233);
+        for (int i = 0; i < max_attempts && !session.is_display_on(); ++i)
+          std::this_thread::sleep_for(wait_time);
       }
     }
 
@@ -852,7 +853,7 @@ namespace display_device {
   void
   settings_t::reset_persistence() {
     BOOST_LOG(info) << "Purging persistent display device data (trying to reset settings one last time).";
-    if (persistent_data && !revert_settings()) {
+    if (persistent_data && !revert_settings(revert_reason_e::persistence_reset)) {
       BOOST_LOG(info) << "Failed to revert settings - proceeding to reset persistence.";
     }
 

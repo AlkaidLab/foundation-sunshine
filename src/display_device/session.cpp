@@ -422,7 +422,7 @@ namespace display_device {
       return;
     }
 
-    if (!settings.is_changing_settings_going_to_fail() && settings.revert_settings()) {
+    if (!settings.is_changing_settings_going_to_fail() && settings.revert_settings(revert_reason_e::stream_ended)) {
       stop_timer_and_clear_vdd_state();
     }
     else {
@@ -447,7 +447,7 @@ namespace display_device {
         }
 
         // 只恢复一次
-        auto result = settings.revert_settings();
+        auto result = settings.revert_settings(revert_reason_e::stream_ended);
         BOOST_LOG(info) << "尝试恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
         clear_vdd_state();
         return true;

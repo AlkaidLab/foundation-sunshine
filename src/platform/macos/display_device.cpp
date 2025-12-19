@@ -104,8 +104,9 @@ namespace display_device {
   }
 
   bool
-  settings_t::revert_settings() {
+  settings_t::revert_settings(revert_reason_e reason) {
     // Not implemented
+    (void)reason;  // Unused parameter
     return true;
   }
 
