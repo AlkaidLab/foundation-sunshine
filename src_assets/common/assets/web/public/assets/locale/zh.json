@@ -9,6 +9,7 @@
     "copied": "已复制到剪贴板",
     "copy": "复制",
     "delete": "删除",
+    "description": "说明",
     "disabled": "禁用",
     "disabled_def": "禁用（默认）",
     "dismiss": "忽略",
@@ -55,6 +56,7 @@
     "detached_cmds_add": "添加独立命令",
     "detached_cmds_desc": "在后台运行的命令列表",
     "detached_cmds_note": "如果可执行文件路径包含空格，请用引号括起来。",
+    "detached_cmds_remove": "删除独立命令",
     "edit": "编辑",
     "env_app_id": "应用 ID",
     "env_app_name": "应用名称",
@@ -556,7 +558,10 @@
     "unknown_client": "未知客户端",
     "unpair_all_confirm": "您确定要取消所有客户端的配对吗？此操作无法撤销。",
     "unsaved_changes": "未保存的更改",
-    "warning_msg": "请确保您可以掌控您正在配对的客户端。该软件可以完全控制您的计算机，请务必小心！"
+    "warning_msg": "请确保您可以掌控您正在配对的客户端。该软件可以完全控制您的计算机，请务必小心！",
+    "client_settings_info": "提示：",
+    "device_size_info": "根据客户端设备的屏幕大小选择合适的类型（小-手机、中-平板、大-电视），以优化串流画质和触控交互体验。",
+    "hdr_profile_info": "为该客户端指定 HDR 色彩配置文件（ICC 文件），确保 HDR 内容正确显示。若使用最新版客户端，支持自动同步亮度信息至主机虚拟屏幕，将此项留空即可启用自动同步。"
   },
   "resource_card": {
     "github_discussions": "Github 讨论区",

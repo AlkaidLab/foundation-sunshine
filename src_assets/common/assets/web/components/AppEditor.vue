@@ -162,30 +162,48 @@
                   <div class="field-hint">{{ t('apps.global_prep_desc') }}</div>
                 </div>
 
-                <CommandTable
-                  :commands="formData['prep-cmd']"
-                  :platform="platform"
-                  type="prep"
-                  @add-command="addPrepCommand"
-                  @remove-command="removePrepCommand"
-                  @order-changed="handlePrepCommandOrderChanged"
-                />
+                <div class="form-group-enhanced">
+                  <label class="form-label-enhanced">{{ t('apps.cmd_prep_name') }}</label>
+                  <div class="field-hint mb-3">{{ t('apps.cmd_prep_desc') }}</div>
+                  <CommandTable
+                    :commands="formData['prep-cmd']"
+                    :platform="platform"
+                    type="prep"
+                    @add-command="addPrepCommand"
+                    @remove-command="removePrepCommand"
+                    @order-changed="handlePrepCommandOrderChanged"
+                  />
+                </div>
 
-                <CommandTable
-                  :commands="formData['menu-cmd']"
-                  :platform="platform"
-                  type="menu"
-                  @add-command="addMenuCommand"
-                  @remove-command="removeMenuCommand"
-                  @test-command="testMenuCommand"
-                  @order-changed="handleMenuCommandOrderChanged"
-                />
+                <div class="form-group-enhanced">
+                  <label class="form-label-enhanced">{{ t('apps.menu_cmd_name') }}</label>
+                  <div class="field-hint mb-3">{{ t('apps.menu_cmd_desc') }}</div>
+                  <CommandTable
+                    :commands="formData['menu-cmd']"
+                    :platform="platform"
+                    type="menu"
+                    @add-command="addMenuCommand"
+                    @remove-command="removeMenuCommand"
+                    @test-command="testMenuCommand"
+                    @order-changed="handleMenuCommandOrderChanged"
+                  />
+                </div>
 
-                <DetachedCommands
-                  :commands="formData.detached"
-                  @add-command="addDetachedCommand"
-                  @remove-command="removeDetachedCommand"
-                />
+                <div class="form-group-enhanced">
+                  <label class="form-label-enhanced">{{ t('apps.detached_cmds') }}</label>
+                  <div class="field-hint mb-3">
+                    {{ t('apps.detached_cmds_desc') }}<br>
+                    <strong>{{ t('_common.note') }}</strong> {{ t('apps.detached_cmds_note') }}
+                  </div>
+                  <CommandTable
+                    :commands="formData.detached"
+                    :platform="platform"
+                    type="detached"
+                    @add-command="addDetachedCommand"
+                    @remove-command="removeDetachedCommand"
+                    @order-changed="handleDetachedCommandOrderChanged"
+                  />
+                </div>
               </AccordionItem>
 
               <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
@@ -268,7 +286,6 @@ import { useI18n } from 'vue-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
 import CommandTable from './CommandTable.vue'
-import DetachedCommands from './DetachedCommands.vue'
 import ImageSelector from './ImageSelector.vue'
 import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
@@ -532,6 +549,10 @@ const addDetachedCommand = () => {
 
 const removeDetachedCommand = (index) => {
   formData.value.detached.splice(index, 1)
+}
+
+const handleDetachedCommandOrderChanged = (newOrder) => {
+  formData.value.detached = newOrder
 }
 
 const updateImage = (imagePath) => {

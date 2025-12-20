@@ -9,6 +9,7 @@
     "copied": "Copied to clipboard",
     "copy": "Copy",
     "delete": "Delete",
+    "description": "Description",
     "disabled": "Disabled",
     "disabled_def": "Disabled (default)",
     "dismiss": "Dismiss",
@@ -55,6 +56,7 @@
     "detached_cmds_add": "Add Detached Command",
     "detached_cmds_desc": "A list of commands to be run in the background.",
     "detached_cmds_note": "If the path to the command executable contains spaces, you must enclose it in quotes.",
+    "detached_cmds_remove": "Remove Detached Command",
     "edit": "Edit",
     "env_app_id": "App ID",
     "env_app_name": "App Name",
@@ -556,7 +558,10 @@
     "unknown_client": "Unknown Client",
     "unpair_all_confirm": "Are you sure you want to unpair all clients? This action cannot be undone.",
     "unsaved_changes": "Unsaved changes",
-    "warning_msg": "Make sure you have access to the client you are pairing with. This software can give total control to your computer, so be careful!"
+    "warning_msg": "Make sure you have access to the client you are pairing with. This software can give total control to your computer, so be careful!",
+    "client_settings_info": "Tip:",
+    "device_size_info": "<strong>Device Size</strong>: Set the screen size type of the client device (Small - Phone, Medium - Tablet, Large - TV) to optimize streaming experience and touch operations.",
+    "hdr_profile_info": "<strong>HDR Profile</strong>: Select the HDR color profile (ICC file) used for this client to ensure HDR content is displayed correctly on the device. If using the latest client, support automatic synchronization of brightness information to the host virtual screen, leave this field blank to enable automatic synchronization."
   },
   "resource_card": {
     "github_discussions": "GitHub Discussions",

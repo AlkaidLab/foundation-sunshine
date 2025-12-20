@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import Checkbox from '../../components/Checkbox.vue'
+import CommandTable from '../../components/CommandTable.vue'
 
 const props = defineProps({
   platform: String,
@@ -25,6 +26,11 @@ function addCmd() {
 
 function removeCmd(index) {
   globalPrepCmd.value.splice(index, 1)
+}
+
+function handleCommandOrderChanged(newOrder) {
+  // 更新命令顺序
+  globalPrepCmd.value.splice(0, globalPrepCmd.value.length, ...newOrder)
 }
 </script>
 
@@ -83,55 +89,18 @@ function removeCmd(index) {
     </div>
 
     <!-- Global Prep Commands -->
-    <div id="global_prep_cmd" class="mb-3 d-flex flex-column">
+    <div class="mb-3">
       <label class="form-label">{{ $t('config.global_prep_cmd') }}</label>
       <div class="form-text">{{ $t('config.global_prep_cmd_desc') }}</div>
-      <table class="table" v-if="globalPrepCmd.length > 0">
-        <thead>
-          <tr>
-            <th scope="col"><i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}</th>
-            <th scope="col"><i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}</th>
-            <th scope="col" v-if="platform === 'windows'">
-              <i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}
-            </th>
-            <th scope="col"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(c, i) in globalPrepCmd" :key="i">
-            <td>
-              <input type="text" class="form-control monospace" v-model="c.do" />
-            </td>
-            <td>
-              <input type="text" class="form-control monospace" v-model="c.undo" />
-            </td>
-            <td v-if="platform === 'windows'">
-              <div class="form-check">
-                <input
-                  type="checkbox"
-                  class="form-check-input"
-                  :id="'prep-cmd-admin-' + i"
-                  v-model="c.elevated"
-                  true-value="true"
-                  false-value="false"
-                />
-                <label :for="'prep-cmd-admin-' + i" class="form-check-label">{{ $t('config.elevated') }}</label>
-              </div>
-            </td>
-            <td>
-              <button class="btn btn-danger" @click="removeCmd(i)">
-                <i class="fas fa-trash"></i>
-              </button>
-              <button class="btn btn-success" @click="addCmd">
-                <i class="fas fa-plus"></i>
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <button class="ms-0 mt-2 btn btn-success" style="margin: 0 auto" @click="addCmd">
-        &plus; {{ $t('config.add') }}
-      </button>
+      <CommandTable
+        class="mt-3"
+        :commands="globalPrepCmd"
+        :platform="platform"
+        type="prep"
+        @add-command="addCmd"
+        @remove-command="removeCmd"
+        @order-changed="handleCommandOrderChanged"
+      />
     </div>
 
     <!-- Notify Pre-Releases -->

@@ -9,6 +9,7 @@
     "copied": "已複製到剪貼板",
     "copy": "複製",
     "delete": "刪除",
+    "description": "說明",
     "disabled": "已停用",
     "disabled_def": "已停用（預設）",
     "dismiss": "關閉",
@@ -559,7 +560,10 @@
     "unknown_client": "未知的用戶端",
     "unpair_all_confirm": "您確定要取消所有用戶端的配對嗎？此操作無法復原。",
     "unsaved_changes": "未儲存的變更",
-    "warning_msg": "請確保您可以存取要配對的用戶端。此軟體可讓對方完全控制您的電腦，請小心使用！"
+    "warning_msg": "請確保您可以存取要配對的用戶端。此軟體可讓對方完全控制您的電腦，請小心使用！",
+    "client_settings_info": "提示：",
+    "device_size_info": "<strong>裝置尺寸</strong>：設定用戶端裝置的螢幕尺寸類型（小-手機、中-平板、大-電視），用於優化串流體驗和觸控操作。",
+    "hdr_profile_info": "<strong>HDR 設定檔</strong>：選擇用於該用戶端的 HDR 色彩設定檔（ICC 檔案），可確保 HDR 內容在該裝置上正確顯示。"
   },
   "resource_card": {
     "github_discussions": "GitHub 討論區",

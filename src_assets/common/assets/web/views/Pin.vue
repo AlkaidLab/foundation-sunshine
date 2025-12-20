@@ -77,8 +77,26 @@
                 <thead class="table-dark">
                   <tr>
                     <th scope="col" width="20%" class="ps-3">{{ $t('pin.client_name') }}</th>
-                    <th scope="col" class="ps-3">{{ $t('pin.hdr_profile') }}</th>
-                    <th scope="col" class="ps-3">{{ $t('pin.device_size') }}</th>
+                    <th scope="col" class="ps-3">
+                      <span class="d-inline-flex align-items-center gap-1">
+                        {{ $t('pin.hdr_profile') }}
+                        <i
+                          class="fas fa-info-circle text-info"
+                          data-tooltip="hdr-profile"
+                          style="cursor: help; font-size: 0.875rem;"
+                        ></i>
+                      </span>
+                    </th>
+                    <th scope="col" class="ps-3">
+                      <span class="d-inline-flex align-items-center gap-1">
+                        {{ $t('pin.device_size') }}
+                        <i
+                          class="fas fa-info-circle text-info"
+                          data-tooltip="device-size"
+                          style="cursor: help; font-size: 0.875rem;"
+                        ></i>
+                      </span>
+                    </th>
                     <th scope="col" width="30%" class="text-center">{{ $t('pin.actions') }}</th>
                   </tr>
                 </thead>
@@ -211,18 +229,15 @@
 </template>
 
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
 import { usePin } from '../composables/usePin.js'
 
 const { t } = useI18n()
 
 const {
-  pairingDeviceName,
-  unpairAllPressed,
-  unpairAllStatus,
-  showApplyMessage,
   clients,
   hdrProfileList,
   hasIccFileList,
@@ -238,88 +253,89 @@ const {
   cancelEdit,
   hasUnsavedChanges,
   initPinForm,
-  clickedApplyBanner,
   loadConfig,
 } = usePin()
 
 const clientToDelete = ref(null)
 
-// 处理删除
 const handleDelete = (client) => {
-  // 如果正在编辑，不允许删除
-  if (editingStates[client.uuid]) {
-    return
-  }
+  if (editingStates[client.uuid]) return
   clientToDelete.value = client
 }
 
-// 确认删除
 const confirmDelete = async () => {
   if (!clientToDelete.value) return
-  const uuid = clientToDelete.value.uuid
-  const success = await unpairSingle(uuid)
-  if (success) {
-    clientToDelete.value = null
-  }
+  const success = await unpairSingle(clientToDelete.value.uuid)
+  if (success) clientToDelete.value = null
 }
 
-// 处理保存
 const handleSave = async (uuid) => {
   const success = await saveClient(uuid)
-  if (!success) {
-    alert(t('pin.save_failed'))
-  }
+  if (!success) alert(t('pin.save_failed'))
 }
 
-// 处理取消编辑
-const handleCancelEdit = (uuid) => {
-  cancelEdit(uuid)
-}
+const handleCancelEdit = (uuid) => cancelEdit(uuid)
 
-// 处理HDR Profile变更
-const onProfileChange = (uuid) => {
-  // 可以在这里添加实时验证或其他逻辑
-}
-
-// 处理尺寸变更
-const onSizeChange = (uuid) => {
-  // 可以在这里添加实时验证或其他逻辑
-}
-
-// 处理取消所有配对
 const handleUnpairAll = async () => {
-  if (confirm(t('pin.unpair_all_confirm'))) {
-    await unpairAll()
-  }
+  if (confirm(t('pin.unpair_all_confirm'))) await unpairAll()
+}
+
+const initTooltips = () => {
+  nextTick(() => {
+    const tooltipConfigs = [
+      { selector: '[data-tooltip="hdr-profile"]', title: t('pin.hdr_profile_info') },
+      { selector: '[data-tooltip="device-size"]', title: t('pin.device_size_info') }
+    ]
+    
+    tooltipConfigs.forEach(({ selector, title }) => {
+      const el = document.querySelector(selector)
+      if (!el) return
+      
+      Tooltip.getInstance(el)?.dispose()
+      new Tooltip(el, { html: true, placement: 'top', title })
+    })
+  })
 }
 
 onMounted(async () => {
   await loadConfig()
   await refreshClients()
 
-  initPinForm(() => {
-    setTimeout(() => refreshClients(), 0)
-  })
+  initPinForm(() => setTimeout(refreshClients, 0))
 
-  // 获取 HDR Profile 列表（如果 Electron 可用）
   if (window.electron?.getIccFileList) {
     hasIccFileList.value = true
     window.electron.getIccFileList((files = []) => {
-      hdrProfileList.value = files.filter((file) => /.icc$/.test(file))
+      hdrProfileList.value = files.filter(file => /.icc$/.test(file))
     })
   } else {
     hasIccFileList.value = false
   }
+
+  initTooltips()
 })
+
+watch(clients, initTooltips, { deep: true })
 </script>
 
 <style>
 @import '../styles/global.less';
 </style>
 
-<style scoped>
+<style scoped lang="less">
 .client-list-container {
   margin-top: 1rem;
+
+  .table-responsive {
+    border-radius: var(--border-radius-md, 8px);
+    overflow: hidden;
+  }
+
+  .table {
+    border-radius: var(--border-radius-md, 12px);
+    overflow: hidden;
+    margin-bottom: 0;
+  }
 }
 
 .table-warning {
@@ -344,7 +360,7 @@ onMounted(async () => {
   justify-content: center;
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
-  
+
   [data-bs-theme='light'] & {
     background: rgba(0, 0, 0, 0.5);
   }
@@ -362,7 +378,7 @@ onMounted(async () => {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
   animation: modalSlideUp 0.3s ease;
-  
+
   [data-bs-theme='light'] & {
     background: rgba(255, 255, 255, 0.95);
     border: 1px solid rgba(0, 0, 0, 0.15);
@@ -397,10 +413,10 @@ onMounted(async () => {
     align-items: center;
     gap: var(--spacing-sm, 8px);
   }
-  
+
   [data-bs-theme='light'] & {
     border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
+
     h5 {
       color: #000000;
     }
@@ -414,7 +430,7 @@ onMounted(async () => {
   overflow-y: auto;
   flex: 1;
   color: var(--text-primary, #fff);
-  
+
   [data-bs-theme='light'] & {
     color: #000000;
   }
@@ -426,22 +442,19 @@ onMounted(async () => {
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
   border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
+
   [data-bs-theme='light'] & {
     border-top: 1px solid rgba(0, 0, 0, 0.1);
   }
-}
 
-.delete-client-footer button {
-  padding: 8px 16px;
-  font-size: 0.9rem;
+  button {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+  }
 }
 
 /* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
-}
-
+.fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.3s ease;
 }
@@ -455,11 +468,11 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .btn-toolbar {
     flex-direction: column;
-  }
 
-  .btn-toolbar .btn {
-    width: 100%;
-    margin-bottom: 0.25rem;
+    .btn {
+      width: 100%;
+      margin-bottom: 0.25rem;
+    }
   }
 
   .table-responsive {

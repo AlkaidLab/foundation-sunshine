@@ -223,7 +223,7 @@
 
       <!-- 环境变量说明模态框 -->
       <div id="envVarsModal" class="modal fade" tabindex="-1">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-lg env-vars-modal">
           <div class="modal-content">
             <div class="modal-header">
               <h5 id="envVarsModalLabel" class="modal-title">
@@ -240,13 +240,15 @@
               </div>
               <div class="env-vars-table">
                 <div class="table-responsive">
-                  <table class="table">
+                  <table class="table table-sm">
                     <thead>
                       <tr>
                         <th>
-                          <strong>{{ $t('apps.env_var_name') }}</strong>
+                          <i class="fas fa-code me-1"></i>{{ $t('apps.env_var_name') }}
                         </th>
-                        <th><strong>说明</strong></th>
+                        <th>
+                          <i class="fas fa-info-circle me-1"></i>{{ $t('_common.description') }}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>

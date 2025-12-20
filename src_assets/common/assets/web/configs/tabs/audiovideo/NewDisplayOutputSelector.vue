@@ -12,8 +12,12 @@ const config = ref(props.config);
 //     : "4531345";
 
 // "DISPLAY NAME: \\\\.\\DISPLAY1\nFRIENDLY NAME: F32D80U\nDEVICE STATE: PRIMARY\nHDR STATE: ENABLED"
-const displayDevices = computed(() =>
-  config.value.display_devices.map(({ device_id, data = "" }) => ({
+const displayDevices = computed(() => {
+  const devices = config.value.display_devices;
+  if (!Array.isArray(devices)) {
+    return [];
+  }
+  return devices.map(({ device_id, data = "" }) => ({
     id: device_id,
     name: data
       .replace(
@@ -21,8 +25,8 @@ const displayDevices = computed(() =>
         "$2 ($1)"
       )
       .replace("()", ""),
-  }))
-);
+  }));
+});
 </script>
 
 <template>

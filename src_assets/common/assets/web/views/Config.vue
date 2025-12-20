@@ -581,7 +581,7 @@ onUnmounted(() => {
 
 .config-floating-buttons {
   position: sticky;
-  top: 2rem;
+  top: 80%;
   right: 2rem;
   float: right;
   clear: right;
@@ -605,41 +605,116 @@ onUnmounted(() => {
     width: @btn-size;
     height: @btn-size;
     border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    border: 3px solid rgba(255, 255, 255, 0.4);
     color: #fff;
     font-size: 1.25rem;
     cursor: pointer;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.15);
+    backdrop-filter: blur(15px);
     position: relative;
     overflow: hidden;
-    transition: all @transition-fast @cubic-bounce;
+    .transition();
     .flex-center();
-
+    
     &::before {
       content: '';
       position: absolute;
-      inset: 0;
-      background: rgba(255, 255, 255, 0.3);
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
+      opacity: 0;
+      .transition(opacity);
+    }
+    
+    // 内部高光
+    &::after {
+      content: '';
+      position: absolute;
+      top: 20%;
+      left: 20%;
+      width: 30%;
+      height: 30%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.6) 0%, transparent 70%);
       border-radius: 50%;
-      transform: scale(0);
-      transition: transform @transition-medium ease;
+      opacity: 0.8;
     }
 
-    i {
-      position: relative;
-      z-index: 2;
-      transition: transform @transition-fast ease;
+    // 悬停动画
+    &:hover {
+      transform: scale(1.1) translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2), 
+                  0 0 30px rgba(255, 255, 255, 0.3);
+      
+      &::before {
+        opacity: 1;
+      }
+      
+      &::after {
+        opacity: 1;
+      }
+    }
+    
+    // 点击动画
+    &:active {
+      transform: scale(0.95) translateY(0);
+      transition: transform 0.1s @cubic-bounce;
     }
 
     &-primary {
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      &:hover { background: linear-gradient(135deg, #764ba2, #667eea); }
+      background: linear-gradient(135deg, #ff6b9d, #c44569, #f093fb);
+      background-size: 200% 200%;
+      animation: gradient-shift 3s ease infinite;
+      box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4),
+                  0 0 20px rgba(255, 107, 157, 0.2),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      
+      &:hover {
+        box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6),
+                    0 0 40px rgba(255, 107, 157, 0.4),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        animation-duration: 1.5s;
+      }
     }
 
     &-success {
-      background: linear-gradient(135deg, #11998e, #38ef7d);
-      &:hover { background: linear-gradient(135deg, #38ef7d, #11998e); }
+      background: linear-gradient(135deg, #4facfe, #00f2fe, #43e97b);
+      background-size: 200% 200%;
+      animation: gradient-shift 3s ease infinite;
+      box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4),
+                  0 0 20px rgba(79, 172, 254, 0.2),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      
+      &:hover {
+        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6),
+                    0 0 40px rgba(79, 172, 254, 0.4),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        animation-duration: 1.5s;
+      }
+    }
+    
+    // 图标动画
+    i {
+      position: relative;
+      z-index: 1;
+      .transition(transform);
+    }
+    
+    &:hover i {
+      transform: scale(1.2) rotate(5deg);
+    }
+  }
+  
+  // 渐变动画
+  @keyframes gradient-shift {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
     }
   }
 }
@@ -661,6 +736,34 @@ onUnmounted(() => {
     .dropdown-item {
       &:hover { background: rgba(var(--bs-primary-rgb), 0.15); }
       &.active { background: rgba(var(--bs-primary-rgb), 0.25); }
+    }
+  }
+  
+  .config-floating-buttons .cute-btn {
+    border-color: rgba(255, 255, 255, 0.5);
+    
+    &-primary {
+      box-shadow: 0 4px 15px rgba(255, 107, 157, 0.5),
+                  0 0 25px rgba(255, 107, 157, 0.3),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      
+      &:hover {
+        box-shadow: 0 8px 25px rgba(255, 107, 157, 0.7),
+                    0 0 50px rgba(255, 107, 157, 0.5),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      }
+    }
+    
+    &-success {
+      box-shadow: 0 4px 15px rgba(79, 172, 254, 0.5),
+                  0 0 25px rgba(79, 172, 254, 0.3),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      
+      &:hover {
+        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.7),
+                    0 0 50px rgba(79, 172, 254, 0.5),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      }
     }
   }
 }
