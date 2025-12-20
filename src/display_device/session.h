@@ -221,10 +221,11 @@ namespace display_device {
 
     /**
      * @brief An implementation of `restore_state` without a mutex lock.
+     * @param reason The reason for reverting settings, used to determine appropriate cleanup behavior.
      * @see restore_state for the description.
      */
     void
-    restore_state_impl();
+    restore_state_impl(revert_reason_e reason = revert_reason_e::stream_ended);
 
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
