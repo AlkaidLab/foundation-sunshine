@@ -1,6 +1,7 @@
 // local includes
 #include "settings_topology.h"
 #include "src/display_device/to_string.h"
+#include "src/globals.h"
 #include "src/logging.h"
 
 namespace display_device {
@@ -186,6 +187,59 @@ namespace display_device {
     }
 
   }  // namespace
+
+  bool
+  remove_vdd_from_topology(active_topology_t &topology) {
+    bool removed = false;
+    
+    // Get list of available devices (includes both active and inactive devices)
+    // This ensures we don't remove inactive devices that can be re-enabled
+    const auto available_devices = enum_available_devices();
+    std::unordered_set<std::string> available_device_ids;
+    for (const auto &[device_id, info] : available_devices) {
+      // Include all devices (active, inactive, primary) - they all can potentially be used
+      available_device_ids.insert(device_id);
+    }
+
+    for (auto &group : topology) {
+      auto new_end = std::remove_if(group.begin(), group.end(),
+        [&removed, &available_device_ids](const std::string &device_id) {
+          // First check if device exists in available devices
+          // Note: available_devices includes inactive devices, so inactive devices will pass this check
+          const bool device_exists = available_device_ids.count(device_id) > 0;
+          
+          if (!device_exists) {
+            // Device doesn't exist in available devices at all - remove it
+            // This means the device was truly destroyed (e.g., VDD uninstalled, physical display disconnected)
+            // It's safe to remove as it cannot be re-enabled
+            BOOST_LOG(debug) << "Removing non-existent device from topology: " << device_id;
+            removed = true;
+            return true;
+          }
+          
+          // Device exists (could be active or inactive), check if it's VDD by friendly name
+          // Only remove if it's VDD - inactive physical displays will be preserved
+          const auto friendly_name = get_display_friendly_name(device_id);
+          if (friendly_name == ZAKO_NAME) {
+            BOOST_LOG(debug) << "Removing VDD device from topology: " << device_id;
+            removed = true;
+            return true;
+          }
+          
+          // Device exists and is not VDD - preserve it (even if inactive, it can be re-enabled)
+          return false;
+        });
+      group.erase(new_end, group.end());
+    }
+
+    // Remove empty groups
+    topology.erase(
+      std::remove_if(topology.begin(), topology.end(),
+        [](const auto &group) { return group.empty(); }),
+      topology.end());
+
+    return removed;
+  }
 
   /**
    * @brief Enumerate and get one of the devices matching the id or

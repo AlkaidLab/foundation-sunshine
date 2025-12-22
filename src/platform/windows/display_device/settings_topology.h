@@ -85,4 +85,23 @@ namespace display_device {
   boost::optional<handled_topology_result_t>
   handle_device_topology_configuration(const parsed_config_t &config, const boost::optional<topology_pair_t> &previously_configured_topology, const std::function<bool()> &revert_settings);
 
+  /**
+   * @brief Remove VDD devices and non-existent devices from topology.
+   * @param topology Topology to clean.
+   * @return True if any device was removed, false otherwise.
+   * @note This function will NOT remove inactive devices that can be re-enabled.
+   *       enum_available_devices() includes both active and inactive devices,
+   *       so inactive devices will be preserved in the topology.
+   *
+   * EXAMPLES:
+   * ```cpp
+   * active_topology_t topology { { "DEVICE_1" }, { "VDD_DEVICE" } };
+   * if (remove_vdd_from_topology(topology)) {
+   *   // VDD device was removed
+   * }
+   * ```
+   */
+  bool
+  remove_vdd_from_topology(active_topology_t &topology);
+
 }  // namespace display_device

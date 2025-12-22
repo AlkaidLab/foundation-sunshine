@@ -460,16 +460,31 @@ namespace display_device {
         return true;
       }
 
-      const bool have_changes_for_modified_topology { !data.original_primary_display.empty() || !data.original_modes.empty() || !data.original_hdr_states.empty() };
-      std::unordered_set<std::string> newly_enabled_devices;
-      bool partially_failed { false };
-      auto current_topology { get_current_topology() };
+      // Remove VDD devices from topology before reverting, as VDD may have been destroyed
+      const bool vdd_removed_from_initial = remove_vdd_from_topology(data.topology.initial);
+      const bool vdd_removed_from_modified = remove_vdd_from_topology(data.topology.modified);
+      if (vdd_removed_from_initial || vdd_removed_from_modified) {
+        BOOST_LOG(info) << "Removed VDD devices from persistent topology (VDD may have been destroyed)";
+        data_modified = true;
+      }
 
+      const bool modified_topology_valid = is_topology_valid(data.topology.modified);
+      const bool initial_topology_valid = is_topology_valid(data.topology.initial);
+      const bool have_changes_for_modified_topology = !data.original_primary_display.empty() ||
+                                                      !data.original_modes.empty() ||
+                                                      !data.original_hdr_states.empty();
+
+      std::unordered_set<std::string> newly_enabled_devices;
+      bool partially_failed = false;
+      auto current_topology = get_current_topology();
+
+      // Handle modified topology changes
       if (have_changes_for_modified_topology) {
-        if (set_topology(data.topology.modified)) {
+        if (modified_topology_valid && set_topology(data.topology.modified)) {
           newly_enabled_devices = get_newly_enabled_devices_from_topology(current_topology, data.topology.modified);
           current_topology = data.topology.modified;
 
+          // Revert HDR states
           if (!data.original_hdr_states.empty()) {
             BOOST_LOG(info) << "Changing back the HDR states to: " << to_string(data.original_hdr_states);
             if (set_hdr_states(data.original_hdr_states)) {
@@ -481,6 +496,7 @@ namespace display_device {
             }
           }
 
+          // Revert display modes
           if (!data.original_modes.empty()) {
             BOOST_LOG(info) << "Changing back the display modes to: " << to_string(data.original_modes);
             if (set_display_modes(data.original_modes)) {
@@ -492,6 +508,7 @@ namespace display_device {
             }
           }
 
+          // Revert primary display
           if (!data.original_primary_display.empty()) {
             BOOST_LOG(info) << "Changing back the primary device to: " << data.original_primary_display;
             if (set_as_primary_device(data.original_primary_display)) {
@@ -503,29 +520,43 @@ namespace display_device {
             }
           }
         }
+        else if (!modified_topology_valid) {
+          // Modified topology invalid, clear settings that depend on it
+          BOOST_LOG(warning) << "Modified topology invalid, skipping restoration of HDR, modes, and primary display";
+          data.original_hdr_states.clear();
+          data.original_modes.clear();
+          data.original_primary_display.clear();
+          data_modified = true;
+        }
         else {
           BOOST_LOG(error) << "Cannot switch to the topology to undo changes!";
           partially_failed = true;
         }
       }
 
+      // Revert to initial topology
       BOOST_LOG(info) << "Changing display topology back to: " << to_string(data.topology.initial);
-      if (set_topology(data.topology.initial)) {
-        newly_enabled_devices.merge(get_newly_enabled_devices_from_topology(current_topology, data.topology.initial));
-        current_topology = data.topology.initial;
-        data_modified = true;
+      if (initial_topology_valid) {
+        if (set_topology(data.topology.initial)) {
+          newly_enabled_devices.merge(get_newly_enabled_devices_from_topology(current_topology, data.topology.initial));
+          current_topology = data.topology.initial;
+          data_modified = true;
+        }
+        else {
+          BOOST_LOG(error) << "Failed to switch back to the initial topology!";
+          partially_failed = true;
+        }
       }
       else {
-        BOOST_LOG(error) << "Failed to switch back to the initial topology!";
-        partially_failed = true;
+        BOOST_LOG(warning) << "Initial topology invalid (VDD may have been removed), keeping current topology";
       }
 
+      // Fix HDR states for newly enabled devices
       if (!newly_enabled_devices.empty()) {
-        const auto current_hdr_states { get_current_hdr_states(get_device_ids_from_topology(current_topology)) };
-
+        const auto current_hdr_states = get_current_hdr_states(get_device_ids_from_topology(current_topology));
         BOOST_LOG(debug) << "Trying to fix HDR states (if needed).";
-        blank_hdr_states(current_hdr_states, newly_enabled_devices);  // Return value ignored
-        set_hdr_states(current_hdr_states);  // Return value ignored
+        blank_hdr_states(current_hdr_states, newly_enabled_devices);
+        set_hdr_states(current_hdr_states);
       }
 
       return !partially_failed;
@@ -831,7 +862,7 @@ namespace display_device {
     if (reason == revert_reason_e::stream_ended) {
       auto &session = display_device::session_t::get();
       auto devices = display_device::enum_available_devices();
-      
+
       // headless host case
       if (devices.empty()) {
         BOOST_LOG(info) << "未找到显示设备，创建Zako Monitor";
