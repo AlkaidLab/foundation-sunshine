@@ -51,6 +51,8 @@ const DEFAULT_TABS = [
       install_steam_audio_drivers: 'enabled',
       adapter_name: '',
       output_name: '',
+      capture_target: 'display',
+      window_title: '',
       display_device_prep: 'no_operation',
       resolution_change: 'automatic',
       manual_resolution: '',

@@ -1789,22 +1789,58 @@ namespace platf::dxgi {
    */
   capture_e
   display_wgc_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
+    // Check if window is still valid (if capturing a window)
+    // If window becomes invalid (closed, minimized, hidden), fall back to display capture
+    if (!dup.is_window_valid()) {
+      BOOST_LOG(warning) << "Captured window is no longer valid (closed, minimized, or hidden), falling back to display capture"sv;
+      return capture_e::reinit;
+    }
+    
     texture2d_t src;
     uint64_t frame_qpc;
     dup.set_cursor_visible(cursor_visible);
     auto capture_status = dup.next_frame(timeout, &src, frame_qpc);
-    if (capture_status != capture_e::ok)
+    if (capture_status != capture_e::ok) {
+      // If we're capturing a window and getting timeouts/errors, check if window is still valid
+      if (dup.captured_window_hwnd != nullptr) {
+        // Simplified: Any error or timeout means window might have changed, check validity
+        if (!dup.is_window_valid()) {
+          BOOST_LOG(warning) << "Captured window is no longer valid, reinitializing capture"sv;
+          return capture_e::reinit;
+        }
+      }
       return capture_status;
+    }
 
     auto frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), frame_qpc);
     D3D11_TEXTURE2D_DESC desc;
     src->GetDesc(&desc);
 
-    // It's possible for our display enumeration to race with mode changes and result in
-    // mismatched image pool and desktop texture sizes. If this happens, just reinit again.
-    if (desc.Width != width_before_rotation || desc.Height != height_before_rotation) {
-      BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << desc.Width << 'x' << desc.Height << ']';
-      return capture_e::reinit;
+    // Get the actual captured frame dimensions
+    int frame_width = static_cast<int>(desc.Width);
+    int frame_height = static_cast<int>(desc.Height);
+    
+    // For window capture, check if size changed and handle it
+    if (dup.captured_window_hwnd != nullptr) {
+      int expected_width = dup.window_capture_width > 0 ? dup.window_capture_width : width_before_rotation;
+      int expected_height = dup.window_capture_height > 0 ? dup.window_capture_height : height_before_rotation;
+      
+      if (frame_width != expected_width || frame_height != expected_height) {
+        BOOST_LOG(info) << "Window capture size changed ["sv << expected_width << 'x' << expected_height 
+                         << " -> "sv << frame_width << 'x' << frame_height << ']';
+        // Update stored dimensions
+        dup.window_capture_width = frame_width;
+        dup.window_capture_height = frame_height;
+        // Trigger reinit to recreate all resources (images, textures, etc.) with new size
+        return capture_e::reinit;
+      }
+    }
+    else {
+      // For display capture, check against display dimensions
+      if (desc.Width != width_before_rotation || desc.Height != height_before_rotation) {
+        BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << desc.Width << 'x' << desc.Height << ']';
+        return capture_e::reinit;
+      }
     }
 
     // It's also possible for the capture format to change on the fly. If that happens,
@@ -1844,6 +1880,22 @@ namespace platf::dxgi {
   capture_e
   display_wgc_vram_t::release_snapshot() {
     return dup.release_frame();
+  }
+
+  std::shared_ptr<platf::img_t>
+  display_wgc_vram_t::alloc_img() {
+    auto img = std::make_shared<img_d3d_t>();
+    
+    // For window capture, use window capture dimensions; for display capture, use display dimensions
+    int img_width = dup.window_capture_width > 0 ? dup.window_capture_width : width_before_rotation;
+    int img_height = dup.window_capture_height > 0 ? dup.window_capture_height : height_before_rotation;
+    
+    img->width = img_width;
+    img->height = img_height;
+    img->id = next_image_id++;
+    img->blank = true;
+
+    return img;
   }
 
   int

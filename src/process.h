@@ -105,6 +105,8 @@ namespace proc {
     std::string
     get_app_name(int app_id);
     std::string
+    get_app_cmd(int app_id);
+    std::string
     get_last_run_app_name();
     const boost::process::v1::environment &
     get_env() const;

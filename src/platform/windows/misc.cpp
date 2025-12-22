@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <set>
 #include <sstream>
+#include <vector>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -2013,5 +2014,53 @@ namespace platf {
   std::unique_ptr<high_precision_timer>
   create_high_precision_timer() {
     return std::make_unique<win32_high_precision_timer>();
+  }
+
+  bool
+  fuzzy_match(const std::wstring &text, const std::wstring &pattern) {
+    if (pattern.empty()) {
+      return true;
+    }
+    if (text.empty()) {
+      return false;
+    }
+
+    size_t pattern_idx = 0;
+    for (wchar_t c : text) {
+      if (c == pattern[pattern_idx]) {
+        pattern_idx++;
+        if (pattern_idx >= pattern.length()) {
+          return true;  // All characters found in order
+        }
+      }
+    }
+    return false;  // Not all characters found
+  }
+
+  std::vector<std::wstring>
+  split_words(const std::wstring &text) {
+    std::vector<std::wstring> words;
+    if (text.empty()) {
+      return words;
+    }
+
+    // Use boost::algorithm::split with a predicate that checks for word separators
+    boost::algorithm::split(
+      words,
+      text,
+      [](wchar_t c) {
+        return c == L' ' || c == L'-' || c == L'_' || c == L'.' || c == L':';
+      },
+      boost::algorithm::token_compress_on);  // Merge adjacent separators
+
+    // Remove empty strings
+    words.erase(
+      std::remove_if(
+        words.begin(),
+        words.end(),
+        [](const std::wstring &w) { return w.empty(); }),
+      words.end());
+
+    return words;
   }
 }  // namespace platf

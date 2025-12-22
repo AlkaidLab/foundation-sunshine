@@ -364,7 +364,8 @@ namespace platf::dxgi {
     }
 
     if (!img->data) {
-      img->data = new std::uint8_t[img->row_pitch * height];
+      // Use img->height instead of height to support window capture with different dimensions
+      img->data = new std::uint8_t[img->row_pitch * img->height];
     }
 
     return 0;

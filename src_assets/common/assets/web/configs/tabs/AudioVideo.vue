@@ -88,6 +88,33 @@ const currentSubTab = ref('display-modes')
 
     <NewDisplayOutputSelector :platform="platform" :config="config" />
 
+    <PlatformLayout :platform="platform">
+      <template #windows>
+        <!-- Capture Target -->
+        <div class="mb-3">
+          <label for="capture_target" class="form-label">{{ $t('config.capture_target') }}</label>
+          <select id="capture_target" class="form-select" v-model="config.capture_target">
+            <option value="display">{{ $t('config.capture_target_display') }}</option>
+            <option value="window">{{ $t('config.capture_target_window') }}</option>
+          </select>
+          <div class="form-text">{{ $t('config.capture_target_desc') }}</div>
+        </div>
+
+        <!-- Window Title (only shown when capture_target is window) -->
+        <div class="mb-3" v-if="config.capture_target === 'window'">
+          <label for="window_title" class="form-label">{{ $t('config.window_title') }}</label>
+          <input
+            type="text"
+            class="form-control"
+            id="window_title"
+            :placeholder="$t('config.window_title_placeholder')"
+            v-model="config.window_title"
+          />
+          <div class="form-text">{{ $t('config.window_title_desc') }}</div>
+        </div>
+      </template>
+    </PlatformLayout>
+
     <DisplayDeviceOptions :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
 
     <!-- Display Modes Tab Navigation -->

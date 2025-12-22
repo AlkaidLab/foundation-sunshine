@@ -1029,12 +1029,24 @@ namespace platf {
     };
 
     // 如果capture为空，则依次尝试ddx、wgc，否则只尝试指定类型
+    // 注意：在服务模式下，WGC 不可用，会自动跳过
     std::vector<std::string> try_types;
     if (config::video.capture.empty()) {
-      try_types = { "ddx", "wgc" };
+      // 在服务模式下，优先使用 DDX（WGC 在服务模式下不可用）
+      if (platf::is_running_as_system()) {
+        try_types = { "ddx" };
+        BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
+      }
+      else {
+        try_types = { "ddx", "wgc" };
+      }
     }
     else {
       try_types.push_back(config::video.capture);
+      // 如果明确指定了 wgc 但在服务模式下，给出警告
+      if (config::video.capture == "wgc" && platf::is_running_as_system()) {
+        BOOST_LOG(warning) << "WGC capture is not available in service mode. Consider using 'capture=ddx' instead."sv;
+      }
     }
 
     for (const auto &type : try_types) {

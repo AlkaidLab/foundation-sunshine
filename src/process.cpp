@@ -431,6 +431,14 @@ namespace proc {
   }
 
   std::string
+  proc_t::get_app_cmd(int app_id) {
+    auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
+      return app.id == std::to_string(app_id);
+    });
+    return iter == _apps.end() ? std::string() : iter->cmd;
+  }
+
+  std::string
   proc_t::get_last_run_app_name() {
     return _app.name;
   }

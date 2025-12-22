@@ -3,6 +3,7 @@
  * @brief Definitions for the configuration of Sunshine.
  */
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -30,6 +31,7 @@
 
 #ifdef _WIN32
   #include <shellapi.h>
+  #include "platform/windows/misc.h"
 #endif
 
 #ifndef __APPLE__
@@ -431,6 +433,8 @@ namespace config {
     {},  // encoder
     {},  // adapter_name
     {},  // output_name
+    {},  // capture_target (default: empty, will be set to "display" in apply_config)
+    {},  // window_title
     (int) display_device::parsed_config_t::device_prep_e::no_operation,  // display_device_prep
     (int) display_device::parsed_config_t::resolution_change_e::automatic,  // resolution_change
     {},  // manual_resolution
@@ -1165,9 +1169,43 @@ namespace config {
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 
     string_f(vars, "capture", video.capture);
+    
+#ifdef _WIN32
+    // Check if WGC is selected and we're running in service mode
+    // If so, automatically switch to DDX since WGC doesn't work in system mode
+    if (!video.capture.empty() && video.capture == "wgc") {
+      if (platf::is_running_as_system()) {
+        BOOST_LOG(warning) << "WGC capture requires user session mode. Automatically switching to DDX capture."sv;
+        video.capture = "ddx";
+      }
+    }
+#endif
+    
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
     string_f(vars, "output_name", video.output_name);
+    
+#ifdef _WIN32
+    // Capture target: "display" (default) or "window"
+    string_f(vars, "capture_target", video.capture_target);
+    if (video.capture_target.empty()) {
+      video.capture_target = "display";  // Default to display capture
+    }
+    
+    // Window title for window capture
+    string_f(vars, "window_title", video.window_title);
+    
+    // Validate capture_target
+    if (video.capture_target != "display" && video.capture_target != "window") {
+      BOOST_LOG(warning) << "Invalid capture_target: ["sv << video.capture_target << "], defaulting to 'display'"sv;
+      video.capture_target = "display";
+    }
+    
+    // If window capture is selected, ensure window_title is provided
+    if (video.capture_target == "window" && video.window_title.empty()) {
+      BOOST_LOG(warning) << "capture_target=window but window_title is empty. Window capture may fail."sv;
+    }
+#endif
     sync_idd_f(vars, "output_name", video.output_name);
     int_f(vars, "display_device_prep", video.display_device_prep, display_device::parsed_config_t::device_prep_from_view);
     int_f(vars, "resolution_change", video.resolution_change, display_device::parsed_config_t::resolution_change_from_view);

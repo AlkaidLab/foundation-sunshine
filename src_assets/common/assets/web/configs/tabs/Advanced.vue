@@ -1,14 +1,71 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 
-const props = defineProps([
-  'platform',
-  'config',
-  'global_prep_cmd'
-])
+const props = defineProps(['platform', 'config', 'global_prep_cmd'])
 
 const config = ref(props.config)
+
+// 检查是否在 Tauri 环境中（通过 inject-script.js 注入）
+const isTauri = computed(() => {
+  return typeof window !== 'undefined' && window.__TAURI__?.core?.invoke
+})
+
+// 检查是否选择了 WGC
+const isWGCSelected = computed(() => {
+  return props.platform === 'windows' && config.value.capture === 'wgc'
+})
+
+const showMessage = (message, type = 'info') => {
+  // 尝试使用 window.showToast（如果可用）
+  if (typeof window.showToast === 'function') {
+    window.showToast(message, type)
+    return
+  }
+
+  // 尝试通过 postMessage 请求父窗口显示消息
+  if (window.parent && window.parent !== window) {
+    try {
+      window.parent.postMessage(
+        {
+          type: 'show-message',
+          message,
+          messageType: type,
+          source: 'sunshine-webui',
+        },
+        '*'
+      )
+      return
+    } catch (e) {
+      console.warn('无法通过 postMessage 发送消息:', e)
+    }
+  }
+
+  // 降级到 alert
+  if (type === 'error') {
+    alert(message)
+  } else {
+    console.info(message)
+  }
+}
+
+// 调用用户模式重启
+const restartInUserMode = async () => {
+  if (!isTauri.value) {
+    showMessage('此功能仅在 Sunshine Control Panel 中可用', 'error')
+    return
+  }
+
+  try {
+    // 使用 inject-script.js 注入的 API 调用重启函数
+    // 这会通过 postMessage 与父窗口通信，然后调用 Tauri API
+    await window.__TAURI__.core.invoke('restart_sunshine_in_user_mode')
+    showMessage('已请求以用户模式重启 Sunshine。如果弹出 UAC 提示，请点击"是"以确认。', 'success')
+  } catch (error) {
+    console.error('重启失败:', error)
+    showMessage('重启失败: ' + (error.message || error), 'error')
+  }
+}
 </script>
 
 <template>
@@ -61,23 +118,42 @@ const config = ref(props.config)
     <!-- Capture -->
     <div class="mb-3" v-if="platform !== 'macos'">
       <label for="capture" class="form-label">{{ $t('config.capture') }}</label>
-      <select id="capture" class="form-select" v-model="config.capture">
-        <option value="">{{ $t('_common.autodetect') }}</option>
-        <PlatformLayout :platform="platform">
-          <template #linux>
-            <option value="nvfbc">NvFBC</option>
-            <option value="wlr">wlroots</option>
-            <option value="kms">KMS</option>
-            <option value="x11">X11</option>
-          </template>
-          <template #windows>
-            <option value="ddx">Desktop Duplication API</option>
-            <option value="wgc">Windows.Graphics.Capture {{ $t('_common.beta') }}</option>
-            <option value="amd">AMD Display Capture {{ $t('_common.beta') }}</option>
-          </template>
-        </PlatformLayout>
-      </select>
-      <div class="form-text">{{ $t('config.capture_desc') }}</div>
+      <div class="d-flex align-items-center gap-2">
+        <select id="capture" class="form-select flex-grow-1" v-model="config.capture">
+          <option value="">{{ $t('_common.autodetect') }}</option>
+          <PlatformLayout :platform="platform">
+            <template #linux>
+              <option value="nvfbc">NvFBC</option>
+              <option value="wlr">wlroots</option>
+              <option value="kms">KMS</option>
+              <option value="x11">X11</option>
+            </template>
+            <template #windows>
+              <option value="ddx">Desktop Duplication API</option>
+              <option value="wgc">Windows.Graphics.Capture {{ $t('_common.beta') }}</option>
+              <option value="amd">AMD Display Capture {{ $t('_common.beta') }}</option>
+            </template>
+          </PlatformLayout>
+        </select>
+        <button
+          v-if="isWGCSelected && isTauri"
+          type="button"
+          class="btn btn-warning"
+          style="white-space: nowrap;"
+          @click="restartInUserMode"
+          title="WGC 捕获需要在用户模式下运行。点击此按钮将以用户模式重启 Sunshine。"
+        >
+          <i class="fas fa-sync-alt me-1"></i>
+          切换到用户模式
+        </button>
+      </div>
+      <div class="form-text">
+        {{ $t('config.capture_desc') }}
+        <span v-if="isWGCSelected && isTauri" class="text-warning d-block mt-1">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          WGC 捕获需要在用户模式下运行。如果当前以服务模式运行，请点击上方按钮切换到用户模式。
+        </span>
+      </div>
     </div>
 
     <!-- Encoder -->
@@ -103,10 +179,7 @@ const config = ref(props.config)
       </select>
       <div class="form-text">{{ $t('config.encoder_desc') }}</div>
     </div>
-
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

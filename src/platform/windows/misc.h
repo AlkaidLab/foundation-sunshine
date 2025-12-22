@@ -62,4 +62,21 @@ namespace platf {
    */
   std::error_code
   impersonate_current_user(HANDLE user_token, std::function<void()> callback);
+
+  /**
+   * @brief Check if a character sequence appears in order in a string (fuzzy matching).
+   * @param text The text to search in.
+   * @param pattern The pattern to find (characters must appear in order, but can have gaps).
+   * @return true if pattern is found, false otherwise.
+   */
+  bool
+  fuzzy_match(const std::wstring &text, const std::wstring &pattern);
+
+  /**
+   * @brief Split a string into words (by spaces and common separators).
+   * @param text The text to split.
+   * @return Vector of words.
+   */
+  std::vector<std::wstring>
+  split_words(const std::wstring &text);
 }  // namespace platf
