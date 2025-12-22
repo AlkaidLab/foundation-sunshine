@@ -828,22 +828,19 @@ namespace display_device {
       BOOST_LOG(info) << "显示设备配置已恢复";
     }
 
-    // 仅在串流结束时处理VDD管理
     if (reason == revert_reason_e::stream_ended) {
       auto &session = display_device::session_t::get();
       auto devices = display_device::enum_available_devices();
-      if (devices.size() > 1 && session.is_display_on()) {
-        BOOST_LOG(info) << "Multiple displays detected, closing VDD";
-        session.destroy_vdd_monitor();
-      }
-      else if (devices.empty()) {
-        // headless host case
-        BOOST_LOG(info) << "No display device found, creating Zako Monitor";
+      
+      // headless host case
+      if (devices.empty()) {
+        BOOST_LOG(info) << "未找到显示设备，创建Zako Monitor";
         session.create_vdd_monitor("");
         constexpr int max_attempts = 5;
         constexpr auto wait_time = std::chrono::milliseconds(233);
-        for (int i = 0; i < max_attempts && !session.is_display_on(); ++i)
+        for (int i = 0; i < max_attempts && !session.is_display_on(); ++i) {
           std::this_thread::sleep_for(wait_time);
+        }
       }
     }
 

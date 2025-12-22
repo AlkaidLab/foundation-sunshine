@@ -238,6 +238,10 @@ import { usePin } from '../composables/usePin.js'
 const { t } = useI18n()
 
 const {
+  pairingDeviceName,
+  unpairAllPressed,
+  unpairAllStatus,
+  showApplyMessage,
   clients,
   hdrProfileList,
   hasIccFileList,
@@ -253,6 +257,7 @@ const {
   cancelEdit,
   hasUnsavedChanges,
   initPinForm,
+  clickedApplyBanner,
   loadConfig,
 } = usePin()
 
