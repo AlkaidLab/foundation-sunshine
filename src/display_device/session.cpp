@@ -182,14 +182,12 @@ namespace display_device {
     }
 
     /**
-     * @brief Wait for VDD device to initialize and be ready for DXGI capture.
-     * @details This function checks both Display Config API and DXGI API to ensure
-     *          the virtual display is not only detected but also ready for capture.
+     * @brief Wait for VDD device to initialize.
      * @param device_zako Output parameter for the device ID.
      * @param max_attempts Maximum number of retry attempts.
      * @param initial_delay Initial delay between retries.
      * @param max_delay Maximum delay between retries.
-     * @return true if device was found and ready for DXGI capture, false otherwise.
+     * @return true if device was found, false otherwise.
      */
     bool
     wait_for_vdd_device(std::string &device_zako, int max_attempts,
@@ -197,36 +195,13 @@ namespace display_device {
       std::chrono::milliseconds max_delay) {
       return vdd_utils::retry_with_backoff(
         [&device_zako]() {
-          // First, find the device using Display Config API
           device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
-          if (device_zako.empty()) {
-            return false;
-          }
-
-          // Get the DXGI DeviceName for this device
-          const auto dxgi_device_name = display_device::get_display_name(device_zako);
-          if (dxgi_device_name.empty()) {
-            BOOST_LOG(debug) << "VDD设备已找到，但尚未获得DXGI设备名称";
-            return false;
-          }
-
-          // Check if the device is visible in DXGI enumeration and can be captured
-          // We use platf::display_names which already performs test_dxgi_duplication
-          const auto display_names = platf::display_names(platf::mem_type_e::dxgi);
-          const bool found_in_dxgi = std::find(display_names.begin(), display_names.end(), dxgi_device_name) != display_names.end();
-
-          if (!found_in_dxgi) {
-            BOOST_LOG(debug) << "VDD设备已找到，但尚未在DXGI枚举中可见: " << dxgi_device_name;
-            return false;
-          }
-
-          BOOST_LOG(debug) << "VDD设备已就绪，可在DXGI中捕获: " << dxgi_device_name;
-          return true;
+          return !device_zako.empty();
         },
         { .max_attempts = max_attempts,
           .initial_delay = initial_delay,
           .max_delay = max_delay,
-          .context = "等待VDD设备初始化并在DXGI中可用" });
+          .context = "等待VDD设备初始化" });
     }
 
     /**
@@ -419,10 +394,18 @@ namespace display_device {
     current_vdd_client_id = current_client_id;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
+    // Ensure VDD is in extended mode
     if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
       BOOST_LOG(info) << "已将VDD切换到扩展模式";
+      std::this_thread::sleep_for(500ms);
     }
-    vdd_utils::set_hdr_state(false);
+
+    // Set HDR state with retry
+    if (!vdd_utils::set_hdr_state(false)) {
+      BOOST_LOG(debug) << "首次设置HDR状态失败，等待设备稳定后重试";
+      std::this_thread::sleep_for(500ms);
+      vdd_utils::set_hdr_state(false);
+    }
   }
 
   void

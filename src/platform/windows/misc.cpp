@@ -203,7 +203,14 @@ namespace platf {
 
     if (!SetThreadDesktop(hDesk)) {
       auto err = GetLastError();
-      BOOST_LOG(error) << "Failed to sync desktop to thread [0x"sv << util::hex(err).to_string_view() << ']';
+      // Error 0xAA (ERROR_BUSY) can occur when a virtual display is being created
+      // This is not a critical error, so we just log it as a warning
+      if (err == ERROR_BUSY) {
+        BOOST_LOG(warning) << "Failed to sync desktop to thread [0x"sv << util::hex(err).to_string_view() << "] - desktop is busy, retrying later";
+      }
+      else {
+        BOOST_LOG(error) << "Failed to sync desktop to thread [0x"sv << util::hex(err).to_string_view() << ']';
+      }
     }
 
     CloseDesktop(hDesk);

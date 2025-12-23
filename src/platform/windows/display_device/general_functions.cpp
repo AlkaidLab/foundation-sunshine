@@ -2,43 +2,66 @@
 #include <unordered_set>
 
 // local includes
+#include "src/globals.h"
 #include "src/logging.h"
 #include "windows_utils.h"
-#include "src/globals.h"
 
 namespace display_device {
 
   std::string
   get_display_name(const std::string &device_id) {
-    std::string device_id_copy = device_id;
-    if (device_id_copy == VDD_NAME) {
-      device_id_copy = display_device::find_device_by_friendlyname(ZAKO_NAME);
-    }
-
     if (device_id.empty()) {
-      // Valid return, no error
       return {};
     }
 
-    const auto display_data { w_utils::query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
-    if (!display_data) {
-      // Error already logged
+    const bool is_vdd = (device_id == VDD_NAME);
+    const std::string resolved_device_id = is_vdd ? display_device::find_device_by_friendlyname(ZAKO_NAME) : device_id;
+
+    if (resolved_device_id.empty()) {
       return {};
     }
 
-    const auto path { w_utils::get_active_path(device_id_copy, display_data->paths) };
-    if (!path) {
-      // Debug level, because inactive device is valid case for this function
-      BOOST_LOG(debug) << "Failed to find device for " << device_id_copy << "!";
+    // Helper lambda to find display name from display data
+    auto find_display_name = [&resolved_device_id](bool active_only) -> std::string {
+      auto display_data = w_utils::query_display_config(active_only);
+      if (!display_data) {
+        return {};
+      }
+
+      if (active_only) {
+        const auto path = w_utils::get_active_path(resolved_device_id, display_data->paths);
+        if (path) {
+          return w_utils::get_display_name(*path);
+        }
+      }
+      else {
+        const auto path = std::find_if(display_data->paths.begin(), display_data->paths.end(),
+          [&resolved_device_id](const auto &entry) {
+            const auto device_info = w_utils::get_device_info_for_valid_path(entry, w_utils::ALL_DEVICES);
+            return device_info && device_info->device_id == resolved_device_id;
+          });
+        if (path != display_data->paths.end()) {
+          return w_utils::get_display_name(*path);
+        }
+      }
       return {};
+    };
+
+    // First, try active devices
+    if (auto display_name = find_display_name(w_utils::ACTIVE_ONLY_DEVICES); !display_name.empty()) {
+      return display_name;
     }
 
-    const auto display_name { w_utils::get_display_name(*path) };
-    if (display_name.empty()) {
-      BOOST_LOG(error) << "Device " << device_id_copy << " has no display name assigned.";
+    // If not found in active devices, also try all devices (including inactive)
+    // This is useful for devices that may be in transition (e.g., VDD devices after creation)
+    // or for devices that are temporarily inactive but still have a valid display name
+    if (auto display_name = find_display_name(w_utils::ALL_DEVICES); !display_name.empty()) {
+      BOOST_LOG(debug) << "Found device in inactive devices, display name: " << display_name;
+      return display_name;
     }
 
-    return display_name;
+    BOOST_LOG(debug) << "Failed to find device for " << resolved_device_id << "!";
+    return {};
   }
 
   std::string
