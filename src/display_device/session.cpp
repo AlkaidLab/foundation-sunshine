@@ -182,12 +182,17 @@ namespace display_device {
     }
 
     /**
-     * @brief Wait for VDD device to initialize.
+     * @brief Wait for VDD device to initialize and be fully ready.
      * @param device_zako Output parameter for the device ID.
      * @param max_attempts Maximum number of retry attempts.
      * @param initial_delay Initial delay between retries.
      * @param max_delay Maximum delay between retries.
-     * @return true if device was found, false otherwise.
+     * @return true if device was found and is ready, false otherwise.
+     *
+     * This function checks multiple conditions to ensure the VDD device is fully ready:
+     * 1. Device can be found by friendly name
+     * 2. Device is in the active device list
+     * 3. Device has a valid source mode (can be queried for display configuration)
      */
     bool
     wait_for_vdd_device(std::string &device_zako, int max_attempts,
@@ -196,12 +201,27 @@ namespace display_device {
       return vdd_utils::retry_with_backoff(
         [&device_zako]() {
           device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
-          return !device_zako.empty();
+          if (device_zako.empty()) {
+            return false;
+          }
+
+          const auto display_data = w_utils::query_display_config(w_utils::ACTIVE_ONLY_DEVICES);
+          if (!display_data) {
+            return false;
+          }
+
+          const auto path = w_utils::get_active_path(device_zako, display_data->paths);
+          if (!path) {
+            return false;
+          }
+
+          const auto source_index = w_utils::get_source_index(*path, display_data->modes);
+          return source_index && w_utils::get_source_mode(source_index, display_data->modes);
         },
         { .max_attempts = max_attempts,
           .initial_delay = initial_delay,
           .max_delay = max_delay,
-          .context = "等待VDD设备初始化" });
+          .context = "等待VDD设备初始化并完全就绪" });
     }
 
     /**
@@ -372,7 +392,7 @@ namespace display_device {
     }
 
     // Wait for device to be ready
-    if (!wait_for_vdd_device(device_zako, 10, 100ms, 500ms)) {
+    if (!wait_for_vdd_device(device_zako, 5, 200ms, 1000ms)) {
       BOOST_LOG(error) << "VDD设备初始化失败，尝试恢复";
       vdd_utils::disable_enable_vdd();
       std::this_thread::sleep_for(2s);

@@ -129,7 +129,14 @@ namespace display_device::w_utils {
       DWORD required_size_in_bytes { 0 };
       auto status { RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, nullptr, &required_size_in_bytes) };
       if (status != ERROR_SUCCESS) {
-        BOOST_LOG(error) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
+        // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
+        // Code has fallback mechanism, so this is not a critical error
+        if (status == ERROR_FILE_NOT_FOUND) {
+          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
+        }
+        else {
+          BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
+        }
         return false;
       }
 
@@ -137,7 +144,14 @@ namespace display_device::w_utils {
 
       status = RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, edid.data(), &required_size_in_bytes);
       if (status != ERROR_SUCCESS) {
-        BOOST_LOG(error) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
+        // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
+        // Code has fallback mechanism, so this is not a critical error
+        if (status == ERROR_FILE_NOT_FOUND) {
+          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
+        }
+        else {
+          BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
+        }
         return false;
       }
 
