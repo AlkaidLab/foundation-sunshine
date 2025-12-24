@@ -1,6 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
+
+const { t } = useI18n()
 
 const props = defineProps(['platform', 'config', 'global_prep_cmd'])
 
@@ -15,6 +18,10 @@ const isTauri = computed(() => {
 const isWGCSelected = computed(() => {
   return props.platform === 'windows' && config.value.capture === 'wgc'
 })
+
+// Sunshine 运行模式状态
+const isUserMode = ref(false)
+const isCheckingMode = ref(false)
 
 const showMessage = (message, type = 'info') => {
   // 尝试使用 window.showToast（如果可用）
@@ -49,23 +56,57 @@ const showMessage = (message, type = 'info') => {
   }
 }
 
-// 调用用户模式重启
-const restartInUserMode = async () => {
+// 检查当前 Sunshine 运行模式
+const checkSunshineMode = async () => {
   if (!isTauri.value) {
-    showMessage('此功能仅在 Sunshine Control Panel 中可用', 'error')
+    return
+  }
+
+  isCheckingMode.value = true
+  try {
+    const result = await window.__TAURI__.core.invoke('is_sunshine_running_in_user_mode')
+    isUserMode.value = result === true
+  } catch (error) {
+    console.error('检查 Sunshine 模式失败:', error)
+    // 如果检查失败，默认假设为服务模式
+    isUserMode.value = false
+  } finally {
+    isCheckingMode.value = false
+  }
+}
+
+// 切换 Sunshine 运行模式
+const toggleSunshineMode = async () => {
+  if (!isTauri.value) {
+    showMessage(t('config.wgc_control_panel_only'), 'error')
     return
   }
 
   try {
-    // 使用 inject-script.js 注入的 API 调用重启函数
-    // 这会通过 postMessage 与父窗口通信，然后调用 Tauri API
-    await window.__TAURI__.core.invoke('restart_sunshine_in_user_mode')
-    showMessage('已请求以用户模式重启 Sunshine。如果弹出 UAC 提示，请点击"是"以确认。', 'success')
+    const msg = await window.__TAURI__.core.invoke('toggle_sunshine_mode')
+    showMessage(msg || t('config.wgc_mode_switch_started'), 'success')
+
+    // 等待一段时间后重新检查模式
+    setTimeout(() => {
+      checkSunshineMode()
+    }, 3000)
   } catch (error) {
-    console.error('重启失败:', error)
-    showMessage('重启失败: ' + (error.message || error), 'error')
+    console.error('切换模式失败:', error)
+    showMessage(t('config.wgc_mode_switch_failed') + ': ' + (error.message || error), 'error')
   }
 }
+
+onMounted(() => {
+  if (isTauri.value && isWGCSelected.value) {
+    checkSunshineMode()
+  }
+})
+
+watch(isWGCSelected, (newValue) => {
+  if (newValue && isTauri.value) {
+    checkSunshineMode()
+  }
+})
 </script>
 
 <template>
@@ -138,20 +179,34 @@ const restartInUserMode = async () => {
         <button
           v-if="isWGCSelected && isTauri"
           type="button"
-          class="btn btn-warning"
-          style="white-space: nowrap;"
-          @click="restartInUserMode"
-          title="WGC 捕获需要在用户模式下运行。点击此按钮将以用户模式重启 Sunshine。"
+          :class="['btn', isUserMode ? 'btn-success' : 'btn-warning']"
+          style="white-space: nowrap"
+          @click="toggleSunshineMode"
+          :disabled="isCheckingMode"
+          :title="
+            isUserMode
+              ? $t('config.wgc_switch_to_service_mode_tooltip')
+              : $t('config.wgc_switch_to_user_mode_tooltip')
+          "
         >
-          <i class="fas fa-sync-alt me-1"></i>
-          切换到用户模式
+          <i v-if="isCheckingMode" class="fas fa-spinner fa-spin me-1"></i>
+          <i v-else class="fas fa-sync-alt me-1"></i>
+          {{
+            isCheckingMode
+              ? $t('config.wgc_checking_mode')
+              : isUserMode
+                ? $t('config.wgc_switch_to_service_mode')
+                : $t('config.wgc_switch_to_user_mode')
+          }}
         </button>
       </div>
       <div class="form-text">
         {{ $t('config.capture_desc') }}
-        <span v-if="isWGCSelected && isTauri" class="text-warning d-block mt-1">
-          <i class="fas fa-exclamation-triangle me-1"></i>
-          WGC 捕获需要在用户模式下运行。如果当前以服务模式运行，请点击上方按钮切换到用户模式。
+        <span v-if="isWGCSelected && isTauri" :class="['d-block mt-1', isUserMode ? 'text-success' : 'text-warning']">
+          <i :class="['me-1', isUserMode ? 'fas fa-check-circle' : 'fas fa-exclamation-triangle']"></i>
+          <span v-if="isCheckingMode">{{ $t('config.wgc_checking_running_mode') }}</span>
+          <span v-else-if="isUserMode">{{ $t('config.wgc_user_mode_available') }}</span>
+          <span v-else>{{ $t('config.wgc_service_mode_warning') }}</span>
         </span>
       </div>
     </div>

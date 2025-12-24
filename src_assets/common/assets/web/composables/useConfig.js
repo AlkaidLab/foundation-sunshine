@@ -8,6 +8,9 @@ const PLATFORM_EXCLUSIONS = {
   macos: ['amd', 'nv', 'qsv', 'vaapi'],
 }
 
+// 不参与默认值比较的键
+const EXCLUDED_DEFAULT_KEYS = new Set(['resolutions', 'fps', 'adapter_name'])
+
 // 默认标签页配置
 const DEFAULT_TABS = [
   {
@@ -126,12 +129,12 @@ const DEFAULT_TABS = [
           nvenc_spatial_aq: 'disabled',
           nvenc_temporal_aq: 'disabled',
           nvenc_vbv_increase: 0,
-      nvenc_lookahead_depth: 0,
-      nvenc_lookahead_level: 'disabled',
-      nvenc_temporal_filter: 'disabled',
-      nvenc_rate_control: 'cbr',
-      nvenc_target_quality: 0,
-      nvenc_realtime_hags: 'enabled',
+          nvenc_lookahead_depth: 0,
+          nvenc_lookahead_level: 'disabled',
+          nvenc_temporal_filter: 'disabled',
+          nvenc_rate_control: 'cbr',
+          nvenc_target_quality: 0,
+          nvenc_realtime_hags: 'enabled',
           nvenc_split_encode: 'driver_decides',
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
@@ -181,8 +184,10 @@ const DEFAULT_TABS = [
   },
 ]
 
-// 不参与默认值比较的键
-const EXCLUDED_DEFAULT_KEYS = new Set(['resolutions', 'fps', 'adapter_name'])
+/**
+ * 深拷贝对象
+ */
+const deepClone = (obj) => JSON.parse(JSON.stringify(obj))
 
 /**
  * 安全解析 JSON
@@ -212,6 +217,48 @@ const shouldDeleteDefault = (configData, tab, optionKey) => {
 }
 
 /**
+ * 遍历所有标签页选项
+ */
+const forEachTabOption = (tabs, callback) => {
+  for (const tab of tabs) {
+    if (tab.type === 'group' && tab.children) {
+      for (const childTab of tab.children) {
+        callback(childTab)
+      }
+    } else if (tab.options) {
+      callback(tab)
+    }
+  }
+}
+
+/**
+ * 序列化分辨率数组
+ */
+const serializeResolutions = (resolutions) =>
+  JSON.stringify(resolutions).replace(/","/g, ',').replace(/^\["/, '[').replace(/"\]$/, ']')
+
+/**
+ * 序列化 FPS 数组
+ */
+const serializeFps = (fps) => JSON.stringify(fps).replace(/"/g, '')
+
+/**
+ * 解析分辨率字符串
+ */
+const parseResolutions = (resStr) => {
+  try {
+    return JSON.parse((resStr || '').replace(/(\d+)x(\d+)/g, '"$1x$2"'))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 过滤有效的 FPS 值
+ */
+const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
+
+/**
  * 配置管理组合式函数
  */
 export function useConfig() {
@@ -226,128 +273,134 @@ export function useConfig() {
   const display_mode_remapping = ref([])
   const tabs = ref([])
 
-  // 初始化标签页配置
-  const initTabs = () => {
-    tabs.value = JSON.parse(JSON.stringify(DEFAULT_TABS))
+  // 原始配置快照
+  const snapshots = ref({
+    config: null,
+    fps: null,
+    resolutions: null,
+    global_prep_cmd: null,
+    display_mode_remapping: null,
+  })
+
+  /**
+   * 保存当前状态快照
+   */
+  const saveSnapshots = () => {
+    snapshots.value = {
+      config: deepClone(config.value),
+      fps: deepClone(fps.value),
+      resolutions: deepClone(resolutions.value),
+      global_prep_cmd: deepClone(global_prep_cmd.value),
+      display_mode_remapping: deepClone(display_mode_remapping.value),
+    }
   }
 
-  // 加载配置
+  /**
+   * 初始化标签页配置
+   */
+  const initTabs = () => {
+    tabs.value = deepClone(DEFAULT_TABS)
+  }
+
+  /**
+   * 根据平台过滤标签页
+   */
+  const filterTabsByPlatform = (platformName) => {
+    const exclusions = PLATFORM_EXCLUSIONS[platformName] || []
+
+    tabs.value = tabs.value
+      .map((tab) => {
+        if (tab.type === 'group' && tab.children) {
+          const filteredChildren = tab.children.filter((child) => !exclusions.includes(child.id))
+          return filteredChildren.length > 0 ? { ...tab, children: filteredChildren } : null
+        }
+        return exclusions.includes(tab.id) ? null : tab
+      })
+      .filter(Boolean)
+  }
+
+  /**
+   * 填充配置默认值
+   */
+  const fillDefaultValues = () => {
+    forEachTabOption(tabs.value, (tab) => {
+      for (const [key, defaultVal] of Object.entries(tab.options)) {
+        if (config.value[key] === undefined) {
+          config.value[key] = defaultVal
+        }
+      }
+    })
+  }
+
+  /**
+   * 解析特殊字段
+   */
+  const parseSpecialFields = () => {
+    fps.value = safeParseJSON(config.value.fps)
+    resolutions.value = parseResolutions(config.value.resolutions)
+    global_prep_cmd.value = safeParseJSON(config.value.global_prep_cmd)
+    display_mode_remapping.value = safeParseJSON(config.value.display_mode_remapping)
+
+    config.value.global_prep_cmd = config.value.global_prep_cmd || []
+    config.value.display_mode_remapping = config.value.display_mode_remapping || []
+  }
+
+  /**
+   * 加载配置
+   */
   const loadConfig = async () => {
     try {
       const response = await fetch('/api/config')
       const data = await response.json()
 
       platform.value = data.platform || ''
+      filterTabsByPlatform(platform.value)
 
-      // 根据平台过滤标签页
-      const exclusions = PLATFORM_EXCLUSIONS[platform.value] || []
-      tabs.value = tabs.value
-        .map((tab) => {
-          // 处理分组标签页（编码器）
-          if (tab.type === 'group' && tab.children) {
-            return {
-              ...tab,
-              children: tab.children.filter((child) => !exclusions.includes(child.id)),
-            }
-          }
-          // 处理普通标签页
-          if (!exclusions.includes(tab.id)) {
-            return tab
-          }
-          return null
-        })
-        .filter(Boolean)
-
-      // 移除不需要的字段
       const { platform: _, status, version, ...configData } = data
       config.value = configData
 
-      // 填充默认值
-      for (const tab of tabs.value) {
-        // 处理分组标签页
-        if (tab.type === 'group' && tab.children) {
-          for (const childTab of tab.children) {
-            for (const [key, defaultVal] of Object.entries(childTab.options)) {
-              if (config.value[key] === undefined) {
-                config.value[key] = defaultVal
-              }
-            }
-          }
-        } else if (tab.options) {
-          // 处理普通标签页
-          for (const [key, defaultVal] of Object.entries(tab.options)) {
-            if (config.value[key] === undefined) {
-              config.value[key] = defaultVal
-            }
-          }
-        }
-      }
-
-      // 解析特殊字段
-      fps.value = safeParseJSON(config.value.fps)
-
-      try {
-        const resStr = (config.value.resolutions || '').replace(/(\d+)x(\d+)/g, '"$1x$2"')
-        resolutions.value = JSON.parse(resStr)
-      } catch {
-        resolutions.value = []
-      }
-
-      global_prep_cmd.value = safeParseJSON(config.value.global_prep_cmd)
-      display_mode_remapping.value = safeParseJSON(config.value.display_mode_remapping)
-
-      // 确保配置中有默认值
-      config.value.global_prep_cmd = config.value.global_prep_cmd || []
-      config.value.display_mode_remapping = config.value.display_mode_remapping || []
+      fillDefaultValues()
+      parseSpecialFields()
+      saveSnapshots()
     } catch (error) {
       console.error('Failed to load config:', error)
     }
   }
 
-  // 序列化配置
+  /**
+   * 序列化配置
+   */
   const serialize = () => {
-    // 序列化分辨率
-    config.value.resolutions = JSON.stringify(resolutions.value)
-      .replace(/","/g, ',')
-      .replace(/^\["/, '[')
-      .replace(/"\]$/, ']')
-
-    // 过滤并序列化 FPS
-    fps.value = fps.value.filter((item) => +item >= 30 && +item <= 500)
-    config.value.fps = JSON.stringify(fps.value).replace(/"/g, '')
-
+    config.value.resolutions = serializeResolutions(resolutions.value)
+    fps.value = filterValidFps(fps.value)
+    config.value.fps = serializeFps(fps.value)
     config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
     config.value.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
   }
 
-  // 保存配置
+  /**
+   * 移除默认值
+   */
+  const removeDefaultValues = (configData) => {
+    forEachTabOption(tabs.value, (tab) => {
+      for (const optionKey of Object.keys(tab.options)) {
+        if (shouldDeleteDefault(configData, tab, optionKey)) {
+          delete configData[optionKey]
+        }
+      }
+    })
+  }
+
+  /**
+   * 保存配置
+   */
   const save = async () => {
     saved.value = false
     restarted.value = false
     serialize()
 
-    const configData = JSON.parse(JSON.stringify(config.value))
-
-    // 删除默认值
-    for (const tab of tabs.value) {
-      // 处理分组标签页
-      if (tab.type === 'group' && tab.children) {
-        for (const childTab of tab.children) {
-          for (const optionKey of Object.keys(childTab.options)) {
-            if (shouldDeleteDefault(configData, childTab, optionKey)) {
-              delete configData[optionKey]
-            }
-          }
-        }
-      } else if (tab.options) {
-        // 处理普通标签页
-        for (const optionKey of Object.keys(tab.options)) {
-          if (shouldDeleteDefault(configData, tab, optionKey)) {
-            delete configData[optionKey]
-          }
-        }
-      }
-    }
+    const configData = deepClone(config.value)
+    removeDefaultValues(configData)
 
     try {
       const response = await fetch('/api/config', {
@@ -360,6 +413,7 @@ export function useConfig() {
 
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')
+        saveSnapshots()
       }
 
       return saved.value
@@ -370,13 +424,14 @@ export function useConfig() {
     }
   }
 
-  // 应用配置（保存并重启）
+  /**
+   * 应用配置（保存并重启）
+   */
   const apply = async () => {
     saved.value = false
     restarted.value = false
 
     const result = await save()
-
     if (!result) return
 
     restarted.value = true
@@ -393,35 +448,85 @@ export function useConfig() {
     }
   }
 
-  // 处理哈希导航
+  /**
+   * 在标签页中查找目标
+   */
+  const findTabByHash = (hash) => {
+    for (const tab of tabs.value) {
+      if (tab.id === hash || (tab.options && Object.keys(tab.options).includes(hash))) {
+        return tab
+      }
+
+      if (tab.type === 'group' && tab.children) {
+        const childTab = tab.children.find(
+          (child) => child.id === hash || Object.keys(child.options).includes(hash)
+        )
+        if (childTab) return childTab
+      }
+    }
+    return null
+  }
+
+  /**
+   * 处理哈希导航
+   */
   const handleHash = () => {
     const hash = window.location.hash.slice(1)
     if (!hash) return
 
-    // 查找普通标签页
-    let targetTab = tabs.value.find(
-      (tab) => tab.id === hash || (tab.options && Object.keys(tab.options).includes(hash))
-    )
-
-    // 如果在分组标签页中查找
-    if (!targetTab) {
-      for (const tab of tabs.value) {
-        if (tab.type === 'group' && tab.children) {
-          const childTab = tab.children.find((child) => child.id === hash || Object.keys(child.options).includes(hash))
-          if (childTab) {
-            targetTab = childTab
-            break
-          }
-        }
-      }
-    }
-
+    const targetTab = findTabByHash(hash)
     if (targetTab) {
       currentTab.value = targetTab.id
       setTimeout(() => {
         document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' })
       }, 100)
     }
+  }
+
+  /**
+   * 比较两个值是否相等
+   */
+  const isEqual = (a, b) => {
+    if (a === b) return true
+    if (a === undefined || b === undefined) return false
+
+    try {
+      return JSON.stringify(JSON.parse(a)) === JSON.stringify(JSON.parse(b))
+    } catch {
+      return String(a) === String(b)
+    }
+  }
+
+  /**
+   * 比较两个配置对象
+   */
+  const configsAreEqual = (current, original) => {
+    const allKeys = new Set([...Object.keys(current), ...Object.keys(original)])
+
+    for (const key of allKeys) {
+      if (!isEqual(current[key], original[key])) {
+        return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * 检测是否有未保存的更改
+   */
+  const hasUnsavedChanges = () => {
+    if (!config.value || !snapshots.value.config) {
+      return false
+    }
+
+    // 序列化当前配置用于比较
+    const tempConfig = deepClone(config.value)
+    tempConfig.resolutions = serializeResolutions(resolutions.value)
+    tempConfig.fps = serializeFps(filterValidFps(fps.value))
+    tempConfig.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
+    tempConfig.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
+
+    return !configsAreEqual(tempConfig, snapshots.value.config)
   }
 
   return {
@@ -440,5 +545,6 @@ export function useConfig() {
     save,
     apply,
     handleHash,
+    hasUnsavedChanges,
   }
 }
