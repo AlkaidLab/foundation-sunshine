@@ -182,6 +182,13 @@ const testWebhook = async () => {
       <div class="form-text">{{ $t('config.address_family_desc') }}</div>
     </div>
 
+    <!-- Bind address -->
+    <div class="mb-3">
+      <label for="bind_address" class="form-label">{{ $t('config.bind_address') }}</label>
+      <input type="text" class="form-control" id="bind_address" v-model="config.bind_address" />
+      <div class="form-text">{{ $t('config.bind_address_desc') }}</div>
+    </div>
+
     <!-- Port family -->
     <div class="mb-3">
       <label for="port" class="form-label">{{ $t('config.port') }}</label>

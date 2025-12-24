@@ -222,6 +222,7 @@ namespace config {
 
     std::uint16_t port;
     std::string address_family;
+    std::string bind_address;
 
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）
