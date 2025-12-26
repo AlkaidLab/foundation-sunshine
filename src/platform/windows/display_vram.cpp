@@ -1278,13 +1278,13 @@ namespace platf::dxgi {
         // We got a new frame from DesktopDuplication...
         if (blend_mouse_cursor_flag) {
           // ...and we need to blend the mouse cursor onto it.
-          // Copy the frame to intermediate surface so we can blend this and future mouse cursor updates
-          // without new frames from DesktopDuplication. We use direct3d surface directly here and not
-          // an image from pull_free_image_cb mainly because it's lighter (surface sharing between
-          // direct3d devices produce significant memory overhead).
-          last_frame_action = lfa::copy_src_to_surface;
-          // Copy the intermediate surface to a new image from pull_free_image_cb and blend the mouse cursor onto it.
-          out_frame_action = ofa::copy_last_surface_and_blend_cursor;
+          // Optimization: Directly copy to target image and blend cursor, avoiding intermediate surface copy.
+          // This reduces one texture copy operation when we have a new frame.
+          // We still use intermediate surface for cursor-only updates (no new frame) to avoid
+          // memory overhead from sharing images between direct3d devices.
+          last_frame_action = lfa::copy_src_to_img;
+          // Blend cursor directly onto the image we just copied to.
+          out_frame_action = ofa::copy_last_surface_and_blend_cursor;  // Reused for direct blend
         }
         else {
           // ...and we don't need to blend the mouse cursor.
@@ -1487,23 +1487,59 @@ namespace platf::dxgi {
       }
 
       case ofa::copy_last_surface_and_blend_cursor: {
-        auto p_surface = std::get_if<texture2d_t>(&last_frame_variant);
-        if (!p_surface) {
-          BOOST_LOG(error) << "Logical error at " << __FILE__ << ":" << __LINE__;
-          return capture_e::error;
-        }
         if (!blend_mouse_cursor_flag) {
           BOOST_LOG(error) << "Logical error at " << __FILE__ << ":" << __LINE__;
           return capture_e::error;
         }
 
-        if (!pull_free_image_cb(img_out)) return capture_e::interrupted;
+        // Optimization: Check if we have an image (from direct copy) or surface (from previous frame)
+        auto p_img = std::get_if<std::shared_ptr<platf::img_t>>(&last_frame_variant);
+        auto p_surface = std::get_if<texture2d_t>(&last_frame_variant);
+        
+        if (p_img && p_img->use_count() == 1) {
+          // Optimization: We have a direct image copy that's not yet used by encoder,
+          // blend cursor directly onto it to avoid an extra texture copy.
+          img_out = *p_img;
+          auto d3d_img = std::static_pointer_cast<img_d3d_t>(img_out);
+          texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
+          if (!lock_helper.lock()) {
+            BOOST_LOG(error) << "Failed to lock capture texture for cursor blend";
+            return capture_e::error;
+          }
+          blend_cursor(*d3d_img);
+        }
+        else if (p_surface) {
+          // We have an intermediate surface, copy it first then blend
+          if (!pull_free_image_cb(img_out)) return capture_e::interrupted;
 
-        auto [d3d_img, lock] = get_locked_d3d_img(img_out);
-        if (!d3d_img) return capture_e::error;
+          auto [d3d_img, lock] = get_locked_d3d_img(img_out);
+          if (!d3d_img) return capture_e::error;
 
-        device_ctx->CopyResource(d3d_img->capture_texture.get(), p_surface->get());
-        blend_cursor(*d3d_img);
+          device_ctx->CopyResource(d3d_img->capture_texture.get(), p_surface->get());
+          blend_cursor(*d3d_img);
+        }
+        else if (p_img) {
+          // Image is already in use by encoder, we need to get a new one
+          // This case is rare and indicates the image was consumed before cursor blend
+          // Fall back to creating a surface and copying (original behavior)
+          if (!pull_free_image_cb(img_out)) return capture_e::interrupted;
+
+          auto [d3d_img, lock] = get_locked_d3d_img(img_out);
+          if (!d3d_img) return capture_e::error;
+
+          // Copy from the image that's in use (it should still be valid for reading)
+          // Note: This creates an extra copy, but it's a rare edge case
+          auto d3d_img_src = std::static_pointer_cast<img_d3d_t>(*p_img);
+          texture_lock_helper src_lock_helper(d3d_img_src->capture_mutex.get());
+          if (src_lock_helper.lock()) {
+            device_ctx->CopyResource(d3d_img->capture_texture.get(), d3d_img_src->capture_texture.get());
+          }
+          blend_cursor(*d3d_img);
+        }
+        else {
+          BOOST_LOG(error) << "Logical error at " << __FILE__ << ":" << __LINE__;
+          return capture_e::error;
+        }
         break;
       }
 

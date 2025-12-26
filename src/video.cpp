@@ -12,6 +12,8 @@
 #include <boost/pointer_cast.hpp>
 
 extern "C" {
+#include <libavutil/hdr_dynamic_metadata.h>
+#include <libavutil/hdr_dynamic_vivid_metadata.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <libavutil/opt.h>
@@ -2044,6 +2046,120 @@ namespace video {
           clm->MaxCLL = hdr_metadata.maxContentLightLevel;
           clm->MaxFALL = hdr_metadata.maxFrameAverageLightLevel;
         }
+
+        // Add HDR10+ dynamic metadata support
+        // Generate simplified dynamic metadata based on static metadata
+        // In the future, this could be enhanced with per-frame content analysis
+        auto hdr10plus = av_dynamic_hdr_plus_create_side_data(frame.get());
+        if (hdr10plus) {
+          // Set default values for HDR10+
+          hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
+          hdr10plus->application_version = 0;
+          hdr10plus->num_windows = 1;  // Single processing window covering entire frame
+
+          // Initialize the first (and only) processing window
+          auto &params = hdr10plus->params[0];
+          params.window_upper_left_corner_x = av_make_q(0, 1);
+          params.window_upper_left_corner_y = av_make_q(0, 1);
+          params.window_lower_right_corner_x = av_make_q(1, 1);
+          params.window_lower_right_corner_y = av_make_q(1, 1);
+
+          // Set center of elliptical pixel selector to center of frame
+          params.center_of_ellipse_x = static_cast<uint16_t>(config.width / 2);
+          params.center_of_ellipse_y = static_cast<uint16_t>(config.height / 2);
+          params.rotation_angle = 0;  // 0 degrees
+          params.semimajor_axis_internal_ellipse = static_cast<uint16_t>(config.width / 2);
+          params.semimajor_axis_external_ellipse = static_cast<uint16_t>(config.width / 2);
+          params.semiminor_axis_external_ellipse = static_cast<uint16_t>(config.height / 2);
+          params.overlap_process_option = AV_HDR_PLUS_OVERLAP_PROCESS_WEIGHTED_AVERAGING;
+
+          // Set maxscl (maximum of R, G, B) to 1.0 (full brightness)
+          params.maxscl[0] = av_make_q(1, 1);
+          params.maxscl[1] = av_make_q(1, 1);
+          params.maxscl[2] = av_make_q(1, 1);
+          params.maxscl[3] = av_make_q(0, 1);  // Unused
+
+          // Set average maxRGB to 1.0
+          params.average_maxrgb = av_make_q(1, 1);
+
+          // Initialize percentile distribution (simplified)
+          params.num_distribution_maxrgb_percentiles = 0;  // No percentiles for simplified metadata
+
+          // Set fraction brightness to 0 (no bright pixels)
+          params.fraction_bright_pixels = av_make_q(0, 1);
+
+          // Set tone mapping curve to linear (no adjustment)
+          params.tone_mapping_flag = 0;
+          params.knee_point_x = av_make_q(0, 1);
+          params.knee_point_y = av_make_q(0, 1);
+          params.num_bezier_curve_anchors = 0;
+
+          // Set targeted system display maximum luminance from static metadata
+          hdr10plus->targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+          hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
+          hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
+
+          BOOST_LOG(debug) << "Added HDR10+ dynamic metadata to frame";
+        }
+
+        // Add HDR Vivid dynamic metadata support
+        auto vivid = av_dynamic_hdr_vivid_create_side_data(frame.get());
+        if (vivid) {
+          // Set default values for HDR Vivid
+          vivid->system_start_code = 0x01;
+          vivid->num_windows = 0x01;  // Single processing window
+
+          // Initialize the first (and only) processing window
+          auto &params = vivid->params[0];
+
+          // Initialize maxrgb values (simplified - use full range)
+          params.minimum_maxrgb = av_make_q(0, 4095);
+          params.average_maxrgb = av_make_q(2047, 4095);  // 0.5
+          params.variance_maxrgb = av_make_q(0, 4095);
+          params.maximum_maxrgb = av_make_q(4095, 4095);  // 1.0
+
+          // Initialize tone mapping parameters (simplified - no tone mapping)
+          params.tone_mapping_mode_flag = 0;
+          params.tone_mapping_param_num = 0;
+
+          // Initialize color saturation mapping (disabled)
+          params.color_saturation_mapping_flag = 0;
+          params.color_saturation_num = 0;
+          for (int j = 0; j < 8; j++) {
+            params.color_saturation_gain[j] = av_make_q(128, 128);  // 1.0 (no adjustment)
+          }
+
+          // Initialize tone mapping params structure (even if not used)
+          for (int i = 0; i < 2; i++) {
+            auto &tm_params = params.tm_params[i];
+            tm_params.targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            tm_params.base_enable_flag = 0;
+            tm_params.base_param_m_p = av_make_q(0, 16383);
+            tm_params.base_param_m_m = av_make_q(0, 10);
+            tm_params.base_param_m_a = av_make_q(0, 1023);
+            tm_params.base_param_m_b = av_make_q(0, 1023);
+            tm_params.base_param_m_n = av_make_q(0, 10);
+            tm_params.base_param_k1 = 0;
+            tm_params.base_param_k2 = 0;
+            tm_params.base_param_k3 = 0;
+            tm_params.base_param_Delta_enable_mode = 0;
+            tm_params.base_param_Delta = av_make_q(0, 127);
+            tm_params.three_Spline_enable_flag = 0;
+            tm_params.three_Spline_num = 0;
+            // Initialize three spline parameters
+            for (int j = 0; j < 2; j++) {
+              auto &spline = tm_params.three_spline[j];
+              spline.th_mode = 0;
+              spline.th_enable_mb = av_make_q(0, 255);
+              spline.th_enable = av_make_q(0, 4095);
+              spline.th_delta1 = av_make_q(0, 1023);
+              spline.th_delta2 = av_make_q(0, 1023);
+              spline.enable_strength = av_make_q(0, 255);
+            }
+          }
+
+          BOOST_LOG(debug) << "Added HDR Vivid dynamic metadata to frame";
+        }
       }
       else {
         BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
@@ -2083,9 +2199,30 @@ namespace video {
   }
 
   std::unique_ptr<nvenc_encode_session_t>
-  make_nvenc_encode_session(const config_t &client_config, std::unique_ptr<platf::nvenc_encode_device_t> encode_device) {
+  make_nvenc_encode_session(platf::display_t *disp, const config_t &client_config, std::unique_ptr<platf::nvenc_encode_device_t> encode_device) {
     if (!encode_device->init_encoder(client_config, encode_device->colorspace)) {
       return nullptr;
+    }
+
+    // Set HDR metadata for NVENC encoder if HDR is enabled
+    if (colorspace_is_hdr(encode_device->colorspace) && encode_device->nvenc) {
+      SS_HDR_METADATA hdr_metadata;
+      if (disp->get_hdr_metadata(hdr_metadata)) {
+        nvenc::nvenc_hdr_metadata nvenc_metadata;
+        // Copy display primaries (RGB order)
+        for (int i = 0; i < 3; i++) {
+          nvenc_metadata.displayPrimaries[i].x = hdr_metadata.displayPrimaries[i].x;
+          nvenc_metadata.displayPrimaries[i].y = hdr_metadata.displayPrimaries[i].y;
+        }
+        nvenc_metadata.whitePoint.x = hdr_metadata.whitePoint.x;
+        nvenc_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
+        nvenc_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
+        nvenc_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        nvenc_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
+        nvenc_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
+        encode_device->nvenc->set_hdr_metadata(nvenc_metadata);
+        BOOST_LOG(info) << "NVENC: HDR metadata set - max luminance: " << nvenc_metadata.maxDisplayLuminance << " nits";
+      }
     }
 
     return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
@@ -2099,7 +2236,7 @@ namespace video {
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(config, std::move(nvenc_encode_device));
+      return make_nvenc_encode_session(disp, config, std::move(nvenc_encode_device));
     }
 
     return nullptr;

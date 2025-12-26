@@ -134,6 +134,7 @@ namespace nvenc {
 
     NV_ENC_INITIALIZE_PARAMS init_params = { NV_ENC_INITIALIZE_PARAMS_VER };
     std::string encode_guid_support = "";
+    video_format = client_config.videoFormat;  // Save video format for HDR metadata handling
     switch (client_config.videoFormat) {
       case 0:
         // H.264
@@ -512,6 +513,13 @@ namespace nvenc {
         set_ref_frames(format_config.maxNumRefFramesInDPB, format_config.numRefL0, 5);
         set_minqp_if_enabled(config.min_qp_hevc);
         fill_h264_hevc_vui(format_config.hevcVUIParameters);
+
+#if NVENC_INT_VERSION >= 1202
+        // Enable HDR metadata output (mastering display and content light level SEI)
+        // Available in NVENC SDK 12.2+
+        format_config.outputMaxCll = 1;
+        format_config.outputMasteringDisplay = 1;
+#endif
         
         // Configure temporal filter for HEVC (NVENC SDK 13.0+)
 #if NVENC_INT_VERSION >= 1202
@@ -583,6 +591,13 @@ namespace nvenc {
         format_config.chromaSamplePosition = buffer_is_yuv444() ? 0 : 1;
         set_ref_frames(format_config.maxNumRefFramesInDPB, format_config.numFwdRefs, 8);
         set_minqp_if_enabled(config.min_qp_av1);
+
+#if NVENC_INT_VERSION >= 1202
+        // Enable HDR metadata output (mastering display and content light level)
+        // Available in NVENC SDK 12.2+
+        format_config.outputMaxCll = 1;
+        format_config.outputMasteringDisplay = 1;
+#endif
         
         // Configure temporal filter for AV1 (NVENC SDK 13.0+)
 #if NVENC_INT_VERSION >= 1202
@@ -767,6 +782,44 @@ namespace nvenc {
     pic_params.outputBitstream = output_bitstream;
     pic_params.completionEvent = async_event_handle;
 
+#if NVENC_INT_VERSION >= 1202
+    // Prepare HDR metadata structures for per-frame passing (NVENC SDK 12.2+)
+    MASTERING_DISPLAY_INFO mastering_display = {};
+    CONTENT_LIGHT_LEVEL content_light_level = {};
+
+    if (hdr_metadata) {
+      // Convert nvenc_hdr_metadata to NVENC structures
+      // Display primaries are normalized to 50,000 in SS_HDR_METADATA
+      // NVENC expects values normalized to 50,000 as well
+      mastering_display.r.x = hdr_metadata->displayPrimaries[0].x;
+      mastering_display.r.y = hdr_metadata->displayPrimaries[0].y;
+      mastering_display.g.x = hdr_metadata->displayPrimaries[1].x;
+      mastering_display.g.y = hdr_metadata->displayPrimaries[1].y;
+      mastering_display.b.x = hdr_metadata->displayPrimaries[2].x;
+      mastering_display.b.y = hdr_metadata->displayPrimaries[2].y;
+      mastering_display.whitePoint.x = hdr_metadata->whitePoint.x;
+      mastering_display.whitePoint.y = hdr_metadata->whitePoint.y;
+      // maxLuma is in nits, NVENC expects candelas per square meter (same as nits)
+      mastering_display.maxLuma = hdr_metadata->maxDisplayLuminance;
+      // minLuma is in 1/10000th of a nit in SS_HDR_METADATA, NVENC expects same unit
+      mastering_display.minLuma = hdr_metadata->minDisplayLuminance;
+
+      content_light_level.maxContentLightLevel = hdr_metadata->maxContentLightLevel;
+      content_light_level.maxPicAverageLightLevel = hdr_metadata->maxFrameAverageLightLevel;
+
+      // Set HDR metadata for HEVC
+      if (video_format == 1) {
+        pic_params.codecPicParams.hevcPicParams.pMasteringDisplay = &mastering_display;
+        pic_params.codecPicParams.hevcPicParams.pMaxCll = &content_light_level;
+      }
+      // Set HDR metadata for AV1
+      else if (video_format == 2) {
+        pic_params.codecPicParams.av1PicParams.pMasteringDisplay = &mastering_display;
+        pic_params.codecPicParams.av1PicParams.pMaxCll = &content_light_level;
+      }
+    }
+#endif
+
     NVENCSTATUS encode_status = nvenc->nvEncEncodePicture(encoder, &pic_params);
     if (encode_status == NV_ENC_ERR_NEED_MORE_INPUT) {
       // This is not a fatal error - encoder needs more input frames before it can produce output.
@@ -930,6 +983,20 @@ namespace nvenc {
 
     const char *codec_name = is_hevc ? "HEVC" : (is_av1 ? "AV1" : "AVC");
     BOOST_LOG(info) << "NvEnc: " << codec_name << " 码率已成功调整为 " << bitrate_kbps << " Kbps";
+  }
+
+  void
+  nvenc_base::set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) {
+    hdr_metadata = metadata;
+    if (metadata) {
+      BOOST_LOG(debug) << "NvEnc: HDR metadata set - maxDisplayLuminance: " << metadata->maxDisplayLuminance
+                       << " nits, minDisplayLuminance: " << (metadata->minDisplayLuminance / 10000.0)
+                       << " nits, maxCLL: " << metadata->maxContentLightLevel
+                       << " nits, maxFALL: " << metadata->maxFrameAverageLightLevel << " nits";
+    }
+    else {
+      BOOST_LOG(debug) << "NvEnc: HDR metadata cleared";
+    }
   }
 
   bool

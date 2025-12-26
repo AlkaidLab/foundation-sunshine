@@ -293,7 +293,18 @@ namespace platf::dxgi {
           sleep_overshoot_logger.first_point(sleep_target);
           sleep_overshoot_logger.second_point_now_and_log();
 
+          // Try with 0ms timeout first (non-blocking check)
           status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+
+          // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
+          // This helps catch frames that arrive slightly early or late due to timing variations
+          if (status == capture_e::timeout) {
+            const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
+            // If we're within 2ms of the target time, try one more time with a small timeout
+            if (time_since_target < 2ms && time_since_target > -2ms) {
+              status = snapshot(pull_free_image_cb, img_out, 2ms, *cursor);
+            }
+          }
 
           if (status == capture_e::ok && img_out) {
             frame_pacing_group_frames += 1;
@@ -307,7 +318,42 @@ namespace platf::dxgi {
 
       // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
       if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
-        status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor);
+        // Optimization: Use short timeout polling instead of long timeout to reduce lock contention.
+        // The D3D11 device is protected by an unfair lock that is held the entire time that
+        // IDXGIOutputDuplication::AcquireNextFrame() is running. Using short timeouts based on
+        // display refresh rate allows us to release the lock more frequently, giving the encoding
+        // thread opportunities to acquire it for operations like creating dummy images or initializing shared state.
+        // This prevents encoder reinitialization from taking several seconds due to lock starvation.
+        // 
+        // Calculate optimal short timeout based on display refresh rate (aim for ~half a frame interval)
+        // This ensures we poll frequently enough to catch frames quickly while still releasing the lock regularly.
+        auto short_timeout = std::chrono::milliseconds(16);  // Default to ~60fps frame interval
+        if (display_refresh_rate_rounded > 0) {
+          // Calculate half a frame interval in milliseconds, with minimum of 4ms and maximum of 16ms
+          auto frame_interval_ms = 1000.0 / display_refresh_rate_rounded;
+          short_timeout = std::chrono::milliseconds(std::max(4, std::min(16, static_cast<int>(frame_interval_ms / 2))));
+        }
+        constexpr auto max_total_timeout = 200ms;
+        const auto max_attempts = static_cast<int>((max_total_timeout.count() + short_timeout.count() - 1) / short_timeout.count());
+
+        status = capture_e::timeout;
+        for (int attempt = 0; attempt < max_attempts && status == capture_e::timeout; ++attempt) {
+          status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+
+          // If we got a frame or error, break immediately
+          if (status != capture_e::timeout) {
+            break;
+          }
+
+          // Release the snapshot to free the lock before next attempt
+          // This gives encoding thread a chance to acquire the device lock
+          release_snapshot();
+
+          // Small sleep to yield CPU and allow encoding thread to run
+          if (attempt < max_attempts - 1) {
+            std::this_thread::sleep_for(1ms);
+          }
+        }
 
         if (status == capture_e::ok && img_out) {
           frame_pacing_group_start = img_out->frame_timestamp;
@@ -318,26 +364,6 @@ namespace platf::dxgi {
           }
 
           frame_pacing_group_frames = 1;
-        }
-        else if (status == platf::capture_e::timeout) {
-          // The D3D11 device is protected by an unfair lock that is held the entire time that
-          // IDXGIOutputDuplication::AcquireNextFrame() is running. This is normally harmless,
-          // however sometimes the encoding thread needs to interact with our ID3D11Device to
-          // create dummy images or initialize the shared state that is used to pass textures
-          // between the capture and encoding ID3D11Devices.
-          //
-          // When we're in a state where we're not actively receiving frames regularly, we will
-          // spend almost 100% of our time in AcquireNextFrame() holding that critical lock.
-          // Worse still, since it's unfair, we can monopolize it while the encoding thread
-          // is starved. The encoding thread may acquire it for a few moments across a few
-          // ID3D11Device calls before losing it again to us for another long time waiting in
-          // AcquireNextFrame(). The starvation caused by this lock contention causes encoder
-          // reinitialization to take several seconds instead of a fraction of a second.
-          //
-          // To avoid starving the encoding thread, sleep without the lock held for a little
-          // while each time we reach our max frame timeout. This will only happen when nothing
-          // is updating the display, so no visible stutter should be introduced by the sleep.
-          std::this_thread::sleep_for(10ms);
         }
       }
 
@@ -749,7 +775,41 @@ namespace platf::dxgi {
     status = output->QueryInterface(IID_IDXGIOutput6, (void **) &output6);
     if (SUCCEEDED(status)) {
       DXGI_OUTPUT_DESC1 desc1;
-      output6->GetDesc1(&desc1);
+      status = output6->GetDesc1(&desc1);
+
+      // Helper lambda to validate HDR metadata values
+      auto is_hdr_metadata_valid = [](const DXGI_OUTPUT_DESC1 &desc) {
+        return desc.MinLuminance >= 0 &&
+               desc.MinLuminance < desc.MaxLuminance &&
+               desc.MaxLuminance > 0 &&
+               desc.MaxFullFrameLuminance <= desc.MaxLuminance &&
+               desc.MaxFullFrameLuminance <= 4000;
+      };
+
+      // Retry with exponential backoff if HDR metadata values appear invalid
+      // Windows may take some time to populate correct HDR metadata after display mode changes
+      if (!is_hdr_metadata_valid(desc1)) {
+        BOOST_LOG(warning) << "Detected abnormal HDR info, retrying with backoff...";
+
+        constexpr int max_retries = 5;
+        constexpr std::chrono::milliseconds initial_delay = 200ms;
+
+        for (int retry = 0; retry < max_retries; ++retry) {
+          auto delay = initial_delay * (1 << retry);
+          std::this_thread::sleep_for(delay);
+          status = output6->GetDesc1(&desc1);
+
+          if (is_hdr_metadata_valid(desc1)) {
+            BOOST_LOG(info) << "HDR info became valid after " << (retry + 1) << " retries";
+            break;
+          }
+        }
+
+        if (!is_hdr_metadata_valid(desc1)) {
+          BOOST_LOG(warning) << "HDR info validation failed after retries, values may be inaccurate: min=" << desc1.MinLuminance
+                             << " max=" << desc1.MaxLuminance << " maxFull=" << desc1.MaxFullFrameLuminance;
+        }
+      }
 
       BOOST_LOG(info)
         << "Display HDR info - Colorspace: "sv << colorspace_to_string(desc1.ColorSpace)

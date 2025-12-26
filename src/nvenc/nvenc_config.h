@@ -4,7 +4,34 @@
  */
 #pragma once
 
+#include <cstdint>
+#include <optional>
+
 namespace nvenc {
+
+  /**
+   * @brief HDR metadata for NVENC encoder.
+   *        Based on SS_HDR_METADATA from moonlight-common-c.
+   */
+  struct nvenc_hdr_metadata {
+    // RGB order - display primaries
+    struct {
+      uint16_t x;  // Normalized to 50,000
+      uint16_t y;  // Normalized to 50,000
+    } displayPrimaries[3];
+
+    struct {
+      uint16_t x;  // Normalized to 50,000
+      uint16_t y;  // Normalized to 50,000
+    } whitePoint;
+
+    uint16_t maxDisplayLuminance;       // Nits
+    uint16_t minDisplayLuminance;       // 1/10000th of a nit
+
+    // Content-specific values
+    uint16_t maxContentLightLevel;      // Nits
+    uint16_t maxFrameAverageLightLevel; // Nits
+  };
 
   enum class nvenc_two_pass {
     disabled,  ///< Single pass, the fastest and no extra vram

@@ -49,6 +49,9 @@ namespace nvenc {
     void
     set_bitrate(int bitrate_kbps) override;
 
+    void
+    set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) override;
+
   protected:
     /**
      * @brief Required. Used for loading NvEnc library and setting `nvenc` variable with `NvEncodeAPICreateInstance()`.
@@ -123,5 +126,9 @@ namespace nvenc {
 
     NV_ENC_INITIALIZE_PARAMS saved_init_params;  // 保存初始化参数
     NV_ENC_CONFIG current_enc_config;  // 保存当前的编码器配置
+
+    // HDR metadata support
+    std::optional<nvenc_hdr_metadata> hdr_metadata;
+    int video_format = 0;  // 0 = H.264, 1 = HEVC, 2 = AV1
   };
 }

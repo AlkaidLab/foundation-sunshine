@@ -71,6 +71,15 @@ namespace nvenc {
      */
     virtual void
     set_bitrate(int bitrate_kbps) = 0;
+
+    /**
+     * @brief Set HDR metadata for the encoder.
+     *        When set, the encoder will include mastering display and content light level
+     *        metadata in the encoded bitstream (HEVC and AV1 only).
+     * @param metadata HDR metadata to set, or nullopt to disable HDR metadata.
+     */
+    virtual void
+    set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) = 0;
   };
 
 }  // namespace nvenc
