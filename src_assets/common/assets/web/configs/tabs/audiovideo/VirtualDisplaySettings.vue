@@ -16,7 +16,8 @@ const fpsIn = ref('')
 
 const MAX_RESOLUTIONS = 25
 const MAX_FPS = 5
-const MIN_FPS_VALUE = 30
+const MIN_FPS_VALUE = 1
+const MAX_FPS_VALUE = 480
 
 function addResolution() {
   if (resIn.value && resolutions.value.length < MAX_RESOLUTIONS) {
@@ -29,10 +30,34 @@ function removeResolution(index) {
   resolutions.value.splice(index, 1)
 }
 
+function validateFps(value) {
+  // 支持整数和小数格式（如 60, 59.94, 29.97）
+  const pattern = /^\d+(\.\d+)?$/
+  if (!pattern.test(value)) {
+    return false
+  }
+  const fpsValue = parseFloat(value)
+  return fpsValue >= MIN_FPS_VALUE && fpsValue <= MAX_FPS_VALUE
+}
+
 function addFps() {
-  const fpsValue = +fpsIn.value
-  if (fpsValue >= MIN_FPS_VALUE && fps.value.length < MAX_FPS) {
-    fps.value.push(fpsIn.value)
+  const value = fpsIn.value.trim()
+  if (!value) {
+    fpsIn.value = ''
+    return
+  }
+  
+  if (!validateFps(value)) {
+    // 验证失败，清空输入但不显示错误（由HTML5 pattern验证处理）
+    fpsIn.value = ''
+    return
+  }
+  
+  const fpsValue = parseFloat(value)
+  if (fpsValue >= MIN_FPS_VALUE && fpsValue <= MAX_FPS_VALUE && fps.value.length < MAX_FPS) {
+    if (!fps.value.includes(value)) {
+      fps.value.push(value)
+    }
   }
   fpsIn.value = ''
 }
@@ -105,9 +130,9 @@ function removeFps(index) {
           type="text"
           v-model="fpsIn"
           required
-          pattern="[0-9]+"
+          pattern="\d+(\.\d+)?"
           class="form-control add-input add-input-fps"
-          placeholder="60"
+          placeholder="例如: 120 或 119.88"
         />
         <button v-if="fps.length < MAX_FPS" class="btn btn-success add-btn" type="submit">
           <i class="fas fa-plus"></i>
