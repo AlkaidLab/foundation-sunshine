@@ -78,7 +78,8 @@ namespace display_device {
     }
 
     const auto path { std::find_if(std::begin(display_data->paths), std::end(display_data->paths), [&](const auto &entry) {
-      return w_utils::get_device_info_for_valid_path(entry, w_utils::ALL_DEVICES)->device_id == device_id;
+      const auto device_info = w_utils::get_device_info_for_valid_path(entry, w_utils::ALL_DEVICES);
+      return device_info && device_info->device_id == device_id;
     }) };
     if (path == std::end(display_data->paths)) {
       // Debug level, because inactive device is valid case for this function
