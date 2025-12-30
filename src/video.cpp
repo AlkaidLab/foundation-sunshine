@@ -152,6 +152,8 @@ namespace video {
   cuda_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *);
   util::Either<avcodec_buffer_t, int>
   vt_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *);
+  util::Either<avcodec_buffer_t, int>
+  vulkan_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *);
 
   class avcodec_software_encode_device_t: public platf::avcodec_encode_device_t {
   public:
@@ -926,6 +928,10 @@ namespace video {
         { "rc"s, &config::video.amd.amd_rc_av1 },
         { "usage"s, &config::video.amd.amd_usage_av1 },
         { "enforce_hrd"s, &config::video.amd.amd_enforce_hrd },
+        // AV1 optimization options (no latency impact)
+        { "high_motion_quality_boost_enable"s, true },
+        { "pa_paq_mode"s, "caq"s },
+        { "pa_taq_mode"s, 2 },
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -1191,9 +1197,63 @@ namespace video {
   };
 #endif
 
+  // Vulkan encoder - cross-platform (Windows and Linux)
+#if !defined(__APPLE__)
+  encoder_t vulkan {
+    "vulkan"sv,
+    std::make_unique<encoder_platform_formats_avcodec>(
+      AV_HWDEVICE_TYPE_VULKAN, AV_HWDEVICE_TYPE_NONE,
+      AV_PIX_FMT_VULKAN,
+      AV_PIX_FMT_NV12, AV_PIX_FMT_P010,
+      AV_PIX_FMT_NONE, AV_PIX_FMT_NONE,
+      vulkan_init_avcodec_hardware_input_buffer),
+    {
+      // Common options for AV1
+      {
+        { "forced_idr"s, 1 },
+        { "async_depth"s, 1 },
+      },
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "av1_vulkan"s,
+    },
+    {
+      // Common options for HEVC (if supported)
+      {
+        { "forced_idr"s, 1 },
+        { "async_depth"s, 1 },
+      },
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "hevc_vulkan"s,
+    },
+    {
+      // Common options for H.264 (if supported)
+      {
+        { "forced_idr"s, 1 },
+        { "async_depth"s, 1 },
+      },
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "h264_vulkan"s,
+    },
+    PARALLEL_ENCODING
+  };
+#endif
+
   static const std::vector<encoder_t *> encoders {
 #ifndef __APPLE__
     &nvenc,
+    &vulkan,  // Vulkan encoder (cross-platform)
 #endif
 #ifdef _WIN32
     &quicksync,
@@ -3460,6 +3520,20 @@ namespace video {
     return hw_device_buf;
   }
 
+  util::Either<avcodec_buffer_t, int>
+  vulkan_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *encode_device) {
+    avcodec_buffer_t hw_device_buf;
+
+    auto status = av_hwdevice_ctx_create(&hw_device_buf, AV_HWDEVICE_TYPE_VULKAN, nullptr, nullptr, 0);
+    if (status < 0) {
+      char string[AV_ERROR_MAX_STRING_SIZE];
+      BOOST_LOG(error) << "Failed to create a Vulkan device: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
+      return -1;
+    }
+
+    return hw_device_buf;
+  }
+
 #ifdef _WIN32
 }
 
@@ -3540,6 +3614,8 @@ namespace video {
         return platf::mem_type_e::system;
       case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
         return platf::mem_type_e::videotoolbox;
+      case AV_HWDEVICE_TYPE_VULKAN:
+        return platf::mem_type_e::vulkan;
       default:
         return platf::mem_type_e::unknown;
     }
