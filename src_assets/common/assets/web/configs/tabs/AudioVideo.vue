@@ -84,6 +84,15 @@ const currentSubTab = ref('display-modes')
       default="true"
     ></Checkbox>
 
+    <!-- Disable Microphone -->
+    <Checkbox
+      class="mb-3"
+      id="stream_mic"
+      locale-prefix="config"
+      v-model="config.stream_mic"
+      default="true"
+    ></Checkbox>
+
     <AdapterNameSelector :platform="platform" :config="config" />
 
     <NewDisplayOutputSelector :platform="platform" :config="config" />

@@ -365,33 +365,43 @@ namespace platf::audio {
 
     UINT32 availableFrames = bufferFrameCount - padding;
 
-    // 等待缓冲区有足够空间
+    // 如果缓冲区空间不足，进行多次等待尝试
     if (framesToWrite > availableFrames) {
       BOOST_LOG(debug) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
 
-      // 等待一段时间让缓冲区清空
-      Sleep(10);  // 等待10ms
+      // 最多尝试3次，每次等待时间递增
+      const int max_retries = 3;
+      for (int retry = 0; retry < max_retries && framesToWrite > availableFrames; ++retry) {
+        // 根据需要的帧数计算等待时间：帧数 / 48000 * 1000 (ms)
+        // 保守估计，等待所需时间的 80%
+        DWORD wait_ms = static_cast<DWORD>((framesToWrite - availableFrames) * 1000 / 48000 * 0.8);
+        wait_ms = std::max(wait_ms, 5ul);  // 最少等待 5ms
+        wait_ms = std::min(wait_ms, 50ul); // 最多等待 50ms
+        
+        Sleep(wait_ms);
 
-      // 重新检查可用空间
-      status = audio_client->GetCurrentPadding(&padding);
-      if (FAILED(status)) {
-        if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
-          BOOST_LOG(warning) << "Audio device invalidated during mic write (GetCurrentPadding after wait)";
-          return -2;  // Special return value indicating device invalidated
+        // 重新检查可用空间
+        status = audio_client->GetCurrentPadding(&padding);
+        if (FAILED(status)) {
+          BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
+          return -1;
         }
-        BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
-        return -1;
+
+        if (padding > bufferFrameCount) {
+          padding = 0;
+        }
+
+        availableFrames = bufferFrameCount - padding;
+        
+        if (framesToWrite <= availableFrames) {
+          BOOST_LOG(verbose) << "Buffer space available after " << (retry + 1) << " retries";
+          break;
+        }
       }
 
-      if (padding > bufferFrameCount) {
-        padding = 0;
-      }
-
-      availableFrames = bufferFrameCount - padding;
-
-      // 如果仍然没有足够空间，则截断数据
+      // 如果仍然没有足够空间，降级为 debug 日志并截断
       if (framesToWrite > availableFrames) {
-        BOOST_LOG(warning) << "Mic write buffer overflow after wait: " << framesToWrite << " frames to write, but only " << availableFrames << " available.";
+        BOOST_LOG(warning) << "Mic write buffer still full after retries: " << framesToWrite << " frames requested, " << availableFrames << " available. Truncating.";
         framesToWrite = availableFrames;
       }
     }
