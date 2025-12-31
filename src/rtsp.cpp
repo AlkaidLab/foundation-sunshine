@@ -867,10 +867,12 @@ namespace rtsp_stream {
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
     }
 
-    // 添加麦克风流支持
-    ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
-    ss << "a=rtpmap:96 opus/48000/2" << std::endl;
-    ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
+    // 添加麦克风流支持（仅在启用时）
+    if (config::audio.stream_mic) {
+      ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
+      ss << "a=rtpmap:96 opus/48000/2" << std::endl;
+      ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
+    }
 
     for (int x = 0; x < audio::MAX_STREAM_CONFIG; ++x) {
       auto &stream_config = audio::stream_configs[x];

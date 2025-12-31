@@ -455,6 +455,8 @@
     "unsaved_changes_tooltip": "You have unsaved changes. Click to save.",
     "stream_audio": "Enable audio streaming",
     "stream_audio_desc": "Disable this option to stop audio streaming.",
+    "stream_mic": "Enable Microphone Streaming",
+    "stream_mic_desc": "Disable this option to stop microphone streaming.",
     "sunshine_name": "Sunshine Name",
     "sunshine_name_desc": "The name displayed by Moonlight. If not specified, the PC's hostname is used",
     "sw_preset": "SW Presets",

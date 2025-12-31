@@ -1186,7 +1186,7 @@ namespace platf::audio {
       }
 
       if (mic_redirect_device->init() != 0) {
-        BOOST_LOG(error) << "Failed to initialize client mic redirection device";
+        BOOST_LOG(warning) << "Failed to initialize client mic redirection device";
         mic_redirect_device.reset();
         return -1;
       }

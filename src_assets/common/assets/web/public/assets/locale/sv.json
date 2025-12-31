@@ -407,6 +407,8 @@
     "restart_note": "Solsken börjar om för att tillämpa förändringar.",
     "stream_audio": "Aktivera ljudströmning",
     "stream_audio_desc": "Inaktivera detta alternativ för att stoppa ljudströmningen.",
+    "stream_mic": "Aktivera mikrofonströmning",
+    "stream_mic_desc": "Inaktivera detta alternativ för att stoppa mikrofonströmningen.",
     "sunshine_name": "Solsken Namn",
     "sunshine_name_desc": "Namnet som visas av Moonlight. Om det inte anges används datorns värdnamn",
     "sw_preset": "SW förinställningar",

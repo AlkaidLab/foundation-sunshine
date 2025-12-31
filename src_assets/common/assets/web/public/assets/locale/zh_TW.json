@@ -436,6 +436,8 @@
     "restart_note": "Sunshine 正在重新啟動以套用變更。",
     "stream_audio": "啟用音頻串流",
     "stream_audio_desc": "禁用此選項以停用音頻串流。",
+    "stream_mic": "啟用麥克風串流",
+    "stream_mic_desc": "禁用此選項以停止麥克風串流。",
     "sunshine_name": "Sunshine 名稱",
     "sunshine_name_desc": "Moonlight 顯示的名稱。如果未指定，則使用 PC 的主機名稱。",
     "sw_preset": "SW 預設值",

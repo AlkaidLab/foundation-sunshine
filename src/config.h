@@ -109,6 +109,7 @@ namespace config {
     std::string sink;
     std::string virtual_sink;
     bool stream;
+    bool stream_mic;
     bool install_steam_drivers;
   };
 

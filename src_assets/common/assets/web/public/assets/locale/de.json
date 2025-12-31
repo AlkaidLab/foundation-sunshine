@@ -407,6 +407,8 @@
     "restart_note": "Sunshine wird neu gestartet, um Änderungen anzuwenden.",
     "stream_audio": "Audio-Streaming aktivieren",
     "stream_audio_desc": "Deaktivieren Sie diese Option, um das Audio-Streaming zu stoppen.",
+    "stream_mic": "Mikrofon-Streaming aktivieren",
+    "stream_mic_desc": "Deaktivieren Sie diese Option, um das Mikrofon-Streaming zu stoppen.",
     "sunshine_name": "Sunshine Name",
     "sunshine_name_desc": "Der von Mononlight angezeigte Name, falls nicht angegeben, wird der Hostname des PCs verwendet",
     "sw_preset": "SW-Voreinstellungen",

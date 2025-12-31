@@ -407,6 +407,8 @@
     "restart_note": "Sunshine değişikleri uygulamak için yeniden başlatılıyor.",
     "stream_audio": "Ses akışını etkinleştir",
     "stream_audio_desc": "Ses akışını durdurmak için bu seçeneği devre dışı bırakın.",
+    "stream_mic": "Mikrofon akışını etkinleştir",
+    "stream_mic_desc": "Mikrofon akışını durdurmak için bu seçeneği devre dışı bırakın.",
     "sunshine_name": "Günışığı Adı",
     "sunshine_name_desc": "Moonlight tarafından görüntülenen ad. Belirtilmezse, bilgisayarın ana bilgisayar adı kullanılır",
     "sw_preset": "SW Ön Ayarları",

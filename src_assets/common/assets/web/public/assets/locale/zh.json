@@ -455,6 +455,8 @@
     "unsaved_changes_tooltip": "您有未保存的更改。点击保存。",
     "stream_audio": "启用串流音频",
     "stream_audio_desc": "禁用此选项以停止串流音频。",
+    "stream_mic": "启用串流麦克风",
+    "stream_mic_desc": "禁用此选项以停止串流麦克风。",
     "sunshine_name": "Sunshine 主机名称",
     "sunshine_name_desc": "在 Moonlight 中显示的名称。如果未指定，则使用 PC 的主机名",
     "sw_preset": "软件编码预设",

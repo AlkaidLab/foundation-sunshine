@@ -407,6 +407,8 @@
     "restart_note": "Sunshine sta riavviando per applicare le modifiche.",
     "stream_audio": "Abilita streaming audio",
     "stream_audio_desc": "Disabilita questa opzione per interrompere lo streaming audio.",
+    "stream_mic": "Abilita streaming microfono",
+    "stream_mic_desc": "Disabilita questa opzione per interrompere lo streaming del microfono.",
     "sunshine_name": "Nome Sunshine",
     "sunshine_name_desc": "Il nome visualizzato da Moonlight. Se non specificato, viene utilizzato il nome host del PC",
     "sw_preset": "Preset SW",

@@ -1448,8 +1448,11 @@ namespace stream {
 
     BOOST_LOG(debug) << "Starting microphone receive thread";
 
+    auto retry_delay = 300ms;  // 初始重试延迟，指数退避到最大5秒
+
     while (!broadcast_shutdown_event->peek()) {
       if (!ctx.mic_socket_enabled.load()) {
+        retry_delay = 300ms;  // 会话结束时重置延迟
         std::this_thread::sleep_for(100ms);
         continue;
       }
@@ -1457,7 +1460,8 @@ namespace stream {
       // 延迟初始化麦克风设备
       if (!mic_device_initialized) {
         if (audio::init_mic_redirect_device() != 0) {
-          std::this_thread::sleep_for(100ms);
+          std::this_thread::sleep_for(retry_delay);
+          retry_delay = std::min(retry_delay * 2, 5000ms);  // 指数退避，最大5秒
           continue;
         }
         mic_device_initialized = true;
@@ -2130,19 +2134,23 @@ namespace stream {
       return -1;
     }
 
-    // 总是启动麦克风socket，后续根据会话需要决定是否关闭
-    ctx.mic_sock.open(protocol, ec);
-    if (ec) {
-      BOOST_LOG(fatal) << "Couldn't open socket for Microphone server: "sv << ec.message();
-      return -1;
+    // 仅在启用麦克风串流时启动麦克风socket
+    if (config::audio.stream_mic) {
+      ctx.mic_sock.open(protocol, ec);
+      if (ec) {
+        BOOST_LOG(fatal) << "Couldn't open socket for Microphone server: "sv << ec.message();
+        return -1;
+      }
+      ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
+      if (ec) {
+        BOOST_LOG(fatal) << "Couldn't bind Microphone server to port ["sv << mic_port << "]: "sv << ec.message();
+        return -1;
+      }
+      ctx.mic_socket_enabled.store(true);
+      BOOST_LOG(info) << "Microphone socket started on port " << mic_port;
+    } else {
+      BOOST_LOG(info) << "Microphone streaming disabled by config";
     }
-    ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
-    if (ec) {
-      BOOST_LOG(fatal) << "Couldn't bind Microphone server to port ["sv << mic_port << "]: "sv << ec.message();
-      return -1;
-    }
-    ctx.mic_socket_enabled.store(true);
-    BOOST_LOG(info) << "Microphone socket started on port " << mic_port;
 
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 

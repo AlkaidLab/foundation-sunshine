@@ -407,6 +407,8 @@
     "restart_note": "Sluneční brýle se restartuje a aplikuje změny.",
     "stream_audio": "Povolit streamování zvuku",
     "stream_audio_desc": "Zakažte tuto možnost, abyste zastavili streamování zvuku.",
+    "stream_mic": "Povolit streamování mikrofonu",
+    "stream_mic_desc": "Zakažte tuto možnost, abyste zastavili streamování mikrofonu.",
     "sunshine_name": "Sluneční jméno",
     "sunshine_name_desc": "Jméno zobrazené podle měsíčního světla. Není-li zadáno, použije se hostname počítače",
     "sw_preset": "SW přednastavení",

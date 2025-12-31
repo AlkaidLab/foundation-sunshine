@@ -407,6 +407,8 @@
     "restart_note": "Sunshine redémarre pour appliquer les changements.",
     "stream_audio": "Activer la diffusion audio",
     "stream_audio_desc": "Désactivez cette option pour arrêter la diffusion audio.",
+    "stream_mic": "Activer la diffusion du microphone",
+    "stream_mic_desc": "Désactivez cette option pour arrêter la diffusion du microphone.",
     "sunshine_name": "Nom de Sunshine",
     "sunshine_name_desc": "Le nom affiché par Moonlight. S'il n'est pas spécifié, le nom d'hôte du PC est utilisé.",
     "sw_preset": "Préréglages SW",

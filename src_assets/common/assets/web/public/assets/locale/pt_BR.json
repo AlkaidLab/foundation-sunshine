@@ -407,6 +407,8 @@
     "restart_note": "O Sunshine está sendo reiniciado para aplicar as alterações.",
     "stream_audio": "Ativar transmissão de áudio",
     "stream_audio_desc": "Desative esta opção para parar a transmissão de áudio.",
+    "stream_mic": "Ativar transmissão de microfone",
+    "stream_mic_desc": "Desative esta opção para parar a transmissão do microfone.",
     "sunshine_name": "Nome Sunshine",
     "sunshine_name_desc": "O nome exibido pelo Moonlight. Se não for especificado, será usado o nome do host do PC",
     "sw_preset": "Predefinições de SW",

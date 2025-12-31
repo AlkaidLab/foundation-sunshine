@@ -407,6 +407,8 @@
     "restart_note": "Sunshine uruchamia się ponownie, aby zastosować zmiany.",
     "stream_audio": "Włącz przesyłanie audio",
     "stream_audio_desc": "Wyłącz tę opcję, aby zatrzymać przesyłanie audio.",
+    "stream_mic": "Włącz przesyłanie mikrofonu",
+    "stream_mic_desc": "Wyłącz tę opcję, aby zatrzymać przesyłanie mikrofonu.",
     "sunshine_name": "Nazwa Sunshine",
     "sunshine_name_desc": "Nazwa wyświetlana przez Moonlight. Jeśli nie zostanie określona, używana jest nazwa hosta komputera",
     "sw_preset": "Ustawienia wstępne SW",

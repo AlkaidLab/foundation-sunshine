@@ -450,6 +450,7 @@ namespace config {
     {},  // audio_sink
     {},  // virtual_sink
     true,  // stream audio
+    true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
   };
 
@@ -1238,6 +1239,7 @@ namespace config {
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
     bool_f(vars, "stream_audio", audio.stream);
+    bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
 
     string_restricted_f(vars, "origin_web_ui_allowed", nvhttp.origin_web_ui_allowed, { "pc"sv, "lan"sv, "wan"sv });
