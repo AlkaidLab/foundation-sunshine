@@ -231,6 +231,7 @@ namespace display_device {
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
     std::string last_vdd_setting; /**< Last VDD resolution and refresh rate setting. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
+    std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
 
     /**
      * @brief An instance of StateRetryTimer.

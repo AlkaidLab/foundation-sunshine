@@ -150,6 +150,12 @@ namespace display_device {
   session_t::clear_vdd_state() {
     current_vdd_client_id.clear();
     last_vdd_setting.clear();
+    // 恢复原始的 output_name，避免下一个会话使用已销毁的 VDD 设备 ID
+    if (!original_output_name.empty()) {
+      config::video.output_name = original_output_name;
+      original_output_name.clear();
+      BOOST_LOG(debug) << "已恢复原始 output_name: " << config::video.output_name;
+    }
   }
 
   void
@@ -182,17 +188,12 @@ namespace display_device {
     }
 
     /**
-     * @brief Wait for VDD device to initialize and be fully ready.
+     * @brief Wait for VDD device to be available (active or inactive).
      * @param device_zako Output parameter for the device ID.
      * @param max_attempts Maximum number of retry attempts.
      * @param initial_delay Initial delay between retries.
      * @param max_delay Maximum delay between retries.
-     * @return true if device was found and is ready, false otherwise.
-     *
-     * This function checks multiple conditions to ensure the VDD device is fully ready:
-     * 1. Device can be found by friendly name
-     * 2. Device is in the active device list
-     * 3. Device has a valid source mode (can be queried for display configuration)
+     * @return true if device was found (active or inactive), false otherwise.
      */
     bool
     wait_for_vdd_device(std::string &device_zako, int max_attempts,
@@ -202,26 +203,19 @@ namespace display_device {
         [&device_zako]() {
           device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
           if (device_zako.empty()) {
+            BOOST_LOG(debug) << "VDD device not found by friendly name";
             return false;
           }
 
-          const auto display_data = w_utils::query_display_config(w_utils::ACTIVE_ONLY_DEVICES);
-          if (!display_data) {
-            return false;
-          }
-
-          const auto path = w_utils::get_active_path(device_zako, display_data->paths);
-          if (!path) {
-            return false;
-          }
-
-          const auto source_index = w_utils::get_source_index(*path, display_data->modes);
-          return source_index && w_utils::get_source_mode(source_index, display_data->modes);
+          // Device found by friendly name - that's all we need
+          // It can be activated later during display configuration
+          BOOST_LOG(debug) << "VDD device found: " << device_zako;
+          return true;
         },
         { .max_attempts = max_attempts,
           .initial_delay = initial_delay,
           .max_delay = max_delay,
-          .context = "等待VDD设备初始化并完全就绪" });
+          .context = "Waiting for VDD device availability" });
     }
 
     /**
@@ -388,7 +382,7 @@ namespace display_device {
     if (device_zako.empty()) {
       BOOST_LOG(info) << "创建虚拟显示器...";
       vdd_utils::create_vdd_monitor(current_client_id, hdr_brightness, physical_size);
-      std::this_thread::sleep_for(233ms);
+      std::this_thread::sleep_for(500ms);
     }
 
     // Wait for device to be ready
@@ -406,6 +400,11 @@ namespace display_device {
 
     if (device_zako.empty()) {
       return;
+    }
+
+    if (original_output_name.empty()) {
+      original_output_name = config::video.output_name;
+      BOOST_LOG(debug) << "保存原始 output_name: " << original_output_name;
     }
 
     // Update configuration and state

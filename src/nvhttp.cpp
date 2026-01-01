@@ -1641,7 +1641,6 @@ namespace nvhttp {
     response_json["status_message"] = "OK";
 
     try {
-      // Get display names using platform-specific device types
       std::vector<std::string> display_names;
       
 #ifdef _WIN32
@@ -1660,14 +1659,12 @@ namespace nvhttp {
       json displays_array = json::array();
       
 #ifdef _WIN32
-      // On Windows, try to get friendly names from display_device API
-      std::unordered_map<std::string, std::string> friendly_name_map;
+      // Build GDI name -> (device_id, friendly_name) mapping
+      std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
       try {
-        auto devices = display_device::enum_available_devices();
-        for (const auto &[device_id, device_info] : devices) {
-          std::string name = display_device::get_display_name(device_id);
-          if (!name.empty()) {
-            friendly_name_map[name] = display_device::get_display_friendly_name(device_id);
+        for (const auto &[device_id, device_info] : display_device::enum_available_devices()) {
+          if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
+            display_info_map[gdi_name] = {device_id, display_device::get_display_friendly_name(device_id)};
           }
         }
       }
@@ -1676,18 +1673,19 @@ namespace nvhttp {
       }
       
       for (size_t i = 0; i < display_names.size(); ++i) {
-        const std::string &name = display_names[i];
-        auto it = friendly_name_map.find(name);
+        const auto &name = display_names[i];
+        auto it = display_info_map.find(name);
+        bool found = (it != display_info_map.end());
         displays_array.push_back({
           {"index", static_cast<int>(i)},
           {"display_name", name},
-          {"device_id", name},
-          {"friendly_name", (it != friendly_name_map.end() && !it->second.empty()) ? it->second : name}
+          {"device_id", found ? it->second.first : name},
+          {"friendly_name", (found && !it->second.second.empty()) ? it->second.second : name}
         });
       }
 #else
       for (size_t i = 0; i < display_names.size(); ++i) {
-        const std::string &name = display_names[i];
+        const auto &name = display_names[i];
         displays_array.push_back({
           {"index", static_cast<int>(i)},
           {"display_name", name},
@@ -1697,7 +1695,7 @@ namespace nvhttp {
       }
 #endif
 
-      response_json["displays"] = displays_array;
+      response_json["displays"] = std::move(displays_array);
       response_json["count"] = static_cast<int>(display_names.size());
     }
     catch (const std::exception &e) {
