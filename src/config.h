@@ -144,7 +144,7 @@ namespace config {
 
     std::string external_ip;
     std::vector<std::string> resolutions;
-    std::vector<int> fps;
+    std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
   };
 
   struct webhook_t {

@@ -467,7 +467,7 @@ namespace display_device {
       // 检查帧率是否已缓存
       for (const auto &fps : config::nvhttp.fps) {
         fps_stream << fps << ',';
-        if (config.refresh_rate && std::to_string(fps) == to_string(*config.refresh_rate)) {
+        if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
           is_fps_cached = true;
         }
       }
@@ -478,7 +478,7 @@ namespace display_device {
         if (!is_res_cached) {
           res_stream << to_string(*config.resolution);
         }
-        if (!is_fps_cached) {
+        if (!is_fps_cached && config.refresh_rate) {
           fps_stream << to_string(*config.refresh_rate);
         }
       }

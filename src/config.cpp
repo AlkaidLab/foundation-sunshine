@@ -487,7 +487,7 @@ namespace config {
       "3840x1600"s,
     },  // supported resolutions
 
-    { 60, 90, 120, 144 },  // supported fps
+    { "60", "90", "120", "144" },  // supported fps (支持小数刷新率)
   };
 
   webhook_t webhook {
@@ -1233,7 +1233,7 @@ namespace config {
 
     string_f(vars, "external_ip", nvhttp.external_ip);
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
-    list_int_f(vars, "fps"s, nvhttp.fps);
+    list_string_f(vars, "fps"s, nvhttp.fps);
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
