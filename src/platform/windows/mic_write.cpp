@@ -126,6 +126,12 @@ namespace platf::audio {
 
   int
   mic_write_wasapi_t::init() {
+    last_seq = 0;
+    first_packet = true;
+    total_packets = 0;
+    packet_loss_count = 0;
+    fec_recovered_packets = 0;
+
     // 初始化OPUS解码器
     int opus_error;
     opus_decoder = opus_decoder_create(48000, 1, &opus_error);  // 48kHz, 单声道
@@ -282,10 +288,52 @@ namespace platf::audio {
   }
 
   int
-  mic_write_wasapi_t::write_data(const char *data, size_t len) {
+  mic_write_wasapi_t::write_data(const char *data, size_t len, uint16_t seq) {
     if (!audio_client || !audio_render || !opus_decoder) {
       BOOST_LOG(error) << "Mic write device not initialized";
       return -1;
+    }
+
+    std::vector<int16_t> pcm_mono_buffer;
+    ++total_packets;
+    // FEC recovery: check for packet loss using sequence number
+    if (seq != 0 && !first_packet) {
+      uint16_t expected_seq = last_seq + 1;
+      if (seq != expected_seq && seq > expected_seq) {
+        // Packet loss detected, try to recover using FEC from current packet
+        uint16_t lost_count = seq - expected_seq;
+        packet_loss_count += lost_count;
+        BOOST_LOG(verbose) << "Mic packet loss detected: expected " << expected_seq << ", got " << seq << " (lost " << lost_count << ")";
+        
+        // Use FEC to recover the previous lost packet from current packet's redundancy data
+        // FEC can only recover one packet (the immediately preceding one)
+        if (lost_count == 1) {
+          int fec_frame_size = opus_decoder_get_nb_samples(opus_decoder, (const unsigned char *) data, len);
+          if (fec_frame_size > 0) {
+            std::vector<int16_t> fec_buffer(fec_frame_size);
+            int fec_samples = opus_decode(
+              opus_decoder,
+              (const unsigned char *) data,
+              len,
+              fec_buffer.data(),
+              fec_frame_size,
+              1  // FEC recovery mode
+            );
+            if (fec_samples > 0) {
+              BOOST_LOG(verbose) << "FEC recovered " << fec_samples << " samples for lost packet";
+              ++fec_recovered_packets;
+              // Write recovered audio (will be done together with current packet below)
+              pcm_mono_buffer = std::move(fec_buffer);
+            }
+          }
+        }
+      }
+    }
+
+    // Update sequence tracking
+    if (seq != 0) {
+      last_seq = seq;
+      first_packet = false;
     }
 
     // 解码OPUS数据
@@ -295,16 +343,17 @@ namespace platf::audio {
       return -1;
     }
 
-    std::vector<int16_t> pcm_mono_buffer;
-    pcm_mono_buffer.resize(frame_size);  // Resize to exactly fit the decoded mono samples
+    // If we recovered FEC data, append current frame; otherwise just decode current
+    size_t fec_offset = pcm_mono_buffer.size();
+    pcm_mono_buffer.resize(fec_offset + frame_size);
 
     int samples_decoded = opus_decode(
       opus_decoder,
       (const unsigned char *) data,
       len,
-      pcm_mono_buffer.data(),
+      pcm_mono_buffer.data() + fec_offset,
       frame_size,
-      0  // No FEC
+      0  // Normal decode
     );
 
     if (samples_decoded < 0) {
@@ -813,6 +862,14 @@ namespace platf::audio {
     }
 
     BOOST_LOG(info) << "Restoring audio devices to original state";
+
+    // Log FEC statistics
+    if (total_packets > 0) {
+      double loss_rate = (double)packet_loss_count / (total_packets + packet_loss_count) * 100.0;
+      BOOST_LOG(info) << "Microphone Audio Stats, Total Audio Packets: " << total_packets
+                      << ", Packet Loss: " << packet_loss_count << " (" << std::fixed << std::setprecision(1) << loss_rate << "%)"
+                      << ", FEC Recovered: " << fec_recovered_packets;
+    }
 
     int result = 0;
 

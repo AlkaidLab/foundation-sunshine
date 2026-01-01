@@ -68,10 +68,11 @@ namespace platf::audio {
      * @brief Write audio data to the virtual audio device
      * @param data Pointer to the audio data (OPUS encoded)
      * @param len Length of the audio data in bytes
+     * @param seq Sequence number for FEC recovery (0 = unknown)
      * @return Number of bytes written, or -1 on error
      */
     int
-    write_data(const char *data, size_t len);
+    write_data(const char *data, size_t len, uint16_t seq = 0);
 
     /**
      * @brief Test write functionality with silent audio
@@ -196,6 +197,15 @@ namespace platf::audio {
       bool input_device_changed = false;
       bool settings_stored = false;
     } restoration_state;
+
+    // FEC recovery state
+    uint16_t last_seq = 0;
+    bool first_packet = true;
+    
+    // Statistics
+    uint64_t total_packets = 0;
+    uint64_t packet_loss_count = 0;
+    uint64_t fec_recovered_packets = 0;
   };
 
   extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;

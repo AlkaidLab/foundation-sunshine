@@ -379,7 +379,7 @@ namespace audio {
     ref->control->release_mic_redirect_device();
   }
 
-  int write_mic_data(const std::uint8_t *data, size_t size) {
+  int write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq) {
     // 先检查是否有活动引用，避免不必要地触发 start_audio_control
     // 如果音频捕获线程正在运行，它会持有引用，这里会返回 true
     if (!has_audio_ctx_ref()) {
@@ -395,6 +395,6 @@ namespace audio {
       return -1;
     }
 
-    return ref->control->write_mic_data(reinterpret_cast<const char*>(data), size);
+    return ref->control->write_mic_data(reinterpret_cast<const char*>(data), size, seq);
   }
 }  // namespace audio

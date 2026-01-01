@@ -599,10 +599,11 @@ namespace platf {
      * @brief Write microphone data to the virtual audio device.
      * @param data Pointer to the audio data.
      * @param size Size of the audio data in bytes.
+     * @param seq Sequence number for FEC recovery (0 = unknown)
      * @returns Number of bytes written, or -1 on error.
      */
     virtual int
-    write_mic_data(const char *data, size_t size) = 0;
+    write_mic_data(const char *data, size_t size, uint16_t seq = 0) = 0;
 
     /**
      * @brief Initialize the microphone redirect device.
