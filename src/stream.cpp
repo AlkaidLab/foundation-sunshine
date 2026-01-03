@@ -1300,15 +1300,15 @@ namespace stream {
     };
     std::map<std::string, MicStats> client_stats;
 
-    // SSRC验证辅助函数
-    auto validate_mic_ssrc = [](uint32_t ssrc, const std::string &client_id) -> bool {
-      if (ssrc != MIC_PACKET_MAGIC) {
-        BOOST_LOG(warning) << "Client " << client_id << " received invalid microphone packet type (SSRC: 0x" 
-                          << std::hex << ssrc << std::dec << ")";
-        return false;
-      }
-      return true;
-    };
+    // // SSRC验证辅助函数
+    // auto validate_mic_ssrc = [](uint32_t ssrc, const std::string &client_id) -> bool {
+    //   if (ssrc != MIC_PACKET_MAGIC) {
+    //     BOOST_LOG(warning) << "Client " << client_id << " received invalid microphone packet type (SSRC: 0x" 
+    //                       << std::hex << ssrc << std::dec << ")";
+    //     return false;
+    //   }
+    //   return true;
+    // };
 
     auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &peer_addr) {
       if (!ctx.mic_socket_enabled.load()) {
@@ -1434,10 +1434,10 @@ namespace stream {
           size_t header_size = sizeof(rtp_packet_ext_t);
           if (received_bytes > header_size) {
             uint16_t sequence_number = util::endian::little(header_ext->sequenceNumber);
-            uint32_t ssrc = util::endian::little(header_ext->ssrc);  // 小端序
-            if (!validate_mic_ssrc(ssrc, client_id)) {
-              return;
-            }
+            // uint32_t ssrc = util::endian::little(header_ext->ssrc);  // 小端序
+            // if (!validate_mic_ssrc(ssrc, client_id)) {
+            //   return;
+            // }
             process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_id);
           }
           return;
@@ -1452,10 +1452,10 @@ namespace stream {
           // 客户端按小端序发送序列号（MicrophoneStream.java 使用 LITTLE_ENDIAN）
           // 服务端必须按小端序读取，否则会读错（比如 1 会读成 256）
           uint16_t sequence_number = util::endian::little(header->rtp.sequenceNumber);
-          uint32_t ssrc = util::endian::little(header->rtp.ssrc);  // 小端序
-          if (!validate_mic_ssrc(ssrc, client_id)) {
-            return;
-          }
+          // uint32_t ssrc = util::endian::little(header->rtp.ssrc);  // 小端序
+          // if (!validate_mic_ssrc(ssrc, client_id)) {
+          //   return;
+          // }
           size_t data_size = received_bytes - header_size;
           
           // BOOST_LOG(verbose) << "Received MIC packet: total=" << received_bytes 
