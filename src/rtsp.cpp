@@ -1069,7 +1069,6 @@ namespace rtsp_stream {
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (util::from_view(args.at("x-nv-general.featureFlags"sv)) & 0x20) {
         config.encryptionFlagsEnabled |= SS_ENC_AUDIO;
-        config.encryptionFlagsEnabled |= SS_ENC_MIC;
       }
 
       config.monitor.height = util::from_view(args.at("x-nv-video[0].clientViewportHt"sv));
