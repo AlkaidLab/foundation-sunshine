@@ -91,7 +91,7 @@
             <div class="col-md-6 col-lg-4">
               <a
                 class="resource-link resource-link-apple"
-                href="https://apps.apple.com/app/voidlink/id6747717070"
+                href="https://apps.apple.com/cn/app/voidlink/id6747717070"
                 target="_blank"
               >
                 <div class="resource-icon">

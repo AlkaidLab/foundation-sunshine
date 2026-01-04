@@ -270,133 +270,294 @@ namespace system_tray {
     platf::open_url_in_browser("https://www.ifdian.net/a/qiin2333");
   };
 
+  // 文件对话框打开标志
+  static bool file_dialog_open = false;
+
+  // 安全验证：检查文件路径是否安全
+  auto is_safe_config_path = [](const std::string &path) -> bool {
+    try {
+      std::filesystem::path p(path);
+
+      // 检查文件是否存在
+      if (!std::filesystem::exists(p)) {
+        BOOST_LOG(warning) << "[tray_check_config] File does not exist: " << path;
+        return false;
+      }
+
+      // 规范化路径（解析符号链接和..）
+      std::filesystem::path canonical_path = std::filesystem::canonical(p);
+
+      // 检查文件扩展名
+      if (canonical_path.extension() != ".conf") {
+        BOOST_LOG(warning) << "[tray_check_config] Invalid file extension: " << canonical_path.extension().string();
+        return false;
+      }
+
+      // 防止符号链接攻击
+      if (std::filesystem::is_symlink(p)) {
+        BOOST_LOG(warning) << "[tray_check_config] Symlink not allowed: " << path;
+        return false;
+      }
+
+      // 确保是常规文件
+      if (!std::filesystem::is_regular_file(canonical_path)) {
+        BOOST_LOG(warning) << "[tray_check_config] Not a regular file: " << path;
+        return false;
+      }
+
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_check_config] Path validation error: " << e.what();
+      return false;
+    }
+  };
+
+  // 安全验证：检查配置文件内容是否安全
+  auto is_safe_config_content = [](const std::string &content) -> bool {
+    // 检查文件大小（最大1MB）
+    const size_t MAX_CONFIG_SIZE = 1024 * 1024;
+    if (content.size() > MAX_CONFIG_SIZE) {
+      BOOST_LOG(warning) << "[tray_check_config] Config file too large: " << content.size() << " bytes";
+      return false;
+    }
+
+    // 检查是否为空
+    if (content.empty()) {
+      BOOST_LOG(warning) << "[tray_check_config] Config file is empty";
+      return false;
+    }
+
+    // 基本格式验证：尝试解析配置
+    try {
+      auto vars = config::parse_config(content);
+      // 如果解析成功，说明格式基本正确
+      BOOST_LOG(debug) << "[tray_check_config] Config validation passed, " << vars.size() << " entries found";
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "[tray_check_config] Config parsing failed: " << e.what();
+      return false;
+    }
+  };
+
+
   // 配置导入功能
   auto tray_import_config_cb = [](struct tray_menu *item) {
-    BOOST_LOG(info) << "Importing configuration from system tray"sv;
+    if (file_dialog_open) {
+      BOOST_LOG(warning) << "[tray_import_config] A file dialog is already open";
+      return;
+    }
+    file_dialog_open = true;
+    auto clear_flag = util::fail_guard([&]() {
+      file_dialog_open = false;
+    });
+
+    BOOST_LOG(info) << "[tray_import_config] Importing configuration from system tray"sv;
 
   #ifdef _WIN32
     std::wstring file_path_wide;
     bool file_selected = false;
 
-    // 如果以SYSTEM身份运行，需要模拟用户身份来避免访问系统配置文件夹的错误
-    HANDLE user_token = NULL;
-    if (platf::is_running_as_system()) {
-      user_token = platf::retrieve_users_token(false);
-      if (!user_token) {
-        BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
-        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_TITLE));
-        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_NO_USER_SESSION));
-        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
-        return;
-      }
-    }
-
-    // 定义文件对话框逻辑为lambda，以便在模拟用户上下文中执行
+    // 直接显示文件对话框
     auto show_file_dialog = [&]() {
       // 初始化COM
       HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
       bool com_initialized = SUCCEEDED(hr);
-
-      IFileOpenDialog *pFileOpen = NULL;
-
-      // 创建文件打开对话框
-      hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void **>(&pFileOpen));
-
+      auto com_cleanup = util::fail_guard([com_initialized]() {
+        if (com_initialized) {
+          CoUninitialize();
+        }
+      });
+      
+      IFileOpenDialog *pFileOpen = nullptr;
+      hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "[tray_import_config] Failed to create IFileOpenDialog: " << hr;
+        return;
+      }
+      auto dialog_cleanup = util::fail_guard([pFileOpen]() {
+        pFileOpen->Release();
+      });
+      
+      // 设置对话框选项
+      // FOS_FORCEFILESYSTEM: 强制只使用文件系统
+      // FOS_DONTADDTORECENT: 不添加到最近文件列表
+      // FOS_NOCHANGEDIR: 不改变当前工作目录
+      // FOS_HIDEPINNEDPLACES: 隐藏固定的位置（导航面板中的快速访问等）
+      // FOS_NOVALIDATE: 不验证文件路径（避免访问不存在的系统路径）
+      DWORD dwFlags;
+      pFileOpen->GetOptions(&dwFlags);
+      pFileOpen->SetOptions(dwFlags | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST | 
+                            FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT | 
+                            FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
+      
+      // 设置文件类型过滤器
+      std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
+      COMDLG_FILTERSPEC fileTypes[] = {
+        { config_files.c_str(), L"*.conf" },
+        { L"All Files", L"*.*" }
+      };
+      pFileOpen->SetFileTypes(2, fileTypes);
+      pFileOpen->SetFileTypeIndex(1);
+      
+      // 设置对话框标题
+      std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SELECT_IMPORT));
+      pFileOpen->SetTitle(dialog_title.c_str());
+      
+      // 设置默认打开路径为应用程序配置目录
+      IShellItem *psiDefault = NULL;
+      std::wstring default_path = platf::appdata().wstring();
+      hr = SHCreateItemFromParsingName(default_path.c_str(), NULL, IID_PPV_ARGS(&psiDefault));
       if (SUCCEEDED(hr)) {
-        // 设置文件类型过滤器
-        std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
-        std::wstring all_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_ALL_FILES));
-        COMDLG_FILTERSPEC rgSpec[] = {
-          { config_files.c_str(), L"*.conf" },
-          { all_files.c_str(), L"*.*" }
-        };
-        pFileOpen->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
-        pFileOpen->SetFileTypeIndex(1);
-        std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SELECT_IMPORT));
-        pFileOpen->SetTitle(dialog_title.c_str());
-
-        // 设置选项：禁用所有可能导致访问系统位置的功能
-        DWORD dwFlags;
-        pFileOpen->GetOptions(&dwFlags);
-        // FOS_FORCEFILESYSTEM: 强制只使用文件系统
-        // FOS_DONTADDTORECENT: 不添加到最近文件列表
-        // FOS_NOCHANGEDIR: 不改变当前工作目录
-        // FOS_HIDEPINNEDPLACES: 隐藏固定的位置（导航面板中的快速访问等）
-        // FOS_NOVALIDATE: 不验证文件路径（避免访问不存在的系统路径）
-        pFileOpen->SetOptions(dwFlags | FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT |
-                              FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
-
-        // 显示对话框
-        hr = pFileOpen->Show(NULL);
-
-        if (SUCCEEDED(hr)) {
-          IShellItem *pItem;
-          hr = pFileOpen->GetResult(&pItem);
-          if (SUCCEEDED(hr)) {
-            PWSTR pszFilePath;
-            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-            if (SUCCEEDED(hr)) {
-              file_path_wide = pszFilePath;
-              file_selected = true;
-              CoTaskMemFree(pszFilePath);
+        pFileOpen->SetFolder(psiDefault);
+        psiDefault->Release();
+      }
+      
+      // 手动添加驱动器到导航栏 (因为使用了 FOS_HIDEPINNEDPLACES)
+      DWORD dwSize = GetLogicalDriveStringsW(0, NULL);
+      if (dwSize > 0) {
+        std::vector<wchar_t> buffer(dwSize + 1);
+        if (GetLogicalDriveStringsW(dwSize, buffer.data())) {
+          wchar_t* pDrive = buffer.data();
+          while (*pDrive) {
+            IShellItem *psiDrive = NULL;
+            HRESULT hrDrive = SHCreateItemFromParsingName(pDrive, NULL, IID_PPV_ARGS(&psiDrive));
+            if (SUCCEEDED(hrDrive)) {
+              pFileOpen->AddPlace(psiDrive, FDAP_BOTTOM);
+              psiDrive->Release();
             }
-            pItem->Release();
+            pDrive += wcslen(pDrive) + 1;
           }
         }
-        pFileOpen->Release();
       }
-
-      if (com_initialized) {
-        CoUninitialize();
+      
+      // 添加"此电脑"到导航栏顶部
+      IShellItem *psiComputer = NULL;
+      hr = SHGetKnownFolderItem(FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, NULL, IID_PPV_ARGS(&psiComputer));
+      if (SUCCEEDED(hr)) {
+        pFileOpen->AddPlace(psiComputer, FDAP_TOP);
+        psiComputer->Release();
+      }
+      
+      // 添加"网络"到导航栏
+      IShellItem *psiNetwork = NULL;
+      hr = SHGetKnownFolderItem(FOLDERID_NetworkFolder, KF_FLAG_DEFAULT, NULL, IID_PPV_ARGS(&psiNetwork));
+      if (SUCCEEDED(hr)) {
+        pFileOpen->AddPlace(psiNetwork, FDAP_BOTTOM);
+        psiNetwork->Release();
+      }
+      
+      // 显示对话框
+      hr = pFileOpen->Show(NULL);
+      if (SUCCEEDED(hr)) {
+        // 获取选择的文件
+        IShellItem *pItem = nullptr;
+        hr = pFileOpen->GetResult(&pItem);
+        if (SUCCEEDED(hr)) {
+          PWSTR pszFilePath = nullptr;
+          hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+          if (SUCCEEDED(hr)) {
+            file_path_wide = pszFilePath;
+            file_selected = true;
+            CoTaskMemFree(pszFilePath);
+          }
+          pItem->Release();
+        }
+      }
+      else if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        BOOST_LOG(info) << "[tray_import_config] User cancelled file dialog"sv;
+      }
+      else {
+        BOOST_LOG(warning) << "[tray_import_config] File dialog failed: 0x" << std::hex << hr << std::dec;
       }
     };
 
-    // 如果有用户令牌，在模拟用户身份的上下文中显示对话框
-    if (user_token) {
-      platf::impersonate_current_user(user_token, show_file_dialog);
-      CloseHandle(user_token);
-    }
-    else {
-      // 否则直接显示
-      show_file_dialog();
-    }
+    // 直接显示文件对话框
+    show_file_dialog();
 
     if (file_selected) {
       std::string file_path = platf::to_utf8(file_path_wide);
 
+      // 安全验证：检查文件路径
+      if (!is_safe_config_path(file_path)) {
+        BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe file path: " << file_path;
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+        std::wstring message = L"文件路径不安全或文件类型无效。\n只允许 .conf 文件，不允许符号链接。";
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+        return;
+      }
+
       try {
         // 读取配置文件内容
         std::string config_content = file_handler::read_file(file_path.c_str());
-        if (!config_content.empty()) {
-          // 备份当前配置
-          std::string backup_path = config::sunshine.config_file + ".backup";
-          std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
-          file_handler::write_file(backup_path.c_str(), current_config);
+        
+        // 安全验证：检查配置内容
+        if (!is_safe_config_content(config_content)) {
+          BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1MB";
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
 
-          // 写入新配置
-          int result = file_handler::write_file(config::sunshine.config_file.c_str(), config_content);
-          if (result == 0) {
-            BOOST_LOG(info) << "Configuration imported successfully from: " << file_path;
-            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_TITLE));
-            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_MSG));
-            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
+        // 备份当前配置（检查是否成功）
+        std::string backup_path = config::sunshine.config_file + ".backup";
+        std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+        int backup_result = file_handler::write_file(backup_path.c_str(), current_config);
+        
+        if (backup_result != 0) {
+          BOOST_LOG(error) << "[tray_import_config] Failed to create backup, aborting import";
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+          std::wstring message = L"无法创建配置备份，导入操作已中止。";
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+
+        BOOST_LOG(info) << "[tray_import_config] Config backup created: " << backup_path;
+
+        // 使用临时文件确保原子性写入
+        std::string temp_path = config::sunshine.config_file + ".tmp";
+        int temp_result = file_handler::write_file(temp_path.c_str(), config_content);
+        
+        if (temp_result != 0) {
+          BOOST_LOG(error) << "[tray_import_config] Failed to write temporary config file";
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+
+        // 原子性替换：重命名临时文件为实际配置文件
+        try {
+          std::filesystem::rename(temp_path, config::sunshine.config_file);
+          BOOST_LOG(info) << "[tray_import_config] Configuration imported successfully from: " << file_path;
+          
+          // 询问用户是否重启Sunshine以应用新配置
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_TITLE));
+          std::wstring message = L"配置导入成功！\n\n是否立即重启 Sunshine 以应用新配置？";
+          int result = MessageBoxW(NULL, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION);
+          
+          if (result == IDYES) {
+            BOOST_LOG(info) << "[tray_import_config] User chose to restart Sunshine"sv;
+            // 重启Sunshine
+            platf::restart();
           }
           else {
-            BOOST_LOG(error) << "Failed to write imported configuration";
-            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
-            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
-            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+            BOOST_LOG(info) << "[tray_import_config] User chose not to restart Sunshine"sv;
           }
         }
-        else {
-          BOOST_LOG(error) << "Failed to read configuration file: " << file_path;
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "[tray_import_config] Failed to rename temp file: " << e.what();
+          // 清理临时文件
+          std::filesystem::remove(temp_path);
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
-          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_READ));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         }
       }
       catch (const std::exception &e) {
-        BOOST_LOG(error) << "Exception during config import: " << e.what();
+        BOOST_LOG(error) << "[tray_import_config] Exception during config import: " << e.what();
         std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
         std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
         MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
@@ -404,140 +565,232 @@ namespace system_tray {
     }
   #else
     // 非Windows平台的实现（可以后续添加）
-    BOOST_LOG(info) << "Config import not implemented for this platform yet";
+    BOOST_LOG(info) << "[tray_import_config] Config import not implemented for this platform yet";
   #endif
   };
 
   // 配置导出功能
   auto tray_export_config_cb = [](struct tray_menu *item) {
-    BOOST_LOG(info) << "Exporting configuration from system tray"sv;
+    if (file_dialog_open) {
+      BOOST_LOG(warning) << "[tray_export_config] A file dialog is already open";
+      return;
+    }
+    file_dialog_open = true;
+    auto clear_flag = util::fail_guard([&]() {
+      file_dialog_open = false;
+    });
+
+    BOOST_LOG(info) << "[tray_export_config] Exporting configuration from system tray"sv;
 
   #ifdef _WIN32
     std::wstring file_path_wide;
     bool file_selected = false;
 
-    // 如果以SYSTEM身份运行，需要模拟用户身份来避免访问系统配置文件夹的错误
-    HANDLE user_token = NULL;
-    if (platf::is_running_as_system()) {
-      user_token = platf::retrieve_users_token(false);
-      if (!user_token) {
-        BOOST_LOG(warning) << "Unable to retrieve user token for file dialog";
-        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_TITLE));
-        std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ERROR_NO_USER_SESSION));
-        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
-        return;
-      }
-    }
-
-    // 定义文件对话框逻辑为lambda，以便在模拟用户上下文中执行
+    // 直接显示文件对话框
     auto show_file_dialog = [&]() {
       // 初始化COM
       HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
       bool com_initialized = SUCCEEDED(hr);
-
-      IFileSaveDialog *pFileSave = NULL;
-
-      // 创建文件保存对话框
-      hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL, IID_IFileSaveDialog, reinterpret_cast<void **>(&pFileSave));
-
-      if (SUCCEEDED(hr)) {
-        // 设置文件类型过滤器
-        std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
-        std::wstring all_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_ALL_FILES));
-        COMDLG_FILTERSPEC rgSpec[] = {
-          { config_files.c_str(), L"*.conf" },
-          { all_files.c_str(), L"*.*" }
-        };
-        pFileSave->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
-        pFileSave->SetFileTypeIndex(1);
-        pFileSave->SetDefaultExtension(L"conf");
-        std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SAVE_EXPORT));
-        pFileSave->SetTitle(dialog_title.c_str());
-
-        // 设置默认文件名
-        std::string default_name = "sunshine_config_" + std::to_string(std::time(nullptr)) + ".conf";
-        std::wstring wdefault_name(default_name.begin(), default_name.end());
-        pFileSave->SetFileName(wdefault_name.c_str());
-
-        // 设置选项：禁用所有可能导致访问系统位置的功能
-        DWORD dwFlags;
-        pFileSave->GetOptions(&dwFlags);
-        pFileSave->SetOptions(dwFlags | FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT |
-                              FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
-
-        // 显示对话框
-        hr = pFileSave->Show(NULL);
-
-        if (SUCCEEDED(hr)) {
-          IShellItem *pItem;
-          hr = pFileSave->GetResult(&pItem);
-          if (SUCCEEDED(hr)) {
-            PWSTR pszFilePath;
-            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-            if (SUCCEEDED(hr)) {
-              file_path_wide = pszFilePath;
-              file_selected = true;
-              CoTaskMemFree(pszFilePath);
-            }
-            pItem->Release();
-          }
+      auto com_cleanup = util::fail_guard([com_initialized]() {
+        if (com_initialized) {
+          CoUninitialize();
         }
+      });
+
+      IFileSaveDialog *pFileSave = nullptr;
+      hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL, IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "[tray_export_config] Failed to create IFileSaveDialog: " << hr;
+        return;
+      }
+      auto dialog_cleanup = util::fail_guard([pFileSave]() {
         pFileSave->Release();
+      });
+
+      // 设置对话框选项
+      // FOS_FORCEFILESYSTEM: 强制只使用文件系统
+      // FOS_DONTADDTORECENT: 不添加到最近文件列表
+      // FOS_NOCHANGEDIR: 不改变当前工作目录
+      // FOS_HIDEPINNEDPLACES: 隐藏固定的位置（导航面板中的快速访问等）
+      // FOS_NOVALIDATE: 不验证文件路径（避免访问不存在的系统路径）
+      DWORD dwFlags;
+      pFileSave->GetOptions(&dwFlags);
+      pFileSave->SetOptions(dwFlags | FOS_PATHMUSTEXIST | FOS_OVERWRITEPROMPT | 
+                            FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT | 
+                            FOS_NOCHANGEDIR | FOS_HIDEPINNEDPLACES | FOS_NOVALIDATE);
+
+      // 设置文件类型过滤器
+      std::wstring config_files = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES));
+      COMDLG_FILTERSPEC fileTypes[] = {
+        { config_files.c_str(), L"*.conf" },
+        { L"All Files", L"*.*" }
+      };
+      pFileSave->SetFileTypes(2, fileTypes);
+      pFileSave->SetFileTypeIndex(1);
+      pFileSave->SetDefaultExtension(L"conf");
+
+      // 设置对话框标题
+      std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SAVE_EXPORT));
+      pFileSave->SetTitle(dialog_title.c_str());
+
+      // 设置默认文件名
+      std::string default_name = "sunshine_config_" + std::to_string(std::time(nullptr)) + ".conf";
+      std::wstring wdefault_name(default_name.begin(), default_name.end());
+      pFileSave->SetFileName(wdefault_name.c_str());
+
+      // 设置默认保存路径为应用程序配置目录
+      IShellItem *psiDefault = NULL;
+      std::wstring default_path = platf::appdata().wstring();
+      hr = SHCreateItemFromParsingName(default_path.c_str(), NULL, IID_PPV_ARGS(&psiDefault));
+      if (SUCCEEDED(hr)) {
+        pFileSave->SetFolder(psiDefault);
+        psiDefault->Release();
       }
 
-      if (com_initialized) {
-        CoUninitialize();
+      // 手动添加驱动器到导航栏 (因为使用了 FOS_HIDEPINNEDPLACES)
+      DWORD dwSize = GetLogicalDriveStringsW(0, NULL);
+      if (dwSize > 0) {
+        std::vector<wchar_t> buffer(dwSize + 1);
+        if (GetLogicalDriveStringsW(dwSize, buffer.data())) {
+          wchar_t* pDrive = buffer.data();
+          while (*pDrive) {
+            IShellItem *psiDrive = NULL;
+            HRESULT hrDrive = SHCreateItemFromParsingName(pDrive, NULL, IID_PPV_ARGS(&psiDrive));
+            if (SUCCEEDED(hrDrive)) {
+              pFileSave->AddPlace(psiDrive, FDAP_BOTTOM);
+              psiDrive->Release();
+            }
+            pDrive += wcslen(pDrive) + 1;
+          }
+        }
+      }
+      
+      // 添加"此电脑"到导航栏顶部
+      IShellItem *psiComputer = NULL;
+      hr = SHGetKnownFolderItem(FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, NULL, IID_PPV_ARGS(&psiComputer));
+      if (SUCCEEDED(hr)) {
+        pFileSave->AddPlace(psiComputer, FDAP_TOP);
+        psiComputer->Release();
+      }
+
+      // 添加"网络"到导航栏
+      IShellItem *psiNetwork = NULL;
+      hr = SHGetKnownFolderItem(FOLDERID_NetworkFolder, KF_FLAG_DEFAULT, NULL, IID_PPV_ARGS(&psiNetwork));
+      if (SUCCEEDED(hr)) {
+        pFileSave->AddPlace(psiNetwork, FDAP_BOTTOM);
+        psiNetwork->Release();
+      }
+
+      // 显示对话框
+      hr = pFileSave->Show(NULL);
+      if (SUCCEEDED(hr)) {
+        // 获取选择的文件
+        IShellItem *pItem = nullptr;
+        hr = pFileSave->GetResult(&pItem);
+        if (SUCCEEDED(hr)) {
+          PWSTR pszFilePath = nullptr;
+          hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+          if (SUCCEEDED(hr)) {
+            file_path_wide = pszFilePath;
+            file_selected = true;
+            CoTaskMemFree(pszFilePath);
+          }
+          pItem->Release();
+        }
+      }
+      else if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        BOOST_LOG(info) << "[tray_export_config] User cancelled file dialog"sv;
+      }
+      else {
+        BOOST_LOG(warning) << "[tray_export_config] File dialog failed: 0x" << std::hex << hr << std::dec;
       }
     };
 
-    // 如果有用户令牌，在模拟用户身份的上下文中显示对话框
-    if (user_token) {
-      platf::impersonate_current_user(user_token, show_file_dialog);
-      CloseHandle(user_token);
-    }
-    else {
-      // 否则直接显示
-      show_file_dialog();
-    }
+    // 直接显示文件对话框
+    show_file_dialog();
 
     if (file_selected) {
       std::string file_path = platf::to_utf8(file_path_wide);
 
+      // 安全验证：检查输出文件路径（基本检查）
+      try {
+        std::filesystem::path p(file_path);
+        
+        // 检查文件扩展名
+        if (p.extension() != ".conf") {
+          BOOST_LOG(warning) << "[tray_export_config] Config export rejected: invalid extension: " << p.extension().string();
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+          std::wstring message = L"只允许导出为 .conf 文件。";
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+
+        // 如果文件已存在，检查是否为符号链接
+        if (std::filesystem::exists(p) && std::filesystem::is_symlink(p)) {
+          BOOST_LOG(warning) << "[tray_export_config] Config export rejected: target is symlink: " << file_path;
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+          std::wstring message = L"不允许导出到符号链接。";
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "[tray_export_config] Path validation error during export: " << e.what();
+        std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+        std::wstring message = L"文件路径无效。";
+        MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+        return;
+      }
+
       try {
         // 读取当前配置
         std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
-        if (!config_content.empty()) {
-          // 写入到选择的文件
-          int result = file_handler::write_file(file_path.c_str(), config_content);
-          if (result == 0) {
-            BOOST_LOG(info) << "Configuration exported successfully to: " << file_path;
-            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE));
-            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG));
-            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
-          }
-          else {
-            BOOST_LOG(error) << "Failed to write exported configuration";
-            std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
-            std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
-            MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
-          }
-        }
-        else {
-          BOOST_LOG(error) << "No configuration to export";
+        if (config_content.empty()) {
+          BOOST_LOG(error) << "[tray_export_config] No configuration to export";
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
           std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_NO_CONFIG));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+
+        // 使用临时文件确保原子性写入
+        std::string temp_path = file_path + ".tmp";
+        int temp_result = file_handler::write_file(temp_path.c_str(), config_content);
+        
+        if (temp_result != 0) {
+          BOOST_LOG(error) << "[tray_export_config] Failed to write temporary export file";
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+          return;
+        }
+
+        // 原子性替换
+        try {
+          std::filesystem::rename(temp_path, file_path);
+          BOOST_LOG(info) << "[tray_export_config] Configuration exported successfully to: " << file_path;
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG));
+          MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "[tray_export_config] Failed to rename temp export file: " << e.what();
+          // 清理临时文件
+          std::filesystem::remove(temp_path);
+          std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
+          std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
         }
       }
       catch (const std::exception &e) {
-        BOOST_LOG(error) << "Exception during config export: " << e.what();
+        BOOST_LOG(error) << "[tray_export_config] Exception during config export: " << e.what();
         std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
         std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_EXCEPTION));
         MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
       }
     }
   #else
-    BOOST_LOG(info) << "Config export not implemented for this platform yet";
+    BOOST_LOG(info) << "[tray_export_config] Config export not implemented for this platform yet";
   #endif
   };
 
