@@ -188,7 +188,8 @@ namespace platf::dxgi {
     int width_before_rotation;
     int height_before_rotation;
 
-    int client_frame_rate;
+    int client_frame_rate;  // Integer framerate for backward compatibility
+    DXGI_RATIONAL client_frame_rate_rational;  // Fractional framerate for NTSC support (e.g., 60000/1001 = 59.94fps)
     int adapter_index;
     int output_index;
 

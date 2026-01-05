@@ -200,8 +200,42 @@ namespace platf::dxgi {
   capture_e
   display_base_t::capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) {
     auto adjust_client_frame_rate = [&]() -> DXGI_RATIONAL {
+      double requested_fps = static_cast<double>(client_frame_rate_rational.Numerator) / client_frame_rate_rational.Denominator;
+      
+      // Check if client requested an NTSC framerate (denominator is 1001)
+      bool is_ntsc_request = (client_frame_rate_rational.Denominator == 1001);
+      
       // Adjust capture frame interval when display refresh rate is not integral but very close to requested fps.
       if (display_refresh_rate.Denominator > 1) {
+        double display_fps = static_cast<double>(display_refresh_rate.Numerator) / display_refresh_rate.Denominator;
+        
+        // Check if display refresh rate matches the requested NTSC framerate pattern
+        // For example, client requests 60000/1001 (59.94fps), display is 59940/1000 (59.94fps)
+        if (is_ntsc_request) {
+          // Check if display refresh rate is close to the requested NTSC rate
+          double ratio = display_fps / requested_fps;
+          if (ratio > 0.999 && ratio < 1.001) {
+            // Display matches requested NTSC rate, use display refresh rate for perfect sync
+            BOOST_LOG(info) << "Display refresh rate (" << display_fps << "fps) matches NTSC request ("
+                            << requested_fps << "fps), using display timing for capture";
+            return display_refresh_rate;
+          }
+          // Check if display is a multiple of the requested rate (e.g., 120Hz display, 60fps request)
+          int multiplier = static_cast<int>(std::round(display_fps / requested_fps));
+          if (multiplier > 1) {
+            double expected = requested_fps * multiplier;
+            if (std::abs(display_fps - expected) / expected < 0.001) {
+              // Display is a clean multiple, adjust the NTSC rate
+              DXGI_RATIONAL adjusted = { display_refresh_rate.Numerator, display_refresh_rate.Denominator * static_cast<UINT>(multiplier) };
+              double adjusted_fps = static_cast<double>(adjusted.Numerator) / adjusted.Denominator;
+              BOOST_LOG(info) << "Adjusted NTSC capture rate from " << requested_fps << "fps to "
+                              << adjusted_fps << "fps to match display (" << display_fps << "fps / " << multiplier << ")";
+              return adjusted;
+            }
+          }
+        }
+        
+        // Original logic for non-NTSC rates
         DXGI_RATIONAL candidate = display_refresh_rate;
         if (client_frame_rate % display_refresh_rate_rounded == 0) {
           candidate.Numerator *= client_frame_rate / display_refresh_rate_rounded;
@@ -209,15 +243,16 @@ namespace platf::dxgi {
         else if (display_refresh_rate_rounded % client_frame_rate == 0) {
           candidate.Denominator *= display_refresh_rate_rounded / client_frame_rate;
         }
-        double candidate_rate = (double) candidate.Numerator / candidate.Denominator;
+        double candidate_rate = static_cast<double>(candidate.Numerator) / candidate.Denominator;
         // Can only decrease requested fps, otherwise client may start accumulating frames and suffer increased latency.
-        if (client_frame_rate > candidate_rate && candidate_rate / client_frame_rate > 0.99) {
+        if (requested_fps > candidate_rate && candidate_rate / requested_fps > 0.99) {
           BOOST_LOG(info) << "Adjusted capture rate to " << candidate_rate << "fps to better match display";
           return candidate;
         }
       }
 
-      return { (uint32_t) client_frame_rate, 1 };
+      // Use the client's requested fractional framerate directly
+      return client_frame_rate_rational;
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
@@ -771,6 +806,18 @@ namespace platf::dxgi {
     }
 
     client_frame_rate = config.framerate;
+    
+    // Initialize fractional framerate for NTSC support
+    if (config.frameRateNum > 0 && config.frameRateDen > 0) {
+      client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
+      double effective_fps = static_cast<double>(config.frameRateNum) / config.frameRateDen;
+      BOOST_LOG(info) << "Using fractional capture framerate: " << config.frameRateNum << "/" << config.frameRateDen
+                      << " (" << effective_fps << " fps)";
+    }
+    else {
+      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+    }
+    
     dxgi::output6_t output6 {};
     status = output->QueryInterface(IID_IDXGIOutput6, (void **) &output6);
     if (SUCCEEDED(status)) {

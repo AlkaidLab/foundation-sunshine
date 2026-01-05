@@ -1045,54 +1045,79 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
+    args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
     stream::config_t config;
 
     std::int64_t configuredBitrateKbps;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
+    auto getArg = [&args](std::string_view key) {
+      return util::from_view(args.at(key));
+    };
+
     try {
-      config.audio.channels = util::from_view(args.at("x-nv-audio.surround.numChannels"sv));
-      config.audio.mask = util::from_view(args.at("x-nv-audio.surround.channelMask"sv));
-      config.audio.packetDuration = util::from_view(args.at("x-nv-aqos.packetDuration"sv));
+      config.audio.channels = getArg("x-nv-audio.surround.numChannels"sv);
+      config.audio.mask = getArg("x-nv-audio.surround.channelMask"sv);
+      config.audio.packetDuration = getArg("x-nv-aqos.packetDuration"sv);
+      config.audio.flags[audio::config_t::HIGH_QUALITY] = getArg("x-nv-audio.surround.AudioQuality"sv);
 
-      config.audio.flags[audio::config_t::HIGH_QUALITY] =
-        util::from_view(args.at("x-nv-audio.surround.AudioQuality"sv));
-
-      config.controlProtocolType = util::from_view(args.at("x-nv-general.useReliableUdp"sv));
-      config.packetsize = util::from_view(args.at("x-nv-video[0].packetSize"sv));
-      config.minRequiredFecPackets = util::from_view(args.at("x-nv-vqos[0].fec.minRequiredFecPackets"sv));
-      config.mlFeatureFlags = util::from_view(args.at("x-ml-general.featureFlags"sv));
-      config.audioQosType = util::from_view(args.at("x-nv-aqos.qosTrafficType"sv));
-      config.videoQosType = util::from_view(args.at("x-nv-vqos[0].qosTrafficType"sv));
-      config.encryptionFlagsEnabled = util::from_view(args.at("x-ss-general.encryptionEnabled"sv));
+      config.controlProtocolType = getArg("x-nv-general.useReliableUdp"sv);
+      config.packetsize = getArg("x-nv-video[0].packetSize"sv);
+      config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
+      config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
+      config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
+      config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
-      if (util::from_view(args.at("x-nv-general.featureFlags"sv)) & 0x20) {
+      if (getArg("x-nv-general.featureFlags"sv) & 0x20) {
         config.encryptionFlagsEnabled |= SS_ENC_AUDIO;
       }
 
-      config.monitor.height = util::from_view(args.at("x-nv-video[0].clientViewportHt"sv));
-      config.monitor.width = util::from_view(args.at("x-nv-video[0].clientViewportWd"sv));
-      config.monitor.framerate = util::from_view(args.at("x-nv-video[0].maxFPS"sv));
-      config.monitor.bitrate = util::from_view(args.at("x-nv-vqos[0].bw.maximumBitrateKbps"sv));
-      config.monitor.slicesPerFrame = util::from_view(args.at("x-nv-video[0].videoEncoderSlicesPerFrame"sv));
-      config.monitor.numRefFrames = util::from_view(args.at("x-nv-video[0].maxNumReferenceFrames"sv));
-      config.monitor.encoderCscMode = util::from_view(args.at("x-nv-video[0].encoderCscMode"sv));
-      config.monitor.videoFormat = util::from_view(args.at("x-nv-vqos[0].bitStreamFormat"sv));
-      config.monitor.dynamicRange = util::from_view(args.at("x-nv-video[0].dynamicRangeMode"sv));
-      config.monitor.chromaSamplingType = util::from_view(args.at("x-ss-video[0].chromaSamplingType"sv));
-      config.monitor.enableIntraRefresh = util::from_view(args.at("x-ss-video[0].intraRefresh"sv));
+      auto &monitor = config.monitor;
+      monitor.height = getArg("x-nv-video[0].clientViewportHt"sv);
+      monitor.width = getArg("x-nv-video[0].clientViewportWd"sv);
+      monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
+      monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
+      monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);
+      monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
+      monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
+      monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
+      monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
+      monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
+      monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
 
-      configuredBitrateKbps = util::from_view(args.at("x-ml-video.configuredBitrateKbps"sv));
-      
-      // Set display_name from session environment or use global configuration
-      if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-        config.monitor.display_name = it->to_string();
-        BOOST_LOG(info) << "Session using specified display: " << config.monitor.display_name;
+      int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
+
+      // Only use clientRefreshRateX100 if it's within 2% of maxFPS
+      bool useClientRefreshRate = false;
+      if (clientRefreshRateX100 > 0 && monitor.framerate > 0) {
+        double ratio = (clientRefreshRateX100 / 100.0) / monitor.framerate;
+        useClientRefreshRate = (ratio > 0.98 && ratio < 1.02);
+      }
+
+      if (useClientRefreshRate) {
+        int remainder = clientRefreshRateX100 % 100;
+        monitor.frameRateNum = (remainder == 0) ? clientRefreshRateX100 / 100 : clientRefreshRateX100;
+        monitor.frameRateDen = (remainder == 0) ? 1 : 100;
+
+        BOOST_LOG(info) << "Client framerate: " << clientRefreshRateX100 / 100.0 << " fps ("
+                        << monitor.frameRateNum << "/" << monitor.frameRateDen << ")";
       }
       else {
-        // Use global configuration if not specified by session
-        config.monitor.display_name = config::video.output_name;
+        monitor.frameRateNum = monitor.framerate;
+        monitor.frameRateDen = 1;
+      }
+
+      configuredBitrateKbps = getArg("x-ml-video.configuredBitrateKbps"sv);
+
+      // Set display_name from session environment or use global configuration
+      if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+        monitor.display_name = it->to_string();
+        BOOST_LOG(info) << "Session using specified display: " << monitor.display_name;
+      }
+      else {
+        monitor.display_name = config::video.output_name;
       }
     }
     catch (std::out_of_range &) {
