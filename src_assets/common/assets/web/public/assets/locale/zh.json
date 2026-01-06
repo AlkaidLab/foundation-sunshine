@@ -519,7 +519,7 @@
     "webhook_url_desc": "接收事件通知的 Webhook 地址，支持 HTTP/HTTPS 协议"
   },
   "index": {
-    "description": "桑帅基地版 - 杂鱼们一起搞的串流服务",
+    "description": "桑帅 - 杂鱼们一起搞的串流服务",
     "download": "下崽",
     "installed_version_not_stable": "你正在用 Sunshine 的测试版呢！可能会遇到各种小问题，记得报告给咱哦～感谢帮忙让 Sunshine 变得更好！",
     "loading_latest": "正在检查最新版本...",
@@ -529,7 +529,7 @@
     "version_dirty": "感谢杂鱼帮忙让 Sunshine 变得更好！",
     "version_latest": "杂鱼用的是最新版的 Sunshine 呢～",
     "view_logs": "查看日志",
-    "welcome": "Hello, Sunshine-Foundation!"
+    "welcome": "Hello, Foundation Sunshine!"
   },
   "navbar": {
     "applications": "应用程序",

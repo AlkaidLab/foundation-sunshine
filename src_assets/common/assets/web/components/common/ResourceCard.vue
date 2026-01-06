@@ -59,14 +59,14 @@
             <div class="col-md-6 col-lg-4">
               <a
                 class="resource-link resource-link-android"
-                href="https://github.com/qiin2333/moonlight-android/releases/tag/shortcut"
+                href="https://github.com/qiin2333/moonlight-vplus"
                 target="_blank"
               >
                 <div class="resource-icon">
                   <i class="fab fa-android"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">威力加强版</span>
+                  <span class="resource-title">Moonlight-VPLUS</span>
                   <span class="resource-desc">Android 推荐</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>

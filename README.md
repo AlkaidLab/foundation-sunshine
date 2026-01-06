@@ -1,4 +1,4 @@
-# Sunshine 基地版
+# Foundation Sunshine
 
 ## 🌐 多语言支持 / Multi-language Support
 
@@ -17,7 +17,7 @@
 
 基于LizardByte/Sunshine的分支，提供完整的文档支持 [Read the Docs](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)。
 
-**Sunshine-Foundation**  is a self-hosted game stream host for Moonlight，本分支版本在原始Sunshine基础上进行了重大改进，专注于提高各种串流终端设备与windows主机接入的游戏串流体验：
+**Foundation Sunshine**  is a self-hosted game stream host for Moonlight，本分支版本在原始Sunshine基础上进行了重大改进，专注于提高各种串流终端设备与windows主机接入的游戏串流体验：
 
 ### 🌟 核心特性
 - **HDR友好支持** - 经过优化的HDR处理管线，提供真正的HDR游戏流媒体体验
@@ -28,9 +28,8 @@
 - **智能配对** - 智能管理配对设备的对应配置文件
 
 ### 🖥️ 虚拟显示器集成 (需win10 22H2 及更新的系统）
-- 动态虚拟显示器创建和销毁
 - 自定义分辨率和刷新率支持
-- 多显示器配置管理
+- 多显示器组合配置管理
 - 无需重启的实时配置更改
 
 
@@ -42,7 +41,7 @@
 [![Moonlight-PC](https://img.shields.io/badge/Moonlight-PC-red?style=for-the-badge&logo=windows)](https://github.com/qiin2333/moonlight-qt)
 
 ### 📱 Android客户端
-[![威力加强版 Moonlight-Android](https://img.shields.io/badge/威力加强版-Moonlight--Android-green?style=for-the-badge&logo=android)](https://github.com/qiin2333/moonlight-android/releases/tag/shortcut)
+[![VPLUS Moonlight-Android](https://img.shields.io/badge/威力加强版-Moonlight--Android-green?style=for-the-badge&logo=android)](https://github.com/qiin2333/moonlight-vplus)
 [![王冠版 Moonlight-Android](https://img.shields.io/badge/王冠版-Moonlight--Android-blue?style=for-the-badge&logo=android)](https://github.com/WACrown/moonlight-android)
 
 ### 📱 iOS客户端

@@ -519,7 +519,7 @@
     "webhook_url_desc": "The URL to receive event notifications, supports HTTP/HTTPS protocols"
   },
   "index": {
-    "description": "Sunshine Foundation - The elegant game streaming solution for the community",
+    "description": "Foundation Sunshine - The elegant game streaming solution for the community",
     "download": "Download",
     "installed_version_not_stable": "You are running a pre-release version of Sunshine. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to make Sunshine a better software!",
     "loading_latest": "Loading latest release...",
@@ -529,7 +529,7 @@
     "version_dirty": "Thank you for helping to make Sunshine a better software!",
     "version_latest": "You are running the latest version of Sunshine",
     "view_logs": "View Logs",
-    "welcome": "Hello, Sunshine-Foundation!"
+    "welcome": "Hello, Foundation Sunshine!"
   },
   "navbar": {
     "applications": "Applications",
