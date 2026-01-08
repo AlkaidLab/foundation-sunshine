@@ -153,7 +153,10 @@ namespace display_device {
      * ```
      */
     apply_result_t
-    apply_config(const parsed_config_t &config, const rtsp_stream::launch_session_t &session);
+    apply_config(
+      const parsed_config_t &config,
+      const rtsp_stream::launch_session_t &session,
+      const boost::optional<active_topology_t> &pre_saved_initial_topology = boost::none);
 
     /**
      * @brief Revert the applied configuration and restore the previous settings.
@@ -200,8 +203,37 @@ namespace display_device {
      * }
      * ```
      */
-    void
+   void
     reset_persistence();
+
+    /**
+     * @brief Check if there is saved persistent data.
+     * @returns True if persistent data exists, false otherwise.
+     */
+    bool
+    has_persistent_data() const;
+
+    /**
+     * @brief Check if VDD is in the initial topology.
+     * @returns True if VDD is in the initial topology, false otherwise.
+     */
+    bool
+    is_vdd_in_initial_topology() const;
+
+    /**
+     * @brief Remove VDD from initial and modified topology.
+     * @param vdd_id The VDD device ID to remove.
+     */
+    void
+    remove_vdd_from_initial_topology(const std::string& vdd_id);
+
+    /**
+     * @brief Replace VDD ID in initial and modified topology.
+     * @param old_id The old VDD device ID.
+     * @param new_id The new VDD device ID.
+     */
+    void
+    replace_vdd_id(const std::string& old_id, const std::string& new_id);
 
   private:
     std::unique_ptr<persistent_data_t> persistent_data; /**< Platform specific persistent data. */

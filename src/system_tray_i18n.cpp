@@ -12,7 +12,17 @@ namespace system_tray_i18n {
   
   // Menu item keys
   const std::string KEY_OPEN_SUNSHINE = "open_sunshine";
-  const std::string KEY_VDD_MONITOR_TOGGLE = "vdd_monitor_toggle";
+  const std::string KEY_VDD_BASE_DISPLAY = "vdd_base_display";
+  const std::string KEY_VDD_CREATE = "vdd_create";
+  const std::string KEY_VDD_CLOSE = "vdd_close";
+  const std::string KEY_VDD_PERSISTENT = "vdd_persistent";
+  const std::string KEY_VDD_CONFIRM_CREATE_TITLE = "vdd_confirm_create_title";
+  const std::string KEY_VDD_CONFIRM_CREATE_MSG = "vdd_confirm_create_msg";
+  const std::string KEY_VDD_CONFIRM_KEEP_TITLE = "vdd_confirm_keep_title";
+  const std::string KEY_VDD_CONFIRM_KEEP_MSG = "vdd_confirm_keep_msg";
+  const std::string KEY_VDD_CANCEL_CREATE_LOG = "vdd_cancel_create_log";
+  const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE = "vdd_persistent_confirm_title";
+  const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG = "vdd_persistent_confirm_msg";
   const std::string KEY_CONFIGURATION = "configuration";
   const std::string KEY_IMPORT_CONFIG = "import_config";
   const std::string KEY_EXPORT_CONFIG = "export_config";
@@ -71,7 +81,17 @@ namespace system_tray_i18n {
     { KEY_QUIT_TITLE, "Wait! Don't Leave Me! T_T" },
     { KEY_QUIT_MESSAGE, "Nooo! You can't just quit like that!\nAre you really REALLY sure you want to leave?\nI'll miss you... but okay, if you must...\n\n(This will also close the Sunshine GUI application.)" },
     { KEY_OPEN_SUNSHINE, "Open Sunshine" },
-    { KEY_VDD_MONITOR_TOGGLE, "VDD Monitor Toggle" },
+    { KEY_VDD_BASE_DISPLAY, "Foundation Display" },
+    { KEY_VDD_CREATE, "Create Virtual Display" },
+    { KEY_VDD_CLOSE, "Close Virtual Display" },
+    { KEY_VDD_PERSISTENT, "Keep Enabled" },
+    { KEY_VDD_CONFIRM_CREATE_TITLE, "Create Virtual Display" },
+    { KEY_VDD_CONFIRM_CREATE_MSG, "Are you sure you want to create a virtual display?\n\nCreating a display may cause a brief black screen, which is normal.\nIf you encounter a black screen, please press Win+P twice to recover." },
+    { KEY_VDD_CONFIRM_KEEP_TITLE, "Confirm Virtual Display" },
+    { KEY_VDD_CONFIRM_KEEP_MSG, "Virtual display created, do you want to keep using it?\n\nIf not confirmed, it will be automatically closed in 20 seconds." },
+    { KEY_VDD_CANCEL_CREATE_LOG, "User cancelled creating virtual display" },
+    { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "Keep Virtual Display Enabled" },
+    { KEY_VDD_PERSISTENT_CONFIRM_MSG, "By enabling this option, the virtual display will NOT be closed after you stop streaming.\n\nDo you want to enable this feature?" },
     { KEY_CONFIGURATION, "Configuration" },
     { KEY_IMPORT_CONFIG, "Import Config" },
     { KEY_EXPORT_CONFIG, "Export Config" },
@@ -127,7 +147,17 @@ namespace system_tray_i18n {
     { KEY_QUIT_TITLE, "真的要退出吗" },
     { KEY_QUIT_MESSAGE, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~\n\n这将同时关闭Sunshine GUI应用程序。" },
     { KEY_OPEN_SUNSHINE, "打开 Sunshine" },
-    { KEY_VDD_MONITOR_TOGGLE, "虚拟显示器切换" },
+    { KEY_VDD_BASE_DISPLAY, "基地显示器" },
+    { KEY_VDD_CREATE, "创建显示器" },
+    { KEY_VDD_CLOSE, "关闭显示器" },
+    { KEY_VDD_PERSISTENT, "保持启用" },
+    { KEY_VDD_CONFIRM_CREATE_TITLE, "创建基地显示器" },
+    { KEY_VDD_CONFIRM_CREATE_MSG, "确定要创建基地显示器吗？\n\n创建后可能会短暂黑屏，这是正常现象。\n如遇黑屏，请按两次 Win+P 恢复。" },
+    { KEY_VDD_CONFIRM_KEEP_TITLE, "显示器确认" },
+    { KEY_VDD_CONFIRM_KEEP_MSG, "已创建基地显示器，是否继续使用？\n\n如不确认，20秒后将自动关闭显示器" },
+    { KEY_VDD_CANCEL_CREATE_LOG, "用户取消创建基地显示器" },
+    { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "保持开启虚拟显示器" },
+    { KEY_VDD_PERSISTENT_CONFIRM_MSG, "启用此选项后，在串流结束后基地显示器将不会被自动关闭。\n\n确定要开启此功能吗？" },
     { KEY_CONFIGURATION, "配置" },
     { KEY_IMPORT_CONFIG, "导入配置" },
     { KEY_EXPORT_CONFIG, "导出配置" },
@@ -182,7 +212,17 @@ namespace system_tray_i18n {
     { KEY_QUIT_TITLE, "本当に終了しますか？" },
     { KEY_QUIT_MESSAGE, "終了できません！\n本当に終了したいですか？\n\nこれによりSunshine GUIアプリケーションも閉じられます。" },
     { KEY_OPEN_SUNSHINE, "Sunshineを開く" },
-    { KEY_VDD_MONITOR_TOGGLE, "仮想ディスプレイの切り替え" },
+    { KEY_VDD_BASE_DISPLAY, "基地ディスプレイ" },
+    { KEY_VDD_CREATE, "仮想ディスプレイを作成" },
+    { KEY_VDD_CLOSE, "仮想ディスプレイを閉じる" },
+    { KEY_VDD_PERSISTENT, "常駐仮想ディスプレイを" },
+    { KEY_VDD_CONFIRM_CREATE_TITLE, "仮想ディスプレイを作成" },
+    { KEY_VDD_CONFIRM_CREATE_MSG, "仮想ディスプレイを作成しますか？\n\n作成後に一時的な黒画面が発生する場合がありますが、これは正常です。\n黒画面になった場合は、Win+P を2回押して回復してください。" },
+    { KEY_VDD_CONFIRM_KEEP_TITLE, "ディスプレイの確認" },
+    { KEY_VDD_CONFIRM_KEEP_MSG, "仮想ディスプレイが作成されました。継続して使用しますか？\n\n確認がない場合、20秒後に自動的に閉じられます。" },
+    { KEY_VDD_CANCEL_CREATE_LOG, "ユーザーが仮想ディスプレイの作成をキャンセルしました" },
+    { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "仮想ディスプレイを有効に保つ" },
+    { KEY_VDD_PERSISTENT_CONFIRM_MSG, "このオプションを有効にすると、ストリーミング終了後に仮想ディスプレイは**自動的に閉じられません**。\n\nこの機能を有効にしますか？" },
     { KEY_CONFIGURATION, "設定" },
     { KEY_IMPORT_CONFIG, "設定をインポート" },
     { KEY_EXPORT_CONFIG, "設定をエクスポート" },

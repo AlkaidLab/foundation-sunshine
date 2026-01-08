@@ -1,4 +1,5 @@
 // standard includes
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <thread>
@@ -10,6 +11,7 @@
 #include "src/display_device/to_string.h"
 #include "src/globals.h"
 #include "src/logging.h"
+#include "src/config.h"
 #include "src/rtsp.h"
 #include "windows_utils.h"
 
@@ -460,12 +462,81 @@ namespace display_device {
         return true;
       }
 
+      // 在移除VDD之前，先检查拓扑中是否有VDD
+      // 收集VDD的设备ID，分别记录：
+      // - vdd_device_ids: 所有VDD设备ID（用于从HDR/modes中清理）
+      // - vdd_in_modified_only: 只在modified拓扑中的VDD（需要销毁）
+      std::unordered_set<std::string> vdd_device_ids;
+      std::unordered_set<std::string> vdd_in_initial;
+      
+      // 收集 initial 拓扑中的 VDD
+      for (const auto &group : data.topology.initial) {
+        for (const auto &device_id : group) {
+          const auto friendly_name = get_display_friendly_name(device_id);
+          if (friendly_name == ZAKO_NAME) {
+            vdd_device_ids.insert(device_id);
+            vdd_in_initial.insert(device_id);
+          }
+        }
+      }
+      
+      // 收集 modified 拓扑中的 VDD
+      for (const auto &group : data.topology.modified) {
+        for (const auto &device_id : group) {
+          const auto friendly_name = get_display_friendly_name(device_id);
+          if (friendly_name == ZAKO_NAME) {
+            vdd_device_ids.insert(device_id);
+          }
+        }
+      }
+
+      // 如果有VDD不在initial拓扑中（由Sunshine创建），则销毁
+      // 如果VDD在initial拓扑中（用户常驻VDD），则保留
+      // 如果启用了"保持启用"模式，也保留VDD
+      bool should_destroy_vdd = false;
+      if (!config::video.vdd_keep_enabled) {
+        for (const auto &vdd_id : vdd_device_ids) {
+          if (vdd_in_initial.count(vdd_id) == 0) {
+            should_destroy_vdd = true;
+            break;
+          }
+        }
+      }
+      
+      if (config::video.vdd_keep_enabled) {
+        BOOST_LOG(debug) << "VDD保持启用模式已开启，保留VDD";
+      }
+      else if (should_destroy_vdd) {
+        BOOST_LOG(info) << "检测到Sunshine创建的VDD（不在初始拓扑中），销毁VDD";
+        display_device::session_t::get().destroy_vdd_monitor();
+      }
+      else if (!vdd_in_initial.empty()) {
+        BOOST_LOG(debug) << "VDD在初始拓扑中（常驻VDD），保留不销毁";
+      }
+
       // Remove VDD devices from topology before reverting, as VDD may have been destroyed
-      const bool vdd_removed_from_initial = remove_vdd_from_topology(data.topology.initial);
-      const bool vdd_removed_from_modified = remove_vdd_from_topology(data.topology.modified);
-      if (vdd_removed_from_initial || vdd_removed_from_modified) {
+      // This function now returns the IDs of removed devices
+      const auto vdd_ids_from_initial = remove_vdd_from_topology(data.topology.initial);
+      const auto vdd_ids_from_modified = remove_vdd_from_topology(data.topology.modified);
+      
+      // Merge VDD IDs from both topologies
+      std::unordered_set<std::string> all_removed_vdd_ids = vdd_ids_from_initial;
+      all_removed_vdd_ids.insert(vdd_ids_from_modified.begin(), vdd_ids_from_modified.end());
+      
+      if (!all_removed_vdd_ids.empty()) {
         BOOST_LOG(info) << "Removed VDD devices from persistent topology (VDD may have been destroyed)";
         data_modified = true;
+        
+        // Clean up HDR states and display modes using the VDD IDs from topology removal
+        // This works even after VDD is destroyed, since we got IDs before checking friendly_name
+        for (const auto& vdd_id : all_removed_vdd_ids) {
+          if (data.original_hdr_states.erase(vdd_id) > 0) {
+            BOOST_LOG(debug) << "Removed VDD from original_hdr_states: " << vdd_id;
+          }
+          if (data.original_modes.erase(vdd_id) > 0) {
+            BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
+          }
+        }
       }
 
       const bool modified_topology_valid = is_topology_valid(data.topology.modified);
@@ -655,12 +726,41 @@ namespace display_device {
 
   bool
   settings_t::is_changing_settings_going_to_fail() const {
-    return w_utils::is_user_session_locked() || w_utils::test_no_access_to_ccd_api();
+    const bool session_locked = w_utils::is_user_session_locked();
+    
+    // 如果会话已锁定，直接返回true，跳过CCD API测试
+    // 这避免了在锁屏状态下频繁调用显示API导致ERROR_ACCESS_DENIED和WATCHDOG事件
+    if (session_locked) {
+      BOOST_LOG(info) << "Changing settings will fail - session_locked: true";
+      return true;
+    }
+    
+    const bool no_ccd_access = w_utils::test_no_access_to_ccd_api();
+    if (no_ccd_access) {
+      BOOST_LOG(info) << "Changing settings will fail - no_ccd_access: true";
+    }
+    
+    return no_ccd_access;
   }
 
   settings_t::apply_result_t
-  settings_t::apply_config(const parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
-    const auto do_apply_config { [this](const parsed_config_t &config) -> settings_t::apply_result_t {
+  settings_t::apply_config(
+    const parsed_config_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const boost::optional<active_topology_t> &pre_saved_initial_topology) {
+    const auto do_apply_config { [this, &pre_saved_initial_topology](const parsed_config_t &config) -> settings_t::apply_result_t {
+      // no_operation模式：完全不做任何事情
+      if (config.device_prep == parsed_config_t::device_prep_e::no_operation) {
+        BOOST_LOG(info) << "Display device preparation mode is set to no_operation, skipping all display settings changes";
+        
+        // 注意：这里不要清除persistent_data！
+        // 1. 如果一开始就是no_operation，persistent_data本来就是空的，保持为空即可。
+        // 2. 如果之前是active模式（已有persistent_data），中途切换成no_operation，我们需要保留persistent_data，
+        //    以便在最终结束串流时能恢复到最初的状态。如果清除，会导致无法恢复之前的修改。
+        
+        return { apply_result_t::result_e::success };
+      }
+      
       bool failed_while_reverting_settings { false };
       const boost::optional<topology_pair_t> previously_configured_topology { persistent_data ? boost::make_optional(persistent_data->topology) : boost::none };
 
@@ -678,7 +778,7 @@ namespace display_device {
           audio_data = std::make_unique<audio_data_t>();
         }
         return true;
-      }) };
+      }, pre_saved_initial_topology) };
       if (!topology_result) {
         // Error already logged
         return { failed_while_reverting_settings ? apply_result_t::result_e::revert_fail : apply_result_t::result_e::topology_fail };
@@ -837,10 +937,11 @@ namespace display_device {
     if (persistent_data) {
       // 尝试恢复设置
       bool data_updated { false };
-      if (!try_revert_settings(*persistent_data, data_updated)) {
-        if (data_updated)
+      bool success = try_revert_settings(*persistent_data, data_updated);
+      if (!success) {
+        if (data_updated) {
           save_settings(filepath, *persistent_data);  // 忽略返回值
-
+        }
         BOOST_LOG(fatal) << "恢复显示设备设置失败！建议立即使用重置记忆术~";
       }
 
@@ -856,7 +957,9 @@ namespace display_device {
         }
       }
 
-      BOOST_LOG(info) << "显示设备配置已恢复";
+      if (success) {
+        BOOST_LOG(info) << "显示设备配置已恢复";
+      }
     }
 
     if (reason == revert_reason_e::stream_ended) {
@@ -892,6 +995,100 @@ namespace display_device {
       BOOST_LOG(debug) << "Releasing captured audio sink";
       audio_data = nullptr;
     }
+  }
+
+  bool
+  settings_t::has_persistent_data() const {
+    return persistent_data != nullptr;
+  }
+
+  bool
+  settings_t::is_vdd_in_initial_topology() const {
+    if (!persistent_data) {
+      return false;
+    }
+    
+    for (const auto &group : persistent_data->topology.initial) {
+      for (const auto &device_id : group) {
+        const auto friendly_name = get_display_friendly_name(device_id);
+        if (friendly_name == ZAKO_NAME) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void
+  settings_t::remove_vdd_from_initial_topology(const std::string& vdd_id) {
+    if (!persistent_data) {
+      return;
+    }
+    
+    // Remove from initial topology
+    for (auto& group : persistent_data->topology.initial) {
+      group.erase(
+        std::remove(group.begin(), group.end(), vdd_id),
+        group.end()
+      );
+    }
+    
+    // Remove from modified topology
+    for (auto& group : persistent_data->topology.modified) {
+      group.erase(
+        std::remove(group.begin(), group.end(), vdd_id),
+        group.end()
+      );
+    }
+    
+    // Remove VDD from HDR states (avoid trying to restore HDR for destroyed VDD)
+    if (persistent_data->original_hdr_states.erase(vdd_id) > 0) {
+      BOOST_LOG(debug) << "Removed VDD from original_hdr_states: " << vdd_id;
+    }
+    
+    // Remove VDD from display modes (avoid trying to restore mode for destroyed VDD)
+    if (persistent_data->original_modes.erase(vdd_id) > 0) {
+      BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
+    }
+    
+    // Save updated persistent data
+    save_settings(filepath, *persistent_data);
+  }
+
+  void
+  settings_t::replace_vdd_id(const std::string& old_id, const std::string& new_id) {
+    if (!persistent_data) {
+      return;
+    }
+    
+    // Replace in initial topology
+    for (auto& group : persistent_data->topology.initial) {
+      std::replace(group.begin(), group.end(), old_id, new_id);
+    }
+    
+    // Replace in modified topology
+    for (auto& group : persistent_data->topology.modified) {
+      std::replace(group.begin(), group.end(), old_id, new_id);
+    }
+    
+    // Replace VDD ID in HDR states map
+    if (auto it = persistent_data->original_hdr_states.find(old_id); it != persistent_data->original_hdr_states.end()) {
+      auto hdr_value = it->second;
+      persistent_data->original_hdr_states.erase(it);
+      persistent_data->original_hdr_states[new_id] = hdr_value;
+      BOOST_LOG(debug) << "Replaced VDD ID in original_hdr_states: " << old_id << " -> " << new_id;
+    }
+    
+    // Replace VDD ID in display modes map
+    if (auto it = persistent_data->original_modes.find(old_id); it != persistent_data->original_modes.end()) {
+      auto mode_value = it->second;
+      persistent_data->original_modes.erase(it);
+      persistent_data->original_modes[new_id] = mode_value;
+      BOOST_LOG(debug) << "Replaced VDD ID in original_modes: " << old_id << " -> " << new_id;
+    }
+    
+    // Save updated persistent data
+    save_settings(filepath, *persistent_data);
   }
 
 }  // namespace display_device

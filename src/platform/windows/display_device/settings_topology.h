@@ -83,7 +83,11 @@ namespace display_device {
    * @return A result object, or an empty optional if the function fails.
    */
   boost::optional<handled_topology_result_t>
-  handle_device_topology_configuration(const parsed_config_t &config, const boost::optional<topology_pair_t> &previously_configured_topology, const std::function<bool()> &revert_settings);
+  handle_device_topology_configuration(
+    const parsed_config_t &config,
+    const boost::optional<topology_pair_t> &previously_configured_topology,
+    const std::function<bool()> &revert_settings,
+    const boost::optional<active_topology_t> &pre_saved_initial_topology = boost::none);
 
   /**
    * @brief Remove VDD devices and non-existent devices from topology.
@@ -101,7 +105,7 @@ namespace display_device {
    * }
    * ```
    */
-  bool
+  std::unordered_set<std::string>
   remove_vdd_from_topology(active_topology_t &topology);
 
 }  // namespace display_device

@@ -57,6 +57,7 @@
   #include "process.h"
   #include "src/display_device/display_device.h"
   #include "src/entry_handler.h"
+  #include "src/globals.h"
   #include "system_tray_i18n.h"
   #include "version.h"
 
@@ -79,7 +80,10 @@ namespace system_tray {
   // 静态字符串变量用于存储本地化的菜单文本
   // 这些变量必须是静态的，以确保在 tray_menus 的生命周期内有效
   static std::string s_open_sunshine;
-  static std::string s_vdd_monitor_toggle;
+  static std::string s_vdd_base_display;
+  static std::string s_vdd_create;
+  static std::string s_vdd_close;
+  static std::string s_vdd_persistent;
   static std::string s_configuration;
   static std::string s_import_config;
   static std::string s_export_config;
@@ -94,13 +98,18 @@ namespace system_tray {
   static std::string s_developer_qiin;
   static std::string s_reset_display_device_config;
   static std::string s_restart;
+
+  static bool s_vdd_in_cooldown = false;
   static std::string s_quit;
 
   // 初始化本地化字符串
   void
   init_localized_strings() {
     s_open_sunshine = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_OPEN_SUNSHINE);
-    s_vdd_monitor_toggle = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_MONITOR_TOGGLE);
+    s_vdd_base_display = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_BASE_DISPLAY);
+    s_vdd_create = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CREATE);
+    s_vdd_close = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CLOSE);
+    s_vdd_persistent = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT);
     s_configuration = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CONFIGURATION);
     s_import_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_CONFIG);
     s_export_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_CONFIG);
@@ -123,7 +132,8 @@ namespace system_tray {
   update_menu_texts() {
     init_localized_strings();
     tray_menus[0].text = s_open_sunshine.c_str();
-    tray_menus[2].text = s_vdd_monitor_toggle.c_str();
+    tray_menus[2].text = s_vdd_base_display.c_str();
+    // VDD 子菜单项更新由 update_vdd_menu_text() 处理
     tray_menus[4].text = s_configuration.c_str();
     tray_menus[4].submenu[0].text = s_import_config.c_str();
     tray_menus[4].submenu[1].text = s_export_config.c_str();
@@ -151,31 +161,120 @@ namespace system_tray {
     launch_ui();
   };
 
-  auto tray_toggle_display_cb = [](struct tray_menu *item) {
-    // 添加状态检查和日志
-    if (!tray_initialized) {
-      BOOST_LOG(warning) << "Tray not initialized, ignoring toggle";
-      return;
+  // 检查 VDD 是否存在
+  static bool is_vdd_active() {
+    auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    return !vdd_device_id.empty();
+  }
+
+  // 用于存储子菜单的静态数组
+  static struct tray_menu vdd_submenu[4];
+
+  // 保存 vdd_keep_enabled 到配置文件
+  static void save_vdd_keep_enabled() {
+    try {
+      std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
+      std::stringstream new_config;
+      
+      std::istringstream iss(config_content);
+      std::string line;
+      while (std::getline(iss, line)) {
+        if (line.find("vdd_keep_enabled") != std::string::npos) {
+          continue;  // 跳过已有的行
+        }
+        new_config << line << "\n";
+      }
+      new_config << "vdd_keep_enabled = " << (config::video.vdd_keep_enabled ? "true" : "false") << "\n";
+      
+      file_handler::write_file(config::sunshine.config_file.c_str(), new_config.str());
+      BOOST_LOG(info) << "Saved vdd_keep_enabled = " << config::video.vdd_keep_enabled;
     }
-
-    if (tray_menus[2].disabled) {
-      BOOST_LOG(info) << "Toggle display is in cooldown, ignoring request";
-      return;
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Failed to save vdd_keep_enabled: " << e.what();
     }
+  }
 
-    BOOST_LOG(info) << "Toggling display power from system tray"sv;
-    display_device::session_t::get().toggle_display_power();
+  // 更新 VDD 菜单项的文本和状态
+  static void update_vdd_menu_text() {
+    bool vdd_active = is_vdd_active();
+    bool keep_enabled = config::video.vdd_keep_enabled;
+    
+    // 1. 创建项：启用即勾选，启用后或冷却中禁止点击
+    vdd_submenu[0].checked = vdd_active ? 1 : 0;
+    vdd_submenu[0].disabled = (vdd_active || s_vdd_in_cooldown) ? 1 : 0;
+    
+    // 2. 关闭项：未启用即勾选，未启用、冷却中或保持启用模式下禁止点击
+    vdd_submenu[1].checked = vdd_active ? 0 : 1;
+    vdd_submenu[1].disabled = (!vdd_active || s_vdd_in_cooldown || keep_enabled) ? 1 : 0;
+    
+    // 3. 保持启用项
+    vdd_submenu[2].checked = keep_enabled ? 1 : 0;
+  }
 
-    // 添加10秒禁用状态
-    tray_menus[2].disabled = 1;
+  // 启动统一的 10 秒冷却
+  static void start_vdd_cooldown() {
+    s_vdd_in_cooldown = true;
+    update_vdd_menu_text();
     tray_update(&tray);
 
-    // use thread to restore button state
     std::thread([&]() {
       std::this_thread::sleep_for(10s);
-      tray_menus[2].disabled = 0;
+      s_vdd_in_cooldown = false;
+      update_vdd_menu_text();
       tray_update(&tray);
     }).detach();
+  }
+
+  // 创建虚拟显示器回调
+  auto tray_vdd_create_cb = [](struct tray_menu *item) {
+    if (!tray_initialized) return;
+    if (s_vdd_in_cooldown || is_vdd_active()) return;
+
+    BOOST_LOG(info) << "Creating VDD from system tray (Separate Item)"sv;
+    display_device::session_t::get().toggle_display_power();
+    start_vdd_cooldown();
+  };
+
+  // 关闭虚拟显示器回调
+  auto tray_vdd_destroy_cb = [](struct tray_menu *item) {
+    if (!tray_initialized) return;
+    if (s_vdd_in_cooldown || !is_vdd_active() || config::video.vdd_keep_enabled) return;
+
+    BOOST_LOG(info) << "Closing VDD from system tray (Separate Item)"sv;
+    display_device::session_t::get().destroy_vdd_monitor();
+    start_vdd_cooldown();
+  };
+
+  // 保持启用回调
+  auto tray_vdd_persistent_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Toggling persistent VDD from system tray"sv;
+    
+    bool is_persistent = config::video.vdd_keep_enabled;
+    
+    if (!is_persistent) {
+      // 启用保持启用模式前弹出确认
+#ifdef _WIN32
+      std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_TITLE));
+      std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_MSG));
+
+      if (MessageBoxW(NULL, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) {
+        BOOST_LOG(info) << "User cancelled enabling VDD keep-enabled mode";
+        return;
+      }
+#endif
+      config::video.vdd_keep_enabled = true;
+      BOOST_LOG(info) << "Enabled VDD keep-enabled mode (Auto-creation removed)";
+    } else {
+      // 禁用保持启用模式，但不自动关闭 VDD
+      config::video.vdd_keep_enabled = false;
+      BOOST_LOG(info) << "Disabled VDD keep-enabled mode (VDD remains if active)";
+    }
+    
+    // 保存配置到文件
+    save_vdd_keep_enabled();
+    
+    update_vdd_menu_text();
+    tray_update(&tray);
   };
 
   auto tray_reset_display_device_config_cb = [](struct tray_menu *item) {
@@ -890,7 +989,7 @@ namespace system_tray {
   struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
-    { .text = "VDD Monitor Toggle", .checked = 0, .cb = tray_toggle_display_cb },
+    { .text = "Foundation Display", .submenu = vdd_submenu },
     { .text = "-" },
     { .text = "Configuration",
       .submenu =
@@ -1012,6 +1111,12 @@ namespace system_tray {
     }
   #endif
 
+    // 初始化 VDD 子菜单 (创建, 关闭, 保持启用)
+    vdd_submenu[0] = { .text = s_vdd_create.c_str(), .cb = tray_vdd_create_cb };
+    vdd_submenu[1] = { .text = s_vdd_close.c_str(), .cb = tray_vdd_destroy_cb };
+    vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .cb = tray_vdd_persistent_cb };
+    vdd_submenu[3] = { .text = nullptr };
+
     if (tray_init(&tray) < 0) {
       BOOST_LOG(warning) << "Failed to create system tray"sv;
       return 1;
@@ -1020,8 +1125,8 @@ namespace system_tray {
       BOOST_LOG(info) << "System tray created"sv;
     }
 
-    // 初始化时获取实际显示器状态
-    tray_menus[2].checked = display_device::session_t::get().is_display_on() ? 1 : 0;
+    // 初始化时更新 VDD 菜单状态
+    update_vdd_menu_text();
     tray_update(&tray);
 
     tray_initialized = true;
@@ -1185,16 +1290,13 @@ namespace system_tray {
     };
     tray_update(&tray);
   }
-
+ 
   void
-  update_tray_vmonitor_checked(int checked) {
+  update_vdd_menu() {
     if (!tray_initialized) {
       return;
     }
-    // 更新显示器切换菜单项的勾选状态
-    tray_menus[2].checked = checked;
-    // 同时更新禁用状态（冷却期间保持禁用）
-    tray_menus[2].disabled = checked ? 0 : tray_menus[2].disabled;
+    update_vdd_menu_text();
     tray_update(&tray);
   }
 

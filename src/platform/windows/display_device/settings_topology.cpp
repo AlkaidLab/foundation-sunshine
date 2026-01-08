@@ -8,24 +8,18 @@ namespace display_device {
 
   namespace {
     /**
-     * @brief 基于当前可用的显示设备，尝试为目标拓扑补全那些当前不在拓扑中但仍然“存在”的显示器。
-     *
-     * Windows 会在内部记住某些曾经使用过的「仅启用某屏」拓扑，导致部分物理显示器被标记为 inactive，
-     * 之后我们的组合计算又只基于当前活动拓扑 `get_current_topology()` 来排布，结果就永远不会再把这些
-     * inactive 显示器重新拉起来。
-     *
-     * 这里我们通过 `enum_available_devices()` 获取所有可用设备（包含 inactive），将那些：
-     *   - 出现在可用设备列表中；
-     *   - 当前不在目标拓扑中；
-     *   - 设备状态为 inactive；
-     * 的设备以独立分组的形式追加到拓扑尾部，从而“尽可能地把那些找不到的显示器开起来”。
-     *
-     * @param base_topology 已根据配置计算出的目标拓扑。
-     * @param requested_device_id 当前配置中要保证激活的设备 id（目前仅用于日志，逻辑上不强依赖）。
-     * @return 补全后的拓扑；若无需补全或补全后拓扑非法，则返回原始拓扑。
+     * @brief 基于初始拓扑，补全那些当前inactive但应该恢复的设备
+     * @param base_topology 基础拓扑（通常是当前拓扑）
+     * @param requested_device_id 请求的设备ID
+     * @param initial_topology_devices 初始拓扑中的设备列表（只补全这些设备）
+     * @return 补全后的拓扑
      */
     active_topology_t
-    augment_topology_with_inactive_devices(const active_topology_t &base_topology, const std::string &requested_device_id) {
+    augment_topology_with_inactive_devices(
+      const active_topology_t &base_topology,
+      const std::string &requested_device_id,
+      const boost::optional<std::unordered_set<std::string>> &initial_topology_devices = boost::none) {
+      
       // 先拷贝一份作为候选结果
       active_topology_t augmented_topology { base_topology };
 
@@ -37,20 +31,40 @@ namespace display_device {
         return base_topology;
       }
 
-      for (const auto &[device_id, info] : available_devices) {
-        // 已经在拓扑中的设备不需要再处理
-        if (existing_ids.count(device_id) > 0) {
-          continue;
-        }
+      // 如果提供了初始拓扑设备列表，只补全这些设备
+      // 否则补全所有inactive设备（旧行为）
+      if (initial_topology_devices && !initial_topology_devices->empty()) {
+        BOOST_LOG(debug) << "Augmenting topology based on initial topology devices (respecting user's original configuration)";
+        
+        for (const auto &device_id : *initial_topology_devices) {
+          // 已经在拓扑中的设备不需要再处理
+          if (existing_ids.count(device_id) > 0) {
+            continue;
+          }
 
-        // 只尝试拉起处于 inactive 状态的设备
-        if (info.device_state != device_state_e::inactive) {
-          continue;
-        }
+          // 检查设备是否可用且是inactive状态
+          auto device_it = available_devices.find(device_id);
+          if (device_it == available_devices.end()) {
+            BOOST_LOG(debug) << "Device from initial topology not available: " << device_id;
+            continue;
+          }
 
-        BOOST_LOG(debug) << "Augmenting topology for requested device " << requested_device_id
-                         << " by adding inactive display device: " << device_id;
-        augmented_topology.push_back({ device_id });
+          if (device_it->second.device_state != device_state_e::inactive) {
+            // 设备已经是active或其他状态，不需要补全
+            continue;
+          }
+
+          BOOST_LOG(debug) << "Augmenting topology with device from initial topology: " << device_id;
+          augmented_topology.push_back({ device_id });
+        }
+      }
+      else {
+        // 没有初始拓扑约束的场景（非VDD）
+        // augment_topology的真正作用应该是：把在final_topology中但因为某些原因变成inactive的设备重新激活
+        // 但determine_final_topology已经决定了要激活哪些设备，我们不应该再自动添加新设备
+        // 所以这里直接返回base_topology，不做任何补全
+        BOOST_LOG(debug) << "No initial topology constraint, relying on determine_final_topology result without augmentation";
+        return base_topology;
       }
 
       // 如果补全后的拓扑不合法，则保守地退回原始拓扑，避免把系统弄到奇怪状态
@@ -188,9 +202,9 @@ namespace display_device {
 
   }  // namespace
 
-  bool
+  std::unordered_set<std::string>
   remove_vdd_from_topology(active_topology_t &topology) {
-    bool removed = false;
+    std::unordered_set<std::string> removed_device_ids;
     
     // Get list of available devices (includes both active and inactive devices)
     // This ensures we don't remove inactive devices that can be re-enabled
@@ -203,7 +217,7 @@ namespace display_device {
 
     for (auto &group : topology) {
       auto new_end = std::remove_if(group.begin(), group.end(),
-        [&removed, &available_device_ids](const std::string &device_id) {
+        [&removed_device_ids, &available_device_ids](const std::string &device_id) {
           // First check if device exists in available devices
           // Note: available_devices includes inactive devices, so inactive devices will pass this check
           const bool device_exists = available_device_ids.count(device_id) > 0;
@@ -213,7 +227,7 @@ namespace display_device {
             // This means the device was truly destroyed (e.g., VDD uninstalled, physical display disconnected)
             // It's safe to remove as it cannot be re-enabled
             BOOST_LOG(debug) << "Removing non-existent device from topology: " << device_id;
-            removed = true;
+            removed_device_ids.insert(device_id);  // Track removed ID
             return true;
           }
           
@@ -222,7 +236,7 @@ namespace display_device {
           const auto friendly_name = get_display_friendly_name(device_id);
           if (friendly_name == ZAKO_NAME) {
             BOOST_LOG(debug) << "Removing VDD device from topology: " << device_id;
-            removed = true;
+            removed_device_ids.insert(device_id);  // Track removed ID
             return true;
           }
           
@@ -238,7 +252,7 @@ namespace display_device {
         [](const auto &group) { return group.empty(); }),
       topology.end());
 
-    return removed;
+    return removed_device_ids;
   }
 
   /**
@@ -298,7 +312,11 @@ namespace display_device {
   }
 
   boost::optional<handled_topology_result_t>
-  handle_device_topology_configuration(const parsed_config_t &config, const boost::optional<topology_pair_t> &previously_configured_topology, const std::function<bool()> &revert_settings) {
+  handle_device_topology_configuration(
+    const parsed_config_t &config,
+    const boost::optional<topology_pair_t> &previously_configured_topology,
+    const std::function<bool()> &revert_settings,
+    const boost::optional<active_topology_t> &pre_saved_initial_topology) {
     const bool primary_device_requested { config.device_id.empty() };
     const std::string requested_device_id { find_one_of_the_available_devices(config.device_id) };
     if (requested_device_id.empty()) {
@@ -358,12 +376,26 @@ namespace display_device {
     // When dealing with the "requested device" here and in other functions we need to keep
     // in mind that it could belong to a duplicated display and thus all of them
     // need to be taken into account, which complicates everything...
-    auto duplicated_devices { get_duplicate_devices(requested_device_id, current_topology) };
-    auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, current_topology) };
+    
+    // 在VDD场景下，使用真实初始拓扑来计算duplicated_devices和final_topology
+    // 这样可以基于用户串流前的真实状态来构建目标拓扑
+    const auto &topology_for_calculation = pre_saved_initial_topology ? *pre_saved_initial_topology : current_topology;
+    
+    auto duplicated_devices { get_duplicate_devices(requested_device_id, topology_for_calculation) };
+    auto final_topology { determine_final_topology(config.device_prep, primary_device_requested, duplicated_devices, topology_for_calculation) };
 
-    // 如果当前不是「仅启用」模式，则尝试基于 Windows 记忆的可用设备，把 inactive 的物理显示器尽量拉回拓扑
-    if (config.device_prep != parsed_config_t::device_prep_e::ensure_only_display) {
-      final_topology = augment_topology_with_inactive_devices(final_topology, requested_device_id);
+    // 只在特定模式下才调用augment_topology
+    // no_operation模式：不调整任何内容，跳过
+    // ensure_only_display模式：只启用指定设备，不补全，跳过
+    if (config.device_prep != parsed_config_t::device_prep_e::ensure_only_display &&
+        config.device_prep != parsed_config_t::device_prep_e::no_operation) {
+      // 如果有预保存的初始拓扑（VDD场景），只补全在初始拓扑中的设备
+      // 这样可以尊重用户的原始配置（不会打开用户手动关闭的显示器）
+      if (pre_saved_initial_topology) {
+        const auto initial_devices = get_device_ids_from_topology(*pre_saved_initial_topology);
+        BOOST_LOG(debug) << "Augmenting topology with constraints from initial topology (VDD scenario)";
+        final_topology = augment_topology_with_inactive_devices(final_topology, requested_device_id, initial_devices);
+      }
     }
 
     BOOST_LOG(debug) << "Current display topology: " << to_string(current_topology);
@@ -385,9 +417,13 @@ namespace display_device {
       return boost::none;
     }
 
+    // 如果有预保存的初始拓扑（在VDD创建前保存的），使用它作为真实初始拓扑
+    // 否则使用当前拓扑（可能已被VDD破坏）
+    const auto real_initial_topology = pre_saved_initial_topology ? *pre_saved_initial_topology : current_topology;
+    
     return handled_topology_result_t {
       topology_pair_t {
-        current_topology,
+        real_initial_topology,  // 使用真实的初始拓扑
         final_topology },
       topology_metadata_t {
         final_topology,

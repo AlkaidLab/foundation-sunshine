@@ -227,11 +227,22 @@ namespace display_device {
     void
     restore_state_impl(revert_reason_e reason = revert_reason_e::stream_ended);
 
+    /**
+     * @brief Start polling mechanism as fallback when CCD API is temporarily unavailable.
+     * @param reason The reason for reverting settings.
+     */
+    void
+    start_polling_restore(revert_reason_e reason);
+
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
     std::string last_vdd_setting; /**< Last VDD resolution and refresh rate setting. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
     std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
+    boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
+    bool pending_restore_ = false; /**< Flag indicating if there is a pending restore settings operation waiting for unlock. */
+    bool should_replace_vdd_id_ = false; /**< Flag indicating if VDD ID needs to be replaced after client switch. */
+    std::string old_vdd_id_; /**< Old VDD ID that needs to be replaced. */
 
     /**
      * @brief An instance of StateRetryTimer.

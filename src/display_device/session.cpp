@@ -9,6 +9,7 @@
 #include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
+#include "src/platform/windows/display_device/session_listener.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "to_string.h"
@@ -128,6 +129,9 @@ namespace display_device {
   };
 
   session_t::deinit_t::~deinit_t() {
+    // 清理事件监听器
+    SessionEventListener::deinit();
+    
     // 不在析构函数中调用 restore_state()
     // 原因：析构函数在程序退出时被调用，此时 boost::log、timer 等资源可能已被销毁
     // 解决方案：在 main.cpp 的信号处理程序中显式调用 restore_state()
@@ -142,6 +146,10 @@ namespace display_device {
   std::unique_ptr<session_t::deinit_t>
   session_t::init() {
     session_t::get().settings.set_filepath(platf::appdata() / "original_display_settings.json");
+    
+    // 初始化会话事件监听器（用于检测解锁事件）
+    SessionEventListener::init();
+    
     session_t::get().restore_state();
     return std::make_unique<deinit_t>();
   }
@@ -150,6 +158,7 @@ namespace display_device {
   session_t::clear_vdd_state() {
     current_vdd_client_id.clear();
     last_vdd_setting.clear();
+    current_device_prep.reset();
     // 恢复原始的 output_name，避免下一个会话使用已销毁的 VDD 设备 ID
     if (!original_output_name.empty()) {
       config::video.output_name = original_output_name;
@@ -273,20 +282,65 @@ namespace display_device {
       }
     }
 
+    // 在 make_parsed_config 之前保存真实的初始拓扑
+    // 因为 make_parsed_config 内部会调用 prepare_vdd，它会创建VDD并切换到扩展模式，导致原有显示器变成inactive
+    boost::optional<active_topology_t> pre_saved_initial_topology;
+    
+    // 检查是否会使用VDD
+    std::string device_id_to_use = config.output_name;
+    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+      const std::string client_display_name = it->to_string();
+      if (!client_display_name.empty()) {
+        device_id_to_use = client_display_name;
+      }
+    }
+    
+    // 检查VDD是否已存在
+    const auto existing_vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    const bool vdd_already_exists = !existing_vdd_id.empty();
+    
+    // 如果会使用VDD且VDD当前不存在，在创建前保存拓扑
+    // 如果VDD已存在，说明拓扑已被破坏，不应该保存当前拓扑
+    const auto requested_device_id = display_device::find_one_of_the_available_devices(device_id_to_use);
+    const bool is_vdd_device = (display_device::get_display_friendly_name(device_id_to_use) == ZAKO_NAME);
+    const bool will_use_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    
+    if (will_use_vdd && !vdd_already_exists) {
+      // 如果有待恢复的设置，保留旧的初始拓扑，不要覆盖
+      if (pending_restore_ && settings.has_persistent_data()) {
+        BOOST_LOG(info) << "有待恢复的设置，保留原有初始拓扑";
+        // 取消待恢复标志，因为新串流要开始了
+        pending_restore_ = false;
+        SessionEventListener::clear_unlock_task();
+        timer->setup_timer(nullptr);
+        // 不设置 pre_saved_initial_topology，让 apply_config 复用已有的
+      }
+      else {
+        pre_saved_initial_topology = get_current_topology();
+        BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
+      }
+    }
+    else if (will_use_vdd && vdd_already_exists) {
+      BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
+    }
+
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       return;
     }
 
+    // 保存当前会话的device_prep模式（可能包含客户端的override）
+    current_device_prep = parsed_config->device_prep;
+
     if (settings.is_changing_settings_going_to_fail()) {
-      timer->setup_timer([this, config_copy = *parsed_config, &session]() {
+      timer->setup_timer([this, config_copy = *parsed_config, &session, pre_saved_initial_topology]() {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
           return false;
         }
 
-        if (!settings.apply_config(config_copy, session)) {
+        if (!settings.apply_config(config_copy, session, pre_saved_initial_topology)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
@@ -295,13 +349,11 @@ namespace display_device {
         return true;
       });
 
-      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. "
-                         << "Allowing stream to start without changing the settings, "
-                         << "but will retry changing settings later...";
+      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
       return;
     }
 
-    if (settings.apply_config(*parsed_config, session)) {
+    if (settings.apply_config(*parsed_config, session, pre_saved_initial_topology)) {
       timer->setup_timer(nullptr);
     }
     else {
@@ -365,11 +417,42 @@ namespace display_device {
     // Rebuild VDD device on client switch
     if (!device_zako.empty() && !current_vdd_client_id.empty() &&
         !current_client_id.empty() && current_vdd_client_id != current_client_id) {
-      BOOST_LOG(info) << "客户端切换，重建VDD设备";
-      vdd_utils::destroy_vdd_monitor();
-      clear_vdd_state();
-      device_zako.clear();
-      std::this_thread::sleep_for(500ms);
+      
+      // 获取设备准备模式
+      const auto device_prep = current_device_prep.value_or(
+        static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
+      );
+      
+      // 无操作模式：复用VDD，只更新客户端ID
+      if (device_prep == parsed_config_t::device_prep_e::no_operation) {
+        BOOST_LOG(info) << "无操作模式，客户端切换时复用现有VDD";
+        current_vdd_client_id = current_client_id;
+        // 不销毁VDD，不重建，直接继续使用
+      }
+      else {
+        // 常驻模式和非常驻模式：销毁并重建VDD
+        BOOST_LOG(info) << "客户端切换，重建VDD设备";
+        
+        const auto old_vdd_id = device_zako;
+        vdd_utils::destroy_vdd_monitor();
+        clear_vdd_state();
+        device_zako.clear();
+        
+        // Handle VDD ID in persistent_data
+        if (config::video.vdd_keep_enabled) {
+          // 常驻模式：需要替换ID（保留VDD在persistent_data中）
+          should_replace_vdd_id_ = true;
+          old_vdd_id_ = old_vdd_id;
+          BOOST_LOG(debug) << "标记需要替换VDD ID: " << old_vdd_id;
+        }
+        else {
+          // 非常驻模式：从initial中移除VDD
+          BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
+          settings.remove_vdd_from_initial_topology(old_vdd_id);
+        }
+        
+        std::this_thread::sleep_for(500ms);
+      }
     }
 
     // Update VDD resolution configuration
@@ -407,6 +490,14 @@ namespace display_device {
       BOOST_LOG(debug) << "保存原始 output_name: " << original_output_name;
     }
 
+    // Replace VDD ID if needed (after client switch in keep_enabled mode)
+    if (should_replace_vdd_id_ && !old_vdd_id_.empty()) {
+      BOOST_LOG(info) << "替换persistent_data中的VDD ID: " << old_vdd_id_ << " -> " << device_zako;
+      settings.replace_vdd_id(old_vdd_id_, device_zako);
+      should_replace_vdd_id_ = false;
+      old_vdd_id_.clear();
+    }
+    
     // Update configuration and state
     config.device_id = device_zako;
     config::video.output_name = device_zako;
@@ -442,55 +533,119 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
-    // 检测RDP会话
-    if (w_utils::is_any_rdp_session_active()) {
-      BOOST_LOG(info) << "Detected RDP remote session, disabling display settings recovery";
-      stop_timer_and_clear_vdd_state();
-      return;
-    }
-
-    // 在串流结束时处理VDD销毁（即使锁屏也可以执行清理工作）
-    // 注意：创建VDD需要在 revert_settings 中处理，因为需要用户会话解锁才能被DXGI捕获
-    if (reason == revert_reason_e::stream_ended) {
-      auto devices = display_device::enum_available_devices();
-      if (devices.size() > 1 && is_display_on()) {
-        // 销毁VDD：可以在锁屏状态下执行（清理工作）
-        BOOST_LOG(info) << "检测到多个显示器，关闭VDD" << (settings.is_changing_settings_going_to_fail() ? "（锁屏状态）" : "");
+    // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
+    const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    if (!vdd_id.empty()) {
+      const auto device_prep = current_device_prep.value_or(
+        static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
+      );
+      
+      bool should_destroy = false;
+      
+      // 判断1：无操作模式 - 保留VDD
+      if (device_prep == parsed_config_t::device_prep_e::no_operation) {
+        BOOST_LOG(debug) << "无操作模式，保留VDD";
+      }
+      // 判断2：常驻模式 - 保留VDD
+      else if (config::video.vdd_keep_enabled) {
+        BOOST_LOG(debug) << "常驻模式，保留VDD";
+      }
+      // 判断3：有persistent_data - 非常驻模式销毁VDD（无论是否在初始拓扑）
+      else if (settings.has_persistent_data()) {
+        BOOST_LOG(info) << "非常驻/无操作模式，销毁VDD";
+        should_destroy = true;
+      }
+      // 判断4：无persistent_data（异常残留）- 非常驻模式清理
+      else {
+        BOOST_LOG(info) << "检测到异常残留的VDD（无persistent_data），清理VDD";
+        should_destroy = true;
+      }
+      
+      if (should_destroy) {
         destroy_vdd_monitor();
+        std::this_thread::sleep_for(1000ms);
       }
     }
 
-    if (!settings.is_changing_settings_going_to_fail() && settings.revert_settings(reason)) {
+    // 添加诊断日志
+    const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
+    BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
+    
+    if (!settings_will_fail && settings.revert_settings(reason)) {
       stop_timer_and_clear_vdd_state();
     }
     else {
-      if (settings.is_changing_settings_going_to_fail()) {
-        BOOST_LOG(warning) << "Try reverting display settings will fail - retrying later...";
-      }
-
-      // 限制重试次数，避免无限循环
-      static int retry_count = 0;
-      const int max_retries = 20;
-
-      timer->setup_timer([this, reason]() {
-        if (settings.is_changing_settings_going_to_fail()) {
-          retry_count++;
-          if (retry_count >= max_retries) {
-            BOOST_LOG(warning) << "已达到最大重试次数，停止尝试恢复显示设置";
-            clear_vdd_state();
-            return true;  // 返回true停止重试
+      // 无法立即恢复，添加任务到解锁队列
+      BOOST_LOG(warning) << "无法立即恢复显示设置";
+      
+      // 设置待恢复标志
+      pending_restore_ = true;
+      
+      // 添加恢复任务（自动处理锁屏检查和立即执行）
+      SessionEventListener::add_unlock_task([this, reason]() {
+        // 快速检查是否还需要恢复（最小化锁持有时间）
+        {
+          std::lock_guard lock { mutex };
+          if (!pending_restore_) {
+            BOOST_LOG(info) << "恢复操作已取消，跳过";
+            return;
           }
-          BOOST_LOG(warning) << "Timer: Reverting display settings will still fail - retrying later... (Count: " << retry_count << "/" << max_retries << ")";
-          return false;
         }
-
-        // 只恢复一次
+        
+        // 在锁外执行CCD检查和恢复操作（避免阻塞托盘等其他操作）
+        if (settings.is_changing_settings_going_to_fail()) {
+          // 解锁后CCD仍不可用，启动轮询作为fallback
+          BOOST_LOG(warning) << "CCD API仍不可用，启动轮询机制";
+          std::lock_guard lock { mutex };
+          this->start_polling_restore(reason);
+          return;  // 轮询会处理清理
+        }
+        
+        // 执行恢复（这可能需要几秒钟，不要持锁）
         auto result = settings.revert_settings(reason);
-        BOOST_LOG(info) << "尝试恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
-        clear_vdd_state();
-        return true;
+        BOOST_LOG(info) << "恢复显示设置" << (result ? "成功" : "失败");
+        
+        // 恢复完成后清除标志和状态（在锁内执行，确保线程安全）
+        {
+          std::lock_guard lock { mutex };
+          pending_restore_ = false;
+          stop_timer_and_clear_vdd_state();
+        }
       });
     }
+  }
+
+  void
+  session_t::start_polling_restore(revert_reason_e reason) {
+    static int retry_count = 0;
+    retry_count = 0;  // 重置计数器
+    const int max_retries = 20;
+
+    timer->setup_timer([this, reason]() {
+      // 检查是否还需要恢复
+      if (!pending_restore_) {
+        BOOST_LOG(debug) << "恢复操作已取消，跳过";
+        return true;
+      }
+      
+      if (settings.is_changing_settings_going_to_fail()) {
+        retry_count++;
+        if (retry_count >= max_retries) {
+          BOOST_LOG(warning) << "已达到最大重试次数，停止尝试恢复显示设置";
+          pending_restore_ = false;
+          clear_vdd_state();
+          return true;
+        }
+        BOOST_LOG(warning) << "Timer: 仍在等待CCD恢复... (Count: " << retry_count << "/" << max_retries << ")";
+        return false;
+      }
+
+      auto result = settings.revert_settings(reason);
+      BOOST_LOG(info) << "轮询恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
+      pending_restore_ = false;
+      clear_vdd_state();
+      return true;
+    });
   }
 
   session_t::session_t():

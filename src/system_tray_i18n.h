@@ -10,7 +10,17 @@ namespace system_tray_i18n {
   
   // Menu item keys
   extern const std::string KEY_OPEN_SUNSHINE;
-  extern const std::string KEY_VDD_MONITOR_TOGGLE;
+  extern const std::string KEY_VDD_BASE_DISPLAY;
+  extern const std::string KEY_VDD_CREATE;
+  extern const std::string KEY_VDD_CLOSE;
+  extern const std::string KEY_VDD_PERSISTENT;
+  extern const std::string KEY_VDD_CONFIRM_CREATE_TITLE;
+  extern const std::string KEY_VDD_CONFIRM_CREATE_MSG;
+  extern const std::string KEY_VDD_CONFIRM_KEEP_TITLE;
+  extern const std::string KEY_VDD_CONFIRM_KEEP_MSG;
+  extern const std::string KEY_VDD_CANCEL_CREATE_LOG;
+  extern const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE;
+  extern const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG;
   extern const std::string KEY_CONFIGURATION;
   extern const std::string KEY_IMPORT_CONFIG;
   extern const std::string KEY_EXPORT_CONFIG;

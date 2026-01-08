@@ -115,7 +115,7 @@ namespace system_tray {
   
   // GUI process management
   void terminate_gui_processes();
-  
-  // Tray menu management
-  void update_tray_vmonitor_checked(int checked);
+
+  // VDD menu management
+  void update_vdd_menu();
 }  // namespace system_tray

@@ -393,7 +393,7 @@ namespace config {
     true,  // nv_realtime_hags
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
-    false,  // preferUseVdd
+    false,  // vdd_keep_enabled
     {},  // nv_legacy
 
     {
@@ -443,7 +443,7 @@ namespace config {
     (int) display_device::parsed_config_t::hdr_prep_e::automatic,  // hdr_prep
     {},  // display_mode_remapping
     false,  // variable_refresh_rate
-    0  // minimum_fps_target (0 = auto, about half the stream FPS)
+    0,  // minimum_fps_target (0 = auto, about half the stream FPS)
   };
 
   audio_t audio {
@@ -1069,13 +1069,6 @@ namespace config {
   }
 
   void
-  sync_idd_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    if (input == VDD_NAME) {
-      video.preferUseVdd = true;
-    }
-  }
-
-  void
   apply_config(std::unordered_map<std::string, std::string> &&vars) {
 #ifndef __ANDROID__
     // TODO: Android can possibly support this
@@ -1208,7 +1201,6 @@ namespace config {
       BOOST_LOG(warning) << "capture_target=window but window_title is empty. Window capture may fail."sv;
     }
 #endif
-    sync_idd_f(vars, "output_name", video.output_name);
     int_f(vars, "display_device_prep", video.display_device_prep, display_device::parsed_config_t::device_prep_from_view);
     int_f(vars, "resolution_change", video.resolution_change, display_device::parsed_config_t::resolution_change_from_view);
     string_f(vars, "manual_resolution", video.manual_resolution);
@@ -1219,6 +1211,7 @@ namespace config {
     int_f(vars, "max_bitrate", video.max_bitrate);
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
+    bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

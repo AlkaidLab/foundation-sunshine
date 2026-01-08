@@ -1386,19 +1386,27 @@ namespace video {
     std::string target_display_name;
     const auto &config = capture_ctxs.front().config;
     if (!config.display_name.empty()) {
-      // Try to find the client-specified display in the list
+      // config.display_name may be a device ID (e.g., {xxx-xxx-xxx}) rather than display name (e.g., \\.\DISPLAY1)
+      // Try to convert device ID to display name first
+      std::string resolved_display_name = display_device::get_display_name(config.display_name);
+      if (resolved_display_name.empty()) {
+        // If conversion failed, use the original value (might already be a display name)
+        resolved_display_name = config.display_name;
+      }
+      
+      // Try to find the display in the list
       bool found = false;
       for (int x = 0; x < display_names.size(); ++x) {
-        if (display_names[x] == config.display_name) {
+        if (display_names[x] == resolved_display_name) {
           display_p = x;
-          target_display_name = config.display_name;
+          target_display_name = resolved_display_name;
           found = true;
           BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
           break;
         }
       }
       if (!found) {
-        BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+        BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
         target_display_name = display_names[display_p];
       }
     }
@@ -1603,18 +1611,24 @@ namespace video {
             const auto &config = capture_ctxs.front().config;
             std::string target_display_name = display_names[display_p];
             if (!config.display_name.empty()) {
-              // Try to find the client-specified display in the list
+              // config.display_name may be a device ID - convert to display name
+              std::string resolved_display_name = display_device::get_display_name(config.display_name);
+              if (resolved_display_name.empty()) {
+                resolved_display_name = config.display_name;
+              }
+              
+              // Try to find the display in the list
               bool found = false;
               for (int x = 0; x < display_names.size(); ++x) {
-                if (display_names[x] == config.display_name) {
+                if (display_names[x] == resolved_display_name) {
                   display_p = x;
-                  target_display_name = config.display_name;
+                  target_display_name = resolved_display_name;
                   found = true;
                   break;
                 }
               }
               if (!found) {
-                BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+                BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
               }
             }
 
@@ -2702,18 +2716,24 @@ namespace video {
       const auto &config = synced_session_ctxs.front()->config;
       std::string target_display_name = display_names[display_p];
       if (!config.display_name.empty()) {
-        // Try to find the client-specified display in the list
+        // config.display_name may be a device ID - convert to display name
+        std::string resolved_display_name = display_device::get_display_name(config.display_name);
+        if (resolved_display_name.empty()) {
+          resolved_display_name = config.display_name;
+        }
+        
+        // Try to find the display in the list
         bool found = false;
         for (int x = 0; x < display_names.size(); ++x) {
-          if (display_names[x] == config.display_name) {
+          if (display_names[x] == resolved_display_name) {
             display_p = x;
-            target_display_name = config.display_name;
+            target_display_name = resolved_display_name;
             found = true;
             break;
           }
         }
         if (!found) {
-          BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] not found, using default display";
+          BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
         }
       }
 

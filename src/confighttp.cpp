@@ -856,9 +856,10 @@ namespace confighttp {
         "version",          // 版本号，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
-        "pair_name"         // 配对名称，由系统生成，只读
+        "pair_name",        // 配对名称，由系统生成，只读
+        "vdd_keep_enabled", // 由系统托盘控制，不通过Web UI修改
+        "system_tray"       // 由系统托盘控制，不通过Web UI修改
       };
-
       for (const auto &kv : inputTree) {
         if (readonlyFields.find(kv.first) != readonlyFields.end()) {
           continue;

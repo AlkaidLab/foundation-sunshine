@@ -23,6 +23,7 @@
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "src/system_tray.h"
+#include "src/system_tray_i18n.h"
 #include "to_string.h"
 
 namespace pt = boost::property_tree;
@@ -290,7 +291,7 @@ namespace display_device {
       }
 
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-      system_tray::update_tray_vmonitor_checked(1);
+      system_tray::update_vdd_menu();
 #endif
       BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response;
       return true;
@@ -303,10 +304,16 @@ namespace display_device {
         BOOST_LOG(error) << "销毁虚拟显示器失败";
         return false;
       }
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-      system_tray::update_tray_vmonitor_checked(0);
-#endif
+      
       BOOST_LOG(info) << "销毁虚拟显示器完成，响应: " << response;
+      
+      // 等待驱动程序完全卸载，避免WUDFHost.exe崩溃
+      // 这是必要的，因为驱动程序卸载是异步的
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+      system_tray::update_vdd_menu();
+#endif
       return true;
     }
 
@@ -350,21 +357,14 @@ namespace display_device {
         return;
       }
 
-      // since we enable the extended mode by default, we don't need to show the notice message
-      // constexpr auto notice_message =
-      //   L"？只不过是创建了个虚拟显示器，看到屏幕变黑就吓得手忙脚乱了吗？\n"
-      //   L"杂鱼❤真是没见过世面的杂鱼大叔呢❤\n"
-      //   L"这可是Windows记住了你那些乱七八糟的多显示器设置才变成这样的，这完全是正常现象哦？\n"
-      //   L"真是的，别在那边丢人现眼地慌张了，看着好丢人。\n"
-      //   L"听好了，本小姐大发慈悲教你这一遍——按两次 Win+P 就能变回来了。\n"
-      //   L"这么简单的操作都要人教，你的脑子是装饰品吗？哼~。\n\n"
-      //   L"After creating a virtual display, based on Windows' remembered multi-display combination strategy, "
-      //   L"you may see a black screen which is normal. Don't panic. You can press Win+P twice to return to a visible display.";
-
-      // if (MessageBoxW(NULL, notice_message, L"❗Zako Display Notice", MB_OKCANCEL | MB_ICONINFORMATION) == IDCANCEL) {
-      //   BOOST_LOG(info) << "用户取消创建虚拟显示器";
-      //   return;
-      // }
+      // 创建前先确认
+      std::wstring confirm_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_CREATE_TITLE));
+      std::wstring confirm_message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_CREATE_MSG));
+      
+      if (MessageBoxW(NULL, confirm_message.c_str(), confirm_title.c_str(), MB_OKCANCEL | MB_ICONQUESTION) == IDCANCEL) {
+        BOOST_LOG(info) << system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CANCEL_CREATE_LOG);
+        return;
+      }
 
       if (!create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
         return;
@@ -395,6 +395,7 @@ namespace display_device {
         }
       }
 
+      // 后台线程确保VDD处于扩展模式，并进行二次确认
       std::thread([vdd_device_id = find_device_by_friendlyname(ZAKO_NAME), physical_devices_before]() mutable {
         if (vdd_device_id.empty()) {
           std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -402,34 +403,34 @@ namespace display_device {
         }
 
         if (vdd_device_id.empty()) {
-          BOOST_LOG(warning) << "无法找到虚拟显示器设备，跳过配置";
+          BOOST_LOG(warning) << "无法找到基地显示器设备，跳过配置";
         }
         else {
-          BOOST_LOG(info) << "找到虚拟显示器设备: " << vdd_device_id;
+          BOOST_LOG(info) << "找到基地显示器设备: " << vdd_device_id;
 
           if (ensure_vdd_extended_mode(vdd_device_id, physical_devices_before)) {
-            BOOST_LOG(info) << "已确保虚拟显示器处于扩展模式";
+            BOOST_LOG(info) << "已确保基地显示器处于扩展模式";
           }
         }
 
+        // 创建后二次确认，20秒超时
         constexpr auto timeout = std::chrono::seconds(20);
-        constexpr auto dialog_title = L"显示器确认";
-        constexpr auto confirm_message =
-          L"已创建虚拟显示器，是否继续使用？\n\n"
-          L"如不确认，20秒后将自动关闭显示器";
+        std::wstring dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_KEEP_TITLE));
+        std::wstring confirm_message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_KEEP_MSG));
 
         auto future = std::async(std::launch::async, [&]() {
-          return MessageBoxW(nullptr, confirm_message, dialog_title, MB_YESNO | MB_ICONQUESTION) == IDYES;
+          return MessageBoxW(nullptr, confirm_message.c_str(), dialog_title.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES;
         });
 
         if (future.wait_for(timeout) == std::future_status::ready && future.get()) {
-          BOOST_LOG(info) << "用户确认保留虚拟显示器";
+          BOOST_LOG(info) << "用户确认保留基地显示器";
           return;
         }
 
-        BOOST_LOG(info) << "用户未确认或超时，自动销毁虚拟显示器";
+        BOOST_LOG(info) << "用户未确认或超时，自动销毁基地显示器";
 
-        if (HWND hwnd = FindWindowW(L"#32770", dialog_title); hwnd && IsWindow(hwnd)) {
+        std::wstring w_dialog_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_KEEP_TITLE));
+        if (HWND hwnd = FindWindowW(L"#32770", w_dialog_title.c_str()); hwnd && IsWindow(hwnd)) {
           PostMessage(hwnd, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
           PostMessage(hwnd, WM_CLOSE, 0, 0);
 

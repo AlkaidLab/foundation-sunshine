@@ -704,7 +704,12 @@ namespace display_device::w_utils {
         const auto wts_info { reinterpret_cast<const WTSINFOEXW *>(buffer) };
         if (wts_info && wts_info->Level == 1) {
           const bool is_locked { wts_info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK };
-          BOOST_LOG(debug) << "is_user_session_locked: " << is_locked;
+          const auto session_flags = wts_info->Data.WTSInfoExLevel1.SessionFlags;
+          
+          BOOST_LOG(info) << "Session lock check - Locked: " << is_locked 
+                           << ", SessionFlags: " << session_flags 
+                           << " (LOCK=" << WTS_SESSIONSTATE_LOCK 
+                           << ", UNLOCK=" << WTS_SESSIONSTATE_UNLOCK << ")";
           return is_locked;
         }
       }
@@ -791,6 +796,9 @@ namespace display_device::w_utils {
       BOOST_LOG(warning) << "[Check_RDP_Session] WTSEnumerateSessions failed: " << GetLastError();
       return false; // 异常默认返回false
     }
+    
+    BOOST_LOG(debug) << "[Check_RDP_Session] Checking " << sessionCount << " sessions";
+    
     // 遍历所有会话，检测是否有rdp会话
     for (DWORD i = 0; i < sessionCount; ++i) {
       WTS_SESSION_INFO si = pSessionInfo[i];
@@ -805,9 +813,14 @@ namespace display_device::w_utils {
       if (WTSQuerySessionInformation(WTS_CURRENT_SERVER_HANDLE, si.SessionId, WTSClientProtocolType, &buffer, &bytesReturned)) {
         USHORT protocolType = *(USHORT*)buffer;
         WTSFreeMemory(buffer);
-        // BOOST_LOG(info) << "RDP Session ID: " << si.SessionId << ", Protocol: " << protocolType;
+        
+        BOOST_LOG(debug) << "[Check_RDP_Session] Session " << si.SessionId 
+                         << " - State: " << si.State 
+                         << ", Protocol: " << protocolType 
+                         << " (Console=0, RDP=2)";
+        
         if (protocolType == 2) { // RDP 协议
-          BOOST_LOG(debug) << "[Check_RDP_Session] Active RDP session detected, session ID = " << si.SessionId;
+          BOOST_LOG(info) << "[Check_RDP_Session] Active RDP session detected, session ID = " << si.SessionId;
           WTSFreeMemory(pSessionInfo);
           return true;
         }
@@ -816,7 +829,7 @@ namespace display_device::w_utils {
       }
     }
     WTSFreeMemory(pSessionInfo);
-    // BOOST_LOG(info) << "No active RDP session found.";
+    BOOST_LOG(debug) << "[Check_RDP_Session] No active RDP session found.";
     return false;
   }
 }  // namespace display_device::w_utils
