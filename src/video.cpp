@@ -476,6 +476,15 @@ namespace video {
       if (!avcodec_ctx) return;
 
       switch (param.type) {
+        case dynamic_param_type_e::RESOLUTION:
+          // 分辨率变更需要重新初始化编码器
+          BOOST_LOG(info) << "AVCodec encoder: Resolution change requested (requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::FPS:
+          // FPS变更需要重新配置编码器
+          BOOST_LOG(info) << "AVCodec encoder: FPS change requested: " << param.value.float_value 
+                          << " fps (requires encoder reconfiguration)";
+          break;
         case dynamic_param_type_e::BITRATE: {
           // 码率调整通过set_bitrate处理
           set_bitrate(param.value.int_value);
@@ -572,6 +581,15 @@ namespace video {
       if (!device || !device->nvenc) return;
 
       switch (param.type) {
+        case dynamic_param_type_e::RESOLUTION:
+          // 分辨率变更需要重新初始化编码器，这里只记录日志
+          BOOST_LOG(info) << "NVENC encoder: Resolution change requested (requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::FPS:
+          // FPS变更需要重新配置编码器
+          BOOST_LOG(info) << "NVENC encoder: FPS change requested: " << param.value.float_value 
+                          << " fps (requires encoder reconfiguration)";
+          break;
         case dynamic_param_type_e::BITRATE: {
           // 码率调整通过set_bitrate处理
           set_bitrate(param.value.int_value);
@@ -2916,27 +2934,66 @@ namespace video {
 
     auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
     auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
+    auto idr_events = mail->event<bool>(mail::idr);
+    auto resolution_change_event = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
 
     // Encoding takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
+    // Cache window capture mode check outside the loop
+    const bool is_window_capture = (config::video.capture_target == "window");
+
     while (!shutdown_event->peek() && images->running()) {
       // Wait for the main capture event when the display is being reinitialized
       if (ref->reinit_event.peek()) {
-        BOOST_LOG(debug) << "[Display] 检测到重新初始化事件，等待显示器准备就绪...";
+        BOOST_LOG(debug) << "[Display] Reinit event detected, waiting for display ready...";
         std::this_thread::sleep_for(20ms);
         continue;
       }
+
       // Wait for the display to be ready
       std::shared_ptr<platf::display_t> display;
       {
         auto lg = ref->display_wp.lock();
         if (ref->display_wp->expired()) {
-          BOOST_LOG(verbose) << "[Display] 显示对象已过期，等待重新初始化...";
+          BOOST_LOG(verbose) << "[Display] Display object expired, waiting for reinit...";
           continue;
         }
-
         display = ref->display_wp->lock();
+      }
+
+      // Detect display resolution changes (e.g., rotation causing width/height swap)
+      // For WGC window capture, display->width/height is monitor resolution, not window size
+      // Note: config is a reference to session->config.monitor, so updating it updates the session
+      if (!is_window_capture &&
+          (display->width != config.width || display->height != config.height)) {
+        const int old_width = config.width;
+        const int old_height = config.height;
+        const int new_width = display->width;
+        const int new_height = display->height;
+        const bool is_rotation = (old_width == new_height && old_height == new_width);
+        
+        BOOST_LOG(info) << "Display resolution changed: " 
+                        << old_width << "x" << old_height << " -> " 
+                        << new_width << "x" << new_height
+                        << (is_rotation ? " (rotation)" : "");
+        
+        // Update config (this also updates session->config.monitor since config is a reference)
+        config.width = new_width;
+        config.height = new_height;
+        
+        // Notify client about resolution change (similar to HDR notification)
+        resolution_change_event->raise(
+          static_cast<std::uint32_t>(new_width),
+          static_cast<std::uint32_t>(new_height));
+        
+        // Request IDR frame for client to display new resolution correctly
+        idr_events->raise(true);
+        
+        // Wait for client to process resolution change notification and reconfigure decoder
+        // This ensures the control stream message arrives before the new resolution video frames
+        std::this_thread::sleep_for(100ms);
+        BOOST_LOG(info) << "Waited 100ms for client to process resolution change";
       }
 
       auto &encoder = *chosen_encoder;
@@ -2946,7 +3003,7 @@ namespace video {
         return;
       }
 
-      // absolute mouse coordinates require that the dimensions of the screen are known
+      // Absolute mouse coordinates require that the dimensions of the screen are known
       touch_port_event->raise(make_port(display.get(), config));
 
       // Update client with our current HDR display state
@@ -2956,7 +3013,7 @@ namespace video {
           hdr_info->enabled = true;
         }
         else {
-          BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
+          BOOST_LOG(error) << "Couldn't get display HDR metadata when colorspace indicates it should have one";
         }
       }
       hdr_event->raise(std::move(hdr_info));

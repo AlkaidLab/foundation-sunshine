@@ -1092,6 +1092,12 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
+    auto set_error = [&tree](int code, const std::string &message) {
+      tree.put("root.success", 0);
+      tree.put("root.<xmlattr>.status_code", code);
+      tree.put("root.<xmlattr>.status_message", message);
+    };
+
     try {
       auto args = request->parse_query_string();
       auto param_type_param = args.find("type");
@@ -1099,23 +1105,17 @@ namespace nvhttp {
       auto clientname_param = args.find("clientname");
 
       if (param_type_param == args.end()) {
-        tree.put("root.success", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing param_type parameter");
+        set_error(400, "Missing param_type parameter");
         return;
       }
 
       if (param_value_param == args.end()) {
-        tree.put("root.success", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing param_value parameter");
+        set_error(400, "Missing param_value parameter");
         return;
       }
 
       if (clientname_param == args.end()) {
-        tree.put("root.success", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing clientname parameter");
+        set_error(400, "Missing clientname parameter");
         return;
       }
 
@@ -1123,27 +1123,33 @@ namespace nvhttp {
       std::string param_value = param_value_param->second;
       std::string client_name = clientname_param->second;
 
-      // 验证参数类型
-      if (param_type < 0 || param_type >= (int)video::dynamic_param_type_e::MAX_PARAM_TYPE) {
-        tree.put("root.success", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Invalid param_type value");
+      if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
+        set_error(400, "Invalid param_type value");
         return;
       }
 
-      // 创建动态参数
       video::dynamic_param_t param;
       param.type = static_cast<video::dynamic_param_type_e>(param_type);
       param.valid = true;
 
-      // 根据参数类型解析值
       switch (param.type) {
+        case video::dynamic_param_type_e::RESOLUTION: {
+          set_error(400, "Resolution change should be sent via control stream protocol, not HTTP API");
+          return;
+        }
+        case video::dynamic_param_type_e::FPS: {
+          float fps = std::stof(param_value);
+          if (fps <= 0.0f || fps > 1000.0f) {
+            set_error(400, "Invalid FPS value. Must be between 0 and 1000");
+            return;
+          }
+          param.value.float_value = fps;
+          break;
+        }
         case video::dynamic_param_type_e::BITRATE: {
           int bitrate = std::stoi(param_value);
           if (bitrate <= 0 || bitrate > 800000) {
-            tree.put("root.success", 0);
-            tree.put("root.<xmlattr>.status_code", 400);
-            tree.put("root.<xmlattr>.status_message", "Invalid bitrate value. Must be between 1 and 800000 Kbps");
+            set_error(400, "Invalid bitrate value. Must be between 1 and 800000 Kbps");
             return;
           }
           param.value.int_value = bitrate;
@@ -1152,9 +1158,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::QP: {
           int qp = std::stoi(param_value);
           if (qp < 0 || qp > 51) {
-            tree.put("root.success", 0);
-            tree.put("root.<xmlattr>.status_code", 400);
-            tree.put("root.<xmlattr>.status_message", "Invalid QP value. Must be between 0 and 51");
+            set_error(400, "Invalid QP value. Must be between 0 and 51");
             return;
           }
           param.value.int_value = qp;
@@ -1163,9 +1167,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::FEC_PERCENTAGE: {
           int fec = std::stoi(param_value);
           if (fec < 0 || fec > 100) {
-            tree.put("root.success", 0);
-            tree.put("root.<xmlattr>.status_code", 400);
-            tree.put("root.<xmlattr>.status_message", "Invalid FEC percentage. Must be between 0 and 100");
+            set_error(400, "Invalid FEC percentage. Must be between 0 and 100");
             return;
           }
           param.value.int_value = fec;
@@ -1178,9 +1180,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::MULTI_PASS: {
           int multi_pass = std::stoi(param_value);
           if (multi_pass < 0 || multi_pass > 2) {
-            tree.put("root.success", 0);
-            tree.put("root.<xmlattr>.status_code", 400);
-            tree.put("root.<xmlattr>.status_message", "Invalid multi-pass value. Must be between 0 and 2");
+            set_error(400, "Invalid multi-pass value. Must be between 0 and 2");
             return;
           }
           param.value.int_value = multi_pass;
@@ -1189,18 +1189,14 @@ namespace nvhttp {
         case video::dynamic_param_type_e::VBV_BUFFER_SIZE: {
           int vbv = std::stoi(param_value);
           if (vbv <= 0) {
-            tree.put("root.success", 0);
-            tree.put("root.<xmlattr>.status_code", 400);
-            tree.put("root.<xmlattr>.status_message", "Invalid VBV buffer size. Must be greater than 0");
+            set_error(400, "Invalid VBV buffer size. Must be greater than 0");
             return;
           }
           param.value.int_value = vbv;
           break;
         }
         default:
-          tree.put("root.success", 0);
-          tree.put("root.<xmlattr>.status_code", 400);
-          tree.put("root.<xmlattr>.status_message", "Unsupported parameter type");
+          set_error(400, "Unsupported parameter type");
           return;
       }
 
@@ -1216,16 +1212,12 @@ namespace nvhttp {
         BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '" 
                        << client_name << "': type=" << param_type << ", value=" << param_value;
       } else {
-        tree.put("root.success", 0);
-        tree.put("root.<xmlattr>.status_code", 404);
-        tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
+        set_error(404, "No active streaming session found for client: " + client_name);
       }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "ChangeDynamicParam: "sv << e.what();
-      tree.put("root.success", 0);
-      tree.put("root.<xmlattr>.status_code", 500);
-      tree.put("root.<xmlattr>.status_message", e.what());
+      set_error(500, e.what());
     }
   }
 

@@ -24,6 +24,7 @@ extern "C" {
 #include "config.h"
 #include "display_device/session.h"
 #include "globals.h"
+#include "rtsp.h"
 #include "input.h"
 #include "logging.h"
 #include "network.h"
@@ -52,7 +53,8 @@ extern "C" {
 #define IDX_SET_ADAPTIVE_TRIGGERS 15
 #define IDX_MIC_DATA 16
 #define IDX_MIC_CONFIG 17
-#define IDX_DYNAMIC_BITRATE_CHANGE 18  // 新增：动态码率调整消息类型
+#define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
+#define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -73,7 +75,8 @@ static const short packetTypes[] = {
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
   0x5504,  // Microphone data (Sunshine protocol extension)
   0x5505,  // Microphone config (Sunshine protocol extension)
-  0x5506,  // Dynamic bitrate change (Sunshine protocol extension)
+  0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
+  0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
 };
 
 namespace asio = boost::asio;
@@ -220,6 +223,13 @@ namespace stream {
 
     // Sunshine protocol extension
     SS_HDR_METADATA metadata;
+  };
+
+  struct control_resolution_change_t {
+    control_header_v2 header;
+
+    std::uint32_t width;
+    std::uint32_t height;
   };
 
   typedef struct control_encrypted_t {
@@ -456,9 +466,17 @@ namespace stream {
 
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
+      safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
     } control;
 
     std::uint32_t launch_session_id;
+
+    // 保存 launch_session 的关键字段，用于动态参数更新
+    bool enable_sops { false };
+    bool enable_hdr { false };
+    float max_nits { 1000.0f };
+    float min_nits { 0.001f };
+    float max_full_nits { 1000.0f };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
@@ -1000,6 +1018,37 @@ namespace stream {
     return 0;
   }
 
+  int
+  send_resolution_change(session_t *session, std::uint32_t width, std::uint32_t height) {
+    if (!session->control.peer) {
+      BOOST_LOG(warning) << "Couldn't send resolution change, still waiting for PING from Moonlight"sv;
+      // Still waiting for PING from Moonlight
+      return -1;
+    }
+
+    control_resolution_change_t plaintext {};
+    plaintext.header.type = packetTypes[IDX_RESOLUTION_CHANGE];
+    plaintext.header.payloadLength = sizeof(control_resolution_change_t) - sizeof(control_header_v2);
+
+    plaintext.width = util::endian::little(width);
+    plaintext.height = util::endian::little(height);
+
+    std::array<std::uint8_t,
+      sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
+      encrypted_payload;
+
+    auto payload = encode_control(session, util::view(plaintext), encrypted_payload);
+    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send resolution change to ["sv << addr << ':' << port << ']';
+
+      return -1;
+    }
+
+    BOOST_LOG(debug) << "Sent resolution change: " << width << "x" << height;
+    return 0;
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
@@ -1036,27 +1085,206 @@ namespace stream {
       session->video.idr_events->raise(true);
     });
 
-    server->map(packetTypes[IDX_DYNAMIC_BITRATE_CHANGE], [&](session_t *session, const std::string_view &payload) {
-      BOOST_LOG(debug) << "type [IDX_DYNAMIC_BITRATE_CHANGE]"sv;
+    // 辅助函数：处理分辨率变更
+    auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
+      int old_width = session->config.monitor.width;
+      int old_height = session->config.monitor.height;
+      
+      BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height 
+                      << " -> " << new_width << "x" << new_height;
 
-      if (payload.size() >= sizeof(int)) {
-        auto new_bitrate = *(int *) payload.data();
-        BOOST_LOG(info) << "Dynamic bitrate change requested: " << new_bitrate << " Kbps";
+      // 验证分辨率范围
+      constexpr int MAX_RESOLUTION = 16384;
+      if (new_width <= 0 || new_width > MAX_RESOLUTION || new_height <= 0 || new_height > MAX_RESOLUTION) {
+        BOOST_LOG(warning) << "Invalid resolution value: " << new_width << "x" << new_height;
+        return;
+      }
 
-        // 验证码率范围
-        if (new_bitrate > 0 && new_bitrate <= 800000) {  // 最大800Mbps
-          video::dynamic_param_t param;
-          param.type = video::dynamic_param_type_e::BITRATE;
-          param.value.int_value = new_bitrate;
-          param.valid = true;
-          session->video.dynamic_param_change_events->raise(param);
-        }
-        else {
-          BOOST_LOG(warning) << "Invalid bitrate value: " << new_bitrate << " Kbps";
-        }
+      // 检查分辨率是否真的改变了
+      if (old_width == new_width && old_height == new_height) {
+        BOOST_LOG(debug) << "Resolution unchanged, ignoring request";
+        return;
+      }
+
+      // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
+      bool is_rotation = (old_width == new_height && old_height == new_width);
+      if (is_rotation) {
+        BOOST_LOG(info) << "Detected display rotation: width and height swapped";
+      }
+
+      // 更新会话配置
+      session->config.monitor.width = new_width;
+      session->config.monitor.height = new_height;
+
+      // 创建临时的 launch_session_t 来更新显示设备配置
+      // 注意：必须按照结构体声明顺序初始化字段
+      rtsp_stream::launch_session_t temp_launch_session {};
+      temp_launch_session.id = session->launch_session_id;
+      temp_launch_session.client_name = session->client_name;
+      temp_launch_session.width = new_width;
+      temp_launch_session.height = new_height;
+      temp_launch_session.fps = session->config.monitor.framerate;
+      temp_launch_session.enable_hdr = session->enable_hdr;
+      temp_launch_session.enable_sops = session->enable_sops;
+      temp_launch_session.max_nits = session->max_nits;
+      temp_launch_session.min_nits = session->min_nits;
+      temp_launch_session.max_full_nits = session->max_full_nits;
+
+      // 更新显示设备配置（重新配置模式）
+      // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
+      if (is_rotation) {
+        BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height 
+                        << " -> " << new_width << "x" << new_height;
       }
       else {
-        BOOST_LOG(warning) << "Invalid payload size for dynamic bitrate change";
+        BOOST_LOG(info) << "Reconfiguring display device for new resolution: " << old_width << "x" << old_height 
+                        << " -> " << new_width << "x" << new_height;
+      }
+      
+      display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+
+      // 请求 IDR 帧以确保客户端能正确显示新分辨率
+      // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
+      session->video.idr_events->raise(true);
+
+      // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
+      // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
+      // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
+      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height 
+                      << (is_rotation ? " (rotation detected)" : "");
+    };
+
+    // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
+    // Payload 格式：
+    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区
+    // - 参数值：
+    //   * 分辨率 (类型0): 2个int (8字节, width和height)
+    //   * FPS (类型1): 1个float (4字节)
+    //   * 其他单值参数（码率、QP等）: 1个int (4字节)
+    server->map(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], [&, handle_resolution_change](session_t *session, const std::string_view &payload) {
+      BOOST_LOG(debug) << "type [IDX_DYNAMIC_PARAM_CHANGE]"sv;
+
+      constexpr size_t MIN_PAYLOAD_SIZE = sizeof(int);
+      if (payload.size() < MIN_PAYLOAD_SIZE) {
+        BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
+                           << MIN_PAYLOAD_SIZE << " bytes, got " << payload.size();
+        return;
+      }
+
+      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      
+      if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
+        BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
+        return;
+      }
+
+      const auto param_type_enum = static_cast<video::dynamic_param_type_e>(param_type);
+      
+      // 处理分辨率变更（需要两个int值）
+      if (param_type_enum == video::dynamic_param_type_e::RESOLUTION) {
+        constexpr size_t RESOLUTION_PAYLOAD_SIZE = sizeof(int) * 3;  // 类型 + width + height
+        if (payload.size() < RESOLUTION_PAYLOAD_SIZE) {
+          BOOST_LOG(warning) << "Invalid payload size for resolution change. Expected " 
+                             << RESOLUTION_PAYLOAD_SIZE << " bytes, got " << payload.size();
+          return;
+        }
+
+        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
+        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        return;
+      }
+
+      // 处理FPS变更（需要float值）
+      if (param_type_enum == video::dynamic_param_type_e::FPS) {
+        constexpr size_t FPS_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        if (payload.size() < FPS_PAYLOAD_SIZE) {
+          BOOST_LOG(warning) << "Invalid payload size for FPS change. Expected " 
+                             << FPS_PAYLOAD_SIZE << " bytes, got " << payload.size();
+          return;
+        }
+
+        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        
+        if (new_fps <= 0.0f || new_fps > 1000.0f) {
+          BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
+          return;
+        }
+
+        session->config.monitor.framerate = static_cast<int>(new_fps);
+        
+        video::dynamic_param_t param;
+        param.type = video::dynamic_param_type_e::FPS;
+        param.value.float_value = new_fps;
+        param.valid = true;
+        session->video.dynamic_param_change_events->raise(param);
+        
+        BOOST_LOG(info) << "Dynamic FPS change: " << new_fps << " fps";
+        return;
+      }
+
+      // 处理其他单值参数（码率、QP等，使用int值）
+      constexpr size_t INT_PARAM_PAYLOAD_SIZE = sizeof(int) * 2;
+      if (payload.size() < INT_PARAM_PAYLOAD_SIZE) {
+        BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
+                           << INT_PARAM_PAYLOAD_SIZE << " bytes, got " << payload.size();
+        return;
+      }
+
+      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+
+      video::dynamic_param_t param;
+      param.type = param_type_enum;
+      param.valid = true;
+
+      // 参数验证和处理的辅助lambda
+      auto validate_and_raise = [&](bool valid, auto value, const char *name, const char *unit = "") {
+        if (valid) {
+          if constexpr (std::is_same_v<decltype(value), bool>) {
+            param.value.bool_value = value;
+          } else {
+            param.value.int_value = value;
+          }
+          session->video.dynamic_param_change_events->raise(param);
+          BOOST_LOG(info) << "Dynamic " << name << " change: " << value << unit;
+          return true;
+        }
+        BOOST_LOG(warning) << "Invalid " << name << " value: " << param_value;
+        return false;
+      };
+
+      switch (param_type_enum) {
+        case video::dynamic_param_type_e::BITRATE:
+          if (validate_and_raise(param_value > 0 && param_value <= 800000, param_value, "bitrate", " Kbps")) {
+            session->current_total_bitrate = param_value;
+          }
+          break;
+        case video::dynamic_param_type_e::QP:
+          validate_and_raise(param_value >= 0 && param_value <= 51, param_value, "QP");
+          break;
+        case video::dynamic_param_type_e::FEC_PERCENTAGE:
+          validate_and_raise(param_value >= 0 && param_value <= 100, param_value, "FEC percentage", "%");
+          break;
+        case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
+          bool enabled = (param_value != 0);
+          param.value.bool_value = enabled;
+          session->video.dynamic_param_change_events->raise(param);
+          BOOST_LOG(info) << "Dynamic adaptive quantization change: " << (enabled ? "enabled" : "disabled");
+          break;
+        }
+        case video::dynamic_param_type_e::MULTI_PASS:
+          validate_and_raise(param_value >= 0 && param_value <= 2, param_value, "multi-pass");
+          break;
+        case video::dynamic_param_type_e::VBV_BUFFER_SIZE:
+          validate_and_raise(param_value > 0, param_value, "VBV buffer size", " Kbps");
+          break;
+        case video::dynamic_param_type_e::PRESET:
+          param.value.int_value = param_value;
+          session->video.dynamic_param_change_events->raise(param);
+          BOOST_LOG(info) << "Dynamic preset change: " << param_value;
+          break;
+        default:
+          BOOST_LOG(warning) << "Unsupported parameter type: " << param_type;
+          break;
       }
     });
 
@@ -1232,6 +1460,15 @@ namespace stream {
               auto hdr_info = hdr_queue->pop();
 
               send_hdr_mode(session, std::move(hdr_info));
+            }
+
+            auto &resolution_change_queue = session->control.resolution_change_queue;
+            while (session->control.peer && resolution_change_queue->peek()) {
+              auto resolution = resolution_change_queue->pop();
+              
+              if (resolution) {
+                send_resolution_change(session, resolution->first, resolution->second);
+              }
             }
           }
 
@@ -2594,6 +2831,13 @@ namespace stream {
       // 设置客户端名称
       session->client_name = launch_session.client_name;
 
+      // 保存 launch_session 的关键字段，用于后续动态参数更新
+      session->enable_sops = launch_session.enable_sops;
+      session->enable_hdr = launch_session.enable_hdr;
+      session->max_nits = launch_session.max_nits;
+      session->min_nits = launch_session.min_nits;
+      session->max_full_nits = launch_session.max_full_nits;
+
       session->config = config;
 
       // Initialize current total bitrate (including FEC) from config
@@ -2613,6 +2857,7 @@ namespace stream {
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
+      session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
       session->control.legacy_input_enc_iv = launch_session.iv;
       session->control.cipher = crypto::cipher::gcm_t {
         launch_session.gcm_key, false
