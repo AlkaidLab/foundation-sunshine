@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
-import { ViteEjsPlugin } from 'vite-plugin-ejs'
+import { ViteEjsPlugin } from './vite-plugin-ejs-v7.js'
 import vue from '@vitejs/plugin-vue'
 import process from 'process'
 
@@ -48,7 +48,7 @@ export default defineConfig({
     outDir: resolve(assetsDstPath),
     emptyOutDir: true,
     chunkSizeWarningLimit: 1000,
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         apps: resolve(assetsSrcPath, 'apps.html'),
         config: resolve(assetsSrcPath, 'config.html'),

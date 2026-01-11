@@ -41,6 +41,10 @@ build/
 cmake-*/
 docs/doxyconfig*
 
+# Build logs
+build.log
+*.log
+
 # npm
 node_modules/
 package-lock.json

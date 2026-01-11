@@ -1,13 +1,13 @@
 @import './var.css';
 
 // Scrollbar stability
-html {
-  scrollbar-gutter: stable;
+// html {
+//   scrollbar-gutter: stable;
 
-  @supports not (scrollbar-gutter: stable) {
-    overflow-y: scroll;
-  }
-}
+//   @supports not (scrollbar-gutter: stable) {
+//     overflow-y: scroll;
+//   }
+// }
 
 body {
   min-height: 100vh;
@@ -18,6 +18,10 @@ body {
   background-repeat: no-repeat;
   background-attachment: fixed;
   transition: background 0.3s ease;
+
+  &.bg-light {
+    background-color: #5496dd !important;
+  }
 
   &::after {
     content: '';

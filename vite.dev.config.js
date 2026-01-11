@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
-import { ViteEjsPlugin } from 'vite-plugin-ejs'
+import { ViteEjsPlugin } from './vite-plugin-ejs-v7.js'
 import vue from '@vitejs/plugin-vue'
 import mkcert from 'vite-plugin-mkcert'
 
@@ -201,19 +201,21 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 1000, // 提高警告阈值到1MB
-    rollupOptions: {
+    rolldownOptions: {
       input: htmlPages.reduce((acc, name) => {
         acc[name] = resolve(assetsSrcPath, `${name}.html`)
         return acc
       }, {}),
       output: {
-        manualChunks: {
-          // 将Vue相关库分离到单独的chunk
-          'vue-vendor': ['vue', 'vue-i18n'],
-          // 将Bootstrap和FontAwesome分离
-          'ui-vendor': ['bootstrap', '@fortawesome/fontawesome-free', '@popperjs/core'],
-          // 将其他第三方库分离
-          'utils-vendor': ['marked', 'nanoid', 'vuedraggable'],
+        advancedChunks: {
+          groups: [
+            // 将Vue相关库分离到单独的chunk
+            { name: 'vue-vendor', test: /[\\/]node_modules[\\/](vue|vue-i18n)[\\/]/ },
+            // 将Bootstrap和FontAwesome分离
+            { name: 'ui-vendor', test: /[\\/]node_modules[\\/](bootstrap|@fortawesome|@popperjs)[\\/]/ },
+            // 将其他第三方库分离
+            { name: 'utils-vendor', test: /[\\/]node_modules[\\/](marked|nanoid|vuedraggable)[\\/]/ },
+          ],
         },
         // 优化chunk命名
         chunkFileNames: (chunkInfo) => {

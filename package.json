@@ -2,10 +2,10 @@
   "type": "module",
   "scripts": {
     "prebuild": "node ./src_assets/common/assets/web/scripts/extract-welcome-locales.js",
-    "build": "cross-env VITE_USE_ROLldOWN=1 vite build --debug",
-    "build-clean": "cross-env VITE_USE_ROLldOWN=1 vite build --debug --emptyOutDir",
-    "dev": "cross-env VITE_USE_ROLldOWN=1 vite build --watch",
-    "dev-server": "cross-env VITE_USE_ROLldOWN=1 vite serve --config vite.dev.config.js",
+    "build": "vite build --debug",
+    "build-clean": "vite build --debug --emptyOutDir",
+    "dev": "vite build --watch",
+    "dev-server": "vite serve --config vite.dev.config.js",
     "dev-full": "node dev-server.js",
     "preview": "vite preview",
     "preview:build": "npm run build && npm run preview",
@@ -24,16 +24,16 @@
     "firebase": "^12.3.0",
     "marked": "^16.2.1",
     "nanoid": "^5.0.7",
-    "vue": "3.5.18",
-    "vue-i18n": "11.1.11",
+    "vue": "^3.5.26",
+    "vue-i18n": "^11.2.8",
     "vuedraggable-es": "^4.1.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.1",
+    "@vitejs/plugin-vue": "^6.0.3",
     "cross-env": "^7.0.3",
     "express": "^4.18.2",
     "less": "^4.4.2",
-    "vite": "^5.4.11",
+    "vite": "^7.3.1",
     "vite-plugin-ejs": "1.6.4",
     "vite-plugin-mkcert": "^1.17.8"
   }

@@ -12,7 +12,7 @@
             <p class="text-muted small mb-0">{{ $t('password.new_username_desc') }}</p>
           </div>
 
-          <form @submit.prevent="save">
+          <form @submit.prevent="save" autocomplete="off">
             <div class="card border-0 shadow-sm rounded-3">
               <div class="card-body p-3 p-md-4">
                 <div class="row g-3">

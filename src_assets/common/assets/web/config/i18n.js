@@ -37,6 +37,7 @@ export default async function() {
         fallbackLocale: 'en', // set fallback locale
         messages: messages,
         globalInjection: true, // 允许在模板中使用 $t
+        warnHtmlMessage: false, // 禁用 HTML 消息警告（因为我们使用 v-html 来渲染受信任的翻译内容）
     })
     return i18n;
 }
