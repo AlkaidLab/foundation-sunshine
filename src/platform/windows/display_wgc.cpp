@@ -589,6 +589,17 @@ namespace platf::dxgi {
       return -1;
     }
 
+    // WGC frames are typically delivered in the current display orientation.
+    // If we keep DXGI rotation enabled here, later stages may apply an extra rotation,
+    // causing flipped/upside-down/stretched output on client after a monitor rotation.
+    if (display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
+        display_rotation != DXGI_MODE_ROTATION_IDENTITY) {
+      BOOST_LOG(info) << "WGC: disabling DXGI rotation handling for oriented frames";
+      display_rotation = DXGI_MODE_ROTATION_UNSPECIFIED;
+      width_before_rotation = width;
+      height_before_rotation = height;
+    }
+
     texture.reset();
     return 0;
   }
@@ -642,6 +653,15 @@ namespace platf::dxgi {
         dup.window_capture_height = frame_height;
         // Reset texture to force recreation with new size
         texture.reset();
+      }
+    }
+    else {
+      // For display capture, check against display dimensions
+      // WGC frames are typically in display orientation (after rotation),
+      // so compare against `width`/`height` to avoid reinit loops on rotation.
+      if (frame_width != width || frame_height != height) {
+        BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << frame_width << 'x' << frame_height << ']';
+        return capture_e::reinit;
       }
     }
 

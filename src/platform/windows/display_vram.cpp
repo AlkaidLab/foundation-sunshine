@@ -1872,9 +1872,12 @@ namespace platf::dxgi {
       }
     }
     else {
-      // For display capture, check against display dimensions
-      if (desc.Width != width_before_rotation || desc.Height != height_before_rotation) {
-        BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << desc.Width << 'x' << desc.Height << ']';
+      // For display capture with WGC, the frame dimensions are in "display orientation"
+      // (i.e., after rotation). Our `width`/`height` are derived from DesktopCoordinates
+      // and match that orientation. Using width_before_rotation/height_before_rotation
+      // here can cause an infinite reinit loop on rotation.
+      if (frame_width != width || frame_height != height) {
+        BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << frame_width << 'x' << frame_height << ']';
         return capture_e::reinit;
       }
     }
@@ -1923,8 +1926,8 @@ namespace platf::dxgi {
     auto img = std::make_shared<img_d3d_t>();
     
     // For window capture, use window capture dimensions; for display capture, use display dimensions
-    int img_width = dup.window_capture_width > 0 ? dup.window_capture_width : width_before_rotation;
-    int img_height = dup.window_capture_height > 0 ? dup.window_capture_height : height_before_rotation;
+    int img_width = dup.window_capture_width > 0 ? dup.window_capture_width : width;
+    int img_height = dup.window_capture_height > 0 ? dup.window_capture_height : height;
     
     img->width = img_width;
     img->height = img_height;
@@ -1938,6 +1941,17 @@ namespace platf::dxgi {
   display_wgc_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
     if (display_base_t::init(config, display_name) || dup.init(this, config))
       return -1;
+
+    // WGC frames are typically delivered in the current display orientation.
+    // The DXGI rotation flag comes from the output descriptor and is needed for DDX,
+    // but for WGC it can lead to applying rotation twice (client sees flipped/stretched).
+    if (display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
+        display_rotation != DXGI_MODE_ROTATION_IDENTITY) {
+      BOOST_LOG(info) << "WGC: disabling DXGI rotation handling for oriented frames";
+      display_rotation = DXGI_MODE_ROTATION_UNSPECIFIED;
+      width_before_rotation = width;
+      height_before_rotation = height;
+    }
 
     return 0;
   }
