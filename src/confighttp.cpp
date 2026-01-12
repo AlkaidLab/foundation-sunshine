@@ -43,6 +43,7 @@
 #include "network.h"
 #include "nvhttp.h"
 #include "platform/common.h"
+#include "platform/run_command.h"
 #include "rtsp.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/to_string.h"

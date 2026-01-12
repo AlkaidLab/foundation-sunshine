@@ -1,5 +1,5 @@
 // lib includes
-#include <boost/process.hpp>
+#include <boost/process/v1.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -12,6 +12,7 @@
 // local includes
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/run_command.h"
 #include "src/platform/windows/misc.h"
 #include "windows_utils.h"
 
@@ -542,7 +543,7 @@ namespace display_device {
     BOOST_LOG(info) << "Applying hdr profile: " << profile_name << " for " << client_name;
 
     // set hdr profile to registry
-    boost::process::environment _env = boost::this_process::environment();
+    boost::process::v1::environment _env = boost::this_process::environment();
     auto working_dir = boost::filesystem::path();
 
     std::error_code ec;

@@ -31,6 +31,7 @@
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/run_command.h"
 #include "vaapi.h"
 
 #ifdef __GNUC__
@@ -41,7 +42,7 @@
 
 using namespace std::literals;
 namespace fs = std::filesystem;
-namespace bp = boost::process;
+namespace bp = boost::process::v1;
 
 window_system_e window_system;
 

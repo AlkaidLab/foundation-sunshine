@@ -41,6 +41,7 @@
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/run_command.h"
 #include "src/utility.h"
 #include <iterator>
 
@@ -94,7 +95,7 @@ namespace {
 
 }  // namespace
 
-namespace bp = boost::process;
+namespace bp = boost::process::v1;
 
 using namespace std::literals;
 namespace platf {

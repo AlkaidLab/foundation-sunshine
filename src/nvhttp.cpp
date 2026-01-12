@@ -36,6 +36,7 @@
 #include "network.h"
 #include "nvhttp.h"
 #include "platform/common.h"
+#include "platform/run_command.h"
 #include "process.h"
 #include "rtsp.h"
 #include "stream.h"
@@ -1564,7 +1565,7 @@ namespace nvhttp {
   sleep(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    boost::process::environment _env = boost::this_process::environment();
+    boost::process::v1::environment _env = boost::this_process::environment();
     auto working_dir = boost::filesystem::path();
     std::error_code ec;
     std::string cmd = "rundll32.exe powrprof.dll,SetSuspendState 0,1,0";

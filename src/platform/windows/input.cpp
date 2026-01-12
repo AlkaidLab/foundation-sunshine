@@ -20,7 +20,13 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 
-#ifdef __MINGW32__
+// Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
+// modern MinGW-w64 SDK (UCRT64). The declarations below are only needed for
+// very old MinGW versions that predate Windows 10 SDK support.
+// 
+// If you encounter "undefined" errors on old MinGW, uncomment the following:
+// #define SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
+#ifdef SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
 DECLARE_HANDLE(HSYNTHETICPOINTERDEVICE);
 WINUSERAPI HSYNTHETICPOINTERDEVICE WINAPI
 CreateSyntheticPointerDevice(POINTER_INPUT_TYPE pointerType, ULONG maxCount, POINTER_FEEDBACK_MODE mode);

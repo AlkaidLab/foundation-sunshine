@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <boost/filesystem.hpp>
-#include <boost/process.hpp>
+#include <boost/process/v1.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/uuid/name_generator_sha1.hpp>
@@ -20,6 +20,7 @@
 #include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
+#include "src/platform/run_command.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "src/system_tray.h"
@@ -54,7 +55,7 @@ namespace display_device {
       static const std::string kDevManPath = (std::filesystem::path(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe").string();
       static const std::string kDriverName = "Zako Display Adapter";
 
-      boost::process::environment _env = boost::this_process::environment();
+      boost::process::v1::environment _env = boost::this_process::environment();
       auto working_dir = boost::filesystem::path();
       std::error_code ec;
 

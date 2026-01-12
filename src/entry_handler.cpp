@@ -7,7 +7,7 @@
 #include <iostream>
 #include <thread>
 
-#include <boost/process.hpp>
+#include <boost/process/v1.hpp>
 
 // local includes
 #include "config.h"

@@ -21,6 +21,7 @@
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/run_command.h"
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/host_name.hpp>
@@ -28,7 +29,7 @@
 
 using namespace std::literals;
 namespace fs = std::filesystem;
-namespace bp = boost::process;
+namespace bp = boost::process::v1;
 
 namespace platf {
 

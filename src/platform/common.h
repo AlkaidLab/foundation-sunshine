@@ -15,7 +15,7 @@
 #include <boost/core/noncopyable.hpp>
 #ifndef _WIN32
   #include <boost/asio.hpp>
-  #include <boost/process.hpp>
+  #include <boost/process/v1.hpp>
 #endif
 
 // local includes
@@ -47,18 +47,6 @@ namespace boost {
       class address;
     }  // namespace ip
   }  // namespace asio
-
-  namespace filesystem {
-    class path;
-  }
-
-  namespace process::inline v1 {
-    class child;
-    class group;
-    template <typename Char>
-    class basic_environment;
-    typedef basic_environment<char> environment;
-  }  // namespace process::inline v1
 }  // namespace boost
 #endif
 namespace video {
@@ -664,9 +652,6 @@ namespace platf {
    */
   bool
   needs_encoder_reenumeration();
-
-  boost::process::v1::child
-  run_command(bool elevated, bool interactive, const std::string &cmd, boost::filesystem::path &working_dir, const boost::process::v1::environment &env, FILE *file, std::error_code &ec, boost::process::v1::group *group);
 
   enum class thread_priority_e : int {
     low,  ///< Low priority

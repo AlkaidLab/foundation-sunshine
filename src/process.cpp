@@ -28,6 +28,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "platform/common.h"
+#include "platform/run_command.h"
 #include "system_tray.h"
 #include "utility.h"
 
