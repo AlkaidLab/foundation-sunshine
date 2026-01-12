@@ -376,6 +376,8 @@ namespace platf::dxgi {
 
     duplication_t dup;
     sampler_state_t sampler_linear;
+    // Point sampler for high-quality resampling shaders (avoid double-filtering).
+    sampler_state_t sampler_point;
 
     blend_t blend_alpha;
     blend_t blend_invert;

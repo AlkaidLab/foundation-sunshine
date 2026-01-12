@@ -2943,6 +2943,15 @@ namespace video {
     // Cache window capture mode check outside the loop
     const bool is_window_capture = (config::video.capture_target == "window");
 
+    // Track display dimensions for resolution change detection
+    int last_display_width = 0;
+    int last_display_height = 0;
+
+    // Track initial scale ratio (encoding resolution / display resolution)
+    // Used to maintain consistent scaling when display resolution changes
+    float initial_scale_x = 1.0f;
+    float initial_scale_y = 1.0f;
+
     while (!shutdown_event->peek() && images->running()) {
       // Wait for the main capture event when the display is being reinitialized
       if (ref->reinit_event.peek()) {
@@ -2964,36 +2973,76 @@ namespace video {
 
       // Detect display resolution changes (e.g., rotation causing width/height swap)
       // For WGC window capture, display->width/height is monitor resolution, not window size
-      // Note: config is a reference to session->config.monitor, so updating it updates the session
-      if (!is_window_capture &&
-          (display->width != config.width || display->height != config.height)) {
-        const int old_width = config.width;
-        const int old_height = config.height;
-        const int new_width = display->width;
-        const int new_height = display->height;
-        const bool is_rotation = (old_width == new_height && old_height == new_width);
-        
-        BOOST_LOG(info) << "Display resolution changed: " 
-                        << old_width << "x" << old_height << " -> " 
-                        << new_width << "x" << new_height
+      const int current_width = display->width;
+      const int current_height = display->height;
+
+      // Initialize cached display dimensions on first iteration
+      if (last_display_width == 0 && last_display_height == 0) {
+        last_display_width = current_width;
+        last_display_height = current_height;
+        // Store original scale ratio for future display resolution changes
+        initial_scale_x = static_cast<float>(config.width) / current_width;
+        initial_scale_y = static_cast<float>(config.height) / current_height;
+        BOOST_LOG(info) << "Initial display: " << current_width << "x" << current_height
+                        << ", encoding: " << config.width << "x" << config.height
+                        << ", scale: " << initial_scale_x << "x" << initial_scale_y;
+      }
+      else if (!is_window_capture &&
+               (current_width != last_display_width || current_height != last_display_height)) {
+        const bool is_rotation = (last_display_width == current_height && last_display_height == current_width);
+
+        BOOST_LOG(info) << "Display resolution changed: "
+                        << last_display_width << "x" << last_display_height << " -> "
+                        << current_width << "x" << current_height
                         << (is_rotation ? " (rotation)" : "");
-        
-        // Update config (this also updates session->config.monitor since config is a reference)
-        config.width = new_width;
-        config.height = new_height;
-        
-        // Notify client about resolution change (similar to HDR notification)
-        resolution_change_event->raise(
-          static_cast<std::uint32_t>(new_width),
-          static_cast<std::uint32_t>(new_height));
-        
-        // Request IDR frame for client to display new resolution correctly
+
+        // Store old encoding resolution for logging
+        const int old_enc_width = config.width;
+        const int old_enc_height = config.height;
+
+        // Update cached display dimensions
+        last_display_width = current_width;
+        last_display_height = current_height;
+
+        // Calculate new encoding resolution maintaining the original scale ratio
+        if (is_rotation) {
+          // For rotation, swap the scale ratios as well
+          std::swap(initial_scale_x, initial_scale_y);
+        }
+
+        // Apply scale ratio to new display resolution
+        // Round to even numbers for encoder compatibility
+        int new_enc_width = static_cast<int>(current_width * initial_scale_x);
+        int new_enc_height = static_cast<int>(current_height * initial_scale_y);
+
+        // Round to nearest multiple of 2 for encoder compatibility
+        new_enc_width = (new_enc_width + 1) & ~1;
+        new_enc_height = (new_enc_height + 1) & ~1;
+
+        // Ensure minimum resolution
+        new_enc_width = std::max(new_enc_width, 64);
+        new_enc_height = std::max(new_enc_height, 64);
+
+        config.width = new_enc_width;
+        config.height = new_enc_height;
+
+        BOOST_LOG(info) << "Encoding resolution changed: "
+                        << old_enc_width << "x" << old_enc_height << " -> "
+                        << config.width << "x" << config.height
+                        << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")"
+                        << (is_rotation ? " [rotation]" : "");
+
+        // Notify client about the new encoding resolution
+        resolution_change_event->raise(std::make_pair(
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
+
+        // Request IDR frame to ensure clean transition
         idr_events->raise(true);
-        
-        // Wait for client to process resolution change notification and reconfigure decoder
-        // This ensures the control stream message arrives before the new resolution video frames
+
+        // Wait for client to process resolution change notification
         std::this_thread::sleep_for(100ms);
-        BOOST_LOG(info) << "Waited 100ms for client to process resolution change";
+        BOOST_LOG(info) << "Waited 100ms for client to process resolution change notification";
       }
 
       auto &encoder = *chosen_encoder;

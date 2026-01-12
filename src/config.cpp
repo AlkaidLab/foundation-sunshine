@@ -444,6 +444,7 @@ namespace config {
     {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
+    "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
   };
 
   audio_t audio {
@@ -1212,6 +1213,20 @@ namespace config {
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
+    
+    // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
+    string_f(vars, "downscaling_quality", video.downscaling_quality);
+    if (video.downscaling_quality.empty()) {
+      video.downscaling_quality = "balanced";  // Default to bicubic
+    }
+    // Validate downscaling_quality
+    if (video.downscaling_quality != "fast" && 
+        video.downscaling_quality != "balanced" && 
+        video.downscaling_quality != "high_quality") {
+      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality 
+                         << "], valid options are: fast, balanced, high_quality. Defaulting to 'balanced'"sv;
+      video.downscaling_quality = "balanced";
+    }
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

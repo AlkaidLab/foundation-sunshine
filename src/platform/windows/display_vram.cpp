@@ -110,10 +110,17 @@ namespace platf::dxgi {
   blob_t convert_yuv420_packed_uv_type0s_ps_linear_hlsl;
   blob_t convert_yuv420_packed_uv_type0s_ps_perceptual_quantizer_hlsl;
   blob_t convert_yuv420_packed_uv_type0s_vs_hlsl;
+  blob_t convert_yuv420_packed_uv_bicubic_ps_hlsl;
+  blob_t convert_yuv420_packed_uv_bicubic_ps_linear_hlsl;
+  blob_t convert_yuv420_packed_uv_bicubic_ps_perceptual_quantizer_hlsl;
+  blob_t convert_yuv420_packed_uv_bicubic_vs_hlsl;
   blob_t convert_yuv420_planar_y_ps_hlsl;
   blob_t convert_yuv420_planar_y_ps_linear_hlsl;
   blob_t convert_yuv420_planar_y_ps_perceptual_quantizer_hlsl;
   blob_t convert_yuv420_planar_y_vs_hlsl;
+  blob_t convert_yuv420_planar_y_bicubic_ps_hlsl;
+  blob_t convert_yuv420_planar_y_bicubic_ps_linear_hlsl;
+  blob_t convert_yuv420_planar_y_bicubic_ps_perceptual_quantizer_hlsl;
   blob_t convert_yuv444_packed_ayuv_ps_hlsl;
   blob_t convert_yuv444_packed_ayuv_ps_linear_hlsl;
   blob_t convert_yuv444_packed_vs_hlsl;
@@ -506,53 +513,99 @@ namespace platf::dxgi {
   }
 
       const bool downscaling = display->width > width || display->height > height;
+      // Determine downscaling quality based on config
+      // "fast" = bilinear + 8pt average (original method)
+      // "balanced" = bicubic (default, best quality/performance balance)
+      // "high_quality" = reserved for future lanczos implementation
+      const bool use_bicubic = downscaling && 
+                               (config::video.downscaling_quality == "balanced" || 
+                                config::video.downscaling_quality == "high_quality");
+      
+      if (downscaling) {
+        BOOST_LOG(info) << "Downscaling from " << display->width << "x" << display->height 
+                        << " to " << width << "x" << height 
+                        << " using quality: " << config::video.downscaling_quality
+                        << (use_bicubic ? " (bicubic)" : " (bilinear+8pt)");
+      }
 
       switch (format) {
         case DXGI_FORMAT_NV12:
           // Semi-planar 8-bit YUV 4:2:0
-          create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
-          create_pixel_shader_helper(convert_yuv420_planar_y_ps_hlsl, convert_Y_or_YUV_ps);
-          create_pixel_shader_helper(convert_yuv420_planar_y_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
-          if (downscaling) {
-            create_vertex_shader_helper(convert_yuv420_packed_uv_type0s_vs_hlsl, convert_UV_vs);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_hlsl, convert_UV_ps);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_linear_hlsl, convert_UV_fp16_ps);
+          if (use_bicubic) {
+            // Use bicubic sampling for high-quality downscaling
+            create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
+            create_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_hlsl, convert_Y_or_YUV_ps);
+            create_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
+            create_vertex_shader_helper(convert_yuv420_packed_uv_bicubic_vs_hlsl, convert_UV_vs);
+            create_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_hlsl, convert_UV_ps);
+            create_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_linear_hlsl, convert_UV_fp16_ps);
           }
           else {
-            create_vertex_shader_helper(convert_yuv420_packed_uv_type0_vs_hlsl, convert_UV_vs);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_hlsl, convert_UV_ps);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_linear_hlsl, convert_UV_fp16_ps);
+            create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
+            create_pixel_shader_helper(convert_yuv420_planar_y_ps_hlsl, convert_Y_or_YUV_ps);
+            create_pixel_shader_helper(convert_yuv420_planar_y_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
+            if (downscaling) {
+              create_vertex_shader_helper(convert_yuv420_packed_uv_type0s_vs_hlsl, convert_UV_vs);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_hlsl, convert_UV_ps);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_linear_hlsl, convert_UV_fp16_ps);
+            }
+            else {
+              create_vertex_shader_helper(convert_yuv420_packed_uv_type0_vs_hlsl, convert_UV_vs);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_hlsl, convert_UV_ps);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_linear_hlsl, convert_UV_fp16_ps);
+            }
           }
           break;
 
         case DXGI_FORMAT_P010:
           // Semi-planar 16-bit YUV 4:2:0, 10 most significant bits store the value
-          create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
-          create_pixel_shader_helper(convert_yuv420_planar_y_ps_hlsl, convert_Y_or_YUV_ps);
-          if (display->is_hdr()) {
-            create_pixel_shader_helper(convert_yuv420_planar_y_ps_perceptual_quantizer_hlsl, convert_Y_or_YUV_fp16_ps);
-          }
-          else {
-            create_pixel_shader_helper(convert_yuv420_planar_y_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
-          }
-          if (downscaling) {
-            create_vertex_shader_helper(convert_yuv420_packed_uv_type0s_vs_hlsl, convert_UV_vs);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_hlsl, convert_UV_ps);
+          if (use_bicubic) {
+            // Use bicubic sampling for high-quality downscaling
+            create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
+            create_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_hlsl, convert_Y_or_YUV_ps);
             if (display->is_hdr()) {
-              create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_perceptual_quantizer_hlsl, convert_UV_fp16_ps);
+              create_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_perceptual_quantizer_hlsl, convert_Y_or_YUV_fp16_ps);
             }
             else {
-              create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_linear_hlsl, convert_UV_fp16_ps);
+              create_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
+            }
+            create_vertex_shader_helper(convert_yuv420_packed_uv_bicubic_vs_hlsl, convert_UV_vs);
+            create_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_hlsl, convert_UV_ps);
+            if (display->is_hdr()) {
+              create_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_perceptual_quantizer_hlsl, convert_UV_fp16_ps);
+            }
+            else {
+              create_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_linear_hlsl, convert_UV_fp16_ps);
             }
           }
           else {
-            create_vertex_shader_helper(convert_yuv420_packed_uv_type0_vs_hlsl, convert_UV_vs);
-            create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_hlsl, convert_UV_ps);
+            create_vertex_shader_helper(convert_yuv420_planar_y_vs_hlsl, convert_Y_or_YUV_vs);
+            create_pixel_shader_helper(convert_yuv420_planar_y_ps_hlsl, convert_Y_or_YUV_ps);
             if (display->is_hdr()) {
-              create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_perceptual_quantizer_hlsl, convert_UV_fp16_ps);
+              create_pixel_shader_helper(convert_yuv420_planar_y_ps_perceptual_quantizer_hlsl, convert_Y_or_YUV_fp16_ps);
             }
             else {
-              create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_linear_hlsl, convert_UV_fp16_ps);
+              create_pixel_shader_helper(convert_yuv420_planar_y_ps_linear_hlsl, convert_Y_or_YUV_fp16_ps);
+            }
+            if (downscaling) {
+              create_vertex_shader_helper(convert_yuv420_packed_uv_type0s_vs_hlsl, convert_UV_vs);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_hlsl, convert_UV_ps);
+              if (display->is_hdr()) {
+                create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_perceptual_quantizer_hlsl, convert_UV_fp16_ps);
+              }
+              else {
+                create_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_linear_hlsl, convert_UV_fp16_ps);
+              }
+            }
+            else {
+              create_vertex_shader_helper(convert_yuv420_packed_uv_type0_vs_hlsl, convert_UV_vs);
+              create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_hlsl, convert_UV_ps);
+              if (display->is_hdr()) {
+                create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_perceptual_quantizer_hlsl, convert_UV_fp16_ps);
+              }
+              else {
+                create_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps_linear_hlsl, convert_UV_fp16_ps);
+              }
             }
           }
           break;
@@ -820,12 +873,21 @@ namespace platf::dxgi {
 
       status = device->CreateSamplerState(&sampler_desc, &sampler_linear);
       if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to create point sampler state [0x"sv << util::hex(status).to_string_view() << ']';
+        BOOST_LOG(error) << "Failed to create linear sampler state [0x"sv << util::hex(status).to_string_view() << ']';
         return -1;
       }
 
       device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
-      device_ctx->PSSetSamplers(0, 1, &sampler_linear);
+      // s0 = linear (existing shaders), s1 = point (high-quality resampling shaders)
+      sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+      status = device->CreateSamplerState(&sampler_desc, &sampler_point);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create point sampler state [0x"sv << util::hex(status).to_string_view() << ']';
+        return -1;
+      }
+
+      ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
+      device_ctx->PSSetSamplers(0, 2, samplers);
       device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
       return 0;
@@ -940,6 +1002,7 @@ namespace platf::dxgi {
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;
+    sampler_state_t sampler_point;
 
     render_target_t out_Y_or_YUV_rtv;
     render_target_t out_UV_rtv;
@@ -1601,6 +1664,13 @@ namespace platf::dxgi {
 
     auto status = device->CreateSamplerState(&sampler_desc, &sampler_linear);
     if (FAILED(status)) {
+      BOOST_LOG(error) << "Failed to create linear sampler state [0x"sv << util::hex(status).to_string_view() << ']';
+      return -1;
+    }
+
+    sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    status = device->CreateSamplerState(&sampler_desc, &sampler_point);
+    if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create point sampler state [0x"sv << util::hex(status).to_string_view() << ']';
       return -1;
     }
@@ -1659,7 +1729,8 @@ namespace platf::dxgi {
     }
 
     device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
-    device_ctx->PSSetSamplers(0, 1, &sampler_linear);
+    ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
+    device_ctx->PSSetSamplers(0, 2, samplers);
     device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     return 0;
@@ -2257,10 +2328,17 @@ namespace platf::dxgi {
     compile_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_linear);
     compile_pixel_shader_helper(convert_yuv420_packed_uv_type0s_ps_perceptual_quantizer);
     compile_vertex_shader_helper(convert_yuv420_packed_uv_type0s_vs);
+    compile_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps);
+    compile_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_linear);
+    compile_pixel_shader_helper(convert_yuv420_packed_uv_bicubic_ps_perceptual_quantizer);
+    compile_vertex_shader_helper(convert_yuv420_packed_uv_bicubic_vs);
     compile_pixel_shader_helper(convert_yuv420_planar_y_ps);
     compile_pixel_shader_helper(convert_yuv420_planar_y_ps_linear);
     compile_pixel_shader_helper(convert_yuv420_planar_y_ps_perceptual_quantizer);
     compile_vertex_shader_helper(convert_yuv420_planar_y_vs);
+    compile_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps);
+    compile_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_linear);
+    compile_pixel_shader_helper(convert_yuv420_planar_y_bicubic_ps_perceptual_quantizer);
     compile_pixel_shader_helper(convert_yuv444_packed_ayuv_ps);
     compile_pixel_shader_helper(convert_yuv444_packed_ayuv_ps_linear);
     compile_vertex_shader_helper(convert_yuv444_packed_vs);
