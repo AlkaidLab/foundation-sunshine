@@ -97,9 +97,6 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         DetailPrint '🎯 安装虚拟游戏手柄...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-gamepad.bat\\\"'
         
-        DetailPrint '🎤 安装音频重定向组件...'
-        nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-vsink.bat\\\"'
-        
         DetailPrint '⚙️ 安装并启动系统服务...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-service.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\autostart-service.bat\\\"'
@@ -147,11 +144,6 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
             /SD IDNO IDNO NoGamepad
             nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\uninstall-gamepad.bat\\\"'; skipped if no
         NoGamepad:
-        MessageBox MB_YESNO|MB_ICONQUESTION \
-            'Do you want to remove Virtual Sink?' \
-            /SD IDNO IDNO NoSink
-            nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\uninstall-vsink.bat\\\"'; skipped if no
-        NoSink:
         MessageBox MB_YESNO|MB_ICONQUESTION \
             'Do you want to remove $INSTDIR (this includes the configuration, cover images, and settings)?' \
             /SD IDNO IDNO NoDelete

@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { $tp } from '../../platform-i18n'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
@@ -12,8 +13,18 @@ import Checkbox from '../../components/Checkbox.vue'
 
 const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'display_mode_remapping', 'min_fps_factor'])
 
+const { t } = useI18n()
 const config = ref(props.config)
 const currentSubTab = ref('display-modes')
+
+const handleDownloadVSink = () => {
+  const url = 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip'
+  const message = t('config.stream_mic_download_confirm')
+  
+  if (confirm(message)) {
+    window.open(url, '_blank')
+  }
+}
 </script>
 
 <template>
@@ -85,13 +96,28 @@ const currentSubTab = ref('display-modes')
     ></Checkbox>
 
     <!-- Disable Microphone -->
-    <Checkbox
-      class="mb-3"
-      id="stream_mic"
-      locale-prefix="config"
-      v-model="config.stream_mic"
-      default="true"
-    ></Checkbox>
+    <div class="mb-3">
+      <Checkbox
+        id="stream_mic"
+        locale-prefix="config"
+        v-model="config.stream_mic"
+        default="true"
+      ></Checkbox>
+      <div class="stream-mic-helper mt-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-primary stream-mic-download-btn"
+          @click="handleDownloadVSink"
+        >
+          <i class="fas fa-download me-1"></i>
+          {{ $t('_common.download') }}
+        </button>
+        <div class="stream-mic-note">
+          <i class="fas fa-info-circle me-2"></i>
+          <span>{{ $t('config.stream_mic_note') }}</span>
+        </div>
+      </div>
+    </div>
 
     <AdapterNameSelector :platform="platform" :config="config" />
 
@@ -202,4 +228,41 @@ const currentSubTab = ref('display-modes')
 .tab-content {
   padding-top: 1rem;
 }
+
+.stream-mic-helper {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  background: var(--bs-secondary-bg);
+  border-radius: 8px;
+  border: 1px solid var(--bs-border-color);
+}
+
+.stream-mic-download-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  order: -1;
+}
+
+.stream-mic-note {
+  display: flex;
+  align-items: center;
+  color: var(--bs-secondary-color);
+  font-size: 0.875rem;
+  flex: 1;
+  min-width: 200px;
+
+  i {
+    color: var(--bs-info);
+    font-size: 1rem;
+  }
+}
+
+[data-bs-theme='dark'] .stream-mic-helper {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 </style>

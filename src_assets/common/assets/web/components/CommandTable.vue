@@ -16,7 +16,7 @@
             <template v-else-if="isDetachedType">
               <th><i class="fas fa-terminal"></i> {{ $t('apps.menu_cmd_command') }}</th>
             </template>
-            <th v-if="showElevatedColumn"><i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}</th>
+            <th v-if="showElevatedColumn" class="elevated-column"><i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}</th>
             <th class="actions-column">{{ $t('apps.menu_cmd_actions') }}</th>
           </tr>
         </thead>
@@ -100,7 +100,7 @@
                 </td>
               </template>
 
-              <td v-if="showElevatedColumn">
+              <td v-if="showElevatedColumn" class="elevated-column">
                 <div class="form-check">
                   <input
                     :id="`${type}-cmd-admin-${index}`"
@@ -251,19 +251,23 @@ const onDragEnd = () => emitOrderChanged()
   width: 100px;
 }
 
+.elevated-column {
+  text-align: center;
+}
+
 .table {
-  color: var(--modal-text-color, #fff);
-  border-color: var(--modal-border-color, rgba(255, 255, 255, 0.15));
+  color: var(--text-primary-color);
+  border-color: var(--bs-border-color);
   margin-bottom: 0;
 
   th {
     border-top: none;
-    border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
+    border-bottom: 1px solid var(--bs-border-color);
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: 0.95rem;
     padding: 1rem 0.75rem;
-    background: var(--glass-medium, rgba(255, 255, 255, 0.1));
-    color: var(--modal-text-color, #fff);
+    background: var(--bs-tertiary-bg);
+    color: var(--text-secondary-color);
   }
 
   thead th {
@@ -283,15 +287,15 @@ const onDragEnd = () => emitOrderChanged()
 
   td {
     vertical-align: middle;
-    border-color: var(--modal-border-color, rgba(255, 255, 255, 0.1));
+    border-color: var(--bs-border-color);
     padding: 0.75rem;
-    background: var(--glass-light, rgba(255, 255, 255, 0.05));
+    background: var(--bs-body-bg);
     transition: background 0.3s ease;
   }
 
   tbody tr {
     &:hover td {
-      background: var(--glass-medium, rgba(255, 255, 255, 0.1));
+      background: var(--bs-secondary-bg);
     }
 
     &:last-child td {
@@ -315,23 +319,34 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .form-control-sm {
-  font-size: 0.875rem;
-  background: var(--glass-light, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
+  font-size: 0.95rem;
+  background: #ffffff;
+  border: 1px solid var(--bs-border-color);
   border-radius: 8px;
-  color: var(--modal-text-color, #fff);
-  backdrop-filter: blur(5px);
+  color: var(--text-primary-color);
   transition: all 0.3s ease;
 
   &:focus {
-    background: var(--glass-medium, rgba(255, 255, 255, 0.15));
-    border-color: var(--btn-outline-primary-border, rgba(255, 255, 255, 0.4));
-    box-shadow: 0 0 0 0.2rem var(--btn-outline-primary-hover, rgba(255, 255, 255, 0.25));
-    color: var(--modal-text-color, #fff);
+    background: #ffffff;
+    border-color: var(--bs-primary);
+    box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+    color: var(--text-primary-color);
   }
 
   &::placeholder {
-    color: var(--modal-text-muted, rgba(255, 255, 255, 0.6));
+    color: var(--text-secondary-color);
+  }
+}
+
+[data-bs-theme='dark'] .form-control-sm {
+  background: #1a1a1a;
+  border-color: #444;
+  color: #fff;
+
+  &:focus {
+    background: #1a1a1a;
+    border-color: var(--bs-primary);
+    color: #fff;
   }
 }
 
@@ -349,8 +364,8 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .form-check-label {
-  color: var(--modal-text-color, #fff);
-  font-size: 0.875rem;
+  color: var(--text-primary-color);
+  font-size: 0.95rem;
   font-weight: 500;
   margin-left: 0.5rem;
 }
@@ -371,7 +386,7 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .drag-handle {
-  color: var(--modal-text-muted, rgba(255, 255, 255, 0.5));
+  color: var(--text-muted-color);
   font-size: 1.2rem;
   display: inline-block;
   padding: 0.5rem;
@@ -380,7 +395,7 @@ const onDragEnd = () => emitOrderChanged()
   transition: opacity 0.3s ease, color 0.3s ease;
 
   &:hover {
-    color: var(--modal-text-secondary, rgba(255, 255, 255, 0.9));
+    color: var(--text-secondary-color);
   }
 
   &.drag-disabled {
@@ -396,7 +411,7 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .command-row-chosen {
-  background: var(--glass-medium, rgba(255, 255, 255, 0.15));
+  background: var(--bs-secondary-bg);
   z-index: 1000;
   position: relative;
 }
@@ -404,7 +419,7 @@ const onDragEnd = () => emitOrderChanged()
 .command-row-drag {
   opacity: 0.95;
   transform: rotate(2deg);
-  box-shadow: 0 10px 30px var(--modal-shadow, rgba(0, 0, 0, 0.3));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
   z-index: 1001;
   position: relative;
 }

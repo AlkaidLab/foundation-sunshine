@@ -127,11 +127,6 @@ set(CPACK_COMPONENT_GAMEPAD_DISPLAY_NAME "Virtual Gamepad")
 set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtual Gamepad.")
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
-# vsink scripts
-set(CPACK_COMPONENT_VSINK_DISPLAY_NAME "Mic Redirector")
-set(CPACK_COMPONENT_VSINK_DESCRIPTION "Scripts to install and uninstall Virtual Sink.")
-set(CPACK_COMPONENT_VSINK_GROUP "Scripts")
-
 # include specific packaging
 include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
 include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)
