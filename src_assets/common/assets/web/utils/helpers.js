@@ -139,3 +139,35 @@ export function validateRequiredFields(obj, requiredFields) {
     missingFields
   };
 } 
+
+/**
+ * 检测是否在 Tauri 环境中
+ * @returns {boolean} 是否在 Tauri 环境
+ */
+export function isTauriEnv() {
+  return typeof window !== 'undefined' && !!(window.isTauri || window.__TAURI__);
+}
+
+/**
+ * 打开外部链接（支持 Tauri 和浏览器环境）
+ * @param {string} url 要打开的 URL
+ * @returns {Promise<void>}
+ */
+export async function openExternalUrl(url) {
+  if (!isValidUrl(url)) {
+    throw new Error('Invalid URL');
+  }
+
+  if (isTauriEnv()) {
+    try {
+      await window.__TAURI__.shell.open(url);
+    } catch (error) {
+      console.error('Failed to open URL with Tauri shell:', error);
+      // 降级到 window.open
+      window.open(url, '_blank');
+    }
+  } else {
+    // 非 Tauri 环境，使用 window.open
+    window.open(url, '_blank');
+  }
+} 

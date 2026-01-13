@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { $tp } from '../../platform-i18n'
+import { openExternalUrl } from '../../utils/helpers.js'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelector.vue'
@@ -16,14 +17,25 @@ const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'display_
 const { t } = useI18n()
 const config = ref(props.config)
 const currentSubTab = ref('display-modes')
+const showDownloadConfirm = ref(false)
 
 const handleDownloadVSink = () => {
+  showDownloadConfirm.value = true
+}
+
+const confirmDownload = async () => {
+  showDownloadConfirm.value = false
   const url = 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip'
-  const message = t('config.stream_mic_download_confirm')
   
-  if (confirm(message)) {
-    window.open(url, '_blank')
+  try {
+    await openExternalUrl(url)
+  } catch (error) {
+    console.error('Failed to open URL:', error)
   }
+}
+
+const cancelDownload = () => {
+  showDownloadConfirm.value = false
 }
 </script>
 
@@ -196,6 +208,29 @@ const handleDownloadVSink = () => {
         />
       </div>
     </div>
+
+    <!-- 下载确认对话框 -->
+    <Transition name="fade">
+      <div v-if="showDownloadConfirm" class="download-confirm-overlay" @click.self="cancelDownload">
+        <div class="download-confirm-modal">
+          <div class="download-confirm-header">
+            <h5>
+              <i class="fas fa-external-link-alt me-2"></i>{{ $t('_common.download') }}
+            </h5>
+            <button class="btn-close" @click="cancelDownload"></button>
+          </div>
+          <div class="download-confirm-body">
+            <p>{{ $t('config.stream_mic_download_confirm') }}</p>
+          </div>
+          <div class="download-confirm-footer">
+            <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-primary" @click="confirmDownload">
+              <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -263,6 +298,142 @@ const handleDownloadVSink = () => {
 [data-bs-theme='dark'] .stream-mic-helper {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Download Confirm Modal */
+.download-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg, 20px);
+  overflow: hidden;
+
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+.download-confirm-modal {
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  border-radius: var(--border-radius-xl, 12px);
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  animation: modalSlideUp 0.3s ease;
+
+  [data-bs-theme='light'] & {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.download-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  [data-bs-theme='light'] & {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+
+  h5 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--bs-body-color);
+    display: flex;
+    align-items: center;
+
+    i {
+      color: var(--bs-primary);
+    }
+  }
+
+  .btn-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: var(--bs-secondary-color);
+    cursor: pointer;
+    padding: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+
+    &:hover {
+      opacity: 1;
+    }
+
+    &::before {
+      content: '×';
+    }
+  }
+}
+
+.download-confirm-body {
+  padding: 1.5rem;
+  color: var(--bs-body-color);
+
+  p {
+    margin: 0;
+    line-height: 1.6;
+  }
+}
+
+.download-confirm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  [data-bs-theme='light'] & {
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+@keyframes modalSlideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 </style>
