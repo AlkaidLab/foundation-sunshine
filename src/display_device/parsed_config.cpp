@@ -10,6 +10,7 @@
 #include "src/config.h"
 #include "src/globals.h"
 #include "src/logging.h"
+#include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "to_string.h"
 
@@ -589,13 +590,20 @@ namespace display_device {
                      << "\n刷新率: "sv << (parsed_config.refresh_rate ? to_string(*parsed_config.refresh_rate) : "不变")
                      << "\n"sv;
 
-    // 检查是否需要使用VDD（使用解析后的 device_id，可能是客户端指定的显示器）
+    // 检查是否需要使用VDD
     const auto requested_device_id = display_device::find_one_of_the_available_devices(parsed_config.device_id);
     const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
+    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
 
-    // 如果会话不需要VDD且指定设备存在且不是VDD设备，则跳过VDD准备
-    if (!session.use_vdd && !requested_device_id.empty() && !is_vdd_device) {
+    // 不需要VDD时直接返回
+    if (!needs_vdd) {
       BOOST_LOG(debug) << "输出设备已存在，跳过VDD准备"sv;
+      return parsed_config;
+    }
+
+    // RDP环境下强制使用RDP虚拟显示器，不创建VDD
+    if (display_device::w_utils::is_any_rdp_session_active()) {
+      BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备"sv;
       return parsed_config;
     }
 

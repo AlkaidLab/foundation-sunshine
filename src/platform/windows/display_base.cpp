@@ -27,6 +27,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 } D3DKMT_GPU_PREFERENCE_QUERY_STATE;
 
 #include "display.h"
+#include "display_device/windows_utils.h"
 #include "misc.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
@@ -201,14 +202,14 @@ namespace platf::dxgi {
   display_base_t::capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) {
     auto adjust_client_frame_rate = [&]() -> DXGI_RATIONAL {
       double requested_fps = static_cast<double>(client_frame_rate_rational.Numerator) / client_frame_rate_rational.Denominator;
-      
+
       // Check if client requested an NTSC framerate (denominator is 1001)
       bool is_ntsc_request = (client_frame_rate_rational.Denominator == 1001);
-      
+
       // Adjust capture frame interval when display refresh rate is not integral but very close to requested fps.
       if (display_refresh_rate.Denominator > 1) {
         double display_fps = static_cast<double>(display_refresh_rate.Numerator) / display_refresh_rate.Denominator;
-        
+
         // Check if display refresh rate matches the requested NTSC framerate pattern
         // For example, client requests 60000/1001 (59.94fps), display is 59940/1000 (59.94fps)
         if (is_ntsc_request) {
@@ -234,7 +235,7 @@ namespace platf::dxgi {
             }
           }
         }
-        
+
         // Original logic for non-NTSC rates
         DXGI_RATIONAL candidate = display_refresh_rate;
         if (client_frame_rate % display_refresh_rate_rounded == 0) {
@@ -359,7 +360,7 @@ namespace platf::dxgi {
         // display refresh rate allows us to release the lock more frequently, giving the encoding
         // thread opportunities to acquire it for operations like creating dummy images or initializing shared state.
         // This prevents encoder reinitialization from taking several seconds due to lock starvation.
-        // 
+        //
         // Calculate optimal short timeout based on display refresh rate (aim for ~half a frame interval)
         // This ensures we poll frequently enough to catch frames quickly while still releasing the lock regularly.
         auto short_timeout = std::chrono::milliseconds(16);  // Default to ~60fps frame interval
@@ -526,49 +527,50 @@ namespace platf::dxgi {
 
   int
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
-    std::once_flag windows_cpp_once_flag;
+    static std::once_flag windows_cpp_once_flag;
 
     std::call_once(windows_cpp_once_flag, []() {
-      DECLARE_HANDLE(DPI_AWARENESS_CONTEXT);
-
-      typedef BOOL (*User32_SetProcessDpiAwarenessContext)(DPI_AWARENESS_CONTEXT value);
-
-      {
-        auto user32 = LoadLibraryA("user32.dll");
-        auto f = (User32_SetProcessDpiAwarenessContext) GetProcAddress(user32, "SetProcessDpiAwarenessContext");
-        if (f) {
+      if (auto user32 = LoadLibraryA("user32.dll")) {
+        if (auto f = (BOOL(*)(HANDLE)) GetProcAddress(user32, "SetProcessDpiAwarenessContext")) {
           f(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
-
         FreeLibrary(user32);
       }
 
-      {
-        // We aren't calling MH_Uninitialize(), but that's okay because this hook lasts for the life of the process
-        MH_Initialize();
-        MH_CreateHookApi(L"win32u.dll", "NtGdiDdDDIGetCachedHybridQueryValue", (void *) NtGdiDdDDIGetCachedHybridQueryValueHook, nullptr);
-        MH_EnableHook(MH_ALL_HOOKS);
-      }
+      // We aren't calling MH_Uninitialize(), but that's okay because this hook lasts for the life of the process
+      MH_Initialize();
+      MH_CreateHookApi(L"win32u.dll", "NtGdiDdDDIGetCachedHybridQueryValue", (void *) NtGdiDdDDIGetCachedHybridQueryValueHook, nullptr);
+      MH_EnableHook(MH_ALL_HOOKS);
     });
 
     // Get rectangle of full desktop for absolute mouse coordinates
     env_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     env_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-    HRESULT status;
-
-    status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
+    HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create DXGIFactory1 [0x"sv << util::hex(status).to_string_view() << ']';
       return -1;
     }
 
-    auto adapter_name = from_utf8(config::video.adapter_name);
-    auto output_name = from_utf8(display_name);
-    BOOST_LOG(debug) << "[Display Init] 初始化显示器: " << display_name;
+    const auto adapter_name = from_utf8(config::video.adapter_name);
+    const bool is_rdp_session = display_device::w_utils::is_any_rdp_session_active();
+    auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
+
+    if (is_rdp_session) {
+      BOOST_LOG(info) << "[Display Init] RDP session detected - using first available RDP virtual display";
+    }
+    else {
+      BOOST_LOG(debug) << "[Display Init] Initializing display: " << display_name;
+    }
 
     adapter_t::pointer adapter_p;
-    for (int tries = 0; tries < 2; ++tries) {
+    for (int tries = 0; tries < 2 && !output; ++tries) {
+      if (tries == 1) {
+        SetThreadExecutionState(ES_DISPLAY_REQUIRED);
+        Sleep(500);
+      }
+
       for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
         dxgi::adapter_t adapter_tmp { adapter_p };
 
@@ -586,21 +588,23 @@ namespace platf::dxgi {
           DXGI_OUTPUT_DESC desc;
           output_tmp->GetDesc(&desc);
 
-          if (!output_name.empty() && desc.DeviceName != output_name) {
-            BOOST_LOG(debug) << "[Display Init] 跳过不匹配的显示器: " << to_utf8(desc.DeviceName);
+          if (!is_rdp_session && !output_name.empty() && desc.DeviceName != output_name) {
             continue;
           }
 
-          if (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false)) {
-            BOOST_LOG(debug) << "[Display Init] 成功匹配到目标显示器: " << to_utf8(desc.DeviceName);
-            output = std::move(output_tmp);
+          const bool output_accepted = is_rdp_session ||
+                                       (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false));
 
+          if (output_accepted) {
+            BOOST_LOG(is_rdp_session ? info : debug) << "[Display Init] Selected display: " << to_utf8(desc.DeviceName);
+
+            output = std::move(output_tmp);
             offset_x = desc.DesktopCoordinates.left;
             offset_y = desc.DesktopCoordinates.top;
             width = desc.DesktopCoordinates.right - offset_x;
             height = desc.DesktopCoordinates.bottom - offset_y;
-
             display_rotation = desc.Rotation;
+
             if (display_rotation == DXGI_MODE_ROTATION_ROTATE90 ||
                 display_rotation == DXGI_MODE_ROTATION_ROTATE270) {
               width_before_rotation = height;
@@ -611,29 +615,15 @@ namespace platf::dxgi {
               height_before_rotation = height;
             }
 
-            // left and bottom may be negative, yet absolute mouse coordinates start at 0x0
-            // Ensure offset starts at 0x0
             offset_x -= GetSystemMetrics(SM_XVIRTUALSCREEN);
             offset_y -= GetSystemMetrics(SM_YVIRTUALSCREEN);
 
+            adapter = std::move(adapter_tmp);
             break;
           }
         }
 
-        if (output) {
-          adapter = std::move(adapter_tmp);
-          break;
-        }
-      }
-
-      if (output) {
-        break;
-      }
-
-      // If we made it here without finding an output, try to power on the display and retry.
-      if (tries == 0) {
-        SetThreadExecutionState(ES_DISPLAY_REQUIRED);
-        Sleep(500);
+        if (output) break;
       }
     }
 
@@ -642,7 +632,7 @@ namespace platf::dxgi {
       return -1;
     }
 
-    D3D_FEATURE_LEVEL featureLevels[] {
+    constexpr D3D_FEATURE_LEVEL featureLevels[] {
       D3D_FEATURE_LEVEL_11_1,
       D3D_FEATURE_LEVEL_11_0,
       D3D_FEATURE_LEVEL_10_1,
@@ -673,65 +663,50 @@ namespace platf::dxgi {
 
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create D3D11 device [0x"sv << util::hex(status).to_string_view() << ']';
-
       return -1;
     }
 
     DXGI_ADAPTER_DESC adapter_desc;
     adapter->GetDesc(&adapter_desc);
 
-    auto description = to_utf8(adapter_desc.Description);
     BOOST_LOG(info)
-      << "Device Description : " << description
-      << ", Device Vendor ID: 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
-      << ", Device Device ID: 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
-      << ", Device Video Mem: "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
-      << ", Device Sys Mem: "sv << adapter_desc.DedicatedSystemMemory / 1048576 << " MiB"sv
-      << ", Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv
+      << "Device Description : " << to_utf8(adapter_desc.Description)
+      << ", Vendor ID: 0x"sv << util::hex(adapter_desc.VendorId).to_string_view()
+      << ", Device ID: 0x"sv << util::hex(adapter_desc.DeviceId).to_string_view()
+      << ", Video Mem: "sv << adapter_desc.DedicatedVideoMemory / 1048576 << " MiB"sv
       << ", Feature Level: 0x"sv << util::hex(feature_level).to_string_view()
-      << ", Capture size: "sv << width << 'x' << height
-      << ", Offset: "sv << offset_x << 'x' << offset_y
-      << ", Virtual Desktop: "sv << env_width << 'x' << env_height
-      << ", Display Name: " << display_name;
+      << ", Capture: "sv << width << 'x' << height
+      << ", Offset: "sv << offset_x << 'x' << offset_y;
 
     // Bump up thread priority
     {
-      const DWORD flags = TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY;
       TOKEN_PRIVILEGES tp;
       HANDLE token;
       LUID val;
 
-      if (OpenProcessToken(GetCurrentProcess(), flags, &token) &&
-          !!LookupPrivilegeValue(NULL, SE_INC_BASE_PRIORITY_NAME, &val)) {
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = val;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-        if (!AdjustTokenPrivileges(token, false, &tp, sizeof(tp), NULL, NULL)) {
-          BOOST_LOG(warning) << "Could not set privilege to increase GPU priority";
+      if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+        if (LookupPrivilegeValue(NULL, SE_INC_BASE_PRIORITY_NAME, &val)) {
+          tp.PrivilegeCount = 1;
+          tp.Privileges[0].Luid = val;
+          tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+          AdjustTokenPrivileges(token, false, &tp, sizeof(tp), NULL, NULL);
         }
+        CloseHandle(token);
       }
 
-      CloseHandle(token);
-
-      HMODULE gdi32 = GetModuleHandleA("GDI32");
-      if (gdi32) {
-        auto check_hags = [&](const LUID &adapter) -> bool {
+      if (HMODULE gdi32 = GetModuleHandleA("GDI32")) {
+        auto check_hags = [gdi32, this](const LUID &adapter_luid) -> bool {
           auto d3dkmt_open_adapter = (PD3DKMTOpenAdapterFromLuid) GetProcAddress(gdi32, "D3DKMTOpenAdapterFromLuid");
           auto d3dkmt_query_adapter_info = (PD3DKMTQueryAdapterInfo) GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo");
           auto d3dkmt_close_adapter = (PD3DKMTCloseAdapter) GetProcAddress(gdi32, "D3DKMTCloseAdapter");
           if (!d3dkmt_open_adapter || !d3dkmt_query_adapter_info || !d3dkmt_close_adapter) {
-            BOOST_LOG(error) << "Couldn't load d3dkmt functions from gdi32.dll to determine GPU HAGS status";
             return false;
           }
 
-          D3DKMT_OPENADAPTERFROMLUID d3dkmt_adapter = { adapter };
+          D3DKMT_OPENADAPTERFROMLUID d3dkmt_adapter = { adapter_luid };
           if (FAILED(d3dkmt_open_adapter(&d3dkmt_adapter))) {
-            BOOST_LOG(error) << "D3DKMTOpenAdapterFromLuid() failed while trying to determine GPU HAGS status";
             return false;
           }
-
-          bool result;
 
           D3DKMT_WDDM_2_7_CAPS d3dkmt_adapter_caps = {};
           D3DKMT_QUERYADAPTERINFO d3dkmt_adapter_info = {};
@@ -740,91 +715,71 @@ namespace platf::dxgi {
           d3dkmt_adapter_info.pPrivateDriverData = &d3dkmt_adapter_caps;
           d3dkmt_adapter_info.PrivateDriverDataSize = sizeof(d3dkmt_adapter_caps);
 
-          if (SUCCEEDED(d3dkmt_query_adapter_info(&d3dkmt_adapter_info))) {
-            result = d3dkmt_adapter_caps.HwSchEnabled;
-          }
-          else {
-            BOOST_LOG(warning) << "D3DKMTQueryAdapterInfo() failed while trying to determine GPU HAGS status";
-            result = false;
-          }
+          bool result = SUCCEEDED(d3dkmt_query_adapter_info(&d3dkmt_adapter_info)) && d3dkmt_adapter_caps.HwSchEnabled;
 
           D3DKMT_CLOSEADAPTER d3dkmt_close_adapter_wrap = { d3dkmt_adapter.hAdapter };
-          if (FAILED(d3dkmt_close_adapter(&d3dkmt_close_adapter_wrap))) {
-            BOOST_LOG(error) << "D3DKMTCloseAdapter() failed while trying to determine GPU HAGS status";
-          }
+          d3dkmt_close_adapter(&d3dkmt_close_adapter_wrap);
 
           return result;
         };
 
-        auto d3dkmt_set_process_priority = (PD3DKMTSetProcessSchedulingPriorityClass) GetProcAddress(gdi32, "D3DKMTSetProcessSchedulingPriorityClass");
-        if (d3dkmt_set_process_priority) {
+        if (auto d3dkmt_set_process_priority = (PD3DKMTSetProcessSchedulingPriorityClass) GetProcAddress(gdi32, "D3DKMTSetProcessSchedulingPriorityClass")) {
+          const bool hags_enabled = check_hags(adapter_desc.AdapterLuid);
           auto priority = D3DKMT_SCHEDULINGPRIORITYCLASS_REALTIME;
-          bool hags_enabled = check_hags(adapter_desc.AdapterLuid);
-          if (adapter_desc.VendorId == 0x10DE) {
-            // As of 2023.07, NVIDIA driver has unfixed bug(s) where "realtime" can cause unrecoverable encoding freeze or outright driver crash
-            // This issue happens more frequently with HAGS, in DX12 games or when VRAM is filled close to max capacity
-            // Track OBS to see if they find better workaround or NVIDIA fixes it on their end, they seem to be in communication
-            if (hags_enabled && !config::video.nv_realtime_hags) priority = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH;
+
+          // As of 2023.07, NVIDIA driver has unfixed bug(s) where "realtime" can cause unrecoverable encoding freeze or outright driver crash
+          // This issue happens more frequently with HAGS, in DX12 games or when VRAM is filled close to max capacity
+          // Track OBS to see if they find better workaround or NVIDIA fixes it on their end, they seem to be in communication
+          if (adapter_desc.VendorId == 0x10DE && hags_enabled && !config::video.nv_realtime_hags) {
+            priority = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH;
           }
-          BOOST_LOG(info) << "Active GPU has HAGS " << (hags_enabled ? "enabled" : "disabled");
-          BOOST_LOG(info) << "Using " << (priority == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH ? "high" : "realtime") << " GPU priority";
+
+          BOOST_LOG(info) << "HAGS: " << (hags_enabled ? "enabled" : "disabled")
+                          << ", GPU priority: " << (priority == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH ? "high" : "realtime");
+
           if (FAILED(d3dkmt_set_process_priority(GetCurrentProcess(), priority))) {
-            BOOST_LOG(warning) << "Failed to adjust GPU priority. Please run application as administrator for optimal performance.";
+            BOOST_LOG(warning) << "Failed to adjust GPU priority. Run as administrator for optimal performance.";
           }
-        }
-        else {
-          BOOST_LOG(error) << "Couldn't load D3DKMTSetProcessSchedulingPriorityClass function from gdi32.dll to adjust GPU priority";
         }
       }
 
       dxgi::dxgi_t dxgi;
       status = device->QueryInterface(IID_IDXGIDevice, (void **) &dxgi);
       if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to query DXGI interface from device [0x"sv << util::hex(status).to_string_view() << ']';
+        BOOST_LOG(warning) << "Failed to query DXGI interface [0x"sv << util::hex(status).to_string_view() << ']';
         return -1;
       }
 
-      status = dxgi->SetGPUThreadPriority(7);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to increase capture GPU thread priority. Please run application as administrator for optimal performance.";
+      if (FAILED(dxgi->SetGPUThreadPriority(7))) {
+        BOOST_LOG(warning) << "Failed to increase GPU thread priority.";
       }
     }
 
     // Try to reduce latency
     {
       dxgi::dxgi1_t dxgi {};
-      status = device->QueryInterface(IID_IDXGIDevice, (void **) &dxgi);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to query DXGI interface from device [0x"sv << util::hex(status).to_string_view() << ']';
-        return -1;
-      }
-
-      status = dxgi->SetMaximumFrameLatency(1);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to set maximum frame latency [0x"sv << util::hex(status).to_string_view() << ']';
+      if (SUCCEEDED(device->QueryInterface(IID_IDXGIDevice, (void **) &dxgi))) {
+        dxgi->SetMaximumFrameLatency(1);
       }
     }
 
     client_frame_rate = config.framerate;
-    
-    // Initialize fractional framerate for NTSC support
+
     if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
-      double effective_fps = static_cast<double>(config.frameRateNum) / config.frameRateDen;
-      BOOST_LOG(info) << "Using fractional capture framerate: " << config.frameRateNum << "/" << config.frameRateDen
-                      << " (" << effective_fps << " fps)";
+      BOOST_LOG(info) << "Fractional framerate: " << config.frameRateNum << "/" << config.frameRateDen
+                      << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
       client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
     }
-    
+
     dxgi::output6_t output6 {};
     status = output->QueryInterface(IID_IDXGIOutput6, (void **) &output6);
     if (SUCCEEDED(status)) {
       DXGI_OUTPUT_DESC1 desc1;
-      status = output6->GetDesc1(&desc1);
+      output6->GetDesc1(&desc1);
 
-      // Helper lambda to validate HDR metadata values
       auto is_hdr_metadata_valid = [](const DXGI_OUTPUT_DESC1 &desc) {
         return desc.MinLuminance >= 0 &&
                desc.MinLuminance < desc.MaxLuminance &&
@@ -833,40 +788,17 @@ namespace platf::dxgi {
                desc.MaxFullFrameLuminance <= 4000;
       };
 
-      // Retry with exponential backoff if HDR metadata values appear invalid
-      // Windows may take some time to populate correct HDR metadata after display mode changes
-      if (!is_hdr_metadata_valid(desc1)) {
-        BOOST_LOG(warning) << "Detected abnormal HDR info, retrying with backoff...";
-
-        constexpr int max_retries = 5;
-        constexpr std::chrono::milliseconds initial_delay = 200ms;
-
-        for (int retry = 0; retry < max_retries; ++retry) {
-          auto delay = initial_delay * (1 << retry);
-          std::this_thread::sleep_for(delay);
-          status = output6->GetDesc1(&desc1);
-
-          if (is_hdr_metadata_valid(desc1)) {
-            BOOST_LOG(info) << "HDR info became valid after " << (retry + 1) << " retries";
-            break;
-          }
-        }
-
-        if (!is_hdr_metadata_valid(desc1)) {
-          BOOST_LOG(warning) << "HDR info validation failed after retries, values may be inaccurate: min=" << desc1.MinLuminance
-                             << " max=" << desc1.MaxLuminance << " maxFull=" << desc1.MaxFullFrameLuminance;
+      if (!is_hdr_metadata_valid(desc1) && !is_rdp_session) {
+        for (int retry = 0; retry < 3 && !is_hdr_metadata_valid(desc1); ++retry) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100 * (1 << retry)));
+          output6->GetDesc1(&desc1);
         }
       }
 
       BOOST_LOG(info)
-        << "Display HDR info - Colorspace: "sv << colorspace_to_string(desc1.ColorSpace)
-        << ", BitsPerColor: "sv << desc1.BitsPerColor
-        << ", Primaries(RGB): [("sv << desc1.RedPrimary[0] << ',' << desc1.RedPrimary[1]
-        << "),("sv << desc1.GreenPrimary[0] << ',' << desc1.GreenPrimary[1]
-        << "),("sv << desc1.BluePrimary[0] << ',' << desc1.BluePrimary[1] << ")]"sv
-        << ", WhitePoint: ("sv << desc1.WhitePoint[0] << ',' << desc1.WhitePoint[1] << ')'
-        << ", Luminance(min/max/maxFull): "sv << desc1.MinLuminance
-        << '/' << desc1.MaxLuminance << '/' << desc1.MaxFullFrameLuminance << " nits"sv;
+        << "HDR: "sv << colorspace_to_string(desc1.ColorSpace)
+        << ", Bits: "sv << desc1.BitsPerColor
+        << ", Luminance: "sv << desc1.MinLuminance << '/' << desc1.MaxLuminance << '/' << desc1.MaxFullFrameLuminance << " nits"sv;
     }
 
     if (!timer || !*timer) {
@@ -1242,15 +1174,35 @@ namespace platf {
           << ",Resolution: "sv << width << 'x' << height;
 
         // Don't include the display in the list if we can't actually capture it
-        if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {
-          display_names.emplace_back(std::move(device_name));
-          BOOST_LOG(debug) << "[Display] 添加可用显示器: " << device_name;
+        // In RDP sessions, accept any enumerated output since virtual displays may not report attachment status correctly
+        bool is_rdp = display_device::w_utils::is_any_rdp_session_active();
+
+        bool can_capture = false;
+
+        if (is_rdp) {
+          // In RDP, accept any enumerated output regardless of AttachedToDesktop status
+          // Virtual displays may not report this correctly
+          can_capture = true;
+          BOOST_LOG(debug) << "[Display] RDP session: accepting enumerated display (AttachedToDesktop="
+                           << (desc.AttachedToDesktop ? "yes" : "no") << "): " << device_name;
         }
-        else if (!desc.AttachedToDesktop) {
-          BOOST_LOG(debug) << "[Display] 跳过 None AttachedToDesktop 不可用显示器: " << device_name;
+        else if (desc.AttachedToDesktop) {
+          // Normal session: test DXGI Desktop Duplication only for desktop-attached outputs
+          can_capture = dxgi::test_dxgi_duplication(adapter, output, true);
+          if (can_capture) {
+            BOOST_LOG(debug) << "[Display] Desktop Duplication test passed: " << device_name;
+          }
+          else {
+            BOOST_LOG(debug) << "[Display] 跳过 DXGI测试失败 不可用显示器: " << device_name;
+          }
         }
         else {
-          BOOST_LOG(debug) << "[Display] 跳过 DXGI测试失败 不可用显示器: " << device_name;
+          BOOST_LOG(debug) << "[Display] 跳过 None AttachedToDesktop 不可用显示器: " << device_name;
+        }
+
+        if (can_capture) {
+          display_names.emplace_back(std::move(device_name));
+          BOOST_LOG(debug) << "[Display] 添加可用显示器: " << device_name;
         }
       }
     }

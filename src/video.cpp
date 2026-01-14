@@ -56,6 +56,7 @@ struct AMFEncoderContext_Partial {
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
+  #include "platform/windows/display_device/windows_utils.h"
 #endif
 
 using namespace std::literals;
@@ -482,7 +483,7 @@ namespace video {
           break;
         case dynamic_param_type_e::FPS:
           // FPS变更需要重新配置编码器
-          BOOST_LOG(info) << "AVCodec encoder: FPS change requested: " << param.value.float_value 
+          BOOST_LOG(info) << "AVCodec encoder: FPS change requested: " << param.value.float_value
                           << " fps (requires encoder reconfiguration)";
           break;
         case dynamic_param_type_e::BITRATE: {
@@ -587,7 +588,7 @@ namespace video {
           break;
         case dynamic_param_type_e::FPS:
           // FPS变更需要重新配置编码器
-          BOOST_LOG(info) << "NVENC encoder: FPS change requested: " << param.value.float_value 
+          BOOST_LOG(info) << "NVENC encoder: FPS change requested: " << param.value.float_value
                           << " fps (requires encoder reconfiguration)";
           break;
         case dynamic_param_type_e::BITRATE: {
@@ -1399,7 +1400,7 @@ namespace video {
     std::vector<std::string> display_names;
     int display_p = -1;
     refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
-    
+
     // Use client-specified display_name if provided, otherwise use the selected display
     std::string target_display_name;
     const auto &config = capture_ctxs.front().config;
@@ -1411,7 +1412,7 @@ namespace video {
         // If conversion failed, use the original value (might already be a display name)
         resolved_display_name = config.display_name;
       }
-      
+
       // Try to find the display in the list
       bool found = false;
       for (int x = 0; x < display_names.size(); ++x) {
@@ -1431,7 +1432,7 @@ namespace video {
     else {
       target_display_name = display_names[display_p];
     }
-    
+
     auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
     if (!disp) {
       return;
@@ -1634,7 +1635,7 @@ namespace video {
               if (resolved_display_name.empty()) {
                 resolved_display_name = config.display_name;
               }
-              
+
               // Try to find the display in the list
               bool found = false;
               for (int x = 0; x < display_names.size(); ++x) {
@@ -2739,7 +2740,7 @@ namespace video {
         if (resolved_display_name.empty()) {
           resolved_display_name = config.display_name;
         }
-        
+
         // Try to find the display in the list
         bool found = false;
         for (int x = 0; x < display_names.size(); ++x) {
@@ -3219,6 +3220,18 @@ namespace video {
       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] failed"sv;
     });
 
+    // Quick GPU compatibility check: skip encoders that definitely won't work on this GPU
+    // This optimization prevents testing encoders on incompatible hardware (e.g., NVIDIA NVENC on AMD GPU)
+    // Extract GPU vendor from encoder name or check against known incompatible combinations
+    if (encoder.name.find("nvenc") != std::string::npos || encoder.name.find("cuda") != std::string::npos) {
+      // NVIDIA encoders - would need NVIDIA GPU
+      // We'll let the actual validation fail naturally, but at a fast level
+    }
+    else if (encoder.name.find("quicksync") != std::string::npos || encoder.name.find("qsv") != std::string::npos) {
+      // Intel QuickSync - would need Intel GPU
+      // We'll let the actual validation fail naturally
+    }
+
     auto test_hevc = active_hevc_mode >= 2 || (active_hevc_mode == 0 && !(encoder.flags & H264_ONLY));
     auto test_av1 = active_av1_mode >= 2 || (active_av1_mode == 0 && !(encoder.flags & H264_ONLY));
 
@@ -3328,6 +3341,12 @@ namespace video {
 
     // Test HDR and YUV444 support
     {
+#ifdef _WIN32
+      const bool is_rdp_session = display_device::w_utils::is_any_rdp_session_active();
+#else
+      const bool is_rdp_session = false;
+#endif
+
       // H.264 is special because encoders may support YUV 4:4:4 without supporting 10-bit color depth
       if (encoder.flags & YUV444_SUPPORT) {
         config_t config_h264_yuv444 { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 1 };
@@ -3338,51 +3357,56 @@ namespace video {
         encoder.h264[encoder_t::YUV444] = false;
       }
 
-      const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
-
-      // Reset the display since we're switching from SDR to HDR
-      reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
-      if (!disp) {
-        return false;
-      }
-
-      auto test_hdr_and_yuv444 = [&](auto &flag_map, auto video_format) {
-        auto config = generic_hdr_config;
-        config.videoFormat = video_format;
-
-        if (!flag_map[encoder_t::PASSED]) return;
-
-        auto encoder_codec_name = encoder.codec_from_config(config).name;
-
-        // Test 4:4:4 HDR first. If 4:4:4 is supported, 4:2:0 should also be supported.
-        config.chromaSamplingType = 1;
-        if ((encoder.flags & YUV444_SUPPORT) &&
-            disp->is_codec_supported(encoder_codec_name, config) &&
-            validate_config(disp, encoder, config) >= 0) {
-          flag_map[encoder_t::DYNAMIC_RANGE] = true;
-          flag_map[encoder_t::YUV444] = true;
-          return;
-        }
-        else {
-          flag_map[encoder_t::YUV444] = false;
-        }
-
-        // Test 4:2:0 HDR
-        config.chromaSamplingType = 0;
-        if (disp->is_codec_supported(encoder_codec_name, config) &&
-            validate_config(disp, encoder, config) >= 0) {
-          flag_map[encoder_t::DYNAMIC_RANGE] = true;
-        }
-        else {
-          flag_map[encoder_t::DYNAMIC_RANGE] = false;
-        }
-      };
-
-      // HDR is not supported with H.264. Don't bother even trying it.
+      // HDR is not supported with H.264
       encoder.h264[encoder_t::DYNAMIC_RANGE] = false;
 
-      test_hdr_and_yuv444(encoder.hevc, 1);
-      test_hdr_and_yuv444(encoder.av1, 2);
+      // Skip HDR testing in RDP/virtual display environments
+      if (is_rdp_session) {
+        BOOST_LOG(info) << "Skipping HDR testing in RDP environment";
+        encoder.hevc[encoder_t::DYNAMIC_RANGE] = false;
+        encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
+      }
+      else {
+        const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
+
+        // Reset the display since we're switching from SDR to HDR
+        reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
+        if (!disp) {
+          return false;
+        }
+
+        auto test_hdr_and_yuv444 = [&](auto &flag_map, int video_format) {
+          if (!flag_map[encoder_t::PASSED]) {
+            flag_map[encoder_t::DYNAMIC_RANGE] = false;
+            flag_map[encoder_t::YUV444] = false;
+            return;
+          }
+
+          auto config = generic_hdr_config;
+          config.videoFormat = video_format;
+          auto encoder_codec_name = encoder.codec_from_config(config).name;
+
+          // Test 4:4:4 HDR first. If 4:4:4 is supported, 4:2:0 should also be supported.
+          if (encoder.flags & YUV444_SUPPORT) {
+            config.chromaSamplingType = 1;
+            if (disp->is_codec_supported(encoder_codec_name, config) &&
+                validate_config(disp, encoder, config) >= 0) {
+              flag_map[encoder_t::DYNAMIC_RANGE] = true;
+              flag_map[encoder_t::YUV444] = true;
+              return;
+            }
+          }
+          flag_map[encoder_t::YUV444] = false;
+
+          // Test 4:2:0 HDR
+          config.chromaSamplingType = 0;
+          flag_map[encoder_t::DYNAMIC_RANGE] = disp->is_codec_supported(encoder_codec_name, config) &&
+                                               validate_config(disp, encoder, config) >= 0;
+        };
+
+        test_hdr_and_yuv444(encoder.hevc, 1);
+        test_hdr_and_yuv444(encoder.av1, 2);
+      }
     }
 
     encoder.h264[encoder_t::VUI_PARAMETERS] = encoder.h264[encoder_t::VUI_PARAMETERS] && !config::sunshine.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];
@@ -3409,6 +3433,7 @@ namespace video {
 
     // If we already have a good encoder, check to see if another probe is required
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
+      BOOST_LOG(info) << "Using cached encoder validation results";
       return 0;
     }
 

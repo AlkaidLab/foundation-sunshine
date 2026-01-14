@@ -303,7 +303,14 @@ namespace display_device {
     // 如果VDD已存在，说明拓扑已被破坏，不应该保存当前拓扑
     const auto requested_device_id = display_device::find_one_of_the_available_devices(device_id_to_use);
     const bool is_vdd_device = (display_device::get_display_friendly_name(device_id_to_use) == ZAKO_NAME);
-    const bool will_use_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    
+    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    
+    // 检查是否在RDP环境中 - 仅在需要VDD时才检查以避免不必要的系统调用
+    const bool is_rdp_session = needs_vdd && display_device::w_utils::is_any_rdp_session_active();
+    
+    // 在RDP环境下强制使用RDP虚拟显示器，不创建VDD
+    const bool will_use_vdd = needs_vdd && !is_rdp_session;
     
     if (will_use_vdd && !vdd_already_exists) {
       // 如果有待恢复的设置，保留旧的初始拓扑，不要覆盖

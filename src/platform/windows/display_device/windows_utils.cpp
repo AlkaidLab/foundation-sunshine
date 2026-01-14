@@ -412,13 +412,23 @@ namespace display_device::w_utils {
     target_name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
     target_name.header.size = sizeof(target_name);
 
-    LONG result { DisplayConfigGetDeviceInfo(&target_name.header) };
-    if (result != ERROR_SUCCESS) {
+    if (LONG result = DisplayConfigGetDeviceInfo(&target_name.header); result != ERROR_SUCCESS) {
       BOOST_LOG(error) << get_error_string(result) << " failed to get target device name!";
       return {};
     }
 
-    return target_name.flags.friendlyNameFromEdid ? platf::to_utf8(target_name.monitorFriendlyDeviceName) : std::string {};
+    // For standard EDID-based displays, use the friendly name from EDID
+    if (target_name.flags.friendlyNameFromEdid) {
+      return platf::to_utf8(target_name.monitorFriendlyDeviceName);
+    }
+
+    // For virtual displays (RDP, VMs, etc.) without EDID, use the GDI device name
+    if (auto gdi_name = get_display_name(path); !gdi_name.empty()) {
+      return gdi_name;
+    }
+
+    // Fallback: Create a synthetic friendly name based on path info
+    return "Virtual_Display_" + std::to_string(path.targetInfo.id);
   }
 
   std::string
