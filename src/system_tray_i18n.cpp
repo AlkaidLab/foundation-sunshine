@@ -32,10 +32,20 @@ namespace system_tray_i18n {
   const std::string KEY_ENGLISH = "english";
   const std::string KEY_JAPANESE = "japanese";
   const std::string KEY_STAR_PROJECT = "star_project";
+  const std::string KEY_VISIT_PROJECT = "visit_project";
+  const std::string KEY_VISIT_PROJECT_SUNSHINE = "visit_project_sunshine";
+  const std::string KEY_VISIT_PROJECT_MOONLIGHT = "visit_project_moonlight";
   const std::string KEY_HELP_US = "help_us";
   const std::string KEY_DEVELOPER_YUNDI339 = "developer_yundi339";
   const std::string KEY_DEVELOPER_QIIN = "developer_qiin";
+  const std::string KEY_SPONSOR_ALKaidLab = "sponsor_alkaidlab";
+  const std::string KEY_ADVANCED_SETTINGS = "advanced_settings";
+  const std::string KEY_CLOSE_APP = "clear_cache";
+  const std::string KEY_CLOSE_APP_CONFIRM_TITLE = "clear_cache_confirm_title";
+  const std::string KEY_CLOSE_APP_CONFIRM_MSG = "clear_cache_confirm_msg";
   const std::string KEY_RESET_DISPLAY_DEVICE_CONFIG = "reset_display_device_config";
+  const std::string KEY_RESET_DISPLAY_CONFIRM_TITLE = "reset_display_confirm_title";
+  const std::string KEY_RESET_DISPLAY_CONFIRM_MSG = "reset_display_confirm_msg";
   const std::string KEY_RESTART = "restart";
   const std::string KEY_QUIT = "quit";
   
@@ -80,7 +90,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> DEFAULT_STRINGS = {
     { KEY_QUIT_TITLE, "Wait! Don't Leave Me! T_T" },
     { KEY_QUIT_MESSAGE, "Nooo! You can't just quit like that!\nAre you really REALLY sure you want to leave?\nI'll miss you... but okay, if you must...\n\n(This will also close the Sunshine GUI application.)" },
-    { KEY_OPEN_SUNSHINE, "Open Sunshine" },
+    { KEY_OPEN_SUNSHINE, "Open GUI" },
     { KEY_VDD_BASE_DISPLAY, "Foundation Display" },
     { KEY_VDD_CREATE, "Create Virtual Display" },
     { KEY_VDD_CLOSE, "Close Virtual Display" },
@@ -95,16 +105,26 @@ namespace system_tray_i18n {
     { KEY_CONFIGURATION, "Configuration" },
     { KEY_IMPORT_CONFIG, "Import Config" },
     { KEY_EXPORT_CONFIG, "Export Config" },
-    { KEY_RESET_TO_DEFAULT, "Reset to Default" },
+    { KEY_RESET_TO_DEFAULT, "Reset Config" },
     { KEY_LANGUAGE, "Language" },
     { KEY_CHINESE, "中文" },
     { KEY_ENGLISH, "English" },
     { KEY_JAPANESE, "日本語" },
-    { KEY_STAR_PROJECT, "Star Project" },
+    { KEY_STAR_PROJECT, "Visit Website" },
+    { KEY_VISIT_PROJECT, "Visit Project" },
+    { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
+    { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
     { KEY_HELP_US, "Sponsor Us" },
     { KEY_DEVELOPER_YUNDI339, "Developer: Yundi339" },
     { KEY_DEVELOPER_QIIN, "Developer: qiin2333" },
-    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "Reset Display Memory" },
+    { KEY_SPONSOR_ALKaidLab, "Sponsor AlkaidLab" },
+    { KEY_ADVANCED_SETTINGS, "Advanced Settings" },
+    { KEY_CLOSE_APP, "Clear Cache" },
+    { KEY_CLOSE_APP_CONFIRM_TITLE, "Clear Cache" },
+    { KEY_CLOSE_APP_CONFIRM_MSG, "This operation will clear streaming state, may terminate the streaming application, and clean up related processes and state. Do you want to continue?" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "Reset Display" },
+    { KEY_RESET_DISPLAY_CONFIRM_TITLE, "Reset Display" },
+    { KEY_RESET_DISPLAY_CONFIRM_MSG, "Are you sure you want to reset display device memory? This action cannot be undone." },
     { KEY_RESTART, "Restart" },
     { KEY_QUIT, "Quit" },
     { KEY_STREAM_STARTED, "Stream Started" },
@@ -146,7 +166,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> CHINESE_STRINGS = {
     { KEY_QUIT_TITLE, "真的要退出吗" },
     { KEY_QUIT_MESSAGE, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~\n\n这将同时关闭Sunshine GUI应用程序。" },
-    { KEY_OPEN_SUNSHINE, "打开 Sunshine" },
+    { KEY_OPEN_SUNSHINE, "打开基地面板" },
     { KEY_VDD_BASE_DISPLAY, "基地显示器" },
     { KEY_VDD_CREATE, "创建显示器" },
     { KEY_VDD_CLOSE, "关闭显示器" },
@@ -161,16 +181,26 @@ namespace system_tray_i18n {
     { KEY_CONFIGURATION, "配置" },
     { KEY_IMPORT_CONFIG, "导入配置" },
     { KEY_EXPORT_CONFIG, "导出配置" },
-    { KEY_RESET_TO_DEFAULT, "恢复默认" },
-    { KEY_LANGUAGE, "语言" },
+    { KEY_RESET_TO_DEFAULT, "重置配置" },
+    { KEY_LANGUAGE, "语言 / Langue" },
     { KEY_CHINESE, "中文" },
     { KEY_ENGLISH, "English" },
     { KEY_JAPANESE, "日本語" },
-    { KEY_STAR_PROJECT, "Star项目" },
+    { KEY_STAR_PROJECT, "访问官网" },
+    { KEY_VISIT_PROJECT, "访问项目地址" },
+    { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
+    { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
     { KEY_HELP_US, "赞助我们" },
     { KEY_DEVELOPER_YUNDI339, "开发者：Yundi339" },
     { KEY_DEVELOPER_QIIN, "开发者：qiin2333" },
-    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "重置显示器记忆" },
+    { KEY_SPONSOR_ALKaidLab, "赞助 AlkaidLab" },
+    { KEY_ADVANCED_SETTINGS, "高级设置" },
+    { KEY_CLOSE_APP, "清理缓存" },
+    { KEY_CLOSE_APP_CONFIRM_TITLE, "清理缓存" },
+    { KEY_CLOSE_APP_CONFIRM_MSG, "此操作将会清理串流状态，可能会终止串流应用，并清理相关进程和状态。是否继续？" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "重置显示器" },
+    { KEY_RESET_DISPLAY_CONFIRM_TITLE, "重置显示器" },
+    { KEY_RESET_DISPLAY_CONFIRM_MSG, "确定要重置显示器设备记忆吗？此操作无法撤销。" },
     { KEY_RESTART, "重新启动" },
     { KEY_QUIT, "退出" },
     { KEY_STREAM_STARTED, "串流已开始" },
@@ -211,7 +241,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> JAPANESE_STRINGS = {
     { KEY_QUIT_TITLE, "本当に終了しますか？" },
     { KEY_QUIT_MESSAGE, "終了できません！\n本当に終了したいですか？\n\nこれによりSunshine GUIアプリケーションも閉じられます。" },
-    { KEY_OPEN_SUNSHINE, "Sunshineを開く" },
+    { KEY_OPEN_SUNSHINE, "GUIを開く" },
     { KEY_VDD_BASE_DISPLAY, "基地ディスプレイ" },
     { KEY_VDD_CREATE, "仮想ディスプレイを作成" },
     { KEY_VDD_CLOSE, "仮想ディスプレイを閉じる" },
@@ -226,16 +256,26 @@ namespace system_tray_i18n {
     { KEY_CONFIGURATION, "設定" },
     { KEY_IMPORT_CONFIG, "設定をインポート" },
     { KEY_EXPORT_CONFIG, "設定をエクスポート" },
-    { KEY_RESET_TO_DEFAULT, "デフォルトに戻す" },
+    { KEY_RESET_TO_DEFAULT, "設定をリセット" },
     { KEY_LANGUAGE, "言語" },
     { KEY_CHINESE, "中文" },
     { KEY_ENGLISH, "English" },
     { KEY_JAPANESE, "日本語" },
-    { KEY_STAR_PROJECT, "スターを付ける" },
+    { KEY_STAR_PROJECT, "公式サイトを訪問" },
+    { KEY_VISIT_PROJECT, "プロジェクトアドレスを訪問" },
+    { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
+    { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
     { KEY_HELP_US, "スポンサー" },
     { KEY_DEVELOPER_YUNDI339, "開発者：Yundi339" },
     { KEY_DEVELOPER_QIIN, "開発者：qiin2333" },
-    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "ディスプレイメモリをリセット" },
+    { KEY_SPONSOR_ALKaidLab, "AlkaidLabをスポンサー" },
+    { KEY_ADVANCED_SETTINGS, "詳細設定" },
+    { KEY_CLOSE_APP, "キャッシュをクリア" },
+    { KEY_CLOSE_APP_CONFIRM_TITLE, "キャッシュをクリア" },
+    { KEY_CLOSE_APP_CONFIRM_MSG, "この操作はストリーミング状態をクリアし、ストリーミングアプリケーションを終了する可能性があり、関連するプロセスと状態をクリーンアップします。続行しますか？" },
+    { KEY_RESET_DISPLAY_DEVICE_CONFIG, "ディスプレイをリセット" },
+    { KEY_RESET_DISPLAY_CONFIRM_TITLE, "ディスプレイをリセット" },
+    { KEY_RESET_DISPLAY_CONFIRM_MSG, "ディスプレイデバイスのメモリをリセットしてもよろしいですか？この操作は元に戻せません。" },
     { KEY_RESTART, "再起動" },
     { KEY_QUIT, "終了" },
     { KEY_STREAM_STARTED, "ストリーム開始" },

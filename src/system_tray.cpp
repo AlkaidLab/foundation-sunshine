@@ -84,7 +84,6 @@ namespace system_tray {
   static std::string s_vdd_create;
   static std::string s_vdd_close;
   static std::string s_vdd_persistent;
-  static std::string s_configuration;
   static std::string s_import_config;
   static std::string s_export_config;
   static std::string s_reset_to_default;
@@ -93,14 +92,37 @@ namespace system_tray {
   static std::string s_english;
   static std::string s_japanese;
   static std::string s_star_project;
-  static std::string s_help_us;
-  static std::string s_developer_yundi339;
-  static std::string s_developer_qiin;
+  static std::string s_visit_project;
+  static std::string s_visit_project_sunshine;
+  static std::string s_visit_project_moonlight;
+  static std::string s_advanced_settings;
+  static std::string s_close_app;
   static std::string s_reset_display_device_config;
   static std::string s_restart;
 
   static bool s_vdd_in_cooldown = false;
   static std::string s_quit;
+
+  // 用于存储子菜单的静态数组
+  static struct tray_menu vdd_submenu[4];
+  static struct tray_menu advanced_settings_submenu[7];
+  static struct tray_menu visit_project_submenu[3];
+
+  // 更新高级设置菜单项的文本
+  static void update_advanced_settings_menu_text() {
+    advanced_settings_submenu[0].text = s_import_config.c_str();
+    advanced_settings_submenu[1].text = s_export_config.c_str();
+    advanced_settings_submenu[2].text = s_reset_to_default.c_str();
+    advanced_settings_submenu[3].text = "-";
+    advanced_settings_submenu[4].text = s_close_app.c_str();
+    advanced_settings_submenu[5].text = s_reset_display_device_config.c_str();
+  }
+
+  // 更新访问项目地址子菜单项的文本
+  static void tray_visit_project_submenu_text() {
+    visit_project_submenu[0].text = s_visit_project_sunshine.c_str();
+    visit_project_submenu[1].text = s_visit_project_moonlight.c_str();
+  }
 
   // 初始化本地化字符串
   void
@@ -110,7 +132,6 @@ namespace system_tray {
     s_vdd_create = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CREATE);
     s_vdd_close = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CLOSE);
     s_vdd_persistent = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT);
-    s_configuration = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CONFIGURATION);
     s_import_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_CONFIG);
     s_export_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_CONFIG);
     s_reset_to_default = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_TO_DEFAULT);
@@ -119,9 +140,11 @@ namespace system_tray {
     s_english = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ENGLISH);
     s_japanese = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_JAPANESE);
     s_star_project = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_STAR_PROJECT);
-    s_help_us = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_HELP_US);
-    s_developer_yundi339 = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DEVELOPER_YUNDI339);
-    s_developer_qiin = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_DEVELOPER_QIIN);
+    s_visit_project = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VISIT_PROJECT);
+    s_visit_project_sunshine = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VISIT_PROJECT_SUNSHINE);
+    s_visit_project_moonlight = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VISIT_PROJECT_MOONLIGHT);
+    s_advanced_settings = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_ADVANCED_SETTINGS);
+    s_close_app = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP);
     s_reset_display_device_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_DEVICE_CONFIG);
     s_restart = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESTART);
     s_quit = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT);
@@ -133,26 +156,23 @@ namespace system_tray {
     init_localized_strings();
     tray_menus[0].text = s_open_sunshine.c_str();
     tray_menus[2].text = s_vdd_base_display.c_str();
-    // VDD 子菜单项更新由 update_vdd_menu_text() 处理
-    tray_menus[4].text = s_configuration.c_str();
-    tray_menus[4].submenu[0].text = s_import_config.c_str();
-    tray_menus[4].submenu[1].text = s_export_config.c_str();
-    tray_menus[4].submenu[2].text = s_reset_to_default.c_str();
-    tray_menus[6].text = s_language.c_str();
-    tray_menus[6].submenu[0].text = s_chinese.c_str();
-    tray_menus[6].submenu[1].text = s_english.c_str();
-    tray_menus[6].submenu[2].text = s_japanese.c_str();
-    tray_menus[8].text = s_star_project.c_str();
-    tray_menus[9].text = s_help_us.c_str();
-    tray_menus[9].submenu[0].text = s_developer_yundi339.c_str();
-    tray_menus[9].submenu[1].text = s_developer_qiin.c_str();
   #ifdef _WIN32
-    tray_menus[11].text = s_reset_display_device_config.c_str();
-    tray_menus[12].text = s_restart.c_str();
-    tray_menus[13].text = s_quit.c_str();
+    tray_menus[3].text = s_advanced_settings.c_str();
+    update_advanced_settings_menu_text();
+  #endif
+    tray_menus[5].text = s_language.c_str();
+    tray_menus[5].submenu[0].text = s_chinese.c_str();
+    tray_menus[5].submenu[1].text = s_english.c_str();
+    tray_menus[5].submenu[2].text = s_japanese.c_str();
+    tray_menus[7].text = s_star_project.c_str();
+    tray_menus[8].text = s_visit_project.c_str();
+    tray_visit_project_submenu_text();
+  #ifdef _WIN32
+    tray_menus[10].text = s_restart.c_str();
+    tray_menus[11].text = s_quit.c_str();
   #else
-    tray_menus[11].text = s_restart.c_str();
-    tray_menus[12].text = s_quit.c_str();
+    tray_menus[9].text = s_restart.c_str();
+    tray_menus[10].text = s_quit.c_str();
   #endif
   }
 
@@ -166,9 +186,6 @@ namespace system_tray {
     auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
     return !vdd_device_id.empty();
   }
-
-  // 用于存储子菜单的静态数组
-  static struct tray_menu vdd_submenu[4];
 
   // 保存 vdd_keep_enabled 到配置文件
   static void save_vdd_keep_enabled() {
@@ -277,9 +294,58 @@ namespace system_tray {
     tray_update(&tray);
   };
 
+  auto tray_close_app_cb = [](struct tray_menu *item) {
+    if (!tray_initialized) return;
+
+  #ifdef _WIN32
+    std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_TITLE));
+    std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_MSG));
+
+    int msgboxID = MessageBoxW(
+      NULL,
+      message.c_str(),
+      title.c_str(),
+      MB_ICONQUESTION | MB_YESNO);
+
+    if (msgboxID == IDYES) {
+      BOOST_LOG(info) << "Clearing cache (terminating application) from system tray"sv;
+      proc::proc.terminate();
+    }
+    else {
+      BOOST_LOG(info) << "User cancelled clearing cache"sv;
+    }
+  #else
+    // 非 Windows 平台，直接关闭
+    BOOST_LOG(info) << "Closing application from system tray"sv;
+    proc::proc.terminate();
+  #endif
+  };
+
   auto tray_reset_display_device_config_cb = [](struct tray_menu *item) {
+    if (!tray_initialized) return;
+
+  #ifdef _WIN32
+    std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_TITLE));
+    std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_MSG));
+
+    int msgboxID = MessageBoxW(
+      NULL,
+      message.c_str(),
+      title.c_str(),
+      MB_ICONWARNING | MB_YESNO);
+
+    if (msgboxID == IDYES) {
+      BOOST_LOG(info) << "Resetting display device config from system tray"sv;
+      display_device::session_t::get().reset_persistence();
+    }
+    else {
+      BOOST_LOG(info) << "User cancelled resetting display device config"sv;
+    }
+  #else
+    // 非 Windows 平台，直接重置
     BOOST_LOG(info) << "Resetting display device config from system tray"sv;
     display_device::session_t::get().reset_persistence();
+  #endif
   };
 
   auto tray_restart_cb = [](struct tray_menu *item) {
@@ -358,16 +424,17 @@ namespace system_tray {
   };
 
   auto tray_star_project_cb = [](struct tray_menu *item) {
+    platf::open_url_in_browser("https://sunshine-foundation.vercel.app/");
+  };
+
+  auto tray_visit_project_sunshine_cb = [](struct tray_menu *item) {
     platf::open_url_in_browser("https://github.com/qiin2333/Sunshine-Foundation");
   };
 
-  auto tray_donate_yundi339_cb = [](struct tray_menu *item) {
-    platf::open_url_in_browser("https://www.ifdian.net/a/Yundi339");
+  auto tray_visit_project_moonlight_cb = [](struct tray_menu *item) {
+    platf::open_url_in_browser("https://github.com/qiin2333/moonlight-vplus");
   };
 
-  auto tray_donate_qiin_cb = [](struct tray_menu *item) {
-    platf::open_url_in_browser("https://www.ifdian.net/a/qiin2333");
-  };
 
   // 文件对话框打开标志
   static bool file_dialog_open = false;
@@ -989,15 +1056,10 @@ namespace system_tray {
   struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
+  #ifdef _WIN32
     { .text = "Foundation Display", .submenu = vdd_submenu },
-    { .text = "-" },
-    { .text = "Configuration",
-      .submenu =
-        (struct tray_menu[]) {
-          { .text = "Import Config", .cb = tray_import_config_cb },
-          { .text = "Export Config", .cb = tray_export_config_cb },
-          { .text = "Reset to Default", .cb = tray_reset_config_cb },
-          { .text = nullptr } } },
+    { .text = "Advanced Settings", .submenu = advanced_settings_submenu },
+  #endif
     { .text = "-" },
     { .text = "Language",
       .submenu =
@@ -1008,16 +1070,8 @@ namespace system_tray {
           { .text = nullptr } } },
     { .text = "-" },
     { .text = "Star Project", .cb = tray_star_project_cb },
-    { .text = "Help Us",
-      .submenu =
-        (struct tray_menu[]) {
-          { .text = "Developer: Yundi339", .cb = tray_donate_yundi339_cb },
-          { .text = "Developer: Qiin", .cb = tray_donate_qiin_cb },
-          { .text = nullptr } } },
+    { .text = "Visit Project", .submenu = visit_project_submenu },
     { .text = "-" },
-  #ifdef _WIN32
-    { .text = "Reset Display Memory", .cb = tray_reset_display_device_config_cb },
-  #endif
     { .text = "Restart", .cb = tray_restart_cb },
     { .text = "Quit", .cb = tray_quit_cb },
     { .text = nullptr }
@@ -1117,6 +1171,21 @@ namespace system_tray {
     vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .cb = tray_vdd_persistent_cb };
     vdd_submenu[3] = { .text = nullptr };
 
+  #ifdef _WIN32
+    advanced_settings_submenu[0] = { .text = s_import_config.c_str(), .cb = tray_import_config_cb };
+    advanced_settings_submenu[1] = { .text = s_export_config.c_str(), .cb = tray_export_config_cb };
+    advanced_settings_submenu[2] = { .text = s_reset_to_default.c_str(), .cb = tray_reset_config_cb };
+    advanced_settings_submenu[3] = { .text = "-" };
+    advanced_settings_submenu[4] = { .text = s_close_app.c_str(), .cb = tray_close_app_cb };
+    advanced_settings_submenu[5] = { .text = s_reset_display_device_config.c_str(), .cb = tray_reset_display_device_config_cb };
+    advanced_settings_submenu[6] = { .text = nullptr };
+  #endif
+
+    // 初始化访问项目地址子菜单
+    visit_project_submenu[0] = { .text = s_visit_project_sunshine.c_str(), .cb = tray_visit_project_sunshine_cb };
+    visit_project_submenu[1] = { .text = s_visit_project_moonlight.c_str(), .cb = tray_visit_project_moonlight_cb };
+    visit_project_submenu[2] = { .text = nullptr };
+
     if (tray_init(&tray) < 0) {
       BOOST_LOG(warning) << "Failed to create system tray"sv;
       return 1;
@@ -1127,6 +1196,12 @@ namespace system_tray {
 
     // 初始化时更新 VDD 菜单状态
     update_vdd_menu_text();
+  #ifdef _WIN32
+    // 初始化时更新高级设置菜单文本
+    update_advanced_settings_menu_text();
+  #endif
+    // 初始化时更新访问项目地址子菜单文本
+    tray_visit_project_submenu_text();
     tray_update(&tray);
 
     tray_initialized = true;

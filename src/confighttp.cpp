@@ -850,26 +850,84 @@ namespace confighttp {
 
       saveVddSettings(resArray, fpsArray, gpu_name);
 
-      // 不需要保存到配置文件的只读字段
-      std::set<std::string> readonlyFields = {
+      // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
+      const std::set<std::string> readonlyFields = {
         "status",           // API响应状态，不是配置项
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
         "pair_name",        // 配对名称，由系统生成，只读
-        "vdd_keep_enabled", // 由系统托盘控制，不通过Web UI修改
-        "system_tray"       // 由系统托盘控制，不通过Web UI修改
       };
-      for (const auto &kv : inputTree) {
-        if (readonlyFields.find(kv.first) != readonlyFields.end()) {
+
+      // 受保护的字段：由系统托盘控制，API保存时保留配置文件中的原有值
+      const std::set<std::string> protectedFields = {
+        "vdd_keep_enabled", // 由系统托盘控制，不通过Web UI修改
+        "tray_locale"       // 由系统托盘控制，不通过Web UI修改
+      };
+
+      // 读取现有配置文件，保留所有原有配置
+      std::map<std::string, std::string> configMap;
+      std::string originalFileContent;
+      try {
+        originalFileContent = file_handler::read_file(config::sunshine.config_file.c_str());
+        const auto existingVars = config::parse_config(originalFileContent);
+        configMap.insert(existingVars.begin(), existingVars.end());
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Failed to read existing config: " << e.what();
+      }
+
+      // 用API请求中的字段更新配置（但跳过只读字段和受保护字段）
+      for (const auto &[key, valueNode] : inputTree) {
+        // 跳过只读字段和受保护字段
+        if (readonlyFields.count(key) || protectedFields.count(key)) {
           continue;
         }
-        std::string value = inputTree.get<std::string>(kv.first);
-        if (value.length() == 0 || value.compare("null") == 0) continue;
-        configStream << kv.first << " = " << value << std::endl;
+
+        const std::string value = inputTree.get<std::string>(key);
+        // 如果值为空或null，从现有配置中移除该字段
+        if (value.empty() || value == "null") {
+          configMap.erase(key);
+          continue;
+        }
+        // 更新配置值
+        configMap[key] = value;
       }
-      file_handler::write_file(config::sunshine.config_file.c_str(), configStream.str());
+
+      // 构建新的配置内容（按字母顺序排序）
+      for (const auto &[key, value] : configMap) {
+        if (!value.empty() && value != "null") {
+          configStream << key << " = " << value << std::endl;
+        }
+      }
+      std::string newConfigContent = configStream.str();
+
+      // 对比新配置与原始文件内容
+      // 将原始文件也格式化为相同格式以便对比
+      std::stringstream originalFormatted;
+      try {
+        const auto originalVars = config::parse_config(originalFileContent);
+        std::map<std::string, std::string> originalMap(originalVars.begin(), originalVars.end());
+        for (const auto &[key, value] : originalMap) {
+          if (!value.empty() && value != "null") {
+            originalFormatted << key << " = " << value << std::endl;
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        // 如果解析失败，认为内容不一致，继续写入
+        BOOST_LOG(debug) << "Warning to parse original config for comparison: " << e.what();
+      }
+
+      // 只有内容不一致时才写入文件
+      if (newConfigContent != originalFormatted.str()) {
+        file_handler::write_file(config::sunshine.config_file.c_str(), newConfigContent);
+        BOOST_LOG(debug) << "Save config success";
+      }
+      else {
+        BOOST_LOG(debug) << "Save config not changed";
+      }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveConfig: "sv << e.what();
