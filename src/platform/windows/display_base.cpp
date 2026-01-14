@@ -554,7 +554,7 @@ namespace platf::dxgi {
     }
 
     const auto adapter_name = from_utf8(config::video.adapter_name);
-    const bool is_rdp_session = display_device::w_utils::is_any_rdp_session_active();
+    const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
     if (is_rdp_session) {
@@ -1072,7 +1072,7 @@ namespace platf {
     std::vector<std::string> try_types;
     if (config::video.capture.empty()) {
       // 在服务模式下，优先使用 DDX（WGC 在服务模式下不可用）
-      if (platf::is_running_as_system()) {
+      if (is_running_as_system_user) {
         try_types = { "ddx" };
         BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
       }
@@ -1083,7 +1083,7 @@ namespace platf {
     else {
       try_types.push_back(config::video.capture);
       // 如果明确指定了 wgc 但在服务模式下，给出警告
-      if (config::video.capture == "wgc" && platf::is_running_as_system()) {
+      if (config::video.capture == "wgc" && is_running_as_system_user) {
         BOOST_LOG(warning) << "WGC capture is not available in service mode. Consider using 'capture=ddx' instead."sv;
       }
     }
@@ -1175,7 +1175,7 @@ namespace platf {
 
         // Don't include the display in the list if we can't actually capture it
         // In RDP sessions, accept any enumerated output since virtual displays may not report attachment status correctly
-        bool is_rdp = display_device::w_utils::is_any_rdp_session_active();
+        bool is_rdp = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
 
         bool can_capture = false;
 

@@ -24,6 +24,7 @@
 #include "video.h"
 
 #ifdef _WIN32
+  #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
 #endif
 
@@ -156,6 +157,14 @@ main(int argc, char *argv[]) {
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
   BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+
+#ifdef _WIN32
+  // Cache the result of is_running_as_system() check once at startup
+  is_running_as_system_user = platf::is_running_as_system();
+  if (is_running_as_system_user) {
+    BOOST_LOG(info) << "Running as SYSTEM user (service mode)";
+  }
+#endif
 
   // Log publisher metadata
   log_publisher_data();

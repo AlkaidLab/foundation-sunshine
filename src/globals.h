@@ -33,6 +33,12 @@ extern nvprefs::nvprefs_interface nvprefs_instance;
 extern const std::string VDD_NAME;
 extern const std::string ZAKO_NAME;
 extern std::string zako_device_id;
+
+/**
+ * @brief Cached result of is_running_as_system() check.
+ * @details This is set once at program startup and never changes during runtime.
+ */
+extern bool is_running_as_system_user;
 #endif
 
 /**

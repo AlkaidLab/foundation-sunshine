@@ -306,11 +306,11 @@ namespace display_device {
     
     const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
     
-    // 检查是否在RDP环境中 - 仅在需要VDD时才检查以避免不必要的系统调用
-    const bool is_rdp_session = needs_vdd && display_device::w_utils::is_any_rdp_session_active();
-    
-    // 在RDP环境下强制使用RDP虚拟显示器，不创建VDD
-    const bool will_use_vdd = needs_vdd && !is_rdp_session;
+    // - 如果不需要 VDD：跳过 VDD 相关逻辑
+    // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD
+    // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
+    const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+    const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
     
     if (will_use_vdd && !vdd_already_exists) {
       // 如果有待恢复的设置，保留旧的初始拓扑，不要覆盖

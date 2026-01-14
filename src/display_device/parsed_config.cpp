@@ -11,6 +11,7 @@
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/windows/display_device/windows_utils.h"
+#include "src/platform/windows/misc.h"
 #include "src/rtsp.h"
 #include "to_string.h"
 
@@ -601,8 +602,8 @@ namespace display_device {
       return parsed_config;
     }
 
-    // RDP环境下强制使用RDP虚拟显示器，不创建VDD
-    if (display_device::w_utils::is_any_rdp_session_active()) {
+    // 不是SYSTEM权限且处于RDP中，强制使用RDP虚拟显示器，不创建VDD
+    if (!is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active()) {
       BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备"sv;
       return parsed_config;
     }

@@ -1170,7 +1170,7 @@ namespace config {
     // Check if WGC is selected and we're running in service mode
     // If so, automatically switch to DDX since WGC doesn't work in system mode
     if (!video.capture.empty() && video.capture == "wgc") {
-      if (platf::is_running_as_system()) {
+      if (is_running_as_system_user) {
         BOOST_LOG(warning) << "WGC capture requires user session mode. Automatically switching to DDX capture."sv;
         video.capture = "ddx";
       }
