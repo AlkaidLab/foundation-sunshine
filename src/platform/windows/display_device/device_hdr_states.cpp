@@ -14,21 +14,18 @@ namespace display_device {
     do_set_states(const hdr_state_map_t &states) {
       const auto display_data { w_utils::query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
       if (!display_data) {
-        // Error already logged
         return false;
       }
 
       for (const auto &[device_id, state] : states) {
+        if (state == hdr_state_e::unknown) {
+          continue;
+        }
+
         const auto path { w_utils::get_active_path(device_id, display_data->paths) };
         if (!path) {
           BOOST_LOG(error) << "Failed to find device for " << device_id << "!";
           return false;
-        }
-
-        if (state == hdr_state_e::unknown) {
-          // We cannot change state to unknown, so we are just ignoring these entries
-          // for convenience.
-          continue;
         }
 
         const auto current_state { w_utils::get_hdr_state(*path) };
@@ -37,14 +34,18 @@ namespace display_device {
           return false;
         }
 
+        if (current_state == state) {
+          BOOST_LOG(debug) << "HDR state for " << device_id << " is already " << to_string(state) << ", skipping";
+          continue;
+        }
+
         if (!w_utils::set_hdr_state(*path, state == hdr_state_e::enabled)) {
-          // Error already logged
           return false;
         }
       }
 
       return true;
-    };
+    }
 
   }  // namespace
 

@@ -1067,12 +1067,12 @@ namespace platf {
       return nullptr;
     };
 
-    // 如果capture为空，则依次尝试ddx、wgc，否则只尝试指定类型
-    // 注意：在服务模式下，WGC 不可用，会自动跳过
+    // Build list of capture methods to try
     std::vector<std::string> try_types;
+
     if (config::video.capture.empty()) {
-      // 在服务模式下，优先使用 DDX（WGC 在服务模式下不可用）
       if (is_running_as_system_user) {
+        // WGC is not available in service mode
         try_types = { "ddx" };
         BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
       }
@@ -1080,42 +1080,44 @@ namespace platf {
         try_types = { "ddx", "wgc" };
       }
     }
+    else if (config::video.capture == "wgc" && is_running_as_system_user) {
+      // WGC explicitly requested but unavailable in service mode
+      BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
+      try_types = { "ddx" };
+    }
     else {
-      try_types.push_back(config::video.capture);
-      // 如果明确指定了 wgc 但在服务模式下，给出警告
-      if (config::video.capture == "wgc" && is_running_as_system_user) {
-        BOOST_LOG(warning) << "WGC capture is not available in service mode. Consider using 'capture=ddx' instead."sv;
-      }
+      try_types = { config::video.capture };
     }
 
     for (const auto &type : try_types) {
+      std::shared_ptr<display_t> ret;
+
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
-        auto disp = std::make_shared<dxgi::display_amd_vram_t>();
-        if (auto ret = try_init(disp)) return ret;
+        ret = try_init(std::make_shared<dxgi::display_amd_vram_t>());
       }
       else if (type == "ddx") {
         if (hwdevice_type == mem_type_e::dxgi) {
-          auto disp = std::make_shared<dxgi::display_ddup_vram_t>();
-          if (auto ret = try_init(disp)) return ret;
+          ret = try_init(std::make_shared<dxgi::display_ddup_vram_t>());
         }
         else if (hwdevice_type == mem_type_e::system) {
-          auto disp = std::make_shared<dxgi::display_ddup_ram_t>();
-          if (auto ret = try_init(disp)) return ret;
+          ret = try_init(std::make_shared<dxgi::display_ddup_ram_t>());
         }
       }
-      else if (type == "wgc") {
+      else if (type == "wgc" && !is_running_as_system_user) {
         if (hwdevice_type == mem_type_e::dxgi) {
-          auto disp = std::make_shared<dxgi::display_wgc_vram_t>();
-          if (auto ret = try_init(disp)) return ret;
+          ret = try_init(std::make_shared<dxgi::display_wgc_vram_t>());
         }
         else if (hwdevice_type == mem_type_e::system) {
-          auto disp = std::make_shared<dxgi::display_wgc_ram_t>();
-          if (auto ret = try_init(disp)) return ret;
+          ret = try_init(std::make_shared<dxgi::display_wgc_ram_t>());
         }
+      }
+
+      if (ret) {
+        return ret;
       }
     }
-    BOOST_LOG(error) << "[Display] 所有类型创建失败: " << display_name;
-    // 所有尝试均失败
+
+    BOOST_LOG(error) << "Failed to create display for: " << display_name;
     return nullptr;
   }
 

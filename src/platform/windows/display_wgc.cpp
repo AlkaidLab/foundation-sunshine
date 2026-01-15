@@ -14,6 +14,7 @@
 #include "display.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/globals.h"
 #include "src/logging.h"
 #include "src/process.h"
 #include <boost/program_options/parsers.hpp>
@@ -75,7 +76,7 @@ namespace platf::dxgi {
    * @brief Find a window by title (case-insensitive fuzzy matching).
    * @param window_title The window title to search for.
    * @return HWND of the found window, or nullptr if not found.
-   * 
+   *
    * @note This function uses multiple matching strategies:
    *       1. Direct substring match
    *       2. Match after removing spaces
@@ -158,7 +159,7 @@ namespace platf::dxgi {
           if (word.length() < 2) {
             continue;  // Skip very short words
           }
-          if (window_text.find(word) == std::wstring::npos && 
+          if (window_text.find(word) == std::wstring::npos &&
               window_text_no_spaces.find(word) == std::wstring::npos) {
             all_words_found = false;
             break;
@@ -226,6 +227,13 @@ namespace platf::dxgi {
    */
   int
   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+    // WGC is not supported in service mode (running as SYSTEM user)
+    // Fail fast to avoid unnecessary attempts and potential deadlocks
+    if (is_running_as_system_user) {
+      BOOST_LOG(error) << "WGC capture is not available in service mode (running as SYSTEM user). Use DDX capture instead."sv;
+      return -1;
+    }
+
     if (!winrt::GraphicsCaptureSession::IsSupported()) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows!"sv;
       return -1;
@@ -278,23 +286,24 @@ namespace platf::dxgi {
             std::vector<std::string> parts;
             try {
               parts = boost::program_options::split_winmain(app_cmd);
-            } catch (...) {
+            }
+            catch (...) {
               // Ignore parsing errors
             }
-            
+
             if (!parts.empty() && parts[0].find("://") == std::string::npos) {
               std::string exe_path = parts[0];
               size_t last_slash = exe_path.find_last_of("/\\");
               std::string filename = (last_slash != std::string::npos) ? exe_path.substr(last_slash + 1) : exe_path;
               size_t last_dot = filename.find_last_of('.');
               window_title = (last_dot != std::string::npos) ? filename.substr(0, last_dot) : filename;
-              
+
               if (!window_title.empty()) {
                 BOOST_LOG(info) << "Window title not specified, using executable filename: ["sv << window_title << "] (from: ["sv << app_cmd << "])";
               }
             }
           }
-          
+
           // Fallback to app name if still empty
           if (window_title.empty()) {
             window_title = proc::proc.get_app_name(running_app_id);
@@ -302,7 +311,7 @@ namespace platf::dxgi {
               BOOST_LOG(info) << "Window title not specified, using app name: ["sv << window_title << "]";
             }
           }
-          
+
           if (!window_title.empty()) {
             desired_window_title = window_title;
           }
@@ -329,20 +338,20 @@ namespace platf::dxgi {
         constexpr int max_retries = 20;
         constexpr int retry_interval_ms = 500;
         HWND target_hwnd = nullptr;
-        
+
         for (int retry = 0; retry < max_retries; ++retry) {
           target_hwnd = find_window_by_title(window_title);
           if (target_hwnd && IsWindow(target_hwnd) && IsWindowVisible(target_hwnd) && !IsIconic(target_hwnd)) {
             break;
           }
           target_hwnd = nullptr;
-          
+
           if (retry < max_retries - 1) {
             BOOST_LOG(info) << "Window not found yet: ["sv << window_title << "], retrying in "sv << retry_interval_ms << "ms ("sv << (retry + 1) << "/"sv << max_retries << ")..."sv;
             Sleep(retry_interval_ms);
           }
         }
-        
+
         if (!target_hwnd) {
           BOOST_LOG(warning) << "Window not found or invalid after "sv << max_retries << " attempts: ["sv << window_title << "]. Falling back to display capture."sv;
           capture_window = false;
@@ -358,7 +367,7 @@ namespace platf::dxgi {
             ShowWindow(target_hwnd, SW_MAXIMIZE);
             Sleep(500);
           }
-          
+
           SetForegroundWindow(target_hwnd);
           Sleep(100);
 
@@ -366,23 +375,23 @@ namespace platf::dxgi {
             BOOST_LOG(error) << "Failed to create capture item for window [0x"sv << util::hex(status).to_string_view() << ']';
             return -1;
           }
-          
+
           captured_window_hwnd = target_hwnd;
-          
+
           auto window_size = item.Size();
           window_capture_width = static_cast<int>(window_size.Width);
           window_capture_height = static_cast<int>(window_size.Height);
-          
+
           // Log window details for debugging
           RECT window_rect = {}, client_rect = {};
           if (GetWindowRect(target_hwnd, &window_rect) && GetClientRect(target_hwnd, &client_rect)) {
-            BOOST_LOG(info) << "Window geometry - Window: "sv 
+            BOOST_LOG(info) << "Window geometry - Window: "sv
                             << (window_rect.right - window_rect.left) << 'x' << (window_rect.bottom - window_rect.top)
                             << ", Client: "sv << (client_rect.right - client_rect.left) << 'x' << (client_rect.bottom - client_rect.top)
                             << ", WGC initial: "sv << window_capture_width << 'x' << window_capture_height
                             << ", Display: "sv << display->width << 'x' << display->height;
           }
-          
+
           BOOST_LOG(info) << "Window capture initialized with size: "sv << window_capture_width << 'x' << window_capture_height;
         }
       }
@@ -410,7 +419,7 @@ namespace platf::dxgi {
 
     // Use the actual capture item size for frame pool creation
     auto item_size = item.Size();
-    
+
     try {
       frame_pool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(uwp_device, static_cast<winrt::Windows::Graphics::DirectX::DirectXPixelFormat>(display->capture_format), 2, item_size);
       capture_session = frame_pool.CreateCaptureSession(item);
@@ -569,17 +578,17 @@ namespace platf::dxgi {
   std::shared_ptr<img_t>
   display_wgc_ram_t::alloc_img() {
     auto img = std::make_shared<img_t>();
-    
+
     // For window capture, use window capture dimensions; for display capture, use display dimensions
     int img_width = dup.window_capture_width > 0 ? dup.window_capture_width : width;
     int img_height = dup.window_capture_height > 0 ? dup.window_capture_height : height;
-    
+
     img->width = img_width;
     img->height = img_height;
     img->pixel_pitch = get_pixel_pitch();
     img->row_pitch = img->pixel_pitch * img->width;
     img->data = nullptr;
-    
+
     return img;
   }
 
@@ -618,7 +627,7 @@ namespace platf::dxgi {
       BOOST_LOG(warning) << "Captured window is no longer valid, reinitializing capture"sv;
       return capture_e::reinit;
     }
-    
+
     HRESULT status;
     texture2d_t src;
     uint64_t frame_qpc;
@@ -643,12 +652,12 @@ namespace platf::dxgi {
     // Get the actual captured frame dimensions
     int frame_width = static_cast<int>(desc.Width);
     int frame_height = static_cast<int>(desc.Height);
-    
+
     // For window capture, update stored dimensions if they changed
     if (dup.captured_window_hwnd != nullptr) {
       if (dup.window_capture_width != frame_width || dup.window_capture_height != frame_height) {
-        BOOST_LOG(info) << "Window capture size changed: "sv << dup.window_capture_width << 'x' << dup.window_capture_height 
-                         << " -> "sv << frame_width << 'x' << frame_height;
+        BOOST_LOG(info) << "Window capture size changed: "sv << dup.window_capture_width << 'x' << dup.window_capture_height
+                        << " -> "sv << frame_width << 'x' << frame_height;
         dup.window_capture_width = frame_width;
         dup.window_capture_height = frame_height;
         // Reset texture to force recreation with new size
@@ -692,17 +701,17 @@ namespace platf::dxgi {
     // Check if the captured frame size matches our staging texture
     D3D11_TEXTURE2D_DESC staging_desc;
     texture->GetDesc(&staging_desc);
-    
+
     if (frame_width != static_cast<int>(staging_desc.Width) || frame_height != static_cast<int>(staging_desc.Height)) {
-      BOOST_LOG(info) << "Capture size mismatch - frame: "sv << frame_width << 'x' << frame_height 
-                       << ", staging: "sv << staging_desc.Width << 'x' << staging_desc.Height
-                       << ", recreating staging texture"sv;
+      BOOST_LOG(info) << "Capture size mismatch - frame: "sv << frame_width << 'x' << frame_height
+                      << ", staging: "sv << staging_desc.Width << 'x' << staging_desc.Height
+                      << ", recreating staging texture"sv;
       // Reset texture to force recreation with new size on next iteration
       texture.reset();
       // Don't reinit the whole capture, just recreate the staging texture next frame
       return capture_e::timeout;
     }
-    
+
     // It's also possible for the capture format to change on the fly. If that happens,
     // reinitialize capture to try format detection again and create new images.
     if (capture_format != desc.Format) {
