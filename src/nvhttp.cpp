@@ -16,6 +16,7 @@
 #include <utility>
 
 // lib includes
+#include <Simple-Web-Server/server_http.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -23,7 +24,6 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
 #include <openssl/ssl.h>
-#include <Simple-Web-Server/server_http.hpp>
 
 // local includes
 #include "config.h"
@@ -45,6 +45,10 @@
 #include "uuid.h"
 #include "video.h"
 #include "webhook.h"
+
+#ifdef _WIN32
+#include "platform/windows/display_device/windows_utils.h"
+#endif
 
 using json = nlohmann::json;
 
@@ -77,7 +81,7 @@ namespace nvhttp {
 
   // Map to store certificate UUIDs keyed by request pointer
   // Using weak_ptr to track request lifetime and prevent memory leaks
-  static std::map<const void*, std::pair<std::weak_ptr<void>, std::string>> request_cert_uuid_map;
+  static std::map<const void *, std::pair<std::weak_ptr<void>, std::string>> request_cert_uuid_map;
   static std::mutex request_cert_uuid_map_mutex;
 
   class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
@@ -154,7 +158,7 @@ namespace nvhttp {
                       if (named_cert.cert == client_cert_pem) {
                         // Store UUID in map using request pointer as key
                         std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
-                        request_cert_uuid_map[session->request.get()] = 
+                        request_cert_uuid_map[session->request.get()] =
                           std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), named_cert.uuid);
                         break;
                       }
@@ -210,7 +214,8 @@ namespace nvhttp {
           // (assuming UUID is only needed once per request)
           request_cert_uuid_map.erase(it);
           return uuid;
-        } else {
+        }
+        else {
           // Request expired, remove from map
           request_cert_uuid_map.erase(it);
         }
@@ -453,18 +458,21 @@ namespace nvhttp {
     return launch_session;
   }
 
-  void remove_session(const pair_session_t &sess) {
+  void
+  remove_session(const pair_session_t &sess) {
     map_id_sess.erase(sess.client.uniqueID);
   }
 
-  void fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
+  void
+  fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
     tree.put("root.paired", 0);
     tree.put("root.<xmlattr>.status_code", 400);
     tree.put("root.<xmlattr>.status_message", status_msg);
     remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
   }
 
-  void getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
+  void
+  getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
     if (sess.last_phase != PAIR_PHASE::NONE) {
       fail_pair(sess, tree, "Out of order call to getservercert");
       return;
@@ -490,7 +498,8 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void clientchallenge(pair_session_t &sess, pt::ptree &tree, const std::string &challenge) {
+  void
+  clientchallenge(pair_session_t &sess, pt::ptree &tree, const std::string &challenge) {
     if (sess.last_phase != PAIR_PHASE::GETSERVERCERT) {
       fail_pair(sess, tree, "Out of order call to clientchallenge");
       return;
@@ -534,7 +543,8 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const std::string &encrypted_response) {
+  void
+  serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const std::string &encrypted_response) {
     if (sess.last_phase != PAIR_PHASE::CLIENTCHALLENGE) {
       fail_pair(sess, tree, "Out of order call to serverchallengeresp");
       return;
@@ -563,7 +573,8 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, pt::ptree &tree, const std::string &client_pairing_secret) {
+  void
+  clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, pt::ptree &tree, const std::string &client_pairing_secret) {
     if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
       fail_pair(sess, tree, "Out of order call to clientpairingsecret");
       return;
@@ -577,8 +588,8 @@ namespace nvhttp {
       return;
     }
 
-    std::string_view secret {client_pairing_secret.data(), 16};
-    std::string_view sign {client_pairing_secret.data() + secret.size(), client_pairing_secret.size() - secret.size()};
+    std::string_view secret { client_pairing_secret.data(), 16 };
+    std::string_view sign { client_pairing_secret.data() + secret.size(), client_pairing_secret.size() - secret.size() };
 
     auto x509 = crypto::x509(client.cert);
     if (!x509) {
@@ -632,15 +643,15 @@ namespace nvhttp {
     auto debug_flag = debug.open_record();
     auto verbose_flag = verbose.open_record();
     if (!debug_flag && !verbose_flag) {
-        return;
+      return;
     }
     std::ostringstream log_stream;
-    log_stream << "Request - Protocol: " << tunnel<T>::to_string 
+    log_stream << "Request - Protocol: " << tunnel<T>::to_string
                << ", IP: " << request->remote_endpoint().address().to_string()
                << ", PORT: " << request->remote_endpoint().port()
-               << ", METHOD: " << request->method 
+               << ", METHOD: " << request->method
                << ", PATH: " << request->path;
-    
+
     if (verbose_flag) {
       // Headers
       if (!request->header.empty()) {
@@ -652,7 +663,7 @@ namespace nvhttp {
           first = false;
         }
       }
-      
+
       // Query parameters
       auto query_params = request->parse_query_string();
       if (!query_params.empty()) {
@@ -768,13 +779,16 @@ namespace nvhttp {
     if (it = args.find("clientchallenge"); it != std::end(args)) {
       auto challenge = util::from_hex_vec(it->second, true);
       clientchallenge(sess_it->second, tree, challenge);
-    } else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
+    }
+    else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
       auto encrypted_response = util::from_hex_vec(it->second, true);
       serverchallengeresp(sess_it->second, tree, encrypted_response);
-    } else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
+    }
+    else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
       auto pairingsecret = util::from_hex_vec(it->second, true);
       clientpairingsecret(sess_it->second, add_cert, tree, pairingsecret);
-    } else {
+    }
+    else {
       tree.put("root.<xmlattr>.status_code", 404);
       tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
     }
@@ -853,6 +867,7 @@ namespace nvhttp {
 
     tree.put("root.appversion", VERSION);
     tree.put("root.GfeVersion", GFE_VERSION);
+    tree.put("root.SunshineVersion", SUNSHINE_VERSION);
     tree.put("root.uniqueid", http::unique_id);
     tree.put("root.HttpsPort", net::map_port(PORT_HTTPS));
     tree.put("root.ExternalPort", net::map_port(PORT_HTTP));
@@ -913,31 +928,6 @@ namespace nvhttp {
     }
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
-    // pt::ptree display_nodes;
-    // for (auto &resolution : config::nvhttp.resolutions) {
-    //   auto pred = [](auto ch) { return ch == ' ' || ch == '\t' || ch == 'x'; };
-
-    //   auto middle = std::find_if(std::begin(resolution), std::end(resolution), pred);
-    //   if (middle == std::end(resolution)) {
-    //     BOOST_LOG(warning) << resolution << " is not in the proper format for a resolution: WIDTHxHEIGHT"sv;
-    //     continue;
-    //   }
-
-    //   auto width = util::from_chars(&*std::begin(resolution), &*middle);
-    //   auto height = util::from_chars(&*(middle + 1), &*std::end(resolution));
-    //   for (auto fps : config::nvhttp.fps) {
-    //     pt::ptree display_node;
-    //     display_node.put("Width", width);
-    //     display_node.put("Height", height);
-    //     display_node.put("RefreshRate", fps);
-
-    //     display_nodes.add_child("DisplayMode", display_node);
-    //   }
-    // }
-
-    // if (!config::nvhttp.resolutions.empty()) {
-    //   tree.add_child("root.SupportedDisplayMode", display_nodes);
-    // }
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
@@ -950,7 +940,8 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  nlohmann::json get_all_clients() {
+  nlohmann::json
+  get_all_clients() {
     nlohmann::json named_cert_nodes = nlohmann::json::array();
     client_t &client = client_root;
     for (auto &named_cert : client.named_devices) {
@@ -1056,7 +1047,7 @@ namespace nvhttp {
       param.type = video::dynamic_param_type_e::BITRATE;
       param.value.int_value = bitrate;
       param.valid = true;
-      
+
       bool success = stream::session::change_dynamic_param_for_client(client_name, param);
 
       if (success) {
@@ -1065,9 +1056,10 @@ namespace nvhttp {
         tree.put("root.<xmlattr>.bitrate", bitrate);
         tree.put("root.<xmlattr>.clientname", client_name);
         tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '" 
-                       << client_name << "': " << bitrate << " Kbps";
-      } else {
+        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '"
+                        << client_name << "': " << bitrate << " Kbps";
+      }
+      else {
         tree.put("root.bitrate", 0);
         tree.put("root.<xmlattr>.status_code", 404);
         tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
@@ -1210,9 +1202,10 @@ namespace nvhttp {
         tree.put("root.<xmlattr>.param_value", param_value);
         tree.put("root.<xmlattr>.clientname", client_name);
         tree.put("root.<xmlattr>.status_message", "Dynamic parameter change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '" 
-                       << client_name << "': type=" << param_type << ", value=" << param_value;
-      } else {
+        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '"
+                        << client_name << "': type=" << param_type << ", value=" << param_value;
+      }
+      else {
         set_error(404, "No active streaming session found for client: " + client_name);
       }
     }
@@ -1245,15 +1238,15 @@ namespace nvhttp {
 
     try {
       auto sessions_info = stream::session::get_all_sessions_info();
-      
+
       json response_json;
       response_json["success"] = true;
       response_json["status_code"] = 200;
       response_json["status_message"] = "Success";
       response_json["total_sessions"] = sessions_info.size();
-      
+
       json sessions_array = json::array();
-      
+
       for (const auto &session_info : sessions_info) {
         json session_obj;
         session_obj["client_name"] = session_info.client_name;
@@ -1268,25 +1261,25 @@ namespace nvhttp {
         session_obj["enable_mic"] = session_info.enable_mic;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
-        
+
         sessions_array.push_back(session_obj);
       }
-      
+
       response_json["sessions"] = sessions_array;
-      
+
       BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
-      
+
       response->write(response_json.dump());
       response->close_connection_after_response = true;
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "GetSessionsInfo: "sv << e.what();
-      
+
       json error_json;
       error_json["success"] = false;
       error_json["status_code"] = 500;
       error_json["status_message"] = e.what();
-      
+
       response->write(error_json.dump());
       response->close_connection_after_response = true;
     }
@@ -1295,7 +1288,7 @@ namespace nvhttp {
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
-    
+
     print_request_ip<SunshineHTTPS>(request, "Launch request");
 
     pt::ptree tree;
@@ -1342,7 +1335,7 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
-    
+
     // 获取客户端证书UUID（稳定的客户端标识符）
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
@@ -1402,7 +1395,7 @@ namespace nvhttp {
     rtsp_stream::launch_session_raise(launch_session);
 
     // Send webhook notification for successful launch
-    webhook::send_event_async(webhook::event_t{
+    webhook::send_event_async(webhook::event_t {
       .type = webhook::event_type_t::NV_APP_LAUNCH,
       .alert_type = "nv_app_launch",
       .timestamp = webhook::get_current_timestamp(),
@@ -1413,11 +1406,9 @@ namespace nvhttp {
       .app_id = appid,
       .session_id = std::to_string(launch_session->id),
       .extra_data = {
-        {"resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height)},
-        {"fps", std::to_string(launch_session->fps)},
-        {"host_audio", launch_session->host_audio ? "true" : "false"}
-      }
-    });
+        { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
+        { "fps", std::to_string(launch_session->fps) },
+        { "host_audio", launch_session->host_audio ? "true" : "false" } } });
 
     // Stream was started successfully, we will restore the state when the app or session terminates
     need_to_restore_display_state = false;
@@ -1426,7 +1417,7 @@ namespace nvhttp {
   void
   resume(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
-    
+
     print_request_ip<SunshineHTTPS>(request, "Resume request");
 
     pt::ptree tree;
@@ -1465,12 +1456,12 @@ namespace nvhttp {
     // Newer Moonlight clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
-    const bool no_active_sessions {rtsp_stream::session_count() == 0};
+    const bool no_active_sessions { rtsp_stream::session_count() == 0 };
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
-    
+
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
@@ -1515,7 +1506,7 @@ namespace nvhttp {
     rtsp_stream::launch_session_raise(launch_session);
 
     // Send webhook notification for successful resume
-    webhook::send_event_async(webhook::event_t{
+    webhook::send_event_async(webhook::event_t {
       .type = webhook::event_type_t::NV_APP_RESUME,
       .alert_type = "nv_app_resume",
       .timestamp = webhook::get_current_timestamp(),
@@ -1526,11 +1517,9 @@ namespace nvhttp {
       .app_id = proc::proc.running(),
       .session_id = std::to_string(launch_session->id),
       .extra_data = {
-        {"resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height)},
-        {"fps", std::to_string(launch_session->fps)},
-        {"host_audio", launch_session->host_audio ? "true" : "false"}
-      }
-    });
+        { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
+        { "fps", std::to_string(launch_session->fps) },
+        { "host_audio", launch_session->host_audio ? "true" : "false" } } });
   }
 
   void
@@ -1633,11 +1622,11 @@ namespace nvhttp {
 
     try {
       std::vector<std::string> display_names;
-      
+
 #ifdef _WIN32
       display_names = platf::display_names(platf::mem_type_e::dxgi);
 #elif defined(__linux__)
-      for (auto mem_type : {platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system}) {
+      for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
         display_names = platf::display_names(mem_type);
         if (!display_names.empty()) break;
       }
@@ -1648,41 +1637,37 @@ namespace nvhttp {
 #endif
 
       json displays_array = json::array();
-      
+
 #ifdef _WIN32
       // Build GDI name -> (device_id, friendly_name) mapping
       std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
       try {
         for (const auto &[device_id, device_info] : display_device::enum_available_devices()) {
           if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
-            display_info_map[gdi_name] = {device_id, display_device::get_display_friendly_name(device_id)};
+            display_info_map[gdi_name] = { device_id, display_device::get_display_friendly_name(device_id) };
           }
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(warning) << "Failed to get display friendly names: " << e.what();
       }
-      
+
       for (size_t i = 0; i < display_names.size(); ++i) {
         const auto &name = display_names[i];
         auto it = display_info_map.find(name);
         bool found = (it != display_info_map.end());
-        displays_array.push_back({
-          {"index", static_cast<int>(i)},
-          {"display_name", name},
-          {"device_id", found ? it->second.first : name},
-          {"friendly_name", (found && !it->second.second.empty()) ? it->second.second : name}
-        });
+        displays_array.push_back({ { "index", static_cast<int>(i) },
+          { "display_name", name },
+          { "device_id", found ? it->second.first : name },
+          { "friendly_name", (found && !it->second.second.empty()) ? it->second.second : name } });
       }
 #else
       for (size_t i = 0; i < display_names.size(); ++i) {
         const auto &name = display_names[i];
-        displays_array.push_back({
-          {"index", static_cast<int>(i)},
-          {"display_name", name},
-          {"device_id", name},
-          {"friendly_name", name}
-        });
+        displays_array.push_back({ { "index", static_cast<int>(i) },
+          { "display_name", name },
+          { "device_id", name },
+          { "friendly_name", name } });
       }
 #endif
 
@@ -1703,12 +1688,118 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  void setup(const std::string &pkey, const std::string &cert) {
+  void
+  rotate_display(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    json response_json;
+    response_json["status_code"] = 200;
+    response_json["status_message"] = "OK";
+
+    auto send_response = [&](SimpleWeb::StatusCode status_code = SimpleWeb::StatusCode::success_ok) {
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      response->write(status_code, response_json.dump(), headers);
+      response->close_connection_after_response = true;
+    };
+
+    try {
+      auto args = request->parse_query_string();
+      auto angle_param = args.find("angle");
+
+      if (angle_param == args.end()) {
+        response_json["status_code"] = 400;
+        response_json["status_message"] = "Missing angle parameter";
+        response_json["success"] = false;
+        BOOST_LOG(warning) << "rotate_display: Missing angle parameter";
+        send_response(SimpleWeb::StatusCode::client_error_bad_request);
+        return;
+      }
+
+      int angle = std::stoi(angle_param->second);
+
+      if (angle != 0 && angle != 90 && angle != 180 && angle != 270) {
+        response_json["status_code"] = 400;
+        response_json["status_message"] = "Invalid angle value. Must be 0, 90, 180, or 270";
+        response_json["success"] = false;
+        BOOST_LOG(warning) << "rotate_display: Invalid angle value: " << angle;
+        send_response(SimpleWeb::StatusCode::client_error_bad_request);
+        return;
+      }
+
+      auto display_name_param = args.find("display_name");
+      std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
+
+      // URL-decode the display_name parameter
+      if (!display_name.empty()) {
+        std::string decoded_name;
+        decoded_name.reserve(display_name.size());
+        for (size_t i = 0; i < display_name.size(); ++i) {
+          if (display_name[i] == '%' && i + 2 < display_name.size()) {
+            int hex_val;
+            std::istringstream hex_stream(display_name.substr(i + 1, 2));
+            if (hex_stream >> std::hex >> hex_val) {
+              decoded_name += static_cast<char>(hex_val);
+              i += 2;
+              continue;
+            }
+          }
+          decoded_name += display_name[i];
+        }
+        display_name = std::move(decoded_name);
+      }
+
+      // 如果没有指定显示器名称，使用当前捕获的显示器
+      if (display_name.empty() && !config::video.output_name.empty()) {
+        display_name = display_device::get_display_name(config::video.output_name);
+        if (display_name.empty()) {
+          // 如果转换失败，尝试直接使用配置值（可能已经是显示器名称）
+          display_name = config::video.output_name;
+        }
+        BOOST_LOG(debug) << "rotate_display: Using current capture display: " << display_name << " (from config: " << config::video.output_name << ")";
+      }
+
+      BOOST_LOG(info) << "rotate_display: Requested angle=" << angle << ", display_name=" << (display_name.empty() ? "(primary)" : display_name);
+
+#ifdef _WIN32
+      bool success = display_device::w_utils::rotate_display(angle, display_name);
+      if (success) {
+        response_json["success"] = true;
+        response_json["angle"] = angle;
+        response_json["message"] = "Display rotation changed successfully";
+        BOOST_LOG(info) << "rotate_display: Display rotation changed to " << angle << " degrees";
+      }
+      else {
+        response_json["status_code"] = 500;
+        response_json["status_message"] = "Failed to change display rotation";
+        response_json["success"] = false;
+        BOOST_LOG(error) << "rotate_display: Failed to change display rotation to " << angle << " degrees";
+      }
+#else
+      response_json["status_code"] = 501;
+      response_json["status_message"] = "Display rotation is not supported on this platform";
+      response_json["success"] = false;
+      BOOST_LOG(warning) << "rotate_display: Display rotation is not supported on this platform";
+#endif
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Error rotating display: " << e.what();
+      response_json["status_code"] = 500;
+      response_json["status_message"] = "Internal server error: " + std::string(e.what());
+      response_json["success"] = false;
+    }
+
+    send_response();
+  }
+
+  void
+  setup(const std::string &pkey, const std::string &cert) {
     conf_intern.pkey = pkey;
     conf_intern.servercert = cert;
   }
 
-  void start() {
+  void
+  start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     auto port_http = net::map_port(PORT_HTTP);
@@ -1772,10 +1863,11 @@ namespace nvhttp {
         cert_chain.add(std::move(cert));
       }
 
-      const char * err_str;
+      const char *err_str;
       if (!close_verify_safe) {
-        err_str = cert_chain.verify_safe(x509.get());//default
-      } else {
+        err_str = cert_chain.verify_safe(x509.get());  // default
+      }
+      else {
         err_str = cert_chain.verify(x509.get());
       }
       if (err_str) {
@@ -1810,6 +1902,7 @@ namespace nvhttp {
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/displays$"]["GET"] = get_displays;
+    https_server.resource["^/rotate-display$"]["GET"] = rotate_display;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
     https_server.resource["^/cancel$"]["GET"] = cancel;
@@ -1892,7 +1985,8 @@ namespace nvhttp {
       if ((*it).uuid == uuid) {
         it = client.named_devices.erase(it);
         removed = true;
-      } else {
+      }
+      else {
         ++it;
       }
     }

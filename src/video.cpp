@@ -2981,12 +2981,41 @@ namespace video {
       if (last_display_width == 0 && last_display_height == 0) {
         last_display_width = current_width;
         last_display_height = current_height;
-        // Store original scale ratio for future display resolution changes
-        initial_scale_x = static_cast<float>(config.width) / current_width;
-        initial_scale_y = static_cast<float>(config.height) / current_height;
-        BOOST_LOG(info) << "Initial display: " << current_width << "x" << current_height
-                        << ", encoding: " << config.width << "x" << config.height
-                        << ", scale: " << initial_scale_x << "x" << initial_scale_y;
+        
+        // Check if display orientation matches client request
+        const bool display_is_portrait = (current_height > current_width);
+        const bool client_wants_landscape = (config.width > config.height);
+        const bool orientation_mismatch = !is_window_capture &&
+                                          (display_is_portrait == client_wants_landscape);
+        
+        if (orientation_mismatch) {
+          // Use actual display resolution for encoding when orientation doesn't match
+          BOOST_LOG(info) << "Display orientation mismatch: display="
+                          << current_width << "x" << current_height
+                          << ", client=" << config.width << "x" << config.height
+                          << " -> using display resolution";
+          
+          config.width = current_width;
+          config.height = current_height;
+          initial_scale_x = initial_scale_y = 1.0f;
+        }
+        else {
+          // Normal case: store original scale ratio for future display resolution changes
+          initial_scale_x = static_cast<float>(config.width) / current_width;
+          initial_scale_y = static_cast<float>(config.height) / current_height;
+          BOOST_LOG(info) << "Initial display: " << current_width << "x" << current_height
+                          << ", encoding: " << config.width << "x" << config.height
+                          << ", scale: " << initial_scale_x << "x" << initial_scale_y;
+        }
+        
+        // Notify client about encoding resolution
+        resolution_change_event->raise(std::make_pair(
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
+        
+        if (orientation_mismatch) {
+          idr_events->raise(true);
+        }
       }
       else if (!is_window_capture &&
                (current_width != last_display_width || current_height != last_display_height)) {
@@ -2997,53 +3026,31 @@ namespace video {
                         << current_width << "x" << current_height
                         << (is_rotation ? " (rotation)" : "");
 
-        // Store old encoding resolution for logging
-        const int old_enc_width = config.width;
-        const int old_enc_height = config.height;
-
         // Update cached display dimensions
         last_display_width = current_width;
         last_display_height = current_height;
 
-        // Calculate new encoding resolution maintaining the original scale ratio
+        // For rotation, swap the scale ratios
         if (is_rotation) {
-          // For rotation, swap the scale ratios as well
           std::swap(initial_scale_x, initial_scale_y);
         }
 
         // Apply scale ratio to new display resolution
-        // Round to even numbers for encoder compatibility
-        int new_enc_width = static_cast<int>(current_width * initial_scale_x);
-        int new_enc_height = static_cast<int>(current_height * initial_scale_y);
+        // Round to nearest even number for encoder compatibility, ensure minimum 64
+        config.width = std::max(64, (static_cast<int>(current_width * initial_scale_x) + 1) & ~1);
+        config.height = std::max(64, (static_cast<int>(current_height * initial_scale_y) + 1) & ~1);
 
-        // Round to nearest multiple of 2 for encoder compatibility
-        new_enc_width = (new_enc_width + 1) & ~1;
-        new_enc_height = (new_enc_height + 1) & ~1;
-
-        // Ensure minimum resolution
-        new_enc_width = std::max(new_enc_width, 64);
-        new_enc_height = std::max(new_enc_height, 64);
-
-        config.width = new_enc_width;
-        config.height = new_enc_height;
-
-        BOOST_LOG(info) << "Encoding resolution changed: "
-                        << old_enc_width << "x" << old_enc_height << " -> "
-                        << config.width << "x" << config.height
-                        << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")"
-                        << (is_rotation ? " [rotation]" : "");
+        BOOST_LOG(info) << "New encoding resolution: " << config.width << "x" << config.height
+                        << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")";
 
         // Notify client about the new encoding resolution
         resolution_change_event->raise(std::make_pair(
           static_cast<std::uint32_t>(config.width),
           static_cast<std::uint32_t>(config.height)));
 
-        // Request IDR frame to ensure clean transition
+        // Request IDR frame and wait for client to process resolution change
         idr_events->raise(true);
-
-        // Wait for client to process resolution change notification
         std::this_thread::sleep_for(100ms);
-        BOOST_LOG(info) << "Waited 100ms for client to process resolution change notification";
       }
 
       auto &encoder = *chosen_encoder;

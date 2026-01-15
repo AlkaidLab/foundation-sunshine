@@ -842,4 +842,73 @@ namespace display_device::w_utils {
     BOOST_LOG(debug) << "[Check_RDP_Session] No active RDP session found.";
     return false;
   }
+
+  bool
+  rotate_display(int angle, const std::string &display_name) {
+    // Validate angle: 0, 90, 180, 270
+    if (angle != 0 && angle != 90 && angle != 180 && angle != 270) {
+      BOOST_LOG(error) << "Invalid rotation angle: " << angle << ". Must be 0, 90, 180, or 270";
+      return false;
+    }
+
+    // Convert angle to Windows display orientation
+    static const DWORD angle_to_orientation[] = { DMDO_DEFAULT, DMDO_90, DMDO_180, DMDO_270 };
+    DWORD new_orientation = angle_to_orientation[angle / 90];
+
+    // Convert display name to wide string
+    std::wstring wdisplay_name;
+    LPCWSTR device_name = nullptr;
+    if (!display_name.empty()) {
+      wdisplay_name = std::wstring(display_name.begin(), display_name.end());
+      device_name = wdisplay_name.c_str();
+    }
+
+    const std::string target = display_name.empty() ? "primary display" : display_name;
+
+    // Get current display settings
+    DEVMODEW dm = {};
+    dm.dmSize = sizeof(DEVMODEW);
+    
+    if (!EnumDisplaySettingsW(device_name, ENUM_CURRENT_SETTINGS, &dm)) {
+      BOOST_LOG(error) << "Failed to get current display settings for " << target
+                       << ", error: " << GetLastError();
+      return false;
+    }
+
+    BOOST_LOG(debug) << "Current display settings: " 
+                     << dm.dmPelsWidth << "x" << dm.dmPelsHeight 
+                     << ", orientation: " << dm.dmDisplayOrientation;
+
+    DWORD current_orientation = dm.dmDisplayOrientation;
+
+    // Swap width/height if transitioning between landscape and portrait
+    bool current_is_portrait = (current_orientation == DMDO_90 || current_orientation == DMDO_270);
+    bool new_is_portrait = (new_orientation == DMDO_90 || new_orientation == DMDO_270);
+    
+    if (current_is_portrait != new_is_portrait) {
+      std::swap(dm.dmPelsWidth, dm.dmPelsHeight);
+      BOOST_LOG(debug) << "Swapping dimensions to: " << dm.dmPelsWidth << "x" << dm.dmPelsHeight;
+    }
+
+    dm.dmDisplayOrientation = new_orientation;
+    dm.dmFields = DM_DISPLAYORIENTATION | DM_PELSWIDTH | DM_PELSHEIGHT;
+
+    // Test if settings are valid
+    if (ChangeDisplaySettingsExW(device_name, &dm, nullptr, CDS_TEST, nullptr) != DISP_CHANGE_SUCCESSFUL) {
+      BOOST_LOG(error) << "Display rotation test failed for " << target;
+      return false;
+    }
+
+    // Apply settings
+    LONG result = ChangeDisplaySettingsExW(device_name, &dm, nullptr, CDS_UPDATEREGISTRY, nullptr);
+
+    if (result == DISP_CHANGE_SUCCESSFUL) {
+      BOOST_LOG(info) << "Display rotation changed to " << angle << " degrees for " << target;
+      return true;
+    }
+
+    BOOST_LOG(error) << "Failed to change display rotation for " << target 
+                     << ": error code " << result;
+    return false;
+  }
 }  // namespace display_device::w_utils

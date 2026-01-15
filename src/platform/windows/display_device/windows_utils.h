@@ -505,4 +505,19 @@ namespace display_device::w_utils {
    */
   bool
   is_any_rdp_session_active();
+
+  /**
+   * @brief Rotate the display to the specified angle.
+   * @param angle Rotation angle in degrees. Must be 0, 90, 180, or 270.
+   * @param display_name Optional display name. If empty, rotates the primary display.
+   * @returns True if rotation was successful, false otherwise.
+   *
+   * EXAMPLES:
+   * ```cpp
+   * const bool success = rotate_display(90, "");
+   * const bool success2 = rotate_display(180, "\\\\.\\DISPLAY1");
+   * ```
+   */
+  bool
+  rotate_display(int angle, const std::string &display_name);
 }  // namespace display_device::w_utils
