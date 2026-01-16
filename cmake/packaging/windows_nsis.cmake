@@ -170,7 +170,7 @@ set(CPACK_NSIS_CREATE_ICONS_EXTRA
         SetOutPath '\$INSTDIR'
         
         ; 主程序快捷方式 - 使用可执行文件的内嵌图标
-        CreateShortCut '\$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sunshine Service.lnk' \
+        CreateShortCut '\$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sunshine.lnk' \
             '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' '--shortcut' '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' 0
             
         ; GUI管理工具快捷方式 - 使用GUI程序的内嵌图标
@@ -184,7 +184,7 @@ set(CPACK_NSIS_CREATE_ICONS_EXTRA
 
 set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "${CPACK_NSIS_DELETE_ICONS_EXTRA}
-        Delete '\$SMPROGRAMS\\\\$MUI_TEMP\\\\Sunshine Service.lnk'
+        Delete '\$SMPROGRAMS\\\\$MUI_TEMP\\\\Sunshine.lnk'
         Delete '\$SMPROGRAMS\\\\$MUI_TEMP\\\\Sunshine GUI.lnk'
         Delete '\$SMPROGRAMS\\\\$MUI_TEMP\\\\Sunshine Tools.lnk'
         Delete '\$SMPROGRAMS\\\\$MUI_TEMP\\\\${CMAKE_PROJECT_NAME}.lnk'
