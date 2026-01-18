@@ -111,7 +111,7 @@ namespace display_device::vdd_utils {
   void
   disable_enable_vdd();
 
-  void
+  bool
   toggle_display_power();
 
   bool

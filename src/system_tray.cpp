@@ -232,8 +232,9 @@ namespace system_tray {
     if (s_vdd_in_cooldown || is_vdd_active()) return;
 
     BOOST_LOG(info) << "Creating VDD from system tray (Separate Item)"sv;
-    display_device::session_t::get().toggle_display_power();
-    start_vdd_cooldown();
+    if (display_device::session_t::get().toggle_display_power()) {
+      start_vdd_cooldown();
+    }
   };
 
   // 关闭虚拟显示器回调

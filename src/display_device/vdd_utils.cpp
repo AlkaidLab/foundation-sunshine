@@ -305,13 +305,13 @@ namespace display_device {
         BOOST_LOG(error) << "销毁虚拟显示器失败";
         return false;
       }
-      
+
       BOOST_LOG(info) << "销毁虚拟显示器完成，响应: " << response;
-      
+
       // 等待驱动程序完全卸载，避免WUDFHost.exe崩溃
       // 这是必要的，因为驱动程序卸载是异步的
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      
+
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
@@ -338,7 +338,7 @@ namespace display_device {
       return !find_device_by_friendlyname(ZAKO_NAME).empty();
     }
 
-    void
+    bool
     toggle_display_power() {
       auto now = std::chrono::steady_clock::now();
 
@@ -348,27 +348,27 @@ namespace display_device {
                               debounce_interval - (now - last_toggle_time))
                               .count()
                          << "秒";
-        return;
+        return false;
       }
 
       last_toggle_time = now;
 
       if (is_display_on()) {
         destroy_vdd_monitor();
-        return;
+        return true;
       }
 
       // 创建前先确认
       std::wstring confirm_title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_CREATE_TITLE));
       std::wstring confirm_message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CONFIRM_CREATE_MSG));
-      
+
       if (MessageBoxW(NULL, confirm_message.c_str(), confirm_title.c_str(), MB_OKCANCEL | MB_ICONQUESTION) == IDCANCEL) {
         BOOST_LOG(info) << system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CANCEL_CREATE_LOG);
-        return;
+        return false;
       }
 
       if (!create_vdd_monitor("", vdd_utils::hdr_brightness_t {}, vdd_utils::physical_size_t {})) {
-        return;
+        return false;
       }
 
       // 保存创建虚拟显示器前的物理设备列表
@@ -447,6 +447,8 @@ namespace display_device {
 
         destroy_vdd_monitor();
       }).detach();
+
+      return true;
     }
 
     VddSettings

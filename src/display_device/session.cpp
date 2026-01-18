@@ -384,9 +384,9 @@ namespace display_device {
     return vdd_utils::is_display_on();
   }
 
-  void
+  bool
   session_t::toggle_display_power() {
-    vdd_utils::toggle_display_power();
+    return vdd_utils::toggle_display_power();
   }
 
   void

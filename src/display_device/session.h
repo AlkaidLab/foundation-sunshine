@@ -172,7 +172,7 @@ namespace display_device {
     /**
      * @brief Toggle display power
      */
-    void
+    bool
     toggle_display_power();
 
     /**
