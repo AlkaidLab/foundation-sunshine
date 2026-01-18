@@ -542,19 +542,23 @@ namespace display_device {
   session_t::restore_state_impl(revert_reason_e reason) {
     // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    const auto device_prep = current_device_prep.value_or(
+      static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
+    );
+    
+    // 判断是否是跳过拓扑恢复的模式
+    const bool is_no_operation = (device_prep == parsed_config_t::device_prep_e::no_operation);
+    const bool is_keep_enabled = config::video.vdd_keep_enabled;
+    
     if (!vdd_id.empty()) {
-      const auto device_prep = current_device_prep.value_or(
-        static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
-      );
-      
       bool should_destroy = false;
       
       // 判断1：无操作模式 - 保留VDD
-      if (device_prep == parsed_config_t::device_prep_e::no_operation) {
+      if (is_no_operation) {
         BOOST_LOG(debug) << "无操作模式，保留VDD";
       }
       // 判断2：常驻模式 - 保留VDD
-      else if (config::video.vdd_keep_enabled) {
+      else if (is_keep_enabled) {
         BOOST_LOG(debug) << "常驻模式，保留VDD";
       }
       // 判断3：有persistent_data - 非常驻模式销毁VDD（无论是否在初始拓扑）
@@ -572,6 +576,15 @@ namespace display_device {
         destroy_vdd_monitor();
         std::this_thread::sleep_for(1000ms);
       }
+    }
+
+    // 常驻模式或无操作模式：跳过拓扑恢复，只清理VDD状态
+    if (is_keep_enabled || is_no_operation) {
+      BOOST_LOG(info) << (is_keep_enabled ? "常驻模式" : "无操作模式") << "，跳过拓扑恢复";
+      // 不调用 revert_settings，避免恢复屏幕记忆
+      // 但仍然清理VDD状态（current_vdd_client_id等）
+      stop_timer_and_clear_vdd_state();
+      return;
     }
 
     // 添加诊断日志
