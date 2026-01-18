@@ -1587,4 +1587,141 @@ namespace config {
 
     return 0;
   }
+
+  bool
+  update_config(const std::map<std::string, std::string> &updates) {
+    try {
+      // 读取现有配置文件
+      std::map<std::string, std::string> configMap;
+      try {
+        std::string fileContent = file_handler::read_file(sunshine.config_file.c_str());
+        auto existingConfig = parse_config(fileContent);
+        configMap.insert(existingConfig.begin(), existingConfig.end());
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
+      }
+
+      // 更新配置项，同时检查是否有变化
+      bool hasChanged = false;
+      for (const auto &[key, value] : updates) {
+        auto it = configMap.find(key);
+        if (value.empty() || value == "null") {
+          // 空值则删除该配置项
+          if (it != configMap.end()) {
+            configMap.erase(it);
+            hasChanged = true;
+          }
+        }
+        else {
+          // 只有值不同时才更新
+          if (it == configMap.end() || it->second != value) {
+            configMap[key] = value;
+            hasChanged = true;
+          }
+        }
+      }
+
+      if (!hasChanged) {
+        BOOST_LOG(info) << "Config unchanged, skip writing";
+        return false;
+      }
+
+      // 按字母顺序写入配置文件
+      std::stringstream configStream;
+      for (const auto &[key, value] : configMap) {
+        if (!value.empty() && value != "null") {
+          configStream << key << " = " << value << std::endl;
+        }
+      }
+
+      file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+      BOOST_LOG(info) << "Config updated successfully";
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to update config: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+    try {
+      // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
+      const std::set<std::string> readonlyFields = {
+        "status",           // API响应状态，不是配置项
+        "platform",         // 平台信息，编译时确定，只读
+        "version",          // 版本号，只读
+        "display_devices",  // 显示设备列表，运行时枚举，只读
+        "adapters",         // 适配器列表，运行时枚举，只读
+        "pair_name",        // 配对名称，由系统生成，只读
+      };
+
+      // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
+      const std::set<std::string> protectedFields = {
+        "vdd_keep_enabled", // 由系统托盘控制，不通过Web UI修改
+        "tray_locale",      // 由系统托盘控制，不通过Web UI修改
+      };
+
+      // 读取现有配置文件（用于获取受保护字段的值和后续对比）
+      std::map<std::string, std::string> originalMap;
+      try {
+        std::string originalFileContent = file_handler::read_file(sunshine.config_file.c_str());
+        auto existingConfig = parse_config(originalFileContent);
+        originalMap.insert(existingConfig.begin(), existingConfig.end());
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
+      }
+
+      // 使用 std::map 保证按字母顺序保存
+      std::map<std::string, std::string> resultMap;
+
+      // 收集传入的配置（跳过只读字段和受保护字段）
+      for (const auto &[key, value] : fullConfig) {
+        // 跳过只读字段
+        if (readonlyFields.count(key)) {
+          continue;
+        }
+        // 跳过受保护字段（稍后用本地值覆盖）
+        if (protectedFields.count(key)) {
+          continue;
+        }
+        // 跳过空值和 null
+        if (value.empty() || value == "null") {
+          continue;
+        }
+        resultMap[key] = value;
+      }
+
+      // 添加受保护字段（使用本地配置文件中的原有值）
+      for (const auto &field : protectedFields) {
+        auto it = originalMap.find(field);
+        if (it != originalMap.end() && !it->second.empty() && it->second != "null") {
+          resultMap[field] = it->second;
+        }
+      }
+
+      // 对比新配置与原始配置，相同则跳过写入
+      if (resultMap != originalMap) {
+        // 按字母顺序写入配置文件
+        std::stringstream configStream;
+        for (const auto &[key, value] : resultMap) {
+          configStream << key << " = " << value << std::endl;
+        }
+        file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+        BOOST_LOG(info) << "Config saved successfully";
+        return true;
+      }
+      else {
+        BOOST_LOG(info) << "Config unchanged, skip writing";
+        return false;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save config: " << e.what();
+      return false;
+    }
+  }
 }  // namespace config

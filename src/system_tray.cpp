@@ -118,6 +118,13 @@ namespace system_tray {
     advanced_settings_submenu[5].text = s_reset_display_device_config.c_str();
   }
 
+  // 更新 VDD 子菜单项的文本
+  static void update_vdd_submenu_text() {
+    vdd_submenu[0].text = s_vdd_create.c_str();
+    vdd_submenu[1].text = s_vdd_close.c_str();
+    vdd_submenu[2].text = s_vdd_persistent.c_str();
+  }
+
   // 更新访问项目地址子菜单项的文本
   static void tray_visit_project_submenu_text() {
     visit_project_submenu[0].text = s_visit_project_sunshine.c_str();
@@ -156,6 +163,7 @@ namespace system_tray {
     init_localized_strings();
     tray_menus[0].text = s_open_sunshine.c_str();
     tray_menus[2].text = s_vdd_base_display.c_str();
+    update_vdd_submenu_text();  // 更新 VDD 子菜单文本
   #ifdef _WIN32
     tray_menus[3].text = s_advanced_settings.c_str();
     update_advanced_settings_menu_text();
@@ -185,30 +193,6 @@ namespace system_tray {
   static bool is_vdd_active() {
     auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
     return !vdd_device_id.empty();
-  }
-
-  // 保存 vdd_keep_enabled 到配置文件
-  static void save_vdd_keep_enabled() {
-    try {
-      std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
-      std::stringstream new_config;
-      
-      std::istringstream iss(config_content);
-      std::string line;
-      while (std::getline(iss, line)) {
-        if (line.find("vdd_keep_enabled") != std::string::npos) {
-          continue;  // 跳过已有的行
-        }
-        new_config << line << "\n";
-      }
-      new_config << "vdd_keep_enabled = " << (config::video.vdd_keep_enabled ? "true" : "false") << "\n";
-      
-      file_handler::write_file(config::sunshine.config_file.c_str(), new_config.str());
-      BOOST_LOG(info) << "Saved vdd_keep_enabled = " << config::video.vdd_keep_enabled;
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Failed to save vdd_keep_enabled: " << e.what();
-    }
   }
 
   // 更新 VDD 菜单项的文本和状态
@@ -288,7 +272,7 @@ namespace system_tray {
     }
     
     // 保存配置到文件
-    save_vdd_keep_enabled();
+    config::update_config({{"vdd_keep_enabled", config::video.vdd_keep_enabled ? "true" : "false"}});
     
     update_vdd_menu_text();
     tray_update(&tray);
@@ -966,24 +950,7 @@ namespace system_tray {
     system_tray_i18n::set_tray_locale(locale);
 
     // 保存到配置文件
-    try {
-      auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
-      std::stringstream configStream;
-
-      // 更新或添加 tray_locale 配置项
-      vars["tray_locale"] = locale;
-      for (const auto &[key, value] : vars) {
-        if (!value.empty() && value != "null") {
-          configStream << key << " = " << value << std::endl;
-        }
-      }
-
-      file_handler::write_file(config::sunshine.config_file.c_str(), configStream.str());
-      BOOST_LOG(info) << "Tray language setting saved to config file"sv;
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "Failed to save tray language setting: "sv << e.what();
-    }
+    config::update_config({{"tray_locale", locale}});
 
     update_menu_texts();
     tray_update(&tray);

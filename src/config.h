@@ -6,7 +6,9 @@
 
 #include <bitset>
 #include <chrono>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -245,4 +247,10 @@ namespace config {
   parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
+
+  bool
+  update_config(const std::map<std::string, std::string> &updates);
+
+  bool
+  update_full_config(const std::map<std::string, std::string> &fullConfig);
 }  // namespace config
