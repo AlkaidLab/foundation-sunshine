@@ -86,10 +86,9 @@ const toggleSunshineMode = async () => {
     const msg = await window.__TAURI__.core.invoke('toggle_sunshine_mode')
     showMessage(msg || t('config.wgc_mode_switch_started'), 'success')
 
-    // 等待一段时间后重新检查模式
-    setTimeout(() => {
-      checkSunshineMode()
-    }, 3000)
+    // 切换通过 UAC 提升的 PowerShell 在后台执行，需预留：UAC 确认 + net stop + taskkill + 启动。延迟后再检查，并做二次检查以修正中间状态。
+    setTimeout(() => checkSunshineMode(), 6000)
+    setTimeout(() => checkSunshineMode(), 11000)
   } catch (error) {
     console.error('切换模式失败:', error)
     showMessage(t('config.wgc_mode_switch_failed') + ': ' + (error.message || error), 'error')
