@@ -205,7 +205,7 @@
     "av1_mode_desc": "允许客户端请求 AV1 Main 8-bit 或 10-bit 视频流。AV1 编码对 CPU 要求较高，使用软件编码时启用可能会影响性能。",
     "back_button_timeout": "主页/导航按钮模拟超时",
     "back_button_timeout_desc": "按住\"返回/选择\"按钮达到指定毫秒数后，将模拟按下\"主页/导航\"按钮。若设置值小于0（默认值），则不会触发此功能。",
-    "bind_address": "绑定地址",
+    "bind_address": "绑定地址（测试功能）",
     "bind_address_desc": "设置 Sunshine 绑定的 IP 地址。如果留空，Sunshine 将绑定到所有可用接口（0.0.0.0 用于 IPv4 或 :: 用于 IPv6）。",
     "capture": "强制指定捕获方法",
     "capture_desc": "自动模式下，Sunshine将优先使用第一个可正常工作的捕获模式。NvFBC需要已打补丁的NVIDIA驱动程序。",

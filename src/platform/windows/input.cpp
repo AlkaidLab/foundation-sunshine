@@ -210,6 +210,7 @@ namespace platf {
       if (!VIGEM_SUCCESS(status)) {
         // Log a special fatal message for this case to show the error in the web UI
         BOOST_LOG(fatal) << "ViGEmBus is not installed or running. You must install ViGEmBus for gamepad support!"sv;
+        BOOST_LOG(fatal) << "ViGEmBus 没有安装或运行。您必须安装 ViGEmBus 才能支持游戏手柄！"sv;
       }
       else {
         vigem_disconnect(client.get());

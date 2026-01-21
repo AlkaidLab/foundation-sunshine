@@ -3557,9 +3557,9 @@ namespace video {
 
     if (chosen_encoder == nullptr) {
       const auto output_display_name { display_device::get_display_name(config::video.output_name) };
-      BOOST_LOG(fatal) << "Unable to find display or encoder during startup."sv;
+      BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
       if (!config::video.adapter_name.empty() || !output_display_name.empty()) {
-        BOOST_LOG(fatal) << "Please ensure your manually chosen GPU and monitor are connected and powered on."sv;
+        BOOST_LOG(error) << "Please ensure your manually chosen GPU and monitor are connected and powered on."sv;
       }
       else {
         BOOST_LOG(fatal) << "Please check that a display is connected and powered on."sv;

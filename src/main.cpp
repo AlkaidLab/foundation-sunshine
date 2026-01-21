@@ -413,7 +413,9 @@ main(int argc, char *argv[]) {
   // If we're using the default port and GameStream is enabled, warn the user
   if (config::sunshine.port == 47989 && is_gamestream_enabled()) {
     BOOST_LOG(fatal) << "GameStream is still enabled in GeForce Experience! This *will* cause streaming problems with Sunshine!"sv;
+    BOOST_LOG(fatal) << "GeForce Experience 中仍然启用了 GameStream！这将导致流媒体问题与 Sunshine！"sv;
     BOOST_LOG(fatal) << "Disable GameStream on the SHIELD tab in GeForce Experience or change the Port setting on the Advanced tab in the Sunshine Web UI."sv;
+    BOOST_LOG(fatal) << "在 GeForce Experience 的 SHIELD 标签中禁用 GameStream，或在 Sunshine Web UI 的 Advanced 标签中更改端口设置。"sv;
   }
 #endif
 
