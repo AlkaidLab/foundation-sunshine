@@ -1,0 +1,245 @@
+name: "🐛 Bug Report (English)"
+description: "Report a bug to help us improve"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 Before You Submit
+        Thank you for taking the time to report this issue!
+        This project is **Foundation Sunshine**, a self-hosted game stream host for Moonlight.
+
+        **Please check before submitting:**
+        - [ ] I have searched existing issues to avoid duplicates
+        - [ ] This issue is specific to **Foundation Sunshine**, not other versions of Sunshine
+        - [ ] I have checked the [documentation](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) for solutions
+        - [ ] I am using Windows 10/Windows 11 (Virtual Display feature requires Windows 10 22H2 or higher)
+        ---
+
+  - type: dropdown
+    id: bug-type
+    attributes:
+      label: "🏷️ Bug Category"
+      description: "What type of bug is this?"
+      options:
+        - "📺 Video Streaming issues"
+        - "🎨 HDR Support issues"
+        - "🖥️ Virtual Display issues"
+        - "🎤 Remote Microphone issues"
+        - "🔊 Audio issues"
+        - "🌐 Network Connection issues"
+        - "🎮 Gamepad/Controller issues"
+        - "⚙️ Settings/Configuration issues"
+        - "💻 Web Control Panel issues"
+        - "💥 Crash/Freeze"
+        - "🔋 Performance/Encoding issues"
+        - "🔧 Pairing/Device Management issues"
+        - "❓ Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: describe-bug
+    attributes:
+      label: "📝 Bug Description"
+      description: "Describe the bug clearly and concisely. What happened? What did you expect to happen?"
+      placeholder: |
+        Example:
+        When I start streaming, the video output is black screen. The HDR display is enabled but the stream shows no content. I expect the stream to display the game content correctly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-reproduce
+    attributes:
+      label: "🔄 Steps to Reproduce"
+      description: "Provide detailed steps to reproduce the issue"
+      placeholder: |
+        1. Start Sunshine server
+        2. Connect from Moonlight client
+        3. Launch a game/application
+        4. Perform specific action that triggers the bug
+        5. Bug occurs
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected-games
+    attributes:
+      label: "🎯 Affected Games/Apps"
+      description: "Which games or applications are affected? Does it happen in all games or specific ones?"
+      placeholder: |
+        - All games/applications
+        - Specific games (list them)
+        - Desktop streaming
+        - Only with HDR enabled
+    validations:
+      required: false
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: "🔁 Reproducibility"
+      description: "How often can you reproduce this issue?"
+      options:
+        - "Always (100%)"
+        - "Often (>50%)"
+        - "Sometimes (<50%)"
+        - "Rarely (<10%)"
+        - "Only once"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🖥️ Host Server Information
+
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: "💻 Host Operating System"
+      description: "Operating system running Sunshine (Only Windows 10/Windows 11 supported)"
+      options:
+        - "Windows 10"
+        - "Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: "📌 Windows Specific Version"
+      description: "Please get the specific Windows version from your system (e.g., Windows 10 22H2, Windows 11 23H2, Windows 10 LTSC 2021, etc.)"
+      placeholder: "e.g. Windows 10 22H2 / Windows 11 23H2 / Windows 10 LTSC 2021"
+    validations:
+      required: false
+
+  - type: input
+    id: sunshine-version
+    attributes:
+      label: "☀️ Sunshine Version"
+      description: "Sunshine server version"
+      placeholder: "e.g. v0.23.1 / commit hash"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gpu-vendor
+    attributes:
+      label: "🎨 GPU Vendor"
+      description: "Your GPU manufacturer"
+      options:
+        - "NVIDIA"
+        - "AMD"
+        - "Intel"
+        - "Other/Unknown"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu-model
+    attributes:
+      label: "🎨 GPU Model & Driver"
+      description: "GPU model and driver version"
+      placeholder: "e.g. RTX 4090 / Driver 545.92"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: encoder
+    attributes:
+      label: "🔧 Video Encoder"
+      description: "Which encoder is being used?"
+      options:
+        - "NVENC (NVIDIA)"
+        - "AMD VCE"
+        - "Intel QSV"
+        - "Software (x264/x265)"
+        - "Auto/Unknown"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📱 Client Information (Optional)
+
+  - type: input
+    id: client-device
+    attributes:
+      label: "📱 Client Device"
+      description: "Moonlight client device and version (if relevant)"
+      placeholder: "e.g. Android Moonlight V+ v12.5.1 / Windows Moonlight-QT / iOS VoidLink"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🔧 Configuration & Troubleshooting
+
+  - type: dropdown
+    id: settings-default
+    attributes:
+      label: "⚙️ Configuration Modified?"
+      description: "Have you changed any Sunshine settings from default?"
+      options:
+        - "No, using default settings"
+        - "Yes, configuration modified"
+    validations:
+      required: false
+
+  - type: textarea
+    id: settings-adjusted-settings
+    attributes:
+      label: "📋 Modified Configuration"
+      description: "If you modified settings, list them here (bitrate, encoder, HDR, display, etc.)"
+      placeholder: ""
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📎 Additional Information
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "📸 Screenshots/Videos"
+      description: "If applicable, add screenshots or screen recordings to help explain the problem"
+      placeholder: "Drag and drop images/videos here"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "📜 Log Output"
+      description: "If you have relevant log output, paste it here. Especially helpful for connection or crash issues"
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "💬 Additional Information"
+      description: "What settings have been modified besides default settings?"
+      placeholder: |
+        Example:
+        - Modified settings: Resolution, bitrate, encoder, etc.
+        - Network: Local LAN / Internet / VPN
+        - Connection type: WiFi 6 / 5GHz / Ethernet
+        - Display: Resolution, refresh rate, multi-monitor setup
+        - HDR: Display model, HDR settings
+        - Controller: Xbox / PlayStation / Other
+        - Special software: Antivirus, firewall, other streaming software
+    validations:
+      required: false

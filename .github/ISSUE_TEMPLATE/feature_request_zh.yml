@@ -1,0 +1,182 @@
+name: "✨ 功能建议（中文）"
+description: "建议新功能或改进"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 💡 功能建议
+        感谢您花时间提出新功能建议！
+        此项目是 **Foundation Sunshine**，一个自托管的游戏串流服务器。
+        
+        **⚠️ 重要提示：此模板仅用于提交 Sunshine 服务器端的功能建议，客户端（Moonlight）相关问题请勿在此提交。**
+
+        **提交前请检查**
+        - [ ] 我已搜索现有 issues，避免重复
+        - [ ] 此功能在最新版本中尚不可用
+        - [ ] 此功能针对服务器端（Sunshine），而非客户端（Moonlight）
+        - [ ] 我使用的是 Windows 10/Windows 11（虚拟显示器功能需要 Windows 10 22H2 及以上版本）
+        ---
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: "🏷️ 功能类别"
+      description: "这是什么类型的功能？"
+      options:
+        - "� 界面体验"
+        - "🎨 HDR 支持"
+        - "🖥️ 虚拟显示器"
+        - "🎤 远程麦克风"
+        - "📺 视频编码/串流"
+        - "🔊 音频处理"
+        - "🌐 网络/连接"
+        - "💻 控制面板"
+        - "⚙️ 配置/设置"
+        - "🔧 设备/配对管理"
+        - "🎮 控制器/输入支持"
+        - "🔋 性能优化"
+        - "📊 监控/日志"
+        - "🔒 安全/认证"
+        - "❓ 其他"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "📊 优先级"
+      description: "这个功能对您有多重要？"
+      options:
+        - "🔴 关键 - 没有它无法使用"
+        - "🟠 高 - 显著改善体验"
+        - "🟡 中 - 有了更好"
+        - "🟢 低 - 小改进"
+    validations:
+      required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "😤 问题描述"
+      description: "您的功能请求是否与某个问题相关？请描述您遇到的困扰"
+      placeholder: |
+        示例:
+        当我串流结束时，我的游戏没有关闭，而是继续在后台运行。
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "💡 建议的解决方案"
+      description: "描述您希望的解决方案。请尽可能具体"
+      placeholder: |
+        示例:
+        我需要一个功能，当串流结束时，能够执行指定后台命令，如果能够支持这个功能会好得多。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "🔄 替代方案"
+      description: "您是否考虑过任何替代解决方案或变通办法？"
+      placeholder: |
+        示例:
+        1. 使用第三方脚本在串流结束时执行命令
+        2. 通过任务计划程序实现类似功能
+        3. 手动管理游戏进程
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: "🎯 使用场景"
+      description: "描述一个这个功能会很有用的具体场景"
+      placeholder: |
+        示例:
+        当串流结束时，我需要自动关闭游戏进程以释放系统资源。这个功能将帮助我更高效地管理多个串流会话。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: willing-to-test
+    attributes:
+      label: "🧪 愿意测试吗？"
+      description: "如果实现了此功能，您愿意帮忙测试吗？"
+      options:
+        - "是，我可以测试并提供反馈"
+        - "也许，取决于时间"
+        - "否"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📎 附加信息
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "📸 效果图/参考"
+      description: "添加效果图、草图，或其他有类似功能的应用的参考截图"
+      placeholder: "在此处拖放图片"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "💬 其他补充"
+      description: "日志信息、除了默认设置外还修改了什么内容？"
+      placeholder: |
+        示例:
+        - 日志级别: 详细/调试
+        - 修改的设置: 分辨率、码率、编码器等
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🖥️ 系统信息（可选）
+
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: "💻 主机操作系统"
+      description: "您的主机操作系统（仅支持 Windows 10/Windows 11）"
+      options:
+        - "Windows 10"
+        - "Windows 11"
+    validations:
+      required: false
+
+  - type: input
+    id: os-version
+    attributes:
+      label: "📌 Windows 具体版本"
+      description: "请从系统中获取 Windows 的具体版本信息（如：Windows 10 22H2、Windows 11 23H2、Windows 10 LTSC 2021 等）"
+      placeholder: "例如: Windows 10 22H2 / Windows 11 23H2 / Windows 10 LTSC 2021"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: gpu-vendor
+    attributes:
+      label: "🎨 显卡厂商"
+      description: "您的显卡制造商（如与功能相关）"
+      options:
+        - "NVIDIA"
+        - "AMD"
+        - "Intel"
+        - "不适用"
+        - "其他/未知"
+    validations:
+      required: false

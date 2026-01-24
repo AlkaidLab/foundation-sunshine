@@ -1,0 +1,181 @@
+name: "✨ Feature Request (English)"
+description: "Suggest a new feature or improvement"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 💡 Feature Request
+        Thank you for taking the time to suggest a new feature!
+        This project is **Foundation Sunshine**, a self-hosted game stream host for Moonlight.
+        
+        **⚠️ Important: This template is only for submitting Sunshine server-side feature requests. Client-side (Moonlight) issues should not be submitted here.**
+
+        **Please check before submitting:**
+        - [ ] I have searched existing issues and feature requests to avoid duplicates
+        - [ ] This feature is not already available in the latest version
+        - [ ] This feature is specific to the server-side (Sunshine), not the client-side (Moonlight)
+        - [ ] I am using Windows 10/Windows 11 (Virtual Display feature requires Windows 10 22H2 or higher)
+        ---
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: "🏷️ Feature Category"
+      description: "What type of feature is this?"
+      options:
+        - "🎨 HDR Support"
+        - "🖥️ Virtual Display"
+        - "🎤 Remote Microphone"
+        - "📺 Video Encoding/Streaming"
+        - "🔊 Audio Processing"
+        - "🌐 Network/Connection"
+        - "💻 Web Control Panel"
+        - "⚙️ Configuration/Settings"
+        - "🔧 Device/Pairing Management"
+        - "🎮 Controller/Input Support"
+        - "🔋 Performance Optimization"
+        - "📊 Monitoring/Logging"
+        - "🔒 Security/Authentication"
+        - "❓ Other"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "📊 Priority"
+      description: "How important is this feature to you?"
+      options:
+        - "🔴 Critical - Can't use app without it"
+        - "🟠 High - Significantly improves experience"
+        - "🟡 Medium - Nice to have"
+        - "🟢 Low - Minor improvement"
+    validations:
+      required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "😤 Problem Statement"
+      description: "Is your feature request related to a problem? Describe the frustration"
+      placeholder: |
+        Example:
+        When streaming ends, my game doesn't close and continues running in the background.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "💡 Proposed Solution"
+      description: "Describe the solution you'd like. Be as specific as possible"
+      placeholder: |
+        Example:
+        I need a feature that can execute specified background commands when streaming ends. It would be much better if this feature could be supported.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "🔄 Alternative Solutions"
+      description: "Have you considered any alternative solutions or workarounds?"
+      placeholder: |
+        Example:
+        1. Use third-party scripts to execute commands when streaming ends
+        2. Implement similar functionality through Task Scheduler
+        3. Manually manage game processes
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: "🎯 Use Case"
+      description: "Describe a specific scenario where this feature would be useful"
+      placeholder: |
+        Example:
+        When streaming ends, I need to automatically close the game process to free up system resources. This feature would help me manage multiple streaming sessions more efficiently.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: willing-to-test
+    attributes:
+      label: "🧪 Willing to Test?"
+      description: "Would you be willing to test this feature if implemented?"
+      options:
+        - "Yes, I can test and provide feedback"
+        - "Maybe, depends on timing"
+        - "No"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📎 Additional Information
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "📸 Mockups/References"
+      description: "Add mockups, sketches, or reference screenshots from other apps that have similar features"
+      placeholder: "Drag and drop images here"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "💬 Additional Information"
+      description: "Log information, what settings have been modified besides default settings?"
+      placeholder: |
+        Example:
+        - Log level: Verbose/Debug
+        - Modified settings: Resolution, bitrate, encoder, etc.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🖥️ System Information (Optional)
+
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: "💻 Host Operating System"
+      description: "Your host OS (Only Windows 10/Windows 11 supported)"
+      options:
+        - "Windows 10"
+        - "Windows 11"
+    validations:
+      required: false
+
+  - type: input
+    id: os-version
+    attributes:
+      label: "📌 Windows Specific Version"
+      description: "Please get the specific Windows version from your system (e.g., Windows 10 22H2, Windows 11 23H2, Windows 10 LTSC 2021, etc.)"
+      placeholder: "e.g. Windows 10 22H2 / Windows 11 23H2 / Windows 10 LTSC 2021"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: gpu-vendor
+    attributes:
+      label: "🎨 GPU Vendor"
+      description: "Your GPU manufacturer (if relevant to the feature)"
+      options:
+        - "NVIDIA"
+        - "AMD"
+        - "Intel"
+        - "Not applicable"
+        - "Other/Unknown"
+    validations:
+      required: false

@@ -1,0 +1,245 @@
+name: "🐛 问题报告（中文）"
+description: "报告问题帮助我们改进"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 提交前请注意
+        感谢您花时间报告这个问题！
+        此项目是 **Foundation Sunshine**，一个自托管的游戏串流服务器。
+
+        **提交前请检查**
+        - [ ] 我已搜索现有 issues，避免重复提交
+        - [ ] 此问题针对 **Foundation Sunshine**，不是其他版本的 Sunshine
+        - [ ] 我已查阅[使用文档](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)寻找解决方案
+        - [ ] 我使用的是 Windows 10/Windows 11（虚拟显示器功能需要 Windows 10 22H2 及以上版本）
+        ---
+
+  - type: dropdown
+    id: bug-type
+    attributes:
+      label: "🏷️ 问题类型"
+      description: "这是什么类型的问题？"
+      options:
+        - "📺 视频串流问题"
+        - "🎨 HDR 支持问题"
+        - "🖥️ 虚拟显示器问题"
+        - "🎤 远程麦克风问题"
+        - "🔊 音频问题"
+        - "🌐 网络连接问题"
+        - "🎮 手柄/控制器问题"
+        - "⚙️ 设置/配置问题"
+        - "💻 Web 控制面板问题"
+        - "💥 崩溃/卡死"
+        - "🔋 性能/编码问题"
+        - "🔧 配对/设备管理问题"
+        - "❓ 其他"
+    validations:
+      required: true
+
+  - type: textarea
+    id: describe-bug
+    attributes:
+      label: "📝 问题描述"
+      description: "清晰简洁地描述问题。发生了什么？您期望发生什么？"
+      placeholder: |
+        示例:
+        当我开始串流时，视频输出是黑屏。HDR 显示器已启用，但串流显示没有内容。我期望串流能正确显示游戏内容。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-reproduce
+    attributes:
+      label: "🔄 复现步骤"
+      description: "提供详细的复现步骤"
+      placeholder: |
+        1. 启动 Sunshine 服务器
+        2. 从 Moonlight 客户端连接
+        3. 启动游戏/应用
+        4. 执行触发问题的特定操作
+        5. 问题出现
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected-games
+    attributes:
+      label: "🎯 受影响的游戏/应用"
+      description: "哪些游戏或应用受到影响？是所有游戏都有问题还是特定游戏？"
+      placeholder: |
+        - 所有游戏/应用
+        - 特定游戏（请列出）
+        - 桌面串流
+        - 仅在启用 HDR 时
+    validations:
+      required: false
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: "🔁 可复现性"
+      description: "多久能复现一次此问题？"
+      options:
+        - "总是发生 (100%)"
+        - "经常发生 (>50%)"
+        - "有时发生 (<50%)"
+        - "很少发生 (<10%)"
+        - "只发生过一次"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🖥️ 主机服务器信息
+
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: "💻 主机操作系统"
+      description: "运行 Sunshine 的操作系统（仅支持 Windows 10/Windows 11）"
+      options:
+        - "Windows 10"
+        - "Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: "📌 Windows 具体版本"
+      description: "请从系统中获取 Windows 的具体版本信息（如：Windows 10 22H2、Windows 11 23H2、Windows 10 LTSC 2021 等）"
+      placeholder: "例如: Windows 10 22H2 / Windows 11 23H2 / Windows 10 LTSC 2021"
+    validations:
+      required: false
+
+  - type: input
+    id: sunshine-version
+    attributes:
+      label: "☀️ Sunshine 版本"
+      description: "Sunshine 服务器版本"
+      placeholder: "例如: v0.23.1 / commit hash"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gpu-vendor
+    attributes:
+      label: "🎨 显卡厂商"
+      description: "您的显卡制造商"
+      options:
+        - "NVIDIA"
+        - "AMD"
+        - "Intel"
+        - "其他/未知"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu-model
+    attributes:
+      label: "🎨 显卡型号及驱动"
+      description: "显卡型号和驱动版本"
+      placeholder: "例如: RTX 4090 / 驱动 545.92"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: encoder
+    attributes:
+      label: "🔧 视频编码器"
+      description: "使用哪个编码器？"
+      options:
+        - "NVENC (NVIDIA)"
+        - "AMD VCE"
+        - "Intel QSV"
+        - "软件编码 (x264/x265)"
+        - "自动/未知"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📱 客户端信息（可选）
+
+  - type: input
+    id: client-device
+    attributes:
+      label: "📱 客户端设备"
+      description: "Moonlight 客户端设备和版本（如相关）"
+      placeholder: "例如: Android Moonlight V+ v12.5.1 / Windows Moonlight-QT / iOS VoidLink"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 🔧 配置与故障排除
+
+  - type: dropdown
+    id: settings-default
+    attributes:
+      label: "⚙️ 是否修改过配置？"
+      description: "您是否修改过默认配置？"
+      options:
+        - "否，使用默认设置"
+        - "是，已修改配置"
+    validations:
+      required: false
+
+  - type: textarea
+    id: settings-adjusted-settings
+    attributes:
+      label: "📋 已修改的配置"
+      description: "如果修改了设置，请列出（码率、编码器、HDR、显示器等）"
+      placeholder: ""
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📎 附加信息
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "📸 截图/视频"
+      description: "如有必要，请添加截图或录屏来帮助说明问题"
+      placeholder: "在此处拖放图片/视频"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "📜 日志输出"
+      description: "如有相关日志输出，请粘贴在此。对于连接或崩溃问题特别有帮助"
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "💬 其他补充"
+      description: "除了默认设置外还修改了什么内容？"
+      placeholder: |
+        示例:
+        - 修改的设置: 分辨率、码率、编码器等
+        - 网络: 本地局域网 / 外网 / VPN
+        - 连接类型: WiFi 6 / 5GHz / 有线
+        - 显示器: 分辨率、刷新率、多显示器设置
+        - HDR: 显示器型号、HDR 设置
+        - 手柄: Xbox / PlayStation / 其他
+        - 特殊软件: 杀毒软件、防火墙、其他串流软件
+    validations:
+      required: false
