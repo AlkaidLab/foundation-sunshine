@@ -199,7 +199,6 @@ body:
     attributes:
       label: "📋 Modified Configuration"
       description: "If you modified settings, list them here (bitrate, encoder, HDR, display, etc.)"
-      placeholder: ""
     validations:
       required: false
 

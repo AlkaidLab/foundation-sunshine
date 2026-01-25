@@ -16,6 +16,9 @@ namespace system_tray_i18n {
   const std::string KEY_VDD_CREATE = "vdd_create";
   const std::string KEY_VDD_CLOSE = "vdd_close";
   const std::string KEY_VDD_PERSISTENT = "vdd_persistent";
+  const std::string KEY_VDD_HEADLESS_CREATE = "vdd_headless_create";
+  const std::string KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE = "vdd_headless_create_confirm_title";
+  const std::string KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG = "vdd_headless_create_confirm_msg";
   const std::string KEY_VDD_CONFIRM_CREATE_TITLE = "vdd_confirm_create_title";
   const std::string KEY_VDD_CONFIRM_CREATE_MSG = "vdd_confirm_create_msg";
   const std::string KEY_VDD_CONFIRM_KEEP_TITLE = "vdd_confirm_keep_title";
@@ -95,6 +98,9 @@ namespace system_tray_i18n {
     { KEY_VDD_CREATE, "Create Virtual Display" },
     { KEY_VDD_CLOSE, "Close Virtual Display" },
     { KEY_VDD_PERSISTENT, "Keep Enabled" },
+    { KEY_VDD_HEADLESS_CREATE, "Server Mode (Beta)" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE, "[Beta] Enable: Server Mode" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG, "This is an internal beta feature. It works differently from \"Keep Enabled\".\n\nExplanation:\nHeadless host: a computer with no physical display connected (or no available display).\nBase display: the built-in screen used by this software, with streaming second screen, privacy screen, custom resolution and refresh rate.\n\nThis feature runs only when Sunshine starts or when a stream ends; if a headless host has no display after stream end, it will auto-create the base display to avoid app issues.\n\nAfter reconnecting a physical display, the base display may stay on. If you get a black screen, try:\n1. Shortcut: Ctrl+Alt+Win+B\n2. Win+P twice then Enter\n3. Restart the app\n4. Start a stream then end it\nIf none works, check HDMI cable, display and keyboard.\n\nEnable this feature?" },
     { KEY_VDD_CONFIRM_CREATE_TITLE, "Create Virtual Display" },
     { KEY_VDD_CONFIRM_CREATE_MSG, "Are you sure you want to create a virtual display?\n\nCreating a display may cause a brief black screen, which is normal.\nIf you encounter a black screen, please press Win+P twice to recover." },
     { KEY_VDD_CONFIRM_KEEP_TITLE, "Confirm Virtual Display" },
@@ -171,6 +177,9 @@ namespace system_tray_i18n {
     { KEY_VDD_CREATE, "创建显示器" },
     { KEY_VDD_CLOSE, "关闭显示器" },
     { KEY_VDD_PERSISTENT, "保持启用" },
+    { KEY_VDD_HEADLESS_CREATE, "服务器模式(测试)" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE, "【内测功能】启用「服务器模式(测试)」" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG, "此为内测功能，请知悉。与「保持启用」原理不同。\n\n说明：\n无头主机：未连接物理显示器（或当前无可用显示设备）的电脑。\n基地显示器：此软件使用的内置屏幕，具有串流副屏、隐私屏、任意分辨率、任意帧率的功能。\n\n此功能仅在 Sunshine 启动或串流结束时检测；无头主机退出串流后若无显示器，将自动创建基地显示器，避免部分应用异常。\n\n接回物理显示器后，基地显示器也仍然会保持开启状态。如果出现黑屏，请尝试：\n1、快捷键 Ctrl+Alt+Win+B\n2、快捷键 Win+P 按 2 次后回车\n3、重启程序\n4、串流后退出\n如果都没用，请检查 HDMI 线、显示器和键盘是否损坏。\n\n确定启用？" },
     { KEY_VDD_CONFIRM_CREATE_TITLE, "创建基地显示器" },
     { KEY_VDD_CONFIRM_CREATE_MSG, "确定要创建基地显示器吗？\n\n创建后可能会短暂黑屏，这是正常现象。\n如遇黑屏，请按两次 Win+P 恢复。" },
     { KEY_VDD_CONFIRM_KEEP_TITLE, "显示器确认" },
@@ -246,6 +255,9 @@ namespace system_tray_i18n {
     { KEY_VDD_CREATE, "仮想ディスプレイを作成" },
     { KEY_VDD_CLOSE, "仮想ディスプレイを閉じる" },
     { KEY_VDD_PERSISTENT, "常駐仮想ディスプレイを" },
+    { KEY_VDD_HEADLESS_CREATE, "サーバーモード(テスト)" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE, "【β版】「サーバーモード(テスト)」を有効にする" },
+    { KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG, "内側テスト用のβ機能です。「常駐」とは仕様が異なります。\n\n説明：\nヘッドレス：物理ディスプレイが接続されていない（または利用可能なディスプレイがない）PC。\n基地ディスプレイ：本ソフトが使う内蔵画面。串流副画面・プライバシー画面・任意解像度・任意リフレッシュレートの機能を持つ。\n\nこの機能は Sunshine 起動時またはストリーム終了時のみ検出。ヘッドレスでストリーム終了後にディスプレイが無い場合、基地ディスプレイを自動作成し、一部アプリの不具合を防ぎます。\n\n物理ディスプレイを接続した後も基地ディスプレイはオンのままです。黒画面の場合は次を試してください：\n1. ショートカット Ctrl+Alt+Win+B\n2. Win+P を2回押して Enter\n3. プログラムを再起動\n4. ストリーム開始後に終了\nそれでも治らない場合は、HDMIケーブル・ディスプレイ・キーボードの故障を確認してください。\n\n有効にしますか？" },
     { KEY_VDD_CONFIRM_CREATE_TITLE, "仮想ディスプレイを作成" },
     { KEY_VDD_CONFIRM_CREATE_MSG, "仮想ディスプレイを作成しますか？\n\n作成後に一時的な黒画面が発生する場合がありますが、これは正常です。\n黒画面になった場合は、Win+P を2回押して回復してください。" },
     { KEY_VDD_CONFIRM_KEEP_TITLE, "ディスプレイの確認" },

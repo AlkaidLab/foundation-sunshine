@@ -14,6 +14,9 @@ namespace system_tray_i18n {
   extern const std::string KEY_VDD_CREATE;
   extern const std::string KEY_VDD_CLOSE;
   extern const std::string KEY_VDD_PERSISTENT;
+  extern const std::string KEY_VDD_HEADLESS_CREATE;
+  extern const std::string KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE;
+  extern const std::string KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG;
   extern const std::string KEY_VDD_CONFIRM_CREATE_TITLE;
   extern const std::string KEY_VDD_CONFIRM_CREATE_MSG;
   extern const std::string KEY_VDD_CONFIRM_KEEP_TITLE;

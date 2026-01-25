@@ -343,7 +343,8 @@ namespace display_device {
   find_device_by_friendlyname(const std::string &friendly_name) {
     const auto devices { enum_available_devices() };
     if (devices.empty()) {
-      BOOST_LOG(error) << "Display device list is empty!";
+      // Transient during display reinit or right after VDD create; avoid error level
+      BOOST_LOG(warning) << "Get display device by friendly name: display device list is empty!";
       return {};
     }
 

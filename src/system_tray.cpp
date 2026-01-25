@@ -84,6 +84,7 @@ namespace system_tray {
   static std::string s_vdd_create;
   static std::string s_vdd_close;
   static std::string s_vdd_persistent;
+  static std::string s_vdd_headless_create;
   static std::string s_import_config;
   static std::string s_export_config;
   static std::string s_reset_to_default;
@@ -104,7 +105,7 @@ namespace system_tray {
   static std::string s_quit;
 
   // 用于存储子菜单的静态数组
-  static struct tray_menu vdd_submenu[4];
+  static struct tray_menu vdd_submenu[5];
   static struct tray_menu advanced_settings_submenu[7];
   static struct tray_menu visit_project_submenu[3];
 
@@ -123,6 +124,7 @@ namespace system_tray {
     vdd_submenu[0].text = s_vdd_create.c_str();
     vdd_submenu[1].text = s_vdd_close.c_str();
     vdd_submenu[2].text = s_vdd_persistent.c_str();
+    vdd_submenu[3].text = s_vdd_headless_create.c_str();
   }
 
   // 更新访问项目地址子菜单项的文本
@@ -139,6 +141,7 @@ namespace system_tray {
     s_vdd_create = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CREATE);
     s_vdd_close = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_CLOSE);
     s_vdd_persistent = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT);
+    s_vdd_headless_create = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE);
     s_import_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_CONFIG);
     s_export_config = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_CONFIG);
     s_reset_to_default = system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_TO_DEFAULT);
@@ -210,6 +213,9 @@ namespace system_tray {
     
     // 3. 保持启用项
     vdd_submenu[2].checked = keep_enabled ? 1 : 0;
+
+    // 4. 无显示器时自动创建
+    vdd_submenu[3].checked = config::video.vdd_headless_create_enabled ? 1 : 0;
   }
 
   // 启动统一的 10 秒冷却
@@ -275,6 +281,26 @@ namespace system_tray {
     // 保存配置到文件
     config::update_config({{"vdd_keep_enabled", config::video.vdd_keep_enabled ? "true" : "false"}});
     
+    update_vdd_menu_text();
+    tray_update(&tray);
+  };
+
+  // 无显示器时自动创建
+  auto tray_vdd_headless_create_cb = [](struct tray_menu *item) {
+    BOOST_LOG(info) << "Toggling headless VDD create from system tray"sv;
+    if (!config::video.vdd_headless_create_enabled) {
+      // 启用前二次确认
+#ifdef _WIN32
+      std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE));
+      std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG));
+      if (MessageBoxW(NULL, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) {
+        BOOST_LOG(info) << "User cancelled enabling headless VDD create";
+        return;
+      }
+#endif
+    }
+    config::video.vdd_headless_create_enabled = !config::video.vdd_headless_create_enabled;
+    config::update_config({{"vdd_headless_create", config::video.vdd_headless_create_enabled ? "true" : "false"}});
     update_vdd_menu_text();
     tray_update(&tray);
   };
@@ -1133,11 +1159,12 @@ namespace system_tray {
     }
   #endif
 
-    // 初始化 VDD 子菜单 (创建, 关闭, 保持启用)
+    // 初始化 VDD 子菜单 (创建, 关闭, 保持启用, 无显示器时自动创建)
     vdd_submenu[0] = { .text = s_vdd_create.c_str(), .cb = tray_vdd_create_cb };
     vdd_submenu[1] = { .text = s_vdd_close.c_str(), .cb = tray_vdd_destroy_cb };
     vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .cb = tray_vdd_persistent_cb };
-    vdd_submenu[3] = { .text = nullptr };
+    vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .cb = tray_vdd_headless_create_cb };
+    vdd_submenu[4] = { .text = nullptr };
 
   #ifdef _WIN32
     advanced_settings_submenu[0] = { .text = s_import_config.c_str(), .cb = tray_import_config_cb };

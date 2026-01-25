@@ -942,7 +942,7 @@ namespace display_device {
         if (data_updated) {
           save_settings(filepath, *persistent_data);  // 忽略返回值
         }
-        BOOST_LOG(fatal) << "恢复显示设备设置失败！建议立即使用重置记忆术~";
+        BOOST_LOG(fatal) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
       }
 
       // 清理持久化数据
@@ -962,11 +962,11 @@ namespace display_device {
       }
     }
 
-    if (reason == revert_reason_e::stream_ended) {
+    if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
       auto &session = display_device::session_t::get();
       auto devices = display_device::enum_available_devices();
 
-      // headless host case
+      // headless host case: create Zako VDD when no display is found (config-enabled only)
       if (devices.empty()) {
         BOOST_LOG(info) << "未找到显示设备，创建Zako Monitor";
         session.create_vdd_monitor("");

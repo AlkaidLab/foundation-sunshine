@@ -394,6 +394,7 @@ namespace config {
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
     false,  // vdd_keep_enabled
+    false,  // vdd_headless_create_enabled
     {},  // nv_legacy
 
     {
@@ -1200,7 +1201,8 @@ namespace config {
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
-    
+    bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
+
     // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
     string_f(vars, "downscaling_quality", video.downscaling_quality);
     if (video.downscaling_quality.empty()) {
@@ -1660,8 +1662,9 @@ namespace config {
 
       // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
       const std::set<std::string> protectedFields = {
-        "vdd_keep_enabled", // 由系统托盘控制，不通过Web UI修改
-        "tray_locale",      // 由系统托盘控制，不通过Web UI修改
+        "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
+        "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
+        "tray_locale",            // 由系统托盘控制，不通过Web UI修改
       };
 
       // 读取现有配置文件（用于获取受保护字段的值和后续对比）

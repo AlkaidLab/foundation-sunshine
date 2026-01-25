@@ -271,7 +271,8 @@ namespace display_device {
   find_one_of_the_available_devices(const std::string &device_id) {
     const auto devices { enum_available_devices() };
     if (devices.empty()) {
-      BOOST_LOG(error) << "Display device list is empty!";
+      // Transient during display reinit or right after VDD create; avoid error level
+      BOOST_LOG(warning) << "Find one of the available devices: display device list is empty!";
       return {};
     }
     BOOST_LOG(info) << "Available display devices: " << to_string(devices);

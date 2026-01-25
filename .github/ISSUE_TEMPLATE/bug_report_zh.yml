@@ -199,7 +199,6 @@ body:
     attributes:
       label: "📋 已修改的配置"
       description: "如果修改了设置，请列出（码率、编码器、HDR、显示器等）"
-      placeholder: ""
     validations:
       required: false
 
