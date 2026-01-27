@@ -117,13 +117,6 @@ watch(isWGCSelected, (newValue) => {
       <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
     </div>
 
-    <!-- Quantization Parameter -->
-    <div class="mb-3">
-      <label for="qp" class="form-label">{{ $t('config.qp') }}</label>
-      <input type="number" class="form-control" id="qp" placeholder="28" v-model="config.qp" />
-      <div class="form-text">{{ $t('config.qp_desc') }}</div>
-    </div>
-
     <!-- Min Threads -->
     <div class="mb-3">
       <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>

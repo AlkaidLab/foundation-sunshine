@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 
@@ -9,6 +9,18 @@ const props = defineProps([
 ])
 
 const config = ref(props.config)
+
+// 按 name 去重，同一名称只保留一项（保持首次出现顺序）
+const uniqueAdapters = computed(() => {
+  const list = config.value?.adapters ?? []
+  const seen = new Set()
+  return list.filter((a) => {
+    const name = a?.name ?? ''
+    if (seen.has(name)) return false
+    seen.add(name)
+    return true
+  })
+})
 </script>
 
 <template>
@@ -18,7 +30,7 @@ const config = ref(props.config)
       <template #windows>
         <select id="adapter_name" class="form-select" v-model="config.adapter_name">
           <option value="">{{ $t("_common.autodetect") }}</option>
-          <option v-for="(adapter, index) in config.adapters" :value="adapter.name" :key="index">
+          <option v-for="(adapter, index) in uniqueAdapters" :value="adapter.name" :key="index">
             {{ adapter.name }}
           </option>
         </select>
@@ -33,7 +45,6 @@ const config = ref(props.config)
       <PlatformLayout :platform="platform">
         <template #windows>
           {{ $t('config.adapter_name_desc_windows') }}<br>
-          <pre>如有安装最新版虚拟显示器，可自动关联GPU绑定</pre>
         </template>
         <template #linux>
           {{ $t('config.adapter_name_desc_linux_1') }}<br>

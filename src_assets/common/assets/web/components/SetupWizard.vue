@@ -112,7 +112,7 @@
                       class="form-select form-select-large" 
                       v-model="selectedAdapter">
                 <option value="">{{ $t('setup.choose_adapter') }}</option>
-                <option v-for="adapter in adapters" :key="adapter.name" :value="adapter.name">
+                <option v-for="adapter in uniqueAdapters" :key="adapter.name" :value="adapter.name">
                   {{ adapter.name }}
                 </option>
               </select>
@@ -127,6 +127,11 @@
                 <p><strong>{{ $t('setup.selected_display') }}:</strong> 
                   {{ isVirtualDisplay ? $t('setup.virtual_display') : selectedDisplay }}
                 </p>
+              </div>
+
+              <!-- GPU选择提示框 -->
+              <div class="form-text mt-3 adapter-hint-box">
+                {{ $t('config.adapter_name_desc_windows') }}<br>
               </div>
           </div>
 
@@ -337,8 +342,8 @@ export default {
     }
     
     // 如果只有一个显卡，自动选择
-    if (this.adapters.length === 1) {
-      this.selectedAdapter = this.adapters[0].name
+    if (this.uniqueAdapters.length === 1) {
+      this.selectedAdapter = this.uniqueAdapters[0].name
     }
   },
   computed: {
@@ -356,6 +361,17 @@ export default {
     },
     isVirtualDisplay() {
       return this.selectedDisplay === 'ZakoHDR'
+    },
+    // 按 name 去重，同一名称只保留一项（保持首次出现顺序）
+    uniqueAdapters() {
+      const list = this.adapters ?? []
+      const seen = new Set()
+      return list.filter((a) => {
+        const name = a?.name ?? ''
+        if (seen.has(name)) return false
+        seen.add(name)
+        return true
+      })
     }
   },
   methods: {
@@ -823,6 +839,26 @@ export default {
 .adapter-info p {
   margin-bottom: 0.3em;
   font-size: 0.95em;
+}
+
+/* GPU选择提示框样式 */
+.adapter-hint-box {
+  background: rgba(102, 126, 234, 0.08);
+  padding: 0.8em 1em;
+  border-radius: 8px;
+  border-left: 3px solid #667eea;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.adapter-vdd-hint {
+  margin: 0.5em 0 0 0;
+  padding: 0.5em 0.8em;
+  background: rgba(40, 167, 69, 0.1);
+  border-radius: 4px;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* 滚动条样式 */
