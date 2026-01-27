@@ -12,6 +12,19 @@
       <div class="row">
         <!-- Left Column -->
         <div class="col-lg-6">
+          <!-- Logout -->
+          <TroubleshootingCard
+            icon="fa-sign-out-alt"
+            color="danger"
+            :title="$t('troubleshooting.logout')"
+            :description="$t('troubleshooting.logout_desc')"
+          >
+            <button class="btn btn-danger" @click="showLogoutModal">
+              <i class="fas fa-sign-out-alt me-2"></i>
+              {{ $t('troubleshooting.logout') }}
+            </button>
+          </TroubleshootingCard>
+
           <!-- Force Close App -->
           <TroubleshootingCard
             icon="fa-times-circle"
@@ -53,7 +66,10 @@
               {{ $t('troubleshooting.restart_sunshine') }}
             </button>
           </TroubleshootingCard>
+        </div>
 
+        <!-- Right Column -->
+        <div class="col-lg-6">
           <!-- Boom Sunshine -->
           <TroubleshootingCard
             icon="fa-bomb"
@@ -72,15 +88,12 @@
               {{ $t('troubleshooting.boom_sunshine') }}
             </button>
           </TroubleshootingCard>
-        </div>
 
-        <!-- Right Column -->
-        <div class="col-lg-6">
           <!-- Reset persistent display device settings -->
           <TroubleshootingCard
             v-if="platform === 'windows'"
             icon="fa-desktop"
-            color="secondary"
+            color="info"
             :title="$t('troubleshooting.reset_display_device_windows')"
             :description="$t('troubleshooting.reset_display_device_desc_windows')"
             pre-line
@@ -96,7 +109,7 @@
               </div>
             </template>
             <button
-              class="btn btn-secondary"
+              class="btn btn-info text-white"
               :disabled="resetDisplayDevicePressed"
               @click="resetDisplayDevicePersistence"
             >
@@ -155,6 +168,53 @@
         </div>
       </div>
     </Transition>
+
+    <!-- Logout Confirm Modal -->
+    <Transition name="fade">
+      <div v-if="showLogoutConfirmModal" class="boom-confirm-overlay" @click.self="closeLogoutModal">
+        <div class="boom-confirm-modal">
+          <div class="boom-confirm-header">
+            <h5>
+              <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.confirm_logout') }}
+            </h5>
+            <button class="btn-close" @click="closeLogoutModal"></button>
+          </div>
+          <div class="boom-confirm-body">
+            <p>{{ $t('troubleshooting.confirm_logout_desc') }}</p>
+          </div>
+          <div class="boom-confirm-footer">
+            <button type="button" class="btn btn-secondary" @click="closeLogoutModal">
+              {{ $t('_common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" @click="confirmLogout">
+              <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.logout') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Localhost 登出提醒弹窗（200 时显示） -->
+    <Transition name="fade">
+      <div v-if="showLocalhostLogoutModal" class="boom-confirm-overlay" @click.self="closeLocalhostLogoutModal">
+        <div class="boom-confirm-modal">
+          <div class="boom-confirm-header">
+            <h5>
+              <i class="fas fa-info-circle me-2"></i>{{ $t('troubleshooting.logout') }}
+            </h5>
+            <button class="btn-close" @click="closeLocalhostLogoutModal"></button>
+          </div>
+          <div class="boom-confirm-body">
+            <p>{{ $t('troubleshooting.logout_localhost_tip') }}</p>
+          </div>
+          <div class="boom-confirm-footer">
+            <button type="button" class="btn btn-primary" @click="closeLocalhostLogoutModal">
+              {{ $t('_common.close') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -165,8 +225,10 @@ import Navbar from '../components/layout/Navbar.vue'
 import TroubleshootingCard from '../components/TroubleshootingCard.vue'
 import LogsSection from '../components/LogsSection.vue'
 import { useTroubleshooting } from '../composables/useTroubleshooting.js'
+import { useLogout } from '../composables/useLogout.js'
 
 const { t } = useI18n()
+const { logout } = useLogout()
 
 const {
   platform,
@@ -190,9 +252,12 @@ const {
   reopenSetupWizard,
   loadPlatform,
   startLogRefresh,
+  stopLogRefresh,
 } = useTroubleshooting()
 
 const showBoomConfirmModal = ref(false)
+const showLogoutConfirmModal = ref(false)
+const showLocalhostLogoutModal = ref(false)
 
 const showBoomModal = () => {
   showBoomConfirmModal.value = true
@@ -205,6 +270,29 @@ const closeBoomModal = () => {
 const confirmBoom = () => {
   closeBoomModal()
   boom()
+}
+
+const showLogoutModal = () => {
+  showLogoutConfirmModal.value = true
+}
+
+const closeLogoutModal = () => {
+  showLogoutConfirmModal.value = false
+}
+
+const closeLocalhostLogoutModal = () => {
+  showLocalhostLogoutModal.value = false
+}
+
+const confirmLogout = () => {
+  closeLogoutModal()
+  showLocalhostLogoutModal.value = false
+  stopLogRefresh() // 避免登出后 log 轮询再发请求触发第二次登录框
+  logout({
+    onLocalhost: () => {
+      showLocalhostLogoutModal.value = true
+    },
+  })
 }
 
 const handleCopyConfig = () => copyConfig(t)

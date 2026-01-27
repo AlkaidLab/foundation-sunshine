@@ -129,6 +129,32 @@ namespace confighttp {
     response->write(SimpleWeb::StatusCode::client_error_unauthorized, headers);
   }
 
+  /**
+   * Logout endpoint: for localhost (PC) returns 200 so the browser does not show
+   * a password dialog; for other allowed origins returns 401 with WWW-Authenticate
+   * so the browser shows the credential prompt. Denied origins receive 403.
+   */
+  void
+  handleLogout(resp_https_t response, req_https_t request) {
+    auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    auto ip_type = net::from_address(address);
+
+    if (ip_type > http::origin_web_ui_allowed) {
+      BOOST_LOG(error) << "Web UI: ["sv << address << "] -- logout denied"sv;
+      response->write(SimpleWeb::StatusCode::client_error_forbidden);
+      return;
+    }
+
+    if (ip_type == net::PC) {
+      BOOST_LOG(info) << "Web UI: ["sv << address << "] -- logout (local), responding 200"sv;
+      response->write(SimpleWeb::StatusCode::success_ok, "");
+      return;
+    }
+
+    BOOST_LOG(info) << "Web UI: ["sv << address << "] -- logout requested, responding 401"sv;
+    send_unauthorized(response, request);
+  }
+
   void
   send_redirect(resp_https_t response, req_https_t request, const char *path) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
@@ -1706,6 +1732,8 @@ namespace confighttp {
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
+    server.resource["^/api/logout$"]["GET"] = handleLogout;
+    server.resource["^/api/logout$"]["POST"] = handleLogout;
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/restart$"]["GET"] = restart;
     server.resource["^/api/boom$"]["GET"] = boom;
