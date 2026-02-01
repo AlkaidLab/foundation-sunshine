@@ -17,6 +17,17 @@ namespace video {
 
   bool
   colorspace_is_hdr(const sunshine_colorspace_t &colorspace) {
+    return colorspace.colorspace == colorspace_e::bt2020 ||
+           colorspace.colorspace == colorspace_e::bt2020hlg;
+  }
+
+  bool
+  colorspace_is_hlg(const sunshine_colorspace_t &colorspace) {
+    return colorspace.colorspace == colorspace_e::bt2020hlg;
+  }
+
+  bool
+  colorspace_is_pq(const sunshine_colorspace_t &colorspace) {
     return colorspace.colorspace == colorspace_e::bt2020;
   }
 
@@ -25,10 +36,20 @@ namespace video {
     sunshine_colorspace_t colorspace;
 
     /* See video::config_t declaration for details */
+    /* dynamicRange values:
+       0 = SDR 8-bit
+       1 = HDR 10-bit with PQ (ST 2084)
+       2 = HDR 10-bit with HLG (ARIB STD-B67) */
 
     if (config.dynamicRange > 0 && hdr_display) {
-      // Rec. 2020 with ST 2084 perceptual quantizer
-      colorspace.colorspace = colorspace_e::bt2020;
+      if (config.dynamicRange == 2) {
+        // Rec. 2020 with Hybrid Log-Gamma (HLG)
+        colorspace.colorspace = colorspace_e::bt2020hlg;
+      }
+      else {
+        // Rec. 2020 with ST 2084 perceptual quantizer (PQ) - default HDR mode
+        colorspace.colorspace = colorspace_e::bt2020;
+      }
     }
     else {
       switch (config.encoderCscMode >> 1) {
@@ -61,7 +82,8 @@ namespace video {
         colorspace.bit_depth = 8;
         break;
 
-      case 1:
+      case 1:  // HDR PQ
+      case 2:  // HDR HLG
         colorspace.bit_depth = 10;
         break;
 
@@ -110,10 +132,19 @@ namespace video {
         break;
 
       case colorspace_e::bt2020:
-        // Rec. 2020 with ST 2084 perceptual quantizer
+        // Rec. 2020 with ST 2084 perceptual quantizer (PQ)
         avcodec_colorspace.primaries = AVCOL_PRI_BT2020;
         assert(sunshine_colorspace.bit_depth == 10);
         avcodec_colorspace.transfer_function = AVCOL_TRC_SMPTE2084;
+        avcodec_colorspace.matrix = AVCOL_SPC_BT2020_NCL;
+        avcodec_colorspace.software_format = SWS_CS_BT2020;
+        break;
+
+      case colorspace_e::bt2020hlg:
+        // Rec. 2020 with Hybrid Log-Gamma (HLG)
+        avcodec_colorspace.primaries = AVCOL_PRI_BT2020;
+        assert(sunshine_colorspace.bit_depth == 10);
+        avcodec_colorspace.transfer_function = AVCOL_TRC_ARIB_STD_B67;
         avcodec_colorspace.matrix = AVCOL_SPC_BT2020_NCL;
         avcodec_colorspace.software_format = SWS_CS_BT2020;
         break;
@@ -141,6 +172,7 @@ namespace video {
           break;
         case colorspace_e::bt2020:
         case colorspace_e::bt2020sdr:
+        case colorspace_e::bt2020hlg:
           Kr = 0.2627;
           Kb = 0.0593;
           break;
@@ -243,6 +275,7 @@ namespace video {
         break;
       case colorspace_e::bt2020:
       case colorspace_e::bt2020sdr:
+      case colorspace_e::bt2020hlg:
         result = &colors[8];
         break;
     }

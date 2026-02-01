@@ -14,7 +14,8 @@ namespace video {
     rec601,  ///< Rec. 601
     rec709,  ///< Rec. 709
     bt2020sdr,  ///< Rec. 2020 SDR
-    bt2020,  ///< Rec. 2020 HDR
+    bt2020,  ///< Rec. 2020 HDR with PQ (ST 2084)
+    bt2020hlg,  ///< Rec. 2020 HDR with HLG (ARIB STD-B67)
   };
 
   struct sunshine_colorspace_t {
@@ -25,6 +26,12 @@ namespace video {
 
   bool
   colorspace_is_hdr(const sunshine_colorspace_t &colorspace);
+
+  bool
+  colorspace_is_hlg(const sunshine_colorspace_t &colorspace);
+
+  bool
+  colorspace_is_pq(const sunshine_colorspace_t &colorspace);
 
   // Declared in video.h
   struct config_t;

@@ -452,7 +452,7 @@ namespace platf {
 
   struct nvenc_encode_device_t: encode_device_t {
     virtual bool
-    init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace) = 0;
+    init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     nvenc::nvenc_encoder *nvenc = nullptr;
   };

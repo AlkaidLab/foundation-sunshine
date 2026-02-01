@@ -82,10 +82,18 @@ namespace nvenc {
         break;
 
       case video::colorspace_e::bt2020:
-        // Rec. 2020 with ST 2084 perceptual quantizer
+        // Rec. 2020 with ST 2084 perceptual quantizer (PQ)
         colorspace.primaries = NV_ENC_VUI_COLOR_PRIMARIES_BT2020;
         assert(sunshine_colorspace.bit_depth == 10);
         colorspace.tranfer_function = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE2084;
+        colorspace.matrix = NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL;
+        break;
+
+      case video::colorspace_e::bt2020hlg:
+        // Rec. 2020 with Hybrid Log-Gamma (HLG)
+        colorspace.primaries = NV_ENC_VUI_COLOR_PRIMARIES_BT2020;
+        assert(sunshine_colorspace.bit_depth == 10);
+        colorspace.tranfer_function = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_ARIB_STD_B67;
         colorspace.matrix = NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL;
         break;
     }

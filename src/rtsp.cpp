@@ -1077,6 +1077,7 @@ namespace rtsp_stream {
       auto &monitor = config.monitor;
       monitor.height = getArg("x-nv-video[0].clientViewportHt"sv);
       monitor.width = getArg("x-nv-video[0].clientViewportWd"sv);
+      BOOST_LOG(info) << "Client requested stream resolution (clientViewport): " << monitor.width << "x" << monitor.height;
       monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
       monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
       monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);

@@ -65,8 +65,11 @@ namespace video {
 
     int videoFormat;  // 0 - H.264, 1 - HEVC, 2 - AV1
 
-    /* Encoding color depth (bit depth): 0 - 8-bit, 1 - 10-bit
-       HDR encoding activates when color depth is higher than 8-bit and the display which is being captured is operating in HDR mode */
+    /* Encoding color depth and HDR transfer function:
+       0 - SDR 8-bit
+       1 - HDR 10-bit with PQ (SMPTE ST 2084)
+       2 - HDR 10-bit with HLG (ARIB STD-B67)
+       HDR encoding activates when dynamicRange > 0 and the display is operating in HDR mode */
     int dynamicRange;
 
     int chromaSamplingType;  // 0 - 4:2:0, 1 - 4:4:4
