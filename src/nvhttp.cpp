@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 // lib includes
@@ -59,6 +60,11 @@ namespace nvhttp {
 
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
+
+  static const std::unordered_set<std::string> blocked_paths = {
+    "/", "/index.html", "/index.htm", "/index",
+    "/favicon.ico", "/favicon.png", "/favicon.svg"
+  };
 
   crypto::cert_chain_t cert_chain;
 
@@ -687,8 +693,21 @@ namespace nvhttp {
 
   template <class T>
   void
+  print_request_warning_ip(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request, const std::string &message) {
+    BOOST_LOG(warning) << message << " [" << request->query_string << "] from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
+  }
+
+  template <class T>
+  void
   not_found(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     print_req<T>(request);
+
+    // Security hardening: Return 444 for root paths to prevent probing
+    if (blocked_paths.count(request->path)) {
+      *response << "HTTP/1.1 444 No Response\r\n";
+      response->close_connection_after_response = true;
+      return;
+    }
 
     pt::ptree tree;
     tree.put("root.<xmlattr>.status_code", 404);
@@ -937,7 +956,6 @@ namespace nvhttp {
 
     pt::write_xml(data, tree);
     response->write(data.str());
-    response->close_connection_after_response = true;
   }
 
   nlohmann::json
@@ -959,6 +977,7 @@ namespace nvhttp {
     return last_pair_name;
   }
 
+  // Use keep-alive connection
   void
   applist(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -970,7 +989,6 @@ namespace nvhttp {
 
       pt::write_xml(data, tree);
       response->write(data.str());
-      response->close_connection_after_response = true;
     });
 
     auto &apps = tree.add_child("root", pt::ptree {});
@@ -990,8 +1008,7 @@ namespace nvhttp {
         json json_cmd;
         json_cmd["id"] = cmd.id;
         json_cmd["name"] = cmd.name;
-        json_cmd["do_cmd"] = cmd.do_cmd;
-        json_cmd["elevated"] = cmd.elevated;
+        // do_cmd and elevated intentionally omitted for security
 
         json_cmds.push_back(json_cmd);
       }
@@ -1098,16 +1115,19 @@ namespace nvhttp {
       auto clientname_param = args.find("clientname");
 
       if (param_type_param == args.end()) {
+        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss type");
         set_error(400, "Missing param_type parameter");
         return;
       }
 
       if (param_value_param == args.end()) {
+        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss value");
         set_error(400, "Missing param_value parameter");
         return;
       }
 
       if (clientname_param == args.end()) {
+        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss clientname");
         set_error(400, "Missing clientname parameter");
         return;
       }
@@ -1117,6 +1137,7 @@ namespace nvhttp {
       std::string client_name = clientname_param->second;
 
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
+        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid type");
         set_error(400, "Invalid param_type value");
         return;
       }
@@ -1127,12 +1148,14 @@ namespace nvhttp {
 
       switch (param.type) {
         case video::dynamic_param_type_e::RESOLUTION: {
+          print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: resolution change should be sent via control stream protocol, not HTTP API");
           set_error(400, "Resolution change should be sent via control stream protocol, not HTTP API");
           return;
         }
         case video::dynamic_param_type_e::FPS: {
           float fps = std::stof(param_value);
           if (fps <= 0.0f || fps > 1000.0f) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FPS value");
             set_error(400, "Invalid FPS value. Must be between 0 and 1000");
             return;
           }
@@ -1142,6 +1165,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::BITRATE: {
           int bitrate = std::stoi(param_value);
           if (bitrate <= 0 || bitrate > 800000) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid bitrate value");
             set_error(400, "Invalid bitrate value. Must be between 1 and 800000 Kbps");
             return;
           }
@@ -1151,6 +1175,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::QP: {
           int qp = std::stoi(param_value);
           if (qp < 0 || qp > 51) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid QP value");
             set_error(400, "Invalid QP value. Must be between 0 and 51");
             return;
           }
@@ -1160,6 +1185,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::FEC_PERCENTAGE: {
           int fec = std::stoi(param_value);
           if (fec < 0 || fec > 100) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FEC percentage value");
             set_error(400, "Invalid FEC percentage. Must be between 0 and 100");
             return;
           }
@@ -1173,6 +1199,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::MULTI_PASS: {
           int multi_pass = std::stoi(param_value);
           if (multi_pass < 0 || multi_pass > 2) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid multi-pass value");
             set_error(400, "Invalid multi-pass value. Must be between 0 and 2");
             return;
           }
@@ -1182,6 +1209,7 @@ namespace nvhttp {
         case video::dynamic_param_type_e::VBV_BUFFER_SIZE: {
           int vbv = std::stoi(param_value);
           if (vbv <= 0) {
+            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid VBV buffer size value");
             set_error(400, "Invalid VBV buffer size. Must be greater than 0");
             return;
           }
@@ -1206,11 +1234,12 @@ namespace nvhttp {
                         << client_name << "': type=" << param_type << ", value=" << param_value;
       }
       else {
+        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: no active streaming session found for client");
         set_error(404, "No active streaming session found for client: " + client_name);
       }
     }
     catch (std::exception &e) {
-      BOOST_LOG(warning) << "ChangeDynamicParam: "sv << e.what();
+      print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: "s + e.what());
       set_error(500, e.what());
     }
   }
@@ -1598,20 +1627,26 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
+  // Use keep-alive connection
   void
   appasset(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    auto args = request->parse_query_string();
-    auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
+    try {
+      auto args = request->parse_query_string();
+      auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
 
-    std::ifstream in(app_image, std::ios::binary);
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "image/png");
-    response->write(SimpleWeb::StatusCode::success_ok, in, headers);
-    response->close_connection_after_response = true;
+      std::ifstream in(app_image, std::ios::binary);
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "image/png");
+      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
+    } catch (const std::exception &e) {
+      print_request_warning_ip<SunshineHTTPS>(request, "AppAsset error: "s + e.what());
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Missing or invalid parameters");
+    }
   }
 
+  // Use keep-alive connection
   void
   get_displays(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -1685,7 +1720,6 @@ namespace nvhttp {
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
     response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-    response->close_connection_after_response = true;
   }
 
   void

@@ -942,7 +942,7 @@ namespace display_device {
         if (data_updated) {
           save_settings(filepath, *persistent_data);  // 忽略返回值
         }
-        BOOST_LOG(fatal) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
+        BOOST_LOG(error) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
       }
 
       // 清理持久化数据

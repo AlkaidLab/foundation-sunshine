@@ -243,6 +243,13 @@ namespace confighttp {
   }
 
   void
+  close_connection(resp_https_t response, req_https_t request) {
+      *response << "HTTP/1.1 444 No Response\r\n";
+      response->close_connection_after_response = true;
+      return;
+  }
+
+  void
   getHtmlPage(resp_https_t response, req_https_t request, const std::string& pageName, bool requireAuth = true) {
     if (requireAuth && !authenticate(response, request)) return;
 
@@ -331,6 +338,12 @@ namespace confighttp {
     getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
   }
 
+  bool
+  isChildPath(fs::path const &base, fs::path const &query) {
+    auto relPath = fs::relative(base, query);
+    return *(relPath.begin()) != fs::path("..");
+  }
+
   void
   getBoxArt(resp_https_t response, req_https_t request) {
     print_req(request);
@@ -343,27 +356,45 @@ namespace confighttp {
 
     BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-    // First try to find in SUNSHINE_ASSETS_DIR
-    std::string imagePath = SUNSHINE_ASSETS_DIR "/" + path;
-    BOOST_LOG(debug) << "Checking boxart path: " << imagePath;
+    static const fs::path assetsRoot = fs::weakly_canonical(fs::path(SUNSHINE_ASSETS_DIR));
+    static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
 
-    // If not found in boxart, try covers directory
-    if (!fs::exists(imagePath)) {
-      BOOST_LOG(debug) << "Not found in boxart, checking covers...";
-      std::string coversPath = platf::appdata().string() + "/covers/" + path;
-      BOOST_LOG(debug) << "Checking covers path: " << coversPath;
-      
-      if (fs::exists(coversPath)) {
-        imagePath = coversPath;
-        BOOST_LOG(debug) << "Found in covers: " << imagePath;
-      } else {
-        // If still not found, use default image
-        BOOST_LOG(debug) << "Not found in covers, using default box.png";
-        imagePath = SUNSHINE_ASSETS_DIR "/box.png";
-      }
-    } else {
-      BOOST_LOG(debug) << "Found in boxart: " << imagePath;
+    // First try to find in SUNSHINE_ASSETS_DIR
+    fs::path targetPath = fs::weakly_canonical(assetsRoot / path);
+    fs::path finalPath;
+    bool found = false;
+
+    // Strict check: Allow only files directly in assets root, no subdirectories
+    if (targetPath.parent_path() == assetsRoot && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
+      finalPath = targetPath;
+      found = true;
+      BOOST_LOG(debug) << "Found in boxart: " << finalPath.string();
     }
+    
+    // If not found in boxart, try covers directory
+    if (!found) {
+      targetPath = fs::weakly_canonical(coversRoot / path);
+      // For covers, we use isChildPath which allows subdirectories but prevents traversal out of root
+      if (isChildPath(targetPath, coversRoot) && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
+        finalPath = targetPath;
+        found = true;
+        BOOST_LOG(debug) << "Found in covers: " << finalPath.string();
+      }
+    }
+
+    if (!found) {
+      // If still not found or invalid path, use default image
+      BOOST_LOG(debug) << "Not found or invalid path, using default box.png";
+      finalPath = assetsRoot / "box.png";
+      // Ensure default file exists, otherwise we might fail later
+      if (!fs::exists(finalPath)) {
+        BOOST_LOG(warning) << "Default box.png not found at: " << finalPath.string();
+        response->write(SimpleWeb::StatusCode::client_error_not_found, "Image not found");
+        return;
+      }
+    }
+
+    std::string imagePath = finalPath.string();
 
     // Get file size
     std::error_code ec;
@@ -400,14 +431,9 @@ namespace confighttp {
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", contentType);
     headers.emplace("Content-Length", std::to_string(fileSize));
+    headers.emplace("Cache-Control", "max-age=3600"); // Add caching to reduce load
     
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
-  }
-
-  bool
-  isChildPath(fs::path const &base, fs::path const &query) {
-    auto relPath = fs::relative(base, query);
-    return *(relPath.begin()) != fs::path("..");
   }
 
   void
@@ -638,7 +664,7 @@ namespace confighttp {
         outputTree.put("error", "Only images.igdb.com is allowed");
         return;
       }
-      if (!http::download_file(url, path)) {
+      if (!http::download_image_with_magic_check(url, path)) {
         outputTree.put("error", "Failed to download cover");
         return;
       }
@@ -1388,7 +1414,7 @@ namespace confighttp {
 
   void
   proxySteamApi(resp_https_t response, req_https_t request) {
-    // 不需要认证，Steam API是公开的
+    if (!authenticate(response, request)) return;
     print_req(request);
 
     // 提取请求路径，移除/steam-api前缀
@@ -1407,15 +1433,18 @@ namespace confighttp {
 
     BOOST_LOG(info) << "Steam API proxy request: " << targetUrl;
 
+    // 安全检查：防止SSRF，确保目标主机确实是api.steampowered.com
+    if (http::url_get_host(targetUrl) != "api.steampowered.com") {
+      BOOST_LOG(warning) << "Blocked Steam API proxy request to unauthorized host";
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Invalid Host");
+      return;
+    }
+
     // 使用http模块下载数据
-    std::string tempFile = platf::appdata().string() + "/temp_steam_api_" + std::to_string(std::time(nullptr));
+    std::string content;
     
     try {
-      if (http::download_file(targetUrl, tempFile)) {
-        // 读取文件内容
-        std::ifstream file(tempFile, std::ios::binary);
-        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        
+      if (http::fetch_url(targetUrl, content)) {
         // 设置响应头
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
@@ -1424,9 +1453,6 @@ namespace confighttp {
         headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
-        
-        // 清理临时文件
-        std::remove(tempFile.c_str());
       } else {
         BOOST_LOG(error) << "Steam API request failed: " << targetUrl;
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API request failed");
@@ -1434,15 +1460,12 @@ namespace confighttp {
     } catch (const std::exception& e) {
       BOOST_LOG(error) << "Steam API proxy exception: " << e.what();
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API proxy exception");
-      
-      // 清理临时文件
-      std::remove(tempFile.c_str());
     }
   }
 
   void
   proxySteamStore(resp_https_t response, req_https_t request) {
-    // 不需要认证，Steam Store API是公开的
+    if (!authenticate(response, request)) return;
     print_req(request);
 
     // 提取请求路径，移除/steam-store前缀
@@ -1461,15 +1484,18 @@ namespace confighttp {
 
     BOOST_LOG(info) << "Steam Store proxy request: " << targetUrl;
 
+    // 安全检查：防止SSRF，确保目标主机确实是store.steampowered.com
+    if (http::url_get_host(targetUrl) != "store.steampowered.com") {
+      BOOST_LOG(warning) << "Blocked Steam Store proxy request to unauthorized host";
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Invalid Host");
+      return;
+    }
+
     // 使用http模块下载数据
-    std::string tempFile = platf::appdata().string() + "/temp_steam_store_" + std::to_string(std::time(nullptr));
+    std::string content;
     
     try {
-      if (http::download_file(targetUrl, tempFile)) {
-        // 读取文件内容
-        std::ifstream file(tempFile, std::ios::binary);
-        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        
+      if (http::fetch_url(targetUrl, content)) {
         // 设置响应头
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
@@ -1478,9 +1504,6 @@ namespace confighttp {
         headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
-        
-        // 清理临时文件
-        std::remove(tempFile.c_str());
       } else {
         BOOST_LOG(error) << "Steam Store request failed: " << targetUrl;
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store request failed");
@@ -1488,9 +1511,6 @@ namespace confighttp {
     } catch (const std::exception& e) {
       BOOST_LOG(error) << "Steam Store proxy exception: " << e.what();
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store proxy exception");
-      
-      // 清理临时文件
-      std::remove(tempFile.c_str());
     }
   }
 
@@ -1716,7 +1736,7 @@ namespace confighttp {
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
     https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
-    server.default_resource["GET"] = not_found;
+    server.default_resource["GET"] = close_connection;
     server.resource["^/$"]["GET"] = getIndexPage;
     server.resource["^/pin/?$"]["GET"] = getPinPage;
     server.resource["^/apps/?$"]["GET"] = getAppsPage;

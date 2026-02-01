@@ -13,6 +13,8 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
+#include <cstring>
+
 #include <boost/asio/ssl/context.hpp>
 
 #include <Simple-Web-Server/server_http.hpp>
@@ -192,22 +194,23 @@ namespace http {
   }
 
   bool download_file(const std::string &url, const std::string &file, long ssl_version) {
+    BOOST_LOG(info) << "Downloading external resource: " << url;
     // sonar complains about weak ssl and tls versions; however sonar cannot detect the fix
     CURL *curl = curl_easy_init();  // NOSONAR
     if (!curl) {
-      BOOST_LOG(error) << "Couldn't create CURL instance";
+      BOOST_LOG(error) << "Couldn't create CURL instance ["sv << url << ']';
       return false;
     }
 
     if (std::string file_dir = file_handler::get_parent_directory(file); !file_handler::make_directory(file_dir)) {
-      BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << ']';
+      BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << "] for ["sv << url << ']';
       curl_easy_cleanup(curl);
       return false;
     }
 
     FILE *fp = fopen(file.c_str(), "wb");
     if (!fp) {
-      BOOST_LOG(error) << "Couldn't open ["sv << file << ']';
+      BOOST_LOG(error) << "Couldn't open ["sv << file << "] for ["sv << url << ']';
       curl_easy_cleanup(curl);
       return false;
     }
@@ -217,14 +220,91 @@ namespace http {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
+    // Security limits
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)10 * 1024 * 1024); // 10MB limit
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L); // Disable 302 redirects
+
+    long response_code = 0;
     CURLcode result = curl_easy_perform(curl);
-    if (result != CURLE_OK) {
-      BOOST_LOG(error) << "Couldn't download ["sv << url << ", code:" << result << ']';
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+    if (result != CURLE_OK || response_code != 200) {
+      if (result != CURLE_OK) {
+        BOOST_LOG(error) << "Couldn't download ["sv << url << ", code:" << result << ']';
+      } else {
+        BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
+      }
+      // Force result to fail state if we got a non-200 response code
+      result = (result == CURLE_OK) ? CURLE_HTTP_RETURNED_ERROR : result;
     }
 
     curl_easy_cleanup(curl);
     fclose(fp);
+    if (result != CURLE_OK) {
+        // Cleanup partial file
+        if (fs::exists(file)) {
+            boost::system::error_code ec;
+            fs::remove(file, ec); // Don't crash if delete fails
+        }
+    }
     return result == CURLE_OK;
+  }
+
+  size_t string_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    auto *str = static_cast<std::string*>(userp);
+    
+    // Safety check: Don't allow string to grow beyond strict limits
+    if (str->size() + realsize > 10 * 1024 * 1024) {
+      BOOST_LOG(error) << "Fetch URL: memory limit exceeded";
+      return 0;
+    }
+    
+    str->append(static_cast<char*>(contents), realsize);
+    return realsize;
+  }
+
+  bool fetch_url(const std::string &url, std::string &content, long ssl_version) {
+    BOOST_LOG(info) << "Fetching external resource: " << url;
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+      BOOST_LOG(error) << "Couldn't create CURL instance ["sv << url << ']';
+      return false;
+    }
+
+    content.clear();
+    // Reserve some memory to reduce reallocations
+    content.reserve(4096);
+
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, ssl_version);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &content);
+
+    // Security limits
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)10 * 1024 * 1024); // 10MB limit
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+
+    long response_code = 0;
+    CURLcode result = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+    curl_easy_cleanup(curl);
+
+    if (result != CURLE_OK || response_code != 200) {
+      if (result != CURLE_OK) {
+        BOOST_LOG(error) << "Couldn't fetch ["sv << url << ", code:" << result << ']';
+      } else {
+        BOOST_LOG(error) << "Fetch failed: HTTP " << response_code << " [" << url << "]";
+      }
+      return false;
+    }
+
+    return true;
   }
 
   std::string url_escape(const std::string &url) {
@@ -249,3 +329,181 @@ namespace http {
     return result;
   }
 }  // namespace http
+
+namespace {
+  struct ImageCheckContext {
+    std::string filename;
+    std::string url;
+    FILE *fp = nullptr;
+    unsigned char buffer[12]; // Buffer for magic bytes
+    size_t buffer_len = 0;
+    bool checked = false;
+    bool valid = false;
+
+    // Ensure buffer is large enough for our checks to avoid overflow
+    static_assert(sizeof(buffer) >= 12, "Image check buffer too small");
+  };
+
+  size_t image_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    try {
+      if (!ptr || !userdata) {
+        return 0;
+      }
+
+      // Check for overflow in size calculation
+      if (size > 0 && nmemb > SIZE_MAX / size) {
+        auto *ctx = static_cast<ImageCheckContext *>(userdata);
+        BOOST_LOG(error) << "Image check size overflow ["sv << (ctx ? ctx->url : "unknown") << ']';
+        return 0;
+      }
+
+      auto *ctx = static_cast<ImageCheckContext *>(userdata);
+      size_t total_size = size * nmemb;
+      if (total_size == 0) {
+        return 0;
+      }
+      const unsigned char *data = static_cast<const unsigned char *>(ptr);
+
+      // If not yet checked, accumulating bytes
+      if (!ctx->checked) {
+        size_t needed = sizeof(ctx->buffer) - ctx->buffer_len;
+        size_t to_copy = std::min(needed, total_size);
+
+        memcpy(ctx->buffer + ctx->buffer_len, data, to_copy);
+        ctx->buffer_len += to_copy;
+
+        // Have we accumulated enough?
+        if (ctx->buffer_len == sizeof(ctx->buffer)) {
+          ctx->checked = true;
+          unsigned char *magic = ctx->buffer;
+
+          // Perform Magic Byte Check
+          // PNG: 89 50 4E 47
+          if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) ctx->valid = true;
+          // JPG: FF D8 FF
+          else if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) ctx->valid = true;
+          // BMP: 42 4D
+          else if (magic[0] == 0x42 && magic[1] == 0x4D) ctx->valid = true;
+          // WEBP: RIFF ... WEBP
+          else if (memcmp(magic, "RIFF", 4) == 0 && memcmp(magic + 8, "WEBP", 4) == 0) ctx->valid = true;
+          // ICO: 00 00 01 00
+          else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00) ctx->valid = true;
+
+          if (!ctx->valid) {
+            BOOST_LOG(warning) << "Streaming validation failed: Invalid magic bytes ["sv << ctx->url << ']';
+            return 0; // Stop download
+          }
+
+          // Check passed, open file
+          ctx->fp = fopen(ctx->filename.c_str(), "wb");
+          if (!ctx->fp) {
+            BOOST_LOG(error) << "Couldn't open ["sv << ctx->filename << "] for ["sv << ctx->url << ']';
+            return 0;
+          }
+
+          // Flush buffer to file
+          fwrite(ctx->buffer, 1, ctx->buffer_len, ctx->fp);
+        }
+        
+        // If we have leftovers in this chunk that weren't part of the buffer fill
+        if (total_size > to_copy) {
+          if (ctx->valid && ctx->fp) {
+            fwrite(data + to_copy, 1, total_size - to_copy, ctx->fp);
+          } else if (!ctx->valid && ctx->checked) {
+             // Should have returned 0 above, but just in case logic flows here
+             return 0;
+          }
+        }
+      } else {
+        // Already checked and valid, just write
+        if (ctx->valid && ctx->fp) {
+          fwrite(ptr, size, nmemb, ctx->fp);
+        } else {
+          return 0;
+        }
+      }
+
+      return total_size;
+    } catch (...) {
+      BOOST_LOG(error) << "Exception in image_write_callback";
+      return 0;
+    }
+  }
+}
+
+namespace http {
+  bool download_image_with_magic_check(const std::string &url, const std::string &file, long ssl_version) {
+    BOOST_LOG(info) << "Downloading external image with magic check: " << url;
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+      BOOST_LOG(error) << "Couldn't create CURL instance ["sv << url << ']';
+      return false;
+    }
+
+    if (std::string file_dir = file_handler::get_parent_directory(file); !file_handler::make_directory(file_dir)) {
+      BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << "] for ["sv << url << ']';
+      curl_easy_cleanup(curl);
+      return false;
+    }
+
+    ImageCheckContext ctx;
+    ctx.filename = file;
+    ctx.url = url;
+
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, ssl_version);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, image_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    
+    // Security limits
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)10 * 1024 * 1024); // 10MB limit
+
+    // Disable redirects
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    // Timeouts
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    long response_code = 0;
+    CURLcode result = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    
+    if (ctx.fp) {
+      fclose(ctx.fp);
+    }
+
+    curl_easy_cleanup(curl);
+
+    bool http_ok = (response_code == 200);
+
+    if (result != CURLE_OK || !http_ok) {
+      if (result != CURLE_OK) {
+        BOOST_LOG(error) << "Download failed or rejected ["sv << url << ", code:" << result << ']';
+      } else {
+        BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
+      }
+      
+      // Cleanup partial file if it exists (though usually it shouldn't be much)
+      if (boost::filesystem::exists(file)) {
+        boost::system::error_code ec;
+        boost::filesystem::remove(file, ec);
+      }
+      return false;
+    }
+
+    // Double check: if download finished but we never got enough bytes to check?
+    // Treat as failure (empty or too small file)
+    if (!ctx.checked) {
+       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
+       // Cleanup if file was created
+       if (boost::filesystem::exists(file)) {
+         boost::system::error_code ec;
+         boost::filesystem::remove(file, ec);
+       }
+       return false;
+    }
+
+    return true;
+  }
+}
+

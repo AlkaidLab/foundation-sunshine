@@ -281,7 +281,7 @@ namespace display_device {
       return device_id.empty() ? entry.second.device_state == device_state_e::primary : entry.first == device_id;
     }) };
     if (device_it == std::end(devices)) {
-      BOOST_LOG(error) << "Device " << (device_id.empty() ? "PRIMARY" : device_id) << " not found in the list of available devices!";
+      BOOST_LOG(warning) << "Device " << (device_id.empty() ? "PRIMARY" : device_id) << " not found in the list of available devices!";
       return {};
     }
 

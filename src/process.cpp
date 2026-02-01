@@ -575,20 +575,31 @@ namespace proc {
         if (query_start != std::string::npos) {
           app_image_path = app_image_path.substr(0, query_start);
         }
-        
+
         // 从URL提取文件名
         auto hash = std::hash<std::string>{}(original_url);
         auto ext = std::filesystem::path(app_image_path).extension().string();
+        
+        // 安全检查：验证文件扩展名
+        std::string ext_lower = ext;
+        std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
+        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" && 
+            ext_lower != ".bmp" && ext_lower != ".webp" && ext_lower != ".ico") {
+          BOOST_LOG(warning) << "Blocked download of non-image extension: " << ext;
+          return DEFAULT_APP_IMAGE_PATH; 
+        }
+
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
         
-        // 保存到本地assets目录
-        auto local_path = std::filesystem::path(SUNSHINE_ASSETS_DIR) / filename;
+        // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
+        auto local_path = std::filesystem::path(platf::appdata().string()) / "covers" / filename;
         
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          if (!http::download_file(original_url, local_path.string())) {
-            BOOST_LOG(warning) << "Failed to download image from URL: " << original_url;
+          // 使用流式校验下载，如果Magic Byte不匹配会直接中断下载
+          if (!http::download_image_with_magic_check(original_url, local_path.string())) {
+            BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
