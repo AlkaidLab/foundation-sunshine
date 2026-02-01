@@ -1362,6 +1362,16 @@ namespace nvhttp {
       return;
     }
 
+    // Early validation of AppID to prevent starting VDD or other expensive operations
+    // if the requested app does not exist.
+    if (proc::proc.get_app_name(appid).empty()) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 404);
+      tree.put("root.<xmlattr>.status_message", "App not found");
+      BOOST_LOG(error) << "Launch couldn't find app with ID ["sv << appid << ']';
+      return;
+    }
+
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
 

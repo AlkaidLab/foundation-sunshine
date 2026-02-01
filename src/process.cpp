@@ -703,15 +703,25 @@ namespace proc {
     // Generate id by hashing name with image data if present
     std::vector<std::string> to_hash;
     to_hash.push_back(app_name);
-    auto file_path = validate_app_image_path(app_image_path);
-    if (file_path != DEFAULT_APP_IMAGE_PATH) {
-      auto file_hash = calculate_sha256(file_path);
-      if (file_hash) {
-        to_hash.push_back(file_hash.value());
-      }
-      else {
-        // Fallback to just hashing image path
-        to_hash.push_back(file_path);
+
+    // Fix for unstable AppID when wallpaper changes:
+    // If the image path is "desktop", use the literal string "desktop" for hashing 
+    // instead of the resolved wallpaper path/content. This ensures the AppID 
+    // remains constant even if the user changes their wallpaper.
+    if (app_image_path == "desktop") {
+      to_hash.push_back("desktop");
+    }
+    else {
+      auto file_path = validate_app_image_path(app_image_path);
+      if (file_path != DEFAULT_APP_IMAGE_PATH) {
+        auto file_hash = calculate_sha256(file_path);
+        if (file_hash) {
+          to_hash.push_back(file_hash.value());
+        }
+        else {
+          // Fallback to just hashing image path
+          to_hash.push_back(file_path);
+        }
       }
     }
 
