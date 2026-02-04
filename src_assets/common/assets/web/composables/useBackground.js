@@ -1,6 +1,6 @@
 import ColorThief from 'colorthief'
 
-const DEFAULT_BACKGROUND = 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/sunshine-bg0.webp'
+const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'
 
 const COLOR_CONFIG = {
