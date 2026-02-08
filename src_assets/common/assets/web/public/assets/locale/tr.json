@@ -531,6 +531,7 @@
     "new_pre_release": "Yeni Bir Yayın Öncesi Sürüm Mevcut!",
     "new_stable": "Yeni bir Kararlı Sürüm Kullanılabilir!",
     "startup_errors": "<b>Dikkat!</b> Sunshine başlatma sırasında bu hataları tespit etti. Yayınlamadan önce bunları düzeltmenizi <b>ŞİDDETLE TAVSİYE</b> EDERİZ.",
+    "update_download_confirm": "Güncelleme indirme sayfası tarayıcınızda açılacak. Devam edilsin mi?",
     "version_dirty": "Sunshine'ı daha iyi bir yazılım haline getirmeye yardımcı olduğunuz için teşekkür ederiz!",
     "version_latest": "Sunshine'ın en son sürümünü çalıştırıyorsunuz",
     "view_logs": "Günlükleri görüntüle",

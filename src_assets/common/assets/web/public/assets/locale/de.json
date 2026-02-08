@@ -531,6 +531,7 @@
     "new_pre_release": "Eine neue Pre-Release Version ist verfügbar!",
     "new_stable": "Eine neue Stable Version ist verfügbar!",
     "startup_errors": "<b>Achtung!</b> Sunshine erkannte diese Fehler während des Starts. Wir <b>STRONGLY EMPFOHLEN</b> beheben sie vor dem Streaming.",
+    "update_download_confirm": "Die Update-Downloadseite wird in Ihrem Browser geöffnet. Fortfahren?",
     "version_dirty": "Vielen Dank, dass Sie dazu beigetragen haben, Sunshine zu einer besseren Software zu machen!",
     "version_latest": "Du verwendest die neueste Version von Sunshine",
     "view_logs": "Protokolle anzeigen",

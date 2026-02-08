@@ -531,6 +531,7 @@
     "new_pre_release": "Je k dispozici nová verze před-vydání!",
     "new_stable": "K dispozici je nová stabilní verze!",
     "startup_errors": "<b>Pozor!</b> Sunshine detekoval tyto chyby během spuštění. <b>STRONGLY RECOMMEND</b> je opraví před vysíláním.",
+    "update_download_confirm": "Chystáte se otevřít stránku stahování aktualizací v prohlížeči. Pokračovat?",
     "version_dirty": "Děkujeme, že jste pomohli udělat sunshine lepší software!",
     "version_latest": "Používáte nejnovější verzi Sunshine",
     "view_logs": "Zobrazit protokoly",

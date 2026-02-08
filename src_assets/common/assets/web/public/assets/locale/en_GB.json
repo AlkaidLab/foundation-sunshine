@@ -531,6 +531,7 @@
     "new_pre_release": "A new Pre-Release Version is Available!",
     "new_stable": "A new Stable Version is Available!",
     "startup_errors": "<b>Attention!</b> Sunshine detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
+    "update_download_confirm": "You are about to open the update download page in your browser. Continue?",
     "version_dirty": "Thank you for helping to make Sunshine a better software!",
     "version_latest": "You are running the latest version of Sunshine",
     "view_logs": "View Logs",
