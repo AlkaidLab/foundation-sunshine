@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <atomic>
 #include <map>
 #include <set>
 #include <sstream>
@@ -61,6 +62,10 @@ using json = nlohmann::json;
 namespace confighttp {
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
+
+  // Prevent saveApp/deleteApp concurrent write to file_apps causing file corruption, non-blocking
+  // return busy if not acquired
+  static std::atomic<bool> apps_writing { false };
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
 
@@ -338,9 +343,12 @@ namespace confighttp {
     getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
   }
 
+  /**
+   * @brief 检查 child 是否是 parent 目录的子路径（防止路径穿越）
+   */
   bool
-  isChildPath(fs::path const &base, fs::path const &query) {
-    auto relPath = fs::relative(base, query);
+  isChildPath(fs::path const &child, fs::path const &parent) {
+    auto relPath = fs::relative(child, parent);
     return *(relPath.begin()) != fs::path("..");
   }
 
@@ -500,6 +508,19 @@ namespace confighttp {
 
     print_req(request);
 
+    // Prevent concurrent write to file_apps causing file corruption
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree outputTree;
+      outputTree.put("status", "false");
+      outputTree.put("error", "Another save operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+
     std::stringstream ss;
     ss << request->content.rdbuf();
 
@@ -513,7 +534,6 @@ namespace confighttp {
 
     pt::ptree inputTree, fileTree;
 
-    BOOST_LOG(info) << config::stream.file_apps;
     try {
       // TODO: Input Validation
       pt::read_json(ss, inputTree);
@@ -528,11 +548,13 @@ namespace confighttp {
         fileTree.push_back(std::make_pair("apps", input_apps_node));
       }
       else {
-        if (input_edit_node.get_child("prep-cmd").empty()) {
+        auto prep_cmd = input_edit_node.get_child_optional("prep-cmd");
+        if (prep_cmd && prep_cmd->empty()) {
           input_edit_node.erase("prep-cmd");
         }
 
-        if (input_edit_node.get_child("detached").empty()) {
+        auto detached = input_edit_node.get_child_optional("detached");
+        if (detached && detached->empty()) {
           input_edit_node.erase("detached");
         }
 
@@ -565,6 +587,7 @@ namespace confighttp {
       return;
     }
 
+    BOOST_LOG(info) << "SaveApp: configuration saved successfully"sv;
     outputTree.put("status", "true");
     proc::refresh(config::stream.file_apps);
   }
@@ -574,6 +597,19 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
+
+    // Prevent concurrent write to file_apps causing file corruption
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree outputTree;
+      outputTree.put("status", "false");
+      outputTree.put("error", "Another operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
 
     pt::ptree outputTree;
     auto g = util::fail_guard([&]() {
@@ -588,7 +624,8 @@ namespace confighttp {
       auto &apps_node = fileTree.get_child("apps"s);
       int index = stoi(request->path_match[1]);
 
-      if (index < 0) {
+      int apps_count = static_cast<int>(apps_node.size());
+      if (index < 0 || index >= apps_count) {
         outputTree.put("status", "false");
         outputTree.put("error", "Invalid Index");
         return;
@@ -614,6 +651,7 @@ namespace confighttp {
       return;
     }
 
+    BOOST_LOG(info) << "DeleteApp: configuration deleted successfully"sv;
     outputTree.put("status", "true");
     proc::refresh(config::stream.file_apps);
   }
@@ -670,7 +708,15 @@ namespace confighttp {
       }
     }
     else {
-      auto data = SimpleWeb::Crypto::Base64::decode(inputTree.get<std::string>("data"));
+      // Limit base64 data size to prevent memory exhaustion
+      // (10MB decoded to about 7.5MB, enough for cover images)
+      constexpr std::size_t MAX_COVER_BASE64_SIZE = 10 * 1024 * 1024;
+      auto base64_str = inputTree.get<std::string>("data");
+      if (base64_str.size() > MAX_COVER_BASE64_SIZE) {
+        outputTree.put("error", "Cover image too large (max 10MB)");
+        return;
+      }
+      auto data = SimpleWeb::Crypto::Base64::decode(base64_str);
 
       std::ofstream imgfile(path, std::ios::binary);
       if (!imgfile.is_open()) {
@@ -836,9 +882,9 @@ namespace confighttp {
         iddOptionTree.add_child("global", global_node);
         iddOptionTree.add_child("resolutions", resolutions_nodes);
       }
-    } catch(...) {
+    } catch(std::exception &e) {
       // 读取失败，创建新的配置
-      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置";
+      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置: " << e.what();
 
       pt::ptree monitor_node;
       monitor_node.put("count", 1);
@@ -870,7 +916,8 @@ namespace confighttp {
 
       return true;
     }
-    catch(...) {
+    catch(std::exception &e) {
+      BOOST_LOG(warning) << "写入VDD配置失败: " << e.what();
       return false;
     }
   }
@@ -918,6 +965,8 @@ namespace confighttp {
       outputTree.put("error", e.what());
       return;
     }
+
+    outputTree.put("status", "true");
   }
 
   void
