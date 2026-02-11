@@ -51,6 +51,8 @@ namespace proc {
   using namespace std::literals;
   namespace pt = boost::property_tree;
 
+  uint32_t calculate_crc32(const std::string &input);
+
   proc_t proc;
 
   class deinit_t: public platf::deinit_t {
@@ -393,7 +395,22 @@ namespace proc {
   }
   void
   proc_t::set_apps(std::vector<ctx_t> apps) {
+    // Calculate uniqueEtag for the app list before moving apps
+    std::string combined_info;
+    for (const auto &app : apps) {
+      combined_info += app.id + app.name;
+    }
+    
+    // Use CRC32 for the tag, same as used elsewhere
+    auto crc = calculate_crc32(combined_info);
+    _apps_etag = std::to_string(crc);
+
     _apps = std::move(apps);
+  }
+
+  std::string
+  proc_t::get_apps_etag() const {
+    return _apps_etag;
   }
 
   const boost::process::v1::environment &

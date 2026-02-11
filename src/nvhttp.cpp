@@ -951,6 +951,7 @@ namespace nvhttp {
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+    tree.put("root.appListEtag", proc::proc.get_apps_etag());
 
     std::ostringstream data;
 

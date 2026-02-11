@@ -118,9 +118,13 @@ namespace proc {
     run_menu_cmd(std::string cmd_id);
     void
     terminate();
+    std::string
+    get_apps_etag() const;
 
   private:
     int _app_id;
+
+    std::string _apps_etag;
 
     boost::process::v1::environment _env;
     std::vector<ctx_t> _apps;
