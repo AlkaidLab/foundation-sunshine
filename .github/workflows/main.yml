@@ -11,6 +11,8 @@ on:
   push:
     branches:
       - master
+  release:
+    types: [published]
   workflow_dispatch:
 
 concurrency:
@@ -31,12 +33,12 @@ jobs:
   setup_release:
     name: Setup Release
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
-      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
-      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
-      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
-      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
+      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_release.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
+      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_release.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
+      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_release.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
+      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_release.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
+      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_release.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
+      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_release.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
       contents: write  # read does not work to check squash and merge details
     runs-on: ubuntu-latest
@@ -51,22 +53,35 @@ jobs:
 
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'release'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Release (Release event)
+        id: setup_release_release
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          SUFFIX=$([ "${{ github.event.release.target_commitish }}" = "master" ] && echo "" || echo "-dev")
+          echo "publish_release=true" >> $GITHUB_OUTPUT
+          echo "release_body=${{ github.event.release.body }}" >> $GITHUB_OUTPUT
+          echo "release_commit=${{ github.event.release.target_commitish }}" >> $GITHUB_OUTPUT
+          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
+          echo "release_tag=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_version=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
 
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
         run: |
-          # 为手动构建设置默认值
+          SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
           echo "publish_release=false" >> $GITHUB_OUTPUT
-          echo "release_body=Manual build" >> $GITHUB_OUTPUT
+          echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
           echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
 
   build_win:
     name: Windows
@@ -76,6 +91,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           submodules: recursive
 
       - name: Setup Dependencies Windows
