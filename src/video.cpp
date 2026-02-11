@@ -2925,10 +2925,10 @@ namespace video {
     config_t &config,
     void *channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    // ---- Setup ----
     auto shutdown_event = mail->event<bool>(mail::shutdown);
-
     auto images = std::make_shared<img_event_t::element_type>();
-    auto lg = util::fail_guard([&]() {
+    auto cleanup = util::fail_guard([&]() {
       images->stop();
       shutdown_event->raise(true);
     });
@@ -2939,96 +2939,92 @@ namespace video {
     }
 
     ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
-
     if (!ref->capture_ctx_queue->running()) {
       return;
     }
 
     int frame_nr = 1;
-
     auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
     auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
     auto idr_events = mail->event<bool>(mail::idr);
     auto resolution_change_event = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
 
-    // Encoding takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
-    // Cache window capture mode check outside the loop
     const bool is_window_capture = (config::video.capture_target == "window");
 
-    // Track display dimensions for resolution change detection
+    // Compute even-aligned resolution (minimum 64) from dimension and scale factor
+    auto compute_aligned_resolution = [](int dimension, float scale) -> int {
+      return std::max(64, (static_cast<int>(dimension * scale) + 1) & ~1);
+    };
+
+    // ---- Resolution tracking state ----
     int last_display_width = 0;
     int last_display_height = 0;
-
-    // Track initial scale ratio (encoding resolution / display resolution)
-    // Used to maintain consistent scaling when display resolution changes
     float initial_scale_x = 1.0f;
     float initial_scale_y = 1.0f;
 
+    // Debounce state: games may change display resolution multiple times during
+    // startup. We wait for the resolution to stabilize before updating encoding
+    // and notifying the client.
+    int pending_display_width = 0;
+    int pending_display_height = 0;
+    bool resolution_change_pending = false;
+    std::chrono::steady_clock::time_point resolution_change_time;
+    static constexpr auto resolution_settle_delay = std::chrono::milliseconds(1500);
+
     while (!shutdown_event->peek() && images->running()) {
-      // Wait for the main capture event when the display is being reinitialized
+      // ==== Phase 1: Acquire display ====
       if (ref->reinit_event.peek()) {
-        BOOST_LOG(debug) << "[Display] Reinit event detected, waiting for display ready...";
         std::this_thread::sleep_for(20ms);
         continue;
       }
 
-      // Wait for the display to be ready
       std::shared_ptr<platf::display_t> display;
       {
-        auto lg = ref->display_wp.lock();
+        auto display_guard = ref->display_wp.lock();
         if (ref->display_wp->expired()) {
-          BOOST_LOG(verbose) << "[Display] Display object expired, waiting for reinit...";
+          std::this_thread::sleep_for(20ms);
           continue;
         }
         display = ref->display_wp->lock();
       }
 
-      // Detect display resolution changes (e.g., rotation causing width/height swap)
-      // For WGC window capture, display->width/height is monitor resolution, not window size
       const int current_width = display->width;
       const int current_height = display->height;
 
-      // Helper lambda to compute even-aligned resolution with minimum 64
-      auto compute_aligned_resolution = [](int dimension, float scale) {
-        return std::max(64, (static_cast<int>(dimension * scale) + 1) & ~1);
-      };
-
-      // Initialize cached display dimensions on first iteration
+      // ==== Phase 2: Resolution change detection (with debounce) ====
       if (last_display_width == 0 && last_display_height == 0) {
+        // First iteration: compute initial scale from display vs client resolution
         last_display_width = current_width;
         last_display_height = current_height;
 
-        // Check if display orientation matches client request
         const bool display_is_portrait = (current_height > current_width);
         const bool client_wants_landscape = (config.width > config.height);
         const bool orientation_mismatch = !is_window_capture &&
                                           (display_is_portrait == client_wants_landscape);
 
         if (orientation_mismatch) {
-          // When orientation mismatches, client width maps to display height and vice versa
+          // Map client width to display height axis and vice versa
           initial_scale_x = static_cast<float>(config.width) / current_height;
           initial_scale_y = static_cast<float>(config.height) / current_width;
-          BOOST_LOG(info) << "Display orientation mismatch: display="
-                          << current_width << "x" << current_height
-                          << ", client=" << config.width << "x" << config.height
-                          << " -> using display resolution";
         }
         else {
           initial_scale_x = static_cast<float>(config.width) / current_width;
           initial_scale_y = static_cast<float>(config.height) / current_height;
-          BOOST_LOG(info) << "Initial display: " << current_width << "x" << current_height
-                          << ", encoding: " << config.width << "x" << config.height
-                          << ", scale: " << initial_scale_x << "x" << initial_scale_y;
         }
 
         config.width = compute_aligned_resolution(current_width, initial_scale_x);
         config.height = compute_aligned_resolution(current_height, initial_scale_y);
 
+        BOOST_LOG(info) << "Initial display: " << current_width << "x" << current_height
+                        << ", encoding: " << config.width << "x" << config.height
+                        << ", scale: " << initial_scale_x << "x" << initial_scale_y
+                        << (orientation_mismatch ? " (orientation mismatch)" : "");
+
         resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
 
         if (orientation_mismatch) {
           idr_events->raise(true);
@@ -3036,9 +3032,39 @@ namespace video {
       }
       else if (!is_window_capture &&
                (current_width != last_display_width || current_height != last_display_height)) {
-        const bool is_rotation = (last_display_width == current_height && last_display_height == current_width);
+        // Display resolution changed: start or restart debounce timer
+        if (!resolution_change_pending ||
+            current_width != pending_display_width || current_height != pending_display_height) {
+          BOOST_LOG(info) << "Display resolution change detected: "
+                          << last_display_width << "x" << last_display_height << " -> "
+                          << current_width << "x" << current_height
+                          << " (waiting for stabilization)";
+          pending_display_width = current_width;
+          pending_display_height = current_height;
+          resolution_change_time = std::chrono::steady_clock::now();
+          resolution_change_pending = true;
+        }
+      }
+      else if (resolution_change_pending) {
+        // Display reverted to last applied resolution: cancel pending change
+        // (reaching this branch implies current == last, since the previous
+        //  branch already handles current != last)
+        BOOST_LOG(info) << "Display resolution reverted to "
+                        << current_width << "x" << current_height
+                        << ", cancelling pending change";
+        resolution_change_pending = false;
+      }
 
-        BOOST_LOG(info) << "Display resolution changed: "
+      // Apply pending resolution change once display has been stable
+      if (resolution_change_pending &&
+          current_width == pending_display_width && current_height == pending_display_height &&
+          std::chrono::steady_clock::now() - resolution_change_time >= resolution_settle_delay) {
+        resolution_change_pending = false;
+
+        const bool is_rotation = (last_display_width == current_height &&
+                                  last_display_height == current_width);
+
+        BOOST_LOG(info) << "Display resolution stabilized: "
                         << last_display_width << "x" << last_display_height << " -> "
                         << current_width << "x" << current_height
                         << (is_rotation ? " (rotation)" : "");
@@ -3057,24 +3083,30 @@ namespace video {
                         << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")";
 
         resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
 
         idr_events->raise(true);
         std::this_thread::sleep_for(100ms);
       }
 
-      auto &encoder = *chosen_encoder;
+      // Short-circuit if resolution change is pending but not yet settled:
+      // wait briefly and re-check instead of starting a new encode session
+      if (resolution_change_pending) {
+        std::this_thread::sleep_for(20ms);
+        continue;
+      }
 
+      // ==== Phase 3: Create encoder and run ====
+      auto &encoder = *chosen_encoder;
       auto encode_device = make_encode_device(*display, encoder, config);
       if (!encode_device) {
         return;
       }
 
-      // Absolute mouse coordinates require that the dimensions of the screen are known
       touch_port_event->raise(make_port(display.get(), config));
 
-      // Update client with our current HDR display state
+      // Update client with current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
       if (colorspace_is_hdr(encode_device->colorspace)) {
         if (display->get_hdr_metadata(hdr_info->metadata)) {
