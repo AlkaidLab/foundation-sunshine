@@ -112,29 +112,26 @@ namespace display_device {
     std::stringstream output;
     bool first_group { true };
 
-    output << std::endl
-           << "[" << std::endl;
+    output << "[";
     for (const auto &group : value) {
       if (!first_group) {
-        output << "," << std::endl;
+        output << ", ";
       }
       first_group = false;
 
-      output << "    [" << std::endl;
+      output << "[";
       bool first_group_item { true };
       for (const auto &group_item : group) {
         if (!first_group_item) {
-          output << "," << std::endl;
+          output << ", ";
         }
         first_group_item = false;
 
-        output << "        " << group_item;
+        output << group_item;
       }
-      output << std::endl
-             << "    ]";
+      output << "]";
     }
-    output << std::endl
-           << "]";
+    output << "]";
 
     return output.str();
   }

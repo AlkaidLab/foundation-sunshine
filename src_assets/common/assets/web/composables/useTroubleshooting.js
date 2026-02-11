@@ -42,6 +42,7 @@ export function useTroubleshooting() {
   const resetDisplayDevicePressed = ref(false)
   const resetDisplayDeviceStatus = ref(null)
   const logs = ref('Loading...')
+  const logOffset = ref(0)
   const logFilter = ref(null)
   const matchMode = ref('contains')
   const ignoreCase = ref(true)
@@ -80,15 +81,44 @@ export function useTroubleshooting() {
 
   const fetchJson = async (url, options = {}) => {
     const response = await fetch(url, options)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
     return response.json()
   }
 
   const refreshLogs = async () => {
     try {
-      const response = await fetch('/api/logs')
-      logs.value = await response.text()
-    } catch {
-      logs.value = 'Failed to load logs'
+      const offset = Number(logOffset.value)
+      const headers = (!Number.isNaN(offset) && offset > 0) ? { 'X-Log-Offset': String(offset) } : {}
+      const response = await fetch('/api/logs', { headers })
+
+      if (response.status === 304) {
+        const sizeHeader = response.headers.get('X-Log-Size')
+        const size = Number.parseInt(sizeHeader || '0', 10)
+        logOffset.value = Number.isNaN(size) || size < 0 ? 0 : size
+        return
+      }
+
+      if (!response.ok) {
+        console.error('Failed to refresh logs: HTTP', response.status)
+        return
+      }
+
+      const rawSize = Number.parseInt(response.headers.get('X-Log-Size') || '0', 10)
+      const newSize = Number.isNaN(rawSize) || rawSize < 0 ? 0 : rawSize
+      const logRange = (response.headers.get('X-Log-Range') || '').trim().toLowerCase()
+      const text = await response.text()
+
+      if (logRange === 'incremental' && text.length > 0) {
+        logs.value += text
+      } else {
+        logs.value = text
+      }
+
+      logOffset.value = newSize
+    } catch (e) {
+      console.error('Failed to refresh logs:', e)
     }
   }
 
@@ -187,7 +217,22 @@ export function useTroubleshooting() {
     }
   }
 
-  onUnmounted(stopLogRefresh)
+  // Pause polling when page is invisible, resume when visible
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      stopLogRefresh()
+    } else {
+      refreshLogs()
+      startLogRefresh()
+    }
+  }
+
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
+  onUnmounted(() => {
+    stopLogRefresh()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  })
 
   return {
     platform,
