@@ -62,10 +62,12 @@ namespace platf::dxgi {
   using multithread_t = util::safe_ptr<ID3D11Multithread, Release<ID3D11Multithread>>;
   using vs_t = util::safe_ptr<ID3D11VertexShader, Release<ID3D11VertexShader>>;
   using ps_t = util::safe_ptr<ID3D11PixelShader, Release<ID3D11PixelShader>>;
+  using cs_t = util::safe_ptr<ID3D11ComputeShader, Release<ID3D11ComputeShader>>;
   using blend_t = util::safe_ptr<ID3D11BlendState, Release<ID3D11BlendState>>;
   using input_layout_t = util::safe_ptr<ID3D11InputLayout, Release<ID3D11InputLayout>>;
   using render_target_t = util::safe_ptr<ID3D11RenderTargetView, Release<ID3D11RenderTargetView>>;
   using shader_res_t = util::safe_ptr<ID3D11ShaderResourceView, Release<ID3D11ShaderResourceView>>;
+  using uav_t = util::safe_ptr<ID3D11UnorderedAccessView, Release<ID3D11UnorderedAccessView>>;
   using buf_t = util::safe_ptr<ID3D11Buffer, Release<ID3D11Buffer>>;
   using raster_state_t = util::safe_ptr<ID3D11RasterizerState, Release<ID3D11RasterizerState>>;
   using sampler_state_t = util::safe_ptr<ID3D11SamplerState, Release<ID3D11SamplerState>>;

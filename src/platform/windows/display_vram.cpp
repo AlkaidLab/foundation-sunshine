@@ -143,6 +143,8 @@ namespace platf::dxgi {
   blob_t cursor_vs_hlsl;
   blob_t simple_cursor_vs_hlsl;
   blob_t simple_cursor_ps_hlsl;
+  blob_t hdr_luminance_analysis_cs_hlsl;
+  blob_t hdr_luminance_reduce_cs_hlsl;
 
   struct img_d3d_t: public platf::img_t {
     // These objects are owned by the display_t's ID3D11Device
@@ -402,6 +404,11 @@ namespace platf::dxgi {
     return compile_shader(file, "main_vs", "vs_5_0");
   }
 
+  blob_t
+  compile_compute_shader(LPCSTR file) {
+    return compile_shader(file, "main_cs", "cs_5_0");
+  }
+
   class d3d_base_encode_device final {
   public:
     int
@@ -464,6 +471,13 @@ namespace platf::dxgi {
 
         // Draw captured frame
         draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+
+        // Dispatch HDR luminance analysis on the scRGB FP16 input texture
+        // This runs AFTER the YUV conversion draw but BEFORE releasing the mutex,
+        // so the texture is still valid. Uses async readback (1-frame delay).
+        if (hdr_analysis_enabled && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+          dispatch_hdr_analysis(img_ctx.encoder_input_res.get());
+        }
 
         // Release encoder mutex to allow capture code to reuse this image
         img_ctx.encoder_mutex->ReleaseSync(0);
@@ -931,6 +945,14 @@ namespace platf::dxgi {
       device_ctx->PSSetSamplers(0, 2, samplers);
       device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+      // Initialize HDR luminance analyzer for HDR formats (P010, Y410, R16_UINT)
+      // The analyzer is optional — if it fails, HDR will still work with static metadata only
+      if (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT) {
+        if (init_hdr_luminance_analyzer() != 0) {
+          BOOST_LOG(warning) << "HDR luminance analyzer init failed, dynamic metadata will use defaults";
+        }
+      }
+
       return 0;
     }
 
@@ -1074,6 +1096,309 @@ namespace platf::dxgi {
     device_ctx_t device_ctx;
 
     texture2d_t output_texture;
+
+    // ===== HDR Luminance Analyzer (Two-Pass GPU Reduction) =====
+    // Pass 1: Per-tile CS — each 16x16 group produces {min, max, sum, count, histogram[128]}
+    // Pass 2: Single-group CS — reduces all groups to one final result on GPU
+    // CPU only reads 1 FinalResult (no iteration over thousands of groups)
+    cs_t hdr_pass1_cs;                     // First pass: per-tile analysis
+    cs_t hdr_pass2_cs;                     // Second pass: global reduction
+    buf_t hdr_group_results_buf;           // Pass 1 output (default usage + UAV + SRV)
+    uav_t hdr_group_results_uav;           // UAV view for pass 1 output
+    shader_res_t hdr_group_results_srv;    // SRV view for pass 2 input
+    buf_t hdr_final_result_buf;            // Pass 2 output (default usage + UAV)
+    uav_t hdr_final_result_uav;            // UAV view for pass 2 output
+    buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
+    buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
+    uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
+    bool hdr_analysis_pending = false;     // Whether we have results ready to read
+    bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
+
+    // Must match HLSL GroupResult layout exactly
+    static constexpr uint32_t HISTOGRAM_BINS = 128;
+
+    struct GroupResult {
+      float minMaxRGB;
+      float maxMaxRGB;
+      float sumMaxRGB;
+      uint32_t pixelCount;
+      uint32_t histogram[HISTOGRAM_BINS];
+    };
+
+    // Must match HLSL FinalResult layout exactly (same as GroupResult for merged output)
+    struct FinalResult {
+      float minMaxRGB;
+      float maxMaxRGB;
+      float sumMaxRGB;
+      uint32_t pixelCount;
+      uint32_t histogram[HISTOGRAM_BINS];
+    };
+
+    /**
+     * @brief Initialize the two-pass HDR luminance analysis compute pipeline.
+     * Pass 1: Per-tile analysis CS (dispatched per-frame)
+     * Pass 2: Single-group reduction CS (dispatched per-frame, reduces all groups to 1 result)
+     * @return 0 on success, -1 on failure (non-fatal, analysis will be disabled)
+     */
+    int
+    init_hdr_luminance_analyzer() {
+      if (!hdr_luminance_analysis_cs_hlsl || !hdr_luminance_reduce_cs_hlsl) {
+        BOOST_LOG(warning) << "HDR luminance analysis CS not compiled, skipping init";
+        return -1;
+      }
+
+      // Create pass 1 compute shader (per-tile analysis)
+      HRESULT status = device->CreateComputeShader(
+        hdr_luminance_analysis_cs_hlsl->GetBufferPointer(),
+        hdr_luminance_analysis_cs_hlsl->GetBufferSize(),
+        nullptr,
+        &hdr_pass1_cs);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR pass 1 compute shader: " << util::log_hex(status);
+        return -1;
+      }
+
+      // Create pass 2 compute shader (global reduction)
+      status = device->CreateComputeShader(
+        hdr_luminance_reduce_cs_hlsl->GetBufferPointer(),
+        hdr_luminance_reduce_cs_hlsl->GetBufferSize(),
+        nullptr,
+        &hdr_pass2_cs);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR pass 2 compute shader: " << util::log_hex(status);
+        return -1;
+      }
+
+      // Calculate number of groups based on display resolution
+      uint32_t width = display->width;
+      uint32_t height = display->height;
+      uint32_t groups_x = (width + 15) / 16;
+      uint32_t groups_y = (height + 15) / 16;
+      hdr_num_groups = groups_x * groups_y;
+
+      // --- Pass 1 output: structured buffer with UAV + SRV ---
+      D3D11_BUFFER_DESC buf_desc = {};
+      buf_desc.ByteWidth = hdr_num_groups * sizeof(GroupResult);
+      buf_desc.Usage = D3D11_USAGE_DEFAULT;
+      buf_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+      buf_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+      buf_desc.StructureByteStride = sizeof(GroupResult);
+
+      status = device->CreateBuffer(&buf_desc, nullptr, &hdr_group_results_buf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR group results buffer: " << util::log_hex(status);
+        return -1;
+      }
+
+      // UAV for pass 1 output
+      D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc = {};
+      uav_desc.Format = DXGI_FORMAT_UNKNOWN;
+      uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+      uav_desc.Buffer.NumElements = hdr_num_groups;
+
+      status = device->CreateUnorderedAccessView(hdr_group_results_buf.get(), &uav_desc, &hdr_group_results_uav);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR group UAV: " << util::log_hex(status);
+        return -1;
+      }
+
+      // SRV for pass 2 input (read group results)
+      D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+      srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+      srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+      srv_desc.Buffer.NumElements = hdr_num_groups;
+
+      status = device->CreateShaderResourceView(hdr_group_results_buf.get(), &srv_desc, &hdr_group_results_srv);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR group SRV: " << util::log_hex(status);
+        return -1;
+      }
+
+      // --- Pass 2 output: single FinalResult ---
+      D3D11_BUFFER_DESC final_desc = {};
+      final_desc.ByteWidth = sizeof(FinalResult);
+      final_desc.Usage = D3D11_USAGE_DEFAULT;
+      final_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+      final_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+      final_desc.StructureByteStride = sizeof(FinalResult);
+
+      status = device->CreateBuffer(&final_desc, nullptr, &hdr_final_result_buf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR final result buffer: " << util::log_hex(status);
+        return -1;
+      }
+
+      D3D11_UNORDERED_ACCESS_VIEW_DESC final_uav_desc = {};
+      final_uav_desc.Format = DXGI_FORMAT_UNKNOWN;
+      final_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+      final_uav_desc.Buffer.NumElements = 1;
+
+      status = device->CreateUnorderedAccessView(hdr_final_result_buf.get(), &final_uav_desc, &hdr_final_result_uav);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR final UAV: " << util::log_hex(status);
+        return -1;
+      }
+
+      // --- Constant buffer for pass 2 (numGroups) ---
+      D3D11_BUFFER_DESC cb_desc = {};
+      cb_desc.ByteWidth = 16;  // 16-byte aligned: uint numGroups + 12 bytes padding
+      cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
+      cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+      struct {
+        uint32_t numGroups;
+        uint32_t pad[3];
+      } cb_data = { hdr_num_groups, {} };
+
+      D3D11_SUBRESOURCE_DATA cb_init = {};
+      cb_init.pSysMem = &cb_data;
+
+      status = device->CreateBuffer(&cb_desc, &cb_init, &hdr_reduce_cbuf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR reduce constant buffer: " << util::log_hex(status);
+        return -1;
+      }
+
+      // --- Staging buffer for async CPU readback (1 FinalResult only) ---
+      D3D11_BUFFER_DESC staging_desc = {};
+      staging_desc.ByteWidth = sizeof(FinalResult);
+      staging_desc.Usage = D3D11_USAGE_STAGING;
+      staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+      status = device->CreateBuffer(&staging_desc, nullptr, &hdr_staging_buf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR staging buffer: " << util::log_hex(status);
+        return -1;
+      }
+
+      hdr_analysis_enabled = true;
+      BOOST_LOG(info) << "HDR luminance analyzer initialized (two-pass): " << width << "x" << height
+                      << ", " << hdr_num_groups << " groups (" << groups_x << "x" << groups_y << ")"
+                      << ", staging: " << sizeof(FinalResult) << " bytes";
+      return 0;
+    }
+
+    /**
+     * @brief Dispatch the two-pass luminance analysis for the current frame.
+     * Pass 1: Per-tile analysis — reads scRGB texture, writes per-group results
+     * Pass 2: Global reduction — reads per-group results, writes 1 final result
+     * Then copies final result to staging for async CPU readback next frame.
+     * @param input_srv SRV of the scRGB FP16 capture texture
+     */
+    void
+    dispatch_hdr_analysis(ID3D11ShaderResourceView *input_srv) {
+      if (!hdr_analysis_enabled || !input_srv) return;
+
+      // Read results from PREVIOUS frame (1-frame delay for async readback)
+      if (hdr_analysis_pending) {
+        read_hdr_analysis_results();
+      }
+
+      // Unbind render targets to avoid resource hazard (SRV vs RTV conflict)
+      ID3D11RenderTargetView *null_rtv = nullptr;
+      device_ctx->OMSetRenderTargets(1, &null_rtv, nullptr);
+
+      // ===== Pass 1: Per-tile analysis =====
+      device_ctx->CSSetShader(hdr_pass1_cs.get(), nullptr, 0);
+      device_ctx->CSSetShaderResources(0, 1, &input_srv);
+      ID3D11UnorderedAccessView *uav1 = hdr_group_results_uav.get();
+      device_ctx->CSSetUnorderedAccessViews(0, 1, &uav1, nullptr);
+
+      uint32_t groups_x = (display->width + 15) / 16;
+      uint32_t groups_y = (display->height + 15) / 16;
+      device_ctx->Dispatch(groups_x, groups_y, 1);
+
+      // Unbind pass 1 resources
+      ID3D11ShaderResourceView *null_srv = nullptr;
+      ID3D11UnorderedAccessView *null_uav = nullptr;
+      device_ctx->CSSetShaderResources(0, 1, &null_srv);
+      device_ctx->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+
+      // ===== Pass 2: Global reduction =====
+      device_ctx->CSSetShader(hdr_pass2_cs.get(), nullptr, 0);
+      ID3D11ShaderResourceView *group_srv = hdr_group_results_srv.get();
+      device_ctx->CSSetShaderResources(0, 1, &group_srv);
+      ID3D11UnorderedAccessView *uav2 = hdr_final_result_uav.get();
+      device_ctx->CSSetUnorderedAccessViews(0, 1, &uav2, nullptr);
+      ID3D11Buffer *cbuf = hdr_reduce_cbuf.get();
+      device_ctx->CSSetConstantBuffers(0, 1, &cbuf);
+
+      device_ctx->Dispatch(1, 1, 1);  // Single group of 256 threads
+
+      // Unbind all CS resources
+      device_ctx->CSSetShaderResources(0, 1, &null_srv);
+      device_ctx->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+      ID3D11Buffer *null_cb = nullptr;
+      device_ctx->CSSetConstantBuffers(0, 1, &null_cb);
+      device_ctx->CSSetShader(nullptr, nullptr, 0);
+
+      // Copy final result to staging buffer for CPU readback next frame
+      device_ctx->CopyResource(hdr_staging_buf.get(), hdr_final_result_buf.get());
+
+      hdr_analysis_pending = true;
+    }
+
+    /**
+     * @brief Read HDR analysis results from the staging buffer (previous frame).
+     * GPU has already reduced all groups to one FinalResult — CPU just reads it
+     * and computes percentiles from the histogram.
+     */
+    void
+    read_hdr_analysis_results() {
+      D3D11_MAPPED_SUBRESOURCE mapped = {};
+      HRESULT status = device_ctx->Map(hdr_staging_buf.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+
+      if (status == DXGI_ERROR_WAS_STILL_DRAWING) {
+        // GPU hasn't finished yet — skip this readback, try next frame
+        return;
+      }
+
+      if (FAILED(status)) {
+        BOOST_LOG(debug) << "HDR staging Map failed: " << util::log_hex(status);
+        return;
+      }
+
+      auto *result = reinterpret_cast<const FinalResult *>(mapped.pData);
+
+      if (result->pixelCount > 0) {
+        hdr_luminance_stats_out.min_maxrgb = result->minMaxRGB;
+        hdr_luminance_stats_out.max_maxrgb = result->maxMaxRGB;
+        hdr_luminance_stats_out.avg_maxrgb = result->sumMaxRGB / static_cast<float>(result->pixelCount);
+
+        // Copy histogram to stats
+        for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
+          hdr_luminance_stats_out.histogram[i] = result->histogram[i];
+        }
+
+        // Compute P95 and P99 percentiles from histogram
+        uint32_t total = result->pixelCount;
+        uint32_t target_95 = static_cast<uint32_t>(total * 0.95);
+        uint32_t target_99 = static_cast<uint32_t>(total * 0.99);
+        uint32_t cumulative = 0;
+        bool found_95 = false, found_99 = false;
+
+        for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
+          cumulative += result->histogram[i];
+          if (!found_95 && cumulative >= target_95) {
+            // P95 is the upper edge of this bin
+            hdr_luminance_stats_out.percentile_95 = (i + 1) * platf::HDR_NITS_PER_BIN;
+            found_95 = true;
+          }
+          if (!found_99 && cumulative >= target_99) {
+            hdr_luminance_stats_out.percentile_99 = (i + 1) * platf::HDR_NITS_PER_BIN;
+            found_99 = true;
+            break;
+          }
+        }
+
+        hdr_luminance_stats_out.valid = true;
+      }
+
+      device_ctx->Unmap(hdr_staging_buf.get(), 0);
+    }
+
+    // Intermediate storage for luminance stats (written by readback, consumed by convert caller)
+    platf::hdr_frame_luminance_stats_t hdr_luminance_stats_out;
   };
 
   class d3d_avcodec_encode_device_t: public avcodec_encode_device_t {
@@ -1087,7 +1412,10 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &img_base) override {
-      return base.convert(img_base);
+      int result = base.convert(img_base);
+      // Propagate per-frame luminance stats from GPU analyzer to encode device
+      hdr_luminance_stats = base.hdr_luminance_stats_out;
+      return result;
     }
 
     void
@@ -1209,7 +1537,10 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &img_base) override {
-      return base.convert(img_base);
+      int result = base.convert(img_base);
+      // Propagate per-frame luminance stats from GPU analyzer to encode device
+      hdr_luminance_stats = base.hdr_luminance_stats_out;
+      return result;
     }
 
   private:
@@ -2402,6 +2733,16 @@ namespace platf::dxgi {
     compile_vertex_shader_helper(cursor_vs);
     compile_pixel_shader_helper(simple_cursor_ps);
     compile_vertex_shader_helper(simple_cursor_vs);
+
+    // Compile HDR luminance analysis compute shaders (optional, non-fatal if fails)
+    hdr_luminance_analysis_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_analysis_cs.hlsl");
+    if (!hdr_luminance_analysis_cs_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile HDR luminance analysis CS, per-frame HDR metadata will use defaults";
+    }
+    hdr_luminance_reduce_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_reduce_cs.hlsl");
+    if (!hdr_luminance_reduce_cs_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile HDR luminance reduce CS, per-frame HDR metadata will use defaults";
+    }
 
     BOOST_LOG(debug) << "Compiled shaders"sv;
 

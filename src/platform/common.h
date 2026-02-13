@@ -394,6 +394,32 @@ namespace platf {
     std::optional<null_t> null;
   };
 
+  /**
+   * @brief Per-frame HDR luminance statistics computed by GPU analysis.
+   *
+   * These statistics are extracted from the captured scRGB FP16 frame
+   * by a D3D11 compute shader and used to generate accurate per-frame
+   * HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
+   *
+   * Values are in nits (cd/m²). scRGB 1.0 = 80 nits.
+   */
+  /// Number of luminance histogram bins (each bin = 78.125 nits, covering 0-10000 nits)
+  static constexpr uint32_t HDR_HISTOGRAM_BINS = 128;
+  /// Maximum nits covered by the histogram
+  static constexpr float HDR_HISTOGRAM_MAX_NITS = 10000.0f;
+  /// Nits per histogram bin
+  static constexpr float HDR_NITS_PER_BIN = HDR_HISTOGRAM_MAX_NITS / HDR_HISTOGRAM_BINS;
+
+  struct hdr_frame_luminance_stats_t {
+    float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
+    float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
+    float percentile_95 = 0.0f; ///< 95th percentile of maxRGB (nits) — stable peak estimate
+    float percentile_99 = 0.0f; ///< 99th percentile of maxRGB (nits) — near-peak estimate
+    uint32_t histogram[HDR_HISTOGRAM_BINS] = {};  ///< Luminance histogram (128 bins × 78.125 nits)
+    bool valid = false;         ///< Whether stats are available (false on first frame)
+  };
+
   struct encode_device_t {
     virtual ~encode_device_t() = default;
 
@@ -401,6 +427,13 @@ namespace platf {
     convert(platf::img_t &img) = 0;
 
     video::sunshine_colorspace_t colorspace;
+
+    /**
+     * @brief Per-frame HDR luminance statistics from GPU analysis.
+     * Updated during convert() with 1-frame delay (async GPU readback).
+     * Used by video.cpp to generate per-frame HDR dynamic metadata.
+     */
+    hdr_frame_luminance_stats_t hdr_luminance_stats;
   };
 
   struct avcodec_encode_device_t: encode_device_t {
