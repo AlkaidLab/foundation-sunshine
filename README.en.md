@@ -19,12 +19,34 @@ A fork based on LizardByte/Sunshine, providing comprehensive documentation suppo
 **Sunshine-Foundation** is a self-hosted game stream host for Moonlight. This forked version introduces significant improvements over the original Sunshine, focusing on enhancing the game streaming experience for various streaming terminal devices connected to a Windows host:
 
 ### 🌟 Core Features
-- **HDR-Friendly Support** - Optimized HDR processing pipeline for a true HDR game streaming experience
+- **Full HDR Pipeline Support** - Dual-format HDR10 (PQ) + HLG encoding with adaptive metadata, covering a wider range of endpoint devices
 - **Virtual Display** - Built-in virtual display management, allowing creation and management of virtual displays without additional software
 - **Remote Microphone** - Supports receiving client microphones, providing high-quality voice passthrough
 - **Advanced Control Panel** - Intuitive web control interface with real-time monitoring and configuration management
 - **Low-Latency Transmission** - Optimized encoding processing leveraging the latest hardware capabilities
 - **Smart Pairing** - Intelligent management of pairing devices with corresponding profiles
+
+### 🎬 Full HDR Pipeline Architecture
+
+**Dual-Format HDR Encoding: HDR10 (PQ) + HLG Parallel Support**
+
+Conventional streaming solutions only support HDR10 (PQ) absolute luminance mapping, which requires the client display to precisely match the source EOTF parameters and peak brightness. When the receiving device has insufficient capabilities or mismatched brightness parameters, tone mapping artifacts such as crushed blacks and clipped highlights occur.
+
+Foundation Sunshine introduces HLG (Hybrid Log-Gamma, ITU-R BT.2100) support at the encoding layer. This standard employs relative luminance mapping with the following technical advantages:
+- **Scene-Referred Luminance Adaptation**: HLG uses a relative luminance curve, allowing the display to automatically perform tone mapping based on its own peak brightness — shadow detail retention on low-brightness devices is significantly superior to PQ
+- **Smooth Highlight Roll-Off**: HLG's hybrid log-gamma transfer function provides gradual roll-off in highlight regions, avoiding the banding artifacts caused by PQ's hard clipping
+- **Native SDR Backward Compatibility**: HLG signals can be directly decoded by SDR displays as standard BT.709 content without additional tone mapping
+
+**Per-Frame Luminance Analysis and Adaptive Metadata Generation**
+
+The encoding pipeline integrates a real-time luminance analysis module on the GPU side, executing the following via Compute Shaders on each frame:
+- **Per-Frame MaxFALL / MaxCLL Computation**: Real-time calculation of frame-level Maximum Content Light Level (MaxCLL) and Maximum Frame-Average Light Level (MaxFALL), dynamically injected into HEVC/AV1 SEI/OBU metadata
+- **Robust Outlier Filtering**: Percentile-based truncation strategy to discard extreme luminance pixels (e.g., specular highlights), preventing isolated bright spots from inflating the global luminance reference and causing overall image dimming
+- **Inter-Frame Exponential Smoothing**: EMA (Exponential Moving Average) filtering applied to luminance statistics across consecutive frames, eliminating brightness flicker caused by abrupt metadata changes during scene transitions
+
+**Complete HDR Metadata Passthrough**
+
+Supports full passthrough of HDR10 static metadata (Mastering Display Info + Content Light Level), HDR Vivid dynamic metadata, and HLG transfer characteristic identifiers, ensuring that bitstreams output by NVENC / AMF / QSV encoders carry complete color volume and luminance information compliant with the CTA-861 specification, enabling client decoders to accurately reproduce the source HDR intent.
 
 ### 🖥️ Virtual Display Integration (Requires Windows 10 22H2 or newer)
 - Dynamic virtual display creation and destruction
