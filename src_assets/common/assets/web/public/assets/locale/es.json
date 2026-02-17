@@ -255,6 +255,7 @@
     "encoder": "Forzar un codificador específico",
     "encoder_desc": "Forzar un codificador específico, de lo contrario Sunshine seleccionará la mejor opción disponible. Nota: Si especifica un codificador de hardware en Windows, debe coincidir con el GPU donde la pantalla está conectada.",
     "encoder_software": "Software",
+    "experimental_features": "Funciones experimentales",
     "external_ip": "IP externa",
     "external_ip_desc": "Si no se da ninguna dirección IP externa, Sunshine detectará automáticamente IP externa",
     "fec_percentage": "Porcentaje FEC",

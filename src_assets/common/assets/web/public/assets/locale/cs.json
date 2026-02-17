@@ -255,6 +255,7 @@
     "encoder": "Vynutit specifický enkodér",
     "encoder_desc": "Vynutit konkrétní enkodér, jinak Sunshine vybere nejlepší dostupnou možnost. Poznámka: Pokud zadáte hardwarový enkodér v systému Windows, musí odpovídat GPU, kde je displej připojen.",
     "encoder_software": "Programové vybavení",
+    "experimental_features": "Experimentální funkce",
     "external_ip": "Externí IP",
     "external_ip_desc": "Pokud není zadána žádná externí IP adresa, Sluneční server automaticky rozpozná externí IP adresu",
     "fec_percentage": "Procento FEC",

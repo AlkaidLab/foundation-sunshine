@@ -255,6 +255,7 @@
     "encoder": "Erzwinge einen bestimmten Encoder",
     "encoder_desc": "Erzwinge einen bestimmten Encoder, sonst wählt Sunshine die beste verfügbare Option. Notiz: Wenn Sie einen Hardwarekodierer unter Windows angeben, muss er mit der GPU übereinstimmen, in der das Display verbunden ist.",
     "encoder_software": "Software",
+    "experimental_features": "Experimentelle Funktionen",
     "external_ip": "Externe IP",
     "external_ip_desc": "Wenn keine externe IP-Adresse angegeben ist, erkennt Sunshine automatisch externe IP",
     "fec_percentage": "Prozentsatz FEC",

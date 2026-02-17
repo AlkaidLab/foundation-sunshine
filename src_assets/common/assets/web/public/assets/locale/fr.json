@@ -255,6 +255,7 @@
     "encoder": "Forcer un encodeur spécifique",
     "encoder_desc": "Forcer un encodeur spécifique, sinon Sunshine sélectionnera la meilleure option disponible. Note : Si vous spécifiez un encodeur matériel sous Windows, il doit correspondre au GPU où l'affichage est connecté.",
     "encoder_software": "Logiciel",
+    "experimental_features": "Fonctionnalités expérimentales",
     "external_ip": "Adresse IP externe",
     "external_ip_desc": "Si aucune adresse IP externe n'est fournie, Sunshine la détectera automatiquement",
     "fec_percentage": "Pourcentage de FEC",

@@ -255,6 +255,7 @@
     "encoder": "Tvinga en specifik kodare",
     "encoder_desc": "Tvinga en specifik kodare, annars kommer Sunshine att välja det bästa tillgängliga alternativet. Obs: Om du anger en hårdvarukodare i Windows, måste den matcha GPU där skärmen är ansluten.",
     "encoder_software": "Programvara",
+    "experimental_features": "Experimentella funktioner",
     "external_ip": "Extern IP",
     "external_ip_desc": "Om ingen extern IP-adress anges, kommer Sunshine automatiskt upptäcka extern IP",
     "fec_percentage": "FEC Procent",

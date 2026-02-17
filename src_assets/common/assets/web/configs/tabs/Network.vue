@@ -505,11 +505,11 @@ const testWebhook = async () => {
   
   .alert {
     color: var(--text-primary, #fff);
-    
-    &-info {
-      background: rgba(23, 162, 184, 0.2);
-      border-color: rgba(23, 162, 184, 0.5);
-    }
+  }
+
+  .alert-info {
+    background: rgba(23, 162, 184, 0.2);
+    border-color: rgba(23, 162, 184, 0.5);
   }
   
   [data-bs-theme='light'] & {
@@ -525,11 +525,11 @@ const testWebhook = async () => {
     
     .alert {
       color: #000000;
-      
-      &-info {
-        background: rgba(23, 162, 184, 0.15);
-        border-color: rgba(23, 162, 184, 0.4);
-      }
+    }
+
+    .alert-info {
+      background: rgba(23, 162, 184, 0.15);
+      border-color: rgba(23, 162, 184, 0.4);
     }
   }
 }

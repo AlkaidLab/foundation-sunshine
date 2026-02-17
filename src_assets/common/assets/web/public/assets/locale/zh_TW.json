@@ -255,6 +255,7 @@
     "encoder": "強制指定編碼器",
     "encoder_desc": "強制指定特定的編碼器，否則 Sunshine 將選擇最佳的可用選項。注意：如果您在 Windows 上指定硬體編碼器，則必須與顯示器連接的 GPU 符合。",
     "encoder_software": "軟體",
+    "experimental_features": "實驗性功能",
     "external_ip": "外部 IP",
     "external_ip_desc": "如果未提供外部 IP 位址，Sunshine 會自動偵測外部 IP 位址。",
     "fec_percentage": "FEC 比例",
