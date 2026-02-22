@@ -113,16 +113,12 @@ void main_cs(uint GIndex : SV_GroupIndex)
         GroupMemoryBarrierWithGroupSync();
     }
 
-    // Thread 0 writes final merged result
+    // Thread 0 writes final merged result (scalars only; histogram written below by 128 threads)
     if (GIndex == 0) {
-        FinalResult result;
-        result.minMaxRGB = gs_min[0];
-        result.maxMaxRGB = gs_max[0];
-        result.sumMaxRGB = gs_sum[0];
-        result.pixelCount = gs_count[0];
-
-        // histogram is written below by multiple threads
-        finalResult[0] = result;
+        finalResult[0].minMaxRGB = gs_min[0];
+        finalResult[0].maxMaxRGB = gs_max[0];
+        finalResult[0].sumMaxRGB = gs_sum[0];
+        finalResult[0].pixelCount = gs_count[0];
     }
 
     GroupMemoryBarrierWithGroupSync();
