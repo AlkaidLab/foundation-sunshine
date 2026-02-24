@@ -142,14 +142,35 @@ jobs:
             "mingw-w64-ucrt-x86_64-nsis"
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
-            "mingw-w64-ucrt-x86_64-opus"
             "mingw-w64-ucrt-x86_64-toolchain"
+            "mingw-w64-ucrt-x86_64-autotools"
           )
 
           # Note: mingw-w64-ucrt-x86_64-rust conflicts with fixed gcc-15.1.0-5
           # We install Rust via rustup in a separate step
 
           pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+
+      - name: Build Opus 1.6.1 from source
+        shell: msys2 {0}
+        run: |
+          echo "Downloading Opus 1.6.1..."
+          wget -q https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz
+          tar xzf opus-1.6.1.tar.gz
+          cd opus-1.6.1
+
+          # Touch generated files to prevent automake/autoconf regeneration
+          touch aclocal.m4 configure Makefile.in config.h.in */Makefile.in
+
+          ./configure --prefix=/ucrt64 --enable-shared --enable-static --disable-doc --disable-extra-programs
+          make -j$(nproc)
+          make install
+
+          # Verify installation
+          echo "Opus version installed:"
+          pkg-config --modversion opus
+          echo "Opus libs:"
+          ls -la /ucrt64/lib/libopus*
 
       - name: Install Rust (for Tauri GUI)
         shell: msys2 {0}
