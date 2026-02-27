@@ -687,6 +687,10 @@ editing the `conf` file in a text editor. Use the examples as reference.
             [BlackHole](https://github.com/ExistentialAudio/BlackHole).
             <br>
             <br>
+            **Note:** For remote microphone functionality (client mic → macOS),
+            use the `virtual_sink` configuration option instead.
+            <br>
+            <br>
             **Windows:**
             <br>
             Enter the following command in command prompt or PowerShell.
@@ -723,12 +727,63 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [mouse_sensitivity](https://localhost:47990/config/#mouse_sensitivity)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Mouse sensitivity multiplier for remote control (macOS only).
+            <br>
+            <br>
+            Adjust this value to fine-tune mouse responsiveness:
+            <ul>
+                <li>1.0 = Default sensitivity</li>
+                <li>< 1.0 = Slower, more precise</li>
+                <li>> 1.0 = Faster, more responsive</li>
+            </ul>
+            Range: 0.5 - 2.0
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">1.0</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            mouse_sensitivity = 1.2
+            @endcode</td>
+    </tr>
+</table>
+
 ### [virtual_sink](https://localhost:47990/config/#virtual_sink)
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
+            Virtual audio output device for remote microphone (macOS only).
+            <br>
+            <br>
+            **macOS:**
+            <br>
+            This setting enables remote microphone functionality by routing client audio
+            to a virtual audio device (BlackHole). Applications can then use this device
+            as a microphone input for voice calls, voice-to-text, etc.
+            <br>
+            <br>
+            **Setup:**
+            <ol>
+                <li>Install BlackHole: <code>brew install blackhole-2ch</code></li>
+                <li>Set <code>virtual_sink = BlackHole 2ch</code> in Sunshine config</li>
+                <li>In System Settings → Sound → Input, select "BlackHole 2ch"</li>
+                <li>In your application (Zoom/AirType/etc), select "BlackHole 2ch" as microphone</li>
+            </ol>
+            <br>
+            <br>
+            **Other platforms:**
+            <br>
             The audio device that's virtual, like Steam Streaming Speakers. This allows Sunshine to stream audio,
             while muting the speakers.
             @tip{See [audio_sink](#audio_sinkhttpslocalhost47990configaudio_sink)!}
@@ -743,10 +798,16 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">n/a</td>
+        <td colspan="2">Empty (feature disabled)</td>
     </tr>
     <tr>
-        <td>Example</td>
+        <td>Example (macOS)</td>
+        <td colspan="2">@code{}
+            virtual_sink = BlackHole 2ch
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example (Other)</td>
         <td colspan="2">@code{}
             virtual_sink = Steam Streaming Speakers
             @endcode</td>
