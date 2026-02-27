@@ -1,0 +1,21 @@
+DMG Package: build/cpack_artifacts/Sunshine.dmg
+Created: $(date)
+Architecture: ARM64 (Apple Silicon)
+Version: 2026.0227.131642.杂鱼
+Size: 9.3 MB
+
+Installation: 
+1. Double-click Sunshine.dmg to mount
+2. Drag Sunshine.app to Applications folder
+3. Right-click Sunshine.app and select "Open" on first launch
+
+Note: Not code-signed. Right-click > Open on first launch to bypass Gatekeeper.
+
+Build Configuration:
+- CMake Build Type: Release
+- Tests: Disabled (test code has compilation errors)
+- Platform: macOS Darwin 25.2.0 (Apple Silicon M4)
+- Compiler: AppleClang 17.0.0
+
+Package Location:
+/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/cpack_artifacts/Sunshine.dmg
