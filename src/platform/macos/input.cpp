@@ -409,9 +409,19 @@ const KeyCodeMap kKeyCodesMap[] = {
     input_t &input,
     const int deltaX,
     const int deltaY) {
+    const auto macos_input = static_cast<macos_input_t *>(input.get());
     const auto current = get_mouse_loc(input);
 
-    const auto location = util::point_t { current.x + deltaX, current.y + deltaY };
+    // 应用灵敏度倍数
+    const float sensitivity = macos_input->mouse_sensitivity;
+    const int adjusted_deltaX = static_cast<int>(deltaX * sensitivity);
+    const int adjusted_deltaY = static_cast<int>(deltaY * sensitivity);
+
+    const auto location = util::point_t {
+      current.x + adjusted_deltaX,
+      current.y + adjusted_deltaY
+    };
+
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, current, 0);
   }
 
