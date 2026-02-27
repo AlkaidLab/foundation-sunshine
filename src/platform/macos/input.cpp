@@ -348,33 +348,44 @@ const KeyCodeMap kKeyCodesMap[] = {
     const util::point_t raw_location,
     const util::point_t previous_location,
     const int click_count) {
-    BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
+    BOOST_LOG(debug) << "mouse_event: " << button << ", type: " << type
+                     << ", location:" << raw_location.x << ":" << raw_location.y
+                     << " click_count: " << click_count;
 
     const auto macos_input = static_cast<macos_input_t *>(input.get());
     const auto display = macos_input->display;
-    const auto event = macos_input->mouse_event;
+    const auto source = macos_input->source;
 
-    // get display bounds for current display
+    // 获取显示器边界
     const CGRect display_bounds = CGDisplayBounds(display);
 
-    // limit mouse to current display bounds
+    // 限制鼠标在当前显示器边界内
     const auto location = CGPoint {
       std::clamp(raw_location.x, display_bounds.origin.x, display_bounds.origin.x + display_bounds.size.width - 1),
       std::clamp(raw_location.y, display_bounds.origin.y, display_bounds.origin.y + display_bounds.size.height - 1)
     };
 
-    CGEventSetType(event, type);
-    CGEventSetLocation(event, location);
-    CGEventSetIntegerValueField(event, kCGMouseEventButtonNumber, button);
-    CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
-
-    // Include deltas so some 3D applications can consume changes (game cameras, etc)
+    // 计算增量（用于 3D 应用）
     const double deltaX = raw_location.x - previous_location.x;
     const double deltaY = raw_location.y - previous_location.y;
+
+    // 直接创建事件（而不是复用和修改）
+    CGEventRef event = CGEventCreateMouseEvent(source, type, location, button);
+
+    // 设置点击次数
+    CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+
+    // 设置增量（用于游戏相机等）
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
 
+    // 发送事件
     CGEventPost(kCGHIDEventTap, event);
+    CFRelease(event);
+
+    // 更新位置缓存
+    macos_input->cached_mouse_position = util::point_t { location.x, location.y };
+    macos_input->position_cache_valid = true;
   }
 
   inline CGEventType
