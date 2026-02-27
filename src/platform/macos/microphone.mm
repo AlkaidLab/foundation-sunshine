@@ -44,6 +44,11 @@ namespace platf {
   struct macos_audio_control_t: public audio_control_t {
     AVCaptureDevice *audio_capture_device {};
 
+    // 新增：音频播放相关
+    AVAudioEngine *audio_engine {};
+    AVAudioPlayerNode *player_node {};
+    AVAudioFormat *audio_format {};
+
   public:
     int
     set_sink(const std::string &sink) override {
@@ -86,6 +91,88 @@ namespace platf {
       sink_t sink;
 
       return sink;
+    }
+
+    bool
+    is_sink_available(const std::string &sink) override {
+      return true;
+    }
+
+    int
+    write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+      return -1;
+    }
+
+    int
+    init_mic_redirect_device() override {
+      // 1. 确定输出设备名称
+      NSString *deviceName = @"BlackHole 2ch";
+      if (!config::audio.virtual_sink.empty()) {
+        deviceName = [NSString stringWithUTF8String:config::audio.virtual_sink.c_str()];
+      }
+
+      BOOST_LOG(info) << "Initializing virtual microphone with device: " << [deviceName UTF8String];
+
+      // 2. 创建 AVAudioEngine
+      audio_engine = [[AVAudioEngine alloc] init];
+      if (!audio_engine) {
+        BOOST_LOG(error) << "Failed to create AVAudioEngine";
+        return -1;
+      }
+
+      // 3. 创建 AVAudioPlayerNode
+      player_node = [[AVAudioPlayerNode alloc] init];
+      if (!player_node) {
+        BOOST_LOG(error) << "Failed to create AVAudioPlayerNode";
+        [audio_engine release];
+        audio_engine = nullptr;
+        return -1;
+      }
+
+      // 4. 配置音频格式（48kHz, 2ch, float32）
+      audio_format = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+                                                      sampleRate:48000
+                                                        channels:2
+                                                     interleaved:NO];
+      if (!audio_format) {
+        BOOST_LOG(error) << "Failed to create audio format";
+        [player_node release];
+        [audio_engine release];
+        player_node = nullptr;
+        audio_engine = nullptr;
+        return -1;
+      }
+
+      // 5. 连接节点
+      [audio_engine attachNode:player_node];
+      [audio_engine connect:player_node
+                         to:audio_engine.mainMixerNode
+                     format:audio_format];
+
+      // 6. 启动音频引擎
+      NSError *nsError = nil;
+      if (![audio_engine startAndReturnError:&nsError]) {
+        BOOST_LOG(error) << "Failed to start audio engine: " << [[nsError localizedDescription] UTF8String];
+        [audio_format release];
+        [player_node release];
+        [audio_engine release];
+        audio_format = nullptr;
+        player_node = nullptr;
+        audio_engine = nullptr;
+        return -1;
+      }
+
+      // 7. 启动播放节点
+      [player_node play];
+
+      BOOST_LOG(info) << "Virtual microphone initialized successfully";
+      BOOST_LOG(info) << "Please select '" << [deviceName UTF8String] << "' as input device in System Settings → Sound → Input";
+
+      return 0;
+    }
+
+    void
+    release_mic_redirect_device() override {
     }
   };
 
