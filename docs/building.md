@@ -120,6 +120,86 @@ ninja -C build
 @tip{Available build options can be found in
 [options.cmake](https://github.com/LizardByte/Sunshine/blob/master/cmake/prep/options.cmake).}
 
+#### macOS-Specific Build Notes
+
+##### FFmpeg Header Priority (Critical)
+
+Sunshine uses bundled FFmpeg static libraries located in `third-party/build-deps/dist/Darwin-arm64/`. The CMake configuration ensures these bundled headers take priority over system headers (e.g., Homebrew FFmpeg).
+
+**Why this matters:** System FFmpeg headers may have different struct layouts than the bundled libraries, causing crashes. The build system automatically handles this, but if you modify CMake files, ensure:
+
+```cmake
+include_directories(BEFORE SYSTEM ${FFMPEG_INCLUDE_DIRS})
+```
+
+comes before any system include directories.
+
+##### Clean Build Recommended
+
+For macOS builds, especially after pulling updates, perform a clean build:
+
+```bash
+rm -rf build
+cmake -B build -G Ninja -S . -DCMAKE_BUILD_TYPE=Release
+ninja -C build
+```
+
+##### Common Build Issues
+
+**Issue:** `ld: library not found for -lssl`
+**Solution:** Install OpenSSL via Homebrew and ensure it's linked:
+```bash
+brew install openssl@3
+ln -s /opt/homebrew/opt/openssl/include/openssl /opt/homebrew/include/openssl
+```
+
+**Issue:** `fatal error: 'boost/...hpp' file not found`
+**Solution:** Install Boost via Homebrew:
+```bash
+brew install boost
+```
+
+**Issue:** Build succeeds but binary crashes on launch
+**Solution:** This may indicate FFmpeg ABI mismatch. Perform a clean rebuild and check `docs/troubleshooting.md` for details.
+
+##### Testing on macOS
+
+After building, run the test suite to verify core functionality:
+
+```bash
+# Build with tests enabled
+cmake -B build -G Ninja -S . -DBUILD_TESTS=ON
+ninja -C build
+
+# Run all tests
+./build/tests/test_sunshine
+
+# Run only macOS-specific tests
+./build/tests/test_sunshine --gtest_filter="ColorspaceTest.*:MacOSEncoderTest.*"
+```
+
+Expected results:
+- 22+ tests should pass (ColorspaceTest + MacOSEncoderTest)
+- VideoToolbox encoder should initialize successfully
+- No SIGSEGV or memory corruption errors
+
+##### Packaging for Distribution
+
+To create a DMG installer:
+
+```bash
+# Ensure Release build
+cmake -B build -G Ninja -S . -DCMAKE_BUILD_TYPE=Release
+ninja -C build
+
+# Generate DMG
+cpack -G DragNDrop --config ./build/CPackConfig.cmake
+```
+
+Output: `Sunshine-<version>-Darwin-arm64.dmg`
+
+**Note:** The generated DMG is not code-signed or notarized. Users will need to right-click and select "Open" to bypass Gatekeeper on first launch.
+
 ### Package
 
 @tabs{
