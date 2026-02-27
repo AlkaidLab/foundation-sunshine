@@ -49,6 +49,8 @@ using namespace std::literals;
 #define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
 namespace config {
 
+  float input_mouse_sensitivity = 1.0f;
+
   namespace nv {
 
     nvenc::nvenc_two_pass
@@ -1315,6 +1317,11 @@ namespace config {
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
+
+    // Mouse sensitivity configuration (range: 0.5 - 2.0, default: 1.0)
+    double mouse_sens = 1.0;
+    double_f(vars, "mouse_sensitivity", mouse_sens);
+    config::input_mouse_sensitivity = std::clamp((float) mouse_sens, 0.5f, 2.0f);
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 

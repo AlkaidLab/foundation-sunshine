@@ -245,6 +245,8 @@ namespace config {
   extern input_t input;
   extern sunshine_t sunshine;
 
+  extern float input_mouse_sensitivity;
+
   int
   parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string>
