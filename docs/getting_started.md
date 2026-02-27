@@ -410,6 +410,43 @@ Sunshine can only access microphones on macOS due to system limitations. To stre
 @note{Command Keys are not forwarded by Moonlight. Right Option-Key is mapped to CMD-Key.}
 @caution{Gamepads are not currently supported.}
 
+#### 设置远程麦克风（可选）
+
+如果你需要在远程 macOS 上使用客户端麦克风（例如语音输入、视频通话），请按以下步骤设置：
+
+1. **安装 BlackHole 虚拟音频驱动：**
+   ```bash
+   brew install blackhole-2ch
+   ```
+
+2. **配置 Sunshine：**
+   编辑 Sunshine 配置文件，添加：
+   ```ini
+   [audio]
+   virtual_sink = BlackHole 2ch
+   ```
+
+3. **配置 macOS 系统音频：**
+   - 打开"系统设置" → "声音" → "输入"
+   - 选择 "BlackHole 2ch" 作为输入设备
+
+4. **在应用中选择麦克风：**
+   - 在 AirType、Zoom、Teams 等应用中
+   - 选择 "BlackHole 2ch" 作为麦克风输入源
+
+5. **重启 Sunshine 使配置生效**
+
+**注意：** 如果你同时需要听到系统音频和使用远程麦克风，可以在"音频 MIDI 设置"中创建"聚合设备"，包含物理输出和 BlackHole。
+
+#### 调整鼠标灵敏度（可选）
+
+如果远程控制时鼠标响应不够灵敏，可以调整灵敏度：
+
+```ini
+[input]
+mouse_sensitivity = 1.2  # 提高 20% 灵敏度（范围：0.5-2.0）
+```
+
 ## Usage
 
 ### Basic usage
