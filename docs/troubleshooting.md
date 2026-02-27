@@ -168,6 +168,109 @@ Some users have reported stuttering issues when streaming games running within G
 
 ## macOS
 
+### FFmpeg ABI Mismatch (SIGSEGV in av_hwframe_ctx_init)
+
+**Symptom:**
+- Server crashes with SIGSEGV during encoder initialization
+- Crash occurs in `av_hwframe_ctx_init` function
+- Debug shows `AVHWDeviceContext->type` has incorrect value
+
+**Root Cause:**
+Sunshine compiles with system Homebrew FFmpeg headers (`/opt/homebrew/include`) but links against bundled FFmpeg static libraries (`third-party/build-deps/dist/Darwin-arm64/lib`). The structure layouts differ between FFmpeg versions, causing memory corruption.
+
+**Solution:**
+Ensure bundled FFmpeg headers have priority in CMake configuration. This is already fixed in `cmake/compile_definitions/common.cmake`:
+
+```cmake
+# FFmpeg bundled headers must come BEFORE system headers
+include_directories(BEFORE SYSTEM ${FFMPEG_INCLUDE_DIRS})
+```
+
+If you encounter this issue, verify your CMake configuration and rebuild from scratch:
+```bash
+rm -rf build
+cmake -B build -G Ninja -S .
+ninja -C build
+```
+
+### Encoder Initialization Failure (Invalid pixel format -1)
+
+**Symptom:**
+- Error: `Invalid video pixel format: -1`
+- Error: `Picture size 2000x0 is invalid`
+- All encoders (VideoToolbox and software) fail to initialize
+
+**Root Cause:**
+The `sunshine_colorspace_t` struct in `src/video_colorspace.h` had no default values, leading to uninitialized members when the struct was created.
+
+**Solution:**
+This is already fixed with default values in the struct definition:
+
+```cpp
+struct sunshine_colorspace_t {
+  colorspace_e colorspace = colorspace_e::rec709;
+  bool full_range = false;
+  unsigned bit_depth = 8;
+};
+```
+
+If you're building from an older commit, update to the latest code or manually add these defaults.
+
+### Mouse Scroll Wheel Not Working
+
+**Symptom:**
+- Mouse movement works but scroll wheel has no effect
+- Scrolling in remote applications doesn't respond
+
+**Root Cause:**
+macOS input code used `kCGScrollEventUnitLine` which has insufficient precision on modern macOS versions.
+
+**Solution:**
+This is already fixed in `src/platform/macos/input.cpp` to use `kCGScrollEventUnitPixel`:
+
+```cpp
+CGEventRef event = CGEventCreateScrollWheelEvent(
+    macos_input->source,
+    kCGScrollEventUnitPixel,  // Changed from kCGScrollEventUnitLine
+    2,
+    scrollY,
+    scrollX
+);
+```
+
+### Mouse Input Delay on Stream Start
+
+**Symptom:**
+- Mouse doesn't respond for ~250ms when first entering stream
+- Initial clicks/movements are ignored
+
+**Root Cause:**
+macOS has a default 250ms event suppression interval to prevent event loops.
+
+**Solution:**
+This is already fixed in `src/platform/macos/input.cpp`:
+
+```cpp
+macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+CGEventSourceSetLocalEventsSuppressionInterval(macos_input->source, 0.0);
+```
+
+### VideoToolbox Encoder Best Practices
+
+**Tips for optimal VideoToolbox performance:**
+
+1. **Use NV12 pixel format** for 8-bit content (most common)
+2. **Use P010 pixel format** for 10-bit HDR content
+3. **Ensure proper dimension alignment**: Width and height should be even numbers for YUV420
+4. **Check hardware support**: Not all Macs support all encoder features
+5. **Monitor encoder logs**: Look for "Encoder [videotoolbox] passed" in startup logs
+
+**Common VideoToolbox errors:**
+
+- `kVTParameterErr`: Usually indicates invalid encoder parameters
+- `kVTAllocationFailedErr`: System resources exhausted, try lowering resolution/bitrate
+- `kVTPixelTransferNotSupportedErr`: Pixel format conversion not supported by hardware
+
 ### Dynamic session lookup failed
 If you get this error:
 
