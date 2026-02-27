@@ -100,7 +100,46 @@ namespace platf {
 
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
-      return -1;
+      if (!audio_engine || !player_node || !audio_format) {
+        BOOST_LOG(warning) << "Audio engine not initialized, cannot write mic data";
+        return -1;
+      }
+
+      // 假设客户端发送的是 48kHz, 2ch, int16 PCM
+      const int16_t *samples = reinterpret_cast<const int16_t *>(data);
+      size_t frameCount = size / (2 * sizeof(int16_t));  // 2 channels
+
+      if (frameCount == 0) {
+        return 0;  // 空数据，直接返回
+      }
+
+      // 创建 AVAudioPCMBuffer
+      AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc]
+        initWithPCMFormat:audio_format
+           frameCapacity:frameCount];
+      if (!buffer) {
+        BOOST_LOG(error) << "Failed to create AVAudioPCMBuffer";
+        return -1;
+      }
+
+      buffer.frameLength = frameCount;
+
+      // 转换 int16 → float32
+      float *leftChannel = buffer.floatChannelData[0];
+      float *rightChannel = buffer.floatChannelData[1];
+
+      for (size_t i = 0; i < frameCount; i++) {
+        leftChannel[i] = samples[i * 2] / 32768.0f;
+        rightChannel[i] = samples[i * 2 + 1] / 32768.0f;
+      }
+
+      // 调度播放
+      [player_node scheduleBuffer:buffer
+                completionHandler:^{
+                  [buffer release];
+                }];
+
+      return 0;
     }
 
     int
