@@ -40,6 +40,11 @@ namespace platf {
     CGEventRef mouse_event {};  // mouse event source
     bool mouse_down[3] {};  // mouse button status
     std::chrono::steady_clock::steady_clock::time_point last_mouse_event[3][2];  // timestamp of last mouse events
+
+    // Mouse position cache and sensitivity
+    util::point_t cached_mouse_position {};
+    bool position_cache_valid {false};
+    float mouse_sensitivity {1.0f};
   };
 
   // A struct to hold a Windows keycode to Mac virtual keycode mapping.
@@ -316,9 +321,9 @@ const KeyCodeMap kKeyCodesMap[] = {
   // returns current mouse location:
   util::point_t
   get_mouse_loc(input_t &input) {
-    // Creating a new event every time to avoid any reuse risk
-    const auto macos_input = static_cast<macos_input_t *>(input.get());
-    const auto snapshot_event = CGEventCreate(macos_input->source);
+    // Query current mouse location directly
+    // Using NULL source is more efficient than creating from macos_input->source
+    const auto snapshot_event = CGEventCreate(NULL);
     const auto current = CGEventGetLocation(snapshot_event);
     CFRelease(snapshot_event);
     return util::point_t {
@@ -453,12 +458,26 @@ const KeyCodeMap kKeyCodesMap[] = {
 
   void
   scroll(input_t &input, const int high_res_distance) {
-    CGEventRef upEvent = CGEventCreateScrollWheelEvent(
+    // Convert high_res_distance to scroll pixels
+    // Moonlight sends high_res_distance in units of 120 per "click"
+    // Modern macOS expects pixel-based scrolling for smooth, precise control
+    // Scale factor: 120 units ≈ 10 pixels (typical scroll distance)
+    const double pixelsPerUnit = 10.0 / 120.0;
+    int32_t scrollPixels = static_cast<int32_t>(high_res_distance * pixelsPerUnit);
+
+    // If the amount is too small, use at least ±1 for any non-zero input
+    if (scrollPixels == 0 && high_res_distance != 0) {
+      scrollPixels = high_res_distance > 0 ? 1 : -1;
+    }
+
+    CGEventRef scrollEvent = CGEventCreateScrollWheelEvent(
       nullptr,
-      kCGScrollEventUnitLine,
-      2, high_res_distance > 0 ? 1 : -1, high_res_distance);
-    CGEventPost(kCGHIDEventTap, upEvent);
-    CFRelease(upEvent);
+      kCGScrollEventUnitPixel,  // Use pixel units for modern smooth scrolling
+      1,  // wheelCount: 1 for vertical scroll only
+      scrollPixels);  // vertical scroll amount in pixels
+
+    CGEventPost(kCGHIDEventTap, scrollEvent);
+    CFRelease(scrollEvent);
   }
 
   void
@@ -564,6 +583,11 @@ const KeyCodeMap kKeyCodesMap[] = {
 
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
+    // Set local events suppression interval to 0 to avoid initial delay
+    // By default, macOS has a 250ms suppression interval which causes
+    // programmatically generated events to be delayed or ignored initially
+    CGEventSourceSetLocalEventsSuppressionInterval(macos_input->source, 0.0);
+
     macos_input->kb_event = CGEventCreate(macos_input->source);
     macos_input->kb_flags = 0;
 
@@ -571,6 +595,11 @@ const KeyCodeMap kKeyCodesMap[] = {
     macos_input->mouse_down[0] = false;
     macos_input->mouse_down[1] = false;
     macos_input->mouse_down[2] = false;
+
+    macos_input->mouse_sensitivity = config::input_mouse_sensitivity;
+    macos_input->position_cache_valid = false;
+
+    BOOST_LOG(debug) << "Mouse sensitivity set to: " << macos_input->mouse_sensitivity;
 
     BOOST_LOG(debug) << "Display "sv << macos_input->display << ", pixel dimension: " << CGDisplayPixelsWide(macos_input->display) << "x"sv << CGDisplayPixelsHigh(macos_input->display);
 
