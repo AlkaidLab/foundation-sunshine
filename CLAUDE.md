@@ -284,6 +284,29 @@ BOOST_LOG(fatal) << "Fatal error";
 - AVFoundation 处理显示/音频捕获
 - 虚拟显示功能不可用（仅限 Windows 10 22H2+）
 
+#### macOS 输入和音频优化
+
+**鼠标输入优化：**
+- 使用位置缓存减少系统调用
+- 直接创建 CGEvent 而非复用修改
+- 支持可配置的鼠标灵敏度（`mouse_sensitivity` 配置项）
+- 使用 `kCGHIDEventTap` 获得最低延迟
+
+**远程麦克风功能：**
+- 使用 AVAudioEngine + AVAudioPlayerNode 播放客户端音频
+- 输出到 BlackHole 虚拟设备，实现系统级麦克风
+- 支持语音转文字（AirType）和语音通话（Zoom/Teams）
+- 需要用户安装 BlackHole 并配置 `virtual_sink`
+
+**配置示例：**
+```ini
+[input]
+mouse_sensitivity = 1.2  # 提高 20% 灵敏度
+
+[audio]
+virtual_sink = BlackHole 2ch  # 远程麦克风输出设备
+```
+
 #### macOS 构建警告
 
 **关键提示**：在 macOS 上构建时，以下情况必须执行完全清理构建：
