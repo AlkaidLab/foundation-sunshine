@@ -321,15 +321,23 @@ const KeyCodeMap kKeyCodesMap[] = {
   // returns current mouse location:
   util::point_t
   get_mouse_loc(input_t &input) {
-    // Query current mouse location directly
-    // Using NULL source is more efficient than creating from macos_input->source
+    const auto macos_input = static_cast<macos_input_t *>(input.get());
+
+    // 如果缓存有效，直接返回
+    if (macos_input->position_cache_valid) {
+      return macos_input->cached_mouse_position;
+    }
+
+    // 缓存失效，查询系统
     const auto snapshot_event = CGEventCreate(NULL);
     const auto current = CGEventGetLocation(snapshot_event);
     CFRelease(snapshot_event);
-    return util::point_t {
-      current.x,
-      current.y
-    };
+
+    // 更新缓存
+    macos_input->cached_mouse_position = util::point_t { current.x, current.y };
+    macos_input->position_cache_valid = true;
+
+    return macos_input->cached_mouse_position;
   }
 
   void
