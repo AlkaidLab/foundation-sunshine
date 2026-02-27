@@ -212,6 +212,26 @@ namespace platf {
 
     void
     release_mic_redirect_device() override {
+      BOOST_LOG(info) << "Releasing virtual microphone resources";
+
+      if (player_node) {
+        [player_node stop];
+        [player_node release];
+        player_node = nullptr;
+      }
+
+      if (audio_engine) {
+        [audio_engine stop];
+        [audio_engine release];
+        audio_engine = nullptr;
+      }
+
+      if (audio_format) {
+        [audio_format release];
+        audio_format = nullptr;
+      }
+
+      BOOST_LOG(info) << "Virtual microphone resources released";
     }
   };
 
