@@ -47,6 +47,13 @@ namespace platf {
   struct macos_audio_control_t: public audio_control_t {
     AVCaptureDevice *audio_capture_device {};
 
+    // AudioQueue remote microphone fields
+    AudioQueueRef audio_queue {nullptr};
+    AudioStreamBasicDescription audio_format {};
+    AudioQueueBufferRef buffers[3] {nullptr, nullptr, nullptr};
+    AudioDeviceID blackhole_device_id {kAudioDeviceUnknown};
+    bool mic_initialized {false};
+
   public:
     int
     set_sink(const std::string &sink) override {
