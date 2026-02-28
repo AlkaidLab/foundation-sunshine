@@ -13,6 +13,21 @@ foreach(dir ${MACOS_LINK_DIRECTORIES})
     endif()
 endforeach()
 
+# Add Homebrew include directories for macOS
+# This is needed because some packages (e.g. opus) have their pkg-config
+# include path pointing to the package subdirectory, but the code uses
+# #include <opus/opus_multistream.h> which needs the parent include dir.
+set(MACOS_INCLUDE_DIRECTORIES
+        /opt/homebrew/include
+        /opt/local/include
+        /usr/local/include)
+
+foreach(dir ${MACOS_INCLUDE_DIRECTORIES})
+    if(EXISTS ${dir})
+        include_directories(SYSTEM ${dir})
+    endif()
+endforeach()
+
 if(NOT BOOST_USE_STATIC AND NOT FETCH_CONTENT_BOOST_USED)
     ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
 endif()
@@ -24,7 +39,10 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${CORE_MEDIA_LIBRARY}
         ${CORE_VIDEO_LIBRARY}
         ${FOUNDATION_LIBRARY}
-        ${VIDEO_TOOLBOX_LIBRARY})
+        ${VIDEO_TOOLBOX_LIBRARY}
+        ${CORE_AUDIO_LIBRARY}
+        ${AUDIO_UNIT_LIBRARY}
+        ${AUDIO_TOOLBOX_LIBRARY})
 
 set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 

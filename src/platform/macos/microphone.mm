@@ -10,6 +10,7 @@
 
 #import <CoreAudio/CoreAudio.h>
 #import <AudioUnit/AudioUnit.h>
+#import <AudioToolbox/AudioToolbox.h>
 
 namespace platf {
   using namespace std::literals;
@@ -237,8 +238,100 @@ namespace platf {
 
     int
     init_mic_redirect_device() override {
-      // TODO: Implement AudioQueue-based initialization
-      return -1;
+      if (mic_initialized) {
+        BOOST_LOG(warning) << "Remote microphone already initialized";
+        return 0;
+      }
+
+      // 1. Determine device name
+      NSString *deviceName = @"BlackHole 2ch";
+      if (!config::audio.virtual_sink.empty()) {
+        deviceName = [NSString stringWithUTF8String:config::audio.virtual_sink.c_str()];
+      }
+
+      BOOST_LOG(info) << "Initializing remote microphone with device: " << [deviceName UTF8String];
+
+      // 2. Find BlackHole device ID
+      blackhole_device_id = find_blackhole_device_id(deviceName);
+      if (blackhole_device_id == kAudioDeviceUnknown) {
+        BOOST_LOG(error) << "Failed to find BlackHole device: " << [deviceName UTF8String];
+        BOOST_LOG(error) << "Please install BlackHole: brew install blackhole-2ch";
+        return -1;
+      }
+
+      // 3. Configure audio format (48kHz, 2ch, float32, non-interleaved)
+      audio_format.mSampleRate = 48000.0;
+      audio_format.mFormatID = kAudioFormatLinearPCM;
+      audio_format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved;
+      audio_format.mBytesPerPacket = sizeof(float);
+      audio_format.mFramesPerPacket = 1;
+      audio_format.mBytesPerFrame = sizeof(float);
+      audio_format.mChannelsPerFrame = 2;
+      audio_format.mBitsPerChannel = 32;
+      audio_format.mReserved = 0;
+
+      // 4. Create AudioQueue
+      OSStatus status = AudioQueueNewOutput(&audio_format,
+                                           audio_queue_output_callback,
+                                           this,
+                                           NULL,
+                                           kCFRunLoopCommonModes,
+                                           0,
+                                           &audio_queue);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to create AudioQueue: " << status;
+        return -1;
+      }
+
+      // 5. Set output device to BlackHole
+      status = AudioQueueSetProperty(audio_queue,
+                                     kAudioQueueProperty_CurrentDevice,
+                                     &blackhole_device_id,
+                                     sizeof(blackhole_device_id));
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to set AudioQueue output device: " << status;
+        AudioQueueDispose(audio_queue, true);
+        audio_queue = nullptr;
+        return -1;
+      }
+
+      BOOST_LOG(info) << "Successfully set output device to: " << [deviceName UTF8String];
+
+      // 6. Allocate buffers (3 buffers, 100ms each)
+      UInt32 bufferSize = 48000 * 2 * sizeof(float) / 10;  // 100ms
+      for (int i = 0; i < 3; i++) {
+        status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffers[i]);
+        if (status != noErr) {
+          BOOST_LOG(error) << "Failed to allocate buffer " << i << ": " << status;
+          // Clean up
+          for (int j = 0; j < i; j++) {
+            AudioQueueFreeBuffer(audio_queue, buffers[j]);
+            buffers[j] = nullptr;
+          }
+          AudioQueueDispose(audio_queue, true);
+          audio_queue = nullptr;
+          return -1;
+        }
+      }
+
+      // 7. Start the queue
+      status = AudioQueueStart(audio_queue, NULL);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to start AudioQueue: " << status;
+        for (int i = 0; i < 3; i++) {
+          AudioQueueFreeBuffer(audio_queue, buffers[i]);
+          buffers[i] = nullptr;
+        }
+        AudioQueueDispose(audio_queue, true);
+        audio_queue = nullptr;
+        return -1;
+      }
+
+      mic_initialized = true;
+      BOOST_LOG(info) << "Remote microphone initialized successfully";
+      BOOST_LOG(info) << "Set system input to '" << [deviceName UTF8String] << "' in System Settings → Sound → Input";
+
+      return 0;
     }
 
     /*
