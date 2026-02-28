@@ -524,7 +524,33 @@ namespace platf {
 
     void
     release_mic_redirect_device() override {
-      // TODO: Implement AudioQueue-based cleanup
+      if (!mic_initialized) {
+        return;
+      }
+
+      BOOST_LOG(info) << "Releasing remote microphone";
+
+      if (audio_queue) {
+        // Stop the queue immediately
+        AudioQueueStop(audio_queue, true);
+
+        // Free all buffers
+        for (int i = 0; i < 3; i++) {
+          if (buffers[i]) {
+            AudioQueueFreeBuffer(audio_queue, buffers[i]);
+            buffers[i] = nullptr;
+          }
+        }
+
+        // Dispose queue
+        AudioQueueDispose(audio_queue, true);
+        audio_queue = nullptr;
+      }
+
+      blackhole_device_id = kAudioDeviceUnknown;
+      mic_initialized = false;
+
+      BOOST_LOG(info) << "Remote microphone released";
     }
 
     /*
