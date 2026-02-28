@@ -174,6 +174,15 @@ namespace platf {
       return deviceID;
     }
 
+    // AudioQueue callback: called when buffer is done playing
+    static void
+    audio_queue_output_callback(void *inUserData,
+                                AudioQueueRef inAQ,
+                                AudioQueueBufferRef inBuffer) {
+      // Buffer is now free to reuse
+      // No action needed - we'll manage buffers manually
+    }
+
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
       // TODO: Implement AudioQueue-based write
