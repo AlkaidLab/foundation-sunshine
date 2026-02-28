@@ -103,6 +103,77 @@ namespace platf {
       return true;
     }
 
+    // Helper: Find BlackHole audio device ID
+    AudioDeviceID
+    find_blackhole_device_id(NSString *deviceName) {
+      AudioDeviceID deviceID = kAudioDeviceUnknown;
+
+      // Get all audio devices
+      AudioObjectPropertyAddress propertyAddress = {
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+
+      UInt32 dataSize = 0;
+      OSStatus status = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject,
+                                                       &propertyAddress,
+                                                       0,
+                                                       NULL,
+                                                       &dataSize);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to get audio devices size: " << status;
+        return kAudioDeviceUnknown;
+      }
+
+      int deviceCount = dataSize / sizeof(AudioDeviceID);
+      AudioDeviceID *audioDevices = (AudioDeviceID *)malloc(dataSize);
+
+      status = AudioObjectGetPropertyData(kAudioObjectSystemObject,
+                                         &propertyAddress,
+                                         0,
+                                         NULL,
+                                         &dataSize,
+                                         audioDevices);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to get audio devices: " << status;
+        free(audioDevices);
+        return kAudioDeviceUnknown;
+      }
+
+      // Search for BlackHole device
+      for (int i = 0; i < deviceCount; i++) {
+        CFStringRef deviceNameRef = NULL;
+        UInt32 propertySize = sizeof(deviceNameRef);
+
+        AudioObjectPropertyAddress nameAddress = {
+          kAudioDevicePropertyDeviceNameCFString,
+          kAudioObjectPropertyScopeGlobal,
+          kAudioObjectPropertyElementMain
+        };
+
+        status = AudioObjectGetPropertyData(audioDevices[i],
+                                           &nameAddress,
+                                           0,
+                                           NULL,
+                                           &propertySize,
+                                           &deviceNameRef);
+
+        if (status == noErr && deviceNameRef) {
+          if (CFStringCompare(deviceNameRef, (__bridge CFStringRef)deviceName, 0) == kCFCompareEqualTo) {
+            deviceID = audioDevices[i];
+            BOOST_LOG(info) << "Found BlackHole device ID: " << deviceID;
+            CFRelease(deviceNameRef);
+            break;
+          }
+          CFRelease(deviceNameRef);
+        }
+      }
+
+      free(audioDevices);
+      return deviceID;
+    }
+
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
       // TODO: Implement AudioQueue-based write
