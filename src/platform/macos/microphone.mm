@@ -8,6 +8,9 @@
 #include "src/config.h"
 #include "src/logging.h"
 
+#import <CoreAudio/CoreAudio.h>
+#import <AudioUnit/AudioUnit.h>
+
 namespace platf {
   using namespace std::literals;
 
@@ -43,11 +46,6 @@ namespace platf {
 
   struct macos_audio_control_t: public audio_control_t {
     AVCaptureDevice *audio_capture_device {};
-
-    // 新增：音频播放相关
-    AVAudioEngine *audio_engine {};
-    AVAudioPlayerNode *player_node {};
-    AVAudioFormat *audio_format {};
 
   public:
     int
@@ -100,6 +98,13 @@ namespace platf {
 
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+      // TODO: Implement AudioQueue-based write
+      return -1;
+    }
+
+    /*
+    int
+    write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
       if (!audio_engine || !player_node || !audio_format) {
         BOOST_LOG(warning) << "Audio engine not initialized, cannot write mic data";
         return -1;
@@ -141,7 +146,15 @@ namespace platf {
 
       return 0;
     }
+    */
 
+    int
+    init_mic_redirect_device() override {
+      // TODO: Implement AudioQueue-based initialization
+      return -1;
+    }
+
+    /*
     int
     init_mic_redirect_device() override {
       // 1. 确定输出设备名称
@@ -182,13 +195,81 @@ namespace platf {
         return -1;
       }
 
-      // 5. 连接节点
+      // 5. 查找 BlackHole 设备 ID 并设置为输出设备
+      AVAudioOutputNode *outputNode = audio_engine.outputNode;
+      AudioUnit outputUnit = outputNode.audioUnit;
+
+      AudioDeviceID blackHoleDeviceID = kAudioDeviceUnknown;
+      UInt32 propertySize;
+      AudioObjectPropertyAddress propertyAddress = {
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+
+      AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &propertySize);
+      int deviceCount = propertySize / sizeof(AudioDeviceID);
+      AudioDeviceID *audioDevices = (AudioDeviceID *)malloc(propertySize);
+      AudioObjectGetPropertyData(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &propertySize, audioDevices);
+
+      for (int i = 0; i < deviceCount; i++) {
+        CFStringRef deviceNameRef = NULL;
+        propertySize = sizeof(deviceNameRef);
+        propertyAddress.mSelector = kAudioDevicePropertyDeviceNameCFString;
+        propertyAddress.mScope = kAudioObjectPropertyScopeGlobal;
+
+        AudioObjectGetPropertyData(audioDevices[i], &propertyAddress, 0, NULL, &propertySize, &deviceNameRef);
+
+        if (deviceNameRef) {
+          if (CFStringCompare(deviceNameRef, (__bridge CFStringRef)deviceName, 0) == kCFCompareEqualTo) {
+            blackHoleDeviceID = audioDevices[i];
+            CFRelease(deviceNameRef);
+            break;
+          }
+          CFRelease(deviceNameRef);
+        }
+      }
+      free(audioDevices);
+
+      if (blackHoleDeviceID == kAudioDeviceUnknown) {
+        BOOST_LOG(error) << "Failed to find BlackHole audio device: " << [deviceName UTF8String];
+        [audio_format release];
+        [player_node release];
+        [audio_engine release];
+        audio_format = nullptr;
+        player_node = nullptr;
+        audio_engine = nullptr;
+        return -1;
+      }
+
+      // 设置输出设备为 BlackHole
+      OSStatus status = AudioUnitSetProperty(outputUnit,
+                                            kAudioOutputUnitProperty_CurrentDevice,
+                                            kAudioUnitScope_Global,
+                                            0,
+                                            &blackHoleDeviceID,
+                                            sizeof(blackHoleDeviceID));
+
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to set output device to BlackHole: " << status;
+        [audio_format release];
+        [player_node release];
+        [audio_engine release];
+        audio_format = nullptr;
+        player_node = nullptr;
+        audio_engine = nullptr;
+        return -1;
+      }
+
+      BOOST_LOG(info) << "Successfully set output device to: " << [deviceName UTF8String];
+
+      // 6. 连接节点
       [audio_engine attachNode:player_node];
       [audio_engine connect:player_node
                          to:audio_engine.mainMixerNode
                      format:audio_format];
 
-      // 6. 启动音频引擎
+      // 7. 启动音频引擎
       NSError *nsError = nil;
       if (![audio_engine startAndReturnError:&nsError]) {
         BOOST_LOG(error) << "Failed to start audio engine: " << [[nsError localizedDescription] UTF8String];
@@ -201,7 +282,7 @@ namespace platf {
         return -1;
       }
 
-      // 7. 启动播放节点
+      // 8. 启动播放节点
       [player_node play];
 
       BOOST_LOG(info) << "Virtual microphone initialized successfully";
@@ -209,7 +290,14 @@ namespace platf {
 
       return 0;
     }
+    */
 
+    void
+    release_mic_redirect_device() override {
+      // TODO: Implement AudioQueue-based cleanup
+    }
+
+    /*
     void
     release_mic_redirect_device() override {
       BOOST_LOG(info) << "Releasing virtual microphone resources";
@@ -233,6 +321,7 @@ namespace platf {
 
       BOOST_LOG(info) << "Virtual microphone resources released";
     }
+    */
   };
 
   std::unique_ptr<audio_control_t>
