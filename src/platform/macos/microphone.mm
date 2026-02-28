@@ -186,8 +186,58 @@ namespace platf {
 
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
-      // TODO: Implement AudioQueue-based write
-      return -1;
+      if (!mic_initialized || !audio_queue) {
+        return -1;
+      }
+
+      // Input: int16 PCM, stereo interleaved
+      const int16_t *samples = reinterpret_cast<const int16_t *>(data);
+      size_t frameCount = size / (2 * sizeof(int16_t));  // 2 channels
+
+      if (frameCount == 0) {
+        return 0;
+      }
+
+      // Find available buffer
+      AudioQueueBufferRef buffer = nullptr;
+      for (int i = 0; i < 3; i++) {
+        if (buffers[i] && buffers[i]->mAudioDataByteSize == 0) {
+          buffer = buffers[i];
+          break;
+        }
+      }
+
+      if (!buffer) {
+        // All buffers in use, allocate temporary
+        UInt32 bufferSize = frameCount * 2 * sizeof(float);
+        OSStatus status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffer);
+        if (status != noErr) {
+          BOOST_LOG(warning) << "Failed to allocate temp buffer, skipping frame";
+          return -1;
+        }
+      }
+
+      // Convert int16 → float32, non-interleaved
+      float *audioData = (float *)buffer->mAudioData;
+      float *leftChannel = audioData;
+      float *rightChannel = audioData + frameCount;
+
+      for (size_t i = 0; i < frameCount; i++) {
+        leftChannel[i] = samples[i * 2] / 32768.0f;
+        rightChannel[i] = samples[i * 2 + 1] / 32768.0f;
+      }
+
+      buffer->mAudioDataByteSize = frameCount * 2 * sizeof(float);
+
+      // Enqueue buffer
+      OSStatus status = AudioQueueEnqueueBuffer(audio_queue, buffer, 0, NULL);
+      if (status != noErr) {
+        BOOST_LOG(warning) << "Failed to enqueue buffer: " << status;
+        buffer->mAudioDataByteSize = 0;  // Mark as free
+        return -1;
+      }
+
+      return 0;
     }
 
     /*
