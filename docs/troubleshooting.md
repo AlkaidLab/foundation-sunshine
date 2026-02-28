@@ -271,6 +271,64 @@ CGEventSourceSetLocalEventsSuppressionInterval(macos_input->source, 0.0);
 - `kVTAllocationFailedErr`: System resources exhausted, try lowering resolution/bitrate
 - `kVTPixelTransferNotSupportedErr`: Pixel format conversion not supported by hardware
 
+### Remote Microphone Issues
+
+#### No audio signal
+
+**Symptoms:** Input level meter shows no activity
+
+**Solutions:**
+1. Verify BlackHole is installed:
+   ```bash
+   ls /Library/Audio/Plug-Ins/HAL/ | grep BlackHole
+   ```
+
+2. Check system input device:
+   - System Settings → Sound → Input
+   - Should be "BlackHole 2ch"
+
+3. Check Sunshine logs:
+   ```bash
+   tail -f ~/.config/sunshine/sunshine.log | grep -i "microphone\|blackhole"
+   ```
+
+4. Restart Sunshine
+
+#### Audio feedback/noise
+
+**Symptoms:** Hearing echo or static
+
+**Solutions:**
+1. Verify system output is NOT BlackHole:
+   - System Settings → Sound → Output
+   - Should be "Mac mini Speaker" or headphones
+
+2. Check for audio loops:
+   - Only BlackHole should be input
+   - Output should be physical device
+
+#### High latency
+
+**Symptoms:** Noticeable delay in voice
+
+**Solutions:**
+1. Check network quality
+2. Reduce streaming resolution/bitrate
+3. Use wired connection instead of WiFi
+
+#### Application not detecting microphone
+
+**Symptoms:** App shows "No microphone"
+
+**Solutions:**
+1. Grant microphone permission:
+   - System Settings → Privacy & Security → Microphone
+   - Enable for the application
+
+2. Restart the application
+
+3. Verify BlackHole is system input
+
 ### Dynamic session lookup failed
 If you get this error:
 
