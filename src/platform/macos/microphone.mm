@@ -12,6 +12,9 @@
 #import <AudioUnit/AudioUnit.h>
 #import <AudioToolbox/AudioToolbox.h>
 
+#include <opus/opus.h>
+#include <vector>
+
 namespace platf {
   using namespace std::literals;
 
@@ -54,6 +57,9 @@ namespace platf {
     AudioQueueBufferRef buffers[3] {nullptr, nullptr, nullptr};
     AudioDeviceID blackhole_device_id {kAudioDeviceUnknown};
     bool mic_initialized {false};
+
+    // OPUS decoder for remote microphone
+    OpusDecoder *opus_decoder {nullptr};
 
   public:
     int
@@ -180,25 +186,53 @@ namespace platf {
     audio_queue_output_callback(void *inUserData,
                                 AudioQueueRef inAQ,
                                 AudioQueueBufferRef inBuffer) {
-      // Buffer is now free to reuse
-      // No action needed - we'll manage buffers manually
+      // Mark buffer as free for reuse
+      inBuffer->mAudioDataByteSize = 0;
+
+      static int callback_count = 0;
+      if (++callback_count % 100 == 1) {
+        BOOST_LOG(info) << "AudioQueue callback called (count: " << callback_count << ")";
+      }
     }
 
     int
     write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
-      if (!mic_initialized || !audio_queue) {
+      static int call_count = 0;
+      if (++call_count % 100 == 1) {  // Log every 100 calls
+        BOOST_LOG(info) << "write_mic_data called: size=" << size << " seq=" << seq;
+      }
+
+      if (!mic_initialized || !audio_queue || !opus_decoder) {
+        if (call_count % 100 == 1) {
+          BOOST_LOG(warning) << "write_mic_data: not initialized";
+        }
         return -1;
       }
 
-      // Input: int16 PCM, stereo interleaved
-      const int16_t *samples = reinterpret_cast<const int16_t *>(data);
-      size_t frameCount = size / (2 * sizeof(int16_t));  // 2 channels
-
-      if (frameCount == 0) {
-        return 0;
+      // 1. Decode OPUS data to PCM int16 mono
+      int frame_size = opus_decoder_get_nb_samples(opus_decoder, (const unsigned char *)data, size);
+      if (frame_size < 0) {
+        BOOST_LOG(error) << "Failed to get OPUS frame size: " << opus_strerror(frame_size);
+        return -1;
       }
 
-      // Find available buffer
+      std::vector<int16_t> pcm_mono(frame_size);
+      int samples_decoded = opus_decode(opus_decoder,
+                                       (const unsigned char *)data,
+                                       size,
+                                       pcm_mono.data(),
+                                       frame_size,
+                                       0);  // Normal decode
+      if (samples_decoded < 0) {
+        BOOST_LOG(error) << "Failed to decode OPUS: " << opus_strerror(samples_decoded);
+        return -1;
+      }
+
+      if (call_count % 100 == 1) {
+        BOOST_LOG(info) << "Decoded " << samples_decoded << " samples from OPUS";
+      }
+
+      // 2. Find available buffer
       AudioQueueBufferRef buffer = nullptr;
       for (int i = 0; i < 3; i++) {
         if (buffers[i] && buffers[i]->mAudioDataByteSize == 0) {
@@ -209,7 +243,7 @@ namespace platf {
 
       if (!buffer) {
         // All buffers in use, allocate temporary
-        UInt32 bufferSize = frameCount * 2 * sizeof(float);
+        UInt32 bufferSize = samples_decoded * 2 * sizeof(float);
         OSStatus status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffer);
         if (status != noErr) {
           BOOST_LOG(warning) << "Failed to allocate temp buffer, skipping frame";
@@ -217,24 +251,26 @@ namespace platf {
         }
       }
 
-      // Convert int16 → float32, non-interleaved
+      // 3. Convert mono int16 → stereo float32 interleaved
       float *audioData = (float *)buffer->mAudioData;
-      float *leftChannel = audioData;
-      float *rightChannel = audioData + frameCount;
-
-      for (size_t i = 0; i < frameCount; i++) {
-        leftChannel[i] = samples[i * 2] / 32768.0f;
-        rightChannel[i] = samples[i * 2 + 1] / 32768.0f;
+      for (int i = 0; i < samples_decoded; i++) {
+        float sample = pcm_mono[i] / 32768.0f;
+        audioData[i * 2] = sample;      // Left
+        audioData[i * 2 + 1] = sample;  // Right (duplicate mono)
       }
 
-      buffer->mAudioDataByteSize = frameCount * 2 * sizeof(float);
+      buffer->mAudioDataByteSize = samples_decoded * 2 * sizeof(float);
 
-      // Enqueue buffer
+      // 4. Enqueue buffer
       OSStatus status = AudioQueueEnqueueBuffer(audio_queue, buffer, 0, NULL);
       if (status != noErr) {
         BOOST_LOG(warning) << "Failed to enqueue buffer: " << status;
         buffer->mAudioDataByteSize = 0;  // Mark as free
         return -1;
+      }
+
+      if (call_count % 100 == 1) {
+        BOOST_LOG(info) << "Successfully enqueued buffer: samples=" << samples_decoded << " bytes=" << buffer->mAudioDataByteSize;
       }
 
       return 0;
@@ -301,30 +337,46 @@ namespace platf {
 
       BOOST_LOG(info) << "Initializing remote microphone with device: " << [deviceName UTF8String];
 
-      // 2. Find BlackHole device ID
+      // 2. Create OPUS decoder (48kHz, mono)
+      int opus_error = 0;
+      opus_decoder = opus_decoder_create(48000, 1, &opus_error);
+      if (opus_error != OPUS_OK || !opus_decoder) {
+        BOOST_LOG(error) << "Failed to create OPUS decoder: " << opus_strerror(opus_error);
+        return -1;
+      }
+      BOOST_LOG(info) << "OPUS decoder created successfully";
+
+      // 3. Find BlackHole device ID
       blackhole_device_id = find_blackhole_device_id(deviceName);
       if (blackhole_device_id == kAudioDeviceUnknown) {
         BOOST_LOG(error) << "Failed to find BlackHole device: " << [deviceName UTF8String];
         BOOST_LOG(error) << "Please install BlackHole: brew install blackhole-2ch";
+        opus_decoder_destroy(opus_decoder);
+        opus_decoder = nullptr;
         return -1;
       }
 
-      // 3. Configure audio format (48kHz, 2ch, float32, non-interleaved)
+      // 4. Configure audio format (48kHz, 2ch, float32, interleaved)
       audio_format.mSampleRate = 48000.0;
       audio_format.mFormatID = kAudioFormatLinearPCM;
-      audio_format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved;
-      audio_format.mBytesPerPacket = sizeof(float);
-      audio_format.mFramesPerPacket = 1;
-      audio_format.mBytesPerFrame = sizeof(float);
+      audio_format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;  // Interleaved
       audio_format.mChannelsPerFrame = 2;
       audio_format.mBitsPerChannel = 32;
+      audio_format.mBytesPerFrame = sizeof(float) * audio_format.mChannelsPerFrame;  // 8 bytes per frame (2 channels)
+      audio_format.mFramesPerPacket = 1;
+      audio_format.mBytesPerPacket = audio_format.mBytesPerFrame * audio_format.mFramesPerPacket;
       audio_format.mReserved = 0;
+
+      BOOST_LOG(info) << "Audio format: " << audio_format.mSampleRate << "Hz, "
+                      << audio_format.mChannelsPerFrame << "ch, "
+                      << audio_format.mBitsPerChannel << "bit, "
+                      << "interleaved float";
 
       // 4. Create AudioQueue
       OSStatus status = AudioQueueNewOutput(&audio_format,
                                            audio_queue_output_callback,
                                            this,
-                                           NULL,
+                                           CFRunLoopGetMain(),
                                            kCFRunLoopCommonModes,
                                            0,
                                            &audio_queue);
@@ -333,11 +385,35 @@ namespace platf {
         return -1;
       }
 
-      // 5. Set output device to BlackHole
+      // 5. Get device UID (required for AudioQueue)
+      CFStringRef deviceUID = NULL;
+      UInt32 propertySize = sizeof(deviceUID);
+      AudioObjectPropertyAddress uidAddress = {
+        kAudioDevicePropertyDeviceUID,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+
+      status = AudioObjectGetPropertyData(blackhole_device_id,
+                                         &uidAddress,
+                                         0,
+                                         NULL,
+                                         &propertySize,
+                                         &deviceUID);
+      if (status != noErr || !deviceUID) {
+        BOOST_LOG(error) << "Failed to get device UID: " << status;
+        AudioQueueDispose(audio_queue, true);
+        audio_queue = nullptr;
+        return -1;
+      }
+
+      // 6. Set output device to BlackHole using UID
       status = AudioQueueSetProperty(audio_queue,
                                      kAudioQueueProperty_CurrentDevice,
-                                     &blackhole_device_id,
-                                     sizeof(blackhole_device_id));
+                                     &deviceUID,
+                                     sizeof(deviceUID));
+      CFRelease(deviceUID);
+
       if (status != noErr) {
         BOOST_LOG(error) << "Failed to set AudioQueue output device: " << status;
         AudioQueueDispose(audio_queue, true);
@@ -347,7 +423,7 @@ namespace platf {
 
       BOOST_LOG(info) << "Successfully set output device to: " << [deviceName UTF8String];
 
-      // 6. Allocate buffers (3 buffers, 100ms each)
+      // 7. Allocate buffers (3 buffers, 100ms each)
       UInt32 bufferSize = 48000 * 2 * sizeof(float) / 10;  // 100ms
       for (int i = 0; i < 3; i++) {
         status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffers[i]);
@@ -362,9 +438,28 @@ namespace platf {
           audio_queue = nullptr;
           return -1;
         }
+        // Initialize buffer as empty
+        buffers[i]->mAudioDataByteSize = 0;
       }
 
-      // 7. Start the queue
+      // 8. Prime the queue with silent buffers to start playback
+      for (int i = 0; i < 3; i++) {
+        // Fill with silence
+        memset(buffers[i]->mAudioData, 0, bufferSize);
+        buffers[i]->mAudioDataByteSize = bufferSize;
+
+        status = AudioQueueEnqueueBuffer(audio_queue, buffers[i], 0, NULL);
+        if (status != noErr) {
+          BOOST_LOG(error) << "Failed to prime buffer " << i << ": " << status;
+          AudioQueueDispose(audio_queue, true);
+          audio_queue = nullptr;
+          return -1;
+        }
+      }
+
+      BOOST_LOG(info) << "Primed AudioQueue with " << 3 << " silent buffers";
+
+      // 9. Start the queue
       status = AudioQueueStart(audio_queue, NULL);
       if (status != noErr) {
         BOOST_LOG(error) << "Failed to start AudioQueue: " << status;
@@ -549,6 +644,12 @@ namespace platf {
 
       blackhole_device_id = kAudioDeviceUnknown;
       mic_initialized = false;
+
+      // Destroy OPUS decoder
+      if (opus_decoder) {
+        opus_decoder_destroy(opus_decoder);
+        opus_decoder = nullptr;
+      }
 
       BOOST_LOG(info) << "Remote microphone released";
     }

@@ -3,6 +3,7 @@
  * @brief Definitions for audio capture and encoding.
  */
 // standard includes
+#include <mutex>
 #include <thread>
 
 // lib includes
@@ -256,6 +257,10 @@ namespace audio {
   // 确保唯一实例
   namespace {
     auto control_shared = safe::make_shared<audio_ctx_t>(start_audio_control, stop_audio_control);
+
+    // 独立的远程麦克风 control，不依赖音频捕获
+    std::unique_ptr<platf::audio_control_t> mic_control;
+    std::mutex mic_control_mutex;
   }
 
   audio_ctx_ref_t get_audio_ctx_ref() {
@@ -348,53 +353,54 @@ namespace audio {
   }
 
   int init_mic_redirect_device() {
-    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
-    // 如果没有活动的引用，说明音频上下文没有启动，不应该初始化麦克风设备
-    if (!has_audio_ctx_ref()) {
-      BOOST_LOG(debug) << "Audio context not active, skipping microphone device initialization";
+    std::lock_guard<std::mutex> lock(mic_control_mutex);
+
+    // 如果已经初始化，直接返回
+    if (mic_control) {
+      BOOST_LOG(debug) << "Remote microphone control already initialized";
+      return 0;
+    }
+
+    // 创建独立的 audio_control 用于远程麦克风
+    mic_control = platf::audio_control();
+    if (!mic_control) {
+      BOOST_LOG(error) << "Failed to create audio control for remote microphone";
       return -1;
     }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
-      BOOST_LOG(error) << "Audio context not available for microphone data writing";
+
+    // 初始化远程麦克风设备
+    int result = mic_control->init_mic_redirect_device();
+    if (result != 0) {
+      BOOST_LOG(error) << "Failed to initialize remote microphone device";
+      mic_control.reset();
       return -1;
     }
-    return ref->control->init_mic_redirect_device();
+
+    BOOST_LOG(info) << "Remote microphone control initialized successfully";
+    return 0;
   }
 
   void release_mic_redirect_device() {
-    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
-    // 如果没有活动的引用，说明音频上下文没有启动，不需要释放
-    if (!has_audio_ctx_ref()) {
-      BOOST_LOG(debug) << "Audio context not active, skipping microphone device release";
+    std::lock_guard<std::mutex> lock(mic_control_mutex);
+
+    if (!mic_control) {
+      BOOST_LOG(debug) << "Remote microphone control not initialized, nothing to release";
       return;
     }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
-      BOOST_LOG(warning) << "Audio context not available for microphone device release";
-      return;
-    }
-    ref->control->release_mic_redirect_device();
+
+    mic_control->release_mic_redirect_device();
+    mic_control.reset();
+    BOOST_LOG(info) << "Remote microphone control released";
   }
 
   int write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq) {
-    // 先检查是否有活动引用，避免不必要地触发 start_audio_control
-    // 如果音频捕获线程正在运行，它会持有引用，这里会返回 true
-    if (!has_audio_ctx_ref()) {
-      BOOST_LOG(debug) << "Audio context not active, skipping microphone data write";
-      // 注意：这不是错误，而是正常情况
-      // 可能音频捕获还没有启动，或者已经停止
-      return -1;
-    }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
-      BOOST_LOG(warning) << "Audio context reference invalid for microphone data writing";
+    std::lock_guard<std::mutex> lock(mic_control_mutex);
+
+    if (!mic_control) {
+      BOOST_LOG(debug) << "Remote microphone control not initialized, skipping data write";
       return -1;
     }
 
-    return ref->control->write_mic_data(reinterpret_cast<const char*>(data), size, seq);
+    return mic_control->write_mic_data(reinterpret_cast<const char*>(data), size, seq);
   }
 }  // namespace audio
