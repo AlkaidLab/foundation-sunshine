@@ -1294,7 +1294,8 @@ namespace input {
     short scrollAmt;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
+    // __builtin_add_overflow returns TRUE when overflow occurs
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 

@@ -21,10 +21,39 @@
   NSMutableArray *result = [NSMutableArray array];
 
   for (uint32_t i = 0; i < count; i++) {
+    // 检查显示器是否在线
+    if (!CGDisplayIsOnline(displays[i])) {
+      NSLog(@"Display %u is not online, skipping", displays[i]);
+      continue;
+    }
+
+    // 检查显示器是否有有效的模式
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displays[i]);
+    if (!mode) {
+      NSLog(@"Failed to get display mode for display %u, skipping", displays[i]);
+      continue;
+    }
+
+    size_t width = CGDisplayModeGetPixelWidth(mode);
+    size_t height = CGDisplayModeGetPixelHeight(mode);
+    CFRelease(mode);
+
+    if (width == 0 || height == 0) {
+      NSLog(@"Invalid resolution %zux%zu for display %u, skipping", width, height, displays[i]);
+      continue;
+    }
+
+    NSString *displayName = [self getDisplayName:displays[i]];
+
+    // macOS 26+ 兼容：确保 displayName 不为 nil
+    if (!displayName) {
+      displayName = [NSString stringWithFormat:@"Display %u", displays[i]];
+    }
+
     [result addObject:@{
       @"id": [NSNumber numberWithUnsignedInt:displays[i]],
       @"name": [NSString stringWithFormat:@"%d", displays[i]],
-      @"displayName": [self getDisplayName:displays[i]],
+      @"displayName": displayName,  // 保证不为 nil
     }];
   }
 
@@ -32,39 +61,105 @@
 }
 
 + (NSString *)getDisplayName:(CGDirectDisplayID)displayID {
-  NSScreen *screens = [NSScreen screens];
+  NSArray *screens = [NSScreen screens];
   for (NSScreen *screen in screens) {
-    if (screen.deviceDescription[@"NSScreenNumber"] == [NSNumber numberWithUnsignedInt:displayID]) {
+    if ([screen.deviceDescription[@"NSScreenNumber"] isEqual:[NSNumber numberWithUnsignedInt:displayID]]) {
       return screen.localizedName;
     }
   }
-  return nil;
+  return [NSString stringWithFormat:@"Display %u", displayID];
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
+  fprintf(stderr, "[INIT] initWithDisplay called for display %u @ %d fps\n", displayID, frameRate);
+  fflush(stderr);
   self = [super init];
+  fprintf(stderr, "[INIT] After [super init], self = %p\n", self);
+  fflush(stderr);
+
+  fprintf(stderr, "[PERMISSION CHECK] Starting permission check...\n");
+  fflush(stderr);
+
+  // 检查屏幕录制权限（macOS 10.15+）
+  // CGPreflightScreenCaptureAccess() 会触发权限对话框（如果尚未授权）
+  // 但只有在作为 .app 启动时才会显示对话框
+  BOOL hasPermission = CGPreflightScreenCaptureAccess();
+  fprintf(stderr, "[PERMISSION CHECK] CGPreflightScreenCaptureAccess returned: %d\n", hasPermission);
+  fflush(stderr);
+
+  if (!hasPermission) {
+    fprintf(stderr, "⚠️  屏幕录制权限未授予！\n");
+    fprintf(stderr, "请在 系统设置 → 隐私与安全性 → 屏幕录制 中授予 Sunshine 权限\n");
+    fprintf(stderr, "然后重启 Sunshine\n");
+    // 不要立即返回 nil，让 AVCaptureSession 尝试初始化
+    // 这样可以触发系统权限对话框
+  }
+  else {
+    fprintf(stderr, "✅ 屏幕录制权限已授予\n");
+  }
+
+  // 检查显示器是否在线
+  if (!CGDisplayIsOnline(displayID)) {
+    NSLog(@"Display %u is not online", displayID);
+    return nil;
+  }
 
   CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
+  if (!mode) {
+    NSLog(@"Failed to get display mode for display %u", displayID);
+    return nil;
+  }
 
   self.displayID = displayID;
   self.pixelFormat = kCVPixelFormatType_32BGRA;
-  self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
-  self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
+
+  // Get display dimensions
+  int displayWidth = (int) CGDisplayModeGetPixelWidth(mode);
+  int displayHeight = (int) CGDisplayModeGetPixelHeight(mode);
+
+  // YUV 4:2:0 formats (NV12/P010) require even dimensions because
+  // the chroma plane is half the size of the luma plane in both dimensions.
+  // Align to even values to prevent "Picture size invalid" errors.
+  self.frameWidth = (displayWidth + 1) & ~1;
+  self.frameHeight = (displayHeight + 1) & ~1;
+
+  // Log if alignment was needed
+  if (self.frameWidth != displayWidth || self.frameHeight != displayHeight) {
+    NSLog(@"[VideoToolbox] Aligned display dimensions from %dx%d to %dx%d for YUV420 compatibility",
+          displayWidth, displayHeight, self.frameWidth, self.frameHeight);
+  }
+
+  CFRelease(mode);
+
+  // 验证分辨率有效性
+  if (self.frameWidth <= 0 || self.frameHeight <= 0) {
+    NSLog(@"Invalid display resolution: %dx%d for display %u",
+          self.frameWidth, self.frameHeight, displayID);
+    return nil;
+  }
+
+  NSLog(@"Initializing display %u with resolution %dx%d @ %d fps",
+        displayID, self.frameWidth, self.frameHeight, frameRate);
+
+  NSLog(@"[DEBUG] After init: self.frameWidth=%d, self.frameHeight=%d",
+        self.frameWidth, self.frameHeight);
+
   self.minFrameDuration = CMTimeMake(1, frameRate);
   self.session = [[AVCaptureSession alloc] init];
   self.videoOutputs = [[NSMapTable alloc] init];
   self.captureCallbacks = [[NSMapTable alloc] init];
   self.captureSignals = [[NSMapTable alloc] init];
 
-  CFRelease(mode);
-
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
+  [screenInput setCapturesCursor:YES];  // 捕获鼠标光标
+  [screenInput setCapturesMouseClicks:YES];  // 捕获鼠标点击高亮效果
 
   if ([self.session canAddInput:screenInput]) {
     [self.session addInput:screenInput];
   }
   else {
+    NSLog(@"Failed to add screen input for display %u", displayID);
     [screenInput release];
     return nil;
   }
@@ -83,8 +178,22 @@
 }
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight {
-  self.frameWidth = frameWidth;
-  self.frameHeight = frameHeight;
+  NSLog(@"[DEBUG] setFrameWidth called with: %dx%d", frameWidth, frameHeight);
+
+  // YUV 4:2:0 formats (NV12/P010) require even dimensions because
+  // the chroma plane is half the size of the luma plane in both dimensions.
+  // Align to even values to prevent "Picture size invalid" errors.
+  self.frameWidth = (frameWidth + 1) & ~1;
+  self.frameHeight = (frameHeight + 1) & ~1;
+
+  // Log if alignment was needed
+  if (self.frameWidth != frameWidth || self.frameHeight != frameHeight) {
+    NSLog(@"[VideoToolbox] Aligned frame dimensions from %dx%d to %dx%d for YUV420 compatibility",
+          frameWidth, frameHeight, self.frameWidth, self.frameHeight);
+  }
+
+  NSLog(@"[DEBUG] After setFrameWidth: self.frameWidth=%d, self.frameHeight=%d",
+        self.frameWidth, self.frameHeight);
 }
 
 - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {

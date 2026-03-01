@@ -1,10 +1,11 @@
-#define WIN32_LEAN_AND_MEAN
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+#endif
 
 #include "vdd_utils.h"
 
 #include <algorithm>
 #include <boost/filesystem.hpp>
-#include <boost/process/v1.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/uuid/name_generator_sha1.hpp>
@@ -20,21 +21,26 @@
 #include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
-#include "src/platform/run_command.h"
-#include "src/platform/windows/display_device/windows_utils.h"
-#include "src/rtsp.h"
-#include "src/system_tray.h"
-#include "src/system_tray_i18n.h"
 #include "to_string.h"
+
+#ifdef _WIN32
+  #include <boost/process/v1.hpp>
+  #include "src/platform/run_command.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/system_tray.h"
+  #include "src/system_tray_i18n.h"
+#endif
 
 namespace pt = boost::property_tree;
 
 namespace display_device {
   namespace vdd_utils {
 
+#ifdef _WIN32
     const wchar_t *kVddPipeName = L"\\\\.\\pipe\\ZakoVDDPipe";
     const DWORD kPipeTimeoutMs = 5000;
     const DWORD kPipeBufferSize = 4096;
+#endif
     const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
     // 上次切换显示器的时间点
@@ -49,6 +55,8 @@ namespace display_device {
       auto delay = kInitialRetryDelay * (1 << attempt);
       return std::min(delay, kMaxRetryDelay);
     }
+
+#ifdef _WIN32
 
     bool
     execute_vdd_command(const std::string &action) {
@@ -175,6 +183,22 @@ namespace display_device {
       return execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
     }
 
+#else  // !_WIN32
+
+    bool
+    execute_vdd_command(const std::string &action) {
+      BOOST_LOG(warning) << "VDD commands are not supported on this platform";
+      return false;
+    }
+
+    bool
+    reload_driver() {
+      BOOST_LOG(warning) << "VDD driver reload is not supported on this platform";
+      return false;
+    }
+
+#endif  // _WIN32
+
     std::string
     generate_client_guid(const std::string &identifier) {
       if (identifier.empty()) {
@@ -227,6 +251,8 @@ namespace display_device {
 
       return {};
     }
+
+#ifdef _WIN32
 
     bool
     create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
@@ -451,53 +477,6 @@ namespace display_device {
       return true;
     }
 
-    VddSettings
-    prepare_vdd_settings(const parsed_config_t &config) {
-      auto is_res_cached = false;
-      auto is_fps_cached = false;
-      std::ostringstream res_stream, fps_stream;
-
-      res_stream << '[';
-      fps_stream << '[';
-
-      // 检查分辨率是否已缓存
-      for (const auto &res : config::nvhttp.resolutions) {
-        res_stream << res << ',';
-        if (config.resolution && res == to_string(*config.resolution)) {
-          is_res_cached = true;
-        }
-      }
-
-      // 检查帧率是否已缓存
-      for (const auto &fps : config::nvhttp.fps) {
-        fps_stream << fps << ',';
-        if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
-          is_fps_cached = true;
-        }
-      }
-
-      // 如果需要更新设置
-      bool needs_update = (!is_res_cached || !is_fps_cached) && config.resolution;
-      if (needs_update) {
-        if (!is_res_cached) {
-          res_stream << to_string(*config.resolution);
-        }
-        if (!is_fps_cached && config.refresh_rate) {
-          fps_stream << to_string(*config.refresh_rate);
-        }
-      }
-
-      // 移除最后的逗号并添加结束括号
-      auto res_str = res_stream.str();
-      auto fps_str = fps_stream.str();
-      if (res_str.back() == ',') res_str.pop_back();
-      if (fps_str.back() == ',') fps_str.pop_back();
-      res_str += ']';
-      fps_str += ']';
-
-      return { res_str, fps_str, needs_update };
-    }
-
     bool
     ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve) {
       if (device_id.empty()) {
@@ -607,5 +586,100 @@ namespace display_device {
       BOOST_LOG(warning) << action << "虚拟显示器HDR失败";
       return false;
     }
+
+#else  // !_WIN32
+
+    bool
+    create_vdd_monitor(const std::string &, const hdr_brightness_t &, const physical_size_t &) {
+      BOOST_LOG(warning) << "VDD is not supported on this platform";
+      return false;
+    }
+
+    bool
+    destroy_vdd_monitor() {
+      return false;
+    }
+
+    void
+    enable_vdd() {
+    }
+
+    void
+    disable_vdd() {
+    }
+
+    void
+    disable_enable_vdd() {
+    }
+
+    bool
+    is_display_on() {
+      return false;
+    }
+
+    bool
+    toggle_display_power() {
+      return false;
+    }
+
+    bool
+    ensure_vdd_extended_mode(const std::string &, const std::unordered_set<std::string> &) {
+      return false;
+    }
+
+    bool
+    set_hdr_state(bool) {
+      return false;
+    }
+
+#endif  // _WIN32
+
+    VddSettings
+    prepare_vdd_settings(const parsed_config_t &config) {
+      auto is_res_cached = false;
+      auto is_fps_cached = false;
+      std::ostringstream res_stream, fps_stream;
+
+      res_stream << '[';
+      fps_stream << '[';
+
+      // 检查分辨率是否已缓存
+      for (const auto &res : config::nvhttp.resolutions) {
+        res_stream << res << ',';
+        if (config.resolution && res == to_string(*config.resolution)) {
+          is_res_cached = true;
+        }
+      }
+
+      // 检查帧率是否已缓存
+      for (const auto &fps : config::nvhttp.fps) {
+        fps_stream << fps << ',';
+        if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
+          is_fps_cached = true;
+        }
+      }
+
+      // 如果需要更新设置
+      bool needs_update = (!is_res_cached || !is_fps_cached) && config.resolution;
+      if (needs_update) {
+        if (!is_res_cached) {
+          res_stream << to_string(*config.resolution);
+        }
+        if (!is_fps_cached && config.refresh_rate) {
+          fps_stream << to_string(*config.refresh_rate);
+        }
+      }
+
+      // 移除最后的逗号并添加结束括号
+      auto res_str = res_stream.str();
+      auto fps_str = fps_stream.str();
+      if (res_str.back() == ',') res_str.pop_back();
+      if (fps_str.back() == ',') fps_str.pop_back();
+      res_str += ']';
+      fps_str += ']';
+
+      return { res_str, fps_str, needs_update };
+    }
+
   }  // namespace vdd_utils
 }  // namespace display_device

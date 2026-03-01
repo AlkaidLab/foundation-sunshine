@@ -1409,4 +1409,14 @@ namespace system_tray {
   }
 
 }  // namespace system_tray
+#else
+// Stub implementations when SUNSHINE_TRAY is disabled (e.g. macOS)
+#include <string>
+namespace system_tray {
+  int end_tray() { return 0; }
+  int init_tray_threaded() { return 0; }
+  void update_tray_playing(const std::string &) {}
+  void update_tray_pausing(const std::string &) {}
+  void update_tray_stopped() {}
+}  // namespace system_tray
 #endif

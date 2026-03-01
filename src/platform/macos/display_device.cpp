@@ -1,5 +1,7 @@
 // local includes
 #include "src/display_device/settings.h"
+#include "src/display_device/display_device.h"
+#include "src/rtsp.h"
 
 namespace display_device {
 
@@ -98,7 +100,10 @@ namespace display_device {
   }
 
   settings_t::apply_result_t
-  settings_t::apply_config(const parsed_config_t &) {
+  settings_t::apply_config(
+    const parsed_config_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const boost::optional<active_topology_t> &pre_saved_initial_topology) {
     // Not implemented
     return { apply_result_t::result_e::success };
   }
@@ -113,6 +118,31 @@ namespace display_device {
   void
   settings_t::reset_persistence() {
     // Not implemented
+  }
+
+  bool
+  settings_t::has_persistent_data() const {
+    // Not implemented
+    return false;
+  }
+
+  bool
+  settings_t::is_vdd_in_initial_topology() const {
+    // Not implemented
+    return false;
+  }
+
+  void
+  settings_t::remove_vdd_from_initial_topology(const std::string& vdd_id) {
+    // Not implemented
+    (void)vdd_id;
+  }
+
+  void
+  settings_t::replace_vdd_id(const std::string& old_id, const std::string& new_id) {
+    // Not implemented
+    (void)old_id;
+    (void)new_id;
   }
 
 }  // namespace display_device

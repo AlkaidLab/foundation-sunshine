@@ -1861,8 +1861,31 @@ namespace nvhttp {
       load_state();
     }
 
+    // Validate cert/key files exist before trying to load them
+    if (!std::filesystem::exists(config::nvhttp.pkey) || !std::filesystem::exists(config::nvhttp.cert)) {
+      BOOST_LOG(warning) << "SSL cert/key files not found, attempting to regenerate..."sv;
+      BOOST_LOG(warning) << "  pkey path: "sv << config::nvhttp.pkey << " exists: " << std::filesystem::exists(config::nvhttp.pkey);
+      BOOST_LOG(warning) << "  cert path: "sv << config::nvhttp.cert << " exists: " << std::filesystem::exists(config::nvhttp.cert);
+
+      if (http::create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
+        BOOST_LOG(fatal) << "Failed to generate SSL credentials. HTTPS server cannot start."sv;
+        shutdown_event->raise(true);
+        return;
+      }
+      BOOST_LOG(info) << "SSL credentials regenerated successfully"sv;
+    }
+
     auto pkey = file_handler::read_file(config::nvhttp.pkey.c_str());
     auto cert = file_handler::read_file(config::nvhttp.cert.c_str());
+
+    if (pkey.empty() || cert.empty()) {
+      BOOST_LOG(fatal) << "SSL cert/key files are empty. HTTPS server cannot start."sv;
+      BOOST_LOG(fatal) << "  pkey path: "sv << config::nvhttp.pkey << " size: " << pkey.size();
+      BOOST_LOG(fatal) << "  cert path: "sv << config::nvhttp.cert << " size: " << cert.size();
+      shutdown_event->raise(true);
+      return;
+    }
+
     setup(pkey, cert);
 
     auto add_cert = std::make_shared<safe::queue_t<crypto::x509_t>>(30);
@@ -1871,7 +1894,35 @@ namespace nvhttp {
     // launch will store it in host_audio
     bool host_audio {};
 
-    https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
+    std::unique_ptr<https_server_t> https_server_ptr;
+    try {
+      https_server_ptr = std::make_unique<https_server_t>(config::nvhttp.cert, config::nvhttp.pkey);
+    }
+    catch (boost::system::system_error &err) {
+      BOOST_LOG(fatal) << "Failed to initialize HTTPS server: "sv << err.what();
+      BOOST_LOG(fatal) << "  cert file: "sv << config::nvhttp.cert;
+      BOOST_LOG(fatal) << "  pkey file: "sv << config::nvhttp.pkey;
+
+      // Try regenerating certs and retry once
+      BOOST_LOG(warning) << "Attempting to regenerate SSL credentials and retry..."sv;
+      if (http::create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
+        BOOST_LOG(fatal) << "Failed to regenerate SSL credentials. Giving up."sv;
+        shutdown_event->raise(true);
+        return;
+      }
+
+      try {
+        https_server_ptr = std::make_unique<https_server_t>(config::nvhttp.cert, config::nvhttp.pkey);
+        BOOST_LOG(info) << "HTTPS server initialized successfully after credential regeneration"sv;
+      }
+      catch (boost::system::system_error &err2) {
+        BOOST_LOG(fatal) << "HTTPS server still failed after credential regeneration: "sv << err2.what();
+        shutdown_event->raise(true);
+        return;
+      }
+    }
+
+    auto &https_server = *https_server_ptr;
     http_server_t http_server;
 
     // Verify certificates after establishing connection

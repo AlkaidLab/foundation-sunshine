@@ -1,14 +1,16 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <chrono>
 #include <functional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_set>
-#include <windows.h>
+
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+#endif
 
 #include "parsed_config.h"
 
@@ -21,9 +23,11 @@ namespace display_device::vdd_utils {
   inline constexpr auto kInitialRetryDelay = 500ms;
   inline constexpr auto kMaxRetryDelay = 5000ms;
 
+#ifdef _WIN32
   extern const wchar_t *kVddPipeName;
   extern const DWORD kPipeTimeoutMs;
   extern const DWORD kPipeBufferSize;
+#endif
   extern const std::chrono::milliseconds kDefaultDebounceInterval;
 
   // HDR亮度范围结构
@@ -62,12 +66,14 @@ namespace display_device::vdd_utils {
   bool
   execute_vdd_command(const std::string &action);
 
-  // 管道相关函数
+#ifdef _WIN32
+  // 管道相关函数（仅Windows）
   HANDLE
   connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries = 3);
 
   bool
   execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr);
+#endif
 
   // 驱动重载函数
   bool

@@ -65,7 +65,15 @@ namespace platf {
         CGPreflightScreenCaptureAccess != nullptr && CGRequestScreenCaptureAccess != nullptr &&
         !CGPreflightScreenCaptureAccess()) {
       BOOST_LOG(error) << "No screen capture permission!"sv;
-      BOOST_LOG(error) << "Please activate it in 'System Preferences' -> 'Privacy' -> 'Screen Recording'"sv;
+
+      // macOS 13+ (Ventura) 使用 "System Settings"，旧版本使用 "System Preferences"
+      if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) { 13, 0, 0 })]) {
+        BOOST_LOG(error) << "Please activate it in 'System Settings' -> 'Privacy & Security' -> 'Screen Recording'"sv;
+      }
+      else {
+        BOOST_LOG(error) << "Please activate it in 'System Preferences' -> 'Privacy' -> 'Screen Recording'"sv;
+      }
+
       CGRequestScreenCaptureAccess();
       return nullptr;
     }

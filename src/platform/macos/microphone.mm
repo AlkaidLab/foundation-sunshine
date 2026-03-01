@@ -14,6 +14,7 @@
 
 #include <opus/opus.h>
 #include <vector>
+#include "../../third-party/TPCircularBuffer/TPCircularBuffer.h"
 
 namespace platf {
   using namespace std::literals;
@@ -51,15 +52,17 @@ namespace platf {
   struct macos_audio_control_t: public audio_control_t {
     AVCaptureDevice *audio_capture_device {};
 
-    // AudioQueue remote microphone fields
-    AudioQueueRef audio_queue {nullptr};
+    // AudioUnit remote microphone fields
+    AudioUnit audio_unit {nullptr};
     AudioStreamBasicDescription audio_format {};
-    AudioQueueBufferRef buffers[3] {nullptr, nullptr, nullptr};
     AudioDeviceID blackhole_device_id {kAudioDeviceUnknown};
     bool mic_initialized {false};
 
     // OPUS decoder for remote microphone
     OpusDecoder *opus_decoder {nullptr};
+
+    // Ring buffer for audio data (lock-free communication between threads)
+    TPCircularBuffer ring_buffer;
 
   public:
     int
@@ -182,17 +185,73 @@ namespace platf {
     }
 
     // AudioQueue callback: called when buffer is done playing
-    static void
-    audio_queue_output_callback(void *inUserData,
-                                AudioQueueRef inAQ,
-                                AudioQueueBufferRef inBuffer) {
-      // Mark buffer as free for reuse
-      inBuffer->mAudioDataByteSize = 0;
+    // AudioUnit render callback (called on real-time thread)
+    static OSStatus
+    audio_unit_render_callback(void *inRefCon,
+                               AudioUnitRenderActionFlags *ioActionFlags,
+                               const AudioTimeStamp *inTimeStamp,
+                               UInt32 inBusNumber,
+                               UInt32 inNumberFrames,
+                               AudioBufferList *ioData) {
+      macos_audio_control_t *self = (macos_audio_control_t *)inRefCon;
 
       static int callback_count = 0;
-      if (++callback_count % 100 == 1) {
-        BOOST_LOG(info) << "AudioQueue callback called (count: " << callback_count << ")";
+      bool should_log = (++callback_count % 100 == 1);
+
+      // Read audio data from ring buffer (interleaved stereo float32)
+      uint32_t bytesNeeded = inNumberFrames * 2 * sizeof(float);  // stereo interleaved
+      uint32_t availableBytes = 0;
+      float *readPtr = (float *)TPCircularBufferTail(&self->ring_buffer, &availableBytes);
+
+      if (should_log) {
+        BOOST_LOG(info) << "AudioUnit render callback: frames=" << inNumberFrames
+                        << " buffers=" << ioData->mNumberBuffers
+                        << " bytesNeeded=" << bytesNeeded
+                        << " available=" << availableBytes;
       }
+
+      uint32_t bytesToCopy = std::min(bytesNeeded, availableBytes);
+      uint32_t framesToCopy = bytesToCopy / (2 * sizeof(float));
+
+      if (bytesToCopy > 0 && ioData->mNumberBuffers >= 2) {
+        // Non-interleaved format: separate buffers for left and right channels
+        float *leftChannel = (float *)ioData->mBuffers[0].mData;
+        float *rightChannel = (float *)ioData->mBuffers[1].mData;
+
+        // De-interleave: readPtr contains [L, R, L, R, ...]
+        for (uint32_t frame = 0; frame < framesToCopy; frame++) {
+          leftChannel[frame] = readPtr[frame * 2];      // Left
+          rightChannel[frame] = readPtr[frame * 2 + 1]; // Right
+        }
+
+        TPCircularBufferConsume(&self->ring_buffer, bytesToCopy);
+
+        if (should_log) {
+          // Check max sample value
+          float maxSample = 0.0f;
+          for (uint32_t i = 0; i < framesToCopy; i++) {
+            maxSample = std::max(maxSample, fabs(leftChannel[i]));
+            maxSample = std::max(maxSample, fabs(rightChannel[i]));
+          }
+          BOOST_LOG(info) << "Copied " << framesToCopy << " frames, max sample: " << maxSample;
+        }
+
+        // Fill remaining with silence if not enough data
+        if (framesToCopy < inNumberFrames) {
+          memset(leftChannel + framesToCopy, 0, (inNumberFrames - framesToCopy) * sizeof(float));
+          memset(rightChannel + framesToCopy, 0, (inNumberFrames - framesToCopy) * sizeof(float));
+        }
+      } else {
+        // No data available, output silence
+        for (UInt32 i = 0; i < ioData->mNumberBuffers; i++) {
+          memset(ioData->mBuffers[i].mData, 0, inNumberFrames * sizeof(float));
+        }
+        if (should_log) {
+          BOOST_LOG(info) << "No data available, outputting silence";
+        }
+      }
+
+      return noErr;
     }
 
     int
@@ -202,7 +261,7 @@ namespace platf {
         BOOST_LOG(info) << "write_mic_data called: size=" << size << " seq=" << seq;
       }
 
-      if (!mic_initialized || !audio_queue || !opus_decoder) {
+      if (!mic_initialized || !audio_unit || !opus_decoder) {
         if (call_count % 100 == 1) {
           BOOST_LOG(warning) << "write_mic_data: not initialized";
         }
@@ -232,45 +291,27 @@ namespace platf {
         BOOST_LOG(info) << "Decoded " << samples_decoded << " samples from OPUS";
       }
 
-      // 2. Find available buffer
-      AudioQueueBufferRef buffer = nullptr;
-      for (int i = 0; i < 3; i++) {
-        if (buffers[i] && buffers[i]->mAudioDataByteSize == 0) {
-          buffer = buffers[i];
-          break;
-        }
-      }
-
-      if (!buffer) {
-        // All buffers in use, allocate temporary
-        UInt32 bufferSize = samples_decoded * 2 * sizeof(float);
-        OSStatus status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffer);
-        if (status != noErr) {
-          BOOST_LOG(warning) << "Failed to allocate temp buffer, skipping frame";
-          return -1;
-        }
-      }
-
-      // 3. Convert mono int16 → stereo float32 interleaved
-      float *audioData = (float *)buffer->mAudioData;
+      // 2. Convert mono int16 → stereo float32 interleaved
+      std::vector<float> stereo_float(samples_decoded * 2);
       for (int i = 0; i < samples_decoded; i++) {
         float sample = pcm_mono[i] / 32768.0f;
-        audioData[i * 2] = sample;      // Left
-        audioData[i * 2 + 1] = sample;  // Right (duplicate mono)
+        stereo_float[i * 2] = sample;      // Left
+        stereo_float[i * 2 + 1] = sample;  // Right (duplicate mono)
       }
 
-      buffer->mAudioDataByteSize = samples_decoded * 2 * sizeof(float);
+      // 3. Write to ring buffer
+      uint32_t bytesToWrite = samples_decoded * 2 * sizeof(float);
+      bool success = TPCircularBufferProduceBytes(&ring_buffer, stereo_float.data(), bytesToWrite);
 
-      // 4. Enqueue buffer
-      OSStatus status = AudioQueueEnqueueBuffer(audio_queue, buffer, 0, NULL);
-      if (status != noErr) {
-        BOOST_LOG(warning) << "Failed to enqueue buffer: " << status;
-        buffer->mAudioDataByteSize = 0;  // Mark as free
+      if (!success) {
+        BOOST_LOG(warning) << "Ring buffer full, dropping audio frame";
         return -1;
       }
 
       if (call_count % 100 == 1) {
-        BOOST_LOG(info) << "Successfully enqueued buffer: samples=" << samples_decoded << " bytes=" << buffer->mAudioDataByteSize;
+        uint32_t available = 0;
+        TPCircularBufferTail(&ring_buffer, &available);
+        BOOST_LOG(info) << "Wrote " << bytesToWrite << " bytes to ring buffer, available: " << available;
       }
 
       return 0;
@@ -346,7 +387,17 @@ namespace platf {
       }
       BOOST_LOG(info) << "OPUS decoder created successfully";
 
-      // 3. Find BlackHole device ID
+      // 3. Initialize ring buffer (1 second of audio = 48000 samples * 2 channels * 4 bytes)
+      bool bufferInit = TPCircularBufferInit(&ring_buffer, 48000 * 2 * sizeof(float));
+      if (!bufferInit) {
+        BOOST_LOG(error) << "Failed to initialize ring buffer";
+        opus_decoder_destroy(opus_decoder);
+        opus_decoder = nullptr;
+        return -1;
+      }
+      BOOST_LOG(info) << "Ring buffer initialized (1 second capacity)";
+
+      // 4. Find BlackHole device ID
       blackhole_device_id = find_blackhole_device_id(deviceName);
       if (blackhole_device_id == kAudioDeviceUnknown) {
         BOOST_LOG(error) << "Failed to find BlackHole device: " << [deviceName UTF8String];
@@ -356,13 +407,14 @@ namespace platf {
         return -1;
       }
 
-      // 4. Configure audio format (48kHz, 2ch, float32, interleaved)
+      // 5. Configure audio format (48kHz, 2ch, float32, NON-interleaved)
+      // HAL Output AudioUnit expects non-interleaved format
       audio_format.mSampleRate = 48000.0;
       audio_format.mFormatID = kAudioFormatLinearPCM;
-      audio_format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;  // Interleaved
+      audio_format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved;
       audio_format.mChannelsPerFrame = 2;
       audio_format.mBitsPerChannel = 32;
-      audio_format.mBytesPerFrame = sizeof(float) * audio_format.mChannelsPerFrame;  // 8 bytes per frame (2 channels)
+      audio_format.mBytesPerFrame = sizeof(float);  // Per channel, not total
       audio_format.mFramesPerPacket = 1;
       audio_format.mBytesPerPacket = audio_format.mBytesPerFrame * audio_format.mFramesPerPacket;
       audio_format.mReserved = 0;
@@ -370,110 +422,148 @@ namespace platf {
       BOOST_LOG(info) << "Audio format: " << audio_format.mSampleRate << "Hz, "
                       << audio_format.mChannelsPerFrame << "ch, "
                       << audio_format.mBitsPerChannel << "bit, "
-                      << "interleaved float";
+                      << "non-interleaved float";
 
-      // 4. Create AudioQueue
-      OSStatus status = AudioQueueNewOutput(&audio_format,
-                                           audio_queue_output_callback,
-                                           this,
-                                           CFRunLoopGetMain(),
-                                           kCFRunLoopCommonModes,
-                                           0,
-                                           &audio_queue);
-      if (status != noErr) {
-        BOOST_LOG(error) << "Failed to create AudioQueue: " << status;
+      // 6. Create HAL Output AudioUnit
+      AudioComponentDescription desc;
+      desc.componentType = kAudioUnitType_Output;
+      desc.componentSubType = kAudioUnitSubType_HALOutput;  // macOS HAL output
+      desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+      desc.componentFlags = 0;
+      desc.componentFlagsMask = 0;
+
+      AudioComponent component = AudioComponentFindNext(NULL, &desc);
+      if (!component) {
+        BOOST_LOG(error) << "Failed to find HAL Output AudioUnit component";
         return -1;
       }
 
-      // 5. Get device UID (required for AudioQueue)
-      CFStringRef deviceUID = NULL;
-      UInt32 propertySize = sizeof(deviceUID);
-      AudioObjectPropertyAddress uidAddress = {
-        kAudioDevicePropertyDeviceUID,
-        kAudioObjectPropertyScopeGlobal,
-        kAudioObjectPropertyElementMain
-      };
-
-      status = AudioObjectGetPropertyData(blackhole_device_id,
-                                         &uidAddress,
-                                         0,
-                                         NULL,
-                                         &propertySize,
-                                         &deviceUID);
-      if (status != noErr || !deviceUID) {
-        BOOST_LOG(error) << "Failed to get device UID: " << status;
-        AudioQueueDispose(audio_queue, true);
-        audio_queue = nullptr;
+      OSStatus status = AudioComponentInstanceNew(component, &audio_unit);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to create AudioUnit: " << status;
         return -1;
       }
 
-      // 6. Set output device to BlackHole using UID
-      status = AudioQueueSetProperty(audio_queue,
-                                     kAudioQueueProperty_CurrentDevice,
-                                     &deviceUID,
-                                     sizeof(deviceUID));
-      CFRelease(deviceUID);
+      BOOST_LOG(info) << "Created HAL Output AudioUnit";
 
+      // 6. Enable output on the AudioUnit
+      UInt32 enableIO = 1;
+      status = AudioUnitSetProperty(audio_unit,
+                                    kAudioOutputUnitProperty_EnableIO,
+                                    kAudioUnitScope_Output,
+                                    0,
+                                    &enableIO,
+                                    sizeof(enableIO));
       if (status != noErr) {
-        BOOST_LOG(error) << "Failed to set AudioQueue output device: " << status;
-        AudioQueueDispose(audio_queue, true);
-        audio_queue = nullptr;
+        BOOST_LOG(error) << "Failed to enable AudioUnit output: " << status;
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
         return -1;
       }
 
-      BOOST_LOG(info) << "Successfully set output device to: " << [deviceName UTF8String];
+      BOOST_LOG(info) << "Enabled AudioUnit output";
 
-      // 7. Allocate buffers (3 buffers, 100ms each)
-      UInt32 bufferSize = 48000 * 2 * sizeof(float) / 10;  // 100ms
-      for (int i = 0; i < 3; i++) {
-        status = AudioQueueAllocateBuffer(audio_queue, bufferSize, &buffers[i]);
-        if (status != noErr) {
-          BOOST_LOG(error) << "Failed to allocate buffer " << i << ": " << status;
-          // Clean up
-          for (int j = 0; j < i; j++) {
-            AudioQueueFreeBuffer(audio_queue, buffers[j]);
-            buffers[j] = nullptr;
-          }
-          AudioQueueDispose(audio_queue, true);
-          audio_queue = nullptr;
-          return -1;
-        }
-        // Initialize buffer as empty
-        buffers[i]->mAudioDataByteSize = 0;
-      }
-
-      // 8. Prime the queue with silent buffers to start playback
-      for (int i = 0; i < 3; i++) {
-        // Fill with silence
-        memset(buffers[i]->mAudioData, 0, bufferSize);
-        buffers[i]->mAudioDataByteSize = bufferSize;
-
-        status = AudioQueueEnqueueBuffer(audio_queue, buffers[i], 0, NULL);
-        if (status != noErr) {
-          BOOST_LOG(error) << "Failed to prime buffer " << i << ": " << status;
-          AudioQueueDispose(audio_queue, true);
-          audio_queue = nullptr;
-          return -1;
-        }
-      }
-
-      BOOST_LOG(info) << "Primed AudioQueue with " << 3 << " silent buffers";
-
-      // 9. Start the queue
-      status = AudioQueueStart(audio_queue, NULL);
+      // 7. Set output device to BlackHole using AudioDeviceID
+      status = AudioUnitSetProperty(audio_unit,
+                                    kAudioOutputUnitProperty_CurrentDevice,
+                                    kAudioUnitScope_Global,
+                                    0,
+                                    &blackhole_device_id,
+                                    sizeof(blackhole_device_id));
       if (status != noErr) {
-        BOOST_LOG(error) << "Failed to start AudioQueue: " << status;
-        for (int i = 0; i < 3; i++) {
-          AudioQueueFreeBuffer(audio_queue, buffers[i]);
-          buffers[i] = nullptr;
+        BOOST_LOG(error) << "Failed to set AudioUnit output device: " << status;
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
+        return -1;
+      }
+
+      BOOST_LOG(info) << "Successfully set AudioUnit output device to: " << [deviceName UTF8String];
+
+      // 7. Set audio format on AudioUnit input scope (data we provide)
+      status = AudioUnitSetProperty(audio_unit,
+                                    kAudioUnitProperty_StreamFormat,
+                                    kAudioUnitScope_Input,
+                                    0,
+                                    &audio_format,
+                                    sizeof(audio_format));
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to set AudioUnit input format: " << status;
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
+        return -1;
+      }
+
+      BOOST_LOG(info) << "Set AudioUnit input format successfully";
+
+      // Also set output format to match
+      status = AudioUnitSetProperty(audio_unit,
+                                    kAudioUnitProperty_StreamFormat,
+                                    kAudioUnitScope_Output,
+                                    0,
+                                    &audio_format,
+                                    sizeof(audio_format));
+      if (status != noErr) {
+        BOOST_LOG(warning) << "Failed to set AudioUnit output format: " << status << " (may be OK)";
+      } else {
+        BOOST_LOG(info) << "Set AudioUnit output format successfully";
+      }
+
+      // 8. Set render callback
+      AURenderCallbackStruct callbackStruct;
+      callbackStruct.inputProc = audio_unit_render_callback;
+      callbackStruct.inputProcRefCon = this;
+
+      status = AudioUnitSetProperty(audio_unit,
+                                    kAudioUnitProperty_SetRenderCallback,
+                                    kAudioUnitScope_Input,
+                                    0,
+                                    &callbackStruct,
+                                    sizeof(callbackStruct));
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to set AudioUnit render callback: " << status;
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
+        return -1;
+      }
+
+      // 9. Initialize AudioUnit
+      status = AudioUnitInitialize(audio_unit);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to initialize AudioUnit: " << status;
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
+        return -1;
+      }
+
+      // Verify the device is still set after initialization
+      AudioDeviceID verifyDeviceID = 0;
+      UInt32 verifySize = sizeof(verifyDeviceID);
+      status = AudioUnitGetProperty(audio_unit,
+                                    kAudioOutputUnitProperty_CurrentDevice,
+                                    kAudioUnitScope_Global,
+                                    0,
+                                    &verifyDeviceID,
+                                    &verifySize);
+      if (status == noErr) {
+        BOOST_LOG(info) << "Verified AudioUnit device ID after init: " << verifyDeviceID << " (expected: " << blackhole_device_id << ")";
+        if (verifyDeviceID != blackhole_device_id) {
+          BOOST_LOG(error) << "Device ID mismatch! AudioUnit is using wrong device!";
         }
-        AudioQueueDispose(audio_queue, true);
-        audio_queue = nullptr;
+      }
+
+      // 10. Start AudioUnit
+      status = AudioOutputUnitStart(audio_unit);
+      if (status != noErr) {
+        BOOST_LOG(error) << "Failed to start AudioUnit: " << status;
+        AudioUnitUninitialize(audio_unit);
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
         return -1;
       }
 
       mic_initialized = true;
-      BOOST_LOG(info) << "Remote microphone initialized successfully";
+      BOOST_LOG(info) << "Remote microphone initialized successfully with AudioUnit";
+      BOOST_LOG(info) << "AudioUnit started, render callback will read from ring buffer";
       BOOST_LOG(info) << "Set system input to '" << [deviceName UTF8String] << "' in System Settings → Sound → Input";
 
       return 0;
@@ -625,21 +715,16 @@ namespace platf {
 
       BOOST_LOG(info) << "Releasing remote microphone";
 
-      if (audio_queue) {
-        // Stop the queue immediately
-        AudioQueueStop(audio_queue, true);
+      if (audio_unit) {
+        // Stop AudioUnit
+        AudioOutputUnitStop(audio_unit);
 
-        // Free all buffers
-        for (int i = 0; i < 3; i++) {
-          if (buffers[i]) {
-            AudioQueueFreeBuffer(audio_queue, buffers[i]);
-            buffers[i] = nullptr;
-          }
-        }
+        // Uninitialize
+        AudioUnitUninitialize(audio_unit);
 
-        // Dispose queue
-        AudioQueueDispose(audio_queue, true);
-        audio_queue = nullptr;
+        // Dispose
+        AudioComponentInstanceDispose(audio_unit);
+        audio_unit = nullptr;
       }
 
       blackhole_device_id = kAudioDeviceUnknown;
@@ -650,6 +735,9 @@ namespace platf {
         opus_decoder_destroy(opus_decoder);
         opus_decoder = nullptr;
       }
+
+      // Cleanup ring buffer
+      TPCircularBufferCleanup(&ring_buffer);
 
       BOOST_LOG(info) << "Remote microphone released";
     }

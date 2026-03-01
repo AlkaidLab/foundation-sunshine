@@ -6,6 +6,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 struct CaptureSession {
   AVCaptureVideoDataOutput *output;

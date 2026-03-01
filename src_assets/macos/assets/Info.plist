@@ -8,5 +8,7 @@
   <string>Sunshine</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>This app requires access to your microphone to stream audio.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Sunshine needs screen recording permission to capture your display for remote streaming.</string>
 </dict>
 </plist>

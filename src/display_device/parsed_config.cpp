@@ -10,8 +10,10 @@
 #include "src/config.h"
 #include "src/globals.h"
 #include "src/logging.h"
-#include "src/platform/windows/display_device/windows_utils.h"
-#include "src/platform/windows/misc.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/platform/windows/misc.h"
+#endif
 #include "src/rtsp.h"
 #include "to_string.h"
 
@@ -592,6 +594,7 @@ namespace display_device {
                      << "\n"sv;
 
     // 检查是否需要使用VDD
+#ifdef _WIN32
     const auto requested_device_id = display_device::find_one_of_the_available_devices(parsed_config.device_id);
     const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
     const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
@@ -610,6 +613,9 @@ namespace display_device {
 
     // 准备VDD设备
     display_device::session_t::get().prepare_vdd(parsed_config, session);
+#else
+    BOOST_LOG(debug) << "VDD is not supported on this platform, skipping VDD preparation"sv;
+#endif
 
     return parsed_config;
   }

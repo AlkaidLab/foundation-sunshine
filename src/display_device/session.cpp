@@ -1,6 +1,8 @@
 // standard includes
 #include <boost/optional/optional_io.hpp>
-#include <boost/process/v1.hpp>
+#ifdef _WIN32
+  #include <boost/process/v1.hpp>
+#endif
 #include <future>
 #include <thread>
 
@@ -9,11 +11,29 @@
 #include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
-#include "src/platform/windows/display_device/session_listener.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/session_listener.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #include "src/rtsp.h"
 #include "to_string.h"
 #include "vdd_utils.h"
+
+// Provide no-op stubs for non-Windows platforms
+#ifndef _WIN32
+namespace {
+  // Stub for SessionEventListener on non-Windows platforms
+  struct SessionEventListener {
+    static void init() {}
+    static void deinit() {}
+    static void clear_unlock_task() {}
+    template<typename F>
+    static void add_unlock_task(F&&) {}
+  };
+  // Stub for is_running_as_system_user
+  constexpr bool is_running_as_system_user = false;
+}
+#endif
 
 namespace display_device {
 
@@ -204,6 +224,7 @@ namespace display_device {
      * @param max_delay Maximum delay between retries.
      * @return true if device was found (active or inactive), false otherwise.
      */
+#ifdef _WIN32
     bool
     wait_for_vdd_device(std::string &device_zako, int max_attempts,
       std::chrono::milliseconds initial_delay,
@@ -264,6 +285,7 @@ namespace display_device {
 
       return false;
     }
+#endif  // _WIN32
   }  // namespace
 
   void
@@ -286,6 +308,7 @@ namespace display_device {
     // 因为 make_parsed_config 内部会调用 prepare_vdd，它会创建VDD并切换到扩展模式，导致原有显示器变成inactive
     boost::optional<active_topology_t> pre_saved_initial_topology;
     
+#ifdef _WIN32
     // 检查是否会使用VDD
     std::string device_id_to_use = config.output_name;
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
@@ -311,6 +334,10 @@ namespace display_device {
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+#else
+    const bool vdd_already_exists = false;
+    const bool will_use_vdd = false;
+#endif
     
     if (will_use_vdd && !vdd_already_exists) {
       // 如果有待恢复的设置，保留旧的初始拓扑，不要覆盖
@@ -415,6 +442,7 @@ namespace display_device {
 
   void
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
+#ifdef _WIN32
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
@@ -523,6 +551,9 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
       vdd_utils::set_hdr_state(false);
     }
+#else
+    BOOST_LOG(warning) << "VDD is not supported on this platform";
+#endif  // _WIN32
   }
 
   void
@@ -541,7 +572,11 @@ namespace display_device {
   void
   session_t::restore_state_impl(revert_reason_e reason) {
     // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
+#ifdef _WIN32
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+#else
+    const std::string vdd_id;
+#endif
     const auto device_prep = current_device_prep.value_or(
       static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
     );

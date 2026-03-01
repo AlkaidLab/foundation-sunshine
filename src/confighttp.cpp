@@ -12,6 +12,8 @@
 #include <fstream>
 #include <iomanip>
 #include <atomic>
+#include <mutex>
+#include <regex>
 #include <stdexcept>
 #include <map>
 #include <set>
@@ -531,10 +533,11 @@ namespace confighttp {
     //print_req(request);
 
     // Log caching: avoid reading disk unnecessarily when file hasn't changed
-    // Use std::atomic<shared_ptr> to ensure thread-safe access (no locks)
-    static std::atomic<std::shared_ptr<const std::string>> cached_log;
-    static std::atomic<std::uintmax_t> cached_log_size { 0 };
-    static std::atomic<std::intmax_t> cached_log_mtime_ns { 0 };
+    // Use mutex-guarded shared_ptr for thread-safe access (Apple Clang does not support std::atomic<shared_ptr>)
+    static std::mutex cached_log_mutex;
+    static std::shared_ptr<const std::string> cached_log;
+    static std::uintmax_t cached_log_size { 0 };
+    static std::intmax_t cached_log_mtime_ns { 0 };
 
     const std::filesystem::path log_path(config::sunshine.log_file);
 
@@ -552,10 +555,11 @@ namespace confighttp {
     }
     auto current_mtime_ns = current_mtime.time_since_epoch().count();
 
-    const auto prev_size = cached_log_size.load();
-    const bool cache_stale = (current_size != prev_size || current_mtime_ns != cached_log_mtime_ns.load());
+    std::lock_guard<std::mutex> lock(cached_log_mutex);
+    const auto prev_size = cached_log_size;
+    const bool cache_stale = (current_size != prev_size || current_mtime_ns != cached_log_mtime_ns);
     if (cache_stale) {
-      auto new_content = try_incremental_log_read(log_path, prev_size, current_size, cached_log.load());
+      auto new_content = try_incremental_log_read(log_path, prev_size, current_size, cached_log);
       if (!new_content) {
         new_content = std::make_shared<const std::string>(file_handler::read_file(log_path.string().c_str()));
       }
@@ -564,13 +568,13 @@ namespace confighttp {
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Log file not available");
         return;
       }
-      cached_log.store(new_content);
-      cached_log_size.store(current_size);
-      cached_log_mtime_ns.store(current_mtime_ns);
+      cached_log = new_content;
+      cached_log_size = current_size;
+      cached_log_mtime_ns = current_mtime_ns;
     }
 
     // Atomic load shared_ptr, subsequent operations based on this snapshot
-    auto content = cached_log.load();
+    auto content = cached_log;
     if (!content) {
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Log not available");
       return;
@@ -935,15 +939,15 @@ namespace confighttp {
     pt::ptree resolutions_nodes;
 
     // prepare resolutions setting for vdd
-    boost::regex pattern("\\[|\\]|\\s+");
+    std::regex pattern("\\[|\\]|\\s+");
     char delimiter = ',';
 
     // 添加全局刷新率到global节点
-    for (const auto &fps : split(boost::regex_replace(fpsArray, pattern, ""), delimiter)) {
+    for (const auto &fps : split(std::regex_replace(fpsArray, pattern, std::string("")), delimiter)) {
       global_node.add("g_refresh_rate", fps);
     }
 
-    std::string str = boost::regex_replace(resArray, pattern, "");
+    std::string str = std::regex_replace(resArray, pattern, std::string(""));
     boost::algorithm::trim(str);
     for (const auto &resolution : split(str, delimiter)) {
       auto index = resolution.find('x');
@@ -1026,8 +1030,8 @@ namespace confighttp {
 
       // 清理多余空行，保持XML格式整洁
       std::string xml_content = oss.str();
-      boost::regex empty_lines_regex("\\n\\s*\\n");
-      xml_content = boost::regex_replace(xml_content, empty_lines_regex, "\n");
+      std::regex empty_lines_regex("\\n\\s*\\n");
+      xml_content = std::regex_replace(xml_content, empty_lines_regex, std::string("\n"));
 
       std::ofstream file(idd_option_path.string());
       file << xml_content;
@@ -1103,10 +1107,12 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
+#ifdef _WIN32
     if (GetConsoleWindow() == NULL) {
       lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
       return;
     }
+#endif
     lifetime::exit_sunshine(0, false);
   }
 
@@ -1903,7 +1909,41 @@ namespace confighttp {
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
-    https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
+    // Validate cert/key files exist before trying to construct HTTPS server
+    if (!std::filesystem::exists(config::nvhttp.pkey) || !std::filesystem::exists(config::nvhttp.cert)) {
+      BOOST_LOG(warning) << "ConfigHTTP: SSL cert/key files not found, attempting to regenerate..."sv;
+      if (http::create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
+        BOOST_LOG(fatal) << "ConfigHTTP: Failed to generate SSL credentials. Config HTTPS server cannot start."sv;
+        shutdown_event->raise(true);
+        return;
+      }
+      BOOST_LOG(info) << "ConfigHTTP: SSL credentials regenerated successfully"sv;
+    }
+
+    std::unique_ptr<https_server_t> server_ptr;
+    try {
+      server_ptr = std::make_unique<https_server_t>(config::nvhttp.cert, config::nvhttp.pkey);
+    }
+    catch (boost::system::system_error &err) {
+      BOOST_LOG(fatal) << "ConfigHTTP: Failed to initialize HTTPS server: "sv << err.what();
+      BOOST_LOG(warning) << "ConfigHTTP: Attempting to regenerate SSL credentials and retry..."sv;
+      if (http::create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
+        BOOST_LOG(fatal) << "ConfigHTTP: Failed to regenerate SSL credentials. Giving up."sv;
+        shutdown_event->raise(true);
+        return;
+      }
+      try {
+        server_ptr = std::make_unique<https_server_t>(config::nvhttp.cert, config::nvhttp.pkey);
+        BOOST_LOG(info) << "ConfigHTTP: HTTPS server initialized after credential regeneration"sv;
+      }
+      catch (boost::system::system_error &err2) {
+        BOOST_LOG(fatal) << "ConfigHTTP: HTTPS server still failed after regeneration: "sv << err2.what();
+        shutdown_event->raise(true);
+        return;
+      }
+    }
+
+    auto &server = *server_ptr;
     server.default_resource["GET"] = close_connection;
     server.resource["^/$"]["GET"] = getIndexPage;
     server.resource["^/pin/?$"]["GET"] = getPinPage;

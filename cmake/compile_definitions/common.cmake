@@ -147,13 +147,16 @@ list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_ISSUE_URL="${SUNSHINE_PUBLIS
 
 include_directories("${CMAKE_SOURCE_DIR}")
 
+# FFmpeg bundled headers must come BEFORE system headers (e.g. Homebrew) to ensure
+# the code compiles against the same struct layout as the bundled static libraries.
+include_directories(BEFORE SYSTEM ${FFMPEG_INCLUDE_DIRS})
+
 include_directories(
         SYSTEM
         "${CMAKE_SOURCE_DIR}/third-party"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet/include"
         "${CMAKE_SOURCE_DIR}/third-party/nanors"
         "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
-        ${FFMPEG_INCLUDE_DIRS}
         ${Boost_INCLUDE_DIRS}  # has to be the last, or we get runtime error on macOS ffmpeg encoder
 )
 

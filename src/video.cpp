@@ -2097,7 +2097,13 @@ namespace video {
         {
           avcodec_buffer_t frame_ref { av_hwframe_ctx_alloc(encoding_stream_context.get()) };
 
+          if (!frame_ref) {
+            BOOST_LOG(error) << "Failed to allocate hardware frames context";
+            return nullptr;
+          }
+
           auto frame_ctx = (AVHWFramesContext *) frame_ref->data;
+
           frame_ctx->format = ctx->pix_fmt;
           frame_ctx->sw_format = sw_fmt;
           frame_ctx->height = ctx->height;
@@ -2108,6 +2114,8 @@ namespace video {
           encode_device->init_hwframes(frame_ctx);
 
           if (auto err = av_hwframe_ctx_init(frame_ref.get()); err < 0) {
+            char err_str[AV_ERROR_MAX_STRING_SIZE] { 0 };
+            BOOST_LOG(error) << "Failed to initialize hardware frames context: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, err);
             return nullptr;
           }
 
@@ -3834,7 +3842,7 @@ namespace video {
     auto status = av_hwdevice_ctx_create(&hw_device_buf, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0);
     if (status < 0) {
       char string[AV_ERROR_MAX_STRING_SIZE];
-      BOOST_LOG(error) << "Failed to create a VideoToolbox device: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
+      BOOST_LOG(error) << "Failed to create VideoToolbox device: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
       return -1;
     }
 

@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sw_vers:*)",
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(ls:*)",
+      "Bash(./build/sunshine:*)",
+      "Bash(system_profiler:*)",
+      "Bash(killall:*)",
+      "Bash(python3:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "Bash(chmod:*)",
+      "Bash(tee:*)",
+      "Bash(ffmpeg:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git fetch:*)",
+      "Bash(git remote add:*)",
+      "Bash(git log:*)",
+      "Bash(pkill:*)",
+      "Bash(brew search:*)",
+      "Bash(brew uninstall:*)",
+      "Bash(brew install:*)",
+      "Bash(brew link:*)",
+      "mcp__context7__resolve-library-id"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "teammateMode": "auto"
+}

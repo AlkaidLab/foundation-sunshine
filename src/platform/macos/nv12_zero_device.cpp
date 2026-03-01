@@ -10,6 +10,7 @@
 #include "src/video.h"
 
 extern "C" {
+#include "libavutil/hwcontext.h"
 #include "libavutil/imgutils.h"
 }
 
@@ -53,7 +54,19 @@ namespace platf {
 
     av_frame.reset(frame);
 
-    resolution_fn(this->display, frame->width, frame->height);
+    // YUV 4:2:0 formats require even dimensions
+    // Align to even values to prevent encoding errors
+    int aligned_width = (frame->width + 1) & ~1;
+    int aligned_height = (frame->height + 1) & ~1;
+
+    if (aligned_width != frame->width || aligned_height != frame->height) {
+      BOOST_LOG(warning) << "VideoToolbox: Aligning frame dimensions from "
+                         << frame->width << "x" << frame->height << " to "
+                         << aligned_width << "x" << aligned_height
+                         << " for YUV420 compatibility";
+    }
+
+    resolution_fn(this->display, aligned_width, aligned_height);
 
     return 0;
   }
@@ -72,6 +85,27 @@ namespace platf {
     data = this;
 
     return 0;
+  }
+
+  void
+  nv12_zero_device::init_hwframes(AVHWFramesContext *frames) {
+    if (!frames) {
+      BOOST_LOG(error) << "VideoToolbox init_hwframes: frames pointer is nullptr";
+      return;
+    }
+
+    // Note: Do not read frames->width, frames->height, etc. before av_hwframe_ctx_init()
+    // as the structure may not be fully initialized yet and reading can cause crashes.
+    // We can only safely write to these fields at this stage.
+
+    BOOST_LOG(debug) << "VideoToolbox init_hwframes called, frames=" << (void*)frames;
+
+    // Set initial pool size (required for proper initialization)
+    // The dimensions (width/height) are already set by the caller in video.cpp
+    // and should NOT be read here as they may not be fully initialized yet.
+    frames->initial_pool_size = 1;
+
+    BOOST_LOG(debug) << "VideoToolbox init_hwframes completed";
   }
 
 }  // namespace platf

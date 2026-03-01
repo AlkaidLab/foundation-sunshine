@@ -7,7 +7,9 @@
 #include <iostream>
 #include <thread>
 
-#include <boost/process/v1.hpp>
+#ifdef _WIN32
+  #include <boost/process/v1.hpp>
+#endif
 
 // local includes
 #include "config.h"
@@ -19,7 +21,9 @@
 #include "network.h"
 #include "platform/common.h"
 #include "src/display_device/display_device.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #include "version.h"
 
 extern "C" {

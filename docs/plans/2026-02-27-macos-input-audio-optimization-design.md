@@ -66,20 +66,37 @@ struct macos_input_t {
    - 仅在缓存失效时查询系统
    - 每次 `post_mouse()` 后更新缓存
 
-2. **直接创建事件**
+2. **直接创建事件（行业最佳实践）**
    - 使用 `CGEventCreateMouseEvent()` 直接创建事件
    - 替代当前的 `CGEventSetType()` 修改方式
    - 减少字段设置调用次数
+   - 参考：[Multi.app 远程控制引擎实现](https://multi.app/blog/building-a-macos-remote-control-engine)
 
-3. **灵敏度配置**
+3. **使用 kCGHIDEventTap 降低延迟**
+   - 当前使用 `kCGHIDEventTap`（已是最优选择）
+   - 相比 `kCGSessionEventTap` 延迟更低
+   - 参考：[CGEventPost 事件类型性能对比](https://stackoverflow.com/a/2625802/2648673)
+
+4. **灵敏度配置**
    - 添加 `config::input::mouse_sensitivity` 配置项
    - 在 `move_mouse()` 中应用灵敏度倍数
    - 支持范围：0.5 - 2.0，默认 1.0
 
+5. **减少系统调用开销**
+   - 复用 CGEventSource 对象（已实现）
+   - 设置 `CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0)`（已实现）
+   - 避免不必要的 `CGEventSetIntegerValueField` 调用
+
 **预期改进：**
-- 鼠标延迟降低 20-30%
-- CPU 使用率降低 10-15%
+- 鼠标延迟降低 20-30%（通过缓存和直接事件创建）
+- CPU 使用率降低 10-15%（减少系统调用）
 - 支持用户自定义灵敏度
+- 接近 UU 远程的流畅度（采用相同的 CGEvent 最佳实践）
+
+**技术参考：**
+- [macOS 鼠标延迟优化（SmoothMouse 项目）](http://dae.me/blog/2144/on-macos-sierra-support-and-the-future-of-smoothmouse/)
+- [CGEventPost 事件类型性能对比](https://stackoverflow.com/a/2625802/2648673)
+- [输入缓冲区延迟分析](https://khorvie.tech/mnkdataqueuesize/)
 
 #### 1.3 配置选项
 

@@ -176,18 +176,52 @@ namespace platf {
     }
     BOOST_LOG(info) << "Configuring selected display ("sv << display->display_id << ") to stream"sv;
 
-    display->av_capture = [[AVVideo alloc] initWithDisplay:display->display_id frameRate:config.framerate];
+    // 尝试最多 3 次初始化（处理显示器热插拔和状态不稳定）
+    const int max_retries = 3;
+    for (int retry = 0; retry < max_retries; retry++) {
+      if (retry > 0) {
+        BOOST_LOG(warning) << "Display initialization failed, retrying ("
+                           << retry << "/" << max_retries << ")..."sv;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
+
+      display->av_capture = [[AVVideo alloc] initWithDisplay:display->display_id frameRate:config.framerate];
+
+      if (display->av_capture &&
+          display->av_capture.frameWidth > 0 &&
+          display->av_capture.frameHeight > 0) {
+        break;
+      }
+
+      if (display->av_capture) {
+        [display->av_capture release];
+        display->av_capture = nil;
+      }
+    }
 
     if (!display->av_capture) {
-      BOOST_LOG(error) << "Video setup failed."sv;
+      BOOST_LOG(error) << "Video setup failed after "sv << max_retries << " retries."sv;
       return nullptr;
     }
 
     display->width = display->av_capture.frameWidth;
     display->height = display->av_capture.frameHeight;
+
+    // 添加验证
+    if (display->width <= 0 || display->height <= 0) {
+      BOOST_LOG(error) << "Invalid display resolution detected: "sv
+                       << display->width << "x"sv << display->height
+                       << " for display ID: "sv << display->display_id;
+      return nullptr;
+    }
+
     // We also need set env_width and env_height for absolute mouse coordinates
     display->env_width = display->width;
     display->env_height = display->height;
+
+    BOOST_LOG(info) << "Display initialized successfully: "sv
+                    << display->width << "x"sv << display->height
+                    << " @ "sv << config.framerate << "fps"sv;
 
     return display;
   }
@@ -215,5 +249,11 @@ namespace platf {
   needs_encoder_reenumeration() {
     // We don't track GPU state, so we will always reenumerate. Fortunately, it is fast on macOS.
     return true;
+  }
+
+  std::vector<std::string>
+  adapter_names() {
+    // macOS doesn't expose GPU adapters the same way Windows does
+    return { "Apple GPU" };
   }
 }  // namespace platf

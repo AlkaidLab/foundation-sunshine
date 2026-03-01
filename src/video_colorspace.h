@@ -19,9 +19,9 @@ namespace video {
   };
 
   struct sunshine_colorspace_t {
-    colorspace_e colorspace;
-    bool full_range;
-    unsigned bit_depth;
+    colorspace_e colorspace = colorspace_e::rec709;  // Default to Rec. 709 (most common SDR)
+    bool full_range = false;  // Default to limited range (MPEG)
+    unsigned bit_depth = 8;  // Default to 8-bit
   };
 
   bool
