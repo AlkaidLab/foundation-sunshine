@@ -81,6 +81,22 @@ namespace audio {
       platf::speaker::map_surround71,
       2048000,
     },
+    {
+      SAMPLE_RATE,
+      12,
+      8,
+      4,
+      platf::speaker::map_surround714,
+      600000,
+    },
+    {
+      SAMPLE_RATE,
+      12,
+      12,
+      0,
+      platf::speaker::map_surround714,
+      3072000,
+    },
   };
 
   void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
@@ -195,6 +211,11 @@ namespace audio {
         case 8:
           sink = &null.surround71;
           break;
+        case 12:
+          if (!null.surround714.empty()) {
+            sink = &null.surround714;
+          }
+          break;
       }
     }
 
@@ -301,6 +322,14 @@ namespace audio {
         return SURROUND51 + shift;
       case 8:
         return SURROUND71 + shift;
+      case 12:
+        return SURROUND714 + shift;
+    }
+    if (channels >= 12) {
+      return SURROUND714 + shift;
+    }
+    if (channels >= 8) {
+      return SURROUND71 + shift;
     }
     return STEREO;
   }
