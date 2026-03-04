@@ -1460,6 +1460,12 @@ namespace nvhttp {
 
     print_request_ip<SunshineHTTPS>(request, "Resume request");
 
+    // If the system is in Away Mode, exit it now since we're resuming a session
+    if (platf::is_away_mode_active()) {
+      BOOST_LOG(info) << "Exiting Away Mode due to incoming resume request"sv;
+      platf::exit_away_mode();
+    }
+
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
       std::ostringstream data;
