@@ -196,6 +196,24 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+
+    /**
+     * @brief Indicates whether the display's output colorspace uses linear gamma.
+     *
+     * This is determined from DXGI_OUTPUT_DESC1.ColorSpace:
+     *   - G10 (gamma 1.0, linear):  capture_linear_gamma = true   (ACM / scRGB)
+     *   - G22 (gamma ~2.2, sRGB):   capture_linear_gamma = false  (normal SDR)
+     *   - G2084 (PQ / HDR):         capture_linear_gamma = true   (linear light)
+     *
+     * Shader selection requires BOTH linear_gamma AND FP16 pixel format to use the
+     * linear-input shader (ApplySRGBCurve). This is because:
+     *   - FP16 + G10/G2084: data is truly in linear light → must apply transfer function
+     *   - B8G8R8A8 + G10:   data was converted to sRGB by the capture API (e.g. WGC
+     *     requesting 8-bit while display is in ACM mode) → already has sRGB gamma
+     *   - FP16 + G22:       driver returned FP16 data with sRGB gamma → identity shader
+     */
+    bool capture_linear_gamma = false;
+
     D3D_FEATURE_LEVEL feature_level;
 
     std::unique_ptr<high_precision_timer> timer = create_high_precision_timer();

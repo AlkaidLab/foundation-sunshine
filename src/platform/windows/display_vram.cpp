@@ -168,6 +168,11 @@ namespace platf::dxgi {
     // DXGI format of this image texture
     DXGI_FORMAT format;
 
+    // Whether this image's pixel data is in linear gamma (scRGB G10).
+    // When true, the conversion shader must apply sRGB transfer function.
+    // When false, the data already has sRGB gamma and should be used as-is.
+    bool linear_gamma = false;
+
     virtual ~img_d3d_t() override {
       if (encoder_texture_handle) {
         CloseHandle(encoder_texture_handle);
@@ -442,10 +447,25 @@ namespace platf::dxgi {
         auto draw = [&](auto &input, auto &y_or_yuv_viewports, auto &uv_viewport) {
           device_ctx->PSSetShaderResources(0, 1, &input);
 
+          // Select the correct pixel shader based on image gamma type:
+          // - linear_gamma AND FP16 format: Use FP16 shader that applies transfer function
+          //   (sRGB for SDR, PQ for HDR, HLG for HLG) to convert from linear light
+          // - Otherwise: Use standard shader that assumes sRGB gamma input
+          //
+          // Both conditions are required because:
+          // 1. FP16 format + G10/G2084 colorspace = data is truly linear (scRGB)
+          // 2. B8G8R8A8 format + G10 colorspace = data was converted TO sRGB by the
+          //    capture API (e.g., WGC requests 8-bit format while display is in ACM mode)
+          //
+          // This prevents double-gamma when the display is in ACM/HDR mode but the
+          // capture is in a non-FP16 format, and also when a driver returns FP16 data
+          // that already carries sRGB gamma (G22 colorspace with FP16 format).
+          const bool use_linear_shader = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+
           // Draw Y/YUV
           device_ctx->OMSetRenderTargets(1, &out_Y_or_YUV_rtv, nullptr);
           device_ctx->VSSetShader(convert_Y_or_YUV_vs.get(), nullptr, 0);
-          device_ctx->PSSetShader(img.format == DXGI_FORMAT_R16G16B16A16_FLOAT ? convert_Y_or_YUV_fp16_ps.get() : convert_Y_or_YUV_ps.get(), nullptr, 0);
+          device_ctx->PSSetShader(use_linear_shader ? convert_Y_or_YUV_fp16_ps.get() : convert_Y_or_YUV_ps.get(), nullptr, 0);
           auto viewport_count = (format == DXGI_FORMAT_R16_UINT) ? 3 : 1;
           assert(viewport_count <= y_or_yuv_viewports.size());
           device_ctx->RSSetViewports(viewport_count, y_or_yuv_viewports.data());
@@ -456,7 +476,7 @@ namespace platf::dxgi {
             assert(format == DXGI_FORMAT_NV12 || format == DXGI_FORMAT_P010);
             device_ctx->OMSetRenderTargets(1, &out_UV_rtv, nullptr);
             device_ctx->VSSetShader(convert_UV_vs.get(), nullptr, 0);
-            device_ctx->PSSetShader(img.format == DXGI_FORMAT_R16G16B16A16_FLOAT ? convert_UV_fp16_ps.get() : convert_UV_ps.get(), nullptr, 0);
+            device_ctx->PSSetShader(use_linear_shader ? convert_UV_fp16_ps.get() : convert_UV_ps.get(), nullptr, 0);
             device_ctx->RSSetViewports(1, &uv_viewport);
             device_ctx->Draw(3, 0);
           }
@@ -475,7 +495,8 @@ namespace platf::dxgi {
         // Dispatch HDR luminance analysis on the scRGB FP16 input texture
         // This runs AFTER the YUV conversion draw but BEFORE releasing the mutex,
         // so the texture is still valid. Uses async readback (1-frame delay).
-        if (hdr_analysis_enabled && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+        // Only valid when the capture data is truly linear (scRGB G10).
+        if (hdr_analysis_enabled && img.linear_gamma && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
           dispatch_hdr_analysis(img_ctx.encoder_input_res.get());
         }
 
@@ -2443,6 +2464,7 @@ namespace platf::dxgi {
     img->row_pitch = img->pixel_pitch * img->width;
     img->dummy = dummy;
     img->format = (capture_format == DXGI_FORMAT_UNKNOWN) ? DXGI_FORMAT_B8G8R8A8_UNORM : capture_format;
+    img->linear_gamma = capture_linear_gamma;
 
     D3D11_TEXTURE2D_DESC t {};
     t.Width = img->width;
