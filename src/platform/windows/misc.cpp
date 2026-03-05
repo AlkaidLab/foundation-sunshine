@@ -19,6 +19,7 @@
 #include <dwmapi.h>
 #include <iphlpapi.h>
 #include <iterator>
+#include <powrprof.h>
 #include <timeapi.h>
 #include <userenv.h>
 #include <winsock2.h>
@@ -103,6 +104,9 @@ namespace platf {
 
   bool enabled_mouse_keys = false;
   MOUSEKEYS previous_mouse_keys_state;
+
+  // Away Mode state tracking
+  std::atomic<bool> away_mode_active = false;
 
   HANDLE qos_handle = nullptr;
 
@@ -1383,6 +1387,100 @@ namespace platf {
         BOOST_LOG(warning) << "Unable to restore original state of Mouse Keys: "sv << winerr;
       }
     }
+  }
+
+  void
+  enter_away_mode() {
+    if (away_mode_active.exchange(true)) {
+      BOOST_LOG(debug) << "Already in Away Mode"sv;
+      return;
+    }
+
+    BOOST_LOG(info) << "Entering Away Mode - display off, system stays running"sv;
+
+    // Set Away Mode: intercept system sleep requests and keep system running.
+    // ES_AWAYMODE_REQUIRED: system enters away mode instead of sleep when idle or sleep is requested
+    // ES_SYSTEM_REQUIRED: prevent system idle timeout from triggering sleep
+    // ES_CONTINUOUS: keep these flags in effect until explicitly cleared
+    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED);
+
+    // Turn off the display to save power
+    // SC_MONITORPOWER with lParam=2 turns off the monitor
+    SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2);
+
+    BOOST_LOG(info) << "Away Mode active - display off, Sunshine continues listening for connections"sv;
+  }
+
+  void
+  exit_away_mode() {
+    if (!away_mode_active.exchange(false)) {
+      return;  // Not in Away Mode
+    }
+
+    BOOST_LOG(info) << "Exiting Away Mode - restoring display"sv;
+
+    // Clear all power flags to return to default system behavior
+    SetThreadExecutionState(ES_CONTINUOUS);
+
+    // Wake up the display by simulating mouse movement
+    // This is more reliable than SC_MONITORPOWER with lParam=-1
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    input.mi.dx = 0;
+    input.mi.dy = 0;
+    SendInput(1, &input, sizeof(INPUT));
+
+    // Also force display on via execution state
+    SetThreadExecutionState(ES_DISPLAY_REQUIRED);
+
+    BOOST_LOG(info) << "Away Mode deactivated - display restored"sv;
+  }
+
+  bool
+  is_away_mode_active() {
+    return away_mode_active.load();
+  }
+
+  bool
+  system_sleep() {
+    BOOST_LOG(info) << "Putting system to sleep (S3 suspend) via SetSuspendState API"sv;
+
+    // Exit Away Mode first if active, otherwise SetSuspendState may be intercepted
+    if (away_mode_active.load()) {
+      exit_away_mode();
+      // Small delay to ensure Away Mode flags are fully cleared
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // SetSuspendState(bHibernate=FALSE, bForce=TRUE, bWakeupEventsDisabled=FALSE)
+    // bHibernate=FALSE: enter S3 sleep (not S4 hibernate)
+    // bForce=TRUE: force sleep even if apps haven't responded to sleep notification
+    // bWakeupEventsDisabled=FALSE: allow wake events (WOL, keyboard, mouse, etc.)
+    if (!SetSuspendState(FALSE, TRUE, FALSE)) {
+      auto err = GetLastError();
+      BOOST_LOG(error) << "SetSuspendState(sleep) failed: "sv << err;
+      return false;
+    }
+    return true;
+  }
+
+  bool
+  system_hibernate() {
+    BOOST_LOG(info) << "Putting system to hibernate (S4) via SetSuspendState API"sv;
+
+    if (away_mode_active.load()) {
+      exit_away_mode();
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // SetSuspendState(bHibernate=TRUE, bForce=TRUE, bWakeupEventsDisabled=FALSE)
+    if (!SetSuspendState(TRUE, TRUE, FALSE)) {
+      auto err = GetLastError();
+      BOOST_LOG(error) << "SetSuspendState(hibernate) failed: "sv << err;
+      return false;
+    }
+    return true;
   }
 
   void

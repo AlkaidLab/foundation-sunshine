@@ -311,6 +311,44 @@ namespace platf {
   }
 
   void
+  enter_away_mode() {
+    // TODO: Linux implementation could use DPMS to turn off display
+    // and inhibit systemd sleep via org.freedesktop.login1.Manager.Inhibit
+    BOOST_LOG(info) << "Away Mode is not yet implemented on Linux"sv;
+  }
+
+  void
+  exit_away_mode() {
+    // No-op on Linux for now
+  }
+
+  bool
+  is_away_mode_active() {
+    return false;
+  }
+
+  bool
+  system_sleep() {
+    // Use systemd: systemctl suspend
+    auto ret = std::system("systemctl suspend");
+    if (ret != 0) {
+      BOOST_LOG(error) << "systemctl suspend failed with code: "sv << ret;
+      return false;
+    }
+    return true;
+  }
+
+  bool
+  system_hibernate() {
+    auto ret = std::system("systemctl hibernate");
+    if (ret != 0) {
+      BOOST_LOG(error) << "systemctl hibernate failed with code: "sv << ret;
+      return false;
+    }
+    return true;
+  }
+
+  void
   restart_on_exit() {
     char executable[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", executable, PATH_MAX - 1);

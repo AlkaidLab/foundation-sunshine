@@ -134,6 +134,11 @@ namespace config {
     int wan_encryption_mode;
   };
 
+  // Sleep mode options for PC sleep command
+  constexpr int SLEEP_MODE_SUSPEND = 0;   // S3 Sleep (traditional suspend via SetSuspendState)
+  constexpr int SLEEP_MODE_HIBERNATE = 1;  // S4 Hibernate (deeper sleep, saves to disk)
+  constexpr int SLEEP_MODE_AWAY = 2;       // Away Mode (display off, system stays on, instant wake)
+
   struct nvhttp_t {
     // Could be any of the following values:
     // pc|lan|wan
@@ -150,6 +155,8 @@ namespace config {
     std::string external_ip;
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
+
+    int sleep_mode;  // Sleep mode: 0=suspend(S3), 1=hibernate(S4), 2=away_mode
   };
 
   struct webhook_t {

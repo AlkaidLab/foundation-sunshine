@@ -490,6 +490,8 @@ namespace config {
     },  // supported resolutions
 
     { "60", "90", "120", "144" },  // supported fps (支持小数刷新率)
+
+    SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
   };
 
   webhook_t webhook {
@@ -1231,6 +1233,7 @@ namespace config {
     string_f(vars, "external_ip", nvhttp.external_ip);
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
     list_string_f(vars, "fps"s, nvhttp.fps);
+    int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);

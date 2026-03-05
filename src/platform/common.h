@@ -701,6 +701,40 @@ namespace platf {
   void
   streaming_will_stop();
 
+  /**
+   * @brief Enter Away Mode - display turns off, system stays running for instant wake.
+   * On Windows, this uses ES_AWAYMODE_REQUIRED + ES_SYSTEM_REQUIRED and turns off the monitor.
+   * On other platforms, this falls back to a no-op (or could be extended).
+   */
+  void
+  enter_away_mode();
+
+  /**
+   * @brief Exit Away Mode - restore display and clear power flags.
+   */
+  void
+  exit_away_mode();
+
+  /**
+   * @brief Check if the system is currently in Away Mode.
+   */
+  bool
+  is_away_mode_active();
+
+  /**
+   * @brief Put the system to sleep (S3 suspend) using the native API.
+   * @return true on success.
+   */
+  bool
+  system_sleep();
+
+  /**
+   * @brief Put the system into hibernation (S4) using the native API.
+   * @return true on success.
+   */
+  bool
+  system_hibernate();
+
   void
   restart();
 

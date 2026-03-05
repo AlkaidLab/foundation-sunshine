@@ -119,6 +119,7 @@ list(PREPEND PLATFORM_LIBRARIES
         nlohmann_json::nlohmann_json
         ntdll
         ole32
+        PowrProf
         setupapi
         shlwapi
         synchronization.lib

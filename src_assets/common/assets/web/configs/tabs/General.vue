@@ -120,6 +120,17 @@ function handleCommandOrderChanged(newOrder) {
       v-model="config.system_tray"
       default="true"
     ></Checkbox>
+
+    <!-- Sleep Mode -->
+    <div class="mb-3">
+      <label for="sleep_mode" class="form-label">{{ $t('config.sleep_mode') }}</label>
+      <select id="sleep_mode" class="form-select" v-model="config.sleep_mode">
+        <option value="0">{{ $t('config.sleep_mode_suspend') }}</option>
+        <option value="1">{{ $t('config.sleep_mode_hibernate') }}</option>
+        <option value="2">{{ $t('config.sleep_mode_away') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.sleep_mode_desc') }}</div>
+    </div>
   </div>
 </template>
 
