@@ -11,6 +11,11 @@ const config = ref(props.config);
 //     ? "{de9bb7e2-186e-505b-9e93-f48793333810}"
 //     : "4531345";
 
+// Check if VDD mode is enabled (output_name is 'ZakoHDR')
+const isVddMode = computed(() => {
+  return config.value.output_name === 'ZakoHDR'
+});
+
 // "DISPLAY NAME: \\\\.\\DISPLAY1\nFRIENDLY NAME: F32D80U\nDEVICE STATE: PRIMARY\nHDR STATE: ENABLED"
 const displayDevices = computed(() => {
   const devices = config.value.display_devices;
@@ -54,6 +59,25 @@ const displayDevices = computed(() => {
       </PlatformLayout>
     </div>
   </div>
+
+  <!-- VDD mode: Reuse VDD for all clients (only shown in VDD mode, Windows only) -->
+  <div class="mb-3 form-check" v-if="isVddMode && platform === 'windows'">
+    <input
+      type="checkbox"
+      class="form-check-input"
+      id="vdd_reuse"
+      v-model="config.vdd_reuse"
+      true-value="enabled"
+      false-value="disabled"
+    />
+    <label class="form-check-label" for="vdd_reuse">
+      {{ $tp('config.vdd_reuse') }}
+    </label>
+    <div class="form-text">
+      {{ $tp('config.vdd_reuse_desc') }}
+    </div>
+  </div>
+
   <div class="mb-3" v-if="platform === 'linux' || platform === 'macos'">
     <label for="output_name" class="form-label">{{
       $t("config.output_name_unix")

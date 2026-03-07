@@ -749,36 +749,46 @@ namespace display_device {
     const rtsp_stream::launch_session_t &session,
     const boost::optional<active_topology_t> &pre_saved_initial_topology) {
     const auto do_apply_config { [this, &pre_saved_initial_topology](const parsed_config_t &config) -> settings_t::apply_result_t {
-      // no_operation模式：完全不做任何事情
-      if (config.device_prep == parsed_config_t::device_prep_e::no_operation) {
-        BOOST_LOG(info) << "Display device preparation mode is set to no_operation, skipping all display settings changes";
-        
-        // 注意：这里不要清除persistent_data！
-        // 1. 如果一开始就是no_operation，persistent_data本来就是空的，保持为空即可。
-        // 2. 如果之前是active模式（已有persistent_data），中途切换成no_operation，我们需要保留persistent_data，
-        //    以便在最终结束串流时能恢复到最初的状态。如果清除，会导致无法恢复之前的修改。
-        
-        return { apply_result_t::result_e::success };
-      }
-      
+      // 检测是否为VDD模式
+      const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
+
+      // 根据模式选择不同的拓扑处理方式
+      boost::optional<handled_topology_result_t> topology_result;
       bool failed_while_reverting_settings { false };
-      const boost::optional<topology_pair_t> previously_configured_topology { persistent_data ? boost::make_optional(persistent_data->topology) : boost::none };
 
-      // On Windows the display settings are kept per an active topology list - each topology
-      // has separate configuration saved in the database. Therefore, we must always switch
-      // to the topology we want to modify before we actually start applying settings.
-      const auto topology_result { handle_device_topology_configuration(config, previously_configured_topology, [&]() {
-        const bool audio_sink_was_captured { audio_data != nullptr };
-        if (!revert_settings(revert_reason_e::topology_switch)) {
-          failed_while_reverting_settings = true;
-          return false;
+      if (is_vdd_mode) {
+        // VDD模式：拓扑由 vdd_prep 控制（在 prepare_vdd 中已处理），这里只获取 metadata
+        // 这里不修改拓扑，分辨率、刷新率、HDR 等设置仍然会应用
+        BOOST_LOG(info) << "VDD mode: topology controlled by vdd_prep in prepare_vdd, only getting current topology metadata";
+        topology_result = get_current_topology_metadata(config.device_id);
+      }
+      else {
+        // 普通模式：device_prep 控制拓扑
+        if (config.device_prep == parsed_config_t::device_prep_e::no_operation) {
+          BOOST_LOG(info) << "Display device preparation mode is set to no_operation, topology will not be changed";
         }
 
-        if (audio_sink_was_captured && !audio_data) {
-          audio_data = std::make_unique<audio_data_t>();
-        }
-        return true;
-      }, pre_saved_initial_topology) };
+        const boost::optional<topology_pair_t> previously_configured_topology { 
+          persistent_data ? boost::make_optional(persistent_data->topology) : boost::none 
+        };
+
+        // On Windows the display settings are kept per an active topology list - each topology
+        // has separate configuration saved in the database. Therefore, we must always switch
+        // to the topology we want to modify before we actually start applying settings.
+        topology_result = handle_device_topology_configuration(config, previously_configured_topology, [&]() {
+          const bool audio_sink_was_captured { audio_data != nullptr };
+          if (!revert_settings(revert_reason_e::topology_switch)) {
+            failed_while_reverting_settings = true;
+            return false;
+          }
+
+          if (audio_sink_was_captured && !audio_data) {
+            audio_data = std::make_unique<audio_data_t>();
+          }
+          return true;
+        }, pre_saved_initial_topology);
+      }
+
       if (!topology_result) {
         // Error already logged
         return { failed_while_reverting_settings ? apply_result_t::result_e::revert_fail : apply_result_t::result_e::topology_fail };

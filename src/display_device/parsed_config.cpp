@@ -537,6 +537,19 @@ namespace display_device {
     return static_cast<int>(parsed_config_t::hdr_prep_e::no_operation);
   }
 
+  int
+  parsed_config_t::vdd_prep_from_view(std::string_view value) {
+    using namespace std::string_view_literals;
+#define _CONVERT_(x) \
+  if (value == #x##sv) return static_cast<int>(parsed_config_t::vdd_prep_e::x);
+    _CONVERT_(no_operation);
+    _CONVERT_(vdd_as_primary);
+    _CONVERT_(vdd_as_secondary);
+    _CONVERT_(display_off);
+#undef _CONVERT_
+    return static_cast<int>(parsed_config_t::vdd_prep_e::no_operation);
+  }
+
   boost::optional<parsed_config_t>
   make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
@@ -553,6 +566,7 @@ namespace display_device {
     
     parsed_config.device_id = device_id_to_use;
     parsed_config.device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
+    parsed_config.vdd_prep = static_cast<parsed_config_t::vdd_prep_e>(config.vdd_prep);
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
     const int custom_screen_mode = session.custom_screen_mode;
@@ -571,6 +585,24 @@ namespace display_device {
       }
       else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_only_display)) {
         parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_only_display;
+      }
+    }
+
+    // 客户端自定义VDD屏幕模式
+    const int custom_vdd_screen_mode = session.custom_vdd_screen_mode;
+    if (custom_vdd_screen_mode != -1) {
+      BOOST_LOG(debug) << "客户端自定义VDD屏幕模式: "sv << custom_vdd_screen_mode;
+      if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::no_operation)) {
+        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::no_operation;
+      }
+      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::vdd_as_primary)) {
+        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::vdd_as_primary;
+      }
+      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::vdd_as_secondary)) {
+        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::vdd_as_secondary;
+      }
+      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::display_off)) {
+        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::display_off;
       }
     }
 
@@ -599,8 +631,15 @@ namespace display_device {
     // 不需要VDD时直接返回
     if (!needs_vdd) {
       BOOST_LOG(debug) << "输出设备已存在，跳过VDD准备"sv;
+      parsed_config.use_vdd = false;
       return parsed_config;
     }
+
+    // 标记为VDD模式
+    // VDD模式下，vdd_prep 控制屏幕布局，apply_config 会根据 use_vdd 分别处理
+    // device_prep 保留原值但不会被使用（由 handle_topology_for_vdd_mode 处理）
+    parsed_config.use_vdd = true;
+    BOOST_LOG(debug) << "VDD模式：使用 vdd_prep 控制屏幕布局"sv;
 
     // 不是SYSTEM权限且处于RDP中，强制使用RDP虚拟显示器，不创建VDD
     if (!is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active()) {

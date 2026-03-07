@@ -114,8 +114,36 @@ namespace display_device {
     static int
     hdr_prep_from_view(std::string_view value);
 
+    /**
+     * @brief Enum detailing how to prepare physical displays when using VDD (Virtual Display Device).
+     * @note In VDD mode, topology changes are handled by Windows automatically when displays are added/removed,
+     *       so we don't save/restore topology state - just modify it as requested.
+     */
+    enum class vdd_prep_e : int {
+      no_operation, /**< Do nothing to physical displays. */
+      vdd_as_primary, /**< VDD as primary display, physical displays as secondary (extend mode). */
+      vdd_as_secondary, /**< Physical displays as primary, VDD as secondary (extend mode). */
+      display_off /**< Turn off physical displays, only VDD remains active. */
+    };
+
+    /**
+     * @brief Convert the string to the matching value of vdd_prep_e.
+     * @param value String value to map to vdd_prep_e.
+     * @returns A vdd_prep_e value (converted to int) that matches the string
+     *          or the default value if string does not match anything.
+     * @see vdd_prep_e
+     *
+     * EXAMPLES:
+     * ```cpp
+     * const int vdd_prep = vdd_prep_from_view("display_off");
+     * ```
+     */
+    static int
+    vdd_prep_from_view(std::string_view value);
+
     std::string device_id; /**< Device id manually provided by the user via config. */
     device_prep_e device_prep; /**< The device_prep_e value taken from config. */
+    vdd_prep_e vdd_prep; /**< The vdd_prep_e value taken from config (only used in VDD mode). */
     boost::optional<resolution_t> resolution; /**< Parsed resolution value we need to switch to. Empty optional if no action is required. */
     boost::optional<refresh_rate_t> refresh_rate; /**< Parsed refresh rate value we need to switch to. Empty optional if no action is required. */
     boost::optional<bool> change_hdr_state; /**< Parsed HDR state value we need to switch to (true == ON, false == OFF). Empty optional if no action is required. */

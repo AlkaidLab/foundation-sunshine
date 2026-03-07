@@ -123,6 +123,17 @@ namespace display_device::vdd_utils {
   bool
   ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve = {});
 
+  /**
+   * @brief Apply VDD prep settings to handle physical displays.
+   * @param vdd_device_id The VDD device ID.
+   * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
+   * @returns True if the operation succeeded.
+   * @note This operation modifies topology without saving/restoring state,
+   *       as Windows automatically handles topology memory when displays change.
+   */
+  bool
+  apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep);
+
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
 

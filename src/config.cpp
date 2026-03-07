@@ -395,6 +395,7 @@ namespace config {
     true,  // nv_sunshine_high_power_mode
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
+    false,  // vdd_reuse (default: recreate VDD for each client)
     {},  // nv_legacy
 
     {
@@ -437,6 +438,7 @@ namespace config {
     {},  // capture_target (default: empty, will be set to "display" in apply_config)
     {},  // window_title
     (int) display_device::parsed_config_t::device_prep_e::no_operation,  // display_device_prep
+    (int) display_device::parsed_config_t::vdd_prep_e::no_operation,  // vdd_prep
     (int) display_device::parsed_config_t::resolution_change_e::automatic,  // resolution_change
     {},  // manual_resolution
     (int) display_device::parsed_config_t::refresh_rate_change_e::automatic,  // refresh_rate_change
@@ -1193,6 +1195,7 @@ namespace config {
     }
 #endif
     int_f(vars, "display_device_prep", video.display_device_prep, display_device::parsed_config_t::device_prep_from_view);
+    int_f(vars, "vdd_prep", video.vdd_prep, display_device::parsed_config_t::vdd_prep_from_view);
     int_f(vars, "resolution_change", video.resolution_change, display_device::parsed_config_t::resolution_change_from_view);
     string_f(vars, "manual_resolution", video.manual_resolution);
     list_display_mode_remapping_f(vars, "display_mode_remapping", video.display_mode_remapping);
@@ -1204,6 +1207,7 @@ namespace config {
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
+    bool_f(vars, "vdd_reuse", video.vdd_reuse);
 
     // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
     string_f(vars, "downscaling_quality", video.downscaling_quality);

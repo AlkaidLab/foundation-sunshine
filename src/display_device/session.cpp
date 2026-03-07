@@ -159,6 +159,8 @@ namespace display_device {
     current_vdd_client_id.clear();
     last_vdd_setting.clear();
     current_device_prep.reset();
+    current_vdd_prep.reset();
+    current_use_vdd.reset();
     // 恢复原始的 output_name，避免下一个会话使用已销毁的 VDD 设备 ID
     if (!original_output_name.empty()) {
       config::video.output_name = original_output_name;
@@ -240,10 +242,15 @@ namespace display_device {
       constexpr int max_retries = 3;
       const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
 
+      // 复用模式使用固定标识符，否则使用客户端ID
+      const std::string vdd_identifier = config::video.vdd_reuse
+        ? "shared_vdd"
+        : client_id;
+
       for (int retry = 1; retry <= max_retries; ++retry) {
         BOOST_LOG(info) << "正在执行第" << retry << "次VDD恢复尝试...";
 
-        if (!vdd_utils::create_vdd_monitor(client_id, hdr_brightness, physical_size)) {
+        if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
           BOOST_LOG(error) << "创建虚拟显示器失败，尝试" << retry << "/" << max_retries;
           if (retry < max_retries) {
             std::this_thread::sleep_for(std::chrono::seconds(1 << retry));
@@ -337,8 +344,10 @@ namespace display_device {
       return;
     }
 
-    // 保存当前会话的device_prep模式（可能包含客户端的override）
+    // 保存当前会话的配置模式（可能包含客户端的override）
     current_device_prep = parsed_config->device_prep;
+    current_vdd_prep = parsed_config->vdd_prep;
+    current_use_vdd = parsed_config->use_vdd;
 
     if (settings.is_changing_settings_going_to_fail()) {
       timer->setup_timer([this, config_copy = *parsed_config, &session, pre_saved_initial_topology]() {
@@ -371,7 +380,11 @@ namespace display_device {
   bool
   session_t::create_vdd_monitor(const std::string &client_name) {
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
-    return vdd_utils::create_vdd_monitor(client_name, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+    // 复用模式使用固定标识符，否则使用客户端名称
+    const std::string vdd_identifier = config::video.vdd_reuse
+      ? "shared_vdd"
+      : client_name;
+    return vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
   }
 
   bool
@@ -425,20 +438,17 @@ namespace display_device {
     if (!device_zako.empty() && !current_vdd_client_id.empty() &&
         !current_client_id.empty() && current_vdd_client_id != current_client_id) {
       
-      // 获取设备准备模式
-      const auto device_prep = current_device_prep.value_or(
-        static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
-      );
-      
-      // 无操作模式：复用VDD，只更新客户端ID
-      if (device_prep == parsed_config_t::device_prep_e::no_operation) {
-        BOOST_LOG(info) << "无操作模式，客户端切换时复用现有VDD";
+      // 是否复用VDD（由独立配置项控制）
+      const bool reuse_vdd = config::video.vdd_reuse;
+
+      if (reuse_vdd) {
+        // 复用VDD：所有客户端共享同一VDD，只更新客户端ID
+        BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
         current_vdd_client_id = current_client_id;
-        // 不销毁VDD，不重建，直接继续使用
       }
       else {
-        // 常驻模式和非常驻模式：销毁并重建VDD
-        BOOST_LOG(info) << "客户端切换，重建VDD设备";
+        // 不复用：销毁并重建VDD（每个客户端独立VDD）
+        BOOST_LOG(info) << "独立VDD模式，重建VDD设备（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
         
         const auto old_vdd_id = device_zako;
         vdd_utils::destroy_vdd_monitor();
@@ -471,7 +481,11 @@ namespace display_device {
     // Create VDD device if not present
     if (device_zako.empty()) {
       BOOST_LOG(info) << "创建虚拟显示器...";
-      vdd_utils::create_vdd_monitor(current_client_id, hdr_brightness, physical_size);
+      // 复用模式使用固定标识符，否则使用客户端ID生成唯一GUID
+      const std::string vdd_identifier = config::video.vdd_reuse
+        ? "shared_vdd"  // 固定标识符，所有客户端共用同一GUID
+        : current_client_id;  // 为每个客户端生成不同GUID
+      vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size);
       std::this_thread::sleep_for(500ms);
     }
 
@@ -511,10 +525,22 @@ namespace display_device {
     current_vdd_client_id = current_client_id;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
-    // Ensure VDD is in extended mode
-    if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
-      BOOST_LOG(info) << "已将VDD切换到扩展模式";
-      std::this_thread::sleep_for(500ms);
+    // Apply VDD prep settings to handle display topology
+    // This determines how VDD interacts with physical displays
+    // VDD模式下的拓扑控制与普通模式分开处理
+    if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
+      // User has specified a display configuration, apply it
+      if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep)) {
+        BOOST_LOG(info) << "已应用VDD屏幕布局设置";
+        std::this_thread::sleep_for(500ms);
+      }
+    }
+    else {
+      // No specific configuration, ensure VDD is in extended mode (default behavior)
+      if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
+        BOOST_LOG(info) << "已将VDD切换到扩展模式";
+        std::this_thread::sleep_for(500ms);
+      }
     }
 
     // Set HDR state with retry
@@ -542,31 +568,42 @@ namespace display_device {
   session_t::restore_state_impl(revert_reason_e reason) {
     // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+
+    // 判断是否为 VDD 模式
+    const bool is_vdd_mode = current_use_vdd.value_or(false);
+
+    // 获取当前有效的配置模式
+    // VDD模式：使用 vdd_prep
+    // 普通模式：使用 device_prep
+    const auto vdd_prep = current_vdd_prep.value_or(
+      static_cast<parsed_config_t::vdd_prep_e>(config::video.vdd_prep)
+    );
     const auto device_prep = current_device_prep.value_or(
       static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
     );
     
-    // 判断是否是跳过拓扑恢复的模式
-    const bool is_no_operation = (device_prep == parsed_config_t::device_prep_e::no_operation);
+    // 判断是否是无操作模式（拓扑从未被修改过）
+    // VDD模式看 vdd_prep，普通模式看 device_prep
+    const bool is_no_operation = is_vdd_mode 
+      ? (vdd_prep == parsed_config_t::vdd_prep_e::no_operation)
+      : (device_prep == parsed_config_t::device_prep_e::no_operation);
+
+    // 常驻模式：只影响 VDD 是否销毁，不影响拓扑恢复
     const bool is_keep_enabled = config::video.vdd_keep_enabled;
     
     if (!vdd_id.empty()) {
       bool should_destroy = false;
       
-      // 判断1：无操作模式 - 保留VDD
-      if (is_no_operation) {
-        BOOST_LOG(debug) << "无操作模式，保留VDD";
-      }
-      // 判断2：常驻模式 - 保留VDD
-      else if (is_keep_enabled) {
+      // 判断1：常驻模式 - 保留VDD
+      if (is_keep_enabled) {
         BOOST_LOG(debug) << "常驻模式，保留VDD";
       }
-      // 判断3：有persistent_data - 非常驻模式销毁VDD（无论是否在初始拓扑）
+      // 判断2：非常驻模式 - 销毁VDD（无论是否是无操作模式）
       else if (settings.has_persistent_data()) {
-        BOOST_LOG(info) << "非常驻/无操作模式，销毁VDD";
+        BOOST_LOG(info) << "非常驻模式，销毁VDD";
         should_destroy = true;
       }
-      // 判断4：无persistent_data（异常残留）- 非常驻模式清理
+      // 判断3：无persistent_data（异常残留）- 清理VDD
       else {
         BOOST_LOG(info) << "检测到异常残留的VDD（无persistent_data），清理VDD";
         should_destroy = true;
@@ -578,11 +615,10 @@ namespace display_device {
       }
     }
 
-    // 常驻模式或无操作模式：跳过拓扑恢复，只清理VDD状态
-    if (is_keep_enabled || is_no_operation) {
-      BOOST_LOG(info) << (is_keep_enabled ? "常驻模式" : "无操作模式") << "，跳过拓扑恢复";
-      // 不调用 revert_settings，避免恢复屏幕记忆
-      // 但仍然清理VDD状态（current_vdd_client_id等）
+    // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
+    // 注意：即使是无操作模式，VDD 在非常驻模式下也会被销毁（上面已处理）
+    if (is_no_operation) {
+      BOOST_LOG(info) << "无操作模式，跳过拓扑恢复";
       stop_timer_and_clear_vdd_state();
       return;
     }

@@ -400,6 +400,7 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
+    launch_session->custom_vdd_screen_mode = util::from_view(get_arg(args, "customVddScreenMode", "-1"));
     launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
     launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
     launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
@@ -448,6 +449,7 @@ namespace nvhttp {
     launch_session->env["SUNSHINE_CLIENT_ENABLE_MIC"] = launch_session->enable_mic ? "true" : "false";
     launch_session->env["SUNSHINE_CLIENT_USE_VDD"] = launch_session->use_vdd ? "true" : "false";
     launch_session->env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session->custom_screen_mode);
+    launch_session->env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = std::to_string(launch_session->custom_vdd_screen_mode);
     int channelCount = launch_session->surround_info & (65535);
     switch (channelCount) {
       case 2:

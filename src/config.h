@@ -41,6 +41,8 @@ namespace config {
     bool vdd_keep_enabled;
     /** When true, after stream end if no display is found (headless), create Zako VDD automatically. Default false. */
     bool vdd_headless_create_enabled;
+    /** When true, reuse existing VDD on client switch instead of destroying and recreating. Default true. */
+    bool vdd_reuse;
 
     struct {
       int preset;
@@ -99,6 +101,7 @@ namespace config {
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
     std::string window_title;     // Window title to capture when capture_target="window"
     int display_device_prep;
+    int vdd_prep;  // How to handle physical displays when using VDD (Virtual Display Device)
     int resolution_change;
     std::string manual_resolution;
     int refresh_rate_change;

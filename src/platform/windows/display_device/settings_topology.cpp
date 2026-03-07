@@ -434,4 +434,39 @@ namespace display_device {
     };
   }
 
+  boost::optional<handled_topology_result_t>
+  get_current_topology_metadata(const std::string &device_id) {
+    const std::string requested_device_id { find_one_of_the_available_devices(device_id) };
+    if (requested_device_id.empty()) {
+      BOOST_LOG(error) << "Device not found: " << device_id;
+      return boost::none;
+    }
+
+    const auto current_topology { get_current_topology() };
+    if (!is_topology_valid(current_topology)) {
+      BOOST_LOG(error) << "Display topology is invalid!";
+      return boost::none;
+    }
+
+    if (!is_device_found_in_active_topology(requested_device_id, current_topology)) {
+      BOOST_LOG(error) << "Device " << requested_device_id << " is not active!";
+      return boost::none;
+    }
+
+    const bool primary_device_requested { device_id.empty() };
+    const auto duplicated_devices { get_duplicate_devices(requested_device_id, current_topology) };
+
+    // VDD模式：不修改拓扑，使用当前拓扑作为initial和modified
+    return handled_topology_result_t {
+      topology_pair_t {
+        current_topology,
+        current_topology },
+      topology_metadata_t {
+        current_topology,
+        {},  // 没有新启用的设备
+        primary_device_requested,
+        duplicated_devices }
+    };
+  }
+
 }  // namespace display_device

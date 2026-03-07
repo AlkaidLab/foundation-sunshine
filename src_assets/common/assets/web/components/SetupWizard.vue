@@ -139,45 +139,91 @@
           <div v-else-if="currentStep === 4">
             <h3 class="mb-4">{{ $t('setup.step3_description') }}</h3>
             
-            <div class="option-card" 
-                 :class="{ selected: displayDevicePrep === 'ensure_only_display' }"
-                 @click="displayDevicePrep = 'ensure_only_display'">
-              <div class="option-icon">
-                <i class="fas fa-desktop"></i>
+            <!-- VDD 模式：显示 vdd_prep 选项 -->
+            <template v-if="isVirtualDisplay">
+              <div class="option-card"
+                   :class="{ selected: vddPrep === 'no_operation' }"
+                   @click="vddPrep = 'no_operation'">
+                <div class="option-icon">
+                  <i class="fas fa-hand-paper"></i>
+                </div>
+                <h4>{{ $t('setup.vdd_no_operation') }}</h4>
+                <p>{{ $t('setup.vdd_no_operation_desc') }}</p>
               </div>
-              <h4>{{ $t('setup.ensure_only_display') }}</h4>
-              <p>{{ $t('setup.ensure_only_display_desc') }}</p>
-            </div>
 
-            <div class="option-card" 
-                 :class="{ selected: displayDevicePrep === 'ensure_primary' }"
-                 @click="displayDevicePrep = 'ensure_primary'">
-              <div class="option-icon">
-                <i class="fas fa-star"></i>
+              <div class="option-card" 
+                   :class="{ selected: vddPrep === 'vdd_as_primary' }"
+                   @click="vddPrep = 'vdd_as_primary'">
+                <div class="option-icon">
+                  <i class="fas fa-star"></i>
+                </div>
+                <h4>{{ $t('setup.vdd_as_primary') }}</h4>
+                <p>{{ $t('setup.vdd_as_primary_desc') }}</p>
               </div>
-              <h4>{{ $t('setup.ensure_primary') }}</h4>
-              <p>{{ $t('setup.ensure_primary_desc') }}</p>
-            </div>
 
-            <div class="option-card" 
-                 :class="{ selected: displayDevicePrep === 'ensure_active' }"
-                 @click="displayDevicePrep = 'ensure_active'">
-              <div class="option-icon">
-                <i class="fas fa-check-circle"></i>
+              <div class="option-card"
+                   :class="{ selected: vddPrep === 'vdd_as_secondary' }"
+                   @click="vddPrep = 'vdd_as_secondary'">
+                <div class="option-icon">
+                  <i class="fas fa-desktop"></i>
+                </div>
+                <h4>{{ $t('setup.vdd_as_secondary') }}</h4>
+                <p>{{ $t('setup.vdd_as_secondary_desc') }}</p>
               </div>
-              <h4>{{ $t('setup.ensure_active') }}</h4>
-              <p>{{ $t('setup.ensure_active_desc') }}</p>
-            </div>
 
-            <div class="option-card" 
-                 :class="{ selected: displayDevicePrep === 'no_operation' }"
-                 @click="displayDevicePrep = 'no_operation'">
-              <div class="option-icon">
-                <i class="fas fa-hand-paper"></i>
+              <div class="option-card" 
+                   :class="{ selected: vddPrep === 'display_off' }"
+                   @click="vddPrep = 'display_off'">
+                <div class="option-icon">
+                  <i class="fas fa-power-off"></i>
+                </div>
+                <h4>{{ $t('setup.vdd_display_off') }}</h4>
+                <p>{{ $t('setup.vdd_display_off_desc') }}</p>
               </div>
-              <h4>{{ $t('setup.no_operation') }}</h4>
-              <p>{{ $t('setup.no_operation_desc') }}</p>
-            </div>
+            </template>
+
+            <!-- 普通模式：显示 device_prep 选项 -->
+            <template v-else>
+              <div class="option-card"
+                   :class="{ selected: displayDevicePrep === 'ensure_only_display' }"
+                   @click="displayDevicePrep = 'ensure_only_display'">
+                <div class="option-icon">
+                  <i class="fas fa-desktop"></i>
+                </div>
+                <h4>{{ $t('setup.ensure_only_display') }}</h4>
+                <p>{{ $t('setup.ensure_only_display_desc') }}</p>
+              </div>
+
+              <div class="option-card" 
+                   :class="{ selected: displayDevicePrep === 'ensure_primary' }"
+                   @click="displayDevicePrep = 'ensure_primary'">
+                <div class="option-icon">
+                  <i class="fas fa-star"></i>
+                </div>
+                <h4>{{ $t('setup.ensure_primary') }}</h4>
+                <p>{{ $t('setup.ensure_primary_desc') }}</p>
+              </div>
+
+              <div class="option-card" 
+                   :class="{ selected: displayDevicePrep === 'ensure_active' }"
+                   @click="displayDevicePrep = 'ensure_active'">
+                <div class="option-icon">
+                  <i class="fas fa-check-circle"></i>
+                </div>
+                <h4>{{ $t('setup.ensure_active') }}</h4>
+                <p>{{ $t('setup.ensure_active_desc') }}</p>
+              </div>
+
+              <div class="option-card" 
+                   :class="{ selected: displayDevicePrep === 'no_operation' }"
+                   @click="displayDevicePrep = 'no_operation'">
+                <div class="option-icon">
+                  <i class="fas fa-hand-paper"></i>
+                </div>
+                <h4>{{ $t('setup.no_operation') }}</h4>
+                <p>{{ $t('setup.no_operation_desc') }}</p>
+              </div>
+            </template>
           </div>
 
           <!-- 步骤 5: 完成 -->
@@ -312,7 +358,8 @@ export default {
       selectedLocale: 'zh', // 默认中文
       selectedDisplay: null, // 选择的显示器（虚拟或物理）
       selectedAdapter: '',
-      displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器
+      displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（普通模式）
+      vddPrep: 'no_operation', // VDD模式下的屏幕布局选项，默认：保持当前布局
       saveSuccess: false,
       saveError: null,
       saving: false,
@@ -355,6 +402,10 @@ export default {
       } else if (this.currentStep === 3) {
         return this.selectedAdapter !== null
       } else if (this.currentStep === 4) {
+        // VDD模式检查 vddPrep，普通模式检查 displayDevicePrep
+        if (this.isVirtualDisplay) {
+          return this.vddPrep !== null
+        }
         return this.displayDevicePrep !== null
       }
       return false
@@ -436,8 +487,16 @@ export default {
         // 设置选择的显示器
         config.output_name = this.selectedDisplay
 
-        // 添加显示器组合策略
-        config.display_device_prep = this.displayDevicePrep
+        // 根据模式添加显示器组合策略
+        if (this.isVirtualDisplay) {
+          // VDD模式：保存 vdd_prep
+          config.vdd_prep = this.vddPrep
+          // device_prep 在 VDD 模式下不使用，但保留默认值
+          config.display_device_prep = 'no_operation'
+        } else {
+          // 普通模式：保存 device_prep
+          config.display_device_prep = this.displayDevicePrep
+        }
 
         console.log('保存配置:', config)
 
@@ -457,7 +516,8 @@ export default {
           trackEvents.userAction('setup_wizard_completed', {
             selected_display: this.selectedDisplay,
             adapter: this.selectedAdapter,
-            display_device_prep: this.displayDevicePrep,
+            display_device_prep: this.isVirtualDisplay ? null : this.displayDevicePrep,
+            vdd_prep: this.isVirtualDisplay ? this.vddPrep : null,
             is_virtual_display: this.isVirtualDisplay
           })
           

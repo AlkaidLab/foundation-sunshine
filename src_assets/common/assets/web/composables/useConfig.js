@@ -57,6 +57,8 @@ const DEFAULT_TABS = [
       capture_target: 'display',
       window_title: '',
       display_device_prep: 'no_operation',
+      vdd_prep: 'no_operation',
+      vdd_reuse: 'disabled',
       resolution_change: 'automatic',
       manual_resolution: '',
       refresh_rate_change: 'automatic',

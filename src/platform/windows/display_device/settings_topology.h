@@ -108,4 +108,21 @@ namespace display_device {
   std::unordered_set<std::string>
   remove_vdd_from_topology(active_topology_t &topology);
 
+  /**
+   * @brief Get current topology metadata without modifying anything.
+   * @param device_id The device ID to use for metadata.
+   * @return A topology metadata object with current state.
+   *
+   * This is a simplified version of handle_device_topology_configuration
+   * for VDD mode where we don't want to modify topology but still need
+   * the metadata for resolution/refresh rate settings.
+   *
+   * EXAMPLES:
+   * ```cpp
+   * const auto metadata = get_current_topology_metadata("DEVICE_ID");
+   * ```
+   */
+  boost::optional<handled_topology_result_t>
+  get_current_topology_metadata(const std::string &device_id);
+
 }  // namespace display_device

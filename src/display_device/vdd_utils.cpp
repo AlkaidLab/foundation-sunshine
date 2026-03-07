@@ -607,5 +607,91 @@ namespace display_device {
       BOOST_LOG(warning) << action << "虚拟显示器HDR失败";
       return false;
     }
+
+    bool
+    apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep) {
+      if (vdd_device_id.empty()) {
+        BOOST_LOG(debug) << "VDD设备ID为空，跳过vdd_prep处理";
+        return true;
+      }
+
+      if (vdd_prep == parsed_config_t::vdd_prep_e::no_operation) {
+        BOOST_LOG(debug) << "vdd_prep设置为无操作，跳过物理显示器处理";
+        return true;
+      }
+
+      auto current_topology = get_current_topology();
+      if (current_topology.empty()) {
+        BOOST_LOG(warning) << "无法获取当前显示器拓扑";
+        return false;
+      }
+
+      // 找出所有物理显示器（非VDD设备）
+      std::vector<std::string> physical_devices;
+      for (const auto &group : current_topology) {
+        for (const auto &id : group) {
+          if (id != vdd_device_id) {
+            physical_devices.push_back(id);
+          }
+        }
+      }
+
+      if (physical_devices.empty()) {
+        BOOST_LOG(debug) << "没有物理显示器需要处理";
+        return true;
+      }
+
+      active_topology_t new_topology;
+
+      switch (vdd_prep) {
+        case parsed_config_t::vdd_prep_e::vdd_as_primary: {
+          // VDD为主屏模式：VDD放在第一位（主屏），物理显示器作为扩展显示器
+          BOOST_LOG(info) << "应用vdd_prep: VDD为主屏，物理显示器为副屏";
+          // VDD单独一组（放在第一位作为主显示器）
+          new_topology.push_back({ vdd_device_id });
+          // 每个物理显示器单独一组（扩展模式）
+          for (const auto &physical_id : physical_devices) {
+            new_topology.push_back({ physical_id });
+          }
+          break;
+        }
+
+        case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
+          // VDD为副屏模式：物理显示器为主屏，VDD作为扩展显示器
+          BOOST_LOG(info) << "应用vdd_prep: 物理显示器为主屏，VDD为副屏";
+          // 物理显示器放在前面（第一个为主显示器）
+          for (const auto &physical_id : physical_devices) {
+            new_topology.push_back({ physical_id });
+          }
+          // VDD单独一组（作为副显示器）
+          new_topology.push_back({ vdd_device_id });
+          break;
+        }
+
+        case parsed_config_t::vdd_prep_e::display_off: {
+          // 熄屏模式：只保留VDD，关闭所有物理显示器
+          BOOST_LOG(info) << "应用vdd_prep: 关闭物理显示器";
+          new_topology.push_back({ vdd_device_id });
+          // 不添加物理显示器，它们将被禁用
+          break;
+        }
+
+        default:
+          return true;
+      }
+
+      if (!is_topology_valid(new_topology)) {
+        BOOST_LOG(error) << "新拓扑无效";
+        return false;
+      }
+
+      if (!set_topology(new_topology)) {
+        BOOST_LOG(error) << "设置拓扑失败";
+        return false;
+      }
+
+      BOOST_LOG(info) << "成功应用vdd_prep设置";
+      return true;
+    }
   }  // namespace vdd_utils
 }  // namespace display_device
