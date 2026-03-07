@@ -120,16 +120,19 @@ namespace display_device {
         return false;
       }
 
+      // RAII guard for pipe handle to prevent handle leak
+      struct HandleGuard {
+        HANDLE handle;
+        ~HandleGuard() {
+          if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+        }
+      } pipe_guard { hPipe };
+
       // 异步IO结构体
       OVERLAPPED overlapped = { 0 };
       overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
-      struct HandleGuard {
-        HANDLE handle;
-        ~HandleGuard() {
-          if (handle) CloseHandle(handle);
-        }
-      } event_guard { overlapped.hEvent };
+      HandleGuard event_guard { overlapped.hEvent };
 
       // 发送命令（使用宽字符版本）
       DWORD bytesWritten;
