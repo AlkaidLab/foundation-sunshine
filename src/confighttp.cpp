@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <atomic>
+#include <stdexcept>
 #include <map>
 #include <set>
 #include <sstream>
@@ -61,6 +63,10 @@ using json = nlohmann::json;
 namespace confighttp {
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
+
+  // Prevent saveApp/deleteApp concurrent write to file_apps causing file corruption, non-blocking
+  // return busy if not acquired
+  static std::atomic<bool> apps_writing { false };
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
 
@@ -338,9 +344,12 @@ namespace confighttp {
     getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
   }
 
+  /**
+   * @brief 检查 child 是否是 parent 目录的子路径（防止路径穿越）
+   */
   bool
-  isChildPath(fs::path const &base, fs::path const &query) {
-    auto relPath = fs::relative(base, query);
+  isChildPath(fs::path const &child, fs::path const &parent) {
+    auto relPath = fs::relative(child, parent);
     return *(relPath.begin()) != fs::path("..");
   }
 
@@ -482,16 +491,134 @@ namespace confighttp {
     response->write(content, headers);
   }
 
+  /**
+   * @brief Try to read only the new tail of the log file and append to existing content.
+   * @return New content on success, nullptr on any failure (caller should fall back to full read).
+   */
+  static std::shared_ptr<const std::string> try_incremental_log_read(
+    const std::filesystem::path &log_path,
+    std::uintmax_t prev_size,
+    std::uintmax_t current_size,
+    const std::shared_ptr<const std::string> &old_content) {
+    if (current_size <= prev_size || prev_size == 0 || !old_content) {
+      return nullptr;
+    }
+    std::ifstream in(log_path.string(), std::ios::binary);
+    if (!in || !in.seekg(static_cast<std::streamoff>(prev_size))) {
+      return nullptr;
+    }
+    const auto tail_len = current_size - prev_size;
+    std::string tail(tail_len, '\0');
+    if (!in.read(tail.data(), static_cast<std::streamsize>(tail_len))) {
+      return nullptr;
+    }
+    return std::make_shared<const std::string>(*old_content + tail);
+  }
+
+  /**
+   * @brief Get the logs from the log file.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/logs| GET| null}
+   */
   void
   getLogs(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) return;
+    if (!authenticate(response, request)) {
+      return;
+    }
 
-    // print_req(request);
+    //print_req(request);
 
-    std::string content = file_handler::read_file(config::sunshine.log_file.c_str());
+    // Log caching: avoid reading disk unnecessarily when file hasn't changed
+    // Use std::atomic<shared_ptr> to ensure thread-safe access (no locks)
+    static std::atomic<std::shared_ptr<const std::string>> cached_log;
+    static std::atomic<std::uintmax_t> cached_log_size { 0 };
+    static std::atomic<std::intmax_t> cached_log_mtime_ns { 0 };
+
+    const std::filesystem::path log_path(config::sunshine.log_file);
+
+    // Check file status
+    std::error_code ec;
+    auto current_size = std::filesystem::file_size(log_path, ec);
+    if (ec) {
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+      return;
+    }
+    auto current_mtime = std::filesystem::last_write_time(log_path, ec);
+    if (ec) {
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+      return;
+    }
+    auto current_mtime_ns = current_mtime.time_since_epoch().count();
+
+    const auto prev_size = cached_log_size.load();
+    const bool cache_stale = (current_size != prev_size || current_mtime_ns != cached_log_mtime_ns.load());
+    if (cache_stale) {
+      auto new_content = try_incremental_log_read(log_path, prev_size, current_size, cached_log.load());
+      if (!new_content) {
+        new_content = std::make_shared<const std::string>(file_handler::read_file(log_path.string().c_str()));
+      }
+      // If read returned empty, ensure file still exists (e.g. not deleted during read)
+      if (new_content->empty() && !std::filesystem::exists(log_path, ec)) {
+        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Log file not available");
+        return;
+      }
+      cached_log.store(new_content);
+      cached_log_size.store(current_size);
+      cached_log_mtime_ns.store(current_mtime_ns);
+    }
+
+    // Atomic load shared_ptr, subsequent operations based on this snapshot
+    auto content = cached_log.load();
+    if (!content) {
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Log not available");
+      return;
+    }
+
+    // Read client's offset from request header (trim whitespace; invalid values => 0, then full response)
+    std::uintmax_t client_offset = 0;
+    auto it = request->header.find("X-Log-Offset");
+    if (it != request->header.end()) {
+      try {
+        std::string offset_str(it->second);
+        boost::algorithm::trim(offset_str);
+        if (!offset_str.empty()) {
+          client_offset = std::stoull(offset_str);
+        }
+      }
+      catch (const std::invalid_argument &) {
+        client_offset = 0;
+      }
+      catch (const std::out_of_range &) {
+        client_offset = 0;
+      }
+    }
+
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "text/plain");
-    response->write(SimpleWeb::StatusCode::success_ok, content, headers);
+    headers.emplace("X-Log-Size", std::to_string(content->size()));
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+
+    // offset equals current size: no change in logs, return 304
+    if (client_offset > 0 && client_offset == content->size()) {
+      headers.emplace("X-Log-Range", "unchanged");
+      response->write(SimpleWeb::StatusCode::redirection_not_modified, headers);
+      return;
+    }
+
+    // Valid offset and within range: return increment
+    if (client_offset > 0 && client_offset < content->size()) {
+      headers.emplace("X-Log-Range", "incremental");
+      auto delta = content->substr(client_offset);
+      response->write(SimpleWeb::StatusCode::success_ok, delta, headers);
+    }
+    else {
+      // Invalid offset (file rotation/first request): return full content
+      headers.emplace("X-Log-Range", "full");
+      response->write(SimpleWeb::StatusCode::success_ok, *content, headers);
+    }
   }
 
   void
@@ -499,6 +626,19 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
+
+    // Prevent concurrent write to file_apps causing file corruption
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree outputTree;
+      outputTree.put("status", "false");
+      outputTree.put("error", "Another save operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
 
     std::stringstream ss;
     ss << request->content.rdbuf();
@@ -513,7 +653,6 @@ namespace confighttp {
 
     pt::ptree inputTree, fileTree;
 
-    BOOST_LOG(info) << config::stream.file_apps;
     try {
       // TODO: Input Validation
       pt::read_json(ss, inputTree);
@@ -528,11 +667,13 @@ namespace confighttp {
         fileTree.push_back(std::make_pair("apps", input_apps_node));
       }
       else {
-        if (input_edit_node.get_child("prep-cmd").empty()) {
+        auto prep_cmd = input_edit_node.get_child_optional("prep-cmd");
+        if (prep_cmd && prep_cmd->empty()) {
           input_edit_node.erase("prep-cmd");
         }
 
-        if (input_edit_node.get_child("detached").empty()) {
+        auto detached = input_edit_node.get_child_optional("detached");
+        if (detached && detached->empty()) {
           input_edit_node.erase("detached");
         }
 
@@ -565,6 +706,7 @@ namespace confighttp {
       return;
     }
 
+    BOOST_LOG(info) << "SaveApp: configuration saved successfully"sv;
     outputTree.put("status", "true");
     proc::refresh(config::stream.file_apps);
   }
@@ -574,6 +716,19 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
+
+    // Prevent concurrent write to file_apps causing file corruption
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree outputTree;
+      outputTree.put("status", "false");
+      outputTree.put("error", "Another operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
 
     pt::ptree outputTree;
     auto g = util::fail_guard([&]() {
@@ -588,7 +743,8 @@ namespace confighttp {
       auto &apps_node = fileTree.get_child("apps"s);
       int index = stoi(request->path_match[1]);
 
-      if (index < 0) {
+      int apps_count = static_cast<int>(apps_node.size());
+      if (index < 0 || index >= apps_count) {
         outputTree.put("status", "false");
         outputTree.put("error", "Invalid Index");
         return;
@@ -614,6 +770,7 @@ namespace confighttp {
       return;
     }
 
+    BOOST_LOG(info) << "DeleteApp: configuration deleted successfully"sv;
     outputTree.put("status", "true");
     proc::refresh(config::stream.file_apps);
   }
@@ -670,7 +827,15 @@ namespace confighttp {
       }
     }
     else {
-      auto data = SimpleWeb::Crypto::Base64::decode(inputTree.get<std::string>("data"));
+      // Limit base64 data size to prevent memory exhaustion
+      // (10MB decoded to about 7.5MB, enough for cover images)
+      constexpr std::size_t MAX_COVER_BASE64_SIZE = 10 * 1024 * 1024;
+      auto base64_str = inputTree.get<std::string>("data");
+      if (base64_str.size() > MAX_COVER_BASE64_SIZE) {
+        outputTree.put("error", "Cover image too large (max 10MB)");
+        return;
+      }
+      auto data = SimpleWeb::Crypto::Base64::decode(base64_str);
 
       std::ofstream imgfile(path, std::ios::binary);
       if (!imgfile.is_open()) {
@@ -836,9 +1001,9 @@ namespace confighttp {
         iddOptionTree.add_child("global", global_node);
         iddOptionTree.add_child("resolutions", resolutions_nodes);
       }
-    } catch(...) {
+    } catch(std::exception &e) {
       // 读取失败，创建新的配置
-      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置";
+      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置: " << e.what();
 
       pt::ptree monitor_node;
       monitor_node.put("count", 1);
@@ -870,7 +1035,8 @@ namespace confighttp {
 
       return true;
     }
-    catch(...) {
+    catch(std::exception &e) {
+      BOOST_LOG(warning) << "写入VDD配置失败: " << e.what();
       return false;
     }
   }
@@ -918,6 +1084,8 @@ namespace confighttp {
       outputTree.put("error", e.what());
       return;
     }
+
+    outputTree.put("status", "true");
   }
 
   void

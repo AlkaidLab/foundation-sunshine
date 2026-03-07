@@ -19,12 +19,34 @@ Fork basé sur LizardByte/Sunshine, offrant une documentation complète [Lire la
 **Sunshine-Foundation** est un hôte de streaming de jeu auto-hébergé pour Moonlight. Cette version forkée apporte des améliorations significatives par rapport à Sunshine original, en se concentrant sur l'amélioration de l'expérience de streaming de jeu entre divers appareils terminaux et l'hôte Windows :
 
 ### 🌟 Fonctionnalités principales
-- **Support convivial HDR** - Pipeline de traitement HDR optimisé pour une véritable expérience de streaming de jeux HDR
+- **Support HDR Full Pipeline** - Double encodage HDR10 (PQ) + HLG avec métadonnées adaptatives, couvrant un plus large éventail d'appareils
 - **Écran virtuel** - Gestion intégrée des écrans virtuels, permettant de créer et gérer des écrans virtuels sans logiciel supplémentaire
 - **Microphone distant** - Prise en charge de la réception du microphone client, offrant une fonction de transmission vocale de haute qualité
 - **Panneau de contrôle avancé** - Interface de contrôle Web intuitive avec surveillance en temps réel et gestion de configuration
 - **Transmission à faible latence** - Traitement de codage optimisé exploitant les dernières capacités matérielles
 - **Appairage intelligent** - Gestion intelligente des profils correspondants aux appareils appairés
+
+### 🎬 Architecture complète du pipeline HDR
+
+**Double format d'encodage HDR : HDR10 (PQ) + HLG en parallèle**
+
+Les solutions de streaming conventionnelles ne prennent en charge que le HDR10 (PQ) avec mappage de luminance absolue, ce qui exige que l'écran client reproduise précisément les paramètres EOTF et la luminosité maximale de la source. Lorsque les capacités de l'appareil récepteur sont insuffisantes ou que les paramètres de luminosité ne correspondent pas, des artefacts de tone mapping apparaissent, tels que la perte de détails dans les ombres et l'écrêtage des hautes lumières.
+
+Foundation Sunshine introduit la prise en charge du HLG (Hybrid Log-Gamma, ITU-R BT.2100) au niveau de l'encodage. Ce standard utilise un mappage de luminance relatif avec les avantages techniques suivants :
+- **Adaptation de luminance référencée à la scène** : Le HLG utilise une courbe de luminance relative, permettant à l'écran d'effectuer automatiquement le tone mapping en fonction de sa propre luminosité maximale — la préservation des détails d'ombre sur les appareils à faible luminosité est significativement supérieure au PQ
+- **Roll-off progressif des hautes lumières** : La fonction de transfert log-gamma hybride du HLG fournit un roll-off graduel dans les zones de haute luminosité, évitant les artefacts de banding causés par l'écrêtage dur du PQ
+- **Compatibilité ascendante native SDR** : Les signaux HLG peuvent être directement décodés par les écrans SDR comme du contenu standard BT.709 sans traitement de tone mapping supplémentaire
+
+**Analyse de luminance image par image et génération adaptative de métadonnées**
+
+Le pipeline d'encodage intègre un module d'analyse de luminance en temps réel côté GPU, exécutant via des Compute Shaders sur chaque image :
+- **Calcul MaxFALL / MaxCLL par image** : Calcul en temps réel du niveau de lumière maximal du contenu (MaxCLL) et du niveau de lumière moyen maximal par image (MaxFALL), injectés dynamiquement dans les métadonnées HEVC/AV1 SEI/OBU
+- **Filtrage robuste des valeurs aberrantes** : Stratégie de troncature par percentile pour éliminer les pixels de luminance extrême (ex. réflexions spéculaires), empêchant les points lumineux isolés d'élever la référence de luminance globale et de provoquer un assombrissement global de l'image
+- **Lissage exponentiel inter-images** : Filtrage EMA (Moyenne Mobile Exponentielle) appliqué aux statistiques de luminance sur les images consécutives, éliminant le scintillement de luminosité causé par les changements brusques de métadonnées lors des transitions de scène
+
+**Transmission complète des métadonnées HDR**
+
+Prise en charge de la transmission complète des métadonnées statiques HDR10 (Mastering Display Info + Content Light Level), des métadonnées dynamiques HDR Vivid et des identifiants de caractéristiques de transfert HLG, garantissant que les flux de bits produits par les encodeurs NVENC / AMF / QSV transportent des informations complètes de volume colorimétrique et de luminance conformes à la spécification CTA-861, permettant aux décodeurs clients de reproduire fidèlement l'intention HDR de la source.
 
 ### 🖥️ Intégration d'écran virtuel (nécessite Windows 10 22H2 ou plus récent)
 - Création et destruction dynamique d'écrans virtuels

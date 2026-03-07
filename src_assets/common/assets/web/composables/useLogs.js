@@ -28,9 +28,15 @@ export function useLogs() {
   const fetchLogs = async () => {
     try {
       const response = await fetch('/api/logs')
-      logs.value = await response.text()
+      if (response.ok) {
+        logs.value = await response.text()
+        return true
+      }
+      console.error('Failed to fetch logs: HTTP', response.status)
+      return false
     } catch (e) {
       console.error('Failed to fetch logs:', e)
+      return false
     }
   }
 

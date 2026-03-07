@@ -24,12 +24,13 @@ pkg_check_modules(MINIUPNP miniupnpc REQUIRED)
 include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
 
 # ffmpeg pre-compiled binaries
+if(WIN32)
+    set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl MinHook)
+elseif(UNIX AND NOT APPLE)
+    set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
+endif()
+
 if(NOT DEFINED FFMPEG_PREPARED_BINARIES)
-    if(WIN32)
-        set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl MinHook)
-    elseif(UNIX AND NOT APPLE)
-        set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
-    endif()
     set(FFMPEG_PREPARED_BINARIES
             "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 
@@ -57,11 +58,19 @@ if(NOT DEFINED FFMPEG_PREPARED_BINARIES)
             ${HDR10_PLUS_LIBRARY}
             ${FFMPEG_PLATFORM_LIBRARIES})
 else()
+    if(EXISTS "${FFMPEG_PREPARED_BINARIES}/lib/libhdr10plus.a")
+        set(HDR10_PLUS_LIBRARY
+                "${FFMPEG_PREPARED_BINARIES}/lib/libhdr10plus.a")
+    endif()
     set(FFMPEG_LIBRARIES
         "${FFMPEG_PREPARED_BINARIES}/lib/libavcodec.a"
         "${FFMPEG_PREPARED_BINARIES}/lib/libswscale.a"
         "${FFMPEG_PREPARED_BINARIES}/lib/libavutil.a"
         "${FFMPEG_PREPARED_BINARIES}/lib/libcbs.a"
+        "${FFMPEG_PREPARED_BINARIES}/lib/libSvtAv1Enc.a"
+        "${FFMPEG_PREPARED_BINARIES}/lib/libx264.a"
+        "${FFMPEG_PREPARED_BINARIES}/lib/libx265.a"
+        ${HDR10_PLUS_LIBRARY}
         ${FFMPEG_PLATFORM_LIBRARIES})
 endif()
 

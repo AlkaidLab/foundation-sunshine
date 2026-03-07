@@ -953,6 +953,7 @@ namespace nvhttp {
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+    tree.put("root.appListEtag", proc::proc.get_apps_etag());
 
     std::ostringstream data;
 
@@ -1460,6 +1461,12 @@ namespace nvhttp {
     print_req<SunshineHTTPS>(request);
 
     print_request_ip<SunshineHTTPS>(request, "Resume request");
+
+    // If the system is in Away Mode, exit it now since we're resuming a session
+    if (platf::is_away_mode_active()) {
+      BOOST_LOG(info) << "Exiting Away Mode due to incoming resume request"sv;
+      platf::exit_away_mode();
+    }
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {

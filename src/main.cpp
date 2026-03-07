@@ -142,6 +142,12 @@ main(int argc, char *argv[]) {
 #pragma GCC diagnostic pop
 
   mail::man = std::make_shared<safe::mail_raw_t>();
+  for (int i = 1; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--version"sv) {
+      std::cout << PROJECT_NAME << " version: " << PROJECT_VER << std::endl;
+      return 0;
+    }
+  }
 
   // parse config file
   if (config::parse(argc, argv)) {

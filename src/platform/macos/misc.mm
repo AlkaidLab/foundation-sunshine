@@ -239,6 +239,37 @@ namespace platf {
   }
 
   void
+  enter_away_mode() {
+    BOOST_LOG(info) << "Away Mode is not yet implemented on macOS"sv;
+  }
+
+  void
+  exit_away_mode() {
+    // No-op on macOS for now
+  }
+
+  bool
+  is_away_mode_active() {
+    return false;
+  }
+
+  bool
+  system_sleep() {
+    auto ret = std::system("pmset sleepnow");
+    if (ret != 0) {
+      BOOST_LOG(error) << "pmset sleepnow failed with code: "sv << ret;
+      return false;
+    }
+    return true;
+  }
+
+  bool
+  system_hibernate() {
+    // macOS doesn't have a separate hibernate command, use sleep
+    return system_sleep();
+  }
+
+  void
   restart_on_exit() {
     char executable[2048];
     uint32_t size = sizeof(executable);

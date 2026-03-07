@@ -62,10 +62,12 @@ namespace platf::dxgi {
   using multithread_t = util::safe_ptr<ID3D11Multithread, Release<ID3D11Multithread>>;
   using vs_t = util::safe_ptr<ID3D11VertexShader, Release<ID3D11VertexShader>>;
   using ps_t = util::safe_ptr<ID3D11PixelShader, Release<ID3D11PixelShader>>;
+  using cs_t = util::safe_ptr<ID3D11ComputeShader, Release<ID3D11ComputeShader>>;
   using blend_t = util::safe_ptr<ID3D11BlendState, Release<ID3D11BlendState>>;
   using input_layout_t = util::safe_ptr<ID3D11InputLayout, Release<ID3D11InputLayout>>;
   using render_target_t = util::safe_ptr<ID3D11RenderTargetView, Release<ID3D11RenderTargetView>>;
   using shader_res_t = util::safe_ptr<ID3D11ShaderResourceView, Release<ID3D11ShaderResourceView>>;
+  using uav_t = util::safe_ptr<ID3D11UnorderedAccessView, Release<ID3D11UnorderedAccessView>>;
   using buf_t = util::safe_ptr<ID3D11Buffer, Release<ID3D11Buffer>>;
   using raster_state_t = util::safe_ptr<ID3D11RasterizerState, Release<ID3D11RasterizerState>>;
   using sampler_state_t = util::safe_ptr<ID3D11SamplerState, Release<ID3D11SamplerState>>;
@@ -194,6 +196,24 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+
+    /**
+     * @brief Indicates whether the display's output colorspace uses linear gamma.
+     *
+     * This is determined from DXGI_OUTPUT_DESC1.ColorSpace:
+     *   - G10 (gamma 1.0, linear):  capture_linear_gamma = true   (ACM / scRGB)
+     *   - G22 (gamma ~2.2, sRGB):   capture_linear_gamma = false  (normal SDR)
+     *   - G2084 (PQ / HDR):         capture_linear_gamma = true   (linear light)
+     *
+     * Shader selection requires BOTH linear_gamma AND FP16 pixel format to use the
+     * linear-input shader (ApplySRGBCurve). This is because:
+     *   - FP16 + G10/G2084: data is truly in linear light → must apply transfer function
+     *   - B8G8R8A8 + G10:   data was converted to sRGB by the capture API (e.g. WGC
+     *     requesting 8-bit while display is in ACM mode) → already has sRGB gamma
+     *   - FP16 + G22:       driver returned FP16 data with sRGB gamma → identity shader
+     */
+    bool capture_linear_gamma = false;
+
     D3D_FEATURE_LEVEL feature_level;
 
     std::unique_ptr<high_precision_timer> timer = create_high_precision_timer();

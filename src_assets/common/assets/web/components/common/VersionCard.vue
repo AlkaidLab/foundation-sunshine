@@ -41,10 +41,10 @@
             <i class="fas fa-rocket text-warning me-2"></i>
             <span>有新的 <b>基地版</b> sunshine可以更新!</span>
           </div>
-          <a class="btn btn-success btn-download" :href="preReleaseVersion.release.html_url" target="_blank">
+          <button type="button" class="btn btn-success btn-download" @click="handleDownloadClick(preReleaseVersion.release.html_url)">
             <i class="fas fa-download me-2"></i>
             {{ $t('index.download') }}
-          </a>
+          </button>
         </div>
         <h3 class="version-release-name">{{ preReleaseVersion.release.name }}</h3>
         <div class="markdown-content" v-html="parsedPreReleaseBody"></div>
@@ -57,19 +57,45 @@
             <i class="fas fa-star text-warning me-2"></i>
             <span>{{ $t('index.new_stable') }}</span>
           </div>
-          <a class="btn btn-success btn-download" :href="githubVersion.release.html_url" target="_blank">
+          <button type="button" class="btn btn-success btn-download" @click="handleDownloadClick(githubVersion.release.html_url)">
             <i class="fas fa-download me-2"></i>
             {{ $t('index.download') }}
-          </a>
+          </button>
         </div>
         <h3 class="version-release-name">{{ githubVersion.release.name }}</h3>
         <div class="markdown-content" v-html="parsedStableBody"></div>
       </div>
     </div>
+
+    <!-- 下载确认弹窗（与配置页虚拟麦克风下载相同方式，确认后打开下载页） -->
+    <Transition name="fade">
+      <div v-if="showDownloadConfirm" class="download-confirm-overlay" @click.self="cancelDownload">
+        <div class="download-confirm-modal">
+          <div class="download-confirm-header">
+            <h5>
+              <i class="fas fa-external-link-alt me-2"></i>{{ $t('_common.download') }}
+            </h5>
+            <button class="btn-close" @click="cancelDownload"></button>
+          </div>
+          <div class="download-confirm-body">
+            <p>{{ $t('index.update_download_confirm') }}</p>
+          </div>
+          <div class="download-confirm-footer">
+            <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-primary" @click="confirmDownload">
+              <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
+import { openExternalUrl } from '../../utils/helpers.js'
+
 defineProps({
   version: Object,
   githubVersion: Object,
@@ -83,6 +109,31 @@ defineProps({
   parsedStableBody: String,
   parsedPreReleaseBody: String,
 })
+
+const showDownloadConfirm = ref(false)
+const pendingDownloadUrl = ref('')
+
+const handleDownloadClick = (url) => {
+  pendingDownloadUrl.value = url
+  showDownloadConfirm.value = true
+}
+
+const confirmDownload = async () => {
+  const url = pendingDownloadUrl.value
+  showDownloadConfirm.value = false
+  pendingDownloadUrl.value = ''
+  if (!url) return
+  try {
+    await openExternalUrl(url)
+  } catch (error) {
+    console.error('Failed to open download URL:', error)
+  }
+}
+
+const cancelDownload = () => {
+  showDownloadConfirm.value = false
+  pendingDownloadUrl.value = ''
+}
 </script>
 
 <style scoped>
@@ -334,5 +385,141 @@ defineProps({
 
 [data-bs-theme='dark'] .version-release-name {
   color: #e0e0e0;
+}
+
+/* Download Confirm Modal（与 AudioVideo 一致） */
+.download-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg, 20px);
+  overflow: hidden;
+}
+
+[data-bs-theme='light'] .download-confirm-overlay {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.download-confirm-modal {
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  border-radius: var(--border-radius-xl, 12px);
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  animation: modalSlideUp 0.3s ease;
+}
+
+[data-bs-theme='light'] .download-confirm-modal {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+}
+
+.download-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+}
+
+[data-bs-theme='light'] .download-confirm-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.download-confirm-header h5 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--bs-body-color);
+  display: flex;
+  align-items: center;
+}
+
+.download-confirm-header h5 i {
+  color: var(--bs-primary);
+}
+
+.download-confirm-header .btn-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--bs-secondary-color);
+  cursor: pointer;
+  padding: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.download-confirm-header .btn-close:hover {
+  opacity: 1;
+}
+
+.download-confirm-header .btn-close::before {
+  content: '×';
+}
+
+.download-confirm-body {
+  padding: 1.5rem;
+  color: var(--bs-body-color);
+}
+
+.download-confirm-body p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.download-confirm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+}
+
+[data-bs-theme='light'] .download-confirm-footer {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+@keyframes modalSlideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

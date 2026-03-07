@@ -799,6 +799,23 @@ namespace platf::dxgi {
         << "HDR: "sv << colorspace_to_string(desc1.ColorSpace)
         << ", Bits: "sv << desc1.BitsPerColor
         << ", Luminance: "sv << desc1.MinLuminance << '/' << desc1.MaxLuminance << '/' << desc1.MaxFullFrameLuminance << " nits"sv;
+
+      // Determine if the captured frames are in linear gamma (need shader conversion).
+      //
+      // The DXGI_COLOR_SPACE_TYPE from the output descriptor tells us the gamma:
+      //   - G10 (gamma 1.0, linear):  scRGB / Windows ACM → data is linear light
+      //   - G2084 (PQ):               HDR mode → DWM outputs scRGB linear, shader applies PQ curve
+      //   - G22 (gamma ~2.2, sRGB):   normal SDR → data already has sRGB gamma
+      //
+      // When capture_linear_gamma is true, the pixel shader must apply a transfer function
+      // (sRGB, PQ, or HLG depending on the encoding colorspace) to convert from linear light.
+      // When false, the captured frames already carry sRGB gamma and should be used as-is.
+      capture_linear_gamma = (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
+                              desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+      BOOST_LOG(info) << "Capture gamma: "sv
+                      << (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ? "linear (HDR/PQ)" :
+                          capture_linear_gamma ? "linear (G10, scRGB/ACM)" :
+                                                 "sRGB (G22)");
     }
 
     if (!timer || !*timer) {

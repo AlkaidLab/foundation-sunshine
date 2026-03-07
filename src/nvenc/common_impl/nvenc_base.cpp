@@ -109,6 +109,13 @@ namespace nvenc {
     encoder_params.width = client_config.width;
     encoder_params.height = client_config.height;
     encoder_params.buffer_format = buffer_format;
+
+    // YUV 4:2:0 formats (NV12/P010) require even dimensions because
+    // the chroma plane is half the size of the luma plane in both dimensions.
+    if (buffer_format == NV_ENC_BUFFER_FORMAT_NV12 || buffer_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT) {
+      encoder_params.width = (encoder_params.width + 1) & ~1;
+      encoder_params.height = (encoder_params.height + 1) & ~1;
+    }
     encoder_params.rfi = true;
 
     NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS session_params = { NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER };

@@ -5,9 +5,10 @@ import { $tp } from '../../platform-i18n'
 import { openExternalUrl } from '../../utils/helpers.js'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
-import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelector.vue'
 import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
+import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelector.vue'
 import DisplayDeviceOptions from './audiovideo/DisplayDeviceOptions.vue'
+import ExperimentalFeatures from './audiovideo/ExperimentalFeatures.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
 import Checkbox from '../../components/Checkbox.vue'
@@ -135,34 +136,7 @@ const cancelDownload = () => {
 
     <NewDisplayOutputSelector :platform="platform" :config="config" />
 
-    <PlatformLayout :platform="platform">
-      <template #windows>
-        <!-- Capture Target -->
-        <div class="mb-3">
-          <label for="capture_target" class="form-label">{{ $t('config.capture_target') }}</label>
-          <select id="capture_target" class="form-select" v-model="config.capture_target">
-            <option value="display">{{ $t('config.capture_target_display') }}</option>
-            <option value="window">{{ $t('config.capture_target_window') }}</option>
-          </select>
-          <div class="form-text">{{ $t('config.capture_target_desc') }}</div>
-        </div>
-
-        <!-- Window Title (only shown when capture_target is window) -->
-        <div class="mb-3" v-if="config.capture_target === 'window'">
-          <label for="window_title" class="form-label">{{ $t('config.window_title') }}</label>
-          <input
-            type="text"
-            class="form-control"
-            id="window_title"
-            :placeholder="$t('config.window_title_placeholder')"
-            v-model="config.window_title"
-          />
-          <div class="form-text">{{ $t('config.window_title_desc') }}</div>
-        </div>
-      </template>
-    </PlatformLayout>
-
-    <DisplayDeviceOptions :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
+    <DisplayDeviceOptions :platform="platform" :config="config" />
 
     <!-- Display Modes Tab Navigation -->
     <div class="mb-3">
@@ -209,28 +183,32 @@ const cancelDownload = () => {
       </div>
     </div>
 
+    <ExperimentalFeatures :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
+
     <!-- 下载确认对话框 -->
-    <Transition name="fade">
-      <div v-if="showDownloadConfirm" class="download-confirm-overlay" @click.self="cancelDownload">
-        <div class="download-confirm-modal">
-          <div class="download-confirm-header">
-            <h5>
-              <i class="fas fa-external-link-alt me-2"></i>{{ $t('_common.download') }}
-            </h5>
-            <button class="btn-close" @click="cancelDownload"></button>
-          </div>
-          <div class="download-confirm-body">
-            <p>{{ $t('config.stream_mic_download_confirm') }}</p>
-          </div>
-          <div class="download-confirm-footer">
-            <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" @click="confirmDownload">
-              <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
-            </button>
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="showDownloadConfirm" class="download-confirm-overlay" @click.self="cancelDownload">
+          <div class="download-confirm-modal">
+            <div class="download-confirm-header">
+              <h5>
+                <i class="fas fa-external-link-alt me-2"></i>{{ $t('_common.download') }}
+              </h5>
+              <button class="btn-close" @click="cancelDownload"></button>
+            </div>
+            <div class="download-confirm-body">
+              <p>{{ $t('config.stream_mic_download_confirm') }}</p>
+            </div>
+            <div class="download-confirm-footer">
+              <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
+              <button type="button" class="btn btn-primary" @click="confirmDownload">
+                <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </Transition>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -300,7 +278,10 @@ const cancelDownload = () => {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-/* Download Confirm Modal */
+/* Download Confirm Modal - teleported to body, styles must not be scoped */
+</style>
+
+<style>
 .download-confirm-overlay {
   position: fixed;
   top: 0;

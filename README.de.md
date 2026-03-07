@@ -19,12 +19,34 @@ Ein Fork basierend auf LizardByte/Sunshine, bietet vollständige Dokumentationsu
 **Sunshine-Foundation** ist ein selbst gehosteter Game-Stream-Host für Moonlight. Diese Fork-Version hat erhebliche Verbesserungen gegenüber dem ursprünglichen Sunshine vorgenommen und konzentriert sich darauf, das Spiel-Streaming-Erlebnis für verschiedene Streaming-Endgeräte und Windows-Hosts zu verbessern:
 
 ### 🌟 Kernfunktionen
-- **HDR-freundliche Unterstützung** - Optimierte HDR-Verarbeitungspipeline für ein echtes HDR-Game-Streaming-Erlebnis
+- **Vollständige HDR-Pipeline-Unterstützung** - Dualformat HDR10 (PQ) + HLG Kodierung mit adaptiven Metadaten für eine breitere Geräteabdeckung
 - **Virtuelle Anzeige** - Integriertes virtuelles Display-Management, ermöglicht das Erstellen und Verwalten virtueller Displays ohne zusätzliche Software
 - **Entferntes Mikrofon** - Unterstützt das Empfangen von Client-Mikrofonen und bietet hochwertige Sprachdurchleitung
 - **Erweiterte Systemsteuerung** - Intuitive Web-Oberfläche zur Konfiguration mit Echtzeit-Überwachung und Verwaltung
 - **Niedrige Latenzübertragung** - Optimierte Encoder-Verarbeitung unter Nutzung der neuesten Hardware-Fähigkeiten
 - **Intelligente Paarung** - Intelligentes Management von Profilen für gepaarte Geräte
+
+### 🎬 Vollständige HDR-Pipeline-Architektur
+
+**Dual-Format HDR-Kodierung: HDR10 (PQ) + HLG Parallelunterstützung**
+
+Herkömmliche Streaming-Lösungen unterstützen nur HDR10 (PQ) mit absoluter Luminanzzuordnung, was erfordert, dass das Client-Display die EOTF-Parameter und Spitzenhelligkeit der Quelle genau reproduziert. Wenn die Fähigkeiten des Empfangsgeräts unzureichend sind oder die Helligkeitsparameter nicht übereinstimmen, treten Tone-Mapping-Artefakte wie abgeschnittene Schatten und überbelichtete Lichter auf.
+
+Foundation Sunshine führt HLG-Unterstützung (Hybrid Log-Gamma, ITU-R BT.2100) auf der Kodierungsebene ein. Dieser Standard verwendet eine relative Luminanzzuordnung mit folgenden technischen Vorteilen:
+- **Szenenreferenzierte Luminanzanpassung**: HLG verwendet eine relative Luminanzkurve, die es dem Display ermöglicht, automatisch Tone Mapping basierend auf seiner eigenen Spitzenhelligkeit durchzuführen — die Erhaltung von Schattendetails auf Geräten mit niedriger Helligkeit ist PQ deutlich überlegen
+- **Sanfter Highlight-Roll-Off**: Die hybride Log-Gamma-Transferfunktion von HLG bietet einen graduellen Roll-Off in Highlight-Bereichen und vermeidet die Banding-Artefakte, die durch hartes Clipping bei PQ verursacht werden
+- **Native SDR-Abwärtskompatibilität**: HLG-Signale können von SDR-Displays direkt als Standard-BT.709-Inhalt dekodiert werden, ohne zusätzliches Tone Mapping
+
+**Einzelbild-Luminanzanalyse und adaptive Metadatengenerierung**
+
+Die Kodierungspipeline integriert ein Echtzeit-Luminanzanalysemodul auf der GPU-Seite, das über Compute Shader für jedes Einzelbild folgende Operationen ausführt:
+- **MaxFALL / MaxCLL Einzelbild-Berechnung**: Echtzeit-Berechnung des maximalen Inhaltslichtpegels (MaxCLL) und des maximalen durchschnittlichen Bildlichtpegels (MaxFALL) auf Einzelbildebene, dynamisch in HEVC/AV1 SEI/OBU-Metadaten injiziert
+- **Robuste Ausreißerfilterung**: Perzentilbasierte Abschneidestrategie zur Eliminierung extremer Luminanzpixel (z.B. Spiegelreflexionen), um zu verhindern, dass isolierte Leuchtpunkte die globale Luminanzreferenz anheben und zu einer allgemeinen Bildverdunkelung führen
+- **Interframe-Exponentialglättung**: EMA-Filterung (Exponentieller gleitender Durchschnitt) auf Luminanzstatistiken über aufeinanderfolgende Frames, zur Beseitigung von Helligkeitsflimmern durch abrupte Metadatenänderungen bei Szenenwechseln
+
+**Vollständige HDR-Metadaten-Durchleitung**
+
+Unterstützt die vollständige Durchleitung von statischen HDR10-Metadaten (Mastering Display Info + Content Light Level), dynamischen HDR Vivid-Metadaten und HLG-Transfercharakteristik-Kennungen. Dies stellt sicher, dass die von NVENC / AMF / QSV-Encodern ausgegebenen Bitstreams vollständige Farbvolumen- und Luminanzinformationen gemäß der CTA-861-Spezifikation enthalten, sodass Client-Decoder die HDR-Absicht der Quelle präzise reproduzieren können.
 
 ### 🖥️ Integriertes virtuelles Display (Erfordert Win10 22H2 oder neuer)
 - Dynamische Erstellung und Entfernung virtueller Displays

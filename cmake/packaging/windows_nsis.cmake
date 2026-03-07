@@ -3,6 +3,103 @@
 
 set(CPACK_NSIS_INSTALLED_ICON_NAME "${PROJECT__DIR}\\\\${PROJECT_EXE}")
 
+# 由于 CPack 的 NSIS 模板限制，我们无法直接修改 .onInit 函数
+# 但可以通过以下方式实现：
+# 通过 MUI_PAGE_CUSTOMFUNCTION_PRE 在目录页面显示前读取注册表
+#
+# 注意：CPACK_NSIS_INSTALLER_MUI_ICON_CODE 是在页面定义之前的钩子
+# 我们用它来定义自定义函数，并设置 MUI_PAGE_CUSTOMFUNCTION_PRE
+
+set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "
+; 定义安装程序图标
+!define MUI_ICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
+!define MUI_UNICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
+
+; 定义在目录页面显示前执行的函数
+!define MUI_PAGE_CUSTOMFUNCTION_PRE PreDirectoryPage
+
+; 从注册表读取之前的安装路径
+; 参考 CPack NSIS 模板中 .onInit 的 ENABLE_UNINSTALL_BEFORE_INSTALL 实现
+
+Function PreDirectoryPage
+    ; 只在默认安装目录时才尝试读取注册表
+    StrCmp $IS_DEFAULT_INSTALLDIR '1' 0 SkipRegRead
+
+    Push $0
+    SetRegView 64
+
+    ; 从 NSIS 卸载注册表读取 UninstallString
+    ReadRegStr $0 HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\Sunshine' 'UninstallString'
+    StrCmp $0 '' DoneRegRead 0
+
+    ; 移除引号（如果有）
+    StrCpy $0 $0 '' 1   ; 移除开头的引号
+    StrLen $1 $0
+    IntOp $1 $1 - 1
+    StrCpy $0 $0 $1     ; 移除结尾的引号
+
+    ; 获取父目录（移除 \\\\Uninstall.exe）
+    Push $0
+    Call GetParent
+    Pop $0
+    StrCmp $0 '' DoneRegRead 0
+    IfFileExists '$0\\\\*.*' SetPath DoneRegRead
+
+    SetPath:
+    StrCpy $INSTDIR $0
+    StrCpy $IS_DEFAULT_INSTALLDIR '0'
+
+    DoneRegRead:
+    Pop $0
+
+    SkipRegRead:
+FunctionEnd
+
+; 辅助函数：获取路径的父目录
+Function GetParent
+    Exch $0
+    Push $1
+    Push $2
+
+    StrLen $1 $0
+    IntOp $1 $1 - 1
+
+    loop:
+        IntOp $1 $1 - 1
+        IntCmp $1 0 done done
+        StrCpy $2 $0 1 $1
+        StrCmp $2 '\\\\' found
+        Goto loop
+
+    found:
+        StrCpy $0 $0 $1
+
+    done:
+        Pop $2
+        Pop $1
+        Exch $0
+FunctionEnd
+
+; Finish Page 自定义选项
+; 复选框1: 打开使用教程（默认勾选）
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT '打开使用教程'
+!define MUI_FINISHPAGE_RUN_FUNCTION OpenDocumentation
+
+; 复选框2: 启动 Sunshine GUI（默认勾选）
+!define MUI_FINISHPAGE_SHOWREADME
+!define MUI_FINISHPAGE_SHOWREADME_TEXT '启动 Sunshine GUI'
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION LaunchGUI
+
+Function OpenDocumentation
+    ExecShell 'open' 'https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ'
+FunctionEnd
+
+Function LaunchGUI
+    Exec '\$INSTDIR\\\\assets\\\\gui\\\\sunshine-gui.exe'
+FunctionEnd
+")
+
 # ==============================================================================
 # File Conflict Prevention - 在文件解压前停止进程
 # ==============================================================================
@@ -47,13 +144,6 @@ set(CPACK_NSIS_WELCOME_TITLE_3LINES "ON")
 # Custom finish page configuration
 set(CPACK_NSIS_FINISH_TITLE "安装完成！")
 set(CPACK_NSIS_FINISH_TEXT "Sunshine Foundation Game Streaming Server 已成功安装到您的系统中。\\r\\n\\r\\n点击 '完成' 开始使用这个强大的游戏流媒体服务器。")
-
-# Finish page run configuration - must be set before MUI pages are defined
-# 注意：
-# 1. 不要使用 $INSTDIR 变量，CPack 会自动添加
-# 2. 静默安装时 Finish 页面不显示，复选框不会触发
-# 3. 如果需要在静默安装后启动GUI，需要在 EXTRA_INSTALL_COMMANDS 中手动处理
-set(CPACK_NSIS_MUI_FINISHPAGE_RUN "assets\\\\gui\\\\sunshine-gui.exe")
 
 # ==============================================================================
 # Installation Progress and User Feedback
@@ -122,11 +212,6 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\autostart-service.bat\\\"'
         
         DetailPrint '✅ 安装完成！'
-        ; 仅在非静默安装时打开使用教程
-        IfSilent skip_post_install
-        DetailPrint '正在启动配置界面...'
-        ExecShell 'open' 'https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ'
-        skip_post_install:
         
         NoController:
         ")

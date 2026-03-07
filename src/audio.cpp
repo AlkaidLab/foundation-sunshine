@@ -105,6 +105,18 @@ namespace audio {
 
     opus_multistream_encoder_ctl(opus.get(), OPUS_SET_BITRATE(stream.bitrate));
     opus_multistream_encoder_ctl(opus.get(), OPUS_SET_VBR(0));
+    opus_multistream_encoder_ctl(opus.get(), OPUS_SET_COMPLEXITY(10));
+
+    // Note: In-band FEC (OPUS_SET_INBAND_FEC) is a SILK-only feature and has no effect
+    // in RESTRICTED_LOWDELAY mode (CELT-only). DRED is the CELT equivalent.
+
+#ifdef OPUS_SET_DRED_DURATION_REQUEST  // Opus >= 1.5.0
+    // DRED (Deep REDundancy): ML-based redundancy for graceful packet loss recovery
+    // Works with CELT mode (RESTRICTED_LOWDELAY). Embeds redundancy in each packet
+    // allowing the decoder to recover up to 100ms of lost audio from subsequent packets.
+    opus_multistream_encoder_ctl(opus.get(), OPUS_SET_DRED_DURATION(100));
+    BOOST_LOG(info) << "Opus DRED enabled: 100ms redundancy"sv;
+#endif
 
     BOOST_LOG(info) << "Opus initialized: "sv << stream.sampleRate / 1000 << " kHz, "sv
                     << stream.channelCount << " channels, "sv
