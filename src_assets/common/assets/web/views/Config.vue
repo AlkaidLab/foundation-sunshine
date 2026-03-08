@@ -651,12 +651,12 @@ onUnmounted(() => {
       }
 
       &.has-unsaved {
-        animation: pulse-warning 2s ease-in-out infinite;
+        animation: pulse-warning 2s ease-in-out 3;
         box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
           0 0 0 3px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 
         &:hover {
-          animation: gradient-shift 1.5s ease infinite, pulse-warning 2s ease-in-out infinite;
+          animation: gradient-shift 1.5s ease infinite, pulse-warning 2s ease-in-out 3;
           box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6), 0 0 40px rgba(255, 107, 157, 0.4),
             0 0 0 4px rgba(255, 193, 7, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.4);
         }
@@ -800,6 +800,25 @@ onUnmounted(() => {
       font-size: 0.875rem;
       white-space: nowrap;
     }
+  }
+}
+
+// 无障碍：减少动态效果
+@media (prefers-reduced-motion: reduce) {
+  .config-floating-buttons .cute-btn {
+    animation: none !important;
+    transition: none !important;
+
+    &:hover {
+      animation: none !important;
+    }
+  }
+
+  .config-skeleton .skeleton-tab,
+  .config-skeleton .skeleton-title,
+  .config-skeleton .skeleton-label,
+  .config-skeleton .skeleton-input {
+    animation: none !important;
   }
 }
 </style>
