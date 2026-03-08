@@ -50,34 +50,62 @@ namespace display_device {
       return std::min(delay, kMaxRetryDelay);
     }
 
+    /**
+     * @brief Allowed DevManView actions for VDD driver management.
+     */
+    enum class vdd_action_e {
+      enable,
+      disable,
+      disable_enable
+    };
+
+    /**
+     * @brief Get the command-line argument string for a VDD action.
+     */
+    const char *
+    vdd_action_to_string(vdd_action_e action) {
+      switch (action) {
+        case vdd_action_e::enable: return "enable";
+        case vdd_action_e::disable: return "disable";
+        case vdd_action_e::disable_enable: return "disable_enable";
+        default: return nullptr;
+      }
+    }
+
     bool
-    execute_vdd_command(const std::string &action) {
+    execute_vdd_command(vdd_action_e action) {
       static const std::string kDevManPath = (std::filesystem::path(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe").string();
       static const std::string kDriverName = "Zako Display Adapter";
+
+      const char *action_str = vdd_action_to_string(action);
+      if (!action_str) {
+        BOOST_LOG(error) << "未知的VDD命令操作";
+        return false;
+      }
 
       boost::process::v1::environment _env = boost::this_process::environment();
       auto working_dir = boost::filesystem::path();
       std::error_code ec;
 
-      std::string cmd = kDevManPath + " /" + action + " \"" + kDriverName + "\"";
+      std::string cmd = kDevManPath + " /" + action_str + " \"" + kDriverName + "\"";
 
       for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
         auto child = platf::run_command(true, true, cmd, working_dir, _env, nullptr, ec, nullptr);
         if (!ec) {
-          BOOST_LOG(info) << "成功执行VDD " << action << " 命令";
+          BOOST_LOG(info) << "成功执行VDD " << action_str << " 命令";
           child.detach();
           return true;
         }
 
         auto delay = calculate_exponential_backoff(attempt);
-        BOOST_LOG(warning) << "执行VDD " << action << " 命令失败 (尝试 "
+        BOOST_LOG(warning) << "执行VDD " << action_str << " 命令失败 (尝试 "
                            << (attempt + 1) << "/" << kMaxRetryCount
                            << "): " << ec.message() << ". 将在 "
                            << delay.count() << "ms 后重试";
         std::this_thread::sleep_for(delay);
       }
 
-      BOOST_LOG(error) << "执行VDD " << action << " 命令失败，已达到最大重试次数";
+      BOOST_LOG(error) << "执行VDD " << action_str << " 命令失败，已达到最大重试次数";
       return false;
     }
 
@@ -323,17 +351,17 @@ namespace display_device {
 
     void
     enable_vdd() {
-      execute_vdd_command("enable");
+      execute_vdd_command(vdd_action_e::enable);
     }
 
     void
     disable_vdd() {
-      execute_vdd_command("disable");
+      execute_vdd_command(vdd_action_e::disable);
     }
 
     void
     disable_enable_vdd() {
-      execute_vdd_command("disable_enable");
+      execute_vdd_command(vdd_action_e::disable_enable);
     }
 
     bool
