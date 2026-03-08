@@ -178,7 +178,7 @@ namespace display_device {
      * ```
      */
     bool
-    revert_settings(revert_reason_e reason = revert_reason_e::stream_ended);
+    revert_settings(revert_reason_e reason = revert_reason_e::stream_ended, bool skip_vdd_destroy = false);
 
     /**
      * @brief Reset the persistence and currently held initial display state.
