@@ -315,9 +315,6 @@ onUnmounted(() => {
   padding: 1em;
   border: 1px solid transparent;
   border-top: none;
-  backdrop-filter: blur(2px);
-  transform: translateZ(0);
-  backface-visibility: hidden;
 }
 
 .config-skeleton {
@@ -597,7 +594,6 @@ onUnmounted(() => {
     color: #fff;
     font-size: 1.25rem;
     cursor: pointer;
-    backdrop-filter: blur(15px);
     position: relative;
     overflow: hidden;
     .transition();
@@ -645,22 +641,22 @@ onUnmounted(() => {
     &-primary {
       background: linear-gradient(135deg, #ff6b9d, #c44569, #f093fb);
       background-size: 200% 200%;
-      animation: gradient-shift 3s ease infinite;
       box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
         inset 0 1px 0 rgba(255, 255, 255, 0.3);
 
       &:hover {
+        animation: gradient-shift 1.5s ease infinite;
         box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6), 0 0 40px rgba(255, 107, 157, 0.4),
           inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        animation-duration: 1.5s;
       }
 
       &.has-unsaved {
-        animation: gradient-shift 3s ease infinite, pulse-warning 2s ease-in-out infinite;
+        animation: pulse-warning 2s ease-in-out 3;
         box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
           0 0 0 3px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 
         &:hover {
+          animation: gradient-shift 1.5s ease infinite, pulse-warning 2s ease-in-out 3;
           box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6), 0 0 40px rgba(255, 107, 157, 0.4),
             0 0 0 4px rgba(255, 193, 7, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.4);
         }
@@ -670,14 +666,13 @@ onUnmounted(() => {
     &-success {
       background: linear-gradient(135deg, #4facfe, #00f2fe, #43e97b);
       background-size: 200% 200%;
-      animation: gradient-shift 3s ease infinite;
       box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4), 0 0 20px rgba(79, 172, 254, 0.2),
         inset 0 1px 0 rgba(255, 255, 255, 0.3);
 
       &:hover {
+        animation: gradient-shift 1.5s ease infinite;
         box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6), 0 0 40px rgba(79, 172, 254, 0.4),
           inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        animation-duration: 1.5s;
       }
     }
 
@@ -805,6 +800,25 @@ onUnmounted(() => {
       font-size: 0.875rem;
       white-space: nowrap;
     }
+  }
+}
+
+// 无障碍：减少动态效果
+@media (prefers-reduced-motion: reduce) {
+  .config-floating-buttons .cute-btn {
+    animation: none !important;
+    transition: none !important;
+
+    &:hover {
+      animation: none !important;
+    }
+  }
+
+  .config-skeleton .skeleton-tab,
+  .config-skeleton .skeleton-title,
+  .config-skeleton .skeleton-label,
+  .config-skeleton .skeleton-input {
+    animation: none !important;
   }
 }
 </style>
