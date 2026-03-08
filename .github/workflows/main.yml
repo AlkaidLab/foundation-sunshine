@@ -61,11 +61,17 @@ jobs:
       - name: Setup Release (Release event)
         id: setup_release_release
         if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           TAG="${{ github.event.release.tag_name }}"
           SUFFIX=$([ "${{ github.event.release.target_commitish }}" = "master" ] && echo "" || echo "-dev")
           echo "publish_release=true" >> $GITHUB_OUTPUT
-          echo "release_body=${{ github.event.release.body }}" >> $GITHUB_OUTPUT
+          {
+            echo "release_body<<RELEASE_BODY_EOF"
+            echo "$RELEASE_BODY"
+            echo "RELEASE_BODY_EOF"
+          } >> $GITHUB_OUTPUT
           echo "release_commit=${{ github.event.release.target_commitish }}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
           echo "release_tag=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
