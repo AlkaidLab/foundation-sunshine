@@ -448,7 +448,7 @@ namespace display_device {
      * ```
      */
     bool
-    try_revert_settings(settings_t::persistent_data_t &data, bool &data_modified) {
+    try_revert_settings(settings_t::persistent_data_t &data, bool &data_modified, bool skip_vdd_destroy = false) {
       try {
         nlohmann::json json_data = data;
         BOOST_LOG(debug) << "Reverting persistent display settings from:\n"
@@ -503,7 +503,10 @@ namespace display_device {
         }
       }
       
-      if (config::video.vdd_keep_enabled) {
+      if (skip_vdd_destroy) {
+        BOOST_LOG(debug) << "VDD已由调用方销毁，跳过try_revert_settings中的VDD销毁逻辑";
+      }
+      else if (config::video.vdd_keep_enabled) {
         BOOST_LOG(debug) << "VDD保持启用模式已开启，保留VDD";
       }
       else if (should_destroy_vdd) {
@@ -932,7 +935,7 @@ namespace display_device {
   }
 
   bool
-  settings_t::revert_settings(revert_reason_e reason) {
+  settings_t::revert_settings(revert_reason_e reason, bool skip_vdd_destroy) {
     static const char *reason_strs[] = { "串流结束", "拓扑切换", "配置清理", "重置持久化" };
     const char *reason_str = reason_strs[static_cast<int>(reason)];
     BOOST_LOG(info) << "正在恢复显示设备设置 (原因: " << reason_str << ")";
@@ -947,7 +950,7 @@ namespace display_device {
     if (persistent_data) {
       // 尝试恢复设置
       bool data_updated { false };
-      bool success = try_revert_settings(*persistent_data, data_updated);
+      bool success = try_revert_settings(*persistent_data, data_updated, skip_vdd_destroy);
       if (!success) {
         if (data_updated) {
           save_settings(filepath, *persistent_data);  // 忽略返回值

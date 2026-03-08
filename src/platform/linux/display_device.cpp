@@ -104,9 +104,10 @@ namespace display_device {
   }
 
   bool
-  settings_t::revert_settings(revert_reason_e reason) {
+  settings_t::revert_settings(revert_reason_e reason, bool skip_vdd_destroy) {
     // Not implemented
     (void)reason;  // Unused parameter
+    (void)skip_vdd_destroy;  // Unused parameter
     return true;
   }
 

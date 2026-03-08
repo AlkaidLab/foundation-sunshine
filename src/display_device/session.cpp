@@ -627,7 +627,10 @@ namespace display_device {
     const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
     BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
     
-    if (!settings_will_fail && settings.revert_settings(reason)) {
+    // VDD生命周期已在上面的逻辑中决定（销毁或保留），通知revert_settings不要再处理VDD销毁
+    const bool vdd_already_handled = true;
+    
+    if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
       stop_timer_and_clear_vdd_state();
     }
     else {
@@ -658,7 +661,8 @@ namespace display_device {
         }
         
         // 执行恢复（这可能需要几秒钟，不要持锁）
-        auto result = settings.revert_settings(reason);
+        // VDD生命周期已由restore_state_impl决定，跳过revert_settings中的VDD销毁
+        auto result = settings.revert_settings(reason, true);
         BOOST_LOG(info) << "恢复显示设置" << (result ? "成功" : "失败");
         
         // 恢复完成后清除标志和状态（在锁内执行，确保线程安全）
@@ -673,11 +677,10 @@ namespace display_device {
 
   void
   session_t::start_polling_restore(revert_reason_e reason) {
-    static int retry_count = 0;
-    retry_count = 0;  // 重置计数器
+    polling_retry_count_.store(0, boost::memory_order_relaxed);  // 重置计数器
     const int max_retries = 20;
 
-    timer->setup_timer([this, reason]() {
+    timer->setup_timer([this, reason, max_retries]() {
       // 检查是否还需要恢复
       if (!pending_restore_) {
         BOOST_LOG(debug) << "恢复操作已取消，跳过";
@@ -685,18 +688,19 @@ namespace display_device {
       }
       
       if (settings.is_changing_settings_going_to_fail()) {
-        retry_count++;
-        if (retry_count >= max_retries) {
+        const int current_count = polling_retry_count_.fetch_add(1, boost::memory_order_relaxed) + 1;
+        if (current_count >= max_retries) {
           BOOST_LOG(warning) << "已达到最大重试次数，停止尝试恢复显示设置";
           pending_restore_ = false;
           clear_vdd_state();
           return true;
         }
-        BOOST_LOG(warning) << "Timer: 仍在等待CCD恢复... (Count: " << retry_count << "/" << max_retries << ")";
+        BOOST_LOG(warning) << "Timer: 仍在等待CCD恢复... (Count: " << current_count << "/" << max_retries << ")";
         return false;
       }
 
-      auto result = settings.revert_settings(reason);
+      // VDD生命周期已由restore_state_impl决定，跳过revert_settings中的VDD销毁
+      auto result = settings.revert_settings(reason, true);
       BOOST_LOG(info) << "轮询恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
       pending_restore_ = false;
       clear_vdd_state();

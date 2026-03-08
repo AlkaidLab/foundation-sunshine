@@ -293,7 +293,7 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
             </div>
             <div class="modal-footer">
               <a
-                href="https://docs.lizardbyte.dev/projects/sunshine/en/latest/about/guides/app_examples.html"
+                href="https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2app__examples.html"
                 target="_blank"
                 class="btn btn-outline-primary"
               >

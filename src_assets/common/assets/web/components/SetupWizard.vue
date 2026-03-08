@@ -66,6 +66,7 @@
           <!-- 步骤 2: 选择串流显示器 -->
           <div v-else-if="currentStep === 2">
             <h3 class="mb-4">{{ $t('setup.step1_description') }}</h3>
+            <p class="text-muted mb-4">{{ $t('setup.step1_vdd_intro') }}</p>
             
             <!-- 虚拟显示器选项 -->
             <div class="option-card" 
@@ -141,87 +142,87 @@
             
             <!-- VDD 模式：显示 vdd_prep 选项 -->
             <template v-if="isVirtualDisplay">
-              <div class="option-card"
+              <div class="option-card-compact"
                    :class="{ selected: vddPrep === 'no_operation' }"
                    @click="vddPrep = 'no_operation'">
-                <div class="option-icon">
-                  <i class="fas fa-hand-paper"></i>
+                <div class="option-icon-compact"><i class="fas fa-hand-paper"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.vdd_no_operation') }}</h4>
+                  <p>{{ $t('setup.vdd_no_operation_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.vdd_no_operation') }}</h4>
-                <p>{{ $t('setup.vdd_no_operation_desc') }}</p>
               </div>
 
-              <div class="option-card" 
+              <div class="option-card-compact" 
                    :class="{ selected: vddPrep === 'vdd_as_primary' }"
                    @click="vddPrep = 'vdd_as_primary'">
-                <div class="option-icon">
-                  <i class="fas fa-star"></i>
+                <div class="option-icon-compact"><i class="fas fa-star"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.vdd_as_primary') }}</h4>
+                  <p>{{ $t('setup.vdd_as_primary_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.vdd_as_primary') }}</h4>
-                <p>{{ $t('setup.vdd_as_primary_desc') }}</p>
               </div>
 
-              <div class="option-card"
+              <div class="option-card-compact"
                    :class="{ selected: vddPrep === 'vdd_as_secondary' }"
                    @click="vddPrep = 'vdd_as_secondary'">
-                <div class="option-icon">
-                  <i class="fas fa-desktop"></i>
+                <div class="option-icon-compact"><i class="fas fa-desktop"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.vdd_as_secondary') }}</h4>
+                  <p>{{ $t('setup.vdd_as_secondary_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.vdd_as_secondary') }}</h4>
-                <p>{{ $t('setup.vdd_as_secondary_desc') }}</p>
               </div>
 
-              <div class="option-card" 
+              <div class="option-card-compact" 
                    :class="{ selected: vddPrep === 'display_off' }"
                    @click="vddPrep = 'display_off'">
-                <div class="option-icon">
-                  <i class="fas fa-power-off"></i>
+                <div class="option-icon-compact"><i class="fas fa-power-off"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.vdd_display_off') }}</h4>
+                  <p>{{ $t('setup.vdd_display_off_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.vdd_display_off') }}</h4>
-                <p>{{ $t('setup.vdd_display_off_desc') }}</p>
               </div>
             </template>
 
             <!-- 普通模式：显示 device_prep 选项 -->
             <template v-else>
-              <div class="option-card"
+              <div class="option-card-compact"
                    :class="{ selected: displayDevicePrep === 'ensure_only_display' }"
                    @click="displayDevicePrep = 'ensure_only_display'">
-                <div class="option-icon">
-                  <i class="fas fa-desktop"></i>
+                <div class="option-icon-compact"><i class="fas fa-desktop"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.ensure_only_display') }}</h4>
+                  <p>{{ $t('setup.ensure_only_display_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.ensure_only_display') }}</h4>
-                <p>{{ $t('setup.ensure_only_display_desc') }}</p>
               </div>
 
-              <div class="option-card" 
+              <div class="option-card-compact" 
                    :class="{ selected: displayDevicePrep === 'ensure_primary' }"
                    @click="displayDevicePrep = 'ensure_primary'">
-                <div class="option-icon">
-                  <i class="fas fa-star"></i>
+                <div class="option-icon-compact"><i class="fas fa-star"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.ensure_primary') }}</h4>
+                  <p>{{ $t('setup.ensure_primary_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.ensure_primary') }}</h4>
-                <p>{{ $t('setup.ensure_primary_desc') }}</p>
               </div>
 
-              <div class="option-card" 
+              <div class="option-card-compact" 
                    :class="{ selected: displayDevicePrep === 'ensure_active' }"
                    @click="displayDevicePrep = 'ensure_active'">
-                <div class="option-icon">
-                  <i class="fas fa-check-circle"></i>
+                <div class="option-icon-compact"><i class="fas fa-check-circle"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.ensure_active') }}</h4>
+                  <p>{{ $t('setup.ensure_active_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.ensure_active') }}</h4>
-                <p>{{ $t('setup.ensure_active_desc') }}</p>
               </div>
 
-              <div class="option-card" 
+              <div class="option-card-compact" 
                    :class="{ selected: displayDevicePrep === 'no_operation' }"
                    @click="displayDevicePrep = 'no_operation'">
-                <div class="option-icon">
-                  <i class="fas fa-hand-paper"></i>
+                <div class="option-icon-compact"><i class="fas fa-hand-paper"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.no_operation') }}</h4>
+                  <p>{{ $t('setup.no_operation_desc') }}</p>
                 </div>
-                <h4>{{ $t('setup.no_operation') }}</h4>
-                <p>{{ $t('setup.no_operation_desc') }}</p>
               </div>
             </template>
           </div>
@@ -365,8 +366,8 @@ export default {
       saving: false,
       showSkipModal: false, // 跳过向导确认弹窗
       // 客户端下载链接
-      androidQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://github.com/qiin2333/moonlight-android/releases/tag/shortcut'),
-      iosQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://apps.apple.com/cn/app/voidlink/id6747717070'),
+      androidQrCode: 'https://assets.alkaidlab.com/androidQrCode.png',
+      iosQrCode: 'https://assets.alkaidlab.com/iosQrCode.png',
     }
   },
   setup() {
@@ -811,6 +812,52 @@ export default {
   margin: 0;
   color: var(--bs-secondary-color);
   font-size: 0.85em;
+  line-height: 1.3;
+}
+
+/* 紧凑型选项卡片（水平布局） */
+.option-card-compact {
+  display: flex;
+  align-items: center;
+  border: 2px solid var(--bs-border-color);
+  border-radius: 8px;
+  padding: 0.5em 0.8em;
+  margin-bottom: 0.4em;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: var(--bs-body-bg);
+  gap: 0.7em;
+}
+
+.option-card-compact:hover {
+  border-color: #667eea;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+}
+
+.option-card-compact.selected {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
+}
+
+.option-icon-compact {
+  font-size: 1.2em;
+  color: #667eea;
+  flex-shrink: 0;
+  width: 2em;
+  text-align: center;
+}
+
+.option-card-compact .option-text h4 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.option-card-compact .option-text p {
+  margin: 0;
+  color: var(--bs-secondary-color);
+  font-size: 0.78em;
   line-height: 1.3;
 }
 

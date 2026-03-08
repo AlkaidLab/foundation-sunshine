@@ -1,10 +1,10 @@
 <template>
   <div id="content" class="container">
-    <svg xmlns="http://www.w3.org/2000/svg">
+    <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0">
       <defs>
         <filter id="pencilTexture">
           <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="2" xChannelSelector="R" yChannelSelector="G" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="1" xChannelSelector="R" yChannelSelector="G" />
         </filter>
       </defs>
     </svg>
@@ -52,7 +52,6 @@
           <div class="card-body">
             <header class="text-center mb-4">
               <h1 class="mb-3">
-                <img src="/images/logo-sunshine-45.png" height="45" alt="" />
                 {{ $t('welcome.greeting') }}
               </h1>
               <p class="lead text-muted">{{ $t('welcome.create_creds') }}</p>
@@ -61,6 +60,9 @@
             <div class="alert alert-warning">
               <i class="fas fa-exclamation-triangle me-2"></i>
               {{ $t('welcome.create_creds_alert') }}
+              <br>
+              <i class="fas fa-shield-alt me-2 mt-2"></i>
+              {{ $t('welcome.creds_local_only') }}
             </div>
 
             <form @submit.prevent="save">
@@ -84,39 +86,48 @@
                     <label for="passwordInput" class="form-label">
                       <i class="fas fa-lock me-2"></i>{{ $t('welcome.password') }}
                     </label>
-                    <input
-                      type="password"
-                      class="form-control"
-                      id="passwordInput"
-                      autocomplete="new-password"
-                      v-model="passwordData.newPassword"
-                      :placeholder="$t('welcome.password')"
-                      required
-                    />
+                    <div class="input-group">
+                      <input
+                        :type="showPassword ? 'text' : 'password'"
+                        class="form-control"
+                        id="passwordInput"
+                        autocomplete="new-password"
+                        v-model="passwordData.newPassword"
+                        :placeholder="$t('welcome.password')"
+                        required
+                      />
+                      <button class="btn btn-outline-secondary toggle-password" type="button" @click="showPassword = !showPassword" :aria-label="showPassword ? $t('welcome.hide_password') : $t('welcome.show_password')">
+                        <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                      </button>
+                    </div>
                   </div>
 
                   <div class="mb-3">
                     <label for="confirmPasswordInput" class="form-label">
                       <i class="fas fa-check-circle me-2"></i>{{ $t('welcome.confirm_password') }}
                     </label>
-                    <input
-                      type="password"
-                      class="form-control"
-                      :class="{ 'is-invalid': !passwordsMatch && passwordData.confirmNewPassword }"
-                      id="confirmPasswordInput"
-                      autocomplete="new-password"
-                      v-model="passwordData.confirmNewPassword"
-                      :placeholder="$t('welcome.confirm_password')"
-                      required
-                    />
-                    <div class="invalid-feedback" v-if="!passwordsMatch && passwordData.confirmNewPassword">
-                      <i class="fas fa-exclamation-circle me-1"></i>密码不匹配
+                    <div class="input-group" :class="{ 'is-invalid': !passwordsMatch && passwordData.confirmNewPassword }">
+                      <input
+                        :type="showConfirmPassword ? 'text' : 'password'"
+                        class="form-control"
+                        id="confirmPasswordInput"
+                        autocomplete="new-password"
+                        v-model="passwordData.confirmNewPassword"
+                        :placeholder="$t('welcome.confirm_password')"
+                        required
+                      />
+                      <button class="btn btn-outline-secondary toggle-password" type="button" @click="showConfirmPassword = !showConfirmPassword" :aria-label="showConfirmPassword ? $t('welcome.hide_password') : $t('welcome.show_password')">
+                        <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                      </button>
+                    </div>
+                    <div class="invalid-feedback d-block" v-if="!passwordsMatch && passwordData.confirmNewPassword">
+                      <i class="fas fa-exclamation-circle me-1"></i>{{ $t('welcome.password_mismatch') }}
                     </div>
                     <div
-                      class="valid-feedback"
+                      class="valid-feedback d-block"
                       v-if="passwordsMatch && passwordData.confirmNewPassword && passwordData.newPassword"
                     >
-                      <i class="fas fa-check-circle me-1"></i>密码匹配
+                      <i class="fas fa-check-circle me-1"></i>{{ $t('welcome.password_match') }}
                     </div>
                   </div>
 
@@ -165,6 +176,8 @@ const { locale, setLocaleMessage } = useI18n()
 const selectedLocale = ref('en')
 
 const { error, success, loading, passwordData, passwordsMatch, isFormValid, save } = useWelcome()
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 
 // 加载语言（使用静态嵌入的翻译数据）
 const loadLanguage = (lang) => {
@@ -258,7 +271,7 @@ const changeLanguage = () => {
 
 /* 手写标题 */
 h1 {
-  font-family: 'Patrick Hand', cursive;
+  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   color: var(--sketch-black);
   font-weight: 700;
   text-shadow: 2px 2px 0px rgba(0, 0, 0, 0.05);
@@ -286,7 +299,7 @@ header img {
 
 /* 副标题 */
 .lead {
-  font-family: 'Indie Flower', cursive;
+  font-family: 'Indie Flower', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   color: var(--pencil-gray);
   font-size: 1.1rem;
   transform: rotate(0.5deg);
@@ -300,7 +313,7 @@ header img {
   box-shadow: 5px 5px 0px rgba(255, 140, 0, 0.4), 3px 3px 0px rgba(255, 140, 0, 0.2), 0 0 20px rgba(255, 140, 0, 0.15);
   transform: rotate(-0.3deg);
   position: relative;
-  font-family: 'Kalam', cursive;
+  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   color: #d97706;
   font-size: 1.05rem;
   font-weight: 600;
@@ -314,7 +327,7 @@ header img {
 
 /* 手绘表单标签 */
 .form-label {
-  font-family: 'Patrick Hand', cursive;
+  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   color: var(--sketch-black);
   font-size: 1.1rem;
   font-weight: 700;
@@ -346,13 +359,41 @@ header img {
   margin-right: 0.3rem;
 }
 
+.toggle-password {
+  border: 2px solid var(--sketch-black) !important;
+  border-left: none !important;
+  border-radius: 0 8px 8px 0 !important;
+  background: #fff !important;
+  color: var(--pencil-gray) !important;
+  padding: 0 14px;
+  transition: all 0.2s ease;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.toggle-password:hover,
+.toggle-password:focus,
+.toggle-password:active {
+  background: var(--paper-bg-alt, #faf9f6) !important;
+  color: var(--sketch-black) !important;
+  border-color: var(--sketch-black) !important;
+  border-left: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.input-group .form-control {
+  border-radius: 8px 0 0 8px;
+  border-right: none;
+}
+
 /* 手绘输入框 */
 .form-control {
   background: #fff;
   border: 2px solid var(--sketch-black);
   border-radius: 8px;
   padding: 12px 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   font-size: 1rem;
   color: var(--sketch-black);
   box-shadow: inset 2px 2px 0px rgba(0, 0, 0, 0.05), 2px 2px 0px rgba(0, 0, 0, 0.1);
@@ -403,7 +444,7 @@ header img {
 .valid-feedback {
   display: block;
   margin-top: 0.5rem;
-  font-family: 'Kalam', cursive;
+  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -427,7 +468,7 @@ header img {
   border: 3px solid var(--sketch-black);
   border-radius: 10px;
   padding: 14px 32px;
-  font-family: 'Patrick Hand', cursive;
+  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   font-size: 1.2rem;
   font-weight: 700;
   color: #fff;
@@ -614,7 +655,7 @@ svg {
 }
 
 .language-selector .form-label {
-  font-family: 'Patrick Hand', cursive;
+  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   color: var(--sketch-black);
   font-size: 1rem;
   font-weight: 600;
@@ -623,7 +664,7 @@ svg {
 }
 
 .language-selector .form-select-sm {
-  font-family: 'Patrick Hand', cursive;
+  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
   border: 2px solid var(--sketch-black);
   border-radius: 8px;
   padding: 6px 12px;
