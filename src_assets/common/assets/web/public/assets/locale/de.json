@@ -741,7 +741,7 @@
     "create_creds_alert": "Die unten angegebenen Anmeldedaten werden benötigt, um auf das Webinterface von Sunshine zuzugreifen. Halten Sie sie sicher, da Sie sie nie wieder sehen werden!",
     "creds_local_only": "Ihre Anmeldedaten werden nur lokal und offline gespeichert und niemals auf einen Server hochgeladen.",
     "error": "Fehler!",
-    "greeting": "Willkommen bei Sunshine!",
+    "greeting": "Willkommen bei Sunshine Foundation!",
     "hide_password": "Passwort verbergen",
     "login": "Anmelden",
     "network_error": "Netzwerkfehler, bitte überprüfen Sie Ihre Verbindung",

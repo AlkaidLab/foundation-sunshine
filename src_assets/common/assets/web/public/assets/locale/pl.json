@@ -741,7 +741,7 @@
     "create_creds_alert": "Poniższe dane uwierzytelniające są potrzebne do uzyskania dostępu do interfejsu użytkownika Sunshine. Zachowaj je w bezpiecznym miejscu, ponieważ nigdy więcej ich nie zobaczysz!",
     "creds_local_only": "Twoje dane logowania są przechowywane lokalnie w trybie offline i nigdy nie zostaną przesłane na żaden serwer.",
     "error": "Błąd!",
-    "greeting": "Witamy w Sunshine!",
+    "greeting": "Witamy w Sunshine Foundation!",
     "hide_password": "Ukryj hasło",
     "login": "Login",
     "network_error": "Błąd sieci, sprawdź połączenie",

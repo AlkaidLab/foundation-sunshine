@@ -741,7 +741,7 @@
     "create_creds_alert": "The credentials below are needed to access Sunshine's Web UI. Keep them safe, since you will never see them again!",
     "creds_local_only": "Your credentials are stored locally offline and will never be uploaded to any server.",
     "error": "Error!",
-    "greeting": "Welcome to Sunshine!",
+    "greeting": "Welcome to Sunshine Foundation!",
     "hide_password": "Hide password",
     "login": "Login",
     "network_error": "Network error, please check your connection",

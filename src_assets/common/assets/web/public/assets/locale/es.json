@@ -741,7 +741,7 @@
     "create_creds_alert": "Las credenciales a continuación son necesarias para acceder a la interfaz web de Sunshine. Manténgalas seguras, ¡ya que nunca volverá a verlas!",
     "creds_local_only": "Sus credenciales se almacenan localmente sin conexión y nunca se cargarán en ningún servidor.",
     "error": "¡Error!",
-    "greeting": "¡Bienvenido a Sunshine!",
+    "greeting": "¡Bienvenido a Sunshine Foundation!",
     "hide_password": "Ocultar contraseña",
     "login": "Iniciar sesión",
     "network_error": "Error de red, por favor verifique su conexión",

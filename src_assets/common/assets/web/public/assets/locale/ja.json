@@ -741,7 +741,7 @@
     "create_creds_alert": "以下の資格情報は、SunshineのWeb UIにアクセスするために必要です。あなたが二度と見ることはありませんので、安全に保管してください！",
     "creds_local_only": "認証情報はローカルにオフラインで保存され、サーバーにアップロードされることはありません。",
     "error": "エラー！",
-    "greeting": "Sunshineへようこそ！",
+    "greeting": "Sunshine Foundation へようこそ！",
     "hide_password": "パスワードを隠す",
     "login": "ログイン",
     "network_error": "ネットワークエラー、接続を確認してください",

@@ -741,7 +741,7 @@
     "create_creds_alert": "以下的憑證是存取 Sunshine 網頁介面所需的。請妥善保管，因為您將無法再查看這些憑證！",
     "creds_local_only": "帳號密碼僅離線儲存在本地，不會上傳到任何伺服器。",
     "error": "錯誤！",
-    "greeting": "歡迎來到 Sunshine！",
+    "greeting": "歡迎使用 Sunshine Foundation！",
     "hide_password": "隱藏密碼",
     "login": "登入",
     "network_error": "網路錯誤，請檢查連線",

@@ -741,7 +741,7 @@
     "create_creds_alert": "Sunshine'ın Web kullanıcı arayüzüne erişmek için aşağıdaki kimlik bilgileri gereklidir. Onları güvende tutun, çünkü bir daha asla görmeyeceksiniz!",
     "creds_local_only": "Kimlik bilgileriniz çevrimdışı olarak yerel olarak depolanır ve hiçbir zaman bir sunucuya yüklenmez.",
     "error": "Hata!",
-    "greeting": "Sunshine'a hoş geldiniz!",
+    "greeting": "Sunshine Foundation'a Hoş Geldiniz!",
     "hide_password": "Şifreyi gizle",
     "login": "Giriş",
     "network_error": "Ağ hatası, lütfen bağlantınızı kontrol edin",

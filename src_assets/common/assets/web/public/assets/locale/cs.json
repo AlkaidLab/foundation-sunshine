@@ -741,7 +741,7 @@
     "create_creds_alert": "Níže uvedené přihlašovací údaje jsou potřebné pro přístup k webovému rozhraní Sunshine. Uchovávejte je v bezpečí, protože je už nikdy nebudete vidět!",
     "creds_local_only": "Vaše přihlašovací údaje jsou uloženy lokálně offline a nikdy nebudou nahrány na žádný server.",
     "error": "Chyba!",
-    "greeting": "Vítejte v Sunshine!",
+    "greeting": "Vítejte v Sunshine Foundation!",
     "hide_password": "Skrýt heslo",
     "login": "Přihlásit se",
     "network_error": "Chyba sítě, zkontrolujte připojení",
