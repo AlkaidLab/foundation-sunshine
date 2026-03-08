@@ -245,6 +245,7 @@ namespace display_device {
     bool pending_restore_ = false; /**< Flag indicating if there is a pending restore settings operation waiting for unlock. */
     bool should_replace_vdd_id_ = false; /**< Flag indicating if VDD ID needs to be replaced after client switch. */
     std::string old_vdd_id_; /**< Old VDD ID that needs to be replaced. */
+    int polling_retry_count_ = 0; /**< Retry counter for polling restore mechanism. */
 
     /**
      * @brief An instance of StateRetryTimer.

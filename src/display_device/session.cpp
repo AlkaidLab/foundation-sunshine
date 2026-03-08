@@ -673,11 +673,10 @@ namespace display_device {
 
   void
   session_t::start_polling_restore(revert_reason_e reason) {
-    static int retry_count = 0;
-    retry_count = 0;  // 重置计数器
+    polling_retry_count_ = 0;  // 重置计数器
     const int max_retries = 20;
 
-    timer->setup_timer([this, reason]() {
+    timer->setup_timer([this, reason, max_retries]() {
       // 检查是否还需要恢复
       if (!pending_restore_) {
         BOOST_LOG(debug) << "恢复操作已取消，跳过";
@@ -685,14 +684,14 @@ namespace display_device {
       }
       
       if (settings.is_changing_settings_going_to_fail()) {
-        retry_count++;
-        if (retry_count >= max_retries) {
+        polling_retry_count_++;
+        if (polling_retry_count_ >= max_retries) {
           BOOST_LOG(warning) << "已达到最大重试次数，停止尝试恢复显示设置";
           pending_restore_ = false;
           clear_vdd_state();
           return true;
         }
-        BOOST_LOG(warning) << "Timer: 仍在等待CCD恢复... (Count: " << retry_count << "/" << max_retries << ")";
+        BOOST_LOG(warning) << "Timer: 仍在等待CCD恢复... (Count: " << polling_retry_count_ << "/" << max_retries << ")";
         return false;
       }
 
