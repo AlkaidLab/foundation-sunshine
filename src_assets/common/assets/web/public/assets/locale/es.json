@@ -742,11 +742,13 @@
     "creds_local_only": "Sus credenciales se almacenan localmente sin conexión y nunca se cargarán en ningún servidor.",
     "error": "¡Error!",
     "greeting": "¡Bienvenido a Sunshine!",
+    "hide_password": "Ocultar contraseña",
     "login": "Iniciar sesión",
     "network_error": "Error de red, por favor verifique su conexión",
     "password": "Contraseña",
     "password_mismatch": "Las contraseñas no coinciden",
     "server_error": "Error del servidor",
+    "show_password": "Mostrar contraseña",
     "success": "¡Éxito!",
     "username": "Nombre de usuario",
     "welcome_success": "Esta página se recargará pronto, su navegador le pedirá las nuevas credenciales"

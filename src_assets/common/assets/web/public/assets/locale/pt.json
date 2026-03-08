@@ -742,11 +742,13 @@
     "creds_local_only": "As suas credenciais são armazenadas localmente offline e nunca serão enviadas para nenhum servidor.",
     "error": "Erro!",
     "greeting": "Bem-vindo ao Sol!",
+    "hide_password": "Ocultar palavra-passe",
     "login": "Conectar",
     "network_error": "Erro de rede, verifique sua conexão",
     "password": "Palavra-passe",
     "password_mismatch": "As senhas não coincidem",
     "server_error": "Erro do servidor",
+    "show_password": "Mostrar palavra-passe",
     "success": "Sucesso!",
     "username": "Usuário:",
     "welcome_success": "Esta página será recarregada em breve, seu navegador irá pedir novas credenciais"

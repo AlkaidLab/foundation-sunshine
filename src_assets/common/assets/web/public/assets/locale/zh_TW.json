@@ -742,11 +742,13 @@
     "creds_local_only": "帳號密碼僅離線儲存在本地，不會上傳到任何伺服器。",
     "error": "錯誤！",
     "greeting": "歡迎來到 Sunshine！",
+    "hide_password": "隱藏密碼",
     "login": "登入",
     "network_error": "網路錯誤，請檢查連線",
     "password": "密碼",
     "password_mismatch": "密碼不相符",
     "server_error": "伺服器錯誤",
+    "show_password": "顯示密碼",
     "success": "成功！",
     "username": "使用者名稱",
     "welcome_success": "此頁面將很快重新載入，您的瀏覽器會要求您提供新的憑證"

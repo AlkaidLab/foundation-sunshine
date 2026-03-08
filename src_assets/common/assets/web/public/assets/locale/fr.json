@@ -742,11 +742,13 @@
     "creds_local_only": "Vos identifiants sont stockés localement hors ligne et ne seront jamais téléchargés vers un serveur.",
     "error": "Erreur !",
     "greeting": "Bienvenue dans Sunshine !",
+    "hide_password": "Masquer le mot de passe",
     "login": "Connexion",
     "network_error": "Erreur réseau, veuillez vérifier votre connexion",
     "password": "Mot de passe",
     "password_mismatch": "Les mots de passe ne correspondent pas",
     "server_error": "Erreur serveur",
+    "show_password": "Afficher le mot de passe",
     "success": "Succès !",
     "username": "Nom d'utilisateur",
     "welcome_success": "Cette page se rechargera bientôt, votre navigateur vous demandera les nouveaux identifiants"

@@ -742,11 +742,13 @@
     "creds_local_only": "認証情報はローカルにオフラインで保存され、サーバーにアップロードされることはありません。",
     "error": "エラー！",
     "greeting": "Sunshineへようこそ！",
+    "hide_password": "パスワードを隠す",
     "login": "ログイン",
     "network_error": "ネットワークエラー、接続を確認してください",
     "password": "パスワード",
     "password_mismatch": "パスワードが一致しません",
     "server_error": "サーバーエラー",
+    "show_password": "パスワードを表示",
     "success": "成功！",
     "username": "ユーザー名",
     "welcome_success": "このページはまもなく再読み込みされます。ブラウザーは新しい資格情報を要求します。"

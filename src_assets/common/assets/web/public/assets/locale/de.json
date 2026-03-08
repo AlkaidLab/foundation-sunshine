@@ -742,11 +742,13 @@
     "creds_local_only": "Ihre Anmeldedaten werden nur lokal und offline gespeichert und niemals auf einen Server hochgeladen.",
     "error": "Fehler!",
     "greeting": "Willkommen bei Sunshine!",
+    "hide_password": "Passwort verbergen",
     "login": "Anmelden",
     "network_error": "Netzwerkfehler, bitte überprüfen Sie Ihre Verbindung",
     "password": "Passwort",
     "password_mismatch": "Passwörter stimmen nicht überein",
     "server_error": "Serverfehler",
+    "show_password": "Passwort anzeigen",
     "success": "Erfolgreich!",
     "username": "Benutzername",
     "welcome_success": "Diese Seite wird bald neu geladen, Ihr Browser wird Sie nach den neuen Anmeldeinformationen fragen"

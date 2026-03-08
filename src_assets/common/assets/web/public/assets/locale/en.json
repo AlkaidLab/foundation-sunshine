@@ -750,11 +750,13 @@
     "creds_local_only": "Your credentials are stored locally offline and will never be uploaded to any server.",
     "error": "Error!",
     "greeting": "Welcome to Sunshine Foundation!",
+    "hide_password": "Hide password",
     "login": "Login",
     "network_error": "Network error, please check your connection",
     "password": "Password",
     "password_mismatch": "Passwords do not match",
     "server_error": "Server error",
+    "show_password": "Show password",
     "success": "Success!",
     "username": "Username",
     "welcome_success": "This page will reload soon, your browser will ask you for the new credentials"

@@ -742,11 +742,13 @@
     "creds_local_only": "Twoje dane logowania są przechowywane lokalnie w trybie offline i nigdy nie zostaną przesłane na żaden serwer.",
     "error": "Błąd!",
     "greeting": "Witamy w Sunshine!",
+    "hide_password": "Ukryj hasło",
     "login": "Login",
     "network_error": "Błąd sieci, sprawdź połączenie",
     "password": "Hasło",
     "password_mismatch": "Hasła nie pasują",
     "server_error": "Błąd serwera",
+    "show_password": "Pokaż hasło",
     "success": "Sukces!",
     "username": "Nazwa użytkownika",
     "welcome_success": "Strona zostanie wkrótce przeładowana, a przeglądarka poprosi o podanie nowych danych uwierzytelniających"

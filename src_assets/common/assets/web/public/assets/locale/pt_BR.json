@@ -742,11 +742,13 @@
     "creds_local_only": "Suas credenciais são armazenadas localmente offline e nunca serão enviadas para nenhum servidor.",
     "error": "Erro!",
     "greeting": "Bem-vindo ao Sunshine!",
+    "hide_password": "Ocultar senha",
     "login": "Login",
     "network_error": "Erro de rede, verifique sua conexão",
     "password": "Senha",
     "password_mismatch": "As senhas não coincidem",
     "server_error": "Erro do servidor",
+    "show_password": "Mostrar senha",
     "success": "Sucesso!",
     "username": "Nome de usuário",
     "welcome_success": "Esta página será recarregada em breve e seu navegador solicitará as novas credenciais"

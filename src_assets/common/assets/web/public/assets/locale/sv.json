@@ -742,11 +742,13 @@
     "creds_local_only": "Dina autentiseringsuppgifter lagras lokalt offline och laddas aldrig upp till någon server.",
     "error": "Fel!",
     "greeting": "Välkommen till Sunshine!",
+    "hide_password": "Dölj lösenord",
     "login": "Inloggning",
     "network_error": "Nätverksfel, kontrollera din anslutning",
     "password": "Lösenord",
     "password_mismatch": "Lösenorden matchar inte",
     "server_error": "Serverfel",
+    "show_password": "Visa lösenord",
     "success": "Klart!",
     "username": "Användarnamn",
     "welcome_success": "Denna sida kommer att laddas om snart, din webbläsare kommer att be dig om nya uppgifter"

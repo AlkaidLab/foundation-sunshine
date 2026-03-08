@@ -742,11 +742,13 @@
     "creds_local_only": "Vaše přihlašovací údaje jsou uloženy lokálně offline a nikdy nebudou nahrány na žádný server.",
     "error": "Chyba!",
     "greeting": "Vítejte v Sunshine!",
+    "hide_password": "Skrýt heslo",
     "login": "Přihlásit se",
     "network_error": "Chyba sítě, zkontrolujte připojení",
     "password": "Heslo",
     "password_mismatch": "Hesla se neshodují",
     "server_error": "Chyba serveru",
+    "show_password": "Zobrazit heslo",
     "success": "Úspěch!",
     "username": "Uživatelské jméno",
     "welcome_success": "Tato stránka se brzy obnoví, váš prohlížeč vás požádá o nové přihlašovací údaje."
