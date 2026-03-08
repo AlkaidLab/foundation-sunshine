@@ -730,6 +730,7 @@
     "confirm_password": "パスワードの確認",
     "create_creds": "始める前に、Web UI にアクセスするための新しいユーザー名とパスワードを作成する必要があります。",
     "create_creds_alert": "以下の資格情報は、SunshineのWeb UIにアクセスするために必要です。あなたが二度と見ることはありませんので、安全に保管してください！",
+    "creds_local_only": "認証情報はローカルにオフラインで保存され、サーバーにアップロードされることはありません。",
     "error": "エラー！",
     "greeting": "Sunshineへようこそ！",
     "login": "ログイン",

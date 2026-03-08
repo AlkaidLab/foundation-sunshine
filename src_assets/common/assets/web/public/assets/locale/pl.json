@@ -725,6 +725,7 @@
     "confirm_password": "Potwierdź hasło",
     "create_creds": "Przed rozpoczęciem pracy należy utworzyć nową nazwę użytkownika i hasło dostępu do interfejsu użytkownika.",
     "create_creds_alert": "Poniższe dane uwierzytelniające są potrzebne do uzyskania dostępu do interfejsu użytkownika Sunshine. Zachowaj je w bezpiecznym miejscu, ponieważ nigdy więcej ich nie zobaczysz!",
+    "creds_local_only": "Twoje dane logowania są przechowywane lokalnie w trybie offline i nigdy nie zostaną przesłane na żaden serwer.",
     "error": "Błąd!",
     "greeting": "Witamy w Sunshine!",
     "login": "Login",

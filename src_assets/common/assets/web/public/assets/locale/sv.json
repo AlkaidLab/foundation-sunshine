@@ -725,6 +725,7 @@
     "confirm_password": "Bekräfta lösenord",
     "create_creds": "Innan du kommer igång behöver du göra ett nytt användarnamn och lösenord för att komma åt webbgränssnittet.",
     "create_creds_alert": "Användaruppgifterna nedan behövs för att komma åt Sunshines webbgränssnitt. Håll dem säkra, eftersom du aldrig kommer att se dem igen!",
+    "creds_local_only": "Dina autentiseringsuppgifter lagras lokalt offline och laddas aldrig upp till någon server.",
     "error": "Fel!",
     "greeting": "Välkommen till Sunshine!",
     "login": "Inloggning",

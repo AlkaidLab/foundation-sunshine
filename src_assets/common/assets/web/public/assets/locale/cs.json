@@ -725,6 +725,7 @@
     "confirm_password": "Potvrdit heslo",
     "create_creds": "Před spuštěním potřebujeme, abyste vytvořili nové uživatelské jméno a heslo pro přístup k webovému uživatelskému rozhraní.",
     "create_creds_alert": "Níže uvedené přihlašovací údaje jsou potřebné pro přístup k webovému rozhraní Sunshine. Uchovávejte je v bezpečí, protože je už nikdy nebudete vidět!",
+    "creds_local_only": "Vaše přihlašovací údaje jsou uloženy lokálně offline a nikdy nebudou nahrány na žádný server.",
     "error": "Chyba!",
     "greeting": "Vítejte v Sunshine!",
     "login": "Přihlásit se",

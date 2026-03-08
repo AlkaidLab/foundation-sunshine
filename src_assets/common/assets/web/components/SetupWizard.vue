@@ -365,8 +365,8 @@ export default {
       saving: false,
       showSkipModal: false, // 跳过向导确认弹窗
       // 客户端下载链接
-      androidQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://github.com/qiin2333/moonlight-android/releases/tag/shortcut'),
-      iosQrCode: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent('https://apps.apple.com/cn/app/voidlink/id6747717070'),
+      androidQrCode: 'https://assets.alkaidlab.com/androidQrCode.png',
+      iosQrCode: 'https://assets.alkaidlab.com/iosQrCode.png',
     }
   },
   setup() {

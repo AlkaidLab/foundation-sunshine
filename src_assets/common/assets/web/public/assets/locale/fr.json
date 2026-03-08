@@ -725,6 +725,7 @@
     "confirm_password": "Confirmation du mot de passe",
     "create_creds": "Avant de commencer, vous devez créer un nouveau nom d'utilisateur et un nouveau mot de passe pour accéder à l'interface Web.",
     "create_creds_alert": "Les identifiants ci-dessous sont nécessaires pour accéder à l'interface Web de Sunshine. Gardez-les en sécurité, car vous ne les reverrez plus jamais !",
+    "creds_local_only": "Vos identifiants sont stockés localement hors ligne et ne seront jamais téléchargés vers un serveur.",
     "error": "Erreur !",
     "greeting": "Bienvenue dans Sunshine !",
     "login": "Connexion",
