@@ -39,10 +39,7 @@ namespace platf {
       }
 
       const float *sampleBuffer = (float *) byteSampleBuffer;
-      std::vector<float> vectorBuffer(sampleBuffer, sampleBuffer + sample_size);
-
-      std::copy_n(std::begin(vectorBuffer), sample_size, std::begin(sample_in));
-
+      std::copy_n(sampleBuffer, sample_size, std::begin(sample_in));
       TPCircularBufferConsume(&av_audio_capture->audioSampleBuffer, sample_size * sizeof(float));
 
       return capture_e::ok;

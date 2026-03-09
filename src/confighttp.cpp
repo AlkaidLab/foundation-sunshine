@@ -263,7 +263,7 @@ namespace confighttp {
 
     print_req(request);
 
-    std::string content = file_handler::read_file((std::string(WEB_DIR) + pageName).c_str());
+    std::string content = file_handler::read_file((get_web_dir() + pageName).c_str());
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "text/html; charset=utf-8");
     if (pageName == "apps.html") {
@@ -338,12 +338,12 @@ namespace confighttp {
 
   void
   getFaviconImage(resp_https_t response, req_https_t request) {
-    getStaticResource(response, request, WEB_DIR "images/sunshine.ico", "image/x-icon");
+    getStaticResource(response, request, (get_web_dir() + "images/sunshine.ico").c_str(), "image/x-icon");
   }
 
   void
   getSunshineLogoImage(resp_https_t response, req_https_t request) {
-    getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
+    getStaticResource(response, request, (get_web_dir() + "images/logo-sunshine-256.png").c_str(), "image/png");
   }
 
   /**
@@ -367,7 +367,7 @@ namespace confighttp {
 
     BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-    static const fs::path assetsRoot = fs::weakly_canonical(fs::path(SUNSHINE_ASSETS_DIR));
+    static const fs::path assetsRoot = fs::weakly_canonical(fs::path(get_assets_dir()));
     static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
 
     // First try to find in SUNSHINE_ASSETS_DIR
@@ -450,7 +450,7 @@ namespace confighttp {
   void
   getNodeModules(resp_https_t response, req_https_t request) {
     // print_req(request);
-    fs::path webDirPath(WEB_DIR);
+    fs::path webDirPath(get_web_dir());
     fs::path nodeModulesPath(webDirPath / "assets");
 
     // .relative_path is needed to shed any leading slash that might exist in the request path

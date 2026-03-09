@@ -1,0 +1,14 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/third-party/moonlight-common-c/enet/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/third-party/Simple-Web-Server/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/_deps/json-build/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/tests/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/tests/googletest/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/tests/googletest/googlemock/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests/tests/googletest/googletest/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

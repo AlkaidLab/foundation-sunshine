@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1537,6 +1537,12 @@ namespace stream {
     };
     std::map<std::string, MicStats> client_stats;
 
+    // 诊断计数器：追踪 UDP 层面的接收情况
+    uint64_t udp_recv_count = 0;
+    uint64_t udp_recv_too_small = 0;
+    uint64_t udp_recv_unknown_type = 0;
+    auto last_diag_time = std::chrono::steady_clock::now();
+
     // // SSRC验证辅助函数
     // auto validate_mic_ssrc = [](uint32_t ssrc, const std::string &client_id) -> bool {
     //   if (ssrc != MIC_PACKET_MAGIC) {
@@ -1648,7 +1654,22 @@ namespace stream {
       }
 
       if (received_bytes < sizeof(RTP_PACKET)) {
+        udp_recv_too_small++;
         return;
+      }
+
+      udp_recv_count++;
+
+      // 每 10 秒输出一次诊断日志
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_diag_time >= 10s) {
+        BOOST_LOG(info) << "Mic UDP stats (10s): recv=" << udp_recv_count
+                        << ", too_small=" << udp_recv_too_small
+                        << ", unknown_type=" << udp_recv_unknown_type;
+        udp_recv_count = 0;
+        udp_recv_too_small = 0;
+        udp_recv_unknown_type = 0;
+        last_diag_time = now;
       }
 
       // 获取客户端标识：设备名拼接IP地址
@@ -1703,6 +1724,9 @@ namespace stream {
           process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_id);
         }
       }
+      else {
+        udp_recv_unknown_type++;
+      }
     };
 
     BOOST_LOG(debug) << "Starting microphone receive thread";
@@ -1711,6 +1735,12 @@ namespace stream {
 
     while (!broadcast_shutdown_event->peek()) {
       if (!ctx.mic_socket_enabled.load()) {
+        // Session ended - release mic device to restore default audio output
+        if (mic_device_initialized) {
+          audio::release_mic_redirect_device();
+          mic_device_initialized = false;
+          BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
+        }
         retry_delay = 300ms;  // 会话结束时重置延迟
         std::this_thread::sleep_for(100ms);
         continue;

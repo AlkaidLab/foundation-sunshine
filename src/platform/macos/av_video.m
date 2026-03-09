@@ -152,8 +152,10 @@
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
-  [screenInput setCapturesCursor:YES];  // 捕获鼠标光标
-  [screenInput setCapturesMouseClicks:YES];  // 捕获鼠标点击高亮效果
+  [screenInput setCapturesCursor:YES];   // 默认显示服务端光标（经典鼠标模式）
+  [screenInput setCapturesMouseClicks:YES];
+  [screenInput setRemovesDuplicateFrames:NO];  // 即使内容不变也持续交付帧，保证固定帧率
+  self.screenInput = screenInput;
 
   if ([self.session canAddInput:screenInput]) {
     [self.session addInput:screenInput];
@@ -175,6 +177,30 @@
   [self.captureSignals release];
   [self.session stopRunning];
   [super dealloc];
+}
+
+- (void)setCursorVisible:(BOOL)visible {
+  @synchronized(self) {
+    if (!self.screenInput) {
+      return;
+    }
+
+    if (self.screenInput.capturesCursor == visible) {
+      return;
+    }
+
+    const BOOL hasActiveCaptureOutputs = self.session && [self.videoOutputs count] > 0;
+
+    if (hasActiveCaptureOutputs) {
+      [self.session beginConfiguration];
+    }
+
+    [self.screenInput setCapturesCursor:visible];
+
+    if (hasActiveCaptureOutputs) {
+      [self.session commitConfiguration];
+    }
+  }
 }
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight {

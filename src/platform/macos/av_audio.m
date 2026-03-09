@@ -137,6 +137,7 @@
     AudioBuffer audioBuffer = audioBufferList.mBuffers[0];
 
     TPCircularBufferProduceBytes(&self->audioSampleBuffer, audioBuffer.mData, audioBuffer.mDataByteSize);
+    CFRelease(blockBuffer);
     [self.samplesArrivedSignal signal];
   }
 }

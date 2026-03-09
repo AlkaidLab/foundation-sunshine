@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/third-party/moonlight-common-c/enet/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/third-party/Simple-Web-Server/cmake_install.cmake",
+		"/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/_deps/json-build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

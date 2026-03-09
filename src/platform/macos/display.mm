@@ -15,7 +15,16 @@
 #include "src/video.h"
 #undef AVMediaType
 
+#include <mutex>
+
 namespace fs = std::filesystem;
+
+// The input path toggles cursor capture from a different thread than display teardown.
+// Keep a retained global reference behind a mutex so visibility changes can't race
+// with AVVideo destruction.
+static std::mutex g_active_av_capture_mutex;
+static AVVideo *g_active_av_capture = nil;
+static bool g_cursor_visible = true;
 
 namespace platf {
   using namespace std::literals;
@@ -25,6 +34,11 @@ namespace platf {
     CGDirectDisplayID display_id {};
 
     ~av_display_t() override {
+      std::lock_guard<std::mutex> lock(g_active_av_capture_mutex);
+      if (g_active_av_capture == av_capture) {
+        [g_active_av_capture release];
+        g_active_av_capture = nil;
+      }
       [av_capture release];
     }
 
@@ -126,7 +140,10 @@ namespace platf {
         return false;
       }];
 
-      dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+      if (dispatch_semaphore_wait(signal, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+        BOOST_LOG(error) << "Timed out waiting for initial capture frame";
+        return -1;
+      }
 
       return 0;
     }
@@ -223,6 +240,19 @@ namespace platf {
                     << display->width << "x"sv << display->height
                     << " @ "sv << config.framerate << "fps"sv;
 
+    // Register active capture for cursor toggle from input layer
+    {
+      std::lock_guard<std::mutex> lock(g_active_av_capture_mutex);
+      if (g_active_av_capture != display->av_capture) {
+        [display->av_capture retain];
+        if (g_active_av_capture) {
+          [g_active_av_capture release];
+        }
+        g_active_av_capture = display->av_capture;
+        [display->av_capture setCursorVisible:g_cursor_visible ? YES : NO];
+      }
+    }
+
     return display;
   }
 
@@ -255,5 +285,22 @@ namespace platf {
   adapter_names() {
     // macOS doesn't expose GPU adapters the same way Windows does
     return { "Apple GPU" };
+  }
+
+  void
+  set_cursor_visible(bool visible) {
+    AVVideo *capture = nil;
+    {
+      std::lock_guard<std::mutex> lock(g_active_av_capture_mutex);
+      g_cursor_visible = visible;
+      capture = g_active_av_capture;
+      if (capture) {
+        [capture retain];
+      }
+    }
+    if (capture) {
+      [capture setCursorVisible:visible ? YES : NO];
+      [capture release];
+    }
   }
 }  // namespace platf

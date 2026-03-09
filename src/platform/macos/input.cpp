@@ -17,6 +17,12 @@
 #include <iostream>
 #include <thread>
 
+#include <atomic>
+#include <dispatch/dispatch.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <mach/thread_act.h>
+
 /**
  * @brief Delay for a double click, in milliseconds.
  * @todo Make this configurable.
@@ -26,6 +32,8 @@ constexpr std::chrono::milliseconds MULTICLICK_DELAY_MS(500);
 namespace platf {
   using namespace std::literals;
 
+  constexpr int BUTTON_RING_SIZE = 8;
+
   struct macos_input_t {
   public:
     CGDirectDisplayID display {};
@@ -34,7 +42,7 @@ namespace platf {
 
     // keyboard related stuff
     CGEventRef kb_event {};
-    CGEventFlags kb_flags {};
+    std::atomic<CGEventFlags> kb_flags {0};
 
     // mouse related stuff
     CGEventRef mouse_event {};  // mouse event source
@@ -45,6 +53,51 @@ namespace platf {
     util::point_t cached_mouse_position {};
     bool position_cache_valid {false};
     float mouse_sensitivity {1.0f};
+
+    // Cached display bounds to avoid CGDisplayBounds() system call per event
+    CGRect cached_display_bounds {};
+
+    // Track whether we've done the initial cursor warp for absolute positioning.
+    // CGWarpMouseCursorPosition has a 250ms throttle built into macOS, so we
+    // only use it once on the first abs_mouse call to establish cursor position,
+    // then rely on CGEvent for subsequent moves.
+    bool abs_mouse_initialized {false};
+
+    // Track whether the display has been validated after prep commands.
+    // Once validated, we skip the per-event display bounds check.
+    bool display_validated {false};
+
+    // --- Dedicated mouse thread (real-time priority) ---
+    // Atomic state: control stream thread writes, mouse thread reads
+    struct alignas(64) {
+      std::atomic<float> abs_x {0};
+      std::atomic<float> abs_y {0};
+      std::atomic<float> abs_prev_x {0};
+      std::atomic<float> abs_prev_y {0};
+      std::atomic<int> rel_dx {0};
+      std::atomic<int> rel_dy {0};
+      std::atomic<uint32_t> move_seq {0};
+      std::atomic<bool> is_absolute {true};
+
+      // Button events use a small ring buffer (max 8 pending)
+      struct button_event_t {
+        int button;
+        bool release;
+      };
+      button_event_t button_ring[8] {};
+      std::atomic<uint32_t> button_write_idx {0};
+      std::atomic<uint32_t> button_read_idx {0};
+    } mouse_state;
+
+    dispatch_semaphore_t mouse_semaphore {};
+    std::thread mouse_thread;
+    std::atomic<bool> mouse_thread_running {false};
+
+    // Mouse thread owns these — never touched by other threads
+    CGEventSourceRef mt_source {};
+    CGEventRef mt_event {};
+    float mt_pos_x {0};
+    float mt_pos_y {0};
   };
 
   // A struct to hold a Windows keycode to Mac virtual keycode mapping.
@@ -285,13 +338,35 @@ const KeyCodeMap kKeyCodesMap[] = {
           break;
       }
 
-      macos_input->kb_flags = release ? macos_input->kb_flags & ~mask : macos_input->kb_flags | mask;
+      CGEventFlags old_flags = macos_input->kb_flags.load(std::memory_order_relaxed);
+      CGEventFlags new_flags = release ? old_flags & ~mask : old_flags | mask;
+      macos_input->kb_flags.store(new_flags, std::memory_order_relaxed);
       CGEventSetType(event, kCGEventFlagsChanged);
-      CGEventSetFlags(event, macos_input->kb_flags);
+      CGEventSetFlags(event, new_flags);
     }
     else {
       CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
       CGEventSetType(event, release ? kCGEventKeyUp : kCGEventKeyDown);
+
+      // Arrow keys, function keys, and navigation keys on Apple keyboards
+      // carry kCGEventFlagMaskSecondaryFn. Without it, macOS system shortcuts
+      // (e.g. Ctrl+Arrow for Spaces switching) won't trigger.
+      CGEventFlags flags = macos_input->kb_flags.load(std::memory_order_relaxed);
+      switch (key) {
+        case kVK_LeftArrow: case kVK_RightArrow:
+        case kVK_UpArrow: case kVK_DownArrow:
+        case kVK_Home: case kVK_End:
+        case kVK_PageUp: case kVK_PageDown:
+        case kVK_ForwardDelete:
+        case kVK_F1: case kVK_F2: case kVK_F3: case kVK_F4:
+        case kVK_F5: case kVK_F6: case kVK_F7: case kVK_F8:
+        case kVK_F9: case kVK_F10: case kVK_F11: case kVK_F12:
+        case kVK_F13: case kVK_F14: case kVK_F15: case kVK_F16:
+        case kVK_F17: case kVK_F18: case kVK_F19: case kVK_F20:
+          flags |= kCGEventFlagMaskSecondaryFn;
+          break;
+      }
+      CGEventSetFlags(event, flags);
     }
 
     CGEventPost(kCGHIDEventTap, event);
@@ -348,42 +423,49 @@ const KeyCodeMap kKeyCodesMap[] = {
     const util::point_t raw_location,
     const util::point_t previous_location,
     const int click_count) {
-    BOOST_LOG(debug) << "mouse_event: " << button << ", type: " << type
-                     << ", location:" << raw_location.x << ":" << raw_location.y
-                     << " click_count: " << click_count;
-
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    const auto display = macos_input->display;
-    const auto source = macos_input->source;
 
-    // 获取显示器边界
-    const CGRect display_bounds = CGDisplayBounds(display);
+    // Use cached display bounds (updated in refresh_display_if_needed / input init)
+    const auto &display_bounds = macos_input->cached_display_bounds;
 
-    // 限制鼠标在当前显示器边界内
+    // Clamp mouse within display bounds
     const auto location = CGPoint {
       std::clamp(raw_location.x, display_bounds.origin.x, display_bounds.origin.x + display_bounds.size.width - 1),
       std::clamp(raw_location.y, display_bounds.origin.y, display_bounds.origin.y + display_bounds.size.height - 1)
     };
 
-    // 计算增量（用于 3D 应用）
+    // Compute deltas for 3D apps / games
     const double deltaX = raw_location.x - previous_location.x;
     const double deltaY = raw_location.y - previous_location.y;
 
-    // 直接创建事件（而不是复用和修改）
-    CGEventRef event = CGEventCreateMouseEvent(source, type, location, button);
+    // Button events: create fresh CGEvent each time (original behavior).
+    // Reusing a mouse-move event for button events can leak state and cause
+    // macOS to not register clicks properly.
+    bool is_button = (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp ||
+                      type == kCGEventRightMouseDown || type == kCGEventRightMouseUp ||
+                      type == kCGEventOtherMouseDown || type == kCGEventOtherMouseUp);
 
-    // 设置点击次数
-    CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+    CGEventRef event;
+    if (is_button) {
+      event = CGEventCreateMouseEvent(macos_input->source, type, location, button);
+      CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+      CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
+      CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
+      CGEventPost(kCGHIDEventTap, event);
+      CFRelease(event);
+    }
+    else {
+      event = macos_input->mouse_event;
+      CGEventSetType(event, type);
+      CGEventSetLocation(event, location);
+      CGEventSetIntegerValueField(event, kCGMouseEventButtonNumber, button);
+      CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+      CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
+      CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
+      CGEventPost(kCGHIDEventTap, event);
+    }
 
-    // 设置增量（用于游戏相机等）
-    CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
-    CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
-
-    // 发送事件
-    CGEventPost(kCGHIDEventTap, event);
-    CFRelease(event);
-
-    // 更新位置缓存
+    // Update position cache
     macos_input->cached_mouse_position = util::point_t { location.x, location.y };
     macos_input->position_cache_valid = true;
   }
@@ -410,19 +492,73 @@ const KeyCodeMap kKeyCodesMap[] = {
     const int deltaX,
     const int deltaY) {
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    const auto current = get_mouse_loc(input);
 
-    // 应用灵敏度倍数
+    const auto current = macos_input->position_cache_valid ? macos_input->cached_mouse_position : get_mouse_loc(input);
+
     const float sensitivity = macos_input->mouse_sensitivity;
-    const int adjusted_deltaX = static_cast<int>(deltaX * sensitivity);
-    const int adjusted_deltaY = static_cast<int>(deltaY * sensitivity);
-
     const auto location = util::point_t {
-      current.x + adjusted_deltaX,
-      current.y + adjusted_deltaY
+      current.x + deltaX * sensitivity,
+      current.y + deltaY * sensitivity
     };
 
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, current, 0);
+  }
+
+  /**
+   * @brief Refresh the input display if the current one has become invalid.
+   * @details After prep commands (e.g., sunshine_connect.sh) switch displays,
+   * the original display may become a 1x1 ghost. Detect this and switch to
+   * the current main display.
+   */
+  void
+  refresh_display_if_needed(macos_input_t *macos_input) {
+    // Once display is validated, no need to check again
+    if (macos_input->display_validated) {
+      return;
+    }
+
+    CGRect bounds = CGDisplayBounds(macos_input->display);
+    if (bounds.size.width > 1 && bounds.size.height > 1) {
+      macos_input->cached_display_bounds = bounds;
+      macos_input->display_validated = true;
+      return;  // Current display is valid
+    }
+
+    // Display became invalid (disconnected/ghost). Switch to main display.
+    CGDirectDisplayID new_display = CGMainDisplayID();
+    if (new_display == macos_input->display) {
+      // Main display is also invalid, scan for any valid display
+      constexpr uint32_t max_display = 32;
+      uint32_t display_count;
+      CGDirectDisplayID displays[max_display];
+      if (CGGetActiveDisplayList(max_display, displays, &display_count) == kCGErrorSuccess) {
+        for (uint32_t i = 0; i < display_count; i++) {
+          CGRect db = CGDisplayBounds(displays[i]);
+          if (db.size.width > 1 && db.size.height > 1) {
+            new_display = displays[i];
+            break;
+          }
+        }
+      }
+    }
+
+    macos_input->display = new_display;
+    const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(new_display);
+    if (mode) {
+      macos_input->displayScaling = ((CGFloat) CGDisplayPixelsWide(new_display)) / ((CGFloat) CGDisplayModeGetPixelWidth(mode));
+      CFRelease(mode);
+    }
+
+    CGRect new_bounds = CGDisplayBounds(new_display);
+    macos_input->cached_display_bounds = new_bounds;
+    BOOST_LOG(info) << "Input display refreshed: display=" << new_display
+                    << " scaling=" << macos_input->displayScaling
+                    << " bounds=(" << new_bounds.origin.x << "," << new_bounds.origin.y
+                    << " " << new_bounds.size.width << "x" << new_bounds.size.height << ")";
+
+    // Reset warp state so the cursor gets warped to the new display
+    macos_input->abs_mouse_initialized = false;
+    macos_input->display_validated = true;
   }
 
   void
@@ -432,16 +568,30 @@ const KeyCodeMap kKeyCodesMap[] = {
     const float x,
     const float y) {
     const auto macos_input = static_cast<macos_input_t *>(input.get());
+
+    // Check if display became invalid after prep commands switched displays
+    refresh_display_if_needed(macos_input);
+
     const auto scaling = macos_input->displayScaling;
-    const auto display = macos_input->display;
 
-    auto location = util::point_t { x * scaling, y * scaling };
-    CGRect display_bounds = CGDisplayBounds(display);
-    // in order to get the correct mouse location for capturing display , we need to add the display bounds to the location
-    location.x += display_bounds.origin.x;
-    location.y += display_bounds.origin.y;
+    // Use cached bounds instead of CGDisplayBounds() system call
+    const auto &display_bounds = macos_input->cached_display_bounds;
+    auto location = util::point_t {
+      x * scaling + display_bounds.origin.x,
+      y * scaling + display_bounds.origin.y
+    };
 
-    post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, get_mouse_loc(input), 0);
+    if (!macos_input->abs_mouse_initialized) {
+      CGAssociateMouseAndMouseCursorPosition(false);
+      CGWarpMouseCursorPosition(CGPoint { location.x, location.y });
+      CGAssociateMouseAndMouseCursorPosition(true);
+
+      macos_input->abs_mouse_initialized = true;
+      BOOST_LOG(info) << "abs_mouse: initial cursor warp to ("sv << location.x << ", "sv << location.y << ")"sv;
+    }
+
+    // Use cached position directly — avoids creating a CGEvent snapshot per move
+    post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, macos_input->cached_mouse_position, 0);
   }
 
   void
@@ -485,6 +635,82 @@ const KeyCodeMap kKeyCodesMap[] = {
     macos_input->last_mouse_event[mac_button][release] = now;
   }
 
+  // --- Fast-path mouse functions (called from control stream thread, lock-free) ---
+
+  void
+  mouse_move_fast(input_t &input, const touch_port_t &touch_port, float x, float y) {
+    const auto mi = static_cast<macos_input_t *>(input.get());
+
+    refresh_display_if_needed(mi);
+
+    const auto scaling = mi->displayScaling;
+    const auto &bounds = mi->cached_display_bounds;
+    float ax = x * scaling + bounds.origin.x;
+    float ay = y * scaling + bounds.origin.y;
+
+    if (!mi->abs_mouse_initialized) {
+      CGAssociateMouseAndMouseCursorPosition(false);
+      CGWarpMouseCursorPosition(CGPoint { ax, ay });
+      CGAssociateMouseAndMouseCursorPosition(true);
+      mi->abs_mouse_initialized = true;
+      mi->mt_pos_x = ax;
+      mi->mt_pos_y = ay;
+
+      // Initialize atomic prev to warp position so first event has zero delta
+      mi->mouse_state.abs_x.store(ax, std::memory_order_relaxed);
+      mi->mouse_state.abs_y.store(ay, std::memory_order_relaxed);
+
+      // Post an immediate CGEvent on this thread to unhide cursor after warp
+      // (macOS hides cursor after CGWarpMouseCursorPosition until a "real" event)
+      CGEventRef ev = mi->mouse_event;
+      CGEventSetType(ev, kCGEventMouseMoved);
+      CGEventSetLocation(ev, CGPoint { ax, ay });
+      CGEventSetIntegerValueField(ev, kCGMouseEventButtonNumber, kCGMouseButtonLeft);
+      CGEventSetIntegerValueField(ev, kCGMouseEventClickState, 0);
+      CGEventSetDoubleValueField(ev, kCGMouseEventDeltaX, 0);
+      CGEventSetDoubleValueField(ev, kCGMouseEventDeltaY, 0);
+      CGEventPost(kCGHIDEventTap, ev);
+
+      BOOST_LOG(info) << "mouse_move_fast: initial warp to (" << ax << ", " << ay << ")";
+    }
+
+    float prev_x = mi->mouse_state.abs_x.load(std::memory_order_relaxed);
+    float prev_y = mi->mouse_state.abs_y.load(std::memory_order_relaxed);
+    mi->mouse_state.abs_prev_x.store(prev_x, std::memory_order_relaxed);
+    mi->mouse_state.abs_prev_y.store(prev_y, std::memory_order_relaxed);
+    mi->mouse_state.abs_x.store(ax, std::memory_order_relaxed);
+    mi->mouse_state.abs_y.store(ay, std::memory_order_relaxed);
+    mi->mouse_state.is_absolute.store(true, std::memory_order_relaxed);
+    mi->mouse_state.move_seq.fetch_add(1, std::memory_order_release);
+    dispatch_semaphore_signal(mi->mouse_semaphore);
+  }
+
+  void
+  mouse_move_rel_fast(input_t &input, int deltaX, int deltaY) {
+    const auto mi = static_cast<macos_input_t *>(input.get());
+
+    mi->mouse_state.rel_dx.fetch_add(deltaX, std::memory_order_relaxed);
+    mi->mouse_state.rel_dy.fetch_add(deltaY, std::memory_order_relaxed);
+    mi->mouse_state.is_absolute.store(false, std::memory_order_relaxed);
+    mi->mouse_state.move_seq.fetch_add(1, std::memory_order_release);
+    dispatch_semaphore_signal(mi->mouse_semaphore);
+  }
+
+  void
+  mouse_button_fast(input_t &input, int button, bool release) {
+    const auto mi = static_cast<macos_input_t *>(input.get());
+
+    uint32_t wi = mi->mouse_state.button_write_idx.load(std::memory_order_relaxed);
+    uint32_t ri = mi->mouse_state.button_read_idx.load(std::memory_order_relaxed);
+    if (wi - ri >= BUTTON_RING_SIZE) return;
+
+    auto &slot = mi->mouse_state.button_ring[wi % BUTTON_RING_SIZE];
+    slot.button = button;
+    slot.release = release;
+    mi->mouse_state.button_write_idx.store(wi + 1, std::memory_order_release);
+    dispatch_semaphore_signal(mi->mouse_semaphore);
+  }
+
   void
   scroll(input_t &input, const int high_res_distance) {
     // Convert high_res_distance to scroll pixels
@@ -512,6 +738,145 @@ const KeyCodeMap kKeyCodesMap[] = {
   void
   hscroll(input_t &input, int high_res_distance) {
     // Unimplemented
+  }
+
+  // --- Mouse thread functions (run on dedicated real-time thread) ---
+
+  CGEventType
+  mt_event_type(const bool mouse_down[3]) {
+    if (mouse_down[0]) return kCGEventLeftMouseDragged;
+    if (mouse_down[1]) return kCGEventOtherMouseDragged;
+    if (mouse_down[2]) return kCGEventRightMouseDragged;
+    return kCGEventMouseMoved;
+  }
+
+  void
+  mt_post_event(macos_input_t *mi, CGEventType type, CGMouseButton button,
+                float x, float y, float prev_x, float prev_y, int click_count) {
+    const auto &bounds = mi->cached_display_bounds;
+    CGPoint loc {
+      std::clamp((double) x, bounds.origin.x, bounds.origin.x + bounds.size.width - 1),
+      std::clamp((double) y, bounds.origin.y, bounds.origin.y + bounds.size.height - 1)
+    };
+
+    // Create a fresh CGEvent for button events to avoid state leakage from reused event.
+    // Move events can still reuse mt_event for performance.
+    bool is_button = (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp ||
+                      type == kCGEventRightMouseDown || type == kCGEventRightMouseUp ||
+                      type == kCGEventOtherMouseDown || type == kCGEventOtherMouseUp);
+
+    CGEventRef ev;
+    if (is_button) {
+      ev = CGEventCreateMouseEvent(mi->mt_source, type, loc, button);
+      CGEventSetIntegerValueField(ev, kCGMouseEventClickState, click_count);
+      CGEventSetFlags(ev, mi->kb_flags.load(std::memory_order_relaxed));
+      BOOST_LOG(info) << "mt_post_event: button type=" << type << " btn=" << button
+                       << " click=" << click_count << " at (" << loc.x << "," << loc.y << ")";
+    }
+    else {
+      ev = mi->mt_event;
+      CGEventSetType(ev, type);
+      CGEventSetLocation(ev, loc);
+      CGEventSetIntegerValueField(ev, kCGMouseEventButtonNumber, button);
+      CGEventSetIntegerValueField(ev, kCGMouseEventClickState, click_count);
+      CGEventSetDoubleValueField(ev, kCGMouseEventDeltaX, x - prev_x);
+      CGEventSetDoubleValueField(ev, kCGMouseEventDeltaY, y - prev_y);
+      CGEventSetFlags(ev, mi->kb_flags.load(std::memory_order_relaxed));
+    }
+    CGEventPost(kCGHIDEventTap, ev);
+    if (is_button) {
+      CFRelease(ev);
+    }
+
+    mi->mt_pos_x = loc.x;
+    mi->mt_pos_y = loc.y;
+  }
+
+  void
+  mouse_thread_func(macos_input_t *mi) {
+    thread_time_constraint_policy_data_t policy;
+    policy.period = 1000000;
+    policy.computation = 250000;
+    policy.constraint = 500000;
+    policy.preemptible = true;
+    thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
+                      (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+
+    BOOST_LOG(info) << "Mouse thread started (real-time priority)";
+
+    bool mouse_down[3] {};
+    uint32_t last_move_seq = 0;
+
+    // Double-click detection: track last button event time per button per direction
+    std::chrono::steady_clock::time_point last_btn_time[3][2] {};  // [button_idx][0=down,1=up]
+
+    while (mi->mouse_thread_running.load(std::memory_order_relaxed)) {
+      dispatch_semaphore_wait(mi->mouse_semaphore,
+                              dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC));
+
+      uint32_t br = mi->mouse_state.button_read_idx.load(std::memory_order_relaxed);
+      uint32_t bw = mi->mouse_state.button_write_idx.load(std::memory_order_acquire);
+      while (br != bw) {
+        auto &evt = mi->mouse_state.button_ring[br % BUTTON_RING_SIZE];
+        int btn = evt.button;
+        bool release = evt.release;
+
+        CGMouseButton mac_button;
+        CGEventType etype;
+        int btn_idx = 0;
+        switch (btn) {
+          case 1:
+            mac_button = kCGMouseButtonLeft; etype = release ? kCGEventLeftMouseUp : kCGEventLeftMouseDown; btn_idx = 0; break;
+          case 2:
+            mac_button = kCGMouseButtonCenter; etype = release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown; btn_idx = 1; break;
+          case 3:
+            mac_button = kCGMouseButtonRight; etype = release ? kCGEventRightMouseUp : kCGEventRightMouseDown; btn_idx = 2; break;
+          default:
+            br++; continue;
+        }
+        mouse_down[btn_idx] = !release;
+
+        // Double-click detection: if same button event within MULTICLICK_DELAY_MS, send click_count=2
+        auto now = std::chrono::steady_clock::now();
+        int click_count = 1;
+        int dir = release ? 1 : 0;
+        if (now < last_btn_time[btn_idx][dir] + MULTICLICK_DELAY_MS) {
+          click_count = 2;
+        }
+        last_btn_time[btn_idx][dir] = now;
+
+        mt_post_event(mi, etype, mac_button, mi->mt_pos_x, mi->mt_pos_y,
+                      mi->mt_pos_x, mi->mt_pos_y, click_count);
+        br++;
+      }
+      mi->mouse_state.button_read_idx.store(br, std::memory_order_release);
+
+      uint32_t seq = mi->mouse_state.move_seq.load(std::memory_order_acquire);
+      if (seq == last_move_seq) continue;
+      last_move_seq = seq;
+
+      CGEventType move_type = mt_event_type(mouse_down);
+
+      if (mi->mouse_state.is_absolute.load(std::memory_order_relaxed)) {
+        float ax = mi->mouse_state.abs_x.load(std::memory_order_relaxed);
+        float ay = mi->mouse_state.abs_y.load(std::memory_order_relaxed);
+        float px = mi->mouse_state.abs_prev_x.load(std::memory_order_relaxed);
+        float py = mi->mouse_state.abs_prev_y.load(std::memory_order_relaxed);
+        mt_post_event(mi, move_type, kCGMouseButtonLeft, ax, ay, px, py, 0);
+      }
+      else {
+        int dx = mi->mouse_state.rel_dx.exchange(0, std::memory_order_relaxed);
+        int dy = mi->mouse_state.rel_dy.exchange(0, std::memory_order_relaxed);
+        if (dx != 0 || dy != 0) {
+          float nx = mi->mt_pos_x + dx * mi->mouse_sensitivity;
+          float ny = mi->mt_pos_y + dy * mi->mouse_sensitivity;
+          mt_post_event(mi, move_type, kCGMouseButtonLeft, nx, ny,
+                        mi->mt_pos_x, mi->mt_pos_y, 0);
+        }
+      }
+    }
+
+    BOOST_LOG(info) << "Mouse thread stopped";
   }
 
   /**
@@ -589,7 +954,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     auto output_name = config::video.output_name;
     // If output_name is set, try to find the display with that display id
     if (!output_name.empty()) {
-      uint32_t max_display = 32;
+      constexpr uint32_t max_display = 32;
       uint32_t display_count;
       CGDirectDisplayID displays[max_display];
       if (CGGetActiveDisplayList(max_display, displays, &display_count) != kCGErrorSuccess) {
@@ -610,6 +975,15 @@ const KeyCodeMap kKeyCodesMap[] = {
     macos_input->displayScaling = ((CGFloat) CGDisplayPixelsWide(macos_input->display)) / ((CGFloat) CGDisplayModeGetPixelWidth(mode));
     CFRelease(mode);
 
+    CGRect bounds = CGDisplayBounds(macos_input->display);
+    macos_input->cached_display_bounds = bounds;
+    BOOST_LOG(info) << "Input initialized: display=" << macos_input->display
+                    << " mainDisplay=" << CGMainDisplayID()
+                    << " scaling=" << macos_input->displayScaling
+                    << " bounds=(" << bounds.origin.x << "," << bounds.origin.y
+                    << " " << bounds.size.width << "x" << bounds.size.height << ")"
+                    << " postEventAccess=" << CGPreflightPostEventAccess();
+
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
     // Set local events suppression interval to 0 to avoid initial delay
@@ -618,15 +992,35 @@ const KeyCodeMap kKeyCodesMap[] = {
     CGEventSourceSetLocalEventsSuppressionInterval(macos_input->source, 0.0);
 
     macos_input->kb_event = CGEventCreate(macos_input->source);
-    macos_input->kb_flags = 0;
+    macos_input->kb_flags.store(0, std::memory_order_relaxed);
 
-    macos_input->mouse_event = CGEventCreate(macos_input->source);
+    // Create a reusable mouse event — post_mouse modifies and reuses this
+    // instead of creating/releasing a new CGEvent per mouse move
+    macos_input->mouse_event = CGEventCreateMouseEvent(macos_input->source, kCGEventMouseMoved, CGPointZero, kCGMouseButtonLeft);
     macos_input->mouse_down[0] = false;
     macos_input->mouse_down[1] = false;
     macos_input->mouse_down[2] = false;
 
     macos_input->mouse_sensitivity = config::input_mouse_sensitivity;
     macos_input->position_cache_valid = false;
+
+    // Create dedicated mouse thread with its own CGEvent resources
+    macos_input->mouse_semaphore = dispatch_semaphore_create(0);
+    macos_input->mt_source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    CGEventSourceSetLocalEventsSuppressionInterval(macos_input->mt_source, 0.0);
+
+    // Initialize mouse thread position to actual cursor location so that
+    // relative-mode clicks and moves start from the correct position
+    // (not (0,0) which would cause cursor jump and misplaced clicks)
+    CGEventRef pos_event = CGEventCreate(NULL);
+    CGPoint cur_pos = CGEventGetLocation(pos_event);
+    CFRelease(pos_event);
+    macos_input->mt_pos_x = cur_pos.x;
+    macos_input->mt_pos_y = cur_pos.y;
+
+    macos_input->mt_event = CGEventCreateMouseEvent(macos_input->mt_source, kCGEventMouseMoved, cur_pos, kCGMouseButtonLeft);
+    macos_input->mouse_thread_running.store(true, std::memory_order_relaxed);
+    macos_input->mouse_thread = std::thread(mouse_thread_func, macos_input);
 
     BOOST_LOG(debug) << "Mouse sensitivity set to: " << macos_input->mouse_sensitivity;
 
@@ -637,7 +1031,21 @@ const KeyCodeMap kKeyCodesMap[] = {
 
   void
   freeInput(void *p) {
-    const auto *input = static_cast<macos_input_t *>(p);
+    auto *input = static_cast<macos_input_t *>(p);
+
+    // Stop mouse thread
+    if (input->mouse_thread_running.load()) {
+      input->mouse_thread_running.store(false, std::memory_order_relaxed);
+      dispatch_semaphore_signal(input->mouse_semaphore);
+      if (input->mouse_thread.joinable()) {
+        input->mouse_thread.join();
+      }
+    }
+
+    // Release mouse thread resources
+    if (input->mt_event) CFRelease(input->mt_event);
+    if (input->mt_source) CFRelease(input->mt_source);
+    if (input->mouse_semaphore) dispatch_release(input->mouse_semaphore);
 
     CFRelease(input->source);
     CFRelease(input->kb_event);

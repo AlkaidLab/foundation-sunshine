@@ -872,6 +872,15 @@ namespace platf {
   scroll(input_t &input, int distance);
   void
   hscroll(input_t &input, int distance);
+
+  // Fast-path mouse functions — write to atomic state, bypass task_pool
+  void
+  mouse_move_fast(input_t &input, const touch_port_t &touch_port, float x, float y);
+  void
+  mouse_move_rel_fast(input_t &input, int deltaX, int deltaY);
+  void
+  mouse_button_fast(input_t &input, int button, bool release);
+
   void
   keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags);
   void
@@ -1002,5 +1011,27 @@ namespace platf {
    */
   std::unique_ptr<high_precision_timer>
   create_high_precision_timer();
+
+#ifdef __APPLE__
+  /**
+   * @brief Run NSApplication event loop on the main thread.
+   * Required for macOS .app bundles to respond to Apple Events from Launch Services.
+   */
+  void
+  run_nsapp_loop();
+
+  /**
+   * @brief Stop the NSApplication event loop.
+   */
+  void
+  stop_nsapp_loop();
+
+  /**
+   * @brief Toggle server cursor visibility in video capture.
+   * @param visible true = show cursor (remote mouse mode), false = hide (local mouse mode).
+   */
+  void
+  set_cursor_visible(bool visible);
+#endif
 
 }  // namespace platf

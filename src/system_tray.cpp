@@ -5,6 +5,9 @@
 // macros
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
 
+  // WEB_DIR for tray icon paths (compile-time, used on Windows/Linux only)
+  #define WEB_DIR SUNSHINE_ASSETS_DIR "/web/"
+
   #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
     #include <accctrl.h>

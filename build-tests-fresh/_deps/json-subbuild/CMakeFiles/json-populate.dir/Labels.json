@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/CMakeFiles/json-populate"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/CMakeFiles/json-populate.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/CMakeFiles/json-populate-complete.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-build.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-configure.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-download.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-install.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-mkdir.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-patch.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-test.rule"
+		},
+		{
+			"file" : "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build-tests-fresh/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/json-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"json-populate"
+		],
+		"name" : "json-populate"
+	}
+}

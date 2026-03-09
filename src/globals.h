@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <string>
+
 #include "entry_handler.h"
 #include "thread_pool.h"
 /**
@@ -40,6 +42,18 @@ extern std::string zako_device_id;
  */
 extern bool is_running_as_system_user;
 #endif
+
+/**
+ * @brief Returns the runtime-resolved assets directory path.
+ * On macOS, detects .app bundle and returns Contents/Resources/assets.
+ * On other platforms, returns the compile-time SUNSHINE_ASSETS_DIR.
+ */
+const std::string &get_assets_dir();
+
+/**
+ * @brief Returns the web UI directory path (assets_dir + "/web/").
+ */
+std::string get_web_dir();
 
 /**
  * @brief Handles process-wide communication.

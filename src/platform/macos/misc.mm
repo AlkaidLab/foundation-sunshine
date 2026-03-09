@@ -618,3 +618,37 @@ namespace dyn {
     return err;
   }
 }  // namespace dyn
+
+// NSApplication run loop for .app bundle support.
+// macOS Launch Services requires NSApplication to handle Apple Events (open, reopen, quit).
+// Without this, Finder reports the app as "not responding".
+#import <Cocoa/Cocoa.h>
+
+namespace platf {
+  void
+  run_nsapp_loop() {
+    @autoreleasepool {
+      NSApplication *app = [NSApplication sharedApplication];
+      [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
+      [app run];
+    }
+  }
+
+  void
+  stop_nsapp_loop() {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [NSApp stop:nil];
+      // Post a dummy event to unblock the run loop
+      NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                          location:NSMakePoint(0, 0)
+                                     modifierFlags:0
+                                         timestamp:0
+                                      windowNumber:0
+                                           context:nil
+                                           subtype:0
+                                             data1:0
+                                             data2:0];
+      [NSApp postEvent:event atStart:YES];
+    });
+  }
+}  // namespace platf

@@ -23,6 +23,10 @@
 #include "version.h"
 #include "video.h"
 
+#ifdef __APPLE__
+  #include "platform/common.h"
+#endif
+
 #ifdef _WIN32
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
@@ -163,6 +167,7 @@ main(int argc, char *argv[]) {
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
   BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+  BOOST_LOG(info) << "Assets directory: " << get_assets_dir();
 
 #ifdef _WIN32
   // Cache the result of is_running_as_system() check once at startup
@@ -377,9 +382,20 @@ main(int argc, char *argv[]) {
     BOOST_LOG(warning) << "No gamepad input is available"sv;
   }
 
+#ifdef __APPLE__
+  // macOS .app bundle: run heavy initialization (encoder probing, HTTP servers, etc.)
+  // on a background thread so the main thread can run NSApplication immediately.
+  // Without NSApplication on the main thread, Finder reports "not responding".
+  std::thread macos_init_thread([&]() {
+#endif
+
+#ifdef __APPLE__
+  BOOST_LOG(info) << "Deferring startup encoder probe on macOS until the first launch request";
+#else
   if (video::probe_encoders()) {
     BOOST_LOG(error) << "Video failed to find working encoder"sv;
   }
+#endif
 
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
@@ -389,7 +405,13 @@ main(int argc, char *argv[]) {
     std::this_thread::sleep_for(10s);
 #endif
 
+#ifdef __APPLE__
+    shutdown_event->raise(true);
+    platf::stop_nsapp_loop();
+    return;
+#else
     return -1;
+#endif
   }
 
   std::unique_ptr<platf::deinit_t> mDNS;
@@ -408,7 +430,12 @@ main(int argc, char *argv[]) {
 
   // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
   if (shutdown_event->peek()) {
+#ifdef __APPLE__
+    platf::stop_nsapp_loop();
+    return;
+#else
     return lifetime::desired_exit_code;
+#endif
   }
 
   std::thread httpThread { nvhttp::start };
@@ -428,22 +455,37 @@ main(int argc, char *argv[]) {
   if (tray_is_enabled && config::sunshine.system_tray) {
     BOOST_LOG(info) << "Starting system tray"sv;
 #ifdef _WIN32
-    // TODO: Windows has a weird bug where when running as a service and on the first Windows boot,
-    // he tray icon would not appear even though Sunshine is running correctly otherwise.
-    // Restarting the service would allow the icon to appear normally.
-    // For now we will keep the Windows tray icon on a separate thread.
-    // Ideally, we would run the system tray on the main thread for all platforms.
     system_tray::init_tray_threaded();
 #else
     system_tray::init_tray();
 #endif
   }
 
+#ifdef __APPLE__
+  // On macOS, wait for shutdown signal on this background thread
+  shutdown_event->view();
+
+  httpThread.join();
+  configThread.join();
+  rtspThread.join();
+
+  platf::stop_nsapp_loop();
+  });  // end macos_init_thread
+
+  // Main thread: run NSApplication event loop to handle Apple Events.
+  // This is required for Finder to consider the app "responsive".
+  BOOST_LOG(info) << "Starting macOS NSApplication run loop"sv;
+  platf::run_nsapp_loop();
+  BOOST_LOG(info) << "macOS NSApplication run loop exited"sv;
+
+  macos_init_thread.join();
+#else
   mainThreadLoop(shutdown_event);
 
   httpThread.join();
   configThread.join();
   rtspThread.join();
+#endif
 
   task_pool.stop();
   task_pool.join();

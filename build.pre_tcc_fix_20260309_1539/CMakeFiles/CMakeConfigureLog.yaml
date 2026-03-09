@@ -1,0 +1,966 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineSystem.cmake:205 (message)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      The system is: Darwin - 25.2.0 - arm64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /usr/bin/cc 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+      
+      The C compiler identification is AppleClang, found in:
+        /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/4.0.2/CompilerIdC/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:290 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Detecting C compiler apple sysroot: "/usr/bin/cc" "-E" "apple-sdk.c"
+        # 1 "apple-sdk.c"
+        # 1 "<built-in>" 1
+        # 1 "<built-in>" 3
+        # 466 "<built-in>" 3
+        # 1 "<command line>" 1
+        # 1 "<built-in>" 2
+        # 1 "apple-sdk.c" 2
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 1 3 4
+        # 89 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 90 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/TargetConditionals.h" 1 3 4
+        # 91 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 207 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 1 3 4
+        # 196 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 197 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 1 3 4
+        # 33 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 34 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 2 3 4
+        # 198 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 1 3 4
+        # 34 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 1 3 4
+        # 35 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 2 3 4
+        # 199 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 208 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 2 "apple-sdk.c" 2
+        
+        
+      Found apple sysroot: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler: /usr/bin/c++ 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "a.out"
+      
+      The CXX compiler identification is AppleClang, found in:
+        /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/4.0.2/CompilerIdCXX/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerId.cmake:290 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Detecting CXX compiler apple sysroot: "/usr/bin/c++" "-E" "apple-sdk.cpp"
+        # 1 "apple-sdk.cpp"
+        # 1 "<built-in>" 1
+        # 1 "<built-in>" 3
+        # 514 "<built-in>" 3
+        # 1 "<command line>" 1
+        # 1 "<built-in>" 2
+        # 1 "apple-sdk.cpp" 2
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 1 3 4
+        # 89 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 90 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/TargetConditionals.h" 1 3 4
+        # 91 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 207 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 1 3 4
+        # 196 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 197 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 1 3 4
+        # 33 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityVersions.h" 1 3 4
+        # 34 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 2 3 4
+        # 198 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 1 3 4
+        # 34 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 3 4
+        # 1 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternal.h" 1 3 4
+        # 35 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityInternalLegacy.h" 2 3 4
+        # 199 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/Availability.h" 2 3 4
+        # 208 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/AvailabilityMacros.h" 2 3 4
+        # 2 "apple-sdk.cpp" 2
+        
+        
+      Found apple sysroot: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:83 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_8f504
+        [1/2] /usr/bin/cc   -arch arm64   -v -Wl,-v -MD -MT CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
+        Apple clang version 17.0.0 (clang-1700.3.19.1)
+        Target: arm64-apple-darwin25.2.0
+        Thread model: posix
+        InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+        clang: warning: -Wl,-v: 'linker' input unused [-Wunused-command-line-argument]
+         "/Library/Developer/CommandLineTools/usr/bin/clang" -cc1 -triple arm64-apple-macosx26.0.0 -Wundef-prefix=TARGET_OS_ -Wdeprecated-objc-isa-usage -Werror=deprecated-objc-isa-usage -Werror=implicit-function-declaration -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model pic -pic-level 2 -mframe-pointer=non-leaf -fno-strict-return -ffp-contract=on -fno-rounding-math -funwind-tables=1 -fobjc-msgsend-selector-stubs -target-sdk-version=26.0 -fvisibility-inlines-hidden-static-local-var -fdefine-target-os-macros -fno-assume-unique-vtables -fno-modulemap-allow-subdirectory-search -target-cpu apple-m1 -target-feature +zcm -target-feature +zcz -target-feature +v8.5a -target-feature +aes -target-feature +altnzcv -target-feature +ccdp -target-feature +complxnum -target-feature +crc -target-feature +dotprod -target-feature +fp-armv8 -target-feature +fp16fml -target-feature +fptoint -target-feature +fullfp16 -target-feature +jsconv -target-feature +lse -target-feature +neon -target-feature +pauth -target-feature +perfmon -target-feature +predres -target-feature +ras -target-feature +rcpc -target-feature +rdm -target-feature +sb -target-feature +sha2 -target-feature +sha3 -target-feature +specrestrict -target-feature +ssbs -target-abi darwinpcs -debugger-tuning=lldb -fdebug-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf -target-linker-version 1221.4 -v -fcoverage-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf -resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/17 -dependency-file CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o.d -skip-unused-modulemap-deps -MT CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -sys-header-deps -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -I/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/usr/lib/clang/17/include -internal-externc-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -internal-externc-isystem /Library/Developer/CommandLineTools/usr/include -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks -Wno-reorder-init-list -Wno-implicit-int-float-conversion -Wno-c99-designator -Wno-final-dtor-non-final-class -Wno-extra-semi-stmt -Wno-misleading-indentation -Wno-quoted-include-in-framework-header -Wno-implicit-fallthrough -Wno-enum-enum-conversion -Wno-enum-float-conversion -Wno-elaborated-enum-base -ferror-limit 19 -stack-protector 1 -fstack-check -mdarwin-stkchk-strong-link -fblocks -fencode-extended-block-signature -fregister-global-dtors-with-atexit -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fmax-type-align=16 -fcommon -clang-vendor-feature=+disableNonDependentMemberExprInCurrentInstantiation -fno-odr-hash-protocols -clang-vendor-feature=+enableAggressiveVLAFolding -clang-vendor-feature=+revert09abecef7bbf -clang-vendor-feature=+thisNoAlignAttr -clang-vendor-feature=+thisNoNullAttr -clang-vendor-feature=+disableAtImportPrivateFrameworkInImplementationError -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -x c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
+        clang -cc1 version 17.0.0 (clang-1700.3.19.1) default target arm64-apple-darwin25.2.0
+        ignoring nonexistent directory "/usr/local/include"
+        ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include"
+        ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /Library/Developer/CommandLineTools/usr/lib/clang/17/include
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include
+         /Library/Developer/CommandLineTools/usr/include
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks (framework directory)
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks (framework directory)
+        End of search list.
+        [2/2] : && /usr/bin/cc -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -v -Wl,-v CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -o cmTC_8f504   && :
+        Apple clang version 17.0.0 (clang-1700.3.19.1)
+        Target: arm64-apple-darwin25.2.0
+        Thread model: posix
+        InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+         "/Library/Developer/CommandLineTools/usr/bin/ld" -demangle -lto_library /Library/Developer/CommandLineTools/usr/lib/libLTO.dylib -dynamic -arch arm64 -platform_version macos 26.0.0 26.0 -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -mllvm -enable-linkonceodr-outlining -o cmTC_8f504 -L/usr/local/lib -search_paths_first -headerpad_max_install_names -v CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -lSystem /Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a
+        @(#)PROGRAM:ld PROJECT:ld-1221.4
+        BUILD 16:29:08 Aug 11 2025
+        configured to support archs: armv6 armv7 armv7s arm64 arm64e arm64_32 i386 x86_64 x86_64h armv6m armv7k armv7m armv7em armv8m.main armv8.1m.main
+        will use ld-classic for: armv6 armv7 armv7s i386 armv6m armv7k armv7m armv7em
+        LTO support using: LLVM version 17.0.0 (static support for 29, runtime is 29)
+        TAPI support using: Apple TAPI version 17.0.0 (tapi-1700.3.8)
+        Library search paths:
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift
+        Framework search paths:
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:122 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Effective list of requested architectures (possibly empty)  : ""
+      Effective list of architectures found in the ABI info binary: "arm64"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:191 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+          add: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+          add: [/Library/Developer/CommandLineTools/usr/include]
+        end of search list found
+        collapse include dir [/Library/Developer/CommandLineTools/usr/lib/clang/17/include] ==> [/Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+        collapse include dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+        collapse include dir [/Library/Developer/CommandLineTools/usr/include] ==> [/Library/Developer/CommandLineTools/usr/include]
+        implicit include dirs: [/Library/Developer/CommandLineTools/usr/lib/clang/17/include;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include;/Library/Developer/CommandLineTools/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:227 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|")?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
+        ignore line: [Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf']
+        ignore line: []
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_8f504]
+        ignore line: [[1/2] /usr/bin/cc   -arch arm64   -v -Wl -v -MD -MT CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Apple clang version 17.0.0 (clang-1700.3.19.1)]
+        ignore line: [Target: arm64-apple-darwin25.2.0]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /Library/Developer/CommandLineTools/usr/bin]
+        ignore line: [clang: warning: -Wl -v: 'linker' input unused [-Wunused-command-line-argument]]
+        ignore line: [ "/Library/Developer/CommandLineTools/usr/bin/clang" -cc1 -triple arm64-apple-macosx26.0.0 -Wundef-prefix=TARGET_OS_ -Wdeprecated-objc-isa-usage -Werror=deprecated-objc-isa-usage -Werror=implicit-function-declaration -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model pic -pic-level 2 -mframe-pointer=non-leaf -fno-strict-return -ffp-contract=on -fno-rounding-math -funwind-tables=1 -fobjc-msgsend-selector-stubs -target-sdk-version=26.0 -fvisibility-inlines-hidden-static-local-var -fdefine-target-os-macros -fno-assume-unique-vtables -fno-modulemap-allow-subdirectory-search -target-cpu apple-m1 -target-feature +zcm -target-feature +zcz -target-feature +v8.5a -target-feature +aes -target-feature +altnzcv -target-feature +ccdp -target-feature +complxnum -target-feature +crc -target-feature +dotprod -target-feature +fp-armv8 -target-feature +fp16fml -target-feature +fptoint -target-feature +fullfp16 -target-feature +jsconv -target-feature +lse -target-feature +neon -target-feature +pauth -target-feature +perfmon -target-feature +predres -target-feature +ras -target-feature +rcpc -target-feature +rdm -target-feature +sb -target-feature +sha2 -target-feature +sha3 -target-feature +specrestrict -target-feature +ssbs -target-abi darwinpcs -debugger-tuning=lldb -fdebug-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf -target-linker-version 1221.4 -v -fcoverage-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-QUHSQf -resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/17 -dependency-file CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o.d -skip-unused-modulemap-deps -MT CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -sys-header-deps -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -I/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/usr/lib/clang/17/include -internal-externc-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -internal-externc-isystem /Library/Developer/CommandLineTools/usr/include -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks -Wno-reorder-init-list -Wno-implicit-int-float-conversion -Wno-c99-designator -Wno-final-dtor-non-final-class -Wno-extra-semi-stmt -Wno-misleading-indentation -Wno-quoted-include-in-framework-header -Wno-implicit-fallthrough -Wno-enum-enum-conversion -Wno-enum-float-conversion -Wno-elaborated-enum-base -ferror-limit 19 -stack-protector 1 -fstack-check -mdarwin-stkchk-strong-link -fblocks -fencode-extended-block-signature -fregister-global-dtors-with-atexit -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fmax-type-align=16 -fcommon -clang-vendor-feature=+disableNonDependentMemberExprInCurrentInstantiation -fno-odr-hash-protocols -clang-vendor-feature=+enableAggressiveVLAFolding -clang-vendor-feature=+revert09abecef7bbf -clang-vendor-feature=+thisNoAlignAttr -clang-vendor-feature=+thisNoNullAttr -clang-vendor-feature=+disableAtImportPrivateFrameworkInImplementationError -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -x c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [clang -cc1 version 17.0.0 (clang-1700.3.19.1) default target arm64-apple-darwin25.2.0]
+        ignore line: [ignoring nonexistent directory "/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+        ignore line: [ /Library/Developer/CommandLineTools/usr/include]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks (framework directory)]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks (framework directory)]
+        ignore line: [End of search list.]
+        ignore line: [[2/2] : && /usr/bin/cc -arch arm64 -Wl -search_paths_first -Wl -headerpad_max_install_names -v -Wl -v CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -o cmTC_8f504   && :]
+        ignore line: [Apple clang version 17.0.0 (clang-1700.3.19.1)]
+        ignore line: [Target: arm64-apple-darwin25.2.0]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /Library/Developer/CommandLineTools/usr/bin]
+        link line: [ "/Library/Developer/CommandLineTools/usr/bin/ld" -demangle -lto_library /Library/Developer/CommandLineTools/usr/lib/libLTO.dylib -dynamic -arch arm64 -platform_version macos 26.0.0 26.0 -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -mllvm -enable-linkonceodr-outlining -o cmTC_8f504 -L/usr/local/lib -search_paths_first -headerpad_max_install_names -v CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o -lSystem /Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+          arg [/Library/Developer/CommandLineTools/usr/bin/ld] ==> ignore
+          arg [-demangle] ==> ignore
+          arg [-lto_library] ==> ignore, skip following value
+          arg [/Library/Developer/CommandLineTools/usr/lib/libLTO.dylib] ==> skip value of -lto_library
+          arg [-dynamic] ==> ignore
+          arg [-arch] ==> ignore
+          arg [arm64] ==> ignore
+          arg [-platform_version] ==> ignore
+          arg [macos] ==> ignore
+          arg [26.0.0] ==> ignore
+          arg [26.0] ==> ignore
+          arg [-syslibroot] ==> ignore
+          arg [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk] ==> ignore
+          arg [-mllvm] ==> ignore
+          arg [-enable-linkonceodr-outlining] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_8f504] ==> ignore
+          arg [-L/usr/local/lib] ==> dir [/usr/local/lib]
+          arg [-search_paths_first] ==> ignore
+          arg [-headerpad_max_install_names] ==> ignore
+          arg [-v] ==> ignore
+          arg [CMakeFiles/cmTC_8f504.dir/CMakeCCompilerABI.c.o] ==> ignore
+          arg [-lSystem] ==> lib [System]
+          arg [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a] ==> lib [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+        linker tool for 'C': /Library/Developer/CommandLineTools/usr/bin/ld
+        Library search paths: [;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        Framework search paths: [;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+        remove lib [System]
+        remove lib [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+        collapse library dir [/usr/local/lib] ==> [/usr/local/lib]
+        collapse library dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib]
+        collapse library dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        collapse framework dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+        implicit libs: []
+        implicit objs: []
+        implicit dirs: [/usr/local/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        implicit fwks: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/Internal/CMakeDetermineLinkerId.cmake:36 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:270 (cmake_determine_linker_id)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Running the C compiler's linker: "/Library/Developer/CommandLineTools/usr/bin/ld" "-v"
+      @(#)PROGRAM:ld PROJECT:ld-1221.4
+      BUILD 16:29:08 Aug 11 2025
+      configured to support archs: armv6 armv7 armv7s arm64 arm64e arm64_32 i386 x86_64 x86_64h armv6m armv7k armv7m armv7em armv8m.main armv8.1m.main
+      will use ld-classic for: armv6 armv7 armv7s i386 armv6m armv7k armv7m armv7em
+      LTO support using: LLVM version 17.0.0 (static support for 29, runtime is 29)
+      TAPI support using: Apple TAPI version 17.0.0 (tapi-1700.3.8)
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:83 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_55649
+        [1/2] /usr/bin/c++   -arch arm64   -v -Wl,-v -MD -MT CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Apple clang version 17.0.0 (clang-1700.3.19.1)
+        Target: arm64-apple-darwin25.2.0
+        Thread model: posix
+        InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+        clang++: warning: -Wl,-v: 'linker' input unused [-Wunused-command-line-argument]
+        ignoring nonexistent directory "/Library/Developer/CommandLineTools/usr/bin/../include/c++/v1"
+         "/Library/Developer/CommandLineTools/usr/bin/clang" -cc1 -triple arm64-apple-macosx26.0.0 -Wundef-prefix=TARGET_OS_ -Wdeprecated-objc-isa-usage -Werror=deprecated-objc-isa-usage -Werror=implicit-function-declaration -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model pic -pic-level 2 -mframe-pointer=non-leaf -fno-strict-return -ffp-contract=on -fno-rounding-math -funwind-tables=1 -fobjc-msgsend-selector-stubs -target-sdk-version=26.0 -fvisibility-inlines-hidden-static-local-var -fdefine-target-os-macros -fno-assume-unique-vtables -fno-modulemap-allow-subdirectory-search -target-cpu apple-m1 -target-feature +zcm -target-feature +zcz -target-feature +v8.5a -target-feature +aes -target-feature +altnzcv -target-feature +ccdp -target-feature +complxnum -target-feature +crc -target-feature +dotprod -target-feature +fp-armv8 -target-feature +fp16fml -target-feature +fptoint -target-feature +fullfp16 -target-feature +jsconv -target-feature +lse -target-feature +neon -target-feature +pauth -target-feature +perfmon -target-feature +predres -target-feature +ras -target-feature +rcpc -target-feature +rdm -target-feature +sb -target-feature +sha2 -target-feature +sha3 -target-feature +specrestrict -target-feature +ssbs -target-abi darwinpcs -debugger-tuning=lldb -fdebug-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5 -target-linker-version 1221.4 -v -fcoverage-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5 -resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/17 -dependency-file CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o.d -skip-unused-modulemap-deps -MT CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -I/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1 -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/usr/lib/clang/17/include -internal-externc-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -internal-externc-isystem /Library/Developer/CommandLineTools/usr/include -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks -Wno-reorder-init-list -Wno-implicit-int-float-conversion -Wno-c99-designator -Wno-final-dtor-non-final-class -Wno-extra-semi-stmt -Wno-misleading-indentation -Wno-quoted-include-in-framework-header -Wno-implicit-fallthrough -Wno-enum-enum-conversion -Wno-enum-float-conversion -Wno-elaborated-enum-base -fdeprecated-macro -ferror-limit 19 -stack-protector 1 -fstack-check -mdarwin-stkchk-strong-link -fblocks -fencode-extended-block-signature -fregister-global-dtors-with-atexit -fgnuc-version=4.2.1 -fno-cxx-modules -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -fmax-type-align=16 -fcommon -clang-vendor-feature=+disableNonDependentMemberExprInCurrentInstantiation -fno-odr-hash-protocols -clang-vendor-feature=+enableAggressiveVLAFolding -clang-vendor-feature=+revert09abecef7bbf -clang-vendor-feature=+thisNoAlignAttr -clang-vendor-feature=+thisNoNullAttr -clang-vendor-feature=+disableAtImportPrivateFrameworkInImplementationError -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -x c++ /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        clang -cc1 version 17.0.0 (clang-1700.3.19.1) default target arm64-apple-darwin25.2.0
+        ignoring nonexistent directory "/usr/local/include"
+        ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include"
+        ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1
+         /Library/Developer/CommandLineTools/usr/lib/clang/17/include
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include
+         /Library/Developer/CommandLineTools/usr/include
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks (framework directory)
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks (framework directory)
+        End of search list.
+        [2/2] : && /usr/bin/c++ -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -v -Wl,-v CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_55649   && :
+        Apple clang version 17.0.0 (clang-1700.3.19.1)
+        Target: arm64-apple-darwin25.2.0
+        Thread model: posix
+        InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+         "/Library/Developer/CommandLineTools/usr/bin/ld" -demangle -lto_library /Library/Developer/CommandLineTools/usr/lib/libLTO.dylib -dynamic -arch arm64 -platform_version macos 26.0.0 26.0 -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -mllvm -enable-linkonceodr-outlining -o cmTC_55649 -L/usr/local/lib -search_paths_first -headerpad_max_install_names -v CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -lc++ -lSystem /Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a
+        @(#)PROGRAM:ld PROJECT:ld-1221.4
+        BUILD 16:29:08 Aug 11 2025
+        configured to support archs: armv6 armv7 armv7s arm64 arm64e arm64_32 i386 x86_64 x86_64h armv6m armv7k armv7m armv7em armv8m.main armv8.1m.main
+        will use ld-classic for: armv6 armv7 armv7s i386 armv6m armv7k armv7m armv7em
+        LTO support using: LLVM version 17.0.0 (static support for 29, runtime is 29)
+        TAPI support using: Apple TAPI version 17.0.0 (tapi-1700.3.8)
+        Library search paths:
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift
+        Framework search paths:
+        	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:122 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Effective list of requested architectures (possibly empty)  : ""
+      Effective list of architectures found in the ABI info binary: "arm64"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:191 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed CXX implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1]
+          add: [/Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+          add: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+          add: [/Library/Developer/CommandLineTools/usr/include]
+        end of search list found
+        collapse include dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1]
+        collapse include dir [/Library/Developer/CommandLineTools/usr/lib/clang/17/include] ==> [/Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+        collapse include dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+        collapse include dir [/Library/Developer/CommandLineTools/usr/include] ==> [/Library/Developer/CommandLineTools/usr/include]
+        implicit include dirs: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1;/Library/Developer/CommandLineTools/usr/lib/clang/17/include;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include;/Library/Developer/CommandLineTools/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:227 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|")?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
+        ignore line: [Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5']
+        ignore line: []
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_55649]
+        ignore line: [[1/2] /usr/bin/c++   -arch arm64   -v -Wl -v -MD -MT CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Apple clang version 17.0.0 (clang-1700.3.19.1)]
+        ignore line: [Target: arm64-apple-darwin25.2.0]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /Library/Developer/CommandLineTools/usr/bin]
+        ignore line: [clang++: warning: -Wl -v: 'linker' input unused [-Wunused-command-line-argument]]
+        ignore line: [ignoring nonexistent directory "/Library/Developer/CommandLineTools/usr/bin/../include/c++/v1"]
+        ignore line: [ "/Library/Developer/CommandLineTools/usr/bin/clang" -cc1 -triple arm64-apple-macosx26.0.0 -Wundef-prefix=TARGET_OS_ -Wdeprecated-objc-isa-usage -Werror=deprecated-objc-isa-usage -Werror=implicit-function-declaration -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model pic -pic-level 2 -mframe-pointer=non-leaf -fno-strict-return -ffp-contract=on -fno-rounding-math -funwind-tables=1 -fobjc-msgsend-selector-stubs -target-sdk-version=26.0 -fvisibility-inlines-hidden-static-local-var -fdefine-target-os-macros -fno-assume-unique-vtables -fno-modulemap-allow-subdirectory-search -target-cpu apple-m1 -target-feature +zcm -target-feature +zcz -target-feature +v8.5a -target-feature +aes -target-feature +altnzcv -target-feature +ccdp -target-feature +complxnum -target-feature +crc -target-feature +dotprod -target-feature +fp-armv8 -target-feature +fp16fml -target-feature +fptoint -target-feature +fullfp16 -target-feature +jsconv -target-feature +lse -target-feature +neon -target-feature +pauth -target-feature +perfmon -target-feature +predres -target-feature +ras -target-feature +rcpc -target-feature +rdm -target-feature +sb -target-feature +sha2 -target-feature +sha3 -target-feature +specrestrict -target-feature +ssbs -target-abi darwinpcs -debugger-tuning=lldb -fdebug-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5 -target-linker-version 1221.4 -v -fcoverage-compilation-dir=/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-z17WF5 -resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/17 -dependency-file CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o.d -skip-unused-modulemap-deps -MT CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -I/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1 -internal-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include -internal-isystem /Library/Developer/CommandLineTools/usr/lib/clang/17/include -internal-externc-isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -internal-externc-isystem /Library/Developer/CommandLineTools/usr/include -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks -internal-iframework /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks -Wno-reorder-init-list -Wno-implicit-int-float-conversion -Wno-c99-designator -Wno-final-dtor-non-final-class -Wno-extra-semi-stmt -Wno-misleading-indentation -Wno-quoted-include-in-framework-header -Wno-implicit-fallthrough -Wno-enum-enum-conversion -Wno-enum-float-conversion -Wno-elaborated-enum-base -fdeprecated-macro -ferror-limit 19 -stack-protector 1 -fstack-check -mdarwin-stkchk-strong-link -fblocks -fencode-extended-block-signature -fregister-global-dtors-with-atexit -fgnuc-version=4.2.1 -fno-cxx-modules -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -fmax-type-align=16 -fcommon -clang-vendor-feature=+disableNonDependentMemberExprInCurrentInstantiation -fno-odr-hash-protocols -clang-vendor-feature=+enableAggressiveVLAFolding -clang-vendor-feature=+revert09abecef7bbf -clang-vendor-feature=+thisNoAlignAttr -clang-vendor-feature=+thisNoNullAttr -clang-vendor-feature=+disableAtImportPrivateFrameworkInImplementationError -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -x c++ /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [clang -cc1 version 17.0.0 (clang-1700.3.19.1) default target arm64-apple-darwin25.2.0]
+        ignore line: [ignoring nonexistent directory "/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/Library/Frameworks"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1]
+        ignore line: [ /Library/Developer/CommandLineTools/usr/lib/clang/17/include]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include]
+        ignore line: [ /Library/Developer/CommandLineTools/usr/include]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks (framework directory)]
+        ignore line: [ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/SubFrameworks (framework directory)]
+        ignore line: [End of search list.]
+        ignore line: [[2/2] : && /usr/bin/c++ -arch arm64 -Wl -search_paths_first -Wl -headerpad_max_install_names -v -Wl -v CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_55649   && :]
+        ignore line: [Apple clang version 17.0.0 (clang-1700.3.19.1)]
+        ignore line: [Target: arm64-apple-darwin25.2.0]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /Library/Developer/CommandLineTools/usr/bin]
+        link line: [ "/Library/Developer/CommandLineTools/usr/bin/ld" -demangle -lto_library /Library/Developer/CommandLineTools/usr/lib/libLTO.dylib -dynamic -arch arm64 -platform_version macos 26.0.0 26.0 -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -mllvm -enable-linkonceodr-outlining -o cmTC_55649 -L/usr/local/lib -search_paths_first -headerpad_max_install_names -v CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o -lc++ -lSystem /Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+          arg [/Library/Developer/CommandLineTools/usr/bin/ld] ==> ignore
+          arg [-demangle] ==> ignore
+          arg [-lto_library] ==> ignore, skip following value
+          arg [/Library/Developer/CommandLineTools/usr/lib/libLTO.dylib] ==> skip value of -lto_library
+          arg [-dynamic] ==> ignore
+          arg [-arch] ==> ignore
+          arg [arm64] ==> ignore
+          arg [-platform_version] ==> ignore
+          arg [macos] ==> ignore
+          arg [26.0.0] ==> ignore
+          arg [26.0] ==> ignore
+          arg [-syslibroot] ==> ignore
+          arg [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk] ==> ignore
+          arg [-mllvm] ==> ignore
+          arg [-enable-linkonceodr-outlining] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_55649] ==> ignore
+          arg [-L/usr/local/lib] ==> dir [/usr/local/lib]
+          arg [-search_paths_first] ==> ignore
+          arg [-headerpad_max_install_names] ==> ignore
+          arg [-v] ==> ignore
+          arg [CMakeFiles/cmTC_55649.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [-lc++] ==> lib [c++]
+          arg [-lSystem] ==> lib [System]
+          arg [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a] ==> lib [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+        linker tool for 'CXX': /Library/Developer/CommandLineTools/usr/bin/ld
+        Library search paths: [;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        Framework search paths: [;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+        remove lib [System]
+        remove lib [/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a]
+        collapse library dir [/usr/local/lib] ==> [/usr/local/lib]
+        collapse library dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib]
+        collapse library dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        collapse framework dir [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks] ==> [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+        implicit libs: [c++]
+        implicit objs: []
+        implicit dirs: [/usr/local/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib;/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/swift]
+        implicit fwks: [/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/Internal/CMakeDetermineLinkerId.cmake:36 (message)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:270 (cmake_determine_linker_id)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Running the CXX compiler's linker: "/Library/Developer/CommandLineTools/usr/bin/ld" "-v"
+      @(#)PROGRAM:ld PROJECT:ld-1221.4
+      BUILD 16:29:08 Aug 11 2025
+      configured to support archs: armv6 armv7 armv7s arm64 arm64e arm64_32 i386 x86_64 x86_64h armv6m armv7k armv7m armv7em armv8m.main armv8.1m.main
+      will use ld-classic for: armv6 armv7 armv7s i386 armv6m armv7k armv7m armv7em
+      LTO support using: LLVM version 17.0.0 (static support for 29, runtime is 29)
+      TAPI support using: Apple TAPI version 17.0.0 (tapi-1700.3.8)
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/Internal/CheckSourceCompiles.cmake:104 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CheckCSourceCompiles.cmake:58 (cmake_check_source_compiles)"
+      - "/opt/homebrew/share/cmake/Modules/FindThreads.cmake:97 (check_c_source_compiles)"
+      - "/opt/homebrew/share/cmake/Modules/FindThreads.cmake:163 (_threads_check_libc)"
+      - "cmake/macros/common.cmake:27 (_find_package)"
+      - "/opt/homebrew/share/cmake/Modules/CMakeFindDependencyMacro.cmake:78 (find_package)"
+      - "/opt/homebrew/lib/cmake/boost_thread-1.88.0/boost_thread-config.cmake:118 (find_dependency)"
+      - "cmake/macros/common.cmake:27 (_find_package)"
+      - "/opt/homebrew/lib/cmake/boost_locale-1.88.0/boost_locale-config.cmake:102 (find_package)"
+      - "cmake/macros/common.cmake:27 (_find_package)"
+      - "/opt/homebrew/lib/cmake/Boost-1.88.0/BoostConfig.cmake:141 (find_package)"
+      - "/opt/homebrew/lib/cmake/Boost-1.88.0/BoostConfig.cmake:262 (boost_find_component)"
+      - "cmake/macros/common.cmake:27 (_find_package)"
+      - "cmake/dependencies/Boost_Sunshine.cmake:33 (find_package)"
+      - "cmake/dependencies/common.cmake:5 (include)"
+      - "CMakeLists.txt:57 (include)"
+    checks:
+      - "Performing Test CMAKE_HAVE_LIBC_PTHREAD"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-EFvGf1"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-EFvGf1"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "CMAKE_HAVE_LIBC_PTHREAD"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-EFvGf1'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_51c2e
+        [1/2] /usr/bin/cc -DCMAKE_HAVE_LIBC_PTHREAD  -arch arm64 -MD -MT CMakeFiles/cmTC_51c2e.dir/src.c.o -MF CMakeFiles/cmTC_51c2e.dir/src.c.o.d -o CMakeFiles/cmTC_51c2e.dir/src.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-EFvGf1/src.c
+        [2/2] : && /usr/bin/cc -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_51c2e.dir/src.c.o -o cmTC_51c2e   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:11 (check_function_exists)"
+    checks:
+      - "Looking for fcntl"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-nc43vZ"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-nc43vZ"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_FCNTL"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-nc43vZ'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_165d1
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=fcntl -arch arm64 -MD -MT CMakeFiles/cmTC_165d1.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_165d1.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_165d1.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-nc43vZ/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=fcntl -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_165d1.dir/CheckFunctionExists.c.o -o cmTC_165d1   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:12 (check_function_exists)"
+    checks:
+      - "Looking for ioctl"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-zINeeP"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-zINeeP"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_IOCTL"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-zINeeP'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_899db
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=ioctl -arch arm64 -MD -MT CMakeFiles/cmTC_899db.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_899db.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_899db.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-zINeeP/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=ioctl -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_899db.dir/CheckFunctionExists.c.o -o cmTC_899db   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:13 (check_function_exists)"
+    checks:
+      - "Looking for poll"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Oqk0f8"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Oqk0f8"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_POLL"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Oqk0f8'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_db0a9
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=poll -arch arm64 -MD -MT CMakeFiles/cmTC_db0a9.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_db0a9.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_db0a9.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Oqk0f8/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=poll -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_db0a9.dir/CheckFunctionExists.c.o -o cmTC_db0a9   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:14 (check_function_exists)"
+    checks:
+      - "Looking for getaddrinfo"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Jdc0cM"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Jdc0cM"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_GETADDRINFO"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Jdc0cM'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_d78ce
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=getaddrinfo -arch arm64 -MD -MT CMakeFiles/cmTC_d78ce.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_d78ce.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_d78ce.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-Jdc0cM/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=getaddrinfo -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_d78ce.dir/CheckFunctionExists.c.o -o cmTC_d78ce   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:15 (check_function_exists)"
+    checks:
+      - "Looking for getnameinfo"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-ntyHO7"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-ntyHO7"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_GETNAMEINFO"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-ntyHO7'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_a4341
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=getnameinfo -arch arm64 -MD -MT CMakeFiles/cmTC_a4341.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_a4341.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_a4341.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-ntyHO7/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=getnameinfo -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_a4341.dir/CheckFunctionExists.c.o -o cmTC_a4341   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:16 (check_function_exists)"
+    checks:
+      - "Looking for gethostbyname_r"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-bT28Y6"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-bT28Y6"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_GETHOSTBYNAME_R"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-bT28Y6'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_23442
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=gethostbyname_r -arch arm64 -MD -MT CMakeFiles/cmTC_23442.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_23442.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_23442.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-bT28Y6/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=gethostbyname_r -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_23442.dir/CheckFunctionExists.c.o -o cmTC_23442   && :
+        FAILED: cmTC_23442 
+        : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=gethostbyname_r -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_23442.dir/CheckFunctionExists.c.o -o cmTC_23442   && :
+        Undefined symbols for architecture arm64:
+          "_gethostbyname_r", referenced from:
+              _main in CheckFunctionExists.c.o
+        ld: symbol(s) not found for architecture arm64
+        clang: error: linker command failed with exit code 1 (use -v to see invocation)
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:17 (check_function_exists)"
+    checks:
+      - "Looking for gethostbyaddr_r"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-FZWPOB"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-FZWPOB"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_GETHOSTBYADDR_R"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-FZWPOB'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_373c5
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=gethostbyaddr_r -arch arm64 -MD -MT CMakeFiles/cmTC_373c5.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_373c5.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_373c5.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-FZWPOB/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=gethostbyaddr_r -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_373c5.dir/CheckFunctionExists.c.o -o cmTC_373c5   && :
+        FAILED: cmTC_373c5 
+        : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=gethostbyaddr_r -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_373c5.dir/CheckFunctionExists.c.o -o cmTC_373c5   && :
+        Undefined symbols for architecture arm64:
+          "_gethostbyaddr_r", referenced from:
+              _main in CheckFunctionExists.c.o
+        ld: symbol(s) not found for architecture arm64
+        clang: error: linker command failed with exit code 1 (use -v to see invocation)
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:18 (check_function_exists)"
+    checks:
+      - "Looking for inet_pton"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-1zvfdk"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-1zvfdk"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_INET_PTON"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-1zvfdk'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_73bdf
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=inet_pton -arch arm64 -MD -MT CMakeFiles/cmTC_73bdf.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_73bdf.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_73bdf.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-1zvfdk/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=inet_pton -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_73bdf.dir/CheckFunctionExists.c.o -o cmTC_73bdf   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckFunctionExists.cmake:93 (try_compile)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:19 (check_function_exists)"
+    checks:
+      - "Looking for inet_ntop"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-y0KcA3"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-y0KcA3"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_INET_NTOP"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-y0KcA3'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_ad4cc
+        [1/2] /usr/bin/cc   -DCHECK_FUNCTION_EXISTS=inet_ntop -arch arm64 -MD -MT CMakeFiles/cmTC_ad4cc.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_ad4cc.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_ad4cc.dir/CheckFunctionExists.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-y0KcA3/CheckFunctionExists.c
+        [2/2] : && /usr/bin/cc -DCHECK_FUNCTION_EXISTS=inet_ntop -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_ad4cc.dir/CheckFunctionExists.c.o -o cmTC_ad4cc   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/Internal/CheckSourceCompiles.cmake:104 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CheckSourceCompiles.cmake:89 (cmake_check_source_compiles)"
+      - "/opt/homebrew/share/cmake/Modules/CheckStructHasMember.cmake:85 (check_source_compiles)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:20 (check_struct_has_member)"
+    checks:
+      - "Performing Test HAS_MSGHDR_FLAGS"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-fM9JFl"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-fM9JFl"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAS_MSGHDR_FLAGS"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-fM9JFl'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_396d0
+        [1/2] /usr/bin/cc -DHAS_MSGHDR_FLAGS  -arch arm64 -MD -MT CMakeFiles/cmTC_396d0.dir/src.c.o -MF CMakeFiles/cmTC_396d0.dir/src.c.o.d -o CMakeFiles/cmTC_396d0.dir/src.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-fM9JFl/src.c
+        [2/2] : && /usr/bin/cc -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_396d0.dir/src.c.o -o cmTC_396d0   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:212 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:339 (__check_type_size_impl)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:22 (check_type_size)"
+    checks:
+      - "Check size of socklen_t"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-HSc6Zx"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-HSc6Zx"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAVE_HAS_SOCKLEN_T"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-HSc6Zx'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_2a9e5
+        [1/2] /usr/bin/cc   -arch arm64 -MD -MT CMakeFiles/cmTC_2a9e5.dir/HAS_SOCKLEN_T.c.o -MF CMakeFiles/cmTC_2a9e5.dir/HAS_SOCKLEN_T.c.o.d -o CMakeFiles/cmTC_2a9e5.dir/HAS_SOCKLEN_T.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-HSc6Zx/HAS_SOCKLEN_T.c
+        [2/2] : && /usr/bin/cc -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/cmTC_2a9e5.dir/HAS_SOCKLEN_T.c.o -o cmTC_2a9e5   && :
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:212 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:339 (__check_type_size_impl)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:25 (check_type_size)"
+    checks:
+      - "Check size of QOS_FLOWID"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAVE_HAS_QOS_FLOWID"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_9b528
+        [1/2] /usr/bin/cc   -arch arm64 -MD -MT CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o -MF CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o.d -o CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b/HAS_QOS_FLOWID.c
+        FAILED: CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o 
+        /usr/bin/cc   -arch arm64 -MD -MT CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o -MF CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o.d -o CMakeFiles/cmTC_9b528.dir/HAS_QOS_FLOWID.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b/HAS_QOS_FLOWID.c
+        /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-SseB6b/HAS_QOS_FLOWID.c:1:10: fatal error: 'winsock2.h' file not found
+            1 | #include "winsock2.h"
+              |          ^~~~~~~~~~~~
+        1 error generated.
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:212 (try_compile)"
+      - "/opt/homebrew/share/cmake/Modules/CheckTypeSize.cmake:339 (__check_type_size_impl)"
+      - "third-party/moonlight-common-c/enet/CMakeLists.txt:26 (check_type_size)"
+    checks:
+      - "Check size of PQOS_FLOWID"
+    directories:
+      source: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M"
+      binary: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/Volumes/ISCSI-Disk/Folder/foundation-sunshine/cmake"
+      CMAKE_OSX_ARCHITECTURES: ""
+      CMAKE_OSX_DEPLOYMENT_TARGET: ""
+      CMAKE_OSX_SYSROOT: ""
+    buildResult:
+      variable: "HAVE_HAS_PQOS_FLOWID"
+      cached: true
+      stdout: |
+        Change Dir: '/Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M'
+        
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_c8e6e
+        [1/2] /usr/bin/cc   -arch arm64 -MD -MT CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o -MF CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o.d -o CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M/HAS_PQOS_FLOWID.c
+        FAILED: CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o 
+        /usr/bin/cc   -arch arm64 -MD -MT CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o -MF CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o.d -o CMakeFiles/cmTC_c8e6e.dir/HAS_PQOS_FLOWID.c.o -c /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M/HAS_PQOS_FLOWID.c
+        /Volumes/ISCSI-Disk/Folder/foundation-sunshine/build/CMakeFiles/CMakeScratch/TryCompile-DF5T6M/HAS_PQOS_FLOWID.c:1:10: fatal error: 'winsock2.h' file not found
+            1 | #include "winsock2.h"
+              |          ^~~~~~~~~~~~
+        1 error generated.
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+...

@@ -16,6 +16,10 @@ extern "C" {
 #include <thread>
 #include <unordered_map>
 
+#ifdef __APPLE__
+  #include <pthread.h>
+#endif
+
 #include "config.h"
 #include "globals.h"
 #include "input.h"
@@ -166,6 +170,8 @@ namespace input {
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
         mouse_left_button_timeout {},
+        server_cursor_visible { true },
+        local_cursor_session { false },
         touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
         accumulated_vscroll_delta {},
         accumulated_hscroll_delta {} {}
@@ -183,12 +189,37 @@ namespace input {
     std::mutex input_queue_lock;
 
     thread_pool_util::ThreadPool::task_id_t mouse_left_button_timeout;
+    bool server_cursor_visible;
+    bool local_cursor_session;
 
     input::touch_port_t touch_port;
 
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
   };
+
+#ifdef __APPLE__
+  void
+  sync_streamed_cursor_mode(const std::shared_ptr<input_t> &input) {
+    platf::set_cursor_visible(display_cursor);
+    input->server_cursor_visible = display_cursor;
+    input->local_cursor_session = !display_cursor;
+    input->mouse_left_button_timeout = display_cursor ? ENABLE_LEFT_BUTTON_DELAY : DISABLE_LEFT_BUTTON_DELAY;
+
+    BOOST_LOG(info) << "Shortcut toggled streamed cursor mode to "
+                    << (display_cursor ? "classic system mouse" : "local cursor");
+  }
+
+  void
+  set_streamed_cursor_mode(const std::shared_ptr<input_t> &input, bool show_remote_cursor, const char *reason) {
+    display_cursor = show_remote_cursor;
+    sync_streamed_cursor_mode(input);
+
+    BOOST_LOG(info) << "Explicit streamed cursor mode set to "
+                    << (show_remote_cursor ? "classic system mouse" : "local cursor")
+                    << " (" << reason << ")";
+  }
+#endif
 
   /**
    * @brief Apply shortcut based on VKEY
@@ -211,6 +242,12 @@ namespace input {
       case 0x4E /* VKEY_N */:
         display_cursor = !display_cursor;
         return 1;
+#ifdef __APPLE__
+      case 0x4D /* VKEY_M */:
+        return 2;
+      case 0x48 /* VKEY_H */:
+        return 3;
+#endif
       case 0x56 /* VKEY_V */:
         display_device::session_t::get().toggle_display_power();
         return 1;
@@ -480,8 +517,20 @@ namespace input {
       touch_port = *touch_port_event->pop();
     }
     if (!touch_port) {
-      BOOST_LOG(verbose) << "Ignoring early absolute input without a touch port"sv;
-      return std::nullopt;
+      // Video pipeline hasn't provided touch_port yet.
+      // Use a short non-blocking wait to avoid freezing the single-threaded
+      // input task pool. Tablet clients send absolute mouse events immediately
+      // on connect, often before the video pipeline is ready.
+      auto tp = touch_port_event->pop(200ms);
+      if (tp) {
+        touch_port = *tp;
+        BOOST_LOG(info) << "Touch port received: "sv << touch_port.width << "x"sv << touch_port.height
+                        << " env: "sv << touch_port.env_width << "x"sv << touch_port.env_height;
+      }
+      else {
+        BOOST_LOG(debug) << "Touch port not ready yet — dropping input event"sv;
+        return std::nullopt;
+      }
     }
 
     auto scalarX = touch_port.width / size.first;
@@ -578,10 +627,24 @@ namespace input {
       return;
     }
 
+    const auto emit_mouse_button = [](int button, bool release) {
+#ifdef __APPLE__
+      platf::mouse_button_fast(platf_input, button, release);
+#else
+      platf::button_mouse(platf_input, button, release);
+#endif
+    };
+
     auto release = util::endian::little(packet->header.magic) == MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5;
     auto button = util::endian::big(packet->button);
+
+    BOOST_LOG(info) << "[BTN] button=" << button << " release=" << release
+                    << " mouse_press[" << button << "]=" << (button < mouse_press.size() ? (int)mouse_press[button] : -1)
+                    << " timeout=" << (void*)input->mouse_left_button_timeout;
+
     if (button > 0 && button < mouse_press.size()) {
       if (mouse_press[button] != release) {
+        BOOST_LOG(info) << "[BTN] DROPPED: state mismatch";
         // button state is already what we want
         return;
       }
@@ -603,13 +666,17 @@ namespace input {
      * when the last mouse coordinates were absolute
      */
     if (button == BUTTON_LEFT && release && !input->mouse_left_button_timeout) {
+      BOOST_LOG(info) << "[BTN] LEFT UP delayed 10ms (absolute mode)";
       auto f = [=]() {
         auto left_released = mouse_press[BUTTON_LEFT];
+        BOOST_LOG(info) << "[BTN] DELAYED CALLBACK: mouse_press[LEFT]=" << (int)left_released;
         if (left_released) {
+          BOOST_LOG(info) << "[BTN] DELAYED CALLBACK: already released, skipping";
           // Already released left button
           return;
         }
-        platf::button_mouse(platf_input, BUTTON_LEFT, release);
+        BOOST_LOG(info) << "[BTN] DELAYED CALLBACK: sending LEFT UP now";
+        emit_mouse_button(BUTTON_LEFT, release);
 
         mouse_press[BUTTON_LEFT] = false;
         input->mouse_left_button_timeout = nullptr;
@@ -622,15 +689,16 @@ namespace input {
     if (
       button == BUTTON_RIGHT && !release &&
       input->mouse_left_button_timeout > DISABLE_LEFT_BUTTON_DELAY) {
-      platf::button_mouse(platf_input, BUTTON_RIGHT, false);
-      platf::button_mouse(platf_input, BUTTON_RIGHT, true);
+      emit_mouse_button(BUTTON_RIGHT, false);
+      emit_mouse_button(BUTTON_RIGHT, true);
 
       mouse_press[BUTTON_RIGHT] = false;
 
       return;
     }
 
-    platf::button_mouse(platf_input, button, release);
+    BOOST_LOG(info) << "[BTN] DIRECT: button=" << button << " release=" << release;
+    emit_mouse_button(button, release);
   }
 
   short
@@ -773,8 +841,22 @@ namespace input {
       if (!release) {
         // A new key has been pressed down, we need to check for key combo's
         // If a key-combo has been pressed down, don't pass it through
-        if (input->shortcutFlags == input_t::SHORTCUT && apply_shortcut(keyCode) > 0) {
-          return;
+        if (input->shortcutFlags == input_t::SHORTCUT) {
+          auto shortcut = apply_shortcut(keyCode);
+          if (shortcut > 0) {
+#ifdef __APPLE__
+            if (keyCode == 0x4E /* VKEY_N */) {
+              sync_streamed_cursor_mode(input);
+            }
+            else if (keyCode == 0x4D /* VKEY_M */) {
+              set_streamed_cursor_mode(input, true, "shortcut M");
+            }
+            else if (keyCode == 0x48 /* VKEY_H */) {
+              set_streamed_cursor_mode(input, false, "shortcut H");
+            }
+#endif
+            return;
+          }
         }
 
         if (key_press_repeat_id) {
@@ -1533,6 +1615,16 @@ namespace input {
    */
   void
   passthrough_next_message(std::shared_ptr<input_t> input) {
+#ifdef __APPLE__
+    // Boost input thread to highest QoS for minimal scheduling latency.
+    // Only set once per thread via thread_local flag.
+    static thread_local bool qos_set = false;
+    if (!qos_set) {
+      pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+      qos_set = true;
+    }
+#endif
+
     // 'entry' backs the 'payload' pointer, so they must remain in scope together
     std::vector<uint8_t> entry;
     PNV_INPUT_HEADER payload;
@@ -1634,6 +1726,77 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    auto *payload = (PNV_INPUT_HEADER) input_data.data();
+
+    // Fast-path on macOS: handle mouse move and button packets before queueing
+    // so the dedicated mouse thread observes a single ordered stream. Button
+    // packets still reuse the existing per-packet logic via the overload below.
+    switch (util::endian::little(payload->magic)) {
+      case MOUSE_MOVE_REL_MAGIC_GEN5: {
+        if (!config::input.mouse) return;
+        auto pkt = (PNV_REL_MOUSE_MOVE_PACKET) payload;
+        input->mouse_left_button_timeout = DISABLE_LEFT_BUTTON_DELAY;
+#ifdef __APPLE__
+        input->local_cursor_session = true;
+        display_cursor = false;
+        if (input->server_cursor_visible) {
+          platf::set_cursor_visible(false);
+          input->server_cursor_visible = false;
+          BOOST_LOG(info) << "Switched to local mouse mode — hiding server cursor";
+        }
+#endif
+        platf::mouse_move_rel_fast(platf_input,
+          util::endian::big(pkt->deltaX), util::endian::big(pkt->deltaY));
+        return;
+      }
+      case MOUSE_MOVE_ABS_MAGIC: {
+        if (!config::input.mouse) return;
+        auto pkt = (PNV_ABS_MOUSE_MOVE_PACKET) payload;
+#ifdef __APPLE__
+        if (input->local_cursor_session) {
+          BOOST_LOG(debug) << "Keeping server cursor hidden during local-cursor session";
+        }
+        if (!input->local_cursor_session && !input->server_cursor_visible) {
+          display_cursor = true;
+          platf::set_cursor_visible(true);
+          input->server_cursor_visible = true;
+          BOOST_LOG(info) << "Switched to remote mouse mode — showing server cursor";
+        }
+        // Only reset left-button timeout when fully in remote/absolute mode.
+        // In mixed mode (REL + ABS interleaved), keep the timeout set by REL
+        // so that left-button release goes through the fast direct path.
+        if (input->server_cursor_visible && !input->local_cursor_session) {
+          if (input->mouse_left_button_timeout == DISABLE_LEFT_BUTTON_DELAY) {
+            input->mouse_left_button_timeout = ENABLE_LEFT_BUTTON_DELAY;
+          }
+        }
+#else
+        if (input->mouse_left_button_timeout == DISABLE_LEFT_BUTTON_DELAY) {
+          input->mouse_left_button_timeout = ENABLE_LEFT_BUTTON_DELAY;
+        }
+#endif
+        if (!pkt->width || !pkt->height) return;
+        float x = util::endian::big(pkt->x);
+        float y = util::endian::big(pkt->y);
+        float w = (float) util::endian::big(pkt->width);
+        float h = (float) util::endian::big(pkt->height);
+        auto tpcoords = client_to_touchport(input, {x, y}, {w, h});
+        if (!tpcoords) return;
+        auto &tp = input->touch_port;
+        platf::touch_port_t abs_port { tp.offset_x, tp.offset_y, tp.env_width, tp.env_height };
+        platf::mouse_move_fast(platf_input, abs_port, tpcoords->first, tpcoords->second);
+        return;
+      }
+      case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
+      case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5: {
+        passthrough(input, (PNV_MOUSE_BUTTON_PACKET) payload);
+        return;
+      }
+      default:
+        break;
+    }
+
+    // All other input: queue through task_pool as before
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       input->input_queue.push_back(std::move(input_data));
@@ -1645,6 +1808,15 @@ namespace input {
   reset(std::shared_ptr<input_t> &input) {
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
+
+#ifdef __APPLE__
+    if (!input->server_cursor_visible) {
+      display_cursor = true;
+      platf::set_cursor_visible(true);
+      input->server_cursor_visible = true;
+    }
+    input->local_cursor_session = false;
+#endif
 
     // Ensure input is synchronous, by using the task_pool
     task_pool.push([]() {
@@ -1698,7 +1870,10 @@ namespace input {
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback));
 
-    // Workaround to ensure new frames will be captured when a client connects
+    // Workaround to ensure new frames will be captured when a client connects.
+    // Also warp the cursor to its current position to "wake up" the cursor
+    // for programmatic events — this helps tablet clients that send absolute
+    // mouse coordinates immediately on connect.
     task_pool.pushDelayed([]() {
       platf::move_mouse(platf_input, 1, 1);
       platf::move_mouse(platf_input, -1, -1);

@@ -26,6 +26,7 @@ struct CaptureSession {
 typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 
 @property (nonatomic, assign) AVCaptureSession *session;
+@property (nonatomic, assign) AVCaptureScreenInput *screenInput;
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *videoOutputs;
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *captureCallbacks;
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *captureSignals;
@@ -37,5 +38,6 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight;
 - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback;
+- (void)setCursorVisible:(BOOL)visible;
 
 @end
