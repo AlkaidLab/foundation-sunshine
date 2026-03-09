@@ -974,23 +974,6 @@ namespace display_device {
         BOOST_LOG(info) << "显示设备配置已恢复";
       }
     }
-
-    if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
-      auto &session = display_device::session_t::get();
-      auto devices = display_device::enum_available_devices();
-
-      // headless host case: create Zako VDD when no display is found (config-enabled only)
-      if (devices.empty()) {
-        BOOST_LOG(info) << "未找到显示设备，创建Zako Monitor";
-        session.create_vdd_monitor("");
-        constexpr int max_attempts = 5;
-        constexpr auto wait_time = std::chrono::milliseconds(233);
-        for (int i = 0; i < max_attempts && !session.is_display_on(); ++i) {
-          std::this_thread::sleep_for(wait_time);
-        }
-      }
-    }
-
     return true;
   }
 
