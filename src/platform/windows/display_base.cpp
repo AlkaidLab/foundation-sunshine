@@ -27,6 +27,8 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 } D3DKMT_GPU_PREFERENCE_QUERY_STATE;
 
 #include "display.h"
+#include "capture_plugin/capture_plugin_loader.h"
+#include "capture_plugin/display_plugin.h"
 #include "display_device/windows_utils.h"
 #include "misc.h"
 #include "src/config.h"
@@ -1126,6 +1128,17 @@ namespace platf {
         }
         else if (hwdevice_type == mem_type_e::system) {
           ret = try_init(std::make_shared<dxgi::display_wgc_ram_t>());
+        }
+      }
+      else {
+        // Try loading as a capture plugin
+        static auto plugins = capture_plugin::discover_plugins();
+        auto *plugin = capture_plugin::find_plugin(plugins, type);
+        if (plugin) {
+          auto disp = std::make_shared<capture_plugin::display_plugin_t>(plugin, hwdevice_type);
+          if (!disp->init(config, display_name)) {
+            ret = disp;
+          }
         }
       }
 
