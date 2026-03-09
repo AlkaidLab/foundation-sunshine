@@ -615,6 +615,21 @@ namespace display_device {
       }
     }
 
+    // 无头主机自动创建检查（在 VDD 清理之后、拓扑恢复之前执行）
+    // 此检查独立于操作模式（no_operation / 普通模式），确保无头主机始终能获得显示器
+    if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
+      auto devices = display_device::enum_available_devices();
+      if (devices.empty()) {
+        BOOST_LOG(info) << "无头主机检测：未找到显示设备，自动创建基地显示器";
+        create_vdd_monitor("");
+        constexpr int max_attempts = 5;
+        constexpr auto wait_time = std::chrono::milliseconds(233);
+        for (int i = 0; i < max_attempts && !is_display_on(); ++i) {
+          std::this_thread::sleep_for(wait_time);
+        }
+      }
+    }
+
     // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
     // 注意：即使是无操作模式，VDD 在非常驻模式下也会被销毁（上面已处理）
     if (is_no_operation) {
