@@ -15,6 +15,8 @@
 #include <boost/atomic.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/endian/arithmetic.hpp>
+#include <boost/make_shared.hpp>
+#include <boost/shared_ptr.hpp>
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/lock_guard.hpp>
 
@@ -410,9 +412,11 @@ namespace stream {
       mic_cipher_ctx_t &operator=(mic_cipher_ctx_t &&) noexcept = default;
     };
 
-    // Per-client 加密表：IP -> cipher_ctx
+    // Per-client 加密表：IP -> shared_ptr<cipher_ctx>
+    // shared_ptr 允许在锁外安全使用 cipher_ctx（即使 map 中的条目被其他线程移除，
+    // 持有 shared_ptr 的线程仍可安全完成解密操作）
     // 使用 boost::container::flat_map 获得更好的缓存局部性（客户端数 N≤5，线性扫描比哈希更快）
-    boost::container::flat_map<std::string, mic_cipher_ctx_t> mic_ciphers;
+    boost::container::flat_map<std::string, boost::shared_ptr<mic_cipher_ctx_t>> mic_ciphers;
     boost::mutex mic_cipher_mutex;
 
     // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
@@ -665,10 +669,8 @@ namespace stream {
     if (should_enable_mic_encryption) {
       boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
       // Per-client cipher：用当前会话的密钥为该客户端创建独立的加密上下文
-      ctx.mic_ciphers.erase(client_ip);
-      ctx.mic_ciphers.emplace(
-        client_ip,
-        broadcast_ctx_t::mic_cipher_ctx_t(session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId));
+      ctx.mic_ciphers[client_ip] = boost::make_shared<broadcast_ctx_t::mic_cipher_ctx_t>(
+        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId);
       BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED (per-client cipher registered for " << client_ip << ")";
     }
     else {
@@ -1688,17 +1690,23 @@ namespace stream {
       stats.total_packets++;
 
       // 查找该客户端的 per-client 加密上下文
+      // 仅在锁内拷贝 shared_ptr，解密和写入在锁外进行
+      // 避免在持有 mutex 期间调用可能阻塞的 write_mic_data（含 WASAPI Sleep）
+      boost::shared_ptr<broadcast_ctx_t::mic_cipher_ctx_t> cipher_ctx;
       {
         boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
         auto it = ctx.mic_ciphers.find(client_ip);
         if (it != ctx.mic_ciphers.end()) {
-          auto &cipher_ctx = it->second;
+          cipher_ctx = it->second;
+        }
+      }
+      if (cipher_ctx) {
           // 根据 sequenceNumber 更新 IV
           // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
           // 这与音频加密不同，音频加密使用: avRiKeyId + sequenceNumber
-          // cipher_ctx.iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
+          // cipher_ctx->iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
           crypto::aes_t current_iv(16);  // 确保是 16 字节
-          uint32_t baseIvVal = util::endian::big<std::uint32_t>(*(std::uint32_t *) cipher_ctx.iv.data());
+          uint32_t baseIvVal = util::endian::big<std::uint32_t>(*(std::uint32_t *) cipher_ctx->iv.data());
           // 服务端收到的 sequence_number 就是包里的实际值，直接使用即可（不需要减1），客户端减1是因为它的 sequenceNumber 变量在写入包后就递增了
           uint32_t ivSeq = baseIvVal + (sequence_number & 0xFFFF);
           *(std::uint32_t *) current_iv.data() = util::endian::big<std::uint32_t>(ivSeq);
@@ -1706,7 +1714,7 @@ namespace stream {
           std::memset(current_iv.data() + 4, 0, 12);
           std::vector<std::uint8_t> plaintext;
           std::string_view cipher_view((const char *) audio_data, data_size);
-          if (cipher_ctx.cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
+          if (cipher_ctx->cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
             // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
             stats.decrypt_failed++;
             return;  // 丢弃数据包
@@ -1739,7 +1747,6 @@ namespace stream {
           // 解密成功且数据看起来有效
           audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
           return;
-        }
       }
 
       // 该客户端没有注册加密上下文 — 视为明文数据

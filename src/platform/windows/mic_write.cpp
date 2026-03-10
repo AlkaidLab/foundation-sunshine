@@ -416,7 +416,7 @@ namespace platf::audio {
 
     // 如果缓冲区空间不足，进行多次等待尝试
     if (framesToWrite > availableFrames) {
-      BOOST_LOG(debug) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
+      BOOST_LOG(verbose) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
 
       // 最多尝试3次，每次等待时间递增
       const int max_retries = 3;
