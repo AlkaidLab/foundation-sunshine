@@ -549,6 +549,56 @@ namespace stream {
     return std::string_view { (char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq) };
   }
 
+  /**
+   * @brief 确保麦克风 socket 处于打开状态。
+   * 如果 socket 已关闭（上次会话结束时被关闭），则重新 open + bind。
+   * @param ctx broadcast 上下文
+   * @return true 如果 socket 已打开或成功重新打开
+   */
+  bool
+  ensure_mic_sock_open(broadcast_ctx_t &ctx) {
+    if (ctx.mic_sock.is_open()) {
+      return true;
+    }
+
+    auto address_family = net::af_from_enum_string(config::sunshine.address_family);
+    auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
+    auto mic_port = net::map_port(MIC_STREAM_PORT);
+    boost::system::error_code ec;
+
+    ctx.mic_sock.open(protocol, ec);
+    if (ec) {
+      BOOST_LOG(error) << "Couldn't re-open Microphone socket: "sv << ec.message();
+      return false;
+    }
+
+    ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
+    if (ec) {
+      BOOST_LOG(error) << "Couldn't re-bind Microphone socket to port ["sv << mic_port << "]: "sv << ec.message();
+      ctx.mic_sock.close();
+      return false;
+    }
+
+    BOOST_LOG(info) << "Microphone socket re-opened on port " << mic_port;
+    return true;
+  }
+
+  /**
+   * @brief 重置麦克风加密状态。
+   * 在所有麦克风会话结束时调用，确保下次会话能正确初始化加密。
+   */
+  void
+  reset_mic_encryption(broadcast_ctx_t &ctx) {
+    std::lock_guard<std::mutex> lg(ctx.mic_cipher_mutex);
+    if (ctx.mic_cipher.has_value()) {
+      ctx.mic_cipher.reset();
+    }
+    if (!ctx.mic_iv.empty()) {
+      std::memset(ctx.mic_iv.data(), 0, ctx.mic_iv.size());
+    }
+    ctx.mic_encryption_enabled.store(false);
+  }
+
   int
   start_broadcast(broadcast_ctx_t &ctx);
   void
@@ -1629,15 +1679,13 @@ namespace stream {
         return;
       }
 
-      auto fg = util::fail_guard([&]() {
-        if (ctx.mic_socket_enabled.load()) {
-          ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
-        }
-      });
-
+      // 错误时不重新注册接收，避免在 socket 已关闭时循环触发无效句柄错误
       if (ec) {
-        if (ec == boost::asio::error::operation_aborted) {
-          BOOST_LOG(info) << "Mic socket normally closed";
+        if (ec == boost::asio::error::operation_aborted ||
+            ec == boost::asio::error::bad_descriptor ||
+            ec == boost::system::errc::bad_file_descriptor ||
+            ec == boost::system::errc::not_a_socket) {
+          BOOST_LOG(debug) << "Mic socket closed: "sv << ec.message();
           return;
         }
         if (ec != boost::system::errc::connection_refused &&
@@ -1646,6 +1694,12 @@ namespace stream {
         }
         return;
       }
+
+      auto fg = util::fail_guard([&]() {
+        if (ctx.mic_socket_enabled.load()) {
+          ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
+        }
+      });
 
       if (received_bytes < sizeof(RTP_PACKET)) {
         return;
@@ -1712,6 +1766,15 @@ namespace stream {
     while (!broadcast_shutdown_event->peek()) {
       if (!ctx.mic_socket_enabled.load()) {
         retry_delay = 300ms;  // 会话结束时重置延迟
+
+        // 重置设备初始化标志，下次会话重新初始化麦克风设备
+        // （处理音频设备在运行中被卸载/重装的情况）
+        if (mic_device_initialized) {
+          audio::release_mic_redirect_device();
+          mic_device_initialized = false;
+          BOOST_LOG(debug) << "Microphone device released, will re-initialize on next session";
+        }
+
         std::this_thread::sleep_for(100ms);
         continue;
       }
@@ -1731,6 +1794,7 @@ namespace stream {
       while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
         io.run();
       }
+      io.restart();  // 重置 io_context，以便下次会话可以重新进入 io.run()
     }
 
     if (mic_device_initialized) {
@@ -2455,14 +2519,7 @@ namespace stream {
       ctx.mic_sessions_count.store(0);
       
       // 安全清理：清零所有麦克风加密相关的敏感数据
-      {
-        std::lock_guard<std::mutex> lg(ctx.mic_cipher_mutex);
-        if (ctx.mic_cipher.has_value()) {
-          ctx.mic_cipher.reset();  // 销毁cipher对象并释放密钥
-        }
-        std::memset(ctx.mic_iv.data(), 0, ctx.mic_iv.size());  // 清零IV
-        ctx.mic_encryption_enabled.store(false);
-      }
+      reset_mic_encryption(ctx);
       
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }
@@ -2655,9 +2712,10 @@ namespace stream {
         if (--running_non_control_only_sessions == 0) {
           // 最后一个会话结束时，确保麦克风socket已关闭
           if (session.broadcast_ref->mic_socket_enabled.load()) {
-            session.broadcast_ref->mic_sock.close();
             session.broadcast_ref->mic_socket_enabled.store(false);
             session.broadcast_ref->mic_sessions_count.store(0);
+            session.broadcast_ref->mic_sock.close();
+            reset_mic_encryption(*session.broadcast_ref.get());
             BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
           }
 
@@ -2683,8 +2741,9 @@ namespace stream {
             int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
             if (remaining_count == 0) {
               // 没有会话需要麦克风了，关闭socket
-              session.broadcast_ref->mic_sock.close();
               session.broadcast_ref->mic_socket_enabled.store(false);
+              session.broadcast_ref->mic_sock.close();
+              reset_mic_encryption(*session.broadcast_ref.get());
               BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
             }
             else {
@@ -2755,6 +2814,12 @@ namespace stream {
           // 根据会话的麦克风启用标志管理麦克风socket
           if (session.audio.enable_mic) {
             session.broadcast_ref->mic_sessions_count.fetch_add(1);
+
+            // 确保 mic socket 处于打开状态（上次会话结束时可能已关闭）
+            if (!ensure_mic_sock_open(*session.broadcast_ref.get())) {
+              BOOST_LOG(error) << "Failed to ensure mic socket is open, microphone will be unavailable";
+            }
+
             session.broadcast_ref->mic_socket_enabled.store(true);
             
             // 注册客户端IP到名称的映射（用于麦克风统计日志）
@@ -2769,26 +2834,27 @@ namespace stream {
             bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
             if (should_enable_mic_encryption) {
               std::lock_guard<std::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
-              if (!session.broadcast_ref->mic_cipher) {
-                session.broadcast_ref->mic_cipher.emplace(session.audio.cipher.key, session.audio.cipher.padding);
-                session.broadcast_ref->mic_iv.resize(16);
-                // 初始化 IV：前 4 字节存储 baseIv（大端序）
-                // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
-                // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
-                *(std::uint32_t *) session.broadcast_ref->mic_iv.data() = util::endian::big<std::uint32_t>(session.audio.avRiKeyId);
-                // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
-                std::memset(session.broadcast_ref->mic_iv.data() + 4, 0, 12);
-                session.broadcast_ref->mic_encryption_enabled.store(true);
-              }
+              // 始终用当前会话的密钥初始化（上次会话可能使用不同密钥）
+              session.broadcast_ref->mic_cipher.emplace(session.audio.cipher.key, session.audio.cipher.padding);
+              session.broadcast_ref->mic_iv.resize(16);
+              // 初始化 IV：前 4 字节存储 baseIv（大端序）
+              // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
+              // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
+              *(std::uint32_t *) session.broadcast_ref->mic_iv.data() = util::endian::big<std::uint32_t>(session.audio.avRiKeyId);
+              // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
+              std::memset(session.broadcast_ref->mic_iv.data() + 4, 0, 12);
+              session.broadcast_ref->mic_encryption_enabled.store(true);
               BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED";
             } else {
+              // 显式禁用加密（上次会话可能启用了加密）
+              reset_mic_encryption(*session.broadcast_ref.get());
               BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED";
             }
           }
           else {
             // 如果第一个会话不需要麦克风，关闭麦克风socket
-            session.broadcast_ref->mic_sock.close();
             session.broadcast_ref->mic_socket_enabled.store(false);
+            session.broadcast_ref->mic_sock.close();
             BOOST_LOG(info) << "Client " << session.client_name << ": Microphone socket closed (session doesn't require it)";
           }
 
@@ -2801,6 +2867,12 @@ namespace stream {
           // 非第一个会话：如果启用麦克风，增加计数
           if (session.audio.enable_mic) {
             session.broadcast_ref->mic_sessions_count.fetch_add(1);
+
+            // 确保 mic socket 处于打开状态（上次会话结束时可能已关闭）
+            if (!ensure_mic_sock_open(*session.broadcast_ref.get())) {
+              BOOST_LOG(error) << "Failed to ensure mic socket is open, microphone will be unavailable";
+            }
+
             session.broadcast_ref->mic_socket_enabled.store(true);
             
             // 注册客户端IP到名称的映射
@@ -2809,6 +2881,26 @@ namespace stream {
               std::lock_guard<std::mutex> lg(session.broadcast_ref->client_name_mutex);
               session.broadcast_ref->client_ip_to_name[client_ip] = session.client_name;
               BOOST_LOG(debug) << "Registered client mapping: " << client_ip << " -> " << session.client_name;
+            }
+
+            // 检查是否需要启用 MIC 加密（可能第一个会话未启用麦克风，cipher 未初始化）
+            bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
+            if (should_enable_mic_encryption) {
+              std::lock_guard<std::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
+              // 始终用当前会话的密钥初始化
+              session.broadcast_ref->mic_cipher.emplace(session.audio.cipher.key, session.audio.cipher.padding);
+              session.broadcast_ref->mic_iv.resize(16);
+              // 初始化 IV：前 4 字节存储 baseIv（大端序）
+              // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
+              // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
+              *(std::uint32_t *) session.broadcast_ref->mic_iv.data() = util::endian::big<std::uint32_t>(session.audio.avRiKeyId);
+              // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
+              std::memset(session.broadcast_ref->mic_iv.data() + 4, 0, 12);
+              session.broadcast_ref->mic_encryption_enabled.store(true);
+              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED";
+            } else {
+              // 显式禁用加密
+              reset_mic_encryption(*session.broadcast_ref.get());
             }
             
             BOOST_LOG(debug) << "Microphone socket enabled for additional session";
