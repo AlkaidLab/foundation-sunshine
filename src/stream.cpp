@@ -12,7 +12,11 @@
 #include <fstream>
 #include <openssl/err.h>
 
+#include <boost/atomic.hpp>
+#include <boost/container/flat_map.hpp>
 #include <boost/endian/arithmetic.hpp>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/lock_guard.hpp>
 
 extern "C" {
 // clang-format off
@@ -383,19 +387,38 @@ namespace stream {
 
     control_server_t control_server;
 
-    std::atomic<bool> mic_socket_enabled { false };
-    std::atomic<int> mic_sessions_count { 0 };  // 需要麦克风的会话数
+    boost::atomic<bool> mic_socket_enabled { false };
+    boost::atomic<int> mic_sessions_count { 0 };  // 需要麦克风的会话数
 
-    std::atomic<bool> mic_encryption_enabled { false };
-    std::optional<crypto::cipher::cbc_t> mic_cipher;
-    crypto::aes_t mic_iv;
-    std::mutex mic_cipher_mutex;
+    // Per-client 麦克风加密上下文（以客户端 IP 为 key）
+    struct mic_cipher_ctx_t {
+      crypto::cipher::cbc_t cipher;
+      crypto::aes_t iv;
+
+      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding, std::uint32_t avRiKeyId)
+          : cipher(key, padding), iv(16) {
+        // 初始化 IV：前 4 字节存储 baseIv（大端序）
+        // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
+        // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
+        *(std::uint32_t *) iv.data() = util::endian::big<std::uint32_t>(avRiKeyId);
+        // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
+        std::memset(iv.data() + 4, 0, 12);
+      }
+
+      mic_cipher_ctx_t(mic_cipher_ctx_t &&) noexcept = default;
+      mic_cipher_ctx_t &operator=(mic_cipher_ctx_t &&) noexcept = default;
+    };
+
+    // Per-client 加密表：IP -> cipher_ctx
+    // 使用 boost::container::flat_map 获得更好的缓存局部性（客户端数 N≤5，线性扫描比哈希更快）
+    boost::container::flat_map<std::string, mic_cipher_ctx_t> mic_ciphers;
+    boost::mutex mic_cipher_mutex;
 
     // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
-    std::atomic<bool> mic_reject_plaintext { false };
+    boost::atomic<bool> mic_reject_plaintext { false };
 
     std::map<std::string, std::string> client_ip_to_name;
-    std::mutex client_name_mutex;
+    boost::mutex client_name_mutex;
   };
 
   struct session_t {
@@ -584,19 +607,25 @@ namespace stream {
   }
 
   /**
-   * @brief 重置麦克风加密状态。
-   * 在所有麦克风会话结束时调用，确保下次会话能正确初始化加密。
+   * @brief 重置麦克风加密状态（清除所有客户端的加密上下文）。
+   * 在所有麦克风会话结束或 broadcast 结束时调用。
    */
   void
   reset_mic_encryption(broadcast_ctx_t &ctx) {
-    std::lock_guard<std::mutex> lg(ctx.mic_cipher_mutex);
-    if (ctx.mic_cipher.has_value()) {
-      ctx.mic_cipher.reset();
-    }
-    if (!ctx.mic_iv.empty()) {
-      std::memset(ctx.mic_iv.data(), 0, ctx.mic_iv.size());
-    }
-    ctx.mic_encryption_enabled.store(false);
+    boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+    ctx.mic_ciphers.clear();
+  }
+
+  /**
+   * @brief 移除指定客户端的麦克风加密上下文。
+   * 在单个客户端会话结束时调用，不影响其他客户端的加密状态。
+   * @param ctx broadcast 上下文
+   * @param client_ip 客户端 IP 地址字符串
+   */
+  void
+  remove_mic_encryption(broadcast_ctx_t &ctx, const std::string &client_ip) {
+    boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+    ctx.mic_ciphers.erase(client_ip);
   }
 
   int
@@ -1597,68 +1626,71 @@ namespace stream {
     //   return true;
     // };
 
-    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &peer_addr) {
+    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &peer_addr, const std::string &client_ip) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
-
-      // 根据 RTSP 协商的配置判断是否启用加密
-      // 不依赖数据长度猜测，直接使用会话配置作为权威来源
-      bool is_encrypted = ctx.mic_encryption_enabled.load();
 
       // 更新统计
       auto &stats = client_stats[peer_addr];
       stats.total_packets++;
 
-      if (is_encrypted && ctx.mic_cipher.has_value()) {
-        std::lock_guard<std::mutex> lg(ctx.mic_cipher_mutex);
-        // 根据 sequenceNumber 更新 IV
-        // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
-        // 这与音频加密不同，音频加密使用: avRiKeyId + sequenceNumber
-        // ctx.mic_iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
-        crypto::aes_t current_iv(16);  // 确保是 16 字节
-        uint32_t baseIvVal = util::endian::big<std::uint32_t>(*(std::uint32_t *) ctx.mic_iv.data());
-        // 服务端收到的 sequence_number 就是包里的实际值，直接使用即可（不需要减1），客户端减1是因为它的 sequenceNumber 变量在写入包后就递增了
-        uint32_t ivSeq = baseIvVal + (sequence_number & 0xFFFF);
-        *(std::uint32_t *) current_iv.data() = util::endian::big<std::uint32_t>(ivSeq);
-        // 确保后 12 字节为 0（客户端构建 IV 时后 12 字节也是 0）
-        std::memset(current_iv.data() + 4, 0, 12);
-        std::vector<std::uint8_t> plaintext;
-        std::string_view cipher_view((const char *) audio_data, data_size);
-        if (ctx.mic_cipher->decrypt(cipher_view, plaintext, &current_iv) != 0) {
-          // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
-          stats.decrypt_failed++;
-          return;  // 丢弃数据包
-        }
-        
-        stats.decrypt_success++;
-        
-        if (plaintext.size() > 0) {
-          // 简单的有效性检查：Opus 数据不应该全是 0 或全是 0xFF
-          bool looks_valid = true;
-          if (plaintext.size() >= 4) {
-            uint8_t first_byte = plaintext[0];
-            uint8_t second_byte = plaintext[1];
-            uint8_t third_byte = plaintext[2];
-            uint8_t fourth_byte = plaintext[3];
-            bool all_zero = (first_byte == 0 && second_byte == 0 && third_byte == 0 && fourth_byte == 0);
-            bool all_ff = (first_byte == 0xFF && second_byte == 0xFF && third_byte == 0xFF && fourth_byte == 0xFF);
-            if (all_zero || all_ff) {
-              looks_valid = false;
-              stats.invalid_data++;
-            }
-          }
-          // 注意：如果 plaintext.size() < 4，无法验证，假设有效并继续处理
-
-          if (!looks_valid) {
+      // 查找该客户端的 per-client 加密上下文
+      {
+        boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+        auto it = ctx.mic_ciphers.find(client_ip);
+        if (it != ctx.mic_ciphers.end()) {
+          auto &cipher_ctx = it->second;
+          // 根据 sequenceNumber 更新 IV
+          // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
+          // 这与音频加密不同，音频加密使用: avRiKeyId + sequenceNumber
+          // cipher_ctx.iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
+          crypto::aes_t current_iv(16);  // 确保是 16 字节
+          uint32_t baseIvVal = util::endian::big<std::uint32_t>(*(std::uint32_t *) cipher_ctx.iv.data());
+          // 服务端收到的 sequence_number 就是包里的实际值，直接使用即可（不需要减1），客户端减1是因为它的 sequenceNumber 变量在写入包后就递增了
+          uint32_t ivSeq = baseIvVal + (sequence_number & 0xFFFF);
+          *(std::uint32_t *) current_iv.data() = util::endian::big<std::uint32_t>(ivSeq);
+          // 确保后 12 字节为 0（客户端构建 IV 时后 12 字节也是 0）
+          std::memset(current_iv.data() + 4, 0, 12);
+          std::vector<std::uint8_t> plaintext;
+          std::string_view cipher_view((const char *) audio_data, data_size);
+          if (cipher_ctx.cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
+            // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
+            stats.decrypt_failed++;
             return;  // 丢弃数据包
           }
-        }
 
-        // 解密成功且数据看起来有效
-        audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
-        return;
+          stats.decrypt_success++;
+
+          if (plaintext.size() > 0) {
+            // 简单的有效性检查：Opus 数据不应该全是 0 或全是 0xFF
+            bool looks_valid = true;
+            if (plaintext.size() >= 4) {
+              uint8_t first_byte = plaintext[0];
+              uint8_t second_byte = plaintext[1];
+              uint8_t third_byte = plaintext[2];
+              uint8_t fourth_byte = plaintext[3];
+              bool all_zero = (first_byte == 0 && second_byte == 0 && third_byte == 0 && fourth_byte == 0);
+              bool all_ff = (first_byte == 0xFF && second_byte == 0xFF && third_byte == 0xFF && fourth_byte == 0xFF);
+              if (all_zero || all_ff) {
+                looks_valid = false;
+                stats.invalid_data++;
+              }
+            }
+            // 注意：如果 plaintext.size() < 4，无法验证，假设有效并继续处理
+
+            if (!looks_valid) {
+              return;  // 丢弃数据包
+            }
+          }
+
+          // 解密成功且数据看起来有效
+          audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
+          return;
+        }
       }
+
+      // 该客户端没有注册加密上下文 — 视为明文数据
 
       // 安全模式：拒绝明文数据
       if (ctx.mic_reject_plaintext.load()) {
@@ -1709,7 +1741,7 @@ namespace stream {
       std::string client_ip = peer.address().to_string();
       std::string client_id;
       {
-        std::lock_guard<std::mutex> lg(ctx.client_name_mutex);
+        boost::lock_guard<boost::mutex> lg(ctx.client_name_mutex);
         auto it = ctx.client_ip_to_name.find(client_ip);
         if (it != ctx.client_ip_to_name.end()) {
           client_id = it->second + "@" + client_ip;  // 设备名@IP
@@ -1729,7 +1761,7 @@ namespace stream {
             // if (!validate_mic_ssrc(ssrc, client_id)) {
             //   return;
             // }
-            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_id);
+            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_id, client_ip);
           }
           return;
         }
@@ -1754,7 +1786,7 @@ namespace stream {
           //                 << " bytes, data=" << data_size 
           //                 << " bytes, sequenceNumber=" << sequence_number << " (little-endian)"
           //                 << " from " << client_id;
-          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_id);
+          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_id, client_ip);
         }
       }
     };
@@ -2740,14 +2772,17 @@ namespace stream {
           if (session.audio.enable_mic) {
             int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
             if (remaining_count == 0) {
-              // 没有会话需要麦克风了，关闭socket
+              // 没有会话需要麦克风了，关闭socket并清除所有加密上下文
               session.broadcast_ref->mic_socket_enabled.store(false);
               session.broadcast_ref->mic_sock.close();
               reset_mic_encryption(*session.broadcast_ref.get());
               BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
             }
             else {
-              BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count;
+              // 只移除当前客户端的加密上下文，保留其他客户端的
+              std::string client_ip = session.audio.peer.address().to_string();
+              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
+              BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
             }
           }
         }
@@ -2825,7 +2860,7 @@ namespace stream {
             // 注册客户端IP到名称的映射（用于麦克风统计日志）
             std::string client_ip = session.audio.peer.address().to_string();
             {
-              std::lock_guard<std::mutex> lg(session.broadcast_ref->client_name_mutex);
+              boost::lock_guard<boost::mutex> lg(session.broadcast_ref->client_name_mutex);
               session.broadcast_ref->client_ip_to_name[client_ip] = session.client_name;
               BOOST_LOG(debug) << "Mic Registered client mapping: " << client_ip << " -> " << session.client_name;
             }
@@ -2833,21 +2868,16 @@ namespace stream {
             // 检查是否需要启用 MIC 加密
             bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
             if (should_enable_mic_encryption) {
-              std::lock_guard<std::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
-              // 始终用当前会话的密钥初始化（上次会话可能使用不同密钥）
-              session.broadcast_ref->mic_cipher.emplace(session.audio.cipher.key, session.audio.cipher.padding);
-              session.broadcast_ref->mic_iv.resize(16);
-              // 初始化 IV：前 4 字节存储 baseIv（大端序）
-              // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
-              // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
-              *(std::uint32_t *) session.broadcast_ref->mic_iv.data() = util::endian::big<std::uint32_t>(session.audio.avRiKeyId);
-              // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
-              std::memset(session.broadcast_ref->mic_iv.data() + 4, 0, 12);
-              session.broadcast_ref->mic_encryption_enabled.store(true);
-              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED";
+              boost::lock_guard<boost::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
+              // Per-client cipher：用当前会话的密钥为该客户端创建独立的加密上下文
+              session.broadcast_ref->mic_ciphers.erase(client_ip);
+              session.broadcast_ref->mic_ciphers.emplace(
+                client_ip,
+                broadcast_ctx_t::mic_cipher_ctx_t(session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId));
+              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED (per-client cipher registered for " << client_ip << ")";
             } else {
-              // 显式禁用加密（上次会话可能启用了加密）
-              reset_mic_encryption(*session.broadcast_ref.get());
+              // 该客户端未启用加密，移除其加密上下文（如果有的话）
+              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
               BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED";
             }
           }
@@ -2878,7 +2908,7 @@ namespace stream {
             // 注册客户端IP到名称的映射
             std::string client_ip = session.audio.peer.address().to_string();
             {
-              std::lock_guard<std::mutex> lg(session.broadcast_ref->client_name_mutex);
+              boost::lock_guard<boost::mutex> lg(session.broadcast_ref->client_name_mutex);
               session.broadcast_ref->client_ip_to_name[client_ip] = session.client_name;
               BOOST_LOG(debug) << "Registered client mapping: " << client_ip << " -> " << session.client_name;
             }
@@ -2886,21 +2916,16 @@ namespace stream {
             // 检查是否需要启用 MIC 加密（可能第一个会话未启用麦克风，cipher 未初始化）
             bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
             if (should_enable_mic_encryption) {
-              std::lock_guard<std::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
-              // 始终用当前会话的密钥初始化
-              session.broadcast_ref->mic_cipher.emplace(session.audio.cipher.key, session.audio.cipher.padding);
-              session.broadcast_ref->mic_iv.resize(16);
-              // 初始化 IV：前 4 字节存储 baseIv（大端序）
-              // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
-              // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
-              *(std::uint32_t *) session.broadcast_ref->mic_iv.data() = util::endian::big<std::uint32_t>(session.audio.avRiKeyId);
-              // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
-              std::memset(session.broadcast_ref->mic_iv.data() + 4, 0, 12);
-              session.broadcast_ref->mic_encryption_enabled.store(true);
-              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED";
+              boost::lock_guard<boost::mutex> lg(session.broadcast_ref->mic_cipher_mutex);
+              // Per-client cipher：用当前会话的密钥为该客户端创建独立的加密上下文
+              session.broadcast_ref->mic_ciphers.erase(client_ip);
+              session.broadcast_ref->mic_ciphers.emplace(
+                client_ip,
+                broadcast_ctx_t::mic_cipher_ctx_t(session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId));
+              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED (per-client cipher registered for " << client_ip << ")";
             } else {
-              // 显式禁用加密
-              reset_mic_encryption(*session.broadcast_ref.get());
+              // 该客户端未启用加密，移除其加密上下文
+              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
             }
             
             BOOST_LOG(debug) << "Microphone socket enabled for additional session";
