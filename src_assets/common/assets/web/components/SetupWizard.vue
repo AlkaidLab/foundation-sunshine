@@ -17,12 +17,12 @@
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 2, completed: currentStep > 2 }">
             <div class="step-number">2</div>
-            <span>{{ $t('setup.step1_title') }}</span>
+            <span>{{ $t('setup.step2_title') }}</span>
           </div>
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 3, completed: currentStep > 3 }">
             <div class="step-number">3</div>
-            <span>{{ $t('setup.step2_title') }}</span>
+            <span>{{ $t('setup.step1_title') }}</span>
           </div>
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 4, completed: currentStep > 4 }">
@@ -63,8 +63,38 @@
             </div>
           </div>
 
-          <!-- 步骤 2: 选择串流显示器 -->
+          <!-- 步骤 2: 选择显卡 -->
           <div v-else-if="currentStep === 2">
+            <h3 class="mb-4">{{ $t('setup.step2_description') }}</h3>
+            
+            <div class="mb-3">
+              <label for="adapterSelect" class="form-label">{{ $t('setup.select_adapter') }}</label>
+              <select id="adapterSelect" 
+                      class="form-select form-select-large" 
+                      v-model="selectedAdapter">
+                <option value="">{{ $t('setup.choose_adapter') }}</option>
+                <option v-for="adapter in uniqueAdapters" :key="adapter.name" :value="adapter.name">
+                  {{ adapter.name }}
+                </option>
+              </select>
+            </div>
+
+              <div v-if="selectedAdapter" class="adapter-info">
+                <h5>
+                  <i class="fas fa-info-circle"></i>
+                  {{ $t('setup.adapter_info') }}
+                </h5>
+                <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
+              </div>
+
+              <!-- GPU选择提示框 -->
+              <div class="form-text mt-3 adapter-hint-box">
+                {{ $t('config.adapter_name_desc_windows') }}<br>
+              </div>
+          </div>
+
+          <!-- 步骤 3: 选择串流显示器 -->
+          <div v-else-if="currentStep === 3">
             <h3 class="mb-4">{{ $t('setup.step1_description') }}</h3>
             <p class="text-muted mb-4">{{ $t('setup.step1_vdd_intro') }}</p>
             
@@ -101,39 +131,6 @@
                 </div>
               </div>
             </div>
-          </div>
-
-          <!-- 步骤 3: 选择显卡 -->
-          <div v-else-if="currentStep === 3">
-            <h3 class="mb-4">{{ $t('setup.step2_description') }}</h3>
-            
-            <div class="mb-3">
-              <label for="adapterSelect" class="form-label">{{ $t('setup.select_adapter') }}</label>
-              <select id="adapterSelect" 
-                      class="form-select form-select-large" 
-                      v-model="selectedAdapter">
-                <option value="">{{ $t('setup.choose_adapter') }}</option>
-                <option v-for="adapter in uniqueAdapters" :key="adapter.name" :value="adapter.name">
-                  {{ adapter.name }}
-                </option>
-              </select>
-            </div>
-
-              <div v-if="selectedAdapter" class="adapter-info">
-                <h5>
-                  <i class="fas fa-info-circle"></i>
-                  {{ $t('setup.adapter_info') }}
-                </h5>
-                <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
-                <p><strong>{{ $t('setup.selected_display') }}:</strong> 
-                  {{ isVirtualDisplay ? $t('setup.virtual_display') : selectedDisplay }}
-                </p>
-              </div>
-
-              <!-- GPU选择提示框 -->
-              <div class="form-text mt-3 adapter-hint-box">
-                {{ $t('config.adapter_name_desc_windows') }}<br>
-              </div>
           </div>
 
           <!-- 步骤 4: 选择显示器组合策略 -->
@@ -363,9 +360,9 @@ export default {
       if (this.currentStep === 1) {
         return this.selectedLocale !== null
       } else if (this.currentStep === 2) {
-        return this.selectedDisplay !== null
-      } else if (this.currentStep === 3) {
         return this.selectedAdapter !== null
+      } else if (this.currentStep === 3) {
+        return this.selectedDisplay !== null
       } else if (this.currentStep === 4) {
         return this.displayDevicePrep !== null
       }
