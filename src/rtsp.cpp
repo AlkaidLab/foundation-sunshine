@@ -10,11 +10,13 @@ extern "C" {
 }
 
 // standard includes
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <set>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // lib includes
 #include <boost/asio.hpp>
@@ -39,6 +41,101 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace rtsp_stream {
+  namespace {
+    bool
+    parse_legacy_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
+      if (params.length() <= 3 || !std::all_of(params.begin(), params.end(), [](char c) { return std::isdigit((unsigned char) c); })) {
+        return false;
+      }
+
+      int channel_count = params[0] - '0';
+      int streams = params[1] - '0';
+      int coupled_streams = params[2] - '0';
+      if (channel_count != requested_channels || channel_count < 2 || channel_count > platf::speaker::MAX_SPEAKERS ||
+          streams + coupled_streams != channel_count || params.length() != (size_t) channel_count + 3) {
+        return false;
+      }
+
+      for (int i = 0; i < channel_count; ++i) {
+        auto map_value = params[i + 3] - '0';
+        if (map_value < 0 || map_value >= channel_count) {
+          return false;
+        }
+
+        result.mapping[i] = (std::uint8_t) map_value;
+      }
+
+      result.channelCount = channel_count;
+      result.streams = streams;
+      result.coupledStreams = coupled_streams;
+      return true;
+    }
+
+    bool
+    parse_delimited_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
+      std::vector<int> values;
+      values.reserve(3 + platf::speaker::MAX_SPEAKERS);
+
+      int current = 0;
+      bool has_digit = false;
+      for (char ch : params) {
+        if (std::isdigit((unsigned char) ch)) {
+          current = current * 10 + (ch - '0');
+          has_digit = true;
+          continue;
+        }
+
+        if (ch == ',' || ch == ';' || ch == ':' || ch == '|' || std::isspace((unsigned char) ch)) {
+          if (has_digit) {
+            values.push_back(current);
+            current = 0;
+            has_digit = false;
+          }
+          continue;
+        }
+
+        return false;
+      }
+
+      if (has_digit) {
+        values.push_back(current);
+      }
+
+      if (values.size() < 3) {
+        return false;
+      }
+
+      int channel_count = values[0];
+      int streams = values[1];
+      int coupled_streams = values[2];
+
+      if (channel_count != requested_channels || channel_count < 2 || channel_count > platf::speaker::MAX_SPEAKERS ||
+          streams + coupled_streams != channel_count || values.size() != (size_t) channel_count + 3) {
+        return false;
+      }
+
+      for (int i = 0; i < channel_count; ++i) {
+        auto map_value = values[i + 3];
+        if (map_value < 0 || map_value >= channel_count) {
+          return false;
+        }
+
+        result.mapping[i] = (std::uint8_t) map_value;
+      }
+
+      result.channelCount = channel_count;
+      result.streams = streams;
+      result.coupledStreams = coupled_streams;
+      return true;
+    }
+
+    bool
+    parse_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
+      return parse_legacy_surround_params(params, requested_channels, result) ||
+             parse_delimited_surround_params(params, requested_channels, result);
+    }
+  }  // namespace
+
   void
   free_msg(PRTSP_MESSAGE msg) {
     freeMessage(msg);
@@ -887,16 +984,30 @@ namespace rtsp_stream {
        */
       if (x == audio::SURROUND51 || x == audio::SURROUND71) {
         std::copy_n(mapping_p, stream_config.channelCount, mapping);
-        std::rotate(mapping + 3, mapping + 4, mapping + audio::MAX_STREAM_CONFIG);
+        std::rotate(mapping + 3, mapping + 4, mapping + stream_config.channelCount);
 
         mapping_p = mapping;
       }
 
-      ss << "a=fmtp:97 surround-params="sv << stream_config.channelCount << stream_config.streams << stream_config.coupledStreams;
+      // For channel counts > 8 (e.g., 7.1.4 with 12 channels), use comma-delimited format
+      // because mapping values can exceed single digits (e.g., 10, 11)
+      if (stream_config.channelCount > 8) {
+        ss << "a=fmtp:97 surround-params="sv << stream_config.channelCount;
 
-      std::for_each_n(mapping_p, stream_config.channelCount, [&ss](std::uint8_t digit) {
-        ss << (char) (digit + '0');
-      });
+        // Use comma-delimited format: channelCount,streams,coupledStreams,m0,m1,...
+        ss << ',' << (int) stream_config.streams << ',' << (int) stream_config.coupledStreams;
+
+        std::for_each_n(mapping_p, stream_config.channelCount, [&ss](std::uint8_t val) {
+          ss << ',' << (int) val;
+        });
+      }
+      else {
+        ss << "a=fmtp:97 surround-params="sv << stream_config.channelCount << stream_config.streams << stream_config.coupledStreams;
+
+        std::for_each_n(mapping_p, stream_config.channelCount, [&ss](std::uint8_t digit) {
+          ss << (char) (digit + '0');
+        });
+      }
 
       ss << std::endl;
     }
@@ -1138,28 +1249,17 @@ namespace rtsp_stream {
         }
       }
     }
-    else if (session.surround_params.length() > 3) {
-      // Channels
-      std::uint8_t c = session.surround_params[0] - '0';
-      // Streams
-      std::uint8_t n = session.surround_params[1] - '0';
-      // Coupled streams
-      std::uint8_t m = session.surround_params[2] - '0';
-      auto valid = false;
-      if ((c == 6 || c == 8) && c == config.audio.channels && n + m == c && session.surround_params.length() == c + 3) {
-        config.audio.customStreamParams.channelCount = c;
-        config.audio.customStreamParams.streams = n;
-        config.audio.customStreamParams.coupledStreams = m;
-        valid = true;
-        for (std::uint8_t i = 0; i < c; i++) {
-          config.audio.customStreamParams.mapping[i] = session.surround_params[i + 3] - '0';
-          if (config.audio.customStreamParams.mapping[i] >= c) {
-            valid = false;
-            break;
-          }
-        }
-      }
-      config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS] = valid;
+    else if (!session.surround_params.empty()) {
+      config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS] =
+        parse_surround_params(session.surround_params, config.audio.channels, config.audio.customStreamParams);
+    }
+
+    if (config.audio.channels == 12 && !config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS]) {
+      config.audio.customStreamParams.channelCount = 12;
+      config.audio.customStreamParams.streams = 8;
+      config.audio.customStreamParams.coupledStreams = 4;
+      std::copy_n(std::begin(platf::speaker::map_surround714), 12, std::begin(config.audio.customStreamParams.mapping));
+      config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS] = true;
     }
 
     // If the client sent a configured bitrate, we will choose the actual bitrate ourselves

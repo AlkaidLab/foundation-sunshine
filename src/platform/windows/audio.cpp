@@ -55,6 +55,13 @@ namespace {
                                               SPEAKER_BACK_LEFT | SPEAKER_BACK_RIGHT |
                                               SPEAKER_SIDE_LEFT | SPEAKER_SIDE_RIGHT;
 
+  constexpr auto waveformat_mask_surround714 = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT |
+                                               SPEAKER_FRONT_CENTER | SPEAKER_LOW_FREQUENCY |
+                                               SPEAKER_BACK_LEFT | SPEAKER_BACK_RIGHT |
+                                               SPEAKER_SIDE_LEFT | SPEAKER_SIDE_RIGHT |
+                                               SPEAKER_TOP_FRONT_LEFT | SPEAKER_TOP_FRONT_RIGHT |
+                                               SPEAKER_TOP_BACK_LEFT | SPEAKER_TOP_BACK_RIGHT;
+
   enum class sample_format_e {
     f32,
     s32,
@@ -167,6 +174,16 @@ namespace {
         create_waveformat(sample_format_e::s16, channel_count, channel_mask),
       };
     }
+    else if (channel_count == 12) {
+      auto channel_mask = waveformat_mask_surround714;
+      return {
+        create_waveformat(sample_format_e::f32, channel_count, channel_mask),
+        create_waveformat(sample_format_e::s32, channel_count, channel_mask),
+        create_waveformat(sample_format_e::s24in32, channel_count, channel_mask),
+        create_waveformat(sample_format_e::s24, channel_count, channel_mask),
+        create_waveformat(sample_format_e::s16, channel_count, channel_mask),
+      };
+    }
   }
 
   std::string
@@ -193,6 +210,10 @@ namespace {
 
       case (waveformat_mask_surround71):
         result += "7.1";
+        break;
+
+      case (waveformat_mask_surround714):
+        result += "7.1.4";
         break;
 
       default:
@@ -257,7 +278,7 @@ namespace platf::audio {
     virtual_sink_waveformats_t virtual_sink_waveformats;
   };
 
-  const std::array<const format_t, 3> formats = {
+  const std::array<const format_t, 4> formats = {
     format_t {
       2,
       "Stereo",
@@ -275,6 +296,12 @@ namespace platf::audio {
       "Surround 7.1",
       waveformat_mask_surround71,
       create_virtual_sink_waveformats<8>(),
+    },
+    format_t {
+      12,
+      "Surround 7.1.4",
+      waveformat_mask_surround714,
+      create_virtual_sink_waveformats<12>(),
     },
   };
 
@@ -736,6 +763,7 @@ namespace platf::audio {
           "virtual-"s + formats[0].name + device_id,
           "virtual-"s + formats[1].name + device_id,
           "virtual-"s + formats[2].name + device_id,
+          "virtual-"s + formats[3].name + device_id,
         });
       }
       else if (!config::audio.virtual_sink.empty()) {

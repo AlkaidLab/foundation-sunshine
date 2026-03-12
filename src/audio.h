@@ -19,6 +19,8 @@ namespace audio {
     HIGH_SURROUND51,  ///< High surround 5.1
     SURROUND71,  ///< Surround 7.1
     HIGH_SURROUND71,  ///< High surround 7.1
+    SURROUND714,  ///< Surround 7.1.4
+    HIGH_SURROUND714,  ///< High surround 7.1.4
     MAX_STREAM_CONFIG  ///< Maximum audio stream configuration
   };
 
@@ -35,7 +37,7 @@ namespace audio {
     int channelCount;
     int streams;
     int coupledStreams;
-    std::uint8_t mapping[8];
+    std::uint8_t mapping[platf::speaker::MAX_SPEAKERS];
   };
 
   extern opus_stream_config_t stream_configs[MAX_STREAM_CONFIG];

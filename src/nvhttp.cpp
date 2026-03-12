@@ -461,6 +461,9 @@ namespace nvhttp {
       case 8:
         launch_session->env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
         break;
+      case 12:
+        launch_session->env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1.4";
+        break;
     }
 
     return launch_session;

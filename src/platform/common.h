@@ -192,6 +192,10 @@ namespace platf {
       BACK_RIGHT,  ///< Back right
       SIDE_LEFT,  ///< Side left
       SIDE_RIGHT,  ///< Side right
+      TOP_FRONT_LEFT,  ///< Top front left
+      TOP_FRONT_RIGHT,  ///< Top front right
+      TOP_BACK_LEFT,  ///< Top back left
+      TOP_BACK_RIGHT,  ///< Top back right
       MAX_SPEAKERS,  ///< Maximum number of speakers
     };
 
@@ -216,6 +220,21 @@ namespace platf {
       BACK_RIGHT,
       SIDE_LEFT,
       SIDE_RIGHT,
+    };
+
+    constexpr std::uint8_t map_surround714[] {
+      FRONT_LEFT,
+      FRONT_RIGHT,
+      FRONT_CENTER,
+      LOW_FREQUENCY,
+      BACK_LEFT,
+      BACK_RIGHT,
+      SIDE_LEFT,
+      SIDE_RIGHT,
+      TOP_FRONT_LEFT,
+      TOP_FRONT_RIGHT,
+      TOP_BACK_LEFT,
+      TOP_BACK_RIGHT,
     };
   }  // namespace speaker
 
@@ -389,6 +408,7 @@ namespace platf {
       std::string stereo;
       std::string surround51;
       std::string surround71;
+      std::string surround714;
     };
 
     std::optional<null_t> null;

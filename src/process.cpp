@@ -200,6 +200,9 @@ namespace proc {
       case 8:
         _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
         break;
+      case 12:
+        _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1.4";
+        break;
     }
     _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
 
