@@ -203,6 +203,29 @@ namespace nvhttp {
   get_pair_name();
 
   /**
+   * @brief Set a preset PIN for QR code pairing.
+   * @param pin The PIN to preset (4 digits).
+   * @param name The client name to use for pairing.
+   * @param timeout_seconds How long the preset PIN is valid (default 120s).
+   * @return True if the preset PIN was set successfully.
+   */
+  bool
+  set_preset_pin(const std::string &pin, const std::string &name, int timeout_seconds = 120);
+
+  /**
+   * @brief Get the current preset PIN if it's still valid.
+   * @return The preset PIN string, or empty string if expired/not set.
+   */
+  std::string
+  get_preset_pin();
+
+  /**
+   * @brief Clear any preset PIN.
+   */
+  void
+  clear_preset_pin();
+
+  /**
    * @brief Remove all paired clients.
    * @examples
    * nvhttp::erase_all_clients();

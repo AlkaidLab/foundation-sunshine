@@ -85,6 +85,14 @@ namespace nvhttp {
 
   static std::string last_pair_name;
 
+  // Preset PIN for QR code pairing
+  static struct {
+    std::string pin;
+    std::string name;
+    std::chrono::steady_clock::time_point expires_at;
+    std::mutex mutex;
+  } preset_pin_state;
+
   // Map to store certificate UUIDs keyed by request pointer
   // Using weak_ptr to track request lifetime and prevent memory leaks
   static std::map<const void *, std::pair<std::weak_ptr<void>, std::string>> request_cert_uuid_map;
@@ -776,13 +784,23 @@ namespace nvhttp {
           getservercert(ptr->second, tree, pin, last_pair_name);
         }
         else {
+          // Check for preset PIN (from QR code pairing)
+          auto preset = get_preset_pin();
+          if (!preset.empty()) {
+            BOOST_LOG(info) << "Using preset PIN for QR code pairing with " << last_pair_name;
+            ptr->second.client.name = last_pair_name;
+            getservercert(ptr->second, tree, preset, last_pair_name);
+            clear_preset_pin();
+          }
+          else {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-          system_tray::update_tray_require_pin(last_pair_name);
+            system_tray::update_tray_require_pin(last_pair_name);
 #endif
-          ptr->second.async_insert_pin.response = std::move(response);
+            ptr->second.async_insert_pin.response = std::move(response);
 
-          fg.disable();
-          return;
+            fg.disable();
+            return;
+          }
         }
       }
       else if (it->second == "pairchallenge"sv) {
@@ -981,6 +999,40 @@ namespace nvhttp {
   std::string
   get_pair_name() {
     return last_pair_name;
+  }
+
+  bool
+  set_preset_pin(const std::string &pin, const std::string &name, int timeout_seconds) {
+    if (pin.size() != 4 || !std::all_of(pin.begin(), pin.end(), ::isdigit)) {
+      BOOST_LOG(warning) << "Invalid preset PIN: must be 4 digits";
+      return false;
+    }
+
+    std::lock_guard lock { preset_pin_state.mutex };
+    preset_pin_state.pin = pin;
+    preset_pin_state.name = name;
+    preset_pin_state.expires_at = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+    BOOST_LOG(info) << "Preset PIN set for QR pairing, expires in " << timeout_seconds << "s";
+    return true;
+  }
+
+  std::string
+  get_preset_pin() {
+    std::lock_guard lock { preset_pin_state.mutex };
+    if (preset_pin_state.pin.empty()) return {};
+    if (std::chrono::steady_clock::now() > preset_pin_state.expires_at) {
+      preset_pin_state.pin.clear();
+      preset_pin_state.name.clear();
+      return {};
+    }
+    return preset_pin_state.pin;
+  }
+
+  void
+  clear_preset_pin() {
+    std::lock_guard lock { preset_pin_state.mutex };
+    preset_pin_state.pin.clear();
+    preset_pin_state.name.clear();
   }
 
   // Use keep-alive connection
