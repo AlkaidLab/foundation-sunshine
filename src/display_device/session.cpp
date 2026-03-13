@@ -335,7 +335,45 @@ namespace display_device {
       }
     }
     else if (will_use_vdd && vdd_already_exists) {
-      BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
+      // VDD 已存在。如果有 deferred restore（grace period 内），取消它并复用 VDD。
+      // 这是 Cancel 快速 Launch 切换应用的高效路径：VDD 不销毁不重建，persistent_data 有效，GUID 不变。
+      if (deferred_restore_) {
+        // 检查新的 vdd_prep 是否与当前的相同
+        // 如果模式变了（如 ensure_only_display → no_operation），persistent_data 中的拓扑记忆可能不匹配，
+        // 此时需要先执行 deferred restore 恢复到干净状态，再重新配置。
+        auto new_vdd_prep = static_cast<parsed_config_t::vdd_prep_e>(config.vdd_prep);
+        if (session.custom_vdd_screen_mode != -1) {
+          new_vdd_prep = static_cast<parsed_config_t::vdd_prep_e>(session.custom_vdd_screen_mode);
+        }
+        const auto old_vdd_prep = current_vdd_prep.value_or(new_vdd_prep);
+
+        if (new_vdd_prep == old_vdd_prep) {
+          BOOST_LOG(info) << "VDD 延迟恢复取消：新串流到来，复用现有 VDD（GUID 不变，模式一致）";
+          deferred_restore_ = false;
+          timer->setup_timer(nullptr);
+          // persistent_data 仍然有效，不设置 pre_saved_initial_topology，让 apply_config 复用已有的
+        }
+        else {
+          BOOST_LOG(info) << "VDD 延迟恢复：模式变化（" << static_cast<int>(old_vdd_prep)
+                          << " -> " << static_cast<int>(new_vdd_prep) << "），执行完整恢复后重新配置";
+          deferred_restore_ = false;
+          timer->setup_timer(nullptr);
+          execute_deferred_restore(deferred_restore_reason_);
+          // 执行完整恢复后，VDD 已销毁，需要重新创建
+          // 保存当前拓扑作为新的初始拓扑
+          pre_saved_initial_topology = get_current_topology();
+          BOOST_LOG(debug) << "Pre-saved initial topology after full restore: " << to_string(*pre_saved_initial_topology);
+        }
+      }
+      else if (pending_restore_ && settings.has_persistent_data()) {
+        BOOST_LOG(info) << "有待恢复的设置且 VDD 仍存在，保留原有初始拓扑";
+        pending_restore_ = false;
+        SessionEventListener::clear_unlock_task();
+        timer->setup_timer(nullptr);
+      }
+      else {
+        BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
+      }
     }
 
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
@@ -566,15 +604,39 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
-    // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
+    // 检测 VDD 是否存在
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    const bool is_vdd_mode = current_use_vdd.value_or(false);
+    const bool is_keep_enabled = config::video.vdd_keep_enabled;
 
-    // 判断是否为 VDD 模式
+    // 如果 VDD 存在、非常驻模式、有 persistent_data：
+    // 延迟整个 restore 操作（VDD 销毁 + 拓扑恢复），给下一个 Launch 一个机会复用 VDD。
+    // 这避免了 Cancel 快速 Launch（切换应用）场景下不必要的 VDD 销毁重建，
+    // 从而消除 GUID 变化、拓扑闪烁、以及 stale persistent_data 等问题。
+    if (!vdd_id.empty() && !is_keep_enabled && is_vdd_mode && settings.has_persistent_data()) {
+      BOOST_LOG(info) << "VDD 延迟恢复：启动 grace period，等待可能的新串流连接复用 VDD";
+      deferred_restore_ = true;
+      deferred_restore_reason_ = reason;
+
+      timer->setup_timer([this]() {
+        // Grace period 到期，没有新的 configure_display 到来，执行真正的 restore
+        BOOST_LOG(info) << "VDD grace period 到期，执行延迟恢复";
+        deferred_restore_ = false;
+        execute_deferred_restore(deferred_restore_reason_);
+        return true;  // 一次性执行，不重试
+      });
+      return;
+    }
+
+    // 非 VDD 延迟场景，立即执行完整 restore
+    execute_deferred_restore(reason);
+  }
+
+  void
+  session_t::execute_deferred_restore(revert_reason_e reason) {
+    const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
     const bool is_vdd_mode = current_use_vdd.value_or(false);
 
-    // 获取当前有效的配置模式
-    // VDD模式：使用 vdd_prep
-    // 普通模式：使用 device_prep
     const auto vdd_prep = current_vdd_prep.value_or(
       static_cast<parsed_config_t::vdd_prep_e>(config::video.vdd_prep)
     );
@@ -582,28 +644,22 @@ namespace display_device {
       static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
     );
     
-    // 判断是否是无操作模式（拓扑从未被修改过）
-    // VDD模式看 vdd_prep，普通模式看 device_prep
     const bool is_no_operation = is_vdd_mode 
       ? (vdd_prep == parsed_config_t::vdd_prep_e::no_operation)
       : (device_prep == parsed_config_t::device_prep_e::no_operation);
 
-    // 常驻模式：只影响 VDD 是否销毁，不影响拓扑恢复
     const bool is_keep_enabled = config::video.vdd_keep_enabled;
     
     if (!vdd_id.empty()) {
       bool should_destroy = false;
       
-      // 判断1：常驻模式 - 保留VDD
       if (is_keep_enabled) {
         BOOST_LOG(debug) << "常驻模式，保留VDD";
       }
-      // 判断2：非常驻模式 - 销毁VDD（无论是否是无操作模式）
       else if (settings.has_persistent_data()) {
         BOOST_LOG(info) << "非常驻模式，销毁VDD";
         should_destroy = true;
       }
-      // 判断3：无persistent_data（异常残留）- 清理VDD
       else {
         BOOST_LOG(info) << "检测到异常残留的VDD（无persistent_data），清理VDD";
         should_destroy = true;
@@ -615,8 +671,7 @@ namespace display_device {
       }
     }
 
-    // 无头主机自动创建检查（在 VDD 清理之后、拓扑恢复之前执行）
-    // 此检查独立于操作模式（no_operation / 普通模式），确保无头主机始终能获得显示器
+    // 无头主机自动创建检查
     if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
       auto devices = display_device::enum_available_devices();
       if (devices.empty()) {
@@ -630,40 +685,26 @@ namespace display_device {
       }
     }
 
-    // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
-    // 注意：即使是无操作模式，VDD 在非常驻模式下也会被销毁（上面已处理）
     if (is_no_operation) {
       BOOST_LOG(info) << "无操作模式，跳过拓扑恢复";
-      // 清理持久化数据中可能残留的旧 VDD 显示模式/HDR状态，
-      // 避免下一次 Launch 创建新 VDD 时，apply_config 使用旧 VDD 的 GUID
-      if (settings.has_persistent_data()) {
-        BOOST_LOG(info) << "清理残留的显示设备持久化数据（VDD 已销毁/重建后 GUID 会变化）";
-        settings.reset_persistence();
-      }
       stop_timer_and_clear_vdd_state();
       return;
     }
 
-    // 添加诊断日志
     const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
     BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
     
-    // VDD生命周期已在上面的逻辑中决定（销毁或保留），通知revert_settings不要再处理VDD销毁
     const bool vdd_already_handled = true;
     
     if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
       stop_timer_and_clear_vdd_state();
     }
     else {
-      // 无法立即恢复，添加任务到解锁队列
       BOOST_LOG(warning) << "无法立即恢复显示设置";
       
-      // 设置待恢复标志
       pending_restore_ = true;
       
-      // 添加恢复任务（自动处理锁屏检查和立即执行）
       SessionEventListener::add_unlock_task([this, reason]() {
-        // 快速检查是否还需要恢复（最小化锁持有时间）
         {
           std::lock_guard lock { mutex };
           if (!pending_restore_) {

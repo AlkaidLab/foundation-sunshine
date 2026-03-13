@@ -64,9 +64,9 @@ namespace display_device {
      * @param device_map The map to filter in-place.
      * @return Number of entries removed.
      */
-    template <typename T>
+    template <typename MapT>
     size_t
-    remove_stale_device_entries(std::unordered_map<std::string, T> &device_map) {
+    remove_stale_device_entries(MapT &device_map) {
       if (device_map.empty()) {
         return 0;
       }
