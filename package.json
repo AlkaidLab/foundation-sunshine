@@ -24,6 +24,7 @@
     "firebase": "^12.3.0",
     "marked": "^16.2.1",
     "nanoid": "^5.0.7",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.26",
     "vue-i18n": "^11.2.8",
     "vuedraggable-es": "^4.1.1"
