@@ -41,7 +41,7 @@ function addRemapping(type) {
     <template #windows>
       <div class="mb-3 accordion">
         <div class="accordion-item">
-          <h2 class="accordion-header">
+          <h2 class="accordion-header" id="panelsStayOpen-headingOne">
             <button
               class="accordion-button"
               type="button"
