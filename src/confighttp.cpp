@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <atomic>
 #include <stdexcept>
+#include <random>
 #include <map>
 #include <set>
 #include <sstream>
@@ -1247,6 +1248,57 @@ namespace confighttp {
   }
 
   void
+  generateQrPairInfo(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    pt::ptree outputTree;
+
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    // Generate a random 4-digit PIN
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(0, 9999);
+    std::string pin = std::to_string(dist(gen));
+    while (pin.size() < 4) pin = "0" + pin;
+
+    // Set the preset PIN in nvhttp (valid for 120 seconds)
+    std::string server_name = config::nvhttp.sunshine_name;
+    if (!nvhttp::set_preset_pin(pin, server_name, 120)) {
+      outputTree.put("status", false);
+      outputTree.put("error", "Failed to set preset PIN");
+      return;
+    }
+
+    // Get server address info
+    auto local_addr = net::addr_to_normalized_string(request->local_endpoint().address());
+    auto port = net::map_port(nvhttp::PORT_HTTP);
+
+    // Use external_ip if configured, otherwise use the local endpoint address
+    std::string host = config::nvhttp.external_ip.empty() ? local_addr : config::nvhttp.external_ip;
+
+    // Build the moonlight:// URL
+    std::string url = "moonlight://pair?host=" + host +
+                      "&port=" + std::to_string(port) +
+                      "&pin=" + pin +
+                      "&name=" + server_name;
+
+    outputTree.put("status", true);
+    outputTree.put("pin", pin);
+    outputTree.put("host", host);
+    outputTree.put("port", port);
+    outputTree.put("name", server_name);
+    outputTree.put("url", url);
+    outputTree.put("expires_in", 120);
+  }
+
+  void
   unpairAll(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -1292,6 +1344,47 @@ namespace confighttp {
       outputTree.put("status", false);
       outputTree.put("error", e.what());
       return;
+    }
+  }
+
+  void
+  renameClient(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    pt::ptree inputTree, outputTree;
+
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      pt::read_json(ss, inputTree);
+
+      std::string uuid = inputTree.get<std::string>("uuid");
+      std::string new_name = inputTree.get<std::string>("name");
+
+      if (new_name.empty()) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Name cannot be empty");
+        return;
+      }
+
+      bool result = nvhttp::rename_client(uuid, new_name);
+      outputTree.put("status", result);
+      if (!result) {
+        outputTree.put("error", "Client not found");
+      }
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "Rename client: "sv << e.what();
+      outputTree.put("status", false);
+      outputTree.put("error", e.what());
     }
   }
 
@@ -1914,6 +2007,7 @@ namespace confighttp {
     server.resource["^/welcome/?$"]["GET"] = getWelcomePage;
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/pin$"]["POST"] = savePin;
+    server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/apps$"]["POST"] = saveApp;
@@ -1932,6 +2026,7 @@ namespace confighttp {
     server.resource["^/api/clients/list$"]["GET"] = listClients;
     server.resource["^/api/clients/list$"]["POST"] = saveConfig;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
+    server.resource["^/api/clients/rename$"]["POST"] = renameClient;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
