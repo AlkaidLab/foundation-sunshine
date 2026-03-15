@@ -133,13 +133,9 @@ namespace display_device {
     SessionEventListener::deinit();
     
     // 兜底：退出时如果 VDD 仍存在且 vdd_keep_enabled=false，直接销毁
-    // 不调用完整的 restore_state()，因为析构时 boost::log/timer 可能已被销毁
-    // 仅执行 VDD 销毁（写管道命令，不依赖日志和定时器）
+    // 使用 nolog 版本，因为析构时 boost::log 可能已被销毁
     if (!config::video.vdd_keep_enabled) {
-      auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-      if (!vdd_id.empty()) {
-        vdd_utils::destroy_vdd_monitor();
-      }
+      vdd_utils::destroy_vdd_monitor_nolog();
     }
   }
 
