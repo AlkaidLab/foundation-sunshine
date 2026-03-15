@@ -1348,6 +1348,47 @@ namespace confighttp {
   }
 
   void
+  renameClient(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    pt::ptree inputTree, outputTree;
+
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      pt::read_json(ss, inputTree);
+
+      std::string uuid = inputTree.get<std::string>("uuid");
+      std::string new_name = inputTree.get<std::string>("name");
+
+      if (new_name.empty()) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Name cannot be empty");
+        return;
+      }
+
+      bool result = nvhttp::rename_client(uuid, new_name);
+      outputTree.put("status", result);
+      if (!result) {
+        outputTree.put("error", "Client not found");
+      }
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "Rename client: "sv << e.what();
+      outputTree.put("status", false);
+      outputTree.put("error", e.what());
+    }
+  }
+
+  void
   listClients(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -1985,6 +2026,7 @@ namespace confighttp {
     server.resource["^/api/clients/list$"]["GET"] = listClients;
     server.resource["^/api/clients/list$"]["POST"] = saveConfig;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
+    server.resource["^/api/clients/rename$"]["POST"] = renameClient;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;

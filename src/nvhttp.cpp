@@ -2103,4 +2103,17 @@ namespace nvhttp {
     load_state();
     return removed;
   }
+
+  bool
+  rename_client(const std::string &uuid, const std::string &new_name) {
+    client_t &client = client_root;
+    for (auto &named_cert : client.named_devices) {
+      if (named_cert.uuid == uuid) {
+        named_cert.name = new_name;
+        save_state();
+        return true;
+      }
+    }
+    return false;
+  }
 }  // namespace nvhttp

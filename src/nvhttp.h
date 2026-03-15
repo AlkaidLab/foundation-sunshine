@@ -191,6 +191,15 @@ namespace nvhttp {
   unpair_client(std::string uniqueid);
 
   /**
+   * @brief Rename a paired client.
+   * @param uuid The unique ID of the client to rename.
+   * @param new_name The new display name for the client.
+   * @return True if the client was found and renamed.
+   */
+  bool
+  rename_client(const std::string &uuid, const std::string &new_name);
+
+  /**
    * @brief Get all paired clients.
    * @return The list of all paired clients.
    * @examples
