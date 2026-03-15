@@ -783,9 +783,13 @@ namespace nvhttp {
         }
         else {
           // Check for preset PIN (from QR code pairing)
-          auto preset = consume_preset_pin();
+          // Only allow preset PIN for LAN/localhost clients
+          auto remote_addr = request->remote_endpoint().address();
+          auto nettype = net::from_address(remote_addr.to_string());
+          auto preset = (nettype == net::net_e::PC || nettype == net::net_e::LAN) ? consume_preset_pin() : std::string {};
           if (!preset.empty()) {
-            BOOST_LOG(info) << "Using preset PIN for QR code pairing with " << last_pair_name;
+            BOOST_LOG(info) << "Using preset PIN for QR code pairing with " << last_pair_name
+                            << " from " << remote_addr.to_string();
             ptr->second.client.name = last_pair_name;
             getservercert(ptr->second, tree, preset, last_pair_name);
           }
@@ -1028,6 +1032,13 @@ namespace nvhttp {
     preset_pin_state.pin.clear();
     preset_pin_state.name.clear();
     return pin;
+  }
+
+  void
+  clear_preset_pin() {
+    std::lock_guard lock { preset_pin_state.mutex };
+    preset_pin_state.pin.clear();
+    preset_pin_state.name.clear();
   }
 
   // Use keep-alive connection

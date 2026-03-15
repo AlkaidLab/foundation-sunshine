@@ -68,12 +68,17 @@ export function useQrPair() {
     }
   }
 
-  const cancelQrCode = () => {
+  const cancelQrCode = async () => {
     stopCountdown()
     qrDataUrl.value = ''
     qrPin.value = ''
     qrUrl.value = ''
     qrRemaining.value = 0
+    try {
+      await fetch('/api/qr-pair/cancel', { method: 'POST' })
+    } catch (e) {
+      // Best-effort cancel, ignore network errors
+    }
   }
 
   onUnmounted(() => {

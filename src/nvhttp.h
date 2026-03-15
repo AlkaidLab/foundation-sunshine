@@ -229,6 +229,12 @@ namespace nvhttp {
   consume_preset_pin();
 
   /**
+   * @brief Clear any preset PIN (for cancel action).
+   */
+  void
+  clear_preset_pin();
+
+  /**
    * @brief Remove all paired clients.
    * @examples
    * nvhttp::erase_all_clients();

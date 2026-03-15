@@ -634,8 +634,9 @@ namespace proc {
     // 特殊处理：桌面壁纸
     if (app_image_path == "desktop") {
 #ifdef _WIN32
-      char wallpaperPath[MAX_PATH];
-      SystemParametersInfo(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPath, 0);
+      wchar_t wallpaperPathW[MAX_PATH];
+      SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPathW, 0);
+      auto wallpaperPath = platf::to_utf8(std::wstring(wallpaperPathW));
       BOOST_LOG(info) << "Use desktop image ["sv << wallpaperPath << ']';
       return wallpaperPath;
 #else

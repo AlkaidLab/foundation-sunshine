@@ -1299,6 +1299,22 @@ namespace confighttp {
   }
 
   void
+  cancelQrPair(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    nvhttp::clear_preset_pin();
+
+    pt::ptree outputTree;
+    outputTree.put("status", true);
+
+    std::ostringstream data;
+    pt::write_json(data, outputTree);
+    response->write(data.str());
+  }
+
+  void
   unpairAll(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -2008,6 +2024,7 @@ namespace confighttp {
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/pin$"]["POST"] = savePin;
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
+    server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/apps$"]["POST"] = saveApp;
