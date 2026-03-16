@@ -191,6 +191,15 @@ namespace nvhttp {
   unpair_client(std::string uniqueid);
 
   /**
+   * @brief Rename a paired client.
+   * @param uuid The unique ID of the client to rename.
+   * @param new_name The new display name for the client.
+   * @return True if the client was found and renamed.
+   */
+  bool
+  rename_client(const std::string &uuid, const std::string &new_name);
+
+  /**
    * @brief Get all paired clients.
    * @return The list of all paired clients.
    * @examples
@@ -201,6 +210,29 @@ namespace nvhttp {
 
   std::string
   get_pair_name();
+
+  /**
+   * @brief Set a preset PIN for QR code pairing.
+   * @param pin The PIN to preset (4 digits).
+   * @param name The client name to use for pairing.
+   * @param timeout_seconds How long the preset PIN is valid (default 120s).
+   * @return True if the preset PIN was set successfully.
+   */
+  bool
+  set_preset_pin(const std::string &pin, const std::string &name, int timeout_seconds = 120);
+
+  /**
+   * @brief Atomically get and clear the preset PIN if it's still valid.
+   * @return The preset PIN string, or empty string if expired/not set.
+   */
+  std::string
+  consume_preset_pin();
+
+  /**
+   * @brief Clear any preset PIN (for cancel action).
+   */
+  void
+  clear_preset_pin();
 
   /**
    * @brief Remove all paired clients.

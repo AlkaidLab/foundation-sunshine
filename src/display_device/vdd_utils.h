@@ -102,6 +102,13 @@ namespace display_device::vdd_utils {
   bool
   destroy_vdd_monitor();
 
+  /**
+   * @brief Shutdown-safe VDD destroy. Uses raw Win32 pipe API without BOOST_LOG.
+   * Safe to call from destructors where boost::log may already be destroyed.
+   */
+  void
+  destroy_vdd_monitor_nolog();
+
   void
   enable_vdd();
 

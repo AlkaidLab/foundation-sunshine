@@ -3,6 +3,58 @@
     <Navbar />
     <div id="content" class="container">
       <h1 class="my-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
+
+      <!-- QR Code Pairing -->
+      <div class="card mb-4 qr-pair-card">
+        <div class="card-body text-center">
+          <h5 class="card-title mb-3">
+            <i class="fas fa-qrcode me-2"></i>{{ $t('pin.qr_pairing') }}
+          </h5>
+          <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
+
+          <!-- QR Code Display -->
+          <div v-if="qrActive" class="qr-display">
+            <div class="qr-image-wrapper mb-3">
+              <img :src="qrDataUrl" alt="QR Code" class="qr-image" />
+            </div>
+            <div class="qr-info">
+              <div class="mb-2">
+                <span class="text-muted">PIN:</span>
+                <span class="fw-bold fs-4 ms-2 font-monospace">{{ qrPin }}</span>
+              </div>
+              <div class="mb-3">
+                <span class="badge" :class="qrRemaining <= 30 ? 'bg-warning text-dark' : 'bg-info'">
+                  <i class="fas fa-clock me-1"></i>
+                  {{ $t('pin.qr_expires_in', { seconds: qrRemaining }) }}
+                </span>
+              </div>
+            </div>
+            <div class="d-flex gap-2 justify-content-center">
+              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="qrLoading">
+                <i class="fas fa-sync-alt me-1"></i>{{ $t('pin.qr_refresh') }}
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode">
+                <i class="fas fa-times me-1"></i>{{ $t('_common.cancel') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Generate Button -->
+          <div v-else>
+            <div v-if="qrError" class="alert alert-danger mb-3">{{ qrError }}</div>
+            <button class="btn btn-primary" @click="generateQrCode" :disabled="qrLoading">
+              <span v-if="qrLoading" class="spinner-border spinner-border-sm me-2"></span>
+              <i v-else class="fas fa-qrcode me-2"></i>
+              {{ $t('pin.qr_generate') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider-text mb-4">
+        <span>{{ $t('pin.or_manual_pin') }}</span>
+      </div>
+
       <form action="" class="form d-flex flex-column align-items-center" id="form">
         <div class="card flex-column d-flex p-4 mb-4">
           <input
@@ -234,6 +286,7 @@ import { useI18n } from 'vue-i18n'
 import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
 import { usePin } from '../composables/usePin.js'
+import { useQrPair } from '../composables/useQrPair.js'
 
 const { t } = useI18n()
 
@@ -260,6 +313,17 @@ const {
   clickedApplyBanner,
   loadConfig,
 } = usePin()
+
+const {
+  qrDataUrl,
+  qrPin,
+  qrRemaining,
+  qrLoading,
+  qrError,
+  qrActive,
+  generateQrCode,
+  cancelQrCode,
+} = useQrPair()
 
 const clientToDelete = ref(null)
 
@@ -482,6 +546,54 @@ watch(clients, initTooltips, { deep: true })
 
   .table-responsive {
     font-size: 0.875rem;
+  }
+}
+
+/* QR Code Pairing Styles */
+.qr-pair-card {
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.qr-image-wrapper {
+  display: inline-block;
+  padding: 12px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.qr-image {
+  display: block;
+  width: 280px;
+  height: 280px;
+  border-radius: 4px;
+}
+
+.divider-text {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--text-muted, #6c757d);
+  font-size: 0.875rem;
+
+  &::before,
+  &::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.15));
+  }
+
+  span {
+    padding: 0 1rem;
+  }
+
+  [data-bs-theme='light'] & {
+    &::before,
+    &::after {
+      border-bottom-color: rgba(0, 0, 0, 0.15);
+    }
   }
 }
 </style>

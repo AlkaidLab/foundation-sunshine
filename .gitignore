@@ -60,8 +60,5 @@ package-lock.json
 *.pyc
 venv/
 
-# Local dev notes (analysis documents, scratch files)
-_dev_notes/
-
 # Generated files
 src_assets/common/assets/web/welcome.html

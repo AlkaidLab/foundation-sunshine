@@ -356,6 +356,22 @@ namespace display_device {
     }
 
     void
+    destroy_vdd_monitor_nolog() {
+      HANDLE hPipe = CreateFileW(
+        kVddPipeName,
+        GENERIC_READ | GENERIC_WRITE,
+        0, NULL, OPEN_EXISTING, 0, NULL);
+      if (hPipe != INVALID_HANDLE_VALUE) {
+        DWORD mode = PIPE_READMODE_MESSAGE;
+        SetNamedPipeHandleState(hPipe, &mode, NULL, NULL);
+        const wchar_t cmd[] = L"DESTROYMONITOR";
+        DWORD bytesWritten;
+        WriteFile(hPipe, cmd, sizeof(cmd), &bytesWritten, NULL);
+        CloseHandle(hPipe);
+      }
+    }
+
+    void
     enable_vdd() {
       execute_vdd_command(vdd_action_e::enable);
     }

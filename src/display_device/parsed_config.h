@@ -25,7 +25,8 @@ namespace display_device {
       no_operation, /**< User has to make sure the display device is active, we will only verify. */
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
-      ensure_only_display /**< Deactivate other displays and turn on the specified one only. */
+      ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */
+      ensure_secondary /**< Stream on the display as a secondary (extended) display. In VDD mode, physical stays primary+ VDD secondary. */
     };
 
     /**
@@ -141,9 +142,21 @@ namespace display_device {
     static int
     vdd_prep_from_view(std::string_view value);
 
+    /**
+     * @brief Map unified device_prep_e to internal vdd_prep_e for VDD mode.
+     */
+    static vdd_prep_e
+    to_vdd_prep(device_prep_e unified);
+
+    /**
+     * @brief Map unified device_prep_e to internal device_prep_e for physical display mode.
+     */
+    static device_prep_e
+    to_physical_device_prep(device_prep_e unified);
+
     std::string device_id; /**< Device id manually provided by the user via config. */
     device_prep_e device_prep; /**< The device_prep_e value taken from config. */
-    vdd_prep_e vdd_prep; /**< The vdd_prep_e value taken from config (only used in VDD mode). */
+    vdd_prep_e vdd_prep; /**< The vdd_prep_e value mapped from device_prep for VDD mode. */
     boost::optional<resolution_t> resolution; /**< Parsed resolution value we need to switch to. Empty optional if no action is required. */
     boost::optional<refresh_rate_t> refresh_rate; /**< Parsed refresh rate value we need to switch to. Empty optional if no action is required. */
     boost::optional<bool> change_hdr_state; /**< Parsed HDR state value we need to switch to (true == ON, false == OFF). Empty optional if no action is required. */

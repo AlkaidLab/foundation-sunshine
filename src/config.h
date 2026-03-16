@@ -101,7 +101,6 @@ namespace config {
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
     std::string window_title;     // Window title to capture when capture_target="window"
     int display_device_prep;
-    int vdd_prep;  // How to handle physical displays when using VDD (Virtual Display Device)
     int resolution_change;
     std::string manual_resolution;
     int refresh_rate_change;

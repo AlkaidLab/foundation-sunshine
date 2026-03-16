@@ -188,7 +188,6 @@ namespace proc {
     _env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
     _env["SUNSHINE_CLIENT_ENABLE_MIC"] = launch_session->enable_mic ? "true" : "false";
     _env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session->custom_screen_mode);
-    _env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = std::to_string(launch_session->custom_vdd_screen_mode);
     int channelCount = launch_session->surround_info & (65535);
     switch (channelCount) {
       case 2:
@@ -635,8 +634,9 @@ namespace proc {
     // 特殊处理：桌面壁纸
     if (app_image_path == "desktop") {
 #ifdef _WIN32
-      char wallpaperPath[MAX_PATH];
-      SystemParametersInfo(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPath, 0);
+      wchar_t wallpaperPathW[MAX_PATH];
+      SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPathW, 0);
+      auto wallpaperPath = platf::to_utf8(std::wstring(wallpaperPathW));
       BOOST_LOG(info) << "Use desktop image ["sv << wallpaperPath << ']';
       return wallpaperPath;
 #else

@@ -17,12 +17,12 @@
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 2, completed: currentStep > 2 }">
             <div class="step-number">2</div>
-            <span>{{ $t('setup.step1_title') }}</span>
+            <span>{{ $t('setup.step2_title') }}</span>
           </div>
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 3, completed: currentStep > 3 }">
             <div class="step-number">3</div>
-            <span>{{ $t('setup.step2_title') }}</span>
+            <span>{{ $t('setup.step1_title') }}</span>
           </div>
           <div class="step-connector"></div>
           <div class="step" :class="{ active: currentStep === 4, completed: currentStep > 4 }">
@@ -63,8 +63,38 @@
             </div>
           </div>
 
-          <!-- 步骤 2: 选择串流显示器 -->
+          <!-- 步骤 2: 选择显卡 -->
           <div v-else-if="currentStep === 2">
+            <h3 class="mb-4">{{ $t('setup.step2_description') }}</h3>
+            
+            <div class="mb-3">
+              <label for="adapterSelect" class="form-label">{{ $t('setup.select_adapter') }}</label>
+              <select id="adapterSelect" 
+                      class="form-select form-select-large" 
+                      v-model="selectedAdapter">
+                <option value="">{{ $t('setup.choose_adapter') }}</option>
+                <option v-for="adapter in uniqueAdapters" :key="adapter.name" :value="adapter.name">
+                  {{ adapter.name }}
+                </option>
+              </select>
+            </div>
+
+              <div v-if="selectedAdapter" class="adapter-info">
+                <h5>
+                  <i class="fas fa-info-circle"></i>
+                  {{ $t('setup.adapter_info') }}
+                </h5>
+                <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
+              </div>
+
+              <!-- GPU选择提示框 -->
+              <div class="form-text mt-3 adapter-hint-box">
+                {{ $t('config.adapter_name_desc_windows') }}<br>
+              </div>
+          </div>
+
+          <!-- 步骤 3: 选择串流显示器 -->
+          <div v-else-if="currentStep === 3">
             <h3 class="mb-4">{{ $t('setup.step1_description') }}</h3>
             <p class="text-muted mb-4">{{ $t('setup.step1_vdd_intro') }}</p>
             
@@ -103,95 +133,18 @@
             </div>
           </div>
 
-          <!-- 步骤 3: 选择显卡 -->
-          <div v-else-if="currentStep === 3">
-            <h3 class="mb-4">{{ $t('setup.step2_description') }}</h3>
-            
-            <div class="mb-3">
-              <label for="adapterSelect" class="form-label">{{ $t('setup.select_adapter') }}</label>
-              <select id="adapterSelect" 
-                      class="form-select form-select-large" 
-                      v-model="selectedAdapter">
-                <option value="">{{ $t('setup.choose_adapter') }}</option>
-                <option v-for="adapter in uniqueAdapters" :key="adapter.name" :value="adapter.name">
-                  {{ adapter.name }}
-                </option>
-              </select>
-            </div>
-
-              <div v-if="selectedAdapter" class="adapter-info">
-                <h5>
-                  <i class="fas fa-info-circle"></i>
-                  {{ $t('setup.adapter_info') }}
-                </h5>
-                <p><strong>{{ $t('setup.selected_adapter') }}:</strong> {{ selectedAdapter }}</p>
-                <p><strong>{{ $t('setup.selected_display') }}:</strong> 
-                  {{ isVirtualDisplay ? $t('setup.virtual_display') : selectedDisplay }}
-                </p>
-              </div>
-
-              <!-- GPU选择提示框 -->
-              <div class="form-text mt-3 adapter-hint-box">
-                {{ $t('config.adapter_name_desc_windows') }}<br>
-              </div>
-          </div>
-
           <!-- 步骤 4: 选择显示器组合策略 -->
           <div v-else-if="currentStep === 4">
             <h3 class="mb-4">{{ $t('setup.step3_description') }}</h3>
             
-            <!-- VDD 模式：显示 vdd_prep 选项 -->
-            <template v-if="isVirtualDisplay">
-              <div class="option-card-compact"
-                   :class="{ selected: vddPrep === 'no_operation' }"
-                   @click="vddPrep = 'no_operation'">
-                <div class="option-icon-compact"><i class="fas fa-hand-paper"></i></div>
-                <div class="option-text">
-                  <h4>{{ $t('setup.vdd_no_operation') }}</h4>
-                  <p>{{ $t('setup.vdd_no_operation_desc') }}</p>
-                </div>
-              </div>
-
-              <div class="option-card-compact" 
-                   :class="{ selected: vddPrep === 'vdd_as_primary' }"
-                   @click="vddPrep = 'vdd_as_primary'">
-                <div class="option-icon-compact"><i class="fas fa-star"></i></div>
-                <div class="option-text">
-                  <h4>{{ $t('setup.vdd_as_primary') }}</h4>
-                  <p>{{ $t('setup.vdd_as_primary_desc') }}</p>
-                </div>
-              </div>
-
-              <div class="option-card-compact"
-                   :class="{ selected: vddPrep === 'vdd_as_secondary' }"
-                   @click="vddPrep = 'vdd_as_secondary'">
-                <div class="option-icon-compact"><i class="fas fa-desktop"></i></div>
-                <div class="option-text">
-                  <h4>{{ $t('setup.vdd_as_secondary') }}</h4>
-                  <p>{{ $t('setup.vdd_as_secondary_desc') }}</p>
-                </div>
-              </div>
-
-              <div class="option-card-compact" 
-                   :class="{ selected: vddPrep === 'display_off' }"
-                   @click="vddPrep = 'display_off'">
-                <div class="option-icon-compact"><i class="fas fa-power-off"></i></div>
-                <div class="option-text">
-                  <h4>{{ $t('setup.vdd_display_off') }}</h4>
-                  <p>{{ $t('setup.vdd_display_off_desc') }}</p>
-                </div>
-              </div>
-            </template>
-
-            <!-- 普通模式：显示 device_prep 选项 -->
-            <template v-else>
+            <!-- 显示器组合策略（VDD/物理模式统一） -->
               <div class="option-card-compact"
                    :class="{ selected: displayDevicePrep === 'ensure_only_display' }"
                    @click="displayDevicePrep = 'ensure_only_display'">
                 <div class="option-icon-compact"><i class="fas fa-desktop"></i></div>
                 <div class="option-text">
-                  <h4>{{ $t('setup.ensure_only_display') }}</h4>
-                  <p>{{ $t('setup.ensure_only_display_desc') }}</p>
+                  <h4>{{ $t('setup.step3_ensure_only_display') }}</h4>
+                  <p>{{ $t('setup.step3_ensure_only_display_desc') }}</p>
                 </div>
               </div>
 
@@ -200,8 +153,8 @@
                    @click="displayDevicePrep = 'ensure_primary'">
                 <div class="option-icon-compact"><i class="fas fa-star"></i></div>
                 <div class="option-text">
-                  <h4>{{ $t('setup.ensure_primary') }}</h4>
-                  <p>{{ $t('setup.ensure_primary_desc') }}</p>
+                  <h4>{{ $t('setup.step3_ensure_primary') }}</h4>
+                  <p>{{ $t('setup.step3_ensure_primary_desc') }}</p>
                 </div>
               </div>
 
@@ -210,8 +163,18 @@
                    @click="displayDevicePrep = 'ensure_active'">
                 <div class="option-icon-compact"><i class="fas fa-check-circle"></i></div>
                 <div class="option-text">
-                  <h4>{{ $t('setup.ensure_active') }}</h4>
-                  <p>{{ $t('setup.ensure_active_desc') }}</p>
+                  <h4>{{ $t('setup.step3_ensure_active') }}</h4>
+                  <p>{{ $t('setup.step3_ensure_active_desc') }}</p>
+                </div>
+              </div>
+
+              <div class="option-card-compact" 
+                   :class="{ selected: displayDevicePrep === 'ensure_secondary' }"
+                   @click="displayDevicePrep = 'ensure_secondary'">
+                <div class="option-icon-compact"><i class="fas fa-columns"></i></div>
+                <div class="option-text">
+                  <h4>{{ $t('setup.step3_ensure_secondary') }}</h4>
+                  <p>{{ $t('setup.step3_ensure_secondary_desc') }}</p>
                 </div>
               </div>
 
@@ -220,11 +183,10 @@
                    @click="displayDevicePrep = 'no_operation'">
                 <div class="option-icon-compact"><i class="fas fa-hand-paper"></i></div>
                 <div class="option-text">
-                  <h4>{{ $t('setup.no_operation') }}</h4>
-                  <p>{{ $t('setup.no_operation_desc') }}</p>
+                  <h4>{{ $t('setup.step3_no_operation') }}</h4>
+                  <p>{{ $t('setup.step3_no_operation_desc') }}</p>
                 </div>
               </div>
-            </template>
           </div>
 
           <!-- 步骤 5: 完成 -->
@@ -277,8 +239,10 @@
           </div>
         </div>
 
-        <!-- 操作按钮 -->
-        <div class="action-buttons">
+      </div>
+
+      <!-- 操作按钮（固定底栏） -->
+      <div class="action-buttons">
           <button class="btn btn-setup btn-setup-secondary" 
                   @click="previousStep" 
                   v-if="currentStep > 1 && currentStep < 5"
@@ -310,7 +274,6 @@
             {{ $t('setup.go_to_apps') }}
             <i class="fas fa-arrow-right"></i>
           </button>
-        </div>
       </div>
     </div>
     <!-- Skip Wizard Modal -->
@@ -359,8 +322,7 @@ export default {
       selectedLocale: 'zh', // 默认中文
       selectedDisplay: null, // 选择的显示器（虚拟或物理）
       selectedAdapter: '',
-      displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（普通模式）
-      vddPrep: 'no_operation', // VDD模式下的屏幕布局选项，默认：保持当前布局
+      displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
       saveSuccess: false,
       saveError: null,
       saving: false,
@@ -399,14 +361,10 @@ export default {
       if (this.currentStep === 1) {
         return this.selectedLocale !== null
       } else if (this.currentStep === 2) {
-        return this.selectedDisplay !== null
-      } else if (this.currentStep === 3) {
         return this.selectedAdapter !== null
+      } else if (this.currentStep === 3) {
+        return this.selectedDisplay !== null
       } else if (this.currentStep === 4) {
-        // VDD模式检查 vddPrep，普通模式检查 displayDevicePrep
-        if (this.isVirtualDisplay) {
-          return this.vddPrep !== null
-        }
         return this.displayDevicePrep !== null
       }
       return false
@@ -488,16 +446,8 @@ export default {
         // 设置选择的显示器
         config.output_name = this.selectedDisplay
 
-        // 根据模式添加显示器组合策略
-        if (this.isVirtualDisplay) {
-          // VDD模式：保存 vdd_prep
-          config.vdd_prep = this.vddPrep
-          // device_prep 在 VDD 模式下不使用，但保留默认值
-          config.display_device_prep = 'no_operation'
-        } else {
-          // 普通模式：保存 device_prep
-          config.display_device_prep = this.displayDevicePrep
-        }
+        // 统一保存 display_device_prep（VDD 和物理模式通用）
+        config.display_device_prep = this.displayDevicePrep
 
         console.log('保存配置:', config)
 
@@ -517,8 +467,7 @@ export default {
           trackEvents.userAction('setup_wizard_completed', {
             selected_display: this.selectedDisplay,
             adapter: this.selectedAdapter,
-            display_device_prep: this.isVirtualDisplay ? null : this.displayDevicePrep,
-            vdd_prep: this.isVirtualDisplay ? this.vddPrep : null,
+            display_device_prep: this.displayDevicePrep,
             is_virtual_display: this.isVirtualDisplay
           })
           
@@ -668,12 +617,13 @@ export default {
 
 <style scoped>
 .setup-container {
-  max-width: 900px;
-  margin: 1em auto;
-  padding: 0 1em;
-  height: calc(100vh - 2em);
+  position: fixed;
+  inset: 0;
+  padding: 1em;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  z-index: 1000;
 }
 
 .setup-card {
@@ -683,7 +633,10 @@ export default {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  width: 100%;
+  max-width: 900px;
+  flex: 1;
+  min-height: 0;
 }
 
 .setup-header {
@@ -712,6 +665,7 @@ export default {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 .step-indicator {
@@ -877,11 +831,11 @@ export default {
 .action-buttons {
   display: flex;
   justify-content: space-between;
-  margin-top: 1em;
   gap: 0.8em;
   flex-shrink: 0;
-  padding-top: 1em;
+  padding: 1em 1.5em;
   border-top: 1px solid var(--bs-border-color);
+  background: var(--bs-body-bg);
 }
 
 .btn-setup {

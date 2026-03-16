@@ -498,6 +498,7 @@ namespace display_device {
     _CONVERT_(ensure_active);
     _CONVERT_(ensure_primary);
     _CONVERT_(ensure_only_display);
+    _CONVERT_(ensure_secondary);
 #undef _CONVERT_
     return static_cast<int>(parsed_config_t::device_prep_e::no_operation);
   }
@@ -550,6 +551,34 @@ namespace display_device {
     return static_cast<int>(parsed_config_t::vdd_prep_e::no_operation);
   }
 
+  parsed_config_t::vdd_prep_e
+  parsed_config_t::to_vdd_prep(device_prep_e unified) {
+    switch (unified) {
+      case device_prep_e::no_operation:
+        return vdd_prep_e::no_operation;
+      case device_prep_e::ensure_active:
+        return vdd_prep_e::no_operation;  // VDD is always active when created
+      case device_prep_e::ensure_primary:
+        return vdd_prep_e::vdd_as_primary;
+      case device_prep_e::ensure_secondary:
+        return vdd_prep_e::vdd_as_secondary;
+      case device_prep_e::ensure_only_display:
+        return vdd_prep_e::display_off;
+      default:
+        return vdd_prep_e::no_operation;
+    }
+  }
+
+  parsed_config_t::device_prep_e
+  parsed_config_t::to_physical_device_prep(device_prep_e unified) {
+    switch (unified) {
+      case device_prep_e::ensure_secondary:
+        return device_prep_e::ensure_active;  // In physical mode, activate as secondary
+      default:
+        return unified;  // All other values map 1:1
+    }
+  }
+
   boost::optional<parsed_config_t>
   make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
@@ -566,12 +595,11 @@ namespace display_device {
     
     parsed_config.device_id = device_id_to_use;
     parsed_config.device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
-    parsed_config.vdd_prep = static_cast<parsed_config_t::vdd_prep_e>(config.vdd_prep);
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
     const int custom_screen_mode = session.custom_screen_mode;
     
-    // 客户端自定义屏幕模式
+    // 客户端自定义屏幕模式（统一覆盖 display_device_prep）
     if (custom_screen_mode != -1) {
       BOOST_LOG(debug) << "客户端自定义屏幕模式: "sv << custom_screen_mode;
       if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::no_operation)) {
@@ -586,23 +614,8 @@ namespace display_device {
       else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_only_display)) {
         parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_only_display;
       }
-    }
-
-    // 客户端自定义VDD屏幕模式
-    const int custom_vdd_screen_mode = session.custom_vdd_screen_mode;
-    if (custom_vdd_screen_mode != -1) {
-      BOOST_LOG(debug) << "客户端自定义VDD屏幕模式: "sv << custom_vdd_screen_mode;
-      if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::no_operation)) {
-        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::no_operation;
-      }
-      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::vdd_as_primary)) {
-        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::vdd_as_primary;
-      }
-      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::vdd_as_secondary)) {
-        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::vdd_as_secondary;
-      }
-      else if (custom_vdd_screen_mode == static_cast<int>(parsed_config_t::vdd_prep_e::display_off)) {
-        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::display_off;
+      else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_secondary)) {
+        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_secondary;
       }
     }
 
@@ -628,18 +641,21 @@ namespace display_device {
     const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
     const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
 
-    // 不需要VDD时直接返回
+    // 不需要VDD时，使用物理模式映射
     if (!needs_vdd) {
       BOOST_LOG(debug) << "输出设备已存在，跳过VDD准备"sv;
       parsed_config.use_vdd = false;
+      parsed_config.device_prep = parsed_config_t::to_physical_device_prep(parsed_config.device_prep);
+      parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::no_operation;
       return parsed_config;
     }
 
-    // 标记为VDD模式
-    // VDD模式下，vdd_prep 控制屏幕布局，apply_config 会根据 use_vdd 分别处理
-    // device_prep 保留原值但不会被使用（由 handle_topology_for_vdd_mode 处理）
+    // 标记为VDD模式，从统一的 device_prep 映射到内部 vdd_prep
+    // device_prep 保留原始统一值（用于 apply_config 中的 display_may_change 等判断）
     parsed_config.use_vdd = true;
-    BOOST_LOG(debug) << "VDD模式：使用 vdd_prep 控制屏幕布局"sv;
+    parsed_config.vdd_prep = parsed_config_t::to_vdd_prep(parsed_config.device_prep);
+    BOOST_LOG(debug) << "VDD模式：统一值 " << static_cast<int>(parsed_config.device_prep)
+                     << " 映射为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
 
     // 不是SYSTEM权限且处于RDP中，强制使用RDP虚拟显示器，不创建VDD
     if (!is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active()) {
