@@ -39,6 +39,17 @@
             </div>
           </div>
 
+          <!-- Pairing Success -->
+          <div v-else-if="qrPaired" class="qr-success">
+            <div class="mb-3">
+              <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
+            </div>
+            <h5 class="text-success mb-3">{{ $t('pin.qr_paired_success') }}</h5>
+            <button class="btn btn-outline-primary btn-sm" @click="qrPaired = false">
+              {{ $t('_common.ok') }}
+            </button>
+          </div>
+
           <!-- Generate Button -->
           <div v-else>
             <div v-if="qrError" class="alert alert-danger mb-3">{{ qrError }}</div>
@@ -320,6 +331,7 @@ const {
   qrRemaining,
   qrLoading,
   qrError,
+  qrPaired,
   qrActive,
   generateQrCode,
   cancelQrCode,

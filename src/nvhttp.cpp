@@ -6,6 +6,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -90,8 +91,52 @@ namespace nvhttp {
     std::string pin;
     std::string name;
     std::chrono::steady_clock::time_point expires_at;
+    bool paired = false;
     std::mutex mutex;
   } preset_pin_state;
+
+  // Rate limiting for pairing attempts per IP
+  struct pair_rate_limiter_t {
+    std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> attempts;
+    std::mutex mutex;
+
+    bool
+    check_and_record(const std::string &ip) {
+      constexpr int max_attempts = 5;
+      constexpr int window_seconds = 60;
+      std::lock_guard lock { mutex };
+      auto now = std::chrono::steady_clock::now();
+      auto &entry = attempts[ip];
+
+      // Reset window if expired
+      if (now - entry.second > std::chrono::seconds(window_seconds)) {
+        entry = { 0, now };
+      }
+
+      if (entry.first >= max_attempts) {
+        return false;  // rate limited
+      }
+
+      entry.first++;
+      return true;
+    }
+
+    void
+    cleanup() {
+      constexpr int window_seconds = 60;
+      std::lock_guard lock { mutex };
+      auto now = std::chrono::steady_clock::now();
+      for (auto it = attempts.begin(); it != attempts.end();) {
+        if (now - it->second.second > std::chrono::seconds(window_seconds * 2)) {
+          it = attempts.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+  };
+  static pair_rate_limiter_t pair_rate_limit;
 
   // Map to store certificate UUIDs keyed by request pointer
   // Using weak_ptr to track request lifetime and prevent memory leaks
@@ -740,6 +785,24 @@ namespace nvhttp {
   pair(std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     print_req<T>(request);
 
+    // Rate limit pairing attempts per IP
+    auto client_ip = request->remote_endpoint().address().to_string();
+    if (!pair_rate_limit.check_and_record(client_ip)) {
+      BOOST_LOG(warning) << "Pairing rate limited for IP: " << client_ip;
+      pt::ptree rate_tree;
+      rate_tree.put("root.<xmlattr>.status_code", 429);
+      rate_tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
+      rate_tree.put("root.paired", 0);
+      std::ostringstream data;
+      pt::write_xml(data, rate_tree);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    // Periodically clean up stale rate limit entries
+    pair_rate_limit.cleanup();
+
     pt::ptree tree;
 
     auto fg = util::fail_guard([&]() {
@@ -1013,6 +1076,7 @@ namespace nvhttp {
     preset_pin_state.pin = pin;
     preset_pin_state.name = name;
     preset_pin_state.expires_at = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+    preset_pin_state.paired = false;
     BOOST_LOG(info) << "Preset PIN set for QR pairing, expires in " << timeout_seconds << "s";
     return true;
   }
@@ -1039,6 +1103,20 @@ namespace nvhttp {
     std::lock_guard lock { preset_pin_state.mutex };
     preset_pin_state.pin.clear();
     preset_pin_state.name.clear();
+    preset_pin_state.paired = true;
+  }
+
+  std::string
+  get_qr_pair_status() {
+    std::lock_guard lock { preset_pin_state.mutex };
+    if (preset_pin_state.paired) return "paired";
+    if (preset_pin_state.pin.empty()) return "inactive";
+    if (std::chrono::steady_clock::now() > preset_pin_state.expires_at) {
+      preset_pin_state.pin.clear();
+      preset_pin_state.name.clear();
+      return "expired";
+    }
+    return "active";
   }
 
   // Use keep-alive connection

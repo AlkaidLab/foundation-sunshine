@@ -58,6 +58,10 @@
 #include "version.h"
 #include "webhook.h"
 
+#ifdef _WIN32
+  #include <iphlpapi.h>
+#endif
+
 using namespace std::literals;
 using json = nlohmann::json;
 
@@ -1248,6 +1252,21 @@ namespace confighttp {
   }
 
   void
+  getQrPairStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    nlohmann::json j;
+    j["status"] = nvhttp::get_qr_pair_status();
+
+    std::string content = j.dump();
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, content, headers);
+  }
+
+  void
   generateQrPairInfo(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -1281,8 +1300,68 @@ namespace confighttp {
     auto local_addr = net::addr_to_normalized_string(request->local_endpoint().address());
     auto port = net::map_port(nvhttp::PORT_HTTP);
 
-    // Use external_ip if configured, otherwise use the local endpoint address
-    std::string host = config::nvhttp.external_ip.empty() ? local_addr : config::nvhttp.external_ip;
+    // Determine the host address for the QR code URL
+    std::string host;
+    if (!config::nvhttp.external_ip.empty()) {
+      // User explicitly configured an external IP (could be WAN for port-forwarded setups)
+      host = config::nvhttp.external_ip;
+    }
+    else {
+      // Detect a usable LAN IP (local_endpoint may be loopback or VPN)
+      host = local_addr;
+      auto host_net_type = net::from_address(host);
+      if (host_net_type != net::LAN) {
+        std::string resolved_host;
+
+        // Method 1: UDP connect trick to find default outgoing interface
+        try {
+          boost::asio::io_context io_ctx;
+          boost::asio::ip::udp::socket socket(io_ctx);
+          socket.connect(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("8.8.8.8"), 53));
+          auto lan_addr = socket.local_endpoint().address();
+          socket.close();
+          auto candidate = net::addr_to_normalized_string(lan_addr);
+          if (net::from_address(candidate) == net::LAN) {
+            resolved_host = candidate;
+          }
+        }
+        catch (...) {}
+
+#ifdef _WIN32
+        // Method 2 (Windows): enumerate adapters via GetAdaptersAddresses
+        if (resolved_host.empty()) {
+          ULONG bufLen = 15000;
+          std::vector<uint8_t> buf(bufLen);
+          auto pAddresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buf.data());
+          if (GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST, nullptr, pAddresses, &bufLen) == NO_ERROR) {
+            for (auto adapter = pAddresses; adapter; adapter = adapter->Next) {
+              if (adapter->OperStatus != IfOperStatusUp) continue;
+              if (adapter->IfType == IF_TYPE_TUNNEL || adapter->IfType == IF_TYPE_PPP) continue;
+              for (auto unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+                if (unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
+                auto sin = reinterpret_cast<sockaddr_in *>(unicast->Address.lpSockaddr);
+                boost::asio::ip::address_v4 addr(ntohl(sin->sin_addr.s_addr));
+                auto candidate = addr.to_string();
+                if (net::from_address(candidate) == net::LAN) {
+                  resolved_host = candidate;
+                  break;
+                }
+              }
+              if (!resolved_host.empty()) break;
+            }
+          }
+        }
+#endif
+
+        if (!resolved_host.empty()) {
+          host = resolved_host;
+          BOOST_LOG(info) << "QR pair: resolved to LAN IP " << host;
+        }
+        else {
+          BOOST_LOG(warning) << "QR pair: could not find a LAN IP, using " << host;
+        }
+      }
+    }
 
     // Build the moonlight:// URL
     std::string url = "moonlight://pair?host=" + host +
@@ -2026,6 +2105,7 @@ namespace confighttp {
     server.resource["^/api/pin$"]["POST"] = savePin;
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
+    server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/apps$"]["POST"] = saveApp;

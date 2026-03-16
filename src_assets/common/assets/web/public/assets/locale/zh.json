@@ -601,6 +601,7 @@
     "qr_generate": "生成二维码",
     "qr_refresh": "刷新",
     "qr_expires_in": "{seconds} 秒后过期",
+    "qr_paired_success": "配对成功！",
     "or_manual_pin": "或手动输入 PIN 码",
     "remove_paired_devices_desc": "移除您已配对的设备。",
     "save_changes": "保存更改",
