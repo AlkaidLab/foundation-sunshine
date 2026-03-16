@@ -601,6 +601,7 @@
     "qr_generate": "Generate QR Code",
     "qr_refresh": "Refresh",
     "qr_expires_in": "Expires in {seconds}s",
+    "qr_paired_success": "Pairing successful!",
     "or_manual_pin": "or enter PIN manually",
     "remove_paired_devices_desc": "Remove your paired devices.",
     "save_changes": "Save changes",
