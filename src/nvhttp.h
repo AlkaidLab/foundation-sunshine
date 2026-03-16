@@ -235,6 +235,13 @@ namespace nvhttp {
   clear_preset_pin();
 
   /**
+   * @brief Get the current QR pair status.
+   * @return "active", "paired", "expired", or "inactive".
+   */
+  std::string
+  get_qr_pair_status();
+
+  /**
    * @brief Remove all paired clients.
    * @examples
    * nvhttp::erase_all_clients();

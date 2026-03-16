@@ -9,10 +9,18 @@ export function useQrPair() {
   const qrRemaining = ref(0)
   const qrLoading = ref(false)
   const qrError = ref('')
+  const qrPaired = ref(false)
 
   let countdownTimer = null
+  let pollTick = 0
 
   const qrActive = computed(() => qrRemaining.value > 0 && qrDataUrl.value !== '')
+
+  const resetQrDisplay = () => {
+    qrDataUrl.value = ''
+    qrPin.value = ''
+    qrUrl.value = ''
+  }
 
   const stopCountdown = () => {
     if (countdownTimer) {
@@ -23,15 +31,28 @@ export function useQrPair() {
 
   const startCountdown = () => {
     stopCountdown()
-    countdownTimer = setInterval(() => {
+    pollTick = 0
+    countdownTimer = setInterval(async () => {
       const now = Date.now()
       const remaining = Math.max(0, Math.floor((qrExpiresAt.value - now) / 1000))
       qrRemaining.value = remaining
       if (remaining <= 0) {
         stopCountdown()
-        qrDataUrl.value = ''
-        qrPin.value = ''
-        qrUrl.value = ''
+        resetQrDisplay()
+        return
+      }
+
+      // Poll status every 2 ticks
+      if (++pollTick % 2 === 0) {
+        try {
+          const res = await fetch('/api/qr-pair')
+          const data = await res.json()
+          if (data.status === 'paired') {
+            stopCountdown()
+            resetQrDisplay()
+            qrPaired.value = true
+          }
+        } catch (e) { /* ignore */ }
       }
     }, 1000)
   }
@@ -39,6 +60,7 @@ export function useQrPair() {
   const generateQrCode = async () => {
     qrLoading.value = true
     qrError.value = ''
+    qrPaired.value = false
     try {
       const response = await fetch('/api/qr-pair', { method: 'POST' })
       const data = await response.json()
@@ -70,9 +92,7 @@ export function useQrPair() {
 
   const cancelQrCode = async () => {
     stopCountdown()
-    qrDataUrl.value = ''
-    qrPin.value = ''
-    qrUrl.value = ''
+    resetQrDisplay()
     qrRemaining.value = 0
     try {
       await fetch('/api/qr-pair/cancel', { method: 'POST' })
@@ -92,6 +112,7 @@ export function useQrPair() {
     qrRemaining,
     qrLoading,
     qrError,
+    qrPaired,
     qrActive,
     generateQrCode,
     cancelQrCode,
