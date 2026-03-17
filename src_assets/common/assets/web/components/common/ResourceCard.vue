@@ -181,7 +181,7 @@
           <div class="col-md-6">
             <a
               class="resource-link resource-link-danger"
-              href="https://github.com/LizardByte/Sunshine/blob/master/LICENSE"
+              href="https://github.com/qiin2333/Sunshine/blob/master/LICENSE"
               target="_blank"
             >
               <div class="resource-icon">
@@ -197,7 +197,7 @@
           <div class="col-md-6">
             <a
               class="resource-link resource-link-danger"
-              href="https://github.com/LizardByte/Sunshine/blob/master/NOTICE"
+              href="https://github.com/qiin2333/Sunshine/blob/master/NOTICE"
               target="_blank"
             >
               <div class="resource-icon">

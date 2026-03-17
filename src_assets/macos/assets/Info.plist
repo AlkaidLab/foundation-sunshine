@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>dev.lizardbyte.sunshine</string>
+  <string>com.alkaidlab.sunshine</string>
   <key>CFBundleName</key>
-  <string>Sunshine</string>
+  <string>Foundation Sunshine</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>This app requires access to your microphone to stream audio.</string>
 </dict>

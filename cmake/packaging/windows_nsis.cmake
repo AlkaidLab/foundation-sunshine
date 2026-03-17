@@ -338,7 +338,7 @@ set(CPACK_NSIS_COMPRESSOR_OPTIONS "/SOLID")  # Solid compression for smaller fil
 # Support Links and Documentation
 # ==============================================================================
 
-set(CPACK_NSIS_HELP_LINK "https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html")
+set(CPACK_NSIS_HELP_LINK "https://alkaidlab.com/sunshine/docs")
 set(CPACK_NSIS_URL_INFO_ABOUT "${CMAKE_PROJECT_HOMEPAGE_URL}")
 set(CPACK_NSIS_CONTACT "${CMAKE_PROJECT_HOMEPAGE_URL}/support")
 
