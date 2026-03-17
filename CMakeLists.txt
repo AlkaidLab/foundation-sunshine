@@ -6,11 +6,11 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Sunshine VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Moonlight"
-        HOMEPAGE_URL "https://app.lizardbyte.dev/Sunshine")
+        HOMEPAGE_URL "https://alkaidlab.com/sunshine")
 
 set(PROJECT_LICENSE "GPL-3.0-only")
 
-set(PROJECT_FQDN "sunshine.alkaidLab.io")
+set(PROJECT_FQDN "sunshine.alkaidlab.com")
 
 set(PROJECT_BRIEF_DESCRIPTION "GameStream host for Moonlight")  # must be <= 35 characters
 
