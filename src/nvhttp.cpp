@@ -68,6 +68,7 @@ namespace nvhttp {
   };
 
   crypto::cert_chain_t cert_chain;
+  std::mutex cert_chain_mutex;
 
   struct named_cert_t {
     std::string name;
@@ -401,9 +402,12 @@ namespace nvhttp {
     }
 
     // Empty certificate chain and import certs from file
-    cert_chain.clear();
-    for (auto &named_cert : client.named_devices) {
-      cert_chain.add(crypto::x509(named_cert.cert));
+    {
+      std::lock_guard<std::mutex> lg(cert_chain_mutex);
+      cert_chain.clear();
+      for (auto &named_cert : client.named_devices) {
+        cert_chain.add(crypto::x509(named_cert.cert));
+      }
     }
 
     client_root = client;
@@ -2045,22 +2049,32 @@ namespace nvhttp {
         BOOST_LOG(debug) << subject_name << " -- "sv << (verified ? "verified"sv : "denied"sv);
       });
 
-      while (add_cert->peek()) {
-        char subject_name[256];
+      // Use non-blocking pop with 0ms timeout to avoid TOCTOU race between peek() and pop().
+      // peek() is lockless, so a concurrent verify callback could drain the queue after peek()
+      // returns true, causing the blocking pop() to wait forever and deadlock the HTTPS server.
+      {
+        std::lock_guard<std::mutex> lg(cert_chain_mutex);
+        while (true) {
+          auto cert = add_cert->pop(std::chrono::milliseconds(0));
+          if (!cert) break;
 
-        auto cert = add_cert->pop();
-        X509_NAME_oneline(X509_get_subject_name(cert.get()), subject_name, sizeof(subject_name));
+          char subject_name[256];
+          X509_NAME_oneline(X509_get_subject_name(cert.get()), subject_name, sizeof(subject_name));
 
-        BOOST_LOG(debug) << "Added cert ["sv << subject_name << ']';
-        cert_chain.add(std::move(cert));
+          BOOST_LOG(debug) << "Added cert ["sv << subject_name << ']';
+          cert_chain.add(std::move(cert));
+        }
       }
 
       const char *err_str;
-      if (!close_verify_safe) {
-        err_str = cert_chain.verify_safe(x509.get());  // default
-      }
-      else {
-        err_str = cert_chain.verify(x509.get());
+      {
+        std::lock_guard<std::mutex> lg(cert_chain_mutex);
+        if (!close_verify_safe) {
+          err_str = cert_chain.verify_safe(x509.get());  // default
+        }
+        else {
+          err_str = cert_chain.verify(x509.get());
+        }
       }
       if (err_str) {
         BOOST_LOG(warning) << "SSL Verification error :: "sv << err_str;
@@ -2165,7 +2179,10 @@ namespace nvhttp {
   erase_all_clients() {
     client_t client;
     client_root = client;
-    cert_chain.clear();
+    {
+      std::lock_guard<std::mutex> lg(cert_chain_mutex);
+      cert_chain.clear();
+    }
     save_state();
   }
 
