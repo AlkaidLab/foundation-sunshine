@@ -19,7 +19,7 @@ set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "
 !define MUI_PAGE_CUSTOMFUNCTION_PRE PreDirectoryPage
 
 ; 从注册表读取之前的安装路径
-; 参考 CPack NSIS 模板中 .onInit 的 ENABLE_UNINSTALL_BEFORE_INSTALL 实现
+; 使用自定义注册表键，避免覆盖安装触发卸载时被清除
 
 Function PreDirectoryPage
     ; 只在默认安装目录时才尝试读取注册表
@@ -28,20 +28,8 @@ Function PreDirectoryPage
     Push $0
     SetRegView 64
 
-    ; 从 NSIS 卸载注册表读取 UninstallString
-    ReadRegStr $0 HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\Sunshine' 'UninstallString'
-    StrCmp $0 '' DoneRegRead 0
-
-    ; 移除引号（如果有）
-    StrCpy $0 $0 '' 1   ; 移除开头的引号
-    StrLen $1 $0
-    IntOp $1 $1 - 1
-    StrCpy $0 $0 $1     ; 移除结尾的引号
-
-    ; 获取父目录（移除 \\\\Uninstall.exe）
-    Push $0
-    Call GetParent
-    Pop $0
+    ; 从自定义注册表读取上次安装目录
+    ReadRegStr $0 HKLM 'SOFTWARE\\\\AlkaidLab\\\\Sunshine' 'InstallDir'
     StrCmp $0 '' DoneRegRead 0
     IfFileExists '$0\\\\*.*' SetPath DoneRegRead
 
@@ -210,6 +198,10 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         DetailPrint '⚙️ 安装并启动系统服务...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-service.bat\\\"'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\autostart-service.bat\\\"'
+
+        ; 写入安装目录，供后续覆盖安装读取
+        SetRegView 64
+        WriteRegStr HKLM 'SOFTWARE\\\\AlkaidLab\\\\Sunshine' 'InstallDir' '$INSTDIR'
         
         DetailPrint '✅ 安装完成！'
         
@@ -249,6 +241,9 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
             'Do you want to remove $INSTDIR (this includes the configuration, cover images, and settings)?' \
             /SD IDNO IDNO NoDelete
             RMDir /r \\\"$INSTDIR\\\"; skipped if no
+            SetRegView 64
+            DeleteRegValue HKLM 'SOFTWARE\\\\AlkaidLab\\\\Sunshine' 'InstallDir'
+            DeleteRegKey /ifempty HKLM 'SOFTWARE\\\\AlkaidLab\\\\Sunshine'
         
         DetailPrint '清理环境变量...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\update-path.bat\\\" remove'
