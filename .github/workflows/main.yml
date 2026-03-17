@@ -309,7 +309,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sunshine-windows
+          name: sunshine-windows-r${{ github.run_number }}
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.WindowsPortable.zip

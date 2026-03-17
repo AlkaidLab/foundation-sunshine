@@ -264,18 +264,23 @@ set(CPACK_NSIS_INSTALLED_ICON_NAME "${CMAKE_PROJECT_NAME}.exe")
 set(CPACK_NSIS_CREATE_ICONS_EXTRA
         "${CPACK_NSIS_CREATE_ICONS_EXTRA}
         SetOutPath '\$INSTDIR'
-        
+
         ; 主程序快捷方式 - 使用可执行文件的内嵌图标
         CreateShortCut '\$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sunshine.lnk' \
             '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' '--shortcut' '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' 0
+
+        ; 安装目录主程序快捷方式 - 使用可执行文件的内嵌图标
+        CreateShortCut '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.lnk' \
+            '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' '--shortcut' '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' 0
+
         ; GUI管理工具快捷方式 - 使用GUI程序的内嵌图标
         CreateShortCut '\$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sunshine GUI.lnk' \
             '\$INSTDIR\\\\assets\\\\gui\\\\sunshine-gui.exe' '' '\$INSTDIR\\\\assets\\\\gui\\\\sunshine-gui.exe' 0
-            
+
         ; 工具文件夹快捷方式 - 使用主程序图标
         CreateShortCut '\$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sunshine Tools.lnk' \
             '\$INSTDIR\\\\tools' '' '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' 0
-        
+
         ; 创建桌面快捷方式 - 使用可执行文件的内嵌图标
         CreateShortCut '\$DESKTOP\\\\Sunshine.lnk' \
             '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' '--shortcut' '\$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe' 0
