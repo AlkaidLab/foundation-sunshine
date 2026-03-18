@@ -153,6 +153,17 @@ function addRemapping(type) {
                   <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
                 </select>
               </div>
+
+              <!-- HDR Luminance Analysis -->
+              <div class="mb-3">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="hdr_luminance_analysis" v-model="config.hdr_luminance_analysis" true-value="enabled" false-value="disabled" />
+                  <label class="form-check-label" for="hdr_luminance_analysis">
+                    {{ $tp('config.hdr_luminance_analysis') }}
+                  </label>
+                </div>
+                <div class="form-text">{{ $tp('config.hdr_luminance_analysis_desc') }}</div>
+              </div>
             </div>
           </div>
         </div>
