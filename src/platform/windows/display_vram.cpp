@@ -968,7 +968,8 @@ namespace platf::dxgi {
 
       // Initialize HDR luminance analyzer for HDR formats (P010, Y410, R16_UINT)
       // The analyzer is optional — if it fails, HDR will still work with static metadata only
-      if (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT) {
+      if (config::video.hdr_luminance_analysis &&
+          (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
         if (init_hdr_luminance_analyzer() != 0) {
           BOOST_LOG(warning) << "HDR luminance analyzer init failed, dynamic metadata will use defaults";
         }
