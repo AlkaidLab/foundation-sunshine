@@ -12,6 +12,8 @@
 #include "src/logging.h"
 #include "src/video.h"
 
+#include <vector>
+
 #ifdef NVENC_NAMESPACE
 namespace NVENC_NAMESPACE {
 #else
@@ -51,6 +53,9 @@ namespace nvenc {
 
     void
     set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) override;
+
+    void
+    set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) override;
 
   protected:
     /**
@@ -130,5 +135,34 @@ namespace nvenc {
     // HDR metadata support
     std::optional<nvenc_hdr_metadata> hdr_metadata;
     int video_format = 0;  // 0 = H.264, 1 = HEVC, 2 = AV1
+
+    // Per-frame HDR luminance stats for dynamic metadata
+    platf::hdr_frame_luminance_stats_t luminance_stats;
+
+    /**
+     * @brief Serialize HDR10+ dynamic metadata into ITU-T T.35 SEI payload.
+     *        Format follows ST 2094-40 (Samsung HDR10+).
+     * @param stats EMA-smoothed luminance statistics.
+     * @param max_display_luminance Display peak luminance in nits.
+     * @param[out] payload Output buffer for serialized payload.
+     * @return Size of serialized payload in bytes, or 0 on failure.
+     */
+    size_t
+    serialize_hdr10plus_sei(const platf::hdr_frame_luminance_stats_t &stats,
+      uint16_t max_display_luminance,
+      std::vector<uint8_t> &payload);
+
+    /**
+     * @brief Serialize HDR Vivid (CUVA) dynamic metadata into ITU-T T.35 SEI payload.
+     *        Format follows T/UWA 005.3 (China Ultrahigh-definition Video Association).
+     * @param stats EMA-smoothed luminance statistics.
+     * @param max_display_luminance Display peak luminance in nits.
+     * @param[out] payload Output buffer for serialized payload.
+     * @return Size of serialized payload in bytes, or 0 on failure.
+     */
+    size_t
+    serialize_vivid_sei(const platf::hdr_frame_luminance_stats_t &stats,
+      uint16_t max_display_luminance,
+      std::vector<uint8_t> &payload);
   };
 }

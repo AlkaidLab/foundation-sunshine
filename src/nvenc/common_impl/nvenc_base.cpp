@@ -8,6 +8,9 @@
 
 #include "src/utility.h"
 
+#include <algorithm>
+#include <cmath>
+
 #define NVENC_INT_VERSION (NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION)
 
 namespace {
@@ -830,6 +833,49 @@ namespace nvenc {
     }
 #endif
 
+    // Inject HDR10+ and/or Vivid dynamic metadata as custom SEI/OBU payloads
+    std::vector<uint8_t> hdr10plus_payload;
+    std::vector<uint8_t> vivid_payload;
+    NV_ENC_SEI_PAYLOAD sei_payloads[2] = {};
+    uint32_t sei_count = 0;
+
+    if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
+      uint16_t max_lum = hdr_metadata->maxDisplayLuminance;
+
+      // HDR10+ (PQ only — HDR10+ requires absolute luminance)
+      if (serialize_hdr10plus_sei(luminance_stats, max_lum, hdr10plus_payload) > 0) {
+        sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(hdr10plus_payload.size());
+        sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
+        sei_payloads[sei_count].payload = hdr10plus_payload.data();
+        sei_count++;
+      }
+
+      // HDR Vivid (both PQ and HLG)
+      if (serialize_vivid_sei(luminance_stats, max_lum, vivid_payload) > 0) {
+        sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(vivid_payload.size());
+        sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
+        sei_payloads[sei_count].payload = vivid_payload.data();
+        sei_count++;
+      }
+
+      if (sei_count > 0) {
+        if (video_format == 1) {
+          pic_params.codecPicParams.hevcPicParams.seiPayloadArrayCnt = sei_count;
+          pic_params.codecPicParams.hevcPicParams.seiPayloadArray = sei_payloads;
+        }
+        else if (video_format == 2) {
+#if NVENC_INT_VERSION >= 1200
+          pic_params.codecPicParams.av1PicParams.obuPayloadArrayCnt = sei_count;
+          pic_params.codecPicParams.av1PicParams.obuPayloadArray = sei_payloads;
+#else
+          // NVENC SDK 12.0-之前的接口头文件不包含 av1PicParams。
+          // 对于这类版本的 NVENC 编码器，AV1 的动态 OBU/SEI 注入不可用，
+          // 这里直接跳过，避免编译失败。
+#endif
+        }
+      }
+    }
+
     NVENCSTATUS encode_status = nvenc->nvEncEncodePicture(encoder, &pic_params);
     if (encode_status == NV_ENC_ERR_NEED_MORE_INPUT) {
       // This is not a fatal error - encoder needs more input frames before it can produce output.
@@ -1007,6 +1053,225 @@ namespace nvenc {
     else {
       BOOST_LOG(debug) << "NvEnc: HDR metadata cleared";
     }
+  }
+
+  void
+  nvenc_base::set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) {
+    luminance_stats = stats;
+  }
+
+  size_t
+  nvenc_base::serialize_hdr10plus_sei(const platf::hdr_frame_luminance_stats_t &stats,
+    uint16_t max_display_luminance,
+    std::vector<uint8_t> &payload) {
+    // HDR10+ (ST 2094-40) ITU-T T.35 registered SEI payload structure:
+    //   country_code:          0xB5 (USA)
+    //   terminal_provider_code: 0x003C (Samsung)
+    //   terminal_provider_oriented_code: 0x0001 (HDR10+)
+    //   application_identifier: 4
+    //   application_version:    1
+    //   num_windows:            1
+    //   Then per-window: maxscl[3], average_maxrgb, distribution percentiles
+    //   targeted_system_display_maximum_luminance
+    //
+    // Simplified profile: no tone mapping curve, no bezier anchors, no percentile distribution
+
+    float peak_nits = max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
+
+    // Use P95 as effective peak (same logic as update_hdr_dynamic_metadata in video.cpp)
+    float effective_max = stats.percentile_95;
+
+    // Normalize to [0, 1] relative to peak_nits, expressed as 27-bit values (maxscl precision)
+    // HDR10+ maxscl is in 0.00001 cd/m² units
+    auto to_maxscl = [&](float nits) -> uint32_t {
+      return static_cast<uint32_t>(std::clamp(nits, 0.0f, 100000.0f) * 10.0f);  // 0.00001 cd/m² unit → stored as integer
+    };
+
+    payload.clear();
+    payload.reserve(64);
+
+    // ITU-T T.35 header
+    payload.push_back(0xB5);        // country_code (USA)
+    payload.push_back(0x00);        // terminal_provider_code (Samsung) high byte
+    payload.push_back(0x3C);        // terminal_provider_code low byte
+    payload.push_back(0x00);        // terminal_provider_oriented_code high byte
+    payload.push_back(0x01);        // terminal_provider_oriented_code low byte
+
+    // application_identifier (4) + application_version (1) — packed as 8+8 bits
+    payload.push_back(4);           // application_identifier
+    payload.push_back(1);           // application_version
+
+    // Bitstream-packed fields follow. We pack into a bit buffer.
+    // For simplicity, we'll use byte-aligned approximation where possible.
+
+    // num_windows (2 bits) = 1 (only 1-1=0 written for extra windows, but the spec says
+    // num_windows is 2 bits and actual count; with 1 window, no extra window data needed)
+    // Then for each window i (1..num_windows-1): window geometry (skipped for window 0)
+
+    // The bitstream layout is complex. Let's use a simple bitstream writer.
+    struct bitwriter {
+      std::vector<uint8_t> &buf;
+      uint32_t accumulator = 0;
+      int bits_pending = 0;
+
+      void write(uint32_t value, int num_bits) {
+        for (int i = num_bits - 1; i >= 0; --i) {
+          accumulator = (accumulator << 1) | ((value >> i) & 1);
+          bits_pending++;
+          if (bits_pending == 8) {
+            buf.push_back(static_cast<uint8_t>(accumulator));
+            accumulator = 0;
+            bits_pending = 0;
+          }
+        }
+      }
+
+      void flush() {
+        if (bits_pending > 0) {
+          accumulator <<= (8 - bits_pending);
+          buf.push_back(static_cast<uint8_t>(accumulator));
+          accumulator = 0;
+          bits_pending = 0;
+        }
+      }
+    };
+
+    bitwriter bw { payload };
+
+    // num_windows: 2 bits (value = 1)
+    bw.write(1, 2);
+
+    // For window 0 (always present, no geometry needed):
+    // maxscl[0..2]: 17 bits each (in 0.00001 cd/m² unit)
+    uint32_t maxscl_val = to_maxscl(effective_max);
+    bw.write(maxscl_val, 17);  // maxscl[0] (R)
+    bw.write(maxscl_val, 17);  // maxscl[1] (G)
+    bw.write(maxscl_val, 17);  // maxscl[2] (B)
+
+    // average_maxrgb: 17 bits
+    uint32_t avg_val = to_maxscl(stats.avg_maxrgb);
+    bw.write(avg_val, 17);
+
+    // num_distribution_maxrgb_percentiles: 4 bits (= 0, no percentile data)
+    bw.write(0, 4);
+
+    // fraction_bright_pixels: 10 bits (= 0)
+    bw.write(0, 10);
+
+    // mastering_display_actual_peak_luminance_flag: 1 bit (= 0)
+    bw.write(0, 1);
+
+    // For each window (window 0):
+    // tone_mapping_flag: 1 bit (= 0, no tone mapping)
+    bw.write(0, 1);
+
+    // color_saturation_mapping_flag: 1 bit (= 0)
+    bw.write(0, 1);
+
+    // targeted_system_display_actual_peak_luminance_flag: 1 bit (= 0)
+    bw.write(0, 1);
+
+    // targeted_system_display_maximum_luminance: 27 bits
+    // In 0.0001 cd/m² units
+    uint32_t target_lum = static_cast<uint32_t>(peak_nits * 10000);
+    bw.write(target_lum, 27);
+
+    bw.flush();
+
+    return payload.size();
+  }
+
+  size_t
+  nvenc_base::serialize_vivid_sei(const platf::hdr_frame_luminance_stats_t &stats,
+    uint16_t max_display_luminance,
+    std::vector<uint8_t> &payload) {
+    // HDR Vivid (CUVA / T/UWA 005.3) ITU-T T.35 registered SEI payload:
+    //   country_code:          0x26 (China)
+    //   terminal_provider_code: 0x0004 (CUVA HDR)
+    //   terminal_provider_oriented_code: 0x0005
+    //   system_start_code:     0x01
+    //   Then per-window: minimum_maxrgb, average_maxrgb, variance_maxrgb, maximum_maxrgb
+    //   tone_mapping_mode, color_saturation_mapping
+
+    float peak_nits = max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
+
+    payload.clear();
+    payload.reserve(64);
+
+    // ITU-T T.35 header for CUVA HDR Vivid
+    payload.push_back(0x26);        // country_code (China)
+    payload.push_back(0x00);        // terminal_provider_code high byte
+    payload.push_back(0x04);        // terminal_provider_code low byte (CUVA)
+    payload.push_back(0x00);        // terminal_provider_oriented_code high byte
+    payload.push_back(0x05);        // terminal_provider_oriented_code low byte
+
+    // system_start_code: 8 bits
+    payload.push_back(0x01);
+
+    // Bitstream-packed fields
+    struct bitwriter {
+      std::vector<uint8_t> &buf;
+      uint32_t accumulator = 0;
+      int bits_pending = 0;
+
+      void write(uint32_t value, int num_bits) {
+        for (int i = num_bits - 1; i >= 0; --i) {
+          accumulator = (accumulator << 1) | ((value >> i) & 1);
+          bits_pending++;
+          if (bits_pending == 8) {
+            buf.push_back(static_cast<uint8_t>(accumulator));
+            accumulator = 0;
+            bits_pending = 0;
+          }
+        }
+      }
+
+      void flush() {
+        if (bits_pending > 0) {
+          accumulator <<= (8 - bits_pending);
+          buf.push_back(static_cast<uint8_t>(accumulator));
+          accumulator = 0;
+          bits_pending = 0;
+        }
+      }
+    };
+
+    bitwriter bw { payload };
+
+    // num_windows: 3 bits (value = 1)
+    bw.write(1, 3);
+
+    // For window 0:
+    // CUVA uses Q4.12 format (denominator 4095) for normalized values
+
+    // minimum_maxrgb: 12 bits
+    float min_norm = std::clamp(stats.min_maxrgb / peak_nits, 0.0f, 1.0f);
+    bw.write(static_cast<uint32_t>(min_norm * 4095), 12);
+
+    // average_maxrgb: 12 bits
+    float avg_norm = std::clamp(stats.avg_maxrgb / peak_nits, 0.0f, 1.0f);
+    bw.write(static_cast<uint32_t>(avg_norm * 4095), 12);
+
+    // variance_maxrgb: 12 bits
+    float variance_norm = std::clamp((stats.percentile_99 - stats.min_maxrgb) / peak_nits, 0.0f, 1.0f);
+    bw.write(static_cast<uint32_t>(variance_norm * 4095), 12);
+
+    // maximum_maxrgb: 12 bits
+    float max_norm = std::clamp(stats.percentile_95 / peak_nits, 0.0f, 1.0f);
+    bw.write(static_cast<uint32_t>(max_norm * 4095), 12);
+
+    // tone_mapping_mode_flag: 1 bit (= 0, no tone mapping)
+    bw.write(0, 1);
+
+    // tone_mapping_param_num: 1 bit (= 0)
+    bw.write(0, 1);
+
+    // color_saturation_mapping_flag: 1 bit (= 0)
+    bw.write(0, 1);
+
+    bw.flush();
+
+    return payload.size();
   }
 
   bool

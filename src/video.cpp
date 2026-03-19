@@ -628,6 +628,11 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->nvenc) return {};
 
+      // Pass per-frame HDR luminance stats to NVENC for dynamic metadata injection
+      if (device->hdr_luminance_stats.valid) {
+        device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
+      }
+
       auto result = device->nvenc->encode_frame(frame_index, force_idr);
       force_idr = false;
       return result;

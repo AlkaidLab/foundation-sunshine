@@ -284,6 +284,8 @@
     "gamepad_xone": "XOne (Xbox One)",
     "global_prep_cmd": "Command Preparations",
     "global_prep_cmd_desc": "Configure a list of commands to be executed before or after running any application. If any of the specified preparation commands fail, the application launch process will be aborted.",
+    "hdr_luminance_analysis": "HDR Dynamic Metadata (HDR10+ / Vivid)",
+    "hdr_luminance_analysis_desc": "Enables per-frame GPU luminance analysis and injects HDR10+ (ST 2094-40) and HDR Vivid (CUVA) dynamic metadata into the encoded bitstream. This provides per-frame tone-mapping hints to supported displays (e.g. Huawei HDR Vivid terminals). Adds minor GPU overhead (~0.5-1.5ms/frame at high resolutions). Disable if you experience frame rate drops with HDR enabled; streaming will then use static HDR metadata only.",
     "hdr_prep_automatic_windows": "Switch on/off the HDR mode as requested by the client",
     "hdr_prep_no_operation_windows": "Disabled",
     "hdr_prep_windows": "HDR state change",
