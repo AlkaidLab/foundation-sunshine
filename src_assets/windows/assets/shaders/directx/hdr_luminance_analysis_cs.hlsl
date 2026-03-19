@@ -18,7 +18,7 @@
  *   Used for P95/P99 percentile computation for stable peak luminance.
  *
  * Thread group size: 16x16 = 256 threads
- * Dispatch: (ceil(width/16), ceil(height/16), 1)
+ * Dispatch: (ceil(analysisWidth/16), ceil(analysisHeight/16), 1)
  */
 
 // scRGB to nits conversion factor
@@ -31,6 +31,13 @@ static const float NITS_PER_BIN = HISTOGRAM_MAX_NITS / HISTOGRAM_BINS;  // 78.12
 
 // Input texture (scRGB FP16)
 Texture2D<float4> inputTexture : register(t0);
+SamplerState linearSampler : register(s0);
+
+cbuffer AnalysisParams : register(b0) {
+    uint analysisWidth;
+    uint analysisHeight;
+    uint2 _pad;
+};
 
 // Per-group reduction results
 struct GroupResult {
@@ -61,16 +68,14 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         gs_histogram[GIndex] = 0;
     }
 
-    // Get texture dimensions
-    uint width, height;
-    inputTexture.GetDimensions(width, height);
-
-    // Compute maxRGB for this pixel
+    // Compute maxRGB for this analysis sample
     float maxRGB_nits = 0.0;
-    bool valid = (DTid.x < width && DTid.y < height);
+    bool valid = (DTid.x < analysisWidth && DTid.y < analysisHeight);
 
     if (valid) {
-        float4 pixel = inputTexture[DTid.xy];
+        // Sample the full-resolution frame on a lower-resolution analysis grid.
+        float2 uv = (float2(DTid.xy) + 0.5) / float2(analysisWidth, analysisHeight);
+        float4 pixel = inputTexture.SampleLevel(linearSampler, uv, 0.0);
 
         // maxRGB = max(R, G, B) — the brightest channel per pixel
         // This is the key statistic used by CUVA HDR Vivid and HDR10+
@@ -114,7 +119,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     // Thread 0 writes the group's result (including histogram)
     if (GIndex == 0) {
         // Compute flat group index
-        uint dispatchWidth = (width + 15) / 16;
+        uint dispatchWidth = (analysisWidth + 15) / 16;
         uint groupIndex = Gid.y * dispatchWidth + Gid.x;
 
         GroupResult result;

@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
+import Checkbox from '../../../components/Checkbox.vue'
 
 const props = defineProps({
   platform: String,
@@ -154,16 +155,13 @@ function addRemapping(type) {
                 </select>
               </div>
 
-              <!-- HDR Luminance Analysis -->
-              <div class="mb-3">
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" id="hdr_luminance_analysis" v-model="config.hdr_luminance_analysis" true-value="enabled" false-value="disabled" />
-                  <label class="form-check-label" for="hdr_luminance_analysis">
-                    {{ $tp('config.hdr_luminance_analysis') }}
-                  </label>
-                </div>
-                <div class="form-text">{{ $tp('config.hdr_luminance_analysis_desc') }}</div>
-              </div>
+              <Checkbox
+                class="mb-3"
+                id="hdr_luminance_analysis"
+                locale-prefix="config"
+                v-model="config.hdr_luminance_analysis"
+                default="true"
+              ></Checkbox>
             </div>
           </div>
         </div>

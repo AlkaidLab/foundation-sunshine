@@ -80,6 +80,15 @@ namespace nvenc {
      */
     virtual void
     set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) = 0;
+
+    /**
+     * @brief Set per-frame HDR luminance statistics for dynamic metadata injection.
+     *        When valid stats are provided, the encoder will generate HDR10+ SEI/OBU
+     *        payloads and inject them into each encoded frame.
+     * @param stats Per-frame luminance statistics from GPU analysis.
+     */
+    virtual void
+    set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) = 0;
   };
 
 }  // namespace nvenc

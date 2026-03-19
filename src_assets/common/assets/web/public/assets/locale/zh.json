@@ -284,6 +284,8 @@
     "gamepad_xone": "XOne (Xbox One)",
     "global_prep_cmd": "命令准备工作",
     "global_prep_cmd_desc": "任何应用运行前/后要运行的命令列表。如果任何前置命令失败，应用的启动过程将被中止。",
+    "hdr_luminance_analysis": "HDR 动态元数据 (HDR10+ / Vivid)",
+    "hdr_luminance_analysis_desc": "启用逐帧 GPU 亮度分析，并将 HDR10+ (ST 2094-40) 和 HDR Vivid (CUVA) 动态元数据注入编码比特流。可为支持动态 HDR 的终端（如华为 HDR Vivid 设备）提供逐帧色调映射参考。在高分辨率下会增加少量 GPU 开销（约 0.5-1.5ms/帧）。若开启 HDR 后出现帧率下降，可关闭此选项，串流将仅使用静态 HDR 元数据。",
     "hdr_prep_automatic_windows": "根据客户端请求开启/关闭 HDR 模式",
     "hdr_prep_no_operation_windows": "禁用",
     "hdr_prep_windows": "HDR 状态更改",
