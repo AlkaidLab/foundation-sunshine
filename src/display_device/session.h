@@ -230,6 +230,14 @@ namespace display_device {
     restore_state_impl(revert_reason_e reason = revert_reason_e::stream_ended);
 
     /**
+     * @brief Execute the actual deferred restore (VDD destruction + settings revert).
+     * @param reason The reason for reverting settings.
+     * @note Called by the grace timer when no new session arrives in time.
+     */
+    void
+    execute_deferred_restore(revert_reason_e reason);
+
+    /**
      * @brief Start polling mechanism as fallback when CCD API is temporarily unavailable.
      * @param reason The reason for reverting settings.
      */
@@ -245,6 +253,8 @@ namespace display_device {
     boost::optional<parsed_config_t::vdd_prep_e> current_vdd_prep; /**< Current VDD preparation mode for VDD mode sessions. */
     boost::optional<bool> current_use_vdd; /**< Whether current session is using VDD mode. */
     bool pending_restore_ = false; /**< Flag indicating if there is a pending restore settings operation waiting for unlock. */
+    bool deferred_restore_ = false; /**< Flag indicating a grace-period deferred restore is pending (VDD kept alive for potential reuse). */
+    revert_reason_e deferred_restore_reason_ = revert_reason_e::stream_ended; /**< The reason saved for deferred restore execution. */
     bool should_replace_vdd_id_ = false; /**< Flag indicating if VDD ID needs to be replaced after client switch. */
     std::string old_vdd_id_; /**< Old VDD ID that needs to be replaced. */
     boost::atomic<int> polling_retry_count_ {0}; /**< Retry counter for polling restore mechanism. */

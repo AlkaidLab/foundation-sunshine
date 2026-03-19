@@ -58,6 +58,36 @@ namespace display_device {
   namespace {
 
     /**
+     * @brief Remove entries for devices that no longer exist in the system from a device-keyed map.
+     * @details This prevents stale VDD device GUIDs (from destroyed virtual displays) from being
+     *          used when persistent data survives across VDD destroy/recreate cycles.
+     * @param device_map The map to filter in-place.
+     * @return Number of entries removed.
+     */
+    template <typename MapT>
+    size_t
+    remove_stale_device_entries(MapT &device_map) {
+      if (device_map.empty()) {
+        return 0;
+      }
+
+      const auto available_devices { enum_available_devices() };
+      size_t removed { 0 };
+      for (auto it = device_map.begin(); it != device_map.end();) {
+        if (available_devices.find(it->first) == available_devices.end()) {
+          BOOST_LOG(debug) << "Removing stale device entry (device no longer exists): " << it->first;
+          it = device_map.erase(it);
+          ++removed;
+        }
+        else {
+          ++it;
+        }
+      }
+
+      return removed;
+    }
+
+    /**
      * @brief Get one of the primary display ids found in the topology metadata.
      * @param metadata Topology metadata that also includes current active topology.
      * @return Device id for the primary device, or empty string if primary device not found somehow.
@@ -121,8 +151,18 @@ namespace display_device {
      */
     boost::optional<std::string>
     handle_primary_display_configuration(const parsed_config_t::device_prep_e &device_prep, const std::string &previous_primary_display, const topology_metadata_t &metadata) {
+      // Validate that previous primary display still exists (could be a stale VDD GUID)
+      auto validated_previous_primary { previous_primary_display };
+      if (!validated_previous_primary.empty()) {
+        const auto available_devices { enum_available_devices() };
+        if (available_devices.find(validated_previous_primary) == available_devices.end()) {
+          BOOST_LOG(info) << "Previous primary display no longer exists, will re-detect: " << validated_previous_primary;
+          validated_previous_primary.clear();
+        }
+      }
+
       if (device_prep == parsed_config_t::device_prep_e::ensure_primary) {
-        const auto original_primary_display { previous_primary_display.empty() ? get_current_primary_display(metadata) : previous_primary_display };
+        const auto original_primary_display { validated_previous_primary.empty() ? get_current_primary_display(metadata) : validated_previous_primary };
         const auto new_primary_display { determine_new_primary_display(original_primary_display, metadata) };
 
         BOOST_LOG(info) << "Changing primary display to: " << new_primary_display;
@@ -135,9 +175,9 @@ namespace display_device {
         return original_primary_display;
       }
 
-      if (!previous_primary_display.empty()) {
-        BOOST_LOG(info) << "Changing primary display back to: " << previous_primary_display;
-        if (!set_as_primary_device(previous_primary_display)) {
+      if (!validated_previous_primary.empty()) {
+        BOOST_LOG(info) << "Changing primary display back to: " << validated_previous_primary;
+        if (!set_as_primary_device(validated_previous_primary)) {
           // Error already logged
           return boost::none;
         }
@@ -201,8 +241,15 @@ namespace display_device {
      */
     boost::optional<device_display_mode_map_t>
     handle_display_mode_configuration(const boost::optional<resolution_t> &resolution, const boost::optional<refresh_rate_t> &refresh_rate, const device_display_mode_map_t &previous_display_modes, const topology_metadata_t &metadata) {
+      // Filter out stale device entries (e.g., destroyed VDD) from persistent modes
+      // to prevent set_display_modes from failing on non-existent devices.
+      auto filtered_previous_modes { previous_display_modes };
+      if (const auto removed = remove_stale_device_entries(filtered_previous_modes); removed > 0) {
+        BOOST_LOG(info) << "Filtered " << removed << " stale device(s) from previous display modes";
+      }
+
       if (resolution || refresh_rate) {
-        const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(get_device_ids_from_topology(metadata.current_topology)) : previous_display_modes };
+        const auto original_display_modes { filtered_previous_modes.empty() ? get_current_display_modes(get_device_ids_from_topology(metadata.current_topology)) : filtered_previous_modes };
         const auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
 
         BOOST_LOG(info) << "Changing display modes to: " << to_string(new_display_modes);
@@ -215,9 +262,9 @@ namespace display_device {
         return original_display_modes;
       }
 
-      if (!previous_display_modes.empty()) {
-        BOOST_LOG(info) << "Changing display modes back to: " << to_string(previous_display_modes);
-        if (!set_display_modes(previous_display_modes)) {
+      if (!filtered_previous_modes.empty()) {
+        BOOST_LOG(info) << "Changing display modes back to: " << to_string(filtered_previous_modes);
+        if (!set_display_modes(filtered_previous_modes)) {
           // Error already logged
           return boost::none;
         }
@@ -321,11 +368,15 @@ namespace display_device {
           return false;
         }
 
-        // 检查当前拓扑是否稳定
+        // 检查当前拓扑是否稳定（metadata.current_topology 在 VDD 模式下可能只含 VDD 组）
         auto current_topology = get_current_topology();
-        if (is_topology_the_same(current_topology, metadata.current_topology)) {
+        const auto metadata_device_ids = get_device_ids_from_topology(metadata.current_topology);
+        const auto current_device_ids = get_device_ids_from_topology(current_topology);
+        bool topology_stable = std::all_of(metadata_device_ids.begin(), metadata_device_ids.end(),
+          [&current_device_ids](const std::string &id) { return current_device_ids.count(id) > 0; });
+        if (topology_stable) {
           // 检查显示模式是否稳定
-          auto current_modes = get_current_display_modes(get_device_ids_from_topology(current_topology));
+          auto current_modes = get_current_display_modes(metadata_device_ids);
           bool modes_stable = true;
 
           for (const auto &device_id : metadata.duplicated_devices) {
@@ -404,8 +455,14 @@ namespace display_device {
      */
     boost::optional<hdr_state_map_t>
     handle_hdr_state_configuration(const boost::optional<bool> &change_hdr_state, const hdr_state_map_t &previous_hdr_states, const topology_metadata_t &metadata) {
+      // Filter out stale device entries (e.g., destroyed VDD) from persistent HDR states
+      auto filtered_previous_hdr_states { previous_hdr_states };
+      if (const auto removed = remove_stale_device_entries(filtered_previous_hdr_states); removed > 0) {
+        BOOST_LOG(info) << "Filtered " << removed << " stale device(s) from previous HDR states";
+      }
+
       if (change_hdr_state) {
-        const auto original_hdr_states { previous_hdr_states.empty() ? get_current_hdr_states(get_device_ids_from_topology(metadata.current_topology)) : previous_hdr_states };
+        const auto original_hdr_states { filtered_previous_hdr_states.empty() ? get_current_hdr_states(get_device_ids_from_topology(metadata.current_topology)) : filtered_previous_hdr_states };
         const auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
 
         BOOST_LOG(info) << "Changing hdr states to: " << to_string(new_hdr_states);
@@ -418,9 +475,9 @@ namespace display_device {
         return original_hdr_states;
       }
 
-      if (!previous_hdr_states.empty()) {
-        BOOST_LOG(info) << "Changing hdr states back to: " << to_string(previous_hdr_states);
-        if (!blank_hdr_states(previous_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(previous_hdr_states)) {
+      if (!filtered_previous_hdr_states.empty()) {
+        BOOST_LOG(info) << "Changing hdr states back to: " << to_string(filtered_previous_hdr_states);
+        if (!blank_hdr_states(filtered_previous_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(filtered_previous_hdr_states)) {
           // Error already logged
           return boost::none;
         }

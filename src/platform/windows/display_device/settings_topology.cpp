@@ -1,3 +1,6 @@
+// standard includes
+#include <algorithm>
+
 // local includes
 #include "settings_topology.h"
 #include "src/display_device/to_string.h"
@@ -456,13 +459,23 @@ namespace display_device {
     const bool primary_device_requested { device_id.empty() };
     const auto duplicated_devices { get_duplicate_devices(requested_device_id, current_topology) };
 
-    // VDD模式：不修改拓扑，使用当前拓扑作为initial和modified
+    // VDD模式：构建仅包含VDD设备所在组的拓扑用于 metadata
+    // 这样 handle_display_mode_configuration 和 handle_hdr_state_configuration
+    // 只会查询/设置VDD相关设备的模式，不会因为物理显示器状态不稳定而失败
+    active_topology_t vdd_only_topology;
+    std::copy_if(current_topology.begin(), current_topology.end(),
+      std::back_inserter(vdd_only_topology),
+      [&requested_device_id](const auto &group) {
+        return std::any_of(group.begin(), group.end(),
+          [&requested_device_id](const auto &id) { return id == requested_device_id; });
+      });
+
     return handled_topology_result_t {
       topology_pair_t {
         current_topology,
         current_topology },
       topology_metadata_t {
-        current_topology,
+        vdd_only_topology,
         {},  // 没有新启用的设备
         primary_device_requested,
         duplicated_devices }
