@@ -34,6 +34,21 @@ mkdir "%DIST_DIR%"
 copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
 rem ============================================================================
+rem  Stop Sunshine service to release HID device handle
+rem ============================================================================
+
+echo Stopping Sunshine service...
+set "SERVICE_WAS_RUNNING=0"
+net stop SunshineService >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "SERVICE_WAS_RUNNING=1"
+    echo Sunshine service stopped.
+    timeout /t 2 /nobreak 1>nul
+) else (
+    echo Sunshine service not running (OK).
+)
+
+rem ============================================================================
 rem  Cleanup existing installation
 rem ============================================================================
 
@@ -81,4 +96,18 @@ if %ERRORLEVEL% EQU 0 (
     echo Virtual Mouse driver installation completed successfully!
 ) else (
     echo Virtual Mouse driver installation failed with error %ERRORLEVEL%
+)
+
+rem ============================================================================
+rem  Restart Sunshine service if it was running before
+rem ============================================================================
+
+if "%SERVICE_WAS_RUNNING%"=="1" (
+    echo Restarting Sunshine service...
+    net start SunshineService >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        echo Sunshine service restarted.
+    ) else (
+        echo WARNING: Could not restart Sunshine service.
+    )
 )

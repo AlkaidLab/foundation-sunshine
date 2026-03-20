@@ -17,6 +17,18 @@ if not exist "%NEFCON%" (
     set "NEFCON=%DIST_DIR%\nefconw.exe"
 )
 
+rem Stop Sunshine service to release HID device handle
+echo Stopping Sunshine service...
+set "SERVICE_WAS_RUNNING=0"
+net stop SunshineService >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "SERVICE_WAS_RUNNING=1"
+    echo Sunshine service stopped.
+    timeout /t 2 /nobreak 1>nul
+) else (
+    echo Sunshine service not running (OK).
+)
+
 if exist "%NEFCON%" (
     echo Removing all Virtual Mouse devices...
     :uninstall_remove_loop
@@ -33,3 +45,9 @@ if exist "%DIST_DIR%" (
 )
 
 echo Virtual Mouse driver uninstalled.
+
+rem Restart Sunshine service if it was running before
+if "%SERVICE_WAS_RUNNING%"=="1" (
+    echo Restarting Sunshine service...
+    net start SunshineService >nul 2>&1
+)

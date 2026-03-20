@@ -14,7 +14,7 @@ Class=HIDClass
 ClassGuid={745a17a0-74d3-11d0-b6fe-00a0c90f57da}
 Provider=%ManufacturerName%
 CatalogFile=ZakoVirtualMouse.cat
-DriverVer = 03/19/2026,20.25.14.232
+DriverVer = 03/19/2026,22.46.22.358
 
 [Manufacturer]
 %ManufacturerName%=Standard,NTamd64.10.0...22000

@@ -14,6 +14,11 @@
 #include <hidpi.h>
 #include <setupapi.h>
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <thread>
+
 #include "virtual_mouse.h"
 #include "src/logging.h"
 
@@ -114,12 +119,63 @@ namespace platf {
     // Implementation Detail
     // ========================================================================
 
+    // Flush interval for accumulated mouse movement (4ms ≈ 250Hz).
+    // HidD_SetFeature takes ~3ms, so this is the practical minimum.
+    static constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(4);
+
     struct device_t::impl_t {
       HANDLE hDevice = INVALID_HANDLE_VALUE;
       uint8_t buttonState = 0;  // Current button state (accumulated)
 
+      // Accumulated mouse deltas (written by callers, read by flush thread)
+      std::mutex accum_mutex;
+      int32_t accum_dx = 0;
+      int32_t accum_dy = 0;
+      bool accum_dirty = false;
+
+      // Flush thread
+      std::thread flush_thread;
+      std::atomic<bool> flush_running { false };
+
       ~impl_t() {
+        stop_flush_thread();
         close();
+      }
+
+      void
+      stop_flush_thread() {
+        flush_running.store(false, std::memory_order_release);
+        if (flush_thread.joinable()) {
+          flush_thread.join();
+        }
+      }
+
+      void
+      start_flush_thread() {
+        flush_running.store(true, std::memory_order_release);
+        flush_thread = std::thread([this]() {
+          while (flush_running.load(std::memory_order_acquire)) {
+            flush_accumulated();
+            std::this_thread::sleep_for(FLUSH_INTERVAL);
+          }
+        });
+      }
+
+      void
+      flush_accumulated() {
+        int16_t dx, dy;
+        uint8_t buttons;
+        {
+          std::lock_guard<std::mutex> lk(accum_mutex);
+          if (!accum_dirty) return;
+          dx = static_cast<int16_t>(std::clamp(accum_dx, -32767, 32767));
+          dy = static_cast<int16_t>(std::clamp(accum_dy, -32767, 32767));
+          buttons = buttonState;
+          accum_dx = 0;
+          accum_dy = 0;
+          accum_dirty = false;
+        }
+        sendReportDirect(buttons, dx, dy, 0, 0);
       }
 
       void
@@ -211,23 +267,30 @@ namespace platf {
                             << " PID="sv << VMOUSE_PID << ")"sv;
         }
 
+        if (found) {
+          start_flush_thread();
+        }
+
         return found;
       }
 
       /**
-       * @brief Send an output report to the virtual mouse driver.
+       * @brief Directly send an output report to the virtual mouse driver.
+       * Called from the flush thread or for non-movement reports.
        */
       bool
-      sendReport(uint8_t buttons, int16_t dx, int16_t dy, int8_t sv, int8_t sh) {
+      sendReportDirect(uint8_t buttons, int16_t dx, int16_t dy, int8_t sv, int8_t sh) {
         if (hDevice == INVALID_HANDLE_VALUE) return false;
 
         auto report = detail::build_output_report(buttons, dx, dy, sv, sh);
 
         BOOL result = HidD_SetFeature(hDevice, (PVOID) report.data(), static_cast<ULONG>(report.size()));
+
         if (!result) {
           DWORD err = GetLastError();
           if (detail::should_close_on_write_error(err)) {
             VMOUSE_LOG(warning) << "vmouse: Device disconnected, closing handle"sv;
+            flush_running.store(false, std::memory_order_release);
             close();
           }
           return false;
@@ -253,31 +316,37 @@ namespace platf {
 
     bool
     device_t::move(int16_t delta_x, int16_t delta_y) {
-      return impl->sendReport(impl->buttonState, delta_x, delta_y, 0, 0);
+      // Accumulate deltas; the flush thread will send them periodically
+      std::lock_guard<std::mutex> lk(impl->accum_mutex);
+      impl->accum_dx += delta_x;
+      impl->accum_dy += delta_y;
+      impl->accum_dirty = true;
+      return true;
     }
 
     bool
     device_t::button(uint8_t button_mask, bool release) {
       impl->buttonState = detail::apply_button_transition(impl->buttonState, button_mask, release);
-      // Send report with current button state and zero movement
-      return impl->sendReport(impl->buttonState, 0, 0, 0, 0);
+      // Flush any pending movement with the new button state
+      impl->flush_accumulated();
+      return impl->sendReportDirect(impl->buttonState, 0, 0, 0, 0);
     }
 
     bool
     device_t::scroll(int8_t distance) {
-      return impl->sendReport(impl->buttonState, 0, 0, distance, 0);
+      return impl->sendReportDirect(impl->buttonState, 0, 0, distance, 0);
     }
 
     bool
     device_t::hscroll(int8_t distance) {
-      return impl->sendReport(impl->buttonState, 0, 0, 0, distance);
+      return impl->sendReportDirect(impl->buttonState, 0, 0, 0, distance);
     }
 
     bool
     device_t::send_report(uint8_t buttons, int16_t delta_x, int16_t delta_y,
                           int8_t scroll_v, int8_t scroll_h) {
       impl->buttonState = buttons;
-      return impl->sendReport(buttons, delta_x, delta_y, scroll_v, scroll_h);
+      return impl->sendReportDirect(buttons, delta_x, delta_y, scroll_v, scroll_h);
     }
 
     // ========================================================================
