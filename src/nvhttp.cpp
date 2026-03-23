@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -68,7 +69,7 @@ namespace nvhttp {
   };
 
   crypto::cert_chain_t cert_chain;
-  std::mutex cert_chain_mutex;
+  std::shared_mutex cert_chain_mutex;
 
   struct named_cert_t {
     std::string name;
@@ -403,7 +404,7 @@ namespace nvhttp {
 
     // Empty certificate chain and import certs from file
     {
-      std::lock_guard<std::mutex> lg(cert_chain_mutex);
+      std::unique_lock<std::shared_mutex> ul(cert_chain_mutex);
       cert_chain.clear();
       for (auto &named_cert : client.named_devices) {
         cert_chain.add(crypto::x509(named_cert.cert));
@@ -640,7 +641,7 @@ namespace nvhttp {
   }
 
   void
-  clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, pt::ptree &tree, const std::string &client_pairing_secret) {
+  clientpairingsecret(pair_session_t &sess, pt::ptree &tree, const std::string &client_pairing_secret) {
     if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
       fail_pair(sess, tree, "Out of order call to clientpairingsecret");
       return;
@@ -678,7 +679,12 @@ namespace nvhttp {
     auto verify = crypto::verify256(crypto::x509(client.cert), secret, sign);
     if (same_hash && verify) {
       tree.put("root.paired", 1);
-      add_cert->raise(crypto::x509(client.cert));
+
+      // Add cert to chain directly under exclusive lock
+      {
+        std::unique_lock<std::shared_mutex> ul(cert_chain_mutex);
+        cert_chain.add(crypto::x509(client.cert));
+      }
 
       // The client is now successfully paired and will be authorized to connect
       add_authorized_client(client.name, std::move(client.cert));
@@ -786,7 +792,7 @@ namespace nvhttp {
 
   template <class T>
   void
-  pair(std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+  pair(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     print_req<T>(request);
 
     // Rate limit pairing attempts per IP
@@ -896,7 +902,7 @@ namespace nvhttp {
     }
     else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
       auto pairingsecret = util::from_hex_vec(it->second, true);
-      clientpairingsecret(sess_it->second, add_cert, tree, pairingsecret);
+      clientpairingsecret(sess_it->second, tree, pairingsecret);
     }
     else {
       tree.put("root.<xmlattr>.status_code", 404);
@@ -2016,8 +2022,6 @@ namespace nvhttp {
     auto cert = file_handler::read_file(config::nvhttp.cert.c_str());
     setup(pkey, cert);
 
-    auto add_cert = std::make_shared<safe::queue_t<crypto::x509_t>>(30);
-
     // resume doesn't always get the parameter "localAudioPlayMode"
     // launch will store it in host_audio
     bool host_audio {};
@@ -2026,7 +2030,7 @@ namespace nvhttp {
     http_server_t http_server;
 
     // Verify certificates after establishing connection
-    https_server.verify = [add_cert, close_verify_safe](SSL *ssl) {
+    https_server.verify = [close_verify_safe](SSL *ssl) {
       crypto::x509_t x509 {
 #if OPENSSL_VERSION_MAJOR >= 3
         SSL_get1_peer_certificate(ssl)
@@ -2049,26 +2053,12 @@ namespace nvhttp {
         BOOST_LOG(debug) << subject_name << " -- "sv << (verified ? "verified"sv : "denied"sv);
       });
 
-      // Use non-blocking pop with 0ms timeout to avoid TOCTOU race between peek() and pop().
-      // peek() is lockless, so a concurrent verify callback could drain the queue after peek()
-      // returns true, causing the blocking pop() to wait forever and deadlock the HTTPS server.
-      {
-        std::lock_guard<std::mutex> lg(cert_chain_mutex);
-        while (true) {
-          auto cert = add_cert->pop(std::chrono::milliseconds(0));
-          if (!cert) break;
-
-          char subject_name[256];
-          X509_NAME_oneline(X509_get_subject_name(cert.get()), subject_name, sizeof(subject_name));
-
-          BOOST_LOG(debug) << "Added cert ["sv << subject_name << ']';
-          cert_chain.add(std::move(cert));
-        }
-      }
-
+      // Verify the client certificate under shared lock.
+      // New certs are added directly in clientpairingsecret() under exclusive lock,
+      // so the verify callback is read-only and can run concurrently.
       const char *err_str;
       {
-        std::lock_guard<std::mutex> lg(cert_chain_mutex);
+        std::shared_lock<std::shared_mutex> sl(cert_chain_mutex);
         if (!close_verify_safe) {
           err_str = cert_chain.verify_safe(x509.get());  // default
         }
@@ -2104,7 +2094,7 @@ namespace nvhttp {
 
     https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
-    https_server.resource["^/pair$"]["GET"] = [&add_cert](auto resp, auto req) { pair<SunshineHTTPS>(add_cert, resp, req); };
+    https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) { pair<SunshineHTTPS>(resp, req); };
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/displays$"]["GET"] = get_displays;
@@ -2124,7 +2114,7 @@ namespace nvhttp {
 
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
     http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
-    http_server.resource["^/pair$"]["GET"] = [&add_cert](auto resp, auto req) { pair<SimpleWeb::HTTP>(add_cert, resp, req); };
+    http_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) { pair<SimpleWeb::HTTP>(resp, req); };
 
     http_server.config.reuse_address = true;
     http_server.config.address = net::get_bind_address(address_family);
@@ -2180,7 +2170,7 @@ namespace nvhttp {
     client_t client;
     client_root = client;
     {
-      std::lock_guard<std::mutex> lg(cert_chain_mutex);
+      std::unique_lock<std::shared_mutex> ul(cert_chain_mutex);
       cert_chain.clear();
     }
     save_state();
