@@ -88,8 +88,7 @@ namespace lifetime {
     int zero = 0;
     desired_exit_code.compare_exchange_strong(zero, exit_code);
 
-    // Raise SIGINT to start termination
-    std::raise(SIGINT);
+    mail::man->event<bool>(mail::shutdown)->raise(true);
 
     // Termination will happen asynchronously, but the caller may
     // have wanted synchronous behavior.

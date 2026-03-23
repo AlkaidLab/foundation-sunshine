@@ -306,7 +306,7 @@ main(int argc, char *argv[]) {
 
   // Create signal handler after logging has been initialized
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
-  on_signal(SIGINT, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
+  on_signal(SIGINT, [&force_shutdown, shutdown_event]() {
     BOOST_LOG(info) << "Interrupt handler called"sv;
 
     auto task = []() {
@@ -316,19 +316,10 @@ main(int argc, char *argv[]) {
     };
     force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
-    // Break out of the main loop
     shutdown_event->raise(true);
-    system_tray::end_tray();
-    try {
-      display_device::session_t::get().restore_state();
-    }
-    catch (...) {
-    }
-
-    display_device_deinit_guard = nullptr;
   });
 
-  on_signal(SIGTERM, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
+  on_signal(SIGTERM, [&force_shutdown, shutdown_event]() {
     BOOST_LOG(info) << "Terminate handler called"sv;
 
     auto task = []() {
@@ -338,16 +329,7 @@ main(int argc, char *argv[]) {
     };
     force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
-    // Break out of the main loop
     shutdown_event->raise(true);
-    system_tray::end_tray();
-    try {
-      display_device::session_t::get().restore_state();
-    }
-    catch (...) {
-    }
-
-    display_device_deinit_guard = nullptr;
   });
 
 #ifdef _WIN32
@@ -440,6 +422,14 @@ main(int argc, char *argv[]) {
   }
 
   mainThreadLoop(shutdown_event);
+
+  system_tray::end_tray();
+  try {
+    display_device::session_t::get().restore_state();
+  }
+  catch (...) {
+  }
+  display_device_deinit_guard = nullptr;
 
   httpThread.join();
   configThread.join();
