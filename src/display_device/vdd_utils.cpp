@@ -183,8 +183,8 @@ namespace display_device {
       bool read_timed_out = false;
       if (response) {
         char buffer[kPipeBufferSize];
-        DWORD bytesRead;
-        if (!ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, &overlapped)) {
+        DWORD bytesRead = 0;
+        if (!ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, &overlapped)) {
           if (GetLastError() != ERROR_IO_PENDING) {
             BOOST_LOG(warning) << "读取响应失败，错误代码: " << GetLastError();
             return false;
@@ -199,6 +199,11 @@ namespace display_device {
             read_timed_out = true;
             CancelIo(hPipe);
           }
+        }
+        else {
+          // ReadFile completed synchronously
+          buffer[bytesRead] = '\0';
+          *response = std::string(buffer, bytesRead);
         }
       }
 
