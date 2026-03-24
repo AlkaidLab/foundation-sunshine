@@ -1697,6 +1697,7 @@ namespace platf::dxgi {
       amf_cfg.enforce_hrd = config::video.amd.amd_enforce_hrd;
       amf_cfg.h264_cabac = (config::video.amd.amd_coder != 2);  // 2 = CAVLC
       amf_cfg.max_ltr_frames = 1;  // Enable RFI
+      amf_cfg.qvbr_quality_level = config::video.amd.amd_qvbr_quality;
 
       // Pre-Analysis sub-system defaults: enable PAQ + TAQ for better quality at same bitrate
       if (amf_cfg.preanalysis && *amf_cfg.preanalysis) {
