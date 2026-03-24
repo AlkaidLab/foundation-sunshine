@@ -127,6 +127,13 @@ namespace system_tray {
     vdd_submenu[3].text = s_vdd_headless_create.c_str();
   }
 
+  static void clear_tray_notification() {
+    tray.notification_title = NULL;
+    tray.notification_text = NULL;
+    tray.notification_icon = NULL;
+    tray.notification_cb = NULL;
+  }
+
   // 更新访问项目地址子菜单项的文本
   static void tray_visit_project_submenu_text() {
     visit_project_submenu[0].text = s_visit_project_sunshine.c_str();
@@ -1236,10 +1243,7 @@ namespace system_tray {
       return;
     }
 
-    tray.notification_title = NULL;
-    tray.notification_text = NULL;
-    tray.notification_cb = NULL;
-    tray.notification_icon = NULL;
+    clear_tray_notification();
     tray.icon = TRAY_ICON_PLAYING;
     tray_update(&tray);
     tray.icon = TRAY_ICON_PLAYING;
@@ -1260,6 +1264,8 @@ namespace system_tray {
     tray.tooltip = msg.c_str();
     tray.notification_icon = TRAY_ICON_PLAYING;
     tray_update(&tray);
+
+    clear_tray_notification();
   }
 
   void
@@ -1268,10 +1274,7 @@ namespace system_tray {
       return;
     }
 
-    tray.notification_title = NULL;
-    tray.notification_text = NULL;
-    tray.notification_cb = NULL;
-    tray.notification_icon = NULL;
+    clear_tray_notification();
     tray.icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
 
@@ -1292,6 +1295,8 @@ namespace system_tray {
     tray.tooltip = msg.c_str();
     tray.notification_icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
+
+    clear_tray_notification();
   }
 
   void
@@ -1300,10 +1305,7 @@ namespace system_tray {
       return;
     }
 
-    tray.notification_title = NULL;
-    tray.notification_text = NULL;
-    tray.notification_cb = NULL;
-    tray.notification_icon = NULL;
+    clear_tray_notification();
     tray.icon = TRAY_ICON;
     tray_update(&tray);
 
@@ -1324,6 +1326,8 @@ namespace system_tray {
     tray.notification_text = msg.c_str();
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
+
+    clear_tray_notification();
   }
 
   void
@@ -1332,10 +1336,7 @@ namespace system_tray {
       return;
     }
 
-    tray.notification_title = NULL;
-    tray.notification_text = NULL;
-    tray.notification_cb = NULL;
-    tray.notification_icon = NULL;
+    clear_tray_notification();
     tray.icon = TRAY_ICON;
     tray_update(&tray);
     tray.icon = TRAY_ICON;
@@ -1359,6 +1360,8 @@ namespace system_tray {
       launch_ui_with_path("/pin");
     };
     tray_update(&tray);
+
+    clear_tray_notification();
   }
  
   void

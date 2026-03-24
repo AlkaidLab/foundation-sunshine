@@ -1628,14 +1628,16 @@ namespace video {
             refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
             // Process any pending display switch with the new list of displays
+            bool user_switched = false;
             if (switch_display_event->peek()) {
               display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
+              user_switched = true;
             }
 
-            // Use client-specified display_name if provided
+            // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
             const auto &config = capture_ctxs.front().config;
             std::string target_display_name = display_names[display_p];
-            if (!config.display_name.empty()) {
+            if (!user_switched && !config.display_name.empty()) {
               // config.display_name may be a device ID - convert to display name
               std::string resolved_display_name = display_device::get_display_name(config.display_name);
               if (resolved_display_name.empty()) {
@@ -2897,14 +2899,16 @@ namespace video {
       refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
       // Process any pending display switch with the new list of displays
+      bool user_switched = false;
       if (switch_display_event->peek()) {
         display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
+        user_switched = true;
       }
 
-      // Use client-specified display_name if provided
+      // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
       const auto &config = synced_session_ctxs.front()->config;
       std::string target_display_name = display_names[display_p];
-      if (!config.display_name.empty()) {
+      if (!user_switched && !config.display_name.empty()) {
         // config.display_name may be a device ID - convert to display name
         std::string resolved_display_name = display_device::get_display_name(config.display_name);
         if (resolved_display_name.empty()) {

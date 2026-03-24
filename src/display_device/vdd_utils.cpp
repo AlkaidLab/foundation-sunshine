@@ -33,7 +33,7 @@ namespace display_device {
   namespace vdd_utils {
 
     const wchar_t *kVddPipeName = L"\\\\.\\pipe\\ZakoVDDPipe";
-    const DWORD kPipeTimeoutMs = 5000;
+    const DWORD kPipeTimeoutMs = 3000;
     const DWORD kPipeBufferSize = 4096;
     const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
@@ -141,7 +141,7 @@ namespace display_device {
     }
 
     bool
-    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response) {
+    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out) {
       auto hPipe = connect_to_pipe_with_retry(pipe_name);
       if (hPipe == INVALID_HANDLE_VALUE) {
         BOOST_LOG(error) << "连接MTT虚拟显示管道失败，已重试多次";
@@ -180,10 +180,11 @@ namespace display_device {
       }
 
       // 读取响应
+      bool read_timed_out = false;
       if (response) {
         char buffer[kPipeBufferSize];
-        DWORD bytesRead;
-        if (!ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, &overlapped)) {
+        DWORD bytesRead = 0;
+        if (!ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, &overlapped)) {
           if (GetLastError() != ERROR_IO_PENDING) {
             BOOST_LOG(warning) << "读取响应失败，错误代码: " << GetLastError();
             return false;
@@ -194,9 +195,21 @@ namespace display_device {
             buffer[bytesRead] = '\0';
             *response = std::string(buffer, bytesRead);
           }
+          else {
+            read_timed_out = true;
+            CancelIo(hPipe);
+          }
+        }
+        else {
+          // ReadFile completed synchronously
+          buffer[bytesRead] = '\0';
+          *response = std::string(buffer, bytesRead);
         }
       }
 
+      if (timed_out) {
+        *timed_out = read_timed_out;
+      }
       return true;
     }
 
@@ -309,12 +322,14 @@ namespace display_device {
       }
 
       // 尝试发送命令（带GUID或不带GUID）
-      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response);
+      bool read_timed_out = false;
+      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out);
 
       // 如果带GUID的命令失败，降级为不带GUID的命令（兼容旧版驱动）
       if (!success && !guid_str.empty()) {
         BOOST_LOG(warning) << "带GUID的命令失败，尝试降级为不带GUID的命令";
-        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response);
+        read_timed_out = false;
+        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response, &read_timed_out);
       }
 
       if (!success) {
@@ -325,7 +340,7 @@ namespace display_device {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
-      BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response;
+      BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response << " [return=" << (read_timed_out ? 1 : 0) << "]";
       return true;
     }
 
@@ -627,7 +642,7 @@ namespace display_device {
     set_hdr_state(bool enable_hdr) {
       auto vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
       if (vdd_device_id.empty()) {
-        BOOST_LOG(debug) << "未找到虚拟显示器设备，跳过HDR状态设置";
+        BOOST_LOG(info) << "未找到虚拟显示器设备，跳过HDR状态设置";
         return true;
       }
 
@@ -636,13 +651,13 @@ namespace display_device {
 
       auto hdr_state_it = current_hdr_states.find(vdd_device_id);
       if (hdr_state_it == current_hdr_states.end()) {
-        BOOST_LOG(debug) << "虚拟显示器不支持HDR或状态未知";
+        BOOST_LOG(info) << "虚拟显示器不支持HDR或状态未知";
         return true;
       }
 
       hdr_state_e target_state = enable_hdr ? hdr_state_e::enabled : hdr_state_e::disabled;
       if (hdr_state_it->second == target_state) {
-        BOOST_LOG(debug) << "虚拟显示器HDR状态已是目标状态";
+        BOOST_LOG(info) << "虚拟显示器HDR状态已是目标状态";
         return true;
       }
 
@@ -662,30 +677,55 @@ namespace display_device {
     }
 
     bool
-    apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep) {
+    apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
+      const device_info_map_t &pre_vdd_devices) {
       if (vdd_device_id.empty()) {
-        BOOST_LOG(debug) << "VDD设备ID为空，跳过vdd_prep处理";
+        BOOST_LOG(info) << "VDD设备ID为空，跳过vdd_prep处理";
         return true;
       }
 
       if (vdd_prep == parsed_config_t::vdd_prep_e::no_operation) {
-        BOOST_LOG(debug) << "vdd_prep设置为无操作，跳过物理显示器处理";
+        BOOST_LOG(info) << "vdd_prep设置为无操作，跳过物理显示器处理";
         return true;
       }
 
-      auto current_topology = get_current_topology();
-      if (current_topology.empty()) {
-        BOOST_LOG(warning) << "无法获取当前显示器拓扑";
-        return false;
+      // 从 pre_vdd_devices（VDD创建前保存的设备列表）中获取物理显示器，
+      // 确保即使 VDD 创建后物理屏变 inactive 也能正确识别
+      std::vector<std::string> physical_devices;
+      std::string original_primary_id;
+
+      if (!pre_vdd_devices.empty()) {
+        // 使用 VDD 创建前保存的设备信息（可靠）
+        for (const auto &[device_id, info] : pre_vdd_devices) {
+          if (info.friendly_name != ZAKO_NAME) {
+            physical_devices.push_back(device_id);
+            if (info.device_state == device_state_e::primary) {
+              original_primary_id = device_id;
+            }
+          }
+        }
+        BOOST_LOG(info) << "使用pre-VDD设备列表: " << physical_devices.size() << "个物理显示器"
+                        << (original_primary_id.empty() ? "" : ", 原主屏: " + original_primary_id);
+      }
+      else {
+        // 回退：从当前设备枚举中获取（VDD创建前未保存时的兜底逻辑）
+        BOOST_LOG(warning) << "未提供pre-VDD设备列表，从当前设备枚举中查找物理显示器";
+        const auto all_devices = enum_available_devices();
+        for (const auto &[device_id, info] : all_devices) {
+          if (device_id != vdd_device_id && info.friendly_name != ZAKO_NAME) {
+            physical_devices.push_back(device_id);
+            if (info.device_state == device_state_e::primary) {
+              original_primary_id = device_id;
+            }
+          }
+        }
       }
 
-      // 找出所有物理显示器（非VDD设备）
-      std::vector<std::string> physical_devices;
-      for (const auto &group : current_topology) {
-        for (const auto &id : group) {
-          if (id != vdd_device_id) {
-            physical_devices.push_back(id);
-          }
+      // 确保原主屏在列表最前面（set_topology 中第一组拥有主屏优先权）
+      if (!original_primary_id.empty()) {
+        auto it = std::find(physical_devices.begin(), physical_devices.end(), original_primary_id);
+        if (it != physical_devices.begin() && it != physical_devices.end()) {
+          std::rotate(physical_devices.begin(), it, it + 1);
         }
       }
 

@@ -435,7 +435,7 @@ namespace display_device {
 
     BOOST_LOG(info) << "重新加载VDD驱动...";
     vdd_utils::reload_driver();
-    std::this_thread::sleep_for(1500ms);
+    std::this_thread::sleep_for(1200ms);
   }
 
   void
@@ -445,6 +445,10 @@ namespace display_device {
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
+
+    // pre_vdd_devices: 在 VDD 创建前一刻保存的物理显示器快照
+    // 延迟到 VDD 创建前才捕获，确保无论是新建还是重建都能拿到正确状态
+    device_info_map_t pre_vdd_devices;
 
     // Rebuild VDD device on client switch
     if (!device_zako.empty() && !current_vdd_client_id.empty() &&
@@ -492,13 +496,18 @@ namespace display_device {
 
     // Create VDD device if not present
     if (device_zako.empty()) {
+      // 在创建 VDD 之前捕获物理显示器快照
+      // 此时无 VDD 存在（新建 or 重建后已销毁），物理屏应处于正常状态
+      pre_vdd_devices = display_device::enum_available_devices();
+      BOOST_LOG(info) << "已保存pre-VDD设备列表: " << display_device::to_string(pre_vdd_devices);
+
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 复用模式使用固定标识符，否则使用客户端ID生成唯一GUID
       const std::string vdd_identifier = config::video.vdd_reuse
         ? "shared_vdd"  // 固定标识符，所有客户端共用同一GUID
         : current_client_id;  // 为每个客户端生成不同GUID
       vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size);
-      std::this_thread::sleep_for(500ms);
+      std::this_thread::sleep_for(200ms);
     }
 
     // Wait for device to be ready
@@ -542,9 +551,9 @@ namespace display_device {
     // VDD模式下的拓扑控制与普通模式分开处理
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
       // User has specified a display configuration, apply it
-      if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep)) {
+      if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
         BOOST_LOG(info) << "已应用VDD屏幕布局设置";
-        std::this_thread::sleep_for(500ms);
+        std::this_thread::sleep_for(200ms);
       }
     }
     else {
