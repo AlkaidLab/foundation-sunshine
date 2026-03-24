@@ -19,7 +19,7 @@ namespace display_device::vdd_utils {
   // 常量定义
   inline constexpr int kMaxRetryCount = 3;
   inline constexpr auto kInitialRetryDelay = 500ms;
-  inline constexpr auto kMaxRetryDelay = 5000ms;
+  inline constexpr auto kMaxRetryDelay = 3000ms;
 
   extern const wchar_t *kVddPipeName;
   extern const DWORD kPipeTimeoutMs;
@@ -67,7 +67,7 @@ namespace display_device::vdd_utils {
   connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries = 3);
 
   bool
-  execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr);
+  execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr, bool *timed_out = nullptr);
 
   // 驱动重载函数
   bool
@@ -134,12 +134,16 @@ namespace display_device::vdd_utils {
    * @brief Apply VDD prep settings to handle physical displays.
    * @param vdd_device_id The VDD device ID.
    * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
+   * @param pre_vdd_devices Physical device info captured BEFORE VDD creation.
+   *        Used to reliably identify physical displays even if VDD creation
+   *        caused them to become inactive. If empty, falls back to current device enumeration.
    * @returns True if the operation succeeded.
    * @note This operation modifies topology without saving/restoring state,
    *       as Windows automatically handles topology memory when displays change.
    */
   bool
-  apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep);
+  apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
+    const device_info_map_t &pre_vdd_devices = {});
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);

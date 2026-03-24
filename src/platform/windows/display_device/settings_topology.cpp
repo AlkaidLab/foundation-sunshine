@@ -1,3 +1,6 @@
+// standard includes
+#include <thread>
+
 // local includes
 #include "settings_topology.h"
 #include "src/display_device/to_string.h"
@@ -442,14 +445,37 @@ namespace display_device {
       return boost::none;
     }
 
-    const auto current_topology { get_current_topology() };
-    if (!is_topology_valid(current_topology)) {
-      BOOST_LOG(error) << "Display topology is invalid!";
-      return boost::none;
+    // 获取活跃拓扑并检查设备是否可用，带重试以应对 HDR/拓扑变更后的短暂不稳定
+    active_topology_t current_topology;
+    bool device_active = false;
+    constexpr int max_retries = 3;
+    constexpr auto retry_delay = std::chrono::milliseconds(500);
+
+    for (int attempt = 0; attempt < max_retries; ++attempt) {
+      current_topology = get_current_topology();
+      if (!is_topology_valid(current_topology)) {
+        BOOST_LOG(warning) << "Display topology is invalid (attempt " << (attempt + 1) << "/" << max_retries << ")";
+        if (attempt + 1 < max_retries) {
+          std::this_thread::sleep_for(retry_delay);
+          continue;
+        }
+        BOOST_LOG(error) << "Display topology is invalid after all retries!";
+        return boost::none;
+      }
+
+      if (is_device_found_in_active_topology(requested_device_id, current_topology)) {
+        device_active = true;
+        break;
+      }
+
+      BOOST_LOG(warning) << "Device " << requested_device_id << " is not active (attempt " << (attempt + 1) << "/" << max_retries << "), waiting for display to stabilize...";
+      if (attempt + 1 < max_retries) {
+        std::this_thread::sleep_for(retry_delay);
+      }
     }
 
-    if (!is_device_found_in_active_topology(requested_device_id, current_topology)) {
-      BOOST_LOG(error) << "Device " << requested_device_id << " is not active!";
+    if (!device_active) {
+      BOOST_LOG(error) << "Device " << requested_device_id << " is not active after " << max_retries << " retries!";
       return boost::none;
     }
 
