@@ -1,0 +1,546 @@
+; Sunshine Inno Setup Script
+; Generated from CMake template - DO NOT EDIT DIRECTLY
+; Edit cmake/packaging/sunshine.iss.in instead
+
+#define MyAppName "@CMAKE_PROJECT_NAME@"
+#define MyAppVersion "@CPACK_PACKAGE_VERSION@"
+#define MyAppPublisher "@CPACK_PACKAGE_VENDOR@"
+#define MyAppURL "@CMAKE_PROJECT_HOMEPAGE_URL@"
+#define MyAppExeName "@CMAKE_PROJECT_NAME@.exe"
+#define MyAppGUIExeName "sunshine-gui.exe"
+#define MySourceDir "@INNO_STAGING_DIR@"
+#define MyIconFile "@CMAKE_SOURCE_DIR@\sunshine.ico"
+#define MyWelcomeBmp "@CMAKE_SOURCE_DIR@\welcome.bmp"
+#define MySmallBmp "@CMAKE_SOURCE_DIR@\wizard_small.bmp"
+#define MyLicenseFile "@CMAKE_SOURCE_DIR@\LICENSE"
+
+[Setup]
+; 基本设置
+AppId={{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppVerName=Sunshine Foundation Game Streaming Server v{#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/support
+AppUpdatesURL={#MyAppURL}
+DefaultDirName={code:GetPreviousInstallDir|{autopf}\{#MyAppName}}
+DefaultGroupName={#MyAppName}
+; 管理员权限
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
+; 输出设置
+OutputDir=@CPACK_PACKAGE_DIRECTORY@
+OutputBaseFilename=Sunshine
+; 压缩
+Compression=lzma2/ultra64
+SolidCompression=yes
+; UI 设置
+SetupIconFile={#MyIconFile}
+UninstallDisplayIcon={app}\{#MyAppExeName}
+WizardStyle=modern hidebevels
+WizardImageFile={#MyWelcomeBmp}
+WizardSmallImageFile={#MySmallBmp}
+WizardImageAlphaFormat=defined
+WizardSizePercent=120
+; 版本信息 (VersionInfoVersion requires X.X.X.X format, use AppVersion for display)
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription=Sunshine Foundation Game Streaming Server
+VersionInfoProductName={#MyAppName}
+; 其他
+LicenseFile={#MyLicenseFile}
+; 允许覆盖安装
+UsePreviousAppDir=yes
+; 最小 Windows 版本 (Windows 10)
+MinVersion=10.0
+; 64 位安装
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; 重启管理器
+CloseApplications=yes
+RestartApplications=yes
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "@CMAKE_SOURCE_DIR@\cmake\packaging\ChineseSimplified.isl"
+
+[CustomMessages]
+; English custom messages
+english.ComponentApplication=Sunshine main application
+english.ComponentAssets=Required assets (shaders, web UI)
+english.ComponentVDD=Zako Virtual Display Driver (HDR)
+english.ComponentAutostart=Launch on system startup
+english.ComponentFirewall=Add firewall exclusions
+english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
+english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
+english.TypeFull=Full installation
+english.TypeCompact=Compact installation
+english.TypeCustom=Custom installation
+english.StatusResetPermissions=Resetting file permissions...
+english.StatusUpdatePath=Updating system PATH...
+english.StatusMigrateConfig=Migrating configuration files...
+english.StatusFirewall=Configuring firewall rules...
+english.StatusInstallVDD=Installing virtual display driver...
+english.StatusInstallGamepad=Installing virtual gamepad...
+english.StatusInstallService=Installing system service...
+english.StatusAutostart=Configuring autostart...
+english.FinishOpenDocs=Open documentation
+english.FinishLaunchGUI=Launch Sunshine GUI
+english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nIt must be uninstalled before continuing.%n%nUninstall the previous version now?
+english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
+english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
+english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
+english.StatusStoppingService=Stopping Sunshine service...
+english.StatusStoppingProcesses=Stopping running Sunshine processes...
+
+; Chinese Simplified custom messages
+chinesesimplified.ComponentApplication=Sunshine 主程序
+chinesesimplified.ComponentAssets=必要资源（着色器、Web UI）
+chinesesimplified.ComponentVDD=Zako 虚拟显示驱动（HDR）
+chinesesimplified.ComponentAutostart=开机自动启动
+chinesesimplified.ComponentFirewall=添加防火墙规则
+chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
+chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
+chinesesimplified.TypeFull=完全安装
+chinesesimplified.TypeCompact=简洁安装
+chinesesimplified.TypeCustom=自定义安装
+chinesesimplified.StatusResetPermissions=正在重置文件权限...
+chinesesimplified.StatusUpdatePath=正在更新系统 PATH...
+chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
+chinesesimplified.StatusFirewall=正在配置防火墙规则...
+chinesesimplified.StatusInstallVDD=正在安装虚拟显示驱动...
+chinesesimplified.StatusInstallGamepad=正在安装虚拟手柄...
+chinesesimplified.StatusInstallService=正在安装系统服务...
+chinesesimplified.StatusAutostart=正在配置自动启动...
+chinesesimplified.FinishOpenDocs=打开使用文档
+chinesesimplified.FinishLaunchGUI=启动 Sunshine 管理界面
+chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%n需要先卸载才能继续。%n%n是否现在卸载旧版本？
+chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
+chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
+chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
+chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
+chinesesimplified.StatusStoppingProcesses=正在停止 Sunshine 进程...
+
+[Types]
+Name: "full"; Description: "{cm:TypeFull}"
+Name: "compact"; Description: "{cm:TypeCompact}"
+Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
+
+[Components]
+Name: "application"; Description: "{cm:ComponentApplication}"; Types: full compact custom; Flags: fixed
+Name: "assets"; Description: "{cm:ComponentAssets}"; Types: full compact custom; Flags: fixed
+Name: "vdd"; Description: "{cm:ComponentVDD}"; Types: full
+Name: "autostart"; Description: "{cm:ComponentAutostart}"; Types: full
+Name: "firewall"; Description: "{cm:ComponentFirewall}"; Types: full compact
+Name: "gamepad"; Description: "{cm:ComponentGamepad}"; Types: full
+Name: "tools"; Description: "{cm:ComponentTools}"; Types: full
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[Files]
+; Main application
+Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: application
+
+; Mandatory tools
+Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+
+; Portable scripts (will be deleted during install, but needed for layout)
+Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\uninstall_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
+
+; Language files
+Source: "{#MySourceDir}\scripts\languages\*"; DestDir: "{app}\scripts\languages"; Flags: ignoreversion recursesubdirs; Components: application
+
+; Service scripts
+Source: "{#MySourceDir}\scripts\install-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\uninstall-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\sleep.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+
+; Migration scripts
+Source: "{#MySourceDir}\scripts\migrate-config.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\migrate-images.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\IMAGE_MIGRATION.md"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+
+; PATH management
+Source: "{#MySourceDir}\scripts\update-path.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+
+; Assets (includes GUI, shaders, web UI, etc.)
+Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+
+; Helper tools
+Source: "{#MySourceDir}\tools\device-toggler.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\DevManView.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\restart64.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\SetDpi.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\setreg.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+
+; Autostart script
+Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: autostart
+
+; Firewall scripts
+Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: firewall
+Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: firewall
+
+; Virtual Display Driver scripts & files
+Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: vdd
+Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: vdd
+Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs; Components: vdd
+
+; Gamepad scripts
+Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
+Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
+
+; Optional diagnostic tools
+Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
+Source: "{#MySourceDir}\tools\audio-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
+
+[Icons]
+; Start Menu shortcuts
+Name: "{group}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"
+Name: "{group}\Sunshine Tools"; Filename: "{app}\tools"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+
+; Desktop shortcuts (optional, controlled by Tasks)
+Name: "{autodesktop}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Tasks: desktopicon
+
+; Install dir shortcut
+Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
+
+[Registry]
+; Store installation directory for future upgrades
+Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
+
+[Run]
+; Post-install actions (shown on progress page)
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C /Q >nul 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden
+Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
+Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
+Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
+Filename: "{app}\scripts\install-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
+Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
+Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
+
+; Finish page actions - user selectable (use runascurrentuser to avoid SpawnServer issues in RDP)
+Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
+Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall shellexec runascurrentuser nowait skipifsilent
+
+[UninstallRun]
+; Stop running processes first
+Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
+Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
+; Remove system components
+Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
+Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
+Filename: "{app}\scripts\uninstall-vdd.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVDD"
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--restore-nvprefs-undo"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreNV"
+Filename: "{app}\scripts\update-path.bat"; Parameters: "remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemovePath"
+
+[UninstallDelete]
+; Clean up portable scripts that shouldn't be in installed version
+Type: files; Name: "{app}\install_portable.bat"
+Type: files; Name: "{app}\uninstall_portable.bat"
+; Clean up temporary files
+Type: files; Name: "{app}\*.tmp"
+Type: files; Name: "{app}\*.old"
+
+[Code]
+// =============================================================================
+// Pascal Script for custom behavior
+// =============================================================================
+
+// =============================================================================
+// Deep UI Customization — Sunshine Branded Installer Theme
+// =============================================================================
+// Color palette (BGR format for Delphi):
+//   Brand Gold:     $0098E8  (RGB #E89800)  — primary accent
+//   Brand Orange:   $0060C0  (RGB #C06000)  — headings
+//   Dark Text:      $1A1A1A  (RGB #1A1A1A)  — body text
+//   Mid Text:       $444444  (RGB #444444)  — secondary text
+//   Light BG:       $FAF6F2  (RGB #F2F6FA)  — warm tint background
+//   Inner BG:       $F5F2EF  (RGB #EFF2F5)  — inner panel bg
+//   Header BG:      $A86420  (RGB #2064A8)  — header band color
+//   Accent Line:    $0088D8  (RGB #D88800)  — accent bar
+
+var
+  BrandPanel: TPanel;
+  BrandLogo: TBitmapImage;
+  BrandTitle: TNewStaticText;
+  BrandSubtitle: TNewStaticText;
+  AccentBar: TBevel;
+
+procedure InitializeWizard();
+var
+  WelcomeLeft: Integer;
+begin
+  // ── Main form tweaks ──
+  WizardForm.Color := $FAF6F2;
+
+  // ── Header panel (top bar on inner pages) — brand color ──
+  WizardForm.MainPanel.Color := $C07020;
+  WizardForm.PageNameLabel.Font.Color := $FFFFFF;
+  WizardForm.PageNameLabel.Font.Size := 11;
+  WizardForm.PageNameLabel.Font.Style := [fsBold];
+  WizardForm.PageDescriptionLabel.Font.Color := $F0E0D0;
+  WizardForm.PageDescriptionLabel.Font.Size := 9;
+
+  // ── Welcome page — full brand makeover ──
+  WelcomeLeft := WizardForm.WelcomeLabel1.Left;
+
+  // Welcome heading
+  WizardForm.WelcomeLabel1.Font.Name := 'Segoe UI';
+  WizardForm.WelcomeLabel1.Font.Color := $0060C0;
+  WizardForm.WelcomeLabel1.Font.Size := 16;
+  WizardForm.WelcomeLabel1.Font.Style := [fsBold];
+
+  // Welcome body text
+  WizardForm.WelcomeLabel2.Font.Name := 'Segoe UI';
+  WizardForm.WelcomeLabel2.Font.Color := $333333;
+  WizardForm.WelcomeLabel2.Font.Size := 9;
+
+  // ── License page ──
+  WizardForm.LicenseMemo.Font.Name := 'Consolas';
+  WizardForm.LicenseMemo.Font.Size := 9;
+  WizardForm.LicenseMemo.Color := $FFFFFF;
+
+  // ── Components page ──
+  WizardForm.ComponentsList.Color := $FFFFFF;
+  WizardForm.TypesCombo.Color := $FFFFFF;
+
+  // ── Directory page ──
+  WizardForm.DirEdit.Color := $FFFFFF;
+
+  // ── Ready page memo ──
+  WizardForm.ReadyMemo.Font.Name := 'Segoe UI';
+  WizardForm.ReadyMemo.Font.Size := 9;
+  WizardForm.ReadyMemo.Color := $FFFFFF;
+
+  // ── Progress page ──
+  WizardForm.StatusLabel.Font.Name := 'Segoe UI';
+  WizardForm.StatusLabel.Font.Color := $444444;
+  WizardForm.ProgressGauge.Top := WizardForm.ProgressGauge.Top;
+
+  // ── Finish page — brand style ──
+  WizardForm.FinishedHeadingLabel.Font.Name := 'Segoe UI';
+  WizardForm.FinishedHeadingLabel.Font.Color := $0060C0;
+  WizardForm.FinishedHeadingLabel.Font.Size := 16;
+  WizardForm.FinishedHeadingLabel.Font.Style := [fsBold];
+  WizardForm.FinishedLabel.Font.Name := 'Segoe UI';
+  WizardForm.FinishedLabel.Font.Color := $333333;
+  WizardForm.FinishedLabel.Font.Size := 9;
+
+  // ── Inner page background ──
+  WizardForm.InnerPage.Color := $F5F2EF;
+
+  // ── Bottom button panel styling ──
+  WizardForm.NextButton.Font.Size := 9;
+  WizardForm.BackButton.Font.Size := 9;
+  WizardForm.CancelButton.Font.Size := 9;
+
+  // ── Create accent bar below header ──
+  AccentBar := TBevel.Create(WizardForm);
+  AccentBar.Parent := WizardForm.InnerPage;
+  AccentBar.Shape := bsTopLine;
+  AccentBar.Left := 0;
+  AccentBar.Top := 0;
+  AccentBar.Width := WizardForm.InnerPage.Width;
+  AccentBar.Height := 3;
+
+  // ── Create brand panel on Welcome page (right side overlay) ──
+  BrandPanel := TPanel.Create(WizardForm);
+  BrandPanel.Parent := WizardForm.WelcomeLabel1.Parent;
+  BrandPanel.Left := WelcomeLeft;
+  BrandPanel.Top := WizardForm.WelcomeLabel2.Top + WizardForm.WelcomeLabel2.Height + 20;
+  BrandPanel.Width := WizardForm.WelcomeLabel1.Width;
+  BrandPanel.Height := 90;
+  BrandPanel.Color := $F0E8E0;
+  BrandPanel.BevelOuter := bvNone;
+  BrandPanel.ParentBackground := False;
+
+  // Version info in brand panel  
+  BrandTitle := TNewStaticText.Create(WizardForm);
+  BrandTitle.Parent := BrandPanel;
+  BrandTitle.Left := 16;
+  BrandTitle.Top := 12;
+  BrandTitle.Caption := 'Foundation Game Streaming Server';
+  BrandTitle.Font.Name := 'Segoe UI';
+  BrandTitle.Font.Size := 10;
+  BrandTitle.Font.Color := $0060C0;
+  BrandTitle.Font.Style := [fsBold];
+
+  BrandSubtitle := TNewStaticText.Create(WizardForm);
+  BrandSubtitle.Parent := BrandPanel;
+  BrandSubtitle.Left := 16;
+  BrandSubtitle.Top := 38;
+  BrandSubtitle.Caption := 'v' + '{#MyAppVersion}' + '  |  Open Source  |  Low-latency';
+  BrandSubtitle.Font.Name := 'Segoe UI';
+  BrandSubtitle.Font.Size := 9;
+  BrandSubtitle.Font.Color := $666666;
+
+  // URL link in brand panel
+  BrandLogo := TBitmapImage.Create(WizardForm);
+  BrandLogo.Parent := BrandPanel;
+  BrandLogo.Left := 16;
+  BrandLogo.Top := 60;
+  // Use as a visual separator line effect (reuse the bitmap component for placement)
+end;
+
+// Check if old NSIS installation exists and offer to uninstall
+function DetectOldNSISInstall(): Boolean;
+var
+  UninstallString: String;
+begin
+  Result := False;
+  // Check for NSIS uninstall registry entry
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
+    'UninstallString', UninstallString) then
+  begin
+    Result := True;
+  end;
+  // Also check WOW6432Node
+  if not Result then
+  begin
+    if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
+      'UninstallString', UninstallString) then
+    begin
+      Result := True;
+    end;
+  end;
+end;
+
+function GetOldNSISUninstallString(): String;
+var
+  UninstallString: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
+    'UninstallString', UninstallString) then
+  begin
+    Result := UninstallString;
+  end
+  else if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
+    'UninstallString', UninstallString) then
+  begin
+    Result := UninstallString;
+  end;
+end;
+
+// Read previous install directory from registry
+function GetPreviousInstallDir(Default: String): String;
+var
+  InstallDir: String;
+begin
+  Result := Default;
+  if RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir) then
+  begin
+    if DirExists(InstallDir) then
+      Result := InstallDir;
+  end;
+end;
+
+// Initialization: handle old NSIS upgrade
+function InitializeSetup(): Boolean;
+var
+  UninstallString: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+
+  if DetectOldNSISInstall() then
+  begin
+    UninstallString := GetOldNSISUninstallString();
+    if UninstallString <> '' then
+    begin
+      if MsgBox(CustomMessage('MsgOldNSISDetected'),
+        mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        // Run the NSIS uninstaller silently
+        Exec(RemoveQuotes(UninstallString), '/S', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+        // Give it a moment to finish
+        Sleep(2000);
+        // Check if uninstall was successful
+        if DetectOldNSISInstall() then
+        begin
+          MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
+          Result := False;
+        end;
+      end
+      else
+      begin
+        Result := False;
+      end;
+    end;
+  end;
+end;
+
+// Stop services and processes before installation to avoid locked files
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  // Stop the Sunshine service
+  Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Kill any running processes
+  Exec('taskkill', '/f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Small delay to allow processes to release files
+  Sleep(1000);
+end;
+
+// Clean up portable scripts during install
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    // Delete portable scripts in installed version
+    DeleteFile(ExpandConstant('{app}\install_portable.bat'));
+    DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
+  end;
+end;
+
+// Custom uninstall: ask about gamepad and data removal
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    // Ask about virtual gamepad
+    if MsgBox(CustomMessage('MsgUninstallGamepad'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    begin
+      Exec(ExpandConstant('{app}\scripts\uninstall-gamepad.bat'), '', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
+  end;
+
+  if CurUninstallStep = usPostUninstall then
+  begin
+    // Ask about data removal
+    if MsgBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDNO then
+    begin
+      // User chose to keep data, do nothing
+    end
+    else
+    begin
+      // Remove the installation directory
+      DelTree(ExpandConstant('{app}'), True, True, True);
+      // Clean up registry
+      RegDeleteValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
+      RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine');
+      RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab');
+    end;
+  end;
+end;
+
+// Use previous installation directory as default
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+end;

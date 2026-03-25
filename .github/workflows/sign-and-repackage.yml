@@ -1,11 +1,11 @@
 # 签名并重新打包工作流（仅用于正式发布版本）
 # 流程：
 # 1. 编译当前分支的代码（只编译一次）
-# 2. 生成未签名的 ZIP 和 NSIS staging 目录
+# 2. 生成未签名的 ZIP 和 Inno Setup staging 目录
 # 3. 将所有 EXE/DLL 文件提交到 SignPath 签名
 # 4. 用签名文件重新打包 ZIP 便携版
-# 5. 用签名文件替换 NSIS staging 目录中的文件并重新打包
-# 6. 签名最终的 NSIS 安装包
+# 5. 用签名文件替换 Inno Setup staging 目录中的文件并重新打包
+# 6. 签名最终的 Inno Setup 安装包
 # 注意：只在正式发布（非预发布）时运行，确保代码版本和签名文件一致
 
 name: Sign and Repackage (Release Only)
@@ -82,7 +82,7 @@ jobs:
             "mingw-w64-ucrt-x86_64-miniupnpc"
             "mingw-w64-ucrt-x86_64-nlohmann-json"
             "mingw-w64-ucrt-x86_64-nodejs"
-            "mingw-w64-ucrt-x86_64-nsis"
+            # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
             "mingw-w64-ucrt-x86_64-opus"
@@ -171,6 +171,16 @@ jobs:
           ninja -C build
           ninja -C build sunshine-control-panel
 
+      # Install Inno Setup
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $url = "https://jrsoftware.org/download.php/is.exe"
+          $installer = "$env:TEMP\innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
       # 生成未签名的打包产物
       - name: Package unsigned files
         shell: msys2 {0}
@@ -180,9 +190,9 @@ jobs:
           # 生成 ZIP 便携版（包含所有文件）
           cpack -G ZIP --verbose
 
-          # 生成 NSIS 的 staging 目录（但不运行 makensis）
-          echo "Generating NSIS staging directory..."
-          cpack -G NSIS --verbose || true
+          # 生成 Inno Setup staging 目录
+          echo "Generating Inno Setup staging directory..."
+          cmake --install . --prefix ./inno_staging
 
           cd ..
           
@@ -266,21 +276,18 @@ jobs:
           echo "Created signed portable package:"
           ls -lh Sunshine-*-Portable-Signed.zip
 
-      # 使用签名文件重新打包 NSIS 安装包
-      - name: Repackage signed NSIS installer
+      # 使用签名文件重新打包 Inno Setup 安装包
+      - name: Repackage signed Inno Setup installer
         shell: msys2 {0}
         run: |
-          echo "Repackaging NSIS installer with signed files..."
+          echo "Repackaging Inno Setup installer with signed files..."
 
-          # cpack 已经生成的 staging 目录（在步骤 3）
-          CPACK_DIR="build/cpack_artifacts/_CPack_Packages/win64/NSIS"
-          STAGING_DIR="$CPACK_DIR/Sunshine"
+          STAGING_DIR="build/inno_staging"
 
           # 检查 staging 目录是否存在
           if [ ! -d "$STAGING_DIR" ]; then
-            echo "Error: NSIS staging directory not found: $STAGING_DIR"
-            echo "Available directories:"
-            ls -laR build/cpack_artifacts/
+            echo "Error: Inno Setup staging directory not found: $STAGING_DIR"
+            ls -laR build/
             exit 1
           fi
 
@@ -288,22 +295,22 @@ jobs:
           SIGNED_SRC="signed-files/Sunshine"
           
           echo "Replacing with signed files..."
-          cp -fv "$SIGNED_SRC/sunshine.exe"                 "$STAGING_DIR/application/sunshine.exe"
-          cp -fv "$SIGNED_SRC/zlib1.dll"                    "$STAGING_DIR/application/zlib1.dll"
-          cp -fv "$SIGNED_SRC/tools/sunshinesvc.exe"        "$STAGING_DIR/application/tools/sunshinesvc.exe"
-          cp -fv "$SIGNED_SRC/tools/qiin-tabtip.exe"        "$STAGING_DIR/application/tools/qiin-tabtip.exe"
-          cp -fv "$SIGNED_SRC/tools/device-toggler.exe"     "$STAGING_DIR/assets/tools/device-toggler.exe"
-          cp -fv "$SIGNED_SRC/tools/DevManView.exe"         "$STAGING_DIR/assets/tools/DevManView.exe"
-          cp -fv "$SIGNED_SRC/tools/restart64.exe"          "$STAGING_DIR/assets/tools/restart64.exe"
-          cp -fv "$SIGNED_SRC/tools/SetDpi.exe"             "$STAGING_DIR/assets/tools/SetDpi.exe"
-          cp -fv "$SIGNED_SRC/tools/setreg.exe"             "$STAGING_DIR/assets/tools/setreg.exe"
-          cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/audio/tools/audio-info.exe"
-          cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/dxgi/tools/dxgi-info.exe"
-          cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/Unspecified/assets/gui/sunshine-gui.exe"
+          cp -fv "$SIGNED_SRC/sunshine.exe"                 "$STAGING_DIR/sunshine.exe"
+          cp -fv "$SIGNED_SRC/zlib1.dll"                    "$STAGING_DIR/zlib1.dll"
+          cp -fv "$SIGNED_SRC/tools/sunshinesvc.exe"        "$STAGING_DIR/tools/sunshinesvc.exe"
+          cp -fv "$SIGNED_SRC/tools/qiin-tabtip.exe"        "$STAGING_DIR/tools/qiin-tabtip.exe"
+          cp -fv "$SIGNED_SRC/tools/device-toggler.exe"     "$STAGING_DIR/tools/device-toggler.exe"
+          cp -fv "$SIGNED_SRC/tools/DevManView.exe"         "$STAGING_DIR/tools/DevManView.exe"
+          cp -fv "$SIGNED_SRC/tools/restart64.exe"          "$STAGING_DIR/tools/restart64.exe"
+          cp -fv "$SIGNED_SRC/tools/SetDpi.exe"             "$STAGING_DIR/tools/SetDpi.exe"
+          cp -fv "$SIGNED_SRC/tools/setreg.exe"             "$STAGING_DIR/tools/setreg.exe"
+          cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
+          cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
+          cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
 
-          # 手动运行 makensis 重新打包
-          echo "Running makensis to repackage installer..."
-          makensis "$CPACK_DIR/project.nsi"
+          # 运行 Inno Setup 编译器重新打包
+          echo "Running ISCC to repackage installer..."
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss"
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -314,19 +321,19 @@ jobs:
             VERSION="v$(date +%Y.%m%d)"
           fi
           
-          mv -fv "$CPACK_DIR/Sunshine.exe" "Sunshine-${VERSION}-Windows-Installer-Signed.exe"
+          mv -fv "build/cpack_artifacts/Sunshine.exe" "Sunshine-${VERSION}-Windows-Installer-Signed.exe"
           echo "Created signed installer:"
           ls -lh Sunshine-*-Installer-Signed.exe
 
-      # 签名最终的 NSIS 安装包
-      - name: Upload NSIS installer for final signing
-        id: upload-nsis
+      # 签名最终的 Inno Setup 安装包
+      - name: Upload installer for final signing
+        id: upload-installer
         uses: actions/upload-artifact@v4
         with:
-          name: nsis-for-final-signing
+          name: installer-for-final-signing
           path: Sunshine-*-Installer-Signed.exe
 
-      - name: Sign NSIS installer
+      - name: Sign installer
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -334,23 +341,23 @@ jobs:
           project-slug: Sunshine-Foundation
           signing-policy-slug: release-signing
           artifact-configuration-slug: windows-installer
-          github-artifact-id: "${{ steps.upload-nsis.outputs.artifact-id }}"
+          github-artifact-id: "${{ steps.upload-installer.outputs.artifact-id }}"
           output-artifact-directory: final-signed
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 600
           service-unavailable-timeout-in-seconds: 600
 
       # 验证最终签名
-      - name: Verify final NSIS signature
+      - name: Verify final installer signature
         shell: pwsh
         run: |
           $installer = Get-ChildItem "final-signed" -Filter "*.exe" | Select-Object -First 1
           if ($installer) {
-            Write-Host "Verifying NSIS installer signature..."
+            Write-Host "Verifying installer signature..."
             $signature = Get-AuthenticodeSignature $installer.FullName
             Write-Host "Status: $($signature.Status)"
             if ($signature.Status -eq "Valid") {
-              Write-Host "✓ NSIS installer signature is VALID!" -ForegroundColor Green
+              Write-Host "✓ Installer signature is VALID!" -ForegroundColor Green
             }
           }
 
