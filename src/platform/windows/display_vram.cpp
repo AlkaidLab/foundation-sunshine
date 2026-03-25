@@ -18,6 +18,7 @@ extern "C" {
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
+#include "src/amf/amf_d3d11.h"
 #include "src/video.h"
 
 #include <AMF/components/DisplayCapture.h>
@@ -1653,6 +1654,81 @@ namespace platf::dxgi {
     platf::pix_fmt_e buffer_format = platf::pix_fmt_e::unknown;
   };
 
+  class d3d_amf_encode_device_t: public amf_encode_device_t {
+  public:
+    bool
+    init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+      if (base.init(display, adapter_p, pix_fmt)) return false;
+
+      amf_d3d = ::amf::create_amf_d3d11(base.device.get());
+      if (!amf_d3d) return false;
+
+      buffer_format = pix_fmt;
+      amf = amf_d3d.get();
+
+      return true;
+    }
+
+    bool
+    init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) override {
+      if (!amf_d3d) return false;
+
+      ::amf::amf_config amf_cfg;
+
+      // Pass AMF SDK integer values directly from config
+      if (client_config.videoFormat == 0) {
+        amf_cfg.usage = config::video.amd.amd_usage_h264;
+        amf_cfg.quality_preset = config::video.amd.amd_quality_h264;
+        amf_cfg.rc_mode = config::video.amd.amd_rc_h264;
+      }
+      else if (client_config.videoFormat == 1) {
+        amf_cfg.usage = config::video.amd.amd_usage_hevc;
+        amf_cfg.quality_preset = config::video.amd.amd_quality_hevc;
+        amf_cfg.rc_mode = config::video.amd.amd_rc_hevc;
+      }
+      else {
+        amf_cfg.usage = config::video.amd.amd_usage_av1;
+        amf_cfg.quality_preset = config::video.amd.amd_quality_av1;
+        amf_cfg.rc_mode = config::video.amd.amd_rc_av1;
+      }
+
+      amf_cfg.preanalysis = config::video.amd.amd_preanalysis;
+      amf_cfg.vbaq = config::video.amd.amd_vbaq;
+      amf_cfg.enforce_hrd = config::video.amd.amd_enforce_hrd;
+      amf_cfg.h264_cabac = (config::video.amd.amd_coder != 2);  // 2 = CAVLC
+      amf_cfg.max_ltr_frames = 1;  // Enable RFI
+
+      // Pre-Analysis sub-system defaults: enable PAQ + TAQ for better quality at same bitrate
+      if (amf_cfg.preanalysis && *amf_cfg.preanalysis) {
+        amf_cfg.pa_paq_mode = 1;    // CAQ (Content Adaptive Quantization)
+        amf_cfg.pa_taq_mode = 2;    // TAQ mode 2 (more aggressive temporal AQ)
+        amf_cfg.pa_caq_strength = 1;  // Medium strength
+        amf_cfg.pa_activity_type = 1; // YUV activity (better than Y-only)
+        amf_cfg.pa_high_motion_quality_boost = 1;  // Auto
+      }
+
+      // High motion quality boost at encoder level
+      amf_cfg.high_motion_quality_boost_enable = true;
+
+      if (!amf_d3d->create_encoder(amf_cfg, client_config, colorspace, buffer_format)) return false;
+
+      base.apply_colorspace(colorspace);
+      return base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) == 0;
+    }
+
+    int
+    convert(platf::img_t &img_base) override {
+      int result = base.convert(img_base);
+      hdr_luminance_stats = base.hdr_luminance_stats_out;
+      return result;
+    }
+
+  private:
+    d3d_base_encode_device base;
+    std::unique_ptr<::amf::amf_d3d11> amf_d3d;
+    platf::pix_fmt_e buffer_format = platf::pix_fmt_e::unknown;
+  };
+
   bool
   set_cursor_texture(device_t::pointer device, gpu_cursor_t &cursor, util::buffer_t<std::uint8_t> &&cursor_img, DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info) {
     // This cursor image may not be used
@@ -2785,6 +2861,51 @@ namespace platf::dxgi {
       return nullptr;
     }
     
+    return device;
+  }
+
+  std::unique_ptr<amf_encode_device_t>
+  display_vram_t::make_amf_encode_device(pix_fmt_e pix_fmt) {
+    // Find AMD adapter for AMF encoding
+    adapter_t::pointer amf_adapter_p = nullptr;
+    adapter_t amf_adapter;
+
+    DXGI_ADAPTER_DESC adapter_desc;
+    adapter->GetDesc(&adapter_desc);
+
+    if (adapter_desc.VendorId == 0x1002) {  // AMD
+      amf_adapter_p = adapter.get();
+    }
+    else {
+      factory1_t factory;
+      HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
+      if (SUCCEEDED(status)) {
+        adapter_t::pointer adapter_p;
+        for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+          dxgi::adapter_t adapter_tmp { adapter_p };
+          DXGI_ADAPTER_DESC1 adapter_desc1;
+          adapter_tmp->GetDesc1(&adapter_desc1);
+
+          if (adapter_desc1.VendorId == 0x1002) {  // AMD
+            amf_adapter = std::move(adapter_tmp);
+            amf_adapter_p = amf_adapter.get();
+            BOOST_LOG(info) << "Found AMD GPU for AMF encoding: " << platf::to_utf8(adapter_desc1.Description);
+            break;
+          }
+        }
+      }
+
+      if (!amf_adapter_p) {
+        BOOST_LOG(error) << "Failed to find AMD GPU adapter for AMF encoding.";
+        return nullptr;
+      }
+    }
+
+    auto device = std::make_unique<d3d_amf_encode_device_t>();
+    if (!device->init_device(shared_from_this(), amf_adapter_p, pix_fmt)) {
+      return nullptr;
+    }
+
     return device;
   }
 

@@ -60,5 +60,14 @@ package-lock.json
 *.pyc
 venv/
 
+# Dev notes (analysis docs, guide generation, images)
+_dev_notes/
+
+# Temp HID trace files
+temphidtrace*
+
+# Windows NUL device artifact
+nul
+
 # Generated files
 src_assets/common/assets/web/welcome.html

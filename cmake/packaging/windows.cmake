@@ -29,10 +29,10 @@ install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/uninstall_portable.bat
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/languages/"
         DESTINATION "scripts/languages"
         COMPONENT application)
-# add sunshine enviroment to PATH
-# install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/path/"
-#         DESTINATION "scripts"
-#         COMPONENT assets)
+# add sunshine environment to PATH
+install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/path/"
+        DESTINATION "scripts"
+        COMPONENT assets)
 # Configurable options for the service
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
         DESTINATION "scripts"
@@ -128,5 +128,7 @@ set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtua
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
 # include specific packaging
-include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
-include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)
+include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
+# Legacy NSIS/WiX (kept for reference, no longer used)
+# include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
+# include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)

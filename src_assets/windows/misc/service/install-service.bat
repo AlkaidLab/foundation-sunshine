@@ -65,3 +65,38 @@ sc description %SERVICE_NAME% "Sunshine is a self-hosted game stream host for Mo
 
 rem Start the new service
 net start %SERVICE_NAME%
+
+rem Determine the Web UI port from config (default base port 47989 + 1 = 47990)
+set /a WEB_PORT=47990
+set "SUNSHINE_CONF=%ROOT_DIR%\config\sunshine.conf"
+if exist "%SUNSHINE_CONF%" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("%SUNSHINE_CONF%") do (
+        set "KEY=%%a"
+        set "VAL=%%b"
+        rem Trim spaces from key
+        for /f "tokens=* delims= " %%k in ("!KEY!") do set "KEY=%%k"
+        if "!KEY!"=="port" (
+            for /f "tokens=* delims= " %%v in ("!VAL!") do set "VAL=%%v"
+            set /a WEB_PORT=!VAL!+1
+        )
+    )
+)
+
+rem Wait for Sunshine API to be ready
+echo Waiting for Sunshine API on port !WEB_PORT!...
+set /a WAIT_COUNT=0
+set /a WAIT_MAX=15
+:wait_loop
+if !WAIT_COUNT! GEQ !WAIT_MAX! (
+    echo Sunshine API did not become ready within %WAIT_MAX% seconds, continuing anyway...
+    goto :wait_done
+)
+powershell -NoProfile -Command "try { $c = [System.Net.Sockets.TcpClient]::new(); $c.Connect('127.0.0.1', !WEB_PORT!); $c.Close(); exit 0 } catch { exit 1 }" >nul 2>&1
+if !ERRORLEVEL!==0 (
+    echo Sunshine API is ready on port !WEB_PORT!.
+    goto :wait_done
+)
+set /a WAIT_COUNT+=1
+timeout /t 1 /nobreak >nul
+goto :wait_loop
+:wait_done

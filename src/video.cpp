@@ -49,6 +49,7 @@ struct AMFEncoderContext_Partial {
 #include "input.h"
 #include "logging.h"
 #include "nvenc/nvenc_encoder.h"
+#include "amf/amf_encoder.h"
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
@@ -643,6 +644,79 @@ namespace video {
     bool force_idr = false;
   };
 
+  class amf_encode_session_t: public encode_session_t {
+  public:
+    amf_encode_session_t(std::unique_ptr<platf::amf_encode_device_t> encode_device):
+        device(std::move(encode_device)) {
+    }
+
+    int
+    convert(platf::img_t &img) override {
+      if (!device) return -1;
+      return device->convert(img);
+    }
+
+    void
+    request_idr_frame() override {
+      force_idr = true;
+    }
+
+    void
+    request_normal_frame() override {
+      force_idr = false;
+    }
+
+    void
+    invalidate_ref_frames(int64_t first_frame, int64_t last_frame) override {
+      if (!device || !device->amf) return;
+
+      if (!device->amf->invalidate_ref_frames(first_frame, last_frame)) {
+        force_idr = true;
+      }
+    }
+
+    void
+    set_bitrate(int bitrate_kbps) override {
+      if (device && device->amf) {
+        auto adjusted_bitrate_kbps = bitrate_kbps;
+        if (config::stream.fec_percentage <= 80) {
+          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
+        }
+
+        device->amf->set_bitrate(adjusted_bitrate_kbps);
+        BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
+                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
+                        << config::stream.fec_percentage << "%)";
+      }
+    }
+
+    void
+    set_dynamic_param(const dynamic_param_t &param) override {
+      if (!device || !device->amf) return;
+
+      switch (param.type) {
+        case dynamic_param_type_e::BITRATE:
+          set_bitrate(param.value.int_value);
+          break;
+        default:
+          break;
+      }
+    }
+
+    amf::amf_encoded_frame
+    encode_frame(uint64_t frame_index) {
+      if (!device || !device->amf) return {};
+
+      auto result = device->amf->encode_frame(frame_index, force_idr);
+      force_idr = false;
+      return result;
+    }
+
+  private:
+    std::unique_ptr<platf::amf_encode_device_t> device;
+    bool force_idr = false;
+  };
+
   struct sync_session_ctx_t {
     safe::signal_t *join_event;
     safe::mail_raw_t::event_t<bool> shutdown_event;
@@ -931,6 +1005,43 @@ namespace video {
 
   encoder_t amdvce {
     "amdvce"sv,
+    std::make_unique<encoder_platform_formats_amf>(
+      platf::mem_type_e::dxgi,
+      platf::pix_fmt_e::nv12, platf::pix_fmt_e::p010,
+      platf::pix_fmt_e::unknown, platf::pix_fmt_e::unknown),
+    {
+      {},  // Common options (handled by AMF directly)
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "av1_amf"s,
+    },
+    {
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      "hevc_amf"s,
+    },
+    {
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      "h264_amf"s,
+    },
+    PARALLEL_ENCODING | REF_FRAMES_INVALIDATION
+  };
+
+  // Legacy FFmpeg-based AMF encoder (fallback)
+  encoder_t amdvce_legacy {
+    "amdvce_legacy"sv,
     std::make_unique<encoder_platform_formats_avcodec>(
       AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_NONE,
       AV_PIX_FMT_D3D11,
@@ -1283,6 +1394,7 @@ namespace video {
 #ifdef _WIN32
     &quicksync,
     &amdvce,
+    &amdvce_legacy,
 #endif
 #ifdef __linux__
     &vaapi,
@@ -1935,12 +2047,40 @@ namespace video {
   }
 
   int
+  encode_amf(int64_t frame_nr, amf_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+    auto encoded_frame = session.encode_frame(frame_nr);
+    if (encoded_frame.data.empty()) {
+      if (encoded_frame.frame_index == static_cast<uint64_t>(frame_nr)) {
+        BOOST_LOG(debug) << "AMF: frame " << frame_nr << " buffered, waiting for more input";
+        return 0;
+      }
+      BOOST_LOG(error) << "AMF returned empty packet";
+      return -1;
+    }
+
+    if (frame_nr != encoded_frame.frame_index) {
+      BOOST_LOG(error) << "AMF frame index mismatch " << frame_nr << " " << encoded_frame.frame_index;
+    }
+
+    auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
+    packet->channel_data = channel_data;
+    packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
+    packet->frame_timestamp = frame_timestamp;
+    packets->raise(std::move(packet));
+
+    return 0;
+  }
+
+  int
   encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
     }
     else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
       return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+    }
+    else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
+      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp);
     }
 
     return -1;
@@ -2492,6 +2632,36 @@ namespace video {
     return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
   }
 
+  std::unique_ptr<amf_encode_session_t>
+  make_amf_encode_session(platf::display_t *disp, const config_t &client_config, std::unique_ptr<platf::amf_encode_device_t> encode_device, bool is_probe = false) {
+    if (!encode_device->init_encoder(client_config, encode_device->colorspace, is_probe)) {
+      return nullptr;
+    }
+
+    // Set HDR metadata for AMF encoder if HDR is enabled
+    if (colorspace_is_hdr(encode_device->colorspace) && encode_device->amf) {
+      SS_HDR_METADATA hdr_metadata;
+      if (disp->get_hdr_metadata(hdr_metadata)) {
+        amf::amf_hdr_metadata amf_metadata;
+        for (int i = 0; i < 3; i++) {
+          amf_metadata.displayPrimaries[i].x = hdr_metadata.displayPrimaries[i].x;
+          amf_metadata.displayPrimaries[i].y = hdr_metadata.displayPrimaries[i].y;
+        }
+        amf_metadata.whitePoint.x = hdr_metadata.whitePoint.x;
+        amf_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
+        amf_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
+        amf_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        amf_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
+        amf_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
+        encode_device->amf->set_hdr_metadata(amf_metadata);
+        BOOST_LOG(info) << "AMF: HDR metadata set - max luminance: " << amf_metadata.maxDisplayLuminance
+                        << " nits, mode: " << (colorspace_is_hlg(encode_device->colorspace) ? "HLG" : "PQ");
+      }
+    }
+
+    return std::make_unique<amf_encode_session_t>(std::move(encode_device));
+  }
+
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
@@ -2501,6 +2671,10 @@ namespace video {
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
       return make_nvenc_encode_session(disp, config, std::move(nvenc_encode_device), is_probe);
+    }
+    else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
+      auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
+      return make_amf_encode_session(disp, config, std::move(amf_encode_device), is_probe);
     }
 
     return nullptr;
@@ -2815,6 +2989,9 @@ namespace video {
     }
     else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
       result = disp.make_nvenc_encode_device(pix_fmt);
+    }
+    else if (dynamic_cast<const encoder_platform_formats_amf *>(encoder.platform_formats.get())) {
+      result = disp.make_amf_encode_device(pix_fmt);
     }
 
     if (result) {

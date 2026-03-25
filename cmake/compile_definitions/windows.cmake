@@ -49,6 +49,11 @@ file(GLOB_RECURSE NVENC_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/nvenc/*.h"
         "${CMAKE_SOURCE_DIR}/src/nvenc/*.cpp")
 
+# amf
+file(GLOB_RECURSE AMF_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/amf/*.h"
+        "${CMAKE_SOURCE_DIR}/src/amf/*.cpp")
+
 # vigem
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/include")
 
@@ -97,7 +102,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/include/ViGEm/Util.h"
         "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/include/ViGEm/km/BusShared.h"
         ${NVPREFS_FILES}
-        ${NVENC_SOURCES})
+        ${NVENC_SOURCES}
+        ${AMF_SOURCES})
 
 set(OPENSSL_LIBRARIES
         libssl.a
