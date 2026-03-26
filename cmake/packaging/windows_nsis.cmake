@@ -192,6 +192,7 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         DetailPrint '📺 安装虚拟显示器驱动...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-vdd.bat\\\"'
         
+
         DetailPrint '🎯 安装虚拟游戏手柄...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\install-gamepad.bat\\\"'
         
@@ -229,6 +230,7 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
         DetailPrint '卸载虚拟显示器驱动...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\scripts\\\\uninstall-vdd.bat\\\"'
         
+
         DetailPrint '恢复NVIDIA设置...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe\\\" --restore-nvprefs-undo'
         

@@ -170,6 +170,9 @@ namespace proc {
     _app_prep_begin = std::begin(_app.prep_cmds);
     _app_prep_it = _app_prep_begin;
 
+    // Apply per-app mouse mode
+    platf::set_mouse_mode(_app.mouse_mode);
+
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
     // to the launched application. They should be preserved during refresh() if an app is running.
@@ -386,6 +389,9 @@ namespace proc {
     }
 
     _app_id = -1;
+
+    // Reset mouse mode to auto when app terminates
+    platf::set_mouse_mode(0);
   }
 
   const std::vector<ctx_t> &
@@ -795,6 +801,7 @@ namespace proc {
         auto auto_detach = app_node.get_optional<bool>("auto-detach"s);
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
+        auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -875,6 +882,7 @@ namespace proc {
         ctx.elevated = elevated.value_or(false);
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
+        ctx.mouse_mode = mouse_mode.value_or(0);
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);

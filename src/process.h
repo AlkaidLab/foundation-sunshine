@@ -69,6 +69,7 @@ namespace proc {
     bool elevated;
     bool auto_detach;
     bool wait_all;
+    int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
     std::chrono::seconds exit_timeout;
   };
 

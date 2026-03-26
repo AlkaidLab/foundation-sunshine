@@ -51,6 +51,9 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/"
         DESTINATION "scripts"
         COMPONENT vdd)
+install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse"
+        DESTINATION "scripts"
+        COMPONENT assets)
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
         DESTINATION "tools"
@@ -90,6 +93,8 @@ set(CPACK_COMPONENT_APPLICATION_DEPENDS assets)
 set(CPACK_COMPONENT_VDD_DISPLAY_NAME "Zako Display Driver")
 set(CPACK_COMPONENT_VDD_DESCRIPTION "支持HDR的虚拟显示器驱动安装")
 set(CPACK_COMPONENT_VDD_GROUP "Core")
+
+
 
 # service auto-start script
 set(CPACK_COMPONENT_AUTOSTART_DISPLAY_NAME "Launch on Startup")

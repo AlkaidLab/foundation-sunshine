@@ -935,6 +935,8 @@ namespace platf {
   void
   move_mouse(input_t &input, int deltaX, int deltaY);
   void
+  set_mouse_mode(int mode);
+  void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void
   button_mouse(input_t &input, int button, bool release);
