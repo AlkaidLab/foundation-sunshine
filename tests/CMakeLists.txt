@@ -16,8 +16,11 @@ include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR
 
 # coverage
 # https://gcovr.com/en/stable/guide/compiling.html#compiler-options
-set(CMAKE_CXX_FLAGS "-fprofile-arcs -ftest-coverage -ggdb -O0")
-set(CMAKE_C_FLAGS "-fprofile-arcs -ftest-coverage -ggdb -O0")
+option(SUNSHINE_TESTS_ENABLE_COVERAGE "Enable gcov coverage instrumentation for tests" OFF)
+if (SUNSHINE_TESTS_ENABLE_COVERAGE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage -ggdb -O0")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-arcs -ftest-coverage -ggdb -O0")
+endif ()
 
 # if windows
 if (WIN32)
@@ -69,5 +72,56 @@ if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+
+if (WIN32)
+    add_executable(vmouse_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_virtual_mouse.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
+    target_include_directories(vmouse_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(vmouse_unit_tests
+            ${SUNSHINE_EXTERNAL_LIBRARIES}
+            gtest_main
+            ${PLATFORM_LIBRARIES})
+    target_compile_definitions(vmouse_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS} SUNSHINE_VIRTUAL_MOUSE_STANDALONE_TEST)
+    target_compile_options(vmouse_unit_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>
+            -fno-profile-arcs
+            -fno-test-coverage)
+    target_link_options(vmouse_unit_tests PRIVATE
+            -fno-profile-arcs
+            -fno-test-coverage)
+    set_target_properties(vmouse_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+
+    add_executable(vmouse_probe
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_probe.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
+    target_include_directories(vmouse_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(vmouse_probe
+            ${SUNSHINE_EXTERNAL_LIBRARIES}
+            ${PLATFORM_LIBRARIES})
+    target_compile_definitions(vmouse_probe PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS} SUNSHINE_VIRTUAL_MOUSE_STANDALONE_TEST)
+    target_compile_options(vmouse_probe PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>
+            -fno-profile-arcs
+            -fno-test-coverage)
+    target_link_options(vmouse_probe PRIVATE
+            -fno-profile-arcs
+            -fno-test-coverage)
+    set_target_properties(vmouse_probe PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+
+    add_executable(vmouse_send_diag
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_send_diag.cpp)
+    target_include_directories(vmouse_send_diag PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(vmouse_send_diag
+            ${PLATFORM_LIBRARIES})
+    target_compile_definitions(vmouse_send_diag PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+    set_target_properties(vmouse_send_diag PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
 endif ()
 

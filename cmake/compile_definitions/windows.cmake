@@ -75,6 +75,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
@@ -116,6 +118,7 @@ list(PREPEND PLATFORM_LIBRARIES
         D3DCompiler
         dwmapi
         dxgi
+        hid
         iphlpapi
         ksuser
         libssp.a

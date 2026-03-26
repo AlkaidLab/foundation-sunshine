@@ -285,6 +285,8 @@
     "global_prep_cmd": "指令準備",
     "global_prep_cmd_desc": "設定在執行任何應用程式之前或之後執行的指令清單。如果任何指定的準備指令失敗，應用程式的啟動程序將會中止。",
     "hdr_prep_automatic_windows": "根據用戶端要求開啟/關閉 HDR 模式",
+    "hdr_luminance_analysis_windows": "HDR 動態中繼資料分析",
+    "hdr_luminance_analysis_desc_windows": "分析 HDR 畫格亮度，為每路串流產生動態色調映射中繼資料。在支援 HDR 的用戶端與顯示器上，這通常可改善高光表現與映射準確性，但會增加額外的 GPU 擷取負載。若你更重視效能，尤其是在高解析度或高更新率下，可關閉此選項；關閉後 HDR 串流將只會使用靜態中繼資料。",
     "hdr_prep_no_operation_windows": "已停用",
     "hdr_prep_windows": "HDR 狀態變更",
     "hevc_mode": "HEVC 支援",

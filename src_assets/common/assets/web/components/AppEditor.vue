@@ -215,6 +215,23 @@
                   :hint="t('apps.run_as_desc')"
                 />
 
+                <FormField
+                  v-if="isWindows"
+                  id="mouseMode"
+                  :label="t('apps.mouse_mode')"
+                  :hint="t('apps.mouse_mode_desc')"
+                >
+                  <select
+                    id="mouseMode"
+                    class="form-select form-control-enhanced"
+                    v-model="formData['mouse-mode']"
+                  >
+                    <option :value="0">{{ t('apps.mouse_mode_auto') }}</option>
+                    <option :value="1">{{ t('apps.mouse_mode_vmouse') }}</option>
+                    <option :value="2">{{ t('apps.mouse_mode_sendinput') }}</option>
+                  </select>
+                </FormField>
+
                 <CheckboxField
                   id="autoDetach"
                   v-model="formData['auto-detach']"
@@ -302,6 +319,7 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'auto-detach': true,
   'wait-all': true,
   'exit-timeout': 5,
+  'mouse-mode': 0,
   'prep-cmd': [],
   'menu-cmd': [],
   detached: [],
@@ -412,6 +430,9 @@ const ensureDefaultValues = () => {
   }
   if (formData.value['exit-timeout'] === undefined) {
     formData.value['exit-timeout'] = 5
+  }
+  if (isWindows.value && formData.value['mouse-mode'] === undefined) {
+    formData.value['mouse-mode'] = 0
   }
 }
 

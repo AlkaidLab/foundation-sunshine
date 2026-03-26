@@ -1,0 +1,74 @@
+# 下载 Zako Virtual Mouse 驱动预编译产物
+#
+# 驱动源码已独立至 AlkaidLab/ZakoVirtualMouse 仓库
+# 此工作流从该仓库的 GitHub Release 下载预编译产物
+# 更新 src_assets/windows/misc/vmouse/driver/ 中的文件
+
+name: Update Virtual Mouse Driver
+
+on:
+  workflow_dispatch:
+    inputs:
+      driver_version:
+        description: 'Driver release tag (e.g. v1.0.0), leave empty for latest'
+        required: false
+        default: ''
+        type: string
+
+env:
+  DRIVER_REPO: AlkaidLab/ZakoVirtualMouse
+  DRIVER_DEST: src_assets/windows/misc/vmouse/driver
+
+jobs:
+  update-driver:
+    name: Download Virtual Mouse Driver
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download driver from release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.event.inputs.driver_version }}"
+
+          if [ -z "$VERSION" ]; then
+            echo "Fetching latest release..."
+            RELEASE_URL="https://api.github.com/repos/$DRIVER_REPO/releases/latest"
+          else
+            echo "Fetching release $VERSION..."
+            RELEASE_URL="https://api.github.com/repos/$DRIVER_REPO/releases/tags/$VERSION"
+          fi
+
+          # Get release info
+          RELEASE_JSON=$(curl -sL -H "Authorization: token $GH_TOKEN" "$RELEASE_URL")
+          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          echo "Release tag: $TAG"
+
+          # Download driver files
+          mkdir -p "$DRIVER_DEST"
+          for FILE in ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer; do
+            ASSET_URL=$(echo "$RELEASE_JSON" | jq -r ".assets[] | select(.name == \"$FILE\") | .browser_download_url")
+            if [ -n "$ASSET_URL" ] && [ "$ASSET_URL" != "null" ]; then
+              echo "Downloading $FILE..."
+              curl -sL -H "Authorization: token $GH_TOKEN" "$ASSET_URL" -o "$DRIVER_DEST/$FILE"
+            else
+              echo "Warning: $FILE not found in release $TAG"
+            fi
+          done
+
+          ls -la "$DRIVER_DEST/"
+
+      - name: Create PR with updated driver
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: update virtual mouse driver to ${{ github.event.inputs.driver_version || 'latest' }}"
+          title: "Update Virtual Mouse Driver"
+          body: |
+            Automated update of Zako Virtual Mouse driver from ${{ env.DRIVER_REPO }}.
+            Version: ${{ github.event.inputs.driver_version || 'latest' }}
+          branch: update-vmouse-driver
+          delete-branch: true

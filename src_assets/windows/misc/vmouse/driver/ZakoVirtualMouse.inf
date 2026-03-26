@@ -1,0 +1,85 @@
+;
+; ZakoVirtualMouse.inf - UMDF 2.x HID Minidriver INF
+;
+; Zako Virtual Mouse: a UMDF HID minidriver that creates a system-level
+; virtual mouse device. Games see it as real hardware via Raw Input / DirectInput.
+;
+; The driver runs in user-mode (WUDFHost.exe) and only requires Authenticode signing.
+;
+
+[Version]
+PnpLockdown=1
+Signature="$Windows NT$"
+Class=HIDClass
+ClassGuid={745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider=%ManufacturerName%
+CatalogFile=ZakoVirtualMouse.cat
+DriverVer = 03/19/2026,22.46.22.358
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTamd64.10.0...22000
+
+[Standard.NTamd64.10.0...22000]
+%DeviceDesc%=ZakoVMouse_Install, Root\ZakoVirtualMouse
+
+[SourceDisksFiles]
+ZakoVirtualMouse.dll=1
+
+[SourceDisksNames]
+1 = %DiskName%
+
+; =================== UMDF HID Device ==================================
+
+[ZakoVMouse_Install.NT]
+CopyFiles=UMDriverCopy
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT
+
+[ZakoVMouse_Install.NT.HW]
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT.hw
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.hw
+
+[ZakoVMouse_Install.NT.Services]
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT.Services
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Services
+
+[ZakoVMouse_Install.NT.Filters]
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Filters
+
+[ZakoVMouse_Install.NT.Wdf]
+UmdfService=ZakoVirtualMouse,ZakoVMouse_UmdfInstall
+UmdfServiceOrder=ZakoVirtualMouse
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+UmdfFileObjectPolicy=AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction=Copy
+UmdfFsContextUsePolicy=CanUseFsContext2
+
+[ZakoVMouse_UmdfInstall]
+UmdfLibraryVersion=2.15.0
+ServiceBinary="%13%\ZakoVirtualMouse.dll"
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[UMDriverCopy]
+ZakoVirtualMouse.dll
+
+; =================== Strings ==================================
+
+[Strings]
+ManufacturerName="AlkaidLab"
+DeviceDesc="Zako Virtual Mouse"
+DiskName="Zako Virtual Mouse Installation Disk"
+
+REG_MULTI_SZ  = 0x00010000
+REG_SZ        = 0x00000000
+REG_EXPAND_SZ = 0x00020000
+REG_DWORD     = 0x00010001
+

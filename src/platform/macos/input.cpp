@@ -381,6 +381,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void
+  set_mouse_mode(int mode) {
+    // Virtual mouse driver is Windows-only; no-op on macOS
+  }
+
+  void
   move_mouse(
     input_t &input,
     const int deltaX,

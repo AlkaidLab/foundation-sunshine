@@ -15,6 +15,7 @@
 #include "dsu_server.h"
 #include "keylayout.h"
 #include "misc.h"
+#include "virtual_mouse.h"
 #include "src/config.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -443,9 +444,19 @@ namespace platf {
     task_pool.push(&vigem_t::set_rgb_led, (vigem_t *) userdata, target, led_color.Red, led_color.Green, led_color.Blue);
   }
 
+  // Per-app mouse mode: 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
+  static std::atomic<int> current_mouse_mode { 0 };
+
+  void
+  set_mouse_mode(int mode) {
+    current_mouse_mode.store(mode, std::memory_order_relaxed);
+    BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" : "SendInput");
+  }
+
   struct input_raw_t {
     ~input_raw_t() {
       delete vigem;
+      delete vmouse_dev;
       if (dsu_server) {
         dsu_server->stop();
         delete dsu_server;
@@ -471,6 +482,9 @@ namespace platf {
 
     vigem_t *vigem;
     dsu_server_t *dsu_server;
+    vmouse::device_t *vmouse_dev;
+    int vmouse_vscroll_accum = 0;
+    int vmouse_hscroll_accum = 0;
 
     decltype(CreateSyntheticPointerDevice) *fnCreateSyntheticPointerDevice;
     decltype(InjectSyntheticPointerInput) *fnInjectSyntheticPointerInput;
@@ -490,6 +504,21 @@ namespace platf {
 
     // 初始化DSU服务器（延迟初始化，只在需要时创建）
     raw.dsu_server = nullptr;
+
+    // 初始化虚拟鼠标设备
+    if (config::input.virtual_mouse) {
+      raw.vmouse_dev = new vmouse::device_t(vmouse::create());
+      if (raw.vmouse_dev->is_available()) {
+        BOOST_LOG(info) << "Virtual mouse driver connected"sv;
+      }
+      else {
+        BOOST_LOG(info) << "Virtual mouse driver not available, using SendInput"sv;
+      }
+    }
+    else {
+      raw.vmouse_dev = nullptr;
+      BOOST_LOG(info) << "Virtual mouse driver disabled by config"sv;
+    }
 
     // Get pointers to virtual touch/pen input functions (Win10 1809+)
     raw.fnCreateSyntheticPointerDevice = (decltype(CreateSyntheticPointerDevice) *) GetProcAddress(GetModuleHandleA("user32.dll"), "CreateSyntheticPointerDevice");
@@ -565,6 +594,12 @@ namespace platf {
 
   void
   move_mouse(input_t &input, int deltaX, int deltaY) {
+    auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
+      raw.vmouse_dev->move((int16_t) deltaX, (int16_t) deltaY);
+      return;
+    }
+
     INPUT i {};
 
     i.type = INPUT_MOUSE;
@@ -594,6 +629,20 @@ namespace platf {
 
   void
   button_mouse(input_t &input, int button, bool release) {
+    auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
+      uint8_t mask = 0;
+      switch (button) {
+        case 1: mask = vmouse::BTN_LEFT; break;
+        case 2: mask = vmouse::BTN_MIDDLE; break;
+        case 3: mask = vmouse::BTN_RIGHT; break;
+        case 4: mask = vmouse::BTN_SIDE; break;
+        default: mask = vmouse::BTN_EXTRA; break;
+      }
+      raw.vmouse_dev->button(mask, release);
+      return;
+    }
+
     INPUT i {};
 
     i.type = INPUT_MOUSE;
@@ -622,6 +671,19 @@ namespace platf {
 
   void
   scroll(input_t &input, int distance) {
+    auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
+      // HID wheel uses notch units; distance is in WHEEL_DELTA (120) units.
+      // Accumulate sub-notch deltas for high-resolution scrolling support.
+      raw.vmouse_vscroll_accum += distance;
+      int notches = raw.vmouse_vscroll_accum / WHEEL_DELTA;
+      if (notches != 0) {
+        raw.vmouse_vscroll_accum -= notches * WHEEL_DELTA;
+        raw.vmouse_dev->scroll((int8_t) std::clamp(notches, -127, 127));
+      }
+      return;
+    }
+
     INPUT i {};
 
     i.type = INPUT_MOUSE;
@@ -635,6 +697,17 @@ namespace platf {
 
   void
   hscroll(input_t &input, int distance) {
+    auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
+      raw.vmouse_hscroll_accum += distance;
+      int notches = raw.vmouse_hscroll_accum / WHEEL_DELTA;
+      if (notches != 0) {
+        raw.vmouse_hscroll_accum -= notches * WHEEL_DELTA;
+        raw.vmouse_dev->hscroll((int8_t) std::clamp(notches, -127, 127));
+      }
+      return;
+    }
+
     INPUT i {};
 
     i.type = INPUT_MOUSE;

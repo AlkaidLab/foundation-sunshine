@@ -1182,6 +1182,11 @@ namespace platf {
    * @examples_end
    */
   void
+  set_mouse_mode(int mode) {
+    // Virtual mouse driver is Windows-only; no-op on Linux
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     auto mouse_rel = raw->mouse_rel_input.get();
