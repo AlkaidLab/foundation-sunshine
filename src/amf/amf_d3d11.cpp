@@ -149,7 +149,7 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_B_PIC_PATTERN, (amf_int64) 0);
       encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
       encoder->SetProperty(AMF_VIDEO_ENCODER_INPUT_QUEUE_SIZE, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 50);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1);
 
       // LTR for RFI
       max_ltr_frames = config.max_ltr_frames;
@@ -202,7 +202,7 @@ namespace amf {
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, true);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INPUT_QUEUE_SIZE, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 50);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 1);
 
       if (colorspace.bit_depth == 10) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PROFILE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10);
@@ -258,7 +258,7 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) 0);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 50);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 1);
       if (config.av1_encoding_latency_mode) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode);
       }
@@ -501,6 +501,17 @@ namespace amf {
       return false;
     }
 
+    // Check if driver supports QUERY_TIMEOUT by reading back the property (FFmpeg pattern)
+    {
+      const wchar_t *qt_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_QUERY_TIMEOUT :
+                               (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT :
+                                                     AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT;
+      amf_int64 qt_val = 0;
+      auto qt_res = encoder->GetProperty(qt_prop, &qt_val);
+      query_timeout_supported = (qt_res == AMF_OK && qt_val > 0);
+      BOOST_LOG(info) << "AMF: QUERY_TIMEOUT " << (query_timeout_supported ? "supported" : "not supported") << " (value=" << qt_val << ")";
+    }
+
     // Create input texture for the rendering pipeline to write to.
     // Must match the YUV format that the shader pipeline outputs (NV12/P010).
     DXGI_FORMAT dxgi_fmt;
@@ -678,7 +689,9 @@ namespace amf {
           pending_output = drain_data;
         }
         if (drain_res != AMF_OK && !drain_data) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          if (!query_timeout_supported) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          }
         }
         res = encoder->SubmitInput(surface);
       }
@@ -705,8 +718,11 @@ namespace amf {
         if (output_data || (res != AMF_REPEAT && res != AMF_NEED_MORE_INPUT)) {
           break;
         }
-        // QUERY_TIMEOUT is set to 1ms, but if driver doesn't support it, sleep manually
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Only sleep manually if driver doesn't support QUERY_TIMEOUT;
+        // when supported, QueryOutput() blocks internally for up to 1ms
+        if (!query_timeout_supported) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
       }
       if (!output_data) {
         // Encoder needs more input or no output yet (pipeline filling)

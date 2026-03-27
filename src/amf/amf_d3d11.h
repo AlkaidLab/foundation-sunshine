@@ -90,6 +90,9 @@ namespace amf {
     uint64_t last_rfi_ltr_index = 0;
     int max_ltr_frames = 0;
 
+    // Whether the driver supports QUERY_TIMEOUT (FFmpeg-style safety check)
+    bool query_timeout_supported = false;
+
     // Current LTR state for RFI
     static constexpr int MAX_LTR_SLOTS = 2;
     static constexpr uint64_t LTR_MARK_INTERVAL = 30;  // Mark LTR every N frames
