@@ -5,6 +5,9 @@
 
 #include "amf_d3d11.h"
 
+#include <chrono>
+#include <thread>
+
 #include <AMF/components/ColorSpace.h>
 #include <AMF/components/PreAnalysis.h>
 #include <AMF/components/VideoEncoderAV1.h>
@@ -144,6 +147,8 @@ namespace amf {
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_ENABLE_VBAQ, !!(*config.vbaq));
       encoder->SetProperty(AMF_VIDEO_ENCODER_B_PIC_PATTERN, (amf_int64) 0);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_INPUT_QUEUE_SIZE, (amf_int64) 1);
       encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 50);
 
       // LTR for RFI
@@ -195,6 +200,8 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, true);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INPUT_QUEUE_SIZE, (amf_int64) 1);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 50);
 
       if (colorspace.bit_depth == 10) {
@@ -247,8 +254,10 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FILLER_DATA, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) 0);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) 1);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 50);
       if (config.av1_encoding_latency_mode) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode);
@@ -316,59 +325,70 @@ namespace amf {
     else if (video_format == 1) {
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NOMINAL_RANGE, (amf_int64)(colorspace.full_range ? AMF_VIDEO_ENCODER_HEVC_NOMINAL_RANGE_FULL : AMF_VIDEO_ENCODER_HEVC_NOMINAL_RANGE_STUDIO));
     }
+    else {
+      // AV1: amf_bool type
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_FULL_RANGE_COLOR, colorspace.full_range);
+    }
 
-    // Color VUI properties (primaries, transfer characteristics, matrix coefficients)
+    // Color properties for bitstream metadata.
+    // Only set OUTPUT properties, matching FFmpeg's approach.
+    // Do NOT set INPUT_COLOR_xxx — setting them may trigger AMF's internal color converter.
     amf_int64 amf_primaries;
     amf_int64 amf_transfer;
-    amf_int64 amf_matrix;
+    amf_int64 amf_color_profile;
 
     switch (colorspace.colorspace) {
       case video::colorspace_e::rec601:
         amf_primaries = AMF_COLOR_PRIMARIES_SMPTE170M;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_SMPTE170M;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_601;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_601 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_601;
         break;
       case video::colorspace_e::rec709:
         amf_primaries = AMF_COLOR_PRIMARIES_BT709;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_BT709;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_709;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_709 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_709;
         break;
       case video::colorspace_e::bt2020sdr:
         amf_primaries = AMF_COLOR_PRIMARIES_BT2020;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_BT2020_10;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_2020_NCL;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_2020 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_2020;
         break;
       case video::colorspace_e::bt2020:
         amf_primaries = AMF_COLOR_PRIMARIES_BT2020;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_SMPTE2084;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_2020_NCL;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_2020 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_2020;
         break;
       case video::colorspace_e::bt2020hlg:
         amf_primaries = AMF_COLOR_PRIMARIES_BT2020;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_ARIB_STD_B67;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_2020_NCL;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_2020 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_2020;
         break;
       default:
         amf_primaries = AMF_COLOR_PRIMARIES_BT709;
         amf_transfer = AMF_COLOR_TRANSFER_CHARACTERISTIC_BT709;
-        amf_matrix = AMF_COLOR_MATRIX_COEFF_BT_709;
+        amf_color_profile = colorspace.full_range ? AMF_VIDEO_CONVERTER_COLOR_PROFILE_FULL_709 : AMF_VIDEO_CONVERTER_COLOR_PROFILE_709;
         break;
     }
 
+    auto amf_bit_depth = (amf_int64)((colorspace.bit_depth == 10) ? AMF_COLOR_BIT_DEPTH_10 : AMF_COLOR_BIT_DEPTH_8);
+
     if (video_format == 0) {
-      encoder->SetProperty(AMF_VIDEO_ENCODER_OUTPUT_COLOR_PRIMARIES, amf_primaries);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_COLOR_BIT_DEPTH, amf_bit_depth);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_OUTPUT_COLOR_PROFILE, amf_color_profile);
       encoder->SetProperty(AMF_VIDEO_ENCODER_OUTPUT_TRANSFER_CHARACTERISTIC, amf_transfer);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_OUTPUT_MATRIX_COEFF, amf_matrix);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_OUTPUT_COLOR_PRIMARIES, amf_primaries);
     }
     else if (video_format == 1) {
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_OUTPUT_COLOR_PRIMARIES, amf_primaries);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_COLOR_BIT_DEPTH, amf_bit_depth);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_OUTPUT_COLOR_PROFILE, amf_color_profile);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_OUTPUT_TRANSFER_CHARACTERISTIC, amf_transfer);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_OUTPUT_MATRIX_COEFF, amf_matrix);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_OUTPUT_COLOR_PRIMARIES, amf_primaries);
     }
     else {
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_COLOR_PRIMARIES, amf_primaries);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_COLOR_BIT_DEPTH, amf_bit_depth);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_COLOR_PROFILE, amf_color_profile);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_TRANSFER_CHARACTERISTIC, amf_transfer);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_MATRIX_COEFF, amf_matrix);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_OUTPUT_COLOR_PRIMARIES, amf_primaries);
     }
 
     // Save statistics feedback state for encode_frame()
@@ -404,8 +424,13 @@ namespace amf {
       }
     }
 
-    // Low-latency mode
-    encoder->SetProperty(L"LowLatencyInternal", true);
+    // Low-latency mode (matching FFmpeg's "latency"=1 option)
+    if (video_format == 0) {
+      encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
+    }
+    else if (video_format == 1) {
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, true);
+    }
 
     return true;
   }
@@ -429,8 +454,11 @@ namespace amf {
       return false;
     }
 
-    // Initialize D3D11 in AMF context
-    res = context->InitDX11(device);
+    // Set surface cache size to match FFmpeg's hwcontext_amf initialization
+    context->SetProperty(L"DeviceSurfaceCacheSize", (amf_int64) 50);
+
+    // Initialize D3D11 in AMF context with DX11_1 (matching FFmpeg)
+    res = context->InitDX11(device, AMF_DX11_1);
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: InitDX11 failed, error: " << res;
       return false;
@@ -450,7 +478,24 @@ namespace amf {
 
     // Initialize encoder
     auto amf_format = get_amf_format(buffer_format, colorspace.bit_depth);
+    surface_format = amf_format;
+    encode_width = client_config.width;
+    encode_height = client_config.height;
     res = encoder->Init(amf_format, client_config.width, client_config.height);
+    if (res != AMF_OK && config.rc_mode) {
+      // Init failed with custom RC mode - retry without it (driver may not support it)
+      BOOST_LOG(warning) << "AMF: Init failed with rc_mode=" << *config.rc_mode << ", retrying with default RC";
+      encoder->Terminate();
+      encoder = nullptr;
+      res = factory->CreateComponent(context, get_codec_id(), &encoder);
+      if (res == AMF_OK && encoder) {
+        auto config_fallback = config;
+        config_fallback.rc_mode = std::nullopt;
+        if (configure_encoder(config_fallback, client_config, colorspace)) {
+          res = encoder->Init(amf_format, client_config.width, client_config.height);
+        }
+      }
+    }
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: encoder Init failed, error: " << res;
       return false;
@@ -487,6 +532,11 @@ namespace amf {
       return false;
     }
 
+
+
+    // Clamp effective LTR slots to what the encoder actually reserves
+    effective_ltr_slots = (max_ltr_frames > 0) ? std::min(max_ltr_frames, MAX_LTR_SLOTS) : 0;
+
     // Reset LTR state
     for (auto &valid : ltr_slots_valid) valid = false;
     for (auto &fi : ltr_slot_frame_index) fi = 0;
@@ -504,6 +554,7 @@ namespace amf {
 
   void
   amf_d3d11::destroy_encoder() {
+    pending_output = nullptr;
     if (encoder) {
       encoder->Terminate();
       encoder = nullptr;
@@ -516,6 +567,7 @@ namespace amf {
       input_texture->Release();
       input_texture = nullptr;
     }
+
     if (amf_dll) {
       FreeLibrary(amf_dll);
       amf_dll = nullptr;
@@ -530,6 +582,12 @@ namespace amf {
 
     if (!encoder || !input_texture) return result;
 
+    // Set the texture array index via private data, as FFmpeg does.
+    // AMF uses this GUID to determine which slice of a texture array to encode.
+    static const GUID AMFTextureArrayIndexGUID = { 0x28115527, 0xe7c3, 0x4b66, { 0x99, 0xd3, 0x4f, 0x2a, 0xe6, 0xb4, 0x7f, 0xaf } };
+    int array_index = 0;
+    input_texture->SetPrivateData(AMFTextureArrayIndexGUID, sizeof(array_index), &array_index);
+
     // Wrap the D3D11 texture as AMF surface (zero-copy)
     ::amf::AMFSurfacePtr surface;
     auto res = context->CreateSurfaceFromDX11Native(input_texture, &surface, nullptr);
@@ -537,6 +595,9 @@ namespace amf {
       BOOST_LOG(error) << "AMF: CreateSurfaceFromDX11Native failed, error: " << res;
       return result;
     }
+
+    // Set crop to actual frame dimensions (hw surfaces can be vertically aligned by 16)
+    surface->SetCrop(0, 0, encode_width, encode_height);
 
     // Set per-frame properties
     if (force_idr) {
@@ -555,7 +616,7 @@ namespace amf {
       }
 
       // After IDR, mark LTR slot 0 for RFI baseline
-      if (max_ltr_frames > 0) {
+      if (effective_ltr_slots > 0) {
         if (video_format == 0) {
           surface->SetProperty(AMF_VIDEO_ENCODER_MARK_CURRENT_WITH_LTR_INDEX, (amf_int64) 0);
         }
@@ -567,10 +628,10 @@ namespace amf {
         }
         ltr_slots_valid[0] = true;
         ltr_slot_frame_index[0] = frame_index;
-        current_ltr_slot = 1 % MAX_LTR_SLOTS;
+        current_ltr_slot = 1 % effective_ltr_slots;
       }
     }
-    else if (rfi_pending && max_ltr_frames > 0) {
+    else if (rfi_pending && effective_ltr_slots > 0) {
       // After RFI: force reference to the saved LTR frame
       int64_t ltr_bitfield = 1LL << last_rfi_ltr_index;
 
@@ -587,9 +648,10 @@ namespace amf {
       rfi_pending = false;
       result.after_ref_frame_invalidation = true;
     }
-    else if (max_ltr_frames > 0 && (frame_index % LTR_MARK_INTERVAL) == 0) {
+    else if (effective_ltr_slots > 0 && (frame_index % LTR_MARK_INTERVAL) == 0) {
       // Periodically mark current frame as LTR for future RFI use
       // Only mark every LTR_MARK_INTERVAL frames to avoid limiting encoder reference freedom
+      // Only use slots < effective_ltr_slots (clamped to max_ltr_frames)
       if (video_format == 0) {
         surface->SetProperty(AMF_VIDEO_ENCODER_MARK_CURRENT_WITH_LTR_INDEX, (amf_int64) current_ltr_slot);
       }
@@ -601,31 +663,55 @@ namespace amf {
       }
       ltr_slots_valid[current_ltr_slot] = true;
       ltr_slot_frame_index[current_ltr_slot] = frame_index;
-      current_ltr_slot = (current_ltr_slot + 1) % MAX_LTR_SLOTS;
+      current_ltr_slot = (current_ltr_slot + 1) % effective_ltr_slots;
     }
 
-    // Submit input
+    // Submit input — retry with output draining if input queue is full (like FFmpeg)
     res = encoder->SubmitInput(surface);
     if (res == AMF_INPUT_FULL) {
-      // Encoder input is full, drain output first
-      BOOST_LOG(debug) << "AMF: input full, skipping frame " << frame_index;
-      return result;
+      // Drain output to free up space in the encoder queue, then retry
+      for (int retry = 0; retry < 20 && res == AMF_INPUT_FULL; ++retry) {
+        ::amf::AMFDataPtr drain_data;
+        auto drain_res = encoder->QueryOutput(&drain_data);
+        if (drain_data) {
+          // Stash the output for later retrieval
+          pending_output = drain_data;
+        }
+        if (drain_res != AMF_OK && !drain_data) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        res = encoder->SubmitInput(surface);
+      }
+      if (res == AMF_INPUT_FULL) {
+        BOOST_LOG(warning) << "AMF: SubmitInput still AMF_INPUT_FULL after retries, dropping frame " << frame_index;
+        return result;
+      }
     }
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: SubmitInput failed, error: " << res;
       return result;
     }
 
-    // Query output
+    // Query output — if we already drained output during SubmitInput retry, use that
     ::amf::AMFDataPtr output_data;
-    res = encoder->QueryOutput(&output_data);
-    if (res == AMF_REPEAT || res == AMF_NEED_MORE_INPUT) {
-      // Encoder needs more input before producing output
-      return result;
+    if (pending_output) {
+      output_data = pending_output;
+      pending_output = nullptr;
     }
-    if (res != AMF_OK || !output_data) {
-      BOOST_LOG(error) << "AMF: QueryOutput failed, error: " << res;
-      return result;
+    else {
+      // Poll with retry: encoder may need a moment after SubmitInput
+      for (int poll = 0; poll < 10; ++poll) {
+        res = encoder->QueryOutput(&output_data);
+        if (output_data || (res != AMF_REPEAT && res != AMF_NEED_MORE_INPUT)) {
+          break;
+        }
+        // QUERY_TIMEOUT is set to 1ms, but if driver doesn't support it, sleep manually
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (!output_data) {
+        // Encoder needs more input or no output yet (pipeline filling)
+        return result;
+      }
     }
 
     // Extract encoded bitstream
@@ -691,13 +777,13 @@ namespace amf {
 
   bool
   amf_d3d11::invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) {
-    if (!encoder || max_ltr_frames <= 0) return false;
+    if (!encoder || effective_ltr_slots <= 0) return false;
 
     // Find a valid LTR slot whose frame was marked BEFORE the invalidation range.
     // This ensures we reference a frame that predates the corrupted frames.
     int best_ltr = -1;
     uint64_t best_frame = 0;
-    for (int i = 0; i < MAX_LTR_SLOTS; i++) {
+    for (int i = 0; i < effective_ltr_slots; i++) {
       if (ltr_slots_valid[i] && ltr_slot_frame_index[i] < first_frame) {
         if (best_ltr < 0 || ltr_slot_frame_index[i] > best_frame) {
           best_ltr = i;
@@ -712,7 +798,7 @@ namespace amf {
     }
 
     // Invalidate all LTR slots that overlap the invalidation range
-    for (int i = 0; i < MAX_LTR_SLOTS; i++) {
+    for (int i = 0; i < effective_ltr_slots; i++) {
       if (ltr_slots_valid[i] && ltr_slot_frame_index[i] >= first_frame && ltr_slot_frame_index[i] <= last_frame) {
         ltr_slots_valid[i] = false;
       }

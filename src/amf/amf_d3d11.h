@@ -12,6 +12,7 @@
 
 #include <AMF/components/Component.h>
 #include <AMF/core/Context.h>
+#include <AMF/core/Data.h>
 #include <AMF/core/Factory.h>
 
 namespace amf {
@@ -82,6 +83,9 @@ namespace amf {
     // Encoder state
     video::config_t current_config {};
     int video_format = 0;  // 0=H264, 1=HEVC, 2=AV1
+    AMF_SURFACE_FORMAT surface_format = AMF_SURFACE_NV12;
+    int encode_width = 0;
+    int encode_height = 0;
     bool rfi_pending = false;
     uint64_t last_rfi_ltr_index = 0;
     int max_ltr_frames = 0;
@@ -89,9 +93,13 @@ namespace amf {
     // Current LTR state for RFI
     static constexpr int MAX_LTR_SLOTS = 2;
     static constexpr uint64_t LTR_MARK_INTERVAL = 30;  // Mark LTR every N frames
+    int effective_ltr_slots = 0;    // Clamped to min(max_ltr_frames, MAX_LTR_SLOTS)
     int current_ltr_slot = 0;      // Which LTR slot to mark next
     bool ltr_slots_valid[MAX_LTR_SLOTS] = {};
     uint64_t ltr_slot_frame_index[MAX_LTR_SLOTS] = {};  // Frame index when each LTR slot was marked
+
+    // Pending output stashed during SubmitInput retry
+    ::amf::AMFDataPtr pending_output;
 
     // Statistics feedback state
     bool statistics_enabled = false;

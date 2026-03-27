@@ -48,6 +48,9 @@ const config = ref(props.config)
                 <option value="cqp">{{ $t('config.amd_rc_cqp') }}</option>
                 <option value="vbr_latency">{{ $t('config.amd_rc_vbr_latency') }}</option>
                 <option value="vbr_peak">{{ $t('config.amd_rc_vbr_peak') }}</option>
+                <option value="qvbr">{{ $t('config.amd_rc_qvbr') }}</option>
+                <option value="hqvbr">{{ $t('config.amd_rc_hqvbr') }}</option>
+                <option value="hqcbr">{{ $t('config.amd_rc_hqcbr') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_rc_desc') }}</div>
             </div>
@@ -60,6 +63,23 @@ const config = ref(props.config)
                 <option value="disabled">{{ $t('_common.disabled_def') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_enforce_hrd_desc') }}</div>
+            </div>
+
+            <!-- AMF QVBR Quality Level -->
+            <div class="mb-3" v-if="config.amd_rc === 'qvbr'">
+              <label for="amd_qvbr_quality" class="form-label">
+                {{ $t('config.amd_qvbr_quality') }}: {{ config.amd_qvbr_quality || 23 }}
+              </label>
+              <input
+                type="range"
+                class="form-range"
+                id="amd_qvbr_quality"
+                min="1"
+                max="51"
+                step="1"
+                v-model="config.amd_qvbr_quality"
+              />
+              <div class="form-text">{{ $t('config.amd_qvbr_quality_desc') }}</div>
             </div>
           </div>
         </div>

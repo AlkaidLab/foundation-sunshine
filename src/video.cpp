@@ -3493,8 +3493,14 @@ namespace video {
     session->request_idr_frame();
 
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
+    auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
       if (encode(1, *session, packets, nullptr, {})) {
+        return -1;
+      }
+      // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
+      if (std::chrono::steady_clock::now() - encode_start > std::chrono::seconds(5)) {
+        BOOST_LOG(error) << "validate_config: encode timed out (5s), encoder may be incompatible with current settings";
         return -1;
       }
     }
