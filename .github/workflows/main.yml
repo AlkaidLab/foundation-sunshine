@@ -107,6 +107,7 @@ jobs:
           update: true
           install: >-
             wget
+            curl
 
       - name: Update Windows dependencies
         env:
@@ -236,6 +237,7 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+          GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')

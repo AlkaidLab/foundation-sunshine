@@ -13,16 +13,16 @@ rem Get sunshine root directory
 for %%I in ("%~dp0..\..") do set "ROOT_DIR=%%~fI"
 
 set "DIST_DIR=%ROOT_DIR%\tools\vmouse"
-set "NEFCON=%ROOT_DIR%\tools\vdd\nefconw.exe"
+set "NEFCON=%ROOT_DIR%\tools\nefconw.exe"
 
-rem Check if nefconw.exe exists (shared with VDD component)
+rem Check if nefconw.exe exists
 if not exist "%NEFCON%" (
-    rem Try vmouse's own copy
-    set "NEFCON=%DIST_DIR%\nefconw.exe"
+    rem Fallback: try VDD component location
+    set "NEFCON=%ROOT_DIR%\tools\vdd\nefconw.exe"
 )
 if not exist "%NEFCON%" (
-    echo ERROR: nefconw.exe not found. Please install the Virtual Display Driver component first,
-    echo        or copy nefconw.exe to %DIST_DIR%
+    echo ERROR: nefconw.exe not found.
+    echo        Expected at: %ROOT_DIR%\tools\nefconw.exe
     exit /b 1
 )
 
