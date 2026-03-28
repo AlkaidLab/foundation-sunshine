@@ -1,74 +1,128 @@
-# 下载 Zako Virtual Mouse 驱动预编译产物
+# Update driver version pins in cmake/packaging/FetchDriverDeps.cmake
 #
-# 驱动源码已独立至 AlkaidLab/ZakoVirtualMouse 仓库
-# 此工作流从该仓库的 GitHub Release 下载预编译产物
-# 更新 src_assets/windows/misc/vmouse/driver/ 中的文件
+# Driver binaries are no longer committed to the repo.
+# CMake downloads them at configure time from GitHub Releases.
+# This workflow updates the version pins and creates a PR.
 
-name: Update Virtual Mouse Driver
+name: Update Driver Versions
 
 on:
   workflow_dispatch:
     inputs:
-      driver_version:
-        description: 'Driver release tag (e.g. v1.0.0), leave empty for latest'
+      component:
+        description: 'Which driver to update'
+        required: true
+        type: choice
+        options:
+          - vmouse
+          - vdd
+          - nefcon
+          - all
+      version:
+        description: 'Release tag (e.g. v1.1.0). Leave empty for latest.'
         required: false
         default: ''
         type: string
-
-env:
-  DRIVER_REPO: AlkaidLab/ZakoVirtualMouse
-  DRIVER_DEST: src_assets/windows/misc/vmouse/driver
+  repository_dispatch:
+    types: [driver-release]
 
 jobs:
-  update-driver:
-    name: Download Virtual Mouse Driver
+  update-version:
+    name: Update Driver Version Pin
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download driver from release
+      - name: Resolve versions and update pins
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ github.event.inputs.driver_version }}"
+          CMAKE_FILE="cmake/packaging/FetchDriverDeps.cmake"
 
-          if [ -z "$VERSION" ]; then
-            echo "Fetching latest release..."
-            RELEASE_URL="https://api.github.com/repos/$DRIVER_REPO/releases/latest"
-          else
-            echo "Fetching release $VERSION..."
-            RELEASE_URL="https://api.github.com/repos/$DRIVER_REPO/releases/tags/$VERSION"
+          COMPONENT="${{ github.event.inputs.component }}"
+          VERSION="${{ github.event.inputs.version }}"
+
+          # Override with repository_dispatch values
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            COMPONENT="${{ github.event.client_payload.component }}"
+            VERSION="${{ github.event.client_payload.version }}"
+            echo "Triggered by repository_dispatch: component=$COMPONENT version=$VERSION"
           fi
 
-          # Get release info
-          RELEASE_JSON=$(curl -sL -H "Authorization: token $GH_TOKEN" "$RELEASE_URL")
-          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-          echo "Release tag: $TAG"
+          resolve_latest() {
+            local repo="$1"
+            local tag
+            tag=$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+            echo "$tag"
+          }
 
-          # Download driver files
-          mkdir -p "$DRIVER_DEST"
-          for FILE in ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer; do
-            ASSET_URL=$(echo "$RELEASE_JSON" | jq -r ".assets[] | select(.name == \"$FILE\") | .browser_download_url")
-            if [ -n "$ASSET_URL" ] && [ "$ASSET_URL" != "null" ]; then
-              echo "Downloading $FILE..."
-              curl -sL -H "Authorization: token $GH_TOKEN" "$ASSET_URL" -o "$DRIVER_DEST/$FILE"
+          update_pin() {
+            local var_name="$1"
+            local new_version="$2"
+            if [ -z "$new_version" ]; then
+              echo "Warning: empty version for ${var_name}, skipping"
+              return
+            fi
+            echo "Updating ${var_name} to ${new_version}"
+            sed -i "s|set(${var_name} \"[^\"]*\"|set(${var_name} \"${new_version}\"|" "$CMAKE_FILE"
+          }
+
+          declare -A REPOS=(
+            [vmouse]="AlkaidLab/ZakoVirtualMouse"
+            [vdd]="qiin2333/zako-vdd"
+            [nefcon]="nefarius/nefcon"
+          )
+          declare -A VARS=(
+            [vmouse]="VMOUSE_DRIVER_VERSION"
+            [vdd]="VDD_DRIVER_VERSION"
+            [nefcon]="NEFCON_VERSION"
+          )
+
+          if [ "$COMPONENT" = "all" ]; then
+            COMPONENTS=(vmouse vdd nefcon)
+          else
+            COMPONENTS=("$COMPONENT")
+          fi
+
+          SUMMARY=""
+          for comp in "${COMPONENTS[@]}"; do
+            repo="${REPOS[$comp]}"
+            var="${VARS[$comp]}"
+            ver="$VERSION"
+
+            if [ -z "$ver" ]; then
+              ver=$(resolve_latest "$repo")
+            fi
+
+            if [ -n "$ver" ]; then
+              update_pin "$var" "$ver"
+              SUMMARY="${SUMMARY}\n- ${comp}: ${ver}"
             else
-              echo "Warning: $FILE not found in release $TAG"
+              echo "Warning: could not resolve version for ${comp}"
             fi
           done
 
-          ls -la "$DRIVER_DEST/"
+          echo "SUMMARY<<EOF" >> "$GITHUB_ENV"
+          echo -e "$SUMMARY" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
 
-      - name: Create PR with updated driver
+          echo "Updated CMake file:"
+          grep -E "^set\((VMOUSE_DRIVER_VERSION|VDD_DRIVER_VERSION|NEFCON_VERSION)" "$CMAKE_FILE"
+
+      - name: Create PR
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: update virtual mouse driver to ${{ github.event.inputs.driver_version || 'latest' }}"
-          title: "Update Virtual Mouse Driver"
+          commit-message: "chore: update driver version pins"
+          title: "Update driver versions"
           body: |
-            Automated update of Zako Virtual Mouse driver from ${{ env.DRIVER_REPO }}.
-            Version: ${{ github.event.inputs.driver_version || 'latest' }}
-          branch: update-vmouse-driver
+            Automated update of driver version pins in `FetchDriverDeps.cmake`.
+
+            Updated versions:
+            ${{ env.SUMMARY }}
+
+            CMake will download the new driver binaries at configure time.
+          branch: update-driver-versions
           delete-branch: true

@@ -5,7 +5,8 @@ for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 
 rem uninstall
 set "DIST_DIR=%ROOT_DIR%\tools\vdd"
-set "NEFCON=%DIST_DIR%\nefconw.exe"
+set "NEFCON=%ROOT_DIR%\tools\nefconw.exe"
+if not exist "%NEFCON%" set "NEFCON=%DIST_DIR%\nefconw.exe"
 if exist "%DIST_DIR%" (
     "%NEFCON%" --remove-device-node --hardware-id ROOT\ZakoVDD --class-guid 4d36e968-e325-11ce-bfc1-08002be10318
 )

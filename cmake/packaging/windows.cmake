@@ -1,4 +1,8 @@
 # windows specific packaging
+
+# Fetch driver dependencies (downloads at configure time)
+include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
+
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
@@ -11,6 +15,11 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 # Mandatory tools
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
+
+# Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
+install(FILES "${NEFCON_DRIVER_DIR}/nefconw.exe"
+        DESTINATION "tools"
+        COMPONENT application)
 
 # Mandatory scripts
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/service/"
@@ -48,11 +57,33 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
         COMPONENT vsink)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/"
+# VDD: scripts & config from source tree, driver binaries from download cache
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/install-vdd.bat"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/uninstall-vdd.bat"
         DESTINATION "scripts"
         COMPONENT vdd)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse"
-        DESTINATION "scripts"
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/driver/vdd_settings.xml"
+        DESTINATION "scripts/driver"
+        COMPONENT vdd)
+install(FILES "${VDD_DRIVER_DIR}/ZakoVDD.dll"
+              "${VDD_DRIVER_DIR}/ZakoVDD.inf"
+              "${VDD_DRIVER_DIR}/zakovdd.cat"
+              "${VDD_DRIVER_DIR}/ZakoVDD.cer"
+        DESTINATION "scripts/driver"
+        COMPONENT vdd)
+
+# vmouse: scripts & cert from source tree, driver binaries from download cache
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/install-vmouse.bat"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/uninstall-vmouse.bat"
+        DESTINATION "scripts/vmouse"
+        COMPONENT assets)
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/driver/ZakoVirtualMouse.cer"
+        DESTINATION "scripts/vmouse/driver"
+        COMPONENT assets)
+install(FILES "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
+              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.inf"
+              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
+        DESTINATION "scripts/vmouse/driver"
         COMPONENT assets)
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"

@@ -10,11 +10,11 @@ rem Get sunshine root directory
 for %%I in ("%~dp0..\..") do set "ROOT_DIR=%%~fI"
 
 set "DIST_DIR=%ROOT_DIR%\tools\vmouse"
-set "NEFCON=%ROOT_DIR%\tools\vdd\nefconw.exe"
+set "NEFCON=%ROOT_DIR%\tools\nefconw.exe"
 
 rem Check if nefconw.exe exists
 if not exist "%NEFCON%" (
-    set "NEFCON=%DIST_DIR%\nefconw.exe"
+    set "NEFCON=%ROOT_DIR%\tools\vdd\nefconw.exe"
 )
 
 rem Stop Sunshine service to release HID device handle

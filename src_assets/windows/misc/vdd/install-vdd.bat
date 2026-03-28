@@ -11,7 +11,8 @@ for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 
 set "DIST_DIR=%ROOT_DIR%\tools\vdd"
 set "CONFIG_DIR=%ROOT_DIR%\config"
-set "NEFCON=%DIST_DIR%\nefconw.exe"
+set "NEFCON=%ROOT_DIR%\tools\nefconw.exe"
+if not exist "%NEFCON%" set "NEFCON=%DIST_DIR%\nefconw.exe"
 set "VDD_CONFIG=%CONFIG_DIR%\vdd_settings.xml"
 
 rem First, copy files to target directory so nefconw.exe can be used

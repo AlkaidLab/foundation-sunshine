@@ -69,5 +69,16 @@ temphidtrace*
 # Windows NUL device artifact
 nul
 
+# Driver binaries (downloaded at build time via FetchDriverDeps.cmake)
+src_assets/windows/misc/vdd/driver/*.dll
+src_assets/windows/misc/vdd/driver/*.inf
+src_assets/windows/misc/vdd/driver/*.cat
+src_assets/windows/misc/vdd/driver/*.cer
+src_assets/windows/misc/vdd/driver/*.zip
+src_assets/windows/misc/vdd/driver/*.exe
+src_assets/windows/misc/vmouse/driver/*.dll
+src_assets/windows/misc/vmouse/driver/*.inf
+src_assets/windows/misc/vmouse/driver/*.cat
+
 # Generated files
 src_assets/common/assets/web/welcome.html

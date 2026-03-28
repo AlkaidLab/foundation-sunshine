@@ -72,6 +72,7 @@ english.ComponentVDD=Zako Virtual Display Driver (HDR)
 english.ComponentAutostart=Launch on system startup
 english.ComponentFirewall=Add firewall exclusions
 english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
+english.ComponentVmouse=Virtual Mouse Driver (UMDF)
 english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
 english.TypeFull=Full installation
 english.TypeCompact=Compact installation
@@ -82,6 +83,7 @@ english.StatusMigrateConfig=Migrating configuration files...
 english.StatusFirewall=Configuring firewall rules...
 english.StatusInstallVDD=Installing virtual display driver...
 english.StatusInstallGamepad=Installing virtual gamepad...
+english.StatusInstallVmouse=Installing virtual mouse driver...
 english.StatusInstallService=Installing system service...
 english.StatusAutostart=Configuring autostart...
 english.FinishOpenDocs=Open documentation
@@ -100,6 +102,7 @@ chinesesimplified.ComponentVDD=Zako 虚拟显示驱动（HDR）
 chinesesimplified.ComponentAutostart=开机自动启动
 chinesesimplified.ComponentFirewall=添加防火墙规则
 chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
+chinesesimplified.ComponentVmouse=虚拟鼠标驱动（UMDF）
 chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
 chinesesimplified.TypeFull=完全安装
 chinesesimplified.TypeCompact=简洁安装
@@ -110,6 +113,7 @@ chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
 chinesesimplified.StatusFirewall=正在配置防火墙规则...
 chinesesimplified.StatusInstallVDD=正在安装虚拟显示驱动...
 chinesesimplified.StatusInstallGamepad=正在安装虚拟手柄...
+chinesesimplified.StatusInstallVmouse=正在安装虚拟鼠标驱动...
 chinesesimplified.StatusInstallService=正在安装系统服务...
 chinesesimplified.StatusAutostart=正在配置自动启动...
 chinesesimplified.FinishOpenDocs=打开使用文档
@@ -133,6 +137,7 @@ Name: "vdd"; Description: "{cm:ComponentVDD}"; Types: full
 Name: "autostart"; Description: "{cm:ComponentAutostart}"; Types: full
 Name: "firewall"; Description: "{cm:ComponentFirewall}"; Types: full compact
 Name: "gamepad"; Description: "{cm:ComponentGamepad}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse}"; Types: full
 Name: "tools"; Description: "{cm:ComponentTools}"; Types: full
 
 [Tasks]
@@ -146,6 +151,7 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 ; Mandatory tools
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -193,6 +199,11 @@ Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flag
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
 
+; Virtual Mouse Driver scripts & files
+Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion; Components: vmouse
+Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion; Components: vmouse
+Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs; Components: vmouse
+
 ; Optional diagnostic tools
 Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
 Source: "{#MySourceDir}\tools\audio-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
@@ -223,6 +234,7 @@ Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfi
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
 Filename: "{app}\scripts\install-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
+Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
 Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
 
@@ -238,6 +250,7 @@ Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOn
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
 Filename: "{app}\scripts\uninstall-vdd.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVDD"
+Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVmouse"
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--restore-nvprefs-undo"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreNV"
 Filename: "{app}\scripts\update-path.bat"; Parameters: "remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemovePath"
 
