@@ -1,6 +1,7 @@
 // lib includes
 #include <boost/algorithm/string.hpp>
 #include <boost/regex.hpp>
+#include <charconv>
 #include <cmath>
 
 // local includes
@@ -487,6 +488,25 @@ namespace display_device {
           return boost::none;
       }
     }
+    /**
+     * @brief Parse a numeric string as an enum index with range validation.
+     * @param value String to parse (e.g. "1", "2").
+     * @param max_val Maximum valid enum value (inclusive).
+     * @param default_val Value to return on parse failure or out-of-range.
+     * @returns Parsed integer if valid and in [0, max_val], otherwise default_val.
+     *
+     * Used as fallback when config stores enum values as numeric strings
+     * instead of named strings (e.g. "1" instead of "automatic").
+     */
+    int
+    numeric_enum_fallback(std::string_view value, int max_val, int default_val) {
+      int n = 0;
+      auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), n);
+      if (ec == std::errc{} && ptr == value.data() + value.size() && n >= 0 && n <= max_val) {
+        return n;
+      }
+      return default_val;
+    }
   }  // namespace
 
   int
@@ -500,7 +520,7 @@ namespace display_device {
     _CONVERT_(ensure_only_display);
     _CONVERT_(ensure_secondary);
 #undef _CONVERT_
-    return static_cast<int>(parsed_config_t::device_prep_e::no_operation);
+    return numeric_enum_fallback(value, 4, static_cast<int>(parsed_config_t::device_prep_e::no_operation));
   }
 
   int
@@ -512,7 +532,7 @@ namespace display_device {
     _CONVERT_(automatic);
     _CONVERT_(manual);
 #undef _CONVERT_
-    return static_cast<int>(parsed_config_t::resolution_change_e::no_operation);
+    return numeric_enum_fallback(value, 2, static_cast<int>(parsed_config_t::resolution_change_e::no_operation));
   }
 
   int
@@ -524,7 +544,7 @@ namespace display_device {
     _CONVERT_(automatic);
     _CONVERT_(manual);
 #undef _CONVERT_
-    return static_cast<int>(parsed_config_t::refresh_rate_change_e::no_operation);
+    return numeric_enum_fallback(value, 2, static_cast<int>(parsed_config_t::refresh_rate_change_e::no_operation));
   }
 
   int
@@ -535,7 +555,7 @@ namespace display_device {
     _CONVERT_(no_operation);
     _CONVERT_(automatic);
 #undef _CONVERT_
-    return static_cast<int>(parsed_config_t::hdr_prep_e::no_operation);
+    return numeric_enum_fallback(value, 1, static_cast<int>(parsed_config_t::hdr_prep_e::no_operation));
   }
 
   int
@@ -548,7 +568,7 @@ namespace display_device {
     _CONVERT_(vdd_as_secondary);
     _CONVERT_(display_off);
 #undef _CONVERT_
-    return static_cast<int>(parsed_config_t::vdd_prep_e::no_operation);
+    return numeric_enum_fallback(value, 3, static_cast<int>(parsed_config_t::vdd_prep_e::no_operation));
   }
 
   parsed_config_t::vdd_prep_e
