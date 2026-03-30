@@ -72,17 +72,15 @@ install(FILES "${VDD_DRIVER_DIR}/ZakoVDD.dll"
         DESTINATION "scripts/driver"
         COMPONENT vdd)
 
-# vmouse: scripts & cert from source tree, driver binaries from download cache
+# vmouse: scripts from source tree, driver binaries + cert from download cache
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/install-vmouse.bat"
               "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/uninstall-vmouse.bat"
         DESTINATION "scripts/vmouse"
         COMPONENT assets)
-install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/driver/ZakoVirtualMouse.cer"
-        DESTINATION "scripts/vmouse/driver"
-        COMPONENT assets)
 install(FILES "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
               "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.inf"
               "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
+              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cer"
         DESTINATION "scripts/vmouse/driver"
         COMPONENT assets)
 

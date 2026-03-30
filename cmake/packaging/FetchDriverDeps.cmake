@@ -24,7 +24,7 @@ endif()
 option(FETCH_DRIVER_DEPS "Download driver dependencies from GitHub Releases" ON)
 
 # Version pins
-set(VMOUSE_DRIVER_VERSION "v1.1.0" CACHE STRING "ZakoVirtualMouse driver version tag")
+set(VMOUSE_DRIVER_VERSION "v1.2.0" CACHE STRING "ZakoVirtualMouse driver version tag")
 set(VDD_DRIVER_VERSION "v0.1.4" CACHE STRING "ZakoVDD driver version tag")
 set(NEFCON_VERSION "v1.10.0" CACHE STRING "nefcon version tag")
 
@@ -112,7 +112,7 @@ endfunction()
 function(_fetch_vmouse)
   message(STATUS "Fetching ZakoVirtualMouse ${VMOUSE_DRIVER_VERSION} ...")
 
-  set(_files ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat)
+  set(_files ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer)
 
   # Check if all files already cached
   set(_all_cached TRUE)
