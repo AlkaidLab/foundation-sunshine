@@ -238,9 +238,11 @@ Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInsta
 Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
 
-; Finish page actions - user selectable (use runascurrentuser to avoid SpawnServer issues in RDP)
+; Finish page actions - user selectable
+; Use explorer.exe to launch GUI so it always runs as the non-elevated current user,
+; even though the installer itself is running with admin privileges.
 Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
-Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall shellexec runascurrentuser nowait skipifsilent
+Filename: "explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Stop running processes first
