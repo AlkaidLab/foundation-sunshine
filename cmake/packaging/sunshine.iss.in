@@ -242,7 +242,7 @@ Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart
 ; Use explorer.exe to launch GUI so it always runs as the non-elevated current user,
 ; even though the installer itself is running with admin privileges.
 Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
-Filename: "explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
+Filename: "{win}\explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Stop running processes first
