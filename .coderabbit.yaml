@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: zh-CN
+early_access: true
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_prs: true
+  poem: false
+  review_status: true
+  review_details: true
+
+  path_filters:
+    - "!third-party/**"
+    - "!node_modules/**"
+    - "!build/**"
+    - "!cmake-*/**"
+    - "!docs/doxyconfig*"
+    - "!**/*.log"
+    - "!package-lock.json"
+    - "!**/*.obj"
+    - "!**/*.etl"
+    - "!**/*.csv"
+    - "!**/*.cat"
+    - "!**/*.bmp"
+
+  path_instructions:
+    - path: "src/**/*.{cpp,c,h}"
+      instructions: >
+        Sunshine 核心 C++ 源码，自托管游戏串流服务器。审查要点：内存安全、
+        线程安全、RAII 资源管理、安全漏洞。注意预处理宏控制的平台相关代码。
+    - path: "src/platform/**"
+      instructions: >
+        平台抽象层代码（Windows/Linux/macOS）。确保各平台实现一致，
+        注意 Windows API 调用的错误处理和资源释放。
+    - path: "cmake/**"
+      instructions: >
+        CMake 构建系统文件。审查跨平台兼容性、现代 CMake 实践。
+    - path: "src_assets/**/*.{vue,js,html}"
+      instructions: >
+        基于 Vue.js 的 Web 配置面板。审查 XSS/CSRF 安全性、
+        组件设计、状态管理和可访问性。
+    - path: "docker/**"
+      instructions: >
+        Docker 配置文件。审查最小化基础镜像、层缓存、安全性。
+    - path: "packaging/**"
+      instructions: >
+        打包配置（Inno Setup、Flatpak、DEB 等）。审查安装路径、
+        权限设置和依赖声明的正确性。
+    - path: "tests/**"
+      instructions: >
+        测试文件。验证测试覆盖率、边界情况和断言正确性。
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - master
+
+  tools:
+    cppcheck:
+      enabled: true
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto
