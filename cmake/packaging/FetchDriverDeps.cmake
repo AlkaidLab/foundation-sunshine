@@ -25,7 +25,7 @@ option(FETCH_DRIVER_DEPS "Download driver dependencies from GitHub Releases" ON)
 
 # Version pins
 set(VMOUSE_DRIVER_VERSION "v1.2.0" CACHE STRING "ZakoVirtualMouse driver version tag")
-set(VDD_DRIVER_VERSION "v0.1.4" CACHE STRING "ZakoVDD driver version tag")
+set(VDD_DRIVER_VERSION "v0.13" CACHE STRING "ZakoVDD driver version tag")
 set(NEFCON_VERSION "v1.10.0" CACHE STRING "nefcon version tag")
 
 # Repositories
