@@ -82,3 +82,6 @@ src_assets/windows/misc/vmouse/driver/*.cat
 
 # Generated files
 src_assets/common/assets/web/welcome.html
+
+# CodeQL
+_codeql_detected_source_root
