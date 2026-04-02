@@ -254,6 +254,65 @@ export function useApps() {
     }
   }
 
+  // 扫描游戏平台库（Steam/Epic/GOG）
+  const scanGameLibraries = async () => {
+    const tauri = window.__TAURI__
+    if (!tauri?.core?.invoke) {
+      showMessage('扫描功能仅在 Tauri 环境下可用', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      return
+    }
+
+    try {
+      isScanning.value = true
+      showMessage('正在扫描游戏平台库...', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+
+      const result = await tauri.core.invoke('scan_game_libraries')
+
+      // 将 PlatformGame 转换为 scannedApps 格式
+      const allGames = [...result.steam, ...result.epic, ...result.gog]
+
+      if (allGames.length === 0) {
+        scannedApps.value = []
+        showScanResult.value = true
+        showMessage('未检测到已安装的游戏', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      } else {
+        const mapped = allGames.map((game) => ({
+          name: game.name,
+          cmd: game.cmd,
+          'working-dir': game['working-dir'] || game.working_dir || '',
+          'image-path': game['cover-url'] || game.cover_url || '',
+          source_path: game.install_dir,
+          'app-type': game.platform,
+          'is-game': true,
+        }))
+
+        scannedApps.value = mapped
+        showScanResult.value = true
+
+        const parts = []
+        if (result.steam.length) parts.push(`Steam ${result.steam.length}`)
+        if (result.epic.length) parts.push(`Epic ${result.epic.length}`)
+        if (result.gog.length) parts.push(`GOG ${result.gog.length}`)
+        showMessage(
+          `找到 ${result.total} 个游戏 (${parts.join(', ')})，耗时 ${result.scan_time_ms}ms`,
+          APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+        )
+      }
+
+      trackEvents.userAction('game_libraries_scanned', {
+        steam: result.steam.length,
+        epic: result.epic.length,
+        gog: result.gog.length,
+        total: result.total,
+      })
+    } catch (error) {
+      console.error('扫描游戏库失败:', error)
+      showMessage(`扫描游戏库失败: ${error}`, APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    } finally {
+      isScanning.value = false
+    }
+  }
+
   // 异步更新封面图片
   const asyncUpdateCovers = async (appList) => {
     let coversFound = 0
@@ -378,6 +437,9 @@ export function useApps() {
     batch: scannedApps.value.filter((app) => app['app-type'] === 'batch').length,
     command: scannedApps.value.filter((app) => app['app-type'] === 'command').length,
     url: scannedApps.value.filter((app) => app['app-type'] === 'url').length,
+    steam: scannedApps.value.filter((app) => app['app-type'] === 'steam').length,
+    epic: scannedApps.value.filter((app) => app['app-type'] === 'epic').length,
+    gog: scannedApps.value.filter((app) => app['app-type'] === 'gog').length,
   }))
 
   // 过滤扫描结果
@@ -480,6 +542,7 @@ export function useApps() {
     onDragStart,
     onDragEnd,
     scanDirectory,
+    scanGameLibraries,
     addScannedApp,
     quickAddScannedApp,
     addAllScannedApps,

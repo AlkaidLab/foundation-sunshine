@@ -90,6 +90,39 @@
                   <i class="fas fa-globe me-1"></i>{{ t('apps.scan_result_filter_url') }}
                   <span class="badge bg-dark ms-1">{{ stats.url }}</span>
                 </button>
+                <button
+                  v-if="stats.steam > 0"
+                  class="btn"
+                  :class="selectedType === 'steam' ? 'btn-primary' : 'btn-outline-primary'"
+                  @click="selectedType = 'steam'"
+                  type="button"
+                  title="Steam 游戏"
+                >
+                  <i class="fab fa-steam me-1"></i>Steam
+                  <span class="badge bg-dark ms-1">{{ stats.steam }}</span>
+                </button>
+                <button
+                  v-if="stats.epic > 0"
+                  class="btn"
+                  :class="selectedType === 'epic' ? 'btn-dark' : 'btn-outline-dark'"
+                  @click="selectedType = 'epic'"
+                  type="button"
+                  title="Epic Games 游戏"
+                >
+                  <i class="fas fa-store me-1"></i>Epic
+                  <span class="badge bg-dark ms-1">{{ stats.epic }}</span>
+                </button>
+                <button
+                  v-if="stats.gog > 0"
+                  class="btn"
+                  :class="selectedType === 'gog' ? 'btn-purple' : 'btn-outline-secondary'"
+                  @click="selectedType = 'gog'"
+                  type="button"
+                  title="GOG Galaxy 游戏"
+                >
+                  <i class="fas fa-compact-disc me-1"></i>GOG
+                  <span class="badge bg-dark ms-1">{{ stats.gog }}</span>
+                </button>
               </div>
 
               <!-- 游戏过滤 -->
@@ -238,6 +271,16 @@ watch(
   }
 )
 
+// 当扫描结果变化时，如果有游戏则默认开启游戏过滤
+watch(
+  () => props.apps,
+  (newApps) => {
+    if (newApps.length > 0 && newApps.some((app) => app['is-game'] === true)) {
+      gamesOnly.value = true
+    }
+  }
+)
+
 // 统计信息
 const stats = computed(() => ({
   all: props.apps.length,
@@ -247,6 +290,9 @@ const stats = computed(() => ({
   batch: props.apps.filter((app) => app['app-type'] === 'batch').length,
   command: props.apps.filter((app) => app['app-type'] === 'command').length,
   url: props.apps.filter((app) => app['app-type'] === 'url').length,
+  steam: props.apps.filter((app) => app['app-type'] === 'steam').length,
+  epic: props.apps.filter((app) => app['app-type'] === 'epic').length,
+  gog: props.apps.filter((app) => app['app-type'] === 'gog').length,
 }))
 
 // 是否有激活的过滤器
@@ -288,6 +334,9 @@ const getAppTypeLabel = (appType) => {
     batch: t('apps.scan_result_type_batch'),
     command: t('apps.scan_result_type_command'),
     url: t('apps.scan_result_type_url'),
+    steam: 'Steam',
+    epic: 'Epic Games',
+    gog: 'GOG',
   }
   return typeMap[appType] || appType
 }
@@ -300,6 +349,9 @@ const getAppTypeBadgeClass = (appType) => {
     batch: 'bg-warning text-dark',
     command: 'bg-warning text-dark',
     url: 'bg-success',
+    steam: 'bg-primary',
+    epic: 'bg-dark',
+    gog: 'bg-secondary',
   }
   return classMap[appType] || 'bg-secondary'
 }
