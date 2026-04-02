@@ -272,17 +272,13 @@ watch(
 )
 
 // 当 apps 引用被整体替换时（新扫描结果），重置所有筛选状态
-let prevAppsRef = null
 watch(
   () => props.apps,
   (newApps) => {
-    if (newApps !== prevAppsRef) {
-      prevAppsRef = newApps
-      const hasGames = newApps.length > 0 && newApps.some((app) => app['is-game'] === true)
-      gamesOnly.value = hasGames
-      selectedType.value = 'all'
-      searchQuery.value = ''
-    }
+    const hasGames = newApps.length > 0 && newApps.some((app) => app['is-game'] === true)
+    gamesOnly.value = hasGames
+    selectedType.value = 'all'
+    searchQuery.value = ''
   }
 )
 
