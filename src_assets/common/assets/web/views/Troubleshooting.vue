@@ -141,8 +141,23 @@
         :actualLogs="actualLogs"
         :copyLogs="copyLogs"
         :copyConfig="handleCopyConfig"
+        @openDiagnosis="openDiagnosis"
       />
     </div>
+
+    <!-- AI Diagnosis Modal -->
+    <LogDiagnosisModal
+      :show="showDiagnosisModal"
+      :config="aiConfig"
+      :providers="aiProviders"
+      :isLoading="aiLoading"
+      :result="aiResult"
+      :error="aiError"
+      :onProviderChange="aiProviderChange"
+      :getAvailableModels="aiGetModels"
+      @close="showDiagnosisModal = false"
+      @diagnose="handleDiagnose"
+    />
 
     <!-- Boom Confirm Modal -->
     <Transition name="fade">
@@ -224,11 +239,26 @@ import { useI18n } from 'vue-i18n'
 import Navbar from '../components/layout/Navbar.vue'
 import TroubleshootingCard from '../components/TroubleshootingCard.vue'
 import LogsSection from '../components/LogsSection.vue'
+import LogDiagnosisModal from '../components/LogDiagnosisModal.vue'
 import { useTroubleshooting } from '../composables/useTroubleshooting.js'
 import { useLogout } from '../composables/useLogout.js'
+import { useAiDiagnosis } from '../composables/useAiDiagnosis.js'
 
 const { t } = useI18n()
 const { logout } = useLogout()
+
+const {
+  config: aiConfig,
+  providers: aiProviders,
+  isLoading: aiLoading,
+  result: aiResult,
+  error: aiError,
+  onProviderChange: aiProviderChange,
+  getAvailableModels: aiGetModels,
+  diagnose: aiDiagnose,
+} = useAiDiagnosis()
+
+const showDiagnosisModal = ref(false)
 
 const {
   platform,
@@ -298,6 +328,14 @@ const confirmLogout = () => {
 const handleCopyConfig = () => copyConfig(t)
 
 const handleReopenSetupWizard = () => reopenSetupWizard(t)
+
+const openDiagnosis = () => {
+  showDiagnosisModal.value = true
+}
+
+const handleDiagnose = () => {
+  aiDiagnose(actualLogs.value)
+}
 
 onMounted(async () => {
   await Promise.all([loadPlatform(), refreshLogs()])
