@@ -297,6 +297,10 @@ watch(
         selectedType.value = 'all'
       }
     }
+    // 如果游戏过滤开启但已无游戏项，关闭过滤
+    if (gamesOnly.value && !props.apps.some((app) => app['is-game'] === true)) {
+      gamesOnly.value = false
+    }
   }
 )
 
