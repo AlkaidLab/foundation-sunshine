@@ -153,9 +153,6 @@ jobs:
             "mingw-w64-ucrt-x86_64-autotools"
           )
 
-          # Note: mingw-w64-ucrt-x86_64-rust conflicts with fixed gcc-15.1.0-5
-          # We install Rust via rustup in a separate step
-
           pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
 
       - name: Build Opus 1.6.1 from source
