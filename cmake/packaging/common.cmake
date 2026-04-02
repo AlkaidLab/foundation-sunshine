@@ -30,34 +30,47 @@ endforeach()
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web"
         DESTINATION "${SUNSHINE_ASSETS_DIR}")
 
-# install sunshine control panel (Tauri GUI)
+# install sunshine control panel (Tauri GUI) — from pre-built download
 if(WIN32)
-    set(TAURI_TARGET_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}/common/sunshine-control-panel/src-tauri/target")
-    
-    # 分别尝试安装每个可能的 GUI 路径
-    install(PROGRAMS 
-        "${TAURI_TARGET_DIR}/x86_64-pc-windows-gnu/release/sunshine-gui.exe"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
-        RENAME "sunshine-gui.exe"
-        OPTIONAL)
-    install(PROGRAMS 
-        "${TAURI_TARGET_DIR}/x86_64-pc-windows-msvc/release/sunshine-gui.exe"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
-        RENAME "sunshine-gui.exe"
-        OPTIONAL)
-    install(PROGRAMS 
-        "${TAURI_TARGET_DIR}/release/sunshine-gui.exe"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
-        RENAME "sunshine-gui.exe"
-        OPTIONAL)
-    
-    # 安装 WebView2Loader.dll
-    install(FILES 
-        "${TAURI_TARGET_DIR}/x86_64-pc-windows-gnu/release/WebView2Loader.dll"
-        "${TAURI_TARGET_DIR}/x86_64-pc-windows-msvc/release/WebView2Loader.dll"
-        "${TAURI_TARGET_DIR}/release/WebView2Loader.dll"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
-        OPTIONAL)
+    include(${CMAKE_MODULE_PATH}/packaging/FetchGUI.cmake)
+
+    if(EXISTS "${GUI_DIR}/sunshine-gui.exe")
+        install(PROGRAMS "${GUI_DIR}/sunshine-gui.exe"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            COMPONENT assets)
+        # WebView2Loader.dll (optional — Tauri 2 may embed it)
+        if(EXISTS "${GUI_DIR}/WebView2Loader.dll")
+            install(FILES "${GUI_DIR}/WebView2Loader.dll"
+                DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+                COMPONENT assets)
+        endif()
+    else()
+        # Fallback: try local Tauri build output (for developers building GUI locally)
+        set(TAURI_TARGET_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}/common/sunshine-control-panel/src-tauri/target")
+
+        install(PROGRAMS
+            "${TAURI_TARGET_DIR}/x86_64-pc-windows-gnu/release/sunshine-gui.exe"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            RENAME "sunshine-gui.exe"
+            OPTIONAL)
+        install(PROGRAMS
+            "${TAURI_TARGET_DIR}/x86_64-pc-windows-msvc/release/sunshine-gui.exe"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            RENAME "sunshine-gui.exe"
+            OPTIONAL)
+        install(PROGRAMS
+            "${TAURI_TARGET_DIR}/release/sunshine-gui.exe"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            RENAME "sunshine-gui.exe"
+            OPTIONAL)
+
+        install(FILES
+            "${TAURI_TARGET_DIR}/x86_64-pc-windows-gnu/release/WebView2Loader.dll"
+            "${TAURI_TARGET_DIR}/x86_64-pc-windows-msvc/release/WebView2Loader.dll"
+            "${TAURI_TARGET_DIR}/release/WebView2Loader.dll"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            OPTIONAL)
+    endif()
 endif()
 
 # platform specific packaging
