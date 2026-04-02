@@ -278,10 +278,8 @@ watch(
     const newApps = props.apps
     const hasGames = newApps.length > 0 && newApps.some((app) => app['is-game'] === true)
     gamesOnly.value = hasGames
-    if (newApps.length > 0) {
-      selectedType.value = 'all'
-      searchQuery.value = ''
-    }
+    selectedType.value = 'all'
+    searchQuery.value = ''
   }
 )
 
