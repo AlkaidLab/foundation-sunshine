@@ -82,3 +82,4 @@ src_assets/windows/misc/vmouse/driver/*.cat
 
 # Generated files
 src_assets/common/assets/web/welcome.html
+src_assets/common/assets/web/dist/

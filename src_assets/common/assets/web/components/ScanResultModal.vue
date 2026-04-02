@@ -90,6 +90,39 @@
                   <i class="fas fa-globe me-1"></i>{{ t('apps.scan_result_filter_url') }}
                   <span class="badge bg-dark ms-1">{{ stats.url }}</span>
                 </button>
+                <button
+                  v-if="stats.steam > 0"
+                  class="btn"
+                  :class="selectedType === 'steam' ? 'btn-primary' : 'btn-outline-primary'"
+                  @click="selectedType = 'steam'"
+                  type="button"
+                  :title="t('apps.scan_result_filter_steam_title')"
+                >
+                  <i class="fab fa-steam me-1"></i>Steam
+                  <span class="badge bg-dark ms-1">{{ stats.steam }}</span>
+                </button>
+                <button
+                  v-if="stats.epic > 0"
+                  class="btn"
+                  :class="selectedType === 'epic' ? 'btn-dark' : 'btn-outline-dark'"
+                  @click="selectedType = 'epic'"
+                  type="button"
+                  :title="t('apps.scan_result_filter_epic_title')"
+                >
+                  <i class="fas fa-store me-1"></i>Epic
+                  <span class="badge bg-dark ms-1">{{ stats.epic }}</span>
+                </button>
+                <button
+                  v-if="stats.gog > 0"
+                  class="btn"
+                  :class="selectedType === 'gog' ? 'btn-secondary' : 'btn-outline-secondary'"
+                  @click="selectedType = 'gog'"
+                  type="button"
+                  :title="t('apps.scan_result_filter_gog_title')"
+                >
+                  <i class="fas fa-compact-disc me-1"></i>GOG
+                  <span class="badge bg-dark ms-1">{{ stats.gog }}</span>
+                </button>
               </div>
 
               <!-- 游戏过滤 -->
@@ -238,6 +271,39 @@ watch(
   }
 )
 
+// 当 apps 引用被整体替换时（新扫描结果），重置所有筛选状态
+let prevAppsRef = null
+watch(
+  () => props.apps,
+  (newApps) => {
+    if (newApps !== prevAppsRef) {
+      prevAppsRef = newApps
+      const hasGames = newApps.length > 0 && newApps.some((app) => app['is-game'] === true)
+      gamesOnly.value = hasGames
+      selectedType.value = 'all'
+      searchQuery.value = ''
+    }
+  }
+)
+
+// 当数组内部变化时（quick-add/remove via splice），仅做防御性校正
+watch(
+  () => [props.apps.length, ...props.apps.map((a) => a['app-type'])],
+  () => {
+    // 如果当前选中的 type 已经没有对应项了，回退到 'all'
+    if (selectedType.value !== 'all') {
+      const hasType = props.apps.some((app) => app['app-type'] === selectedType.value)
+      if (!hasType) {
+        selectedType.value = 'all'
+      }
+    }
+    // 如果游戏过滤开启但已无游戏项，关闭过滤
+    if (gamesOnly.value && !props.apps.some((app) => app['is-game'] === true)) {
+      gamesOnly.value = false
+    }
+  }
+)
+
 // 统计信息
 const stats = computed(() => ({
   all: props.apps.length,
@@ -247,6 +313,9 @@ const stats = computed(() => ({
   batch: props.apps.filter((app) => app['app-type'] === 'batch').length,
   command: props.apps.filter((app) => app['app-type'] === 'command').length,
   url: props.apps.filter((app) => app['app-type'] === 'url').length,
+  steam: props.apps.filter((app) => app['app-type'] === 'steam').length,
+  epic: props.apps.filter((app) => app['app-type'] === 'epic').length,
+  gog: props.apps.filter((app) => app['app-type'] === 'gog').length,
 }))
 
 // 是否有激活的过滤器
@@ -288,6 +357,9 @@ const getAppTypeLabel = (appType) => {
     batch: t('apps.scan_result_type_batch'),
     command: t('apps.scan_result_type_command'),
     url: t('apps.scan_result_type_url'),
+    steam: 'Steam',
+    epic: 'Epic Games',
+    gog: 'GOG',
   }
   return typeMap[appType] || appType
 }
@@ -300,6 +372,9 @@ const getAppTypeBadgeClass = (appType) => {
     batch: 'bg-warning text-dark',
     command: 'bg-warning text-dark',
     url: 'bg-success',
+    steam: 'bg-primary',
+    epic: 'bg-dark',
+    gog: 'bg-secondary',
   }
   return classMap[appType] || 'bg-secondary'
 }
