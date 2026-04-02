@@ -50,11 +50,12 @@
           <button
             v-if="isTauriEnv()"
             class="cute-btn cute-btn-info"
-            @click="scanDirectory(true)"
+            @click="scanGameLibraries()"
             :disabled="isScanning"
-            title="扫描目录添加应用"
+            title="扫描游戏平台库 (Steam/Epic/GOG)"
+            aria-label="扫描游戏平台库 (Steam/Epic/GOG)"
           >
-            <i class="fas" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-folder-open'"></i>
+            <i class="fas" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-gamepad'"></i>
           </button>
           <button
             class="cute-btn cute-btn-secondary"
@@ -356,6 +357,7 @@ const {
   onDragStart,
   onDragEnd,
   scanDirectory,
+  scanGameLibraries,
   addScannedApp,
   addAllScannedApps,
   closeScanResult,
