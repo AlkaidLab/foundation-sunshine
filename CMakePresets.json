@@ -1,0 +1,29 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "dev-win",
+      "displayName": "Windows Dev (Ninja + MSYS2)",
+      "description": "Local Windows development build. Run inside MSYS2 UCRT64 shell.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "BUILD_DOCS": "OFF",
+        "SUNSHINE_ASSETS_DIR": "assets",
+        "FETCH_DRIVER_DEPS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev",
+      "displayName": "Dev Build",
+      "configurePreset": "dev-win"
+    }
+  ]
+}

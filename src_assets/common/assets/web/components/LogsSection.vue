@@ -47,6 +47,10 @@
             <i class="fas fa-download me-1"></i>
             {{ $t('troubleshooting.download_logs') }}
           </button>
+          <button class="btn btn-outline-info" @click="$emit('openDiagnosis')">
+            <i class="fas fa-robot me-1"></i>
+            {{ $t('troubleshooting.ai_diagnosis') }}
+          </button>
           <button class="btn btn-outline-primary" @click="copyConfig">
             <i class="fas fa-copy me-1"></i>
             {{ $t('troubleshooting.copy_config') }}
@@ -96,7 +100,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:logFilter', 'update:matchMode', 'update:ignoreCase'])
+const emit = defineEmits(['update:logFilter', 'update:matchMode', 'update:ignoreCase', 'openDiagnosis'])
 
 const matchModes = [
   { value: 'contains', labelKey: 'troubleshooting.match_contains', icon: 'fas fa-filter' },

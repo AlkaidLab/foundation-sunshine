@@ -12,7 +12,7 @@
             </span>
             <span v-if="hasActiveFilter" class="badge bg-info ms-2"> {{ t('apps.scan_result_matched', { count: filteredApps.length }) }} </span>
           </h5>
-          <button class="btn-close" @click="$emit('close')"></button>
+          <button class="btn-close" :aria-label="t('close')" @click="$emit('close')"></button>
         </div>
 
         <!-- 搜索框和过滤器 -->
