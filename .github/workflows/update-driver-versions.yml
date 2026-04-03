@@ -30,6 +30,9 @@ jobs:
   update-version:
     name: Update Driver Version Pin
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
