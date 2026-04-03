@@ -45,6 +45,9 @@ docs/doxyconfig*
 build.log
 *.log
 
+# CMake user presets (personal overrides)
+CMakeUserPresets.json
+
 # npm
 node_modules/
 package-lock.json
