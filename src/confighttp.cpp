@@ -1889,11 +1889,10 @@ namespace confighttp {
   }
 
   /**
-   * @brief 从文件或缓存读取 AI 配置
+   * @brief 从文件或缓存读取 AI 配置（调用方需持有 ai_config_mutex）
    */
   static nlohmann::json
-  loadAiConfig() {
-    std::lock_guard<std::mutex> lock(ai_config_mutex);
+  loadAiConfigLocked() {
     if (ai_config_loaded) {
       return ai_config_cache;
     }
@@ -1920,17 +1919,24 @@ namespace confighttp {
   }
 
   /**
-   * @brief 保存 AI 配置并刷新缓存
+   * @brief 从文件或缓存读取 AI 配置（线程安全）
+   */
+  static nlohmann::json
+  loadAiConfig() {
+    std::lock_guard<std::mutex> lock(ai_config_mutex);
+    return loadAiConfigLocked();
+  }
+
+  /**
+   * @brief 保存 AI 配置并刷新缓存（调用方需持有 ai_config_mutex）
    */
   static bool
-  saveAiConfig(const nlohmann::json &cfg) {
+  saveAiConfigLocked(const nlohmann::json &cfg) {
     auto path = getAiConfigPath();
     try {
       std::ofstream file(path);
       if (file.is_open()) {
         file << cfg.dump(2);
-        // 刷新缓存
-        std::lock_guard<std::mutex> lock(ai_config_mutex);
         ai_config_cache = cfg;
         ai_config_loaded = true;
         return true;
@@ -2072,8 +2078,9 @@ namespace confighttp {
     try {
       auto input = nlohmann::json::parse(ss.str());
 
-      // 只允许设置白名单字段
-      auto current = loadAiConfig();
+      // 用同一把锁包住 load-modify-save，防止并发写入丢失
+      std::lock_guard<std::mutex> lock(ai_config_mutex);
+      auto current = loadAiConfigLocked();
       if (input.contains("enabled")) current["enabled"] = input["enabled"].get<bool>();
       if (input.contains("provider")) current["provider"] = input["provider"].get<std::string>();
       if (input.contains("apiBase")) current["apiBase"] = input["apiBase"].get<std::string>();
@@ -2086,7 +2093,7 @@ namespace confighttp {
         }
       }
 
-      if (saveAiConfig(current)) {
+      if (saveAiConfigLocked(current)) {
         output["status"] = "ok";
       } else {
         output["status"] = "error";
@@ -2133,7 +2140,6 @@ namespace confighttp {
           *response << "Content-Type: text/event-stream\r\n";
           *response << "Cache-Control: no-cache\r\n";
           *response << "Connection: keep-alive\r\n";
-          *response << "Access-Control-Allow-Origin: *\r\n";
           *response << "\r\n";
           response->send();
           headerSent = true;
@@ -2146,14 +2152,12 @@ namespace confighttp {
       if (result.httpCode != 200 && !headerSent) {
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
-        headers.emplace("Access-Control-Allow-Origin", "*");
         response->write(SimpleWeb::StatusCode::server_error_bad_gateway, result.body, headers);
       }
     } else {
       auto result = processAiChat(requestBody);
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", result.contentType);
-      headers.emplace("Access-Control-Allow-Origin", "*");
 
       auto statusCode = (result.httpCode == 200)
         ? SimpleWeb::StatusCode::success_ok
@@ -2173,10 +2177,8 @@ namespace confighttp {
   void
   handleAiCors(resp_https_t response, req_https_t request) {
     SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Access-Control-Allow-Origin", "*");
     headers.emplace("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, anthropic-version");
-    headers.emplace("Access-Control-Max-Age", "86400");
+    headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
     response->write(SimpleWeb::StatusCode::success_no_content, "", headers);
   }
 
@@ -2247,6 +2249,15 @@ namespace confighttp {
       : apiBase + "/chat/completions";
 
     if (isAnthropic) {
+      // Anthropic 流式 SSE 格式与 OpenAI 不兼容，强制走非流式以保证响应格式一致
+      if (isStream) {
+        try {
+          auto reqJson = nlohmann::json::parse(processedBody);
+          reqJson["stream"] = false;
+          processedBody = reqJson.dump();
+        } catch (...) {}
+        isStream = false;
+      }
       processedBody = convertToAnthropicFormat(processedBody, defaultModel);
       proxyHeaders["x-api-key"] = apiKey;
       proxyHeaders["anthropic-version"] = "2023-06-01";
