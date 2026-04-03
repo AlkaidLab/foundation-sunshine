@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <atomic>
+#include <mutex>
 #include <stdexcept>
 #include <random>
 #include <map>
@@ -1871,6 +1872,492 @@ namespace confighttp {
     }
   }
 
+  // ===== AI LLM Proxy =====
+
+  // 内存缓存 AI 配置，避免每次请求都读文件
+  static std::mutex ai_config_mutex;
+  static nlohmann::json ai_config_cache;
+  static bool ai_config_loaded = false;
+
+  /**
+   * @brief 获取 AI 配置文件路径（与 sunshine.conf 同目录）
+   */
+  static std::string
+  getAiConfigPath() {
+    auto config_dir = fs::path(config::sunshine.config_file).parent_path();
+    return (config_dir / "ai_config.json").string();
+  }
+
+  /**
+   * @brief 从文件或缓存读取 AI 配置
+   */
+  static nlohmann::json
+  loadAiConfig() {
+    std::lock_guard<std::mutex> lock(ai_config_mutex);
+    if (ai_config_loaded) {
+      return ai_config_cache;
+    }
+
+    auto path = getAiConfigPath();
+    try {
+      std::string content = file_handler::read_file(path.c_str());
+      if (!content.empty()) {
+        ai_config_cache = nlohmann::json::parse(content);
+        ai_config_loaded = true;
+        return ai_config_cache;
+      }
+    } catch (...) {}
+
+    ai_config_cache = nlohmann::json{
+      {"enabled", false},
+      {"provider", "openai"},
+      {"apiBase", "https://api.openai.com/v1"},
+      {"apiKey", ""},
+      {"model", "gpt-4o-mini"}
+    };
+    ai_config_loaded = true;
+    return ai_config_cache;
+  }
+
+  /**
+   * @brief 保存 AI 配置并刷新缓存
+   */
+  static bool
+  saveAiConfig(const nlohmann::json &cfg) {
+    auto path = getAiConfigPath();
+    try {
+      std::ofstream file(path);
+      if (file.is_open()) {
+        file << cfg.dump(2);
+        // 刷新缓存
+        std::lock_guard<std::mutex> lock(ai_config_mutex);
+        ai_config_cache = cfg;
+        ai_config_loaded = true;
+        return true;
+      }
+    } catch (const std::exception &e) {
+      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
+    }
+    return false;
+  }
+
+  /**
+   * @brief 检测 provider 是否为 Anthropic（需要不同的 API 格式）
+   */
+  static bool
+  isAnthropicProvider(const nlohmann::json &cfg) {
+    std::string provider = cfg.value("provider", "");
+    std::string apiBase = cfg.value("apiBase", "");
+    return provider == "anthropic" || apiBase.find("anthropic.com") != std::string::npos;
+  }
+
+  /**
+   * @brief 将 OpenAI 格式的请求转换为 Anthropic 格式
+   */
+  static std::string
+  convertToAnthropicFormat(const std::string &openaiBody, const std::string &model) {
+    try {
+      auto input = nlohmann::json::parse(openaiBody);
+      nlohmann::json anthropic;
+
+      anthropic["model"] = input.value("model", model);
+      anthropic["max_tokens"] = input.value("max_tokens", 4096);
+
+      // 提取 system message 和 user/assistant messages
+      if (input.contains("messages")) {
+        nlohmann::json messages = nlohmann::json::array();
+        for (auto &msg : input["messages"]) {
+          std::string role = msg.value("role", "");
+          if (role == "system") {
+            anthropic["system"] = msg.value("content", "");
+          } else {
+            messages.push_back(msg);
+          }
+        }
+        anthropic["messages"] = messages;
+      }
+
+      // 转换 temperature, top_p 等通用参数
+      if (input.contains("temperature")) anthropic["temperature"] = input["temperature"];
+      if (input.contains("top_p")) anthropic["top_p"] = input["top_p"];
+      if (input.contains("stream")) anthropic["stream"] = input["stream"];
+
+      return anthropic.dump();
+    } catch (...) {
+      return openaiBody;  // 转换失败，原样返回
+    }
+  }
+
+  /**
+   * @brief 将 Anthropic 格式的响应转换回 OpenAI 格式
+   */
+  static std::string
+  convertFromAnthropicFormat(const std::string &anthropicResponse) {
+    try {
+      auto resp = nlohmann::json::parse(anthropicResponse);
+      nlohmann::json openai;
+
+      openai["id"] = resp.value("id", "");
+      openai["object"] = "chat.completion";
+      openai["model"] = resp.value("model", "");
+
+      // 转换 content blocks
+      nlohmann::json choice;
+      choice["index"] = 0;
+      choice["finish_reason"] = resp.value("stop_reason", "stop");
+
+      std::string content;
+      if (resp.contains("content") && resp["content"].is_array()) {
+        for (auto &block : resp["content"]) {
+          if (block.value("type", "") == "text") {
+            content += block.value("text", "");
+          }
+        }
+      }
+      choice["message"]["role"] = "assistant";
+      choice["message"]["content"] = content;
+      openai["choices"] = nlohmann::json::array({choice});
+
+      // 转换 usage
+      if (resp.contains("usage")) {
+        openai["usage"]["prompt_tokens"] = resp["usage"].value("input_tokens", 0);
+        openai["usage"]["completion_tokens"] = resp["usage"].value("output_tokens", 0);
+        openai["usage"]["total_tokens"] =
+          resp["usage"].value("input_tokens", 0) + resp["usage"].value("output_tokens", 0);
+      }
+
+      return openai.dump();
+    } catch (...) {
+      return anthropicResponse;
+    }
+  }
+
+  /**
+   * @brief GET /api/ai/config — 获取 AI 配置（不返回完整 API key）
+   */
+  void
+  getAiConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    auto cfg = loadAiConfig();
+
+    // 掩码 API key：仅显示前4+后4字符
+    if (cfg.contains("apiKey") && cfg["apiKey"].is_string()) {
+      std::string key = cfg["apiKey"].get<std::string>();
+      if (key.length() > 8) {
+        cfg["apiKey"] = key.substr(0, 4) + "****" + key.substr(key.length() - 4);
+      } else if (!key.empty()) {
+        cfg["apiKey"] = "****";
+      }
+    }
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, cfg.dump(), headers);
+  }
+
+  /**
+   * @brief POST /api/ai/config — 保存 AI 配置
+   */
+  void
+  saveAiConfigEndpoint(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+
+    nlohmann::json output;
+    try {
+      auto input = nlohmann::json::parse(ss.str());
+
+      // 只允许设置白名单字段
+      auto current = loadAiConfig();
+      if (input.contains("enabled")) current["enabled"] = input["enabled"].get<bool>();
+      if (input.contains("provider")) current["provider"] = input["provider"].get<std::string>();
+      if (input.contains("apiBase")) current["apiBase"] = input["apiBase"].get<std::string>();
+      if (input.contains("model")) current["model"] = input["model"].get<std::string>();
+      if (input.contains("apiKey")) {
+        std::string key = input["apiKey"].get<std::string>();
+        // 如果前端发来的是掩码（包含****），不覆盖
+        if (key.find("****") == std::string::npos) {
+          current["apiKey"] = key;
+        }
+      }
+
+      if (saveAiConfig(current)) {
+        output["status"] = "ok";
+      } else {
+        output["status"] = "error";
+        output["error"] = "Failed to write config file";
+      }
+    } catch (const std::exception &e) {
+      output["status"] = "error";
+      output["error"] = std::string("Invalid JSON: ") + e.what();
+    }
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, output.dump(), headers);
+  }
+
+  /**
+   * @brief POST /api/ai/chat/completions — OpenAI 兼容的 LLM 代理端点
+   *
+   * 支持普通请求和 SSE 流式请求。
+   * 自动适配 Anthropic API 格式。
+   * 客户端无需知道 API key 或实际后端，Sunshine 作为透明代理。
+   */
+  void
+  proxyAiChat(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    std::string requestBody = ss.str();
+
+    // 检测是否请求流式输出
+    bool isStream = false;
+    try {
+      auto reqJson = nlohmann::json::parse(requestBody);
+      isStream = reqJson.value("stream", false);
+    } catch (...) {}
+
+    if (isStream) {
+      bool headerSent = false;
+      auto result = processAiChatStream(requestBody, [&](const char *data, size_t len) {
+        if (!headerSent) {
+          *response << "HTTP/1.1 200 OK\r\n";
+          *response << "Content-Type: text/event-stream\r\n";
+          *response << "Cache-Control: no-cache\r\n";
+          *response << "Connection: keep-alive\r\n";
+          *response << "Access-Control-Allow-Origin: *\r\n";
+          *response << "\r\n";
+          response->send();
+          headerSent = true;
+        }
+        std::string chunk(data, len);
+        *response << chunk;
+        response->send();
+      });
+
+      if (result.httpCode != 200 && !headerSent) {
+        SimpleWeb::CaseInsensitiveMultimap headers;
+        headers.emplace("Content-Type", "application/json");
+        headers.emplace("Access-Control-Allow-Origin", "*");
+        response->write(SimpleWeb::StatusCode::server_error_bad_gateway, result.body, headers);
+      }
+    } else {
+      auto result = processAiChat(requestBody);
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", result.contentType);
+      headers.emplace("Access-Control-Allow-Origin", "*");
+
+      auto statusCode = (result.httpCode == 200)
+        ? SimpleWeb::StatusCode::success_ok
+        : (result.httpCode == 403)
+          ? SimpleWeb::StatusCode::client_error_forbidden
+          : (result.httpCode == 400)
+            ? SimpleWeb::StatusCode::client_error_bad_request
+            : SimpleWeb::StatusCode::server_error_bad_gateway;
+
+      response->write(statusCode, result.body, headers);
+    }
+  }
+
+  /**
+   * @brief OPTIONS handler for CORS preflight on AI endpoints
+   */
+  void
+  handleAiCors(resp_https_t response, req_https_t request) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Access-Control-Allow-Origin", "*");
+    headers.emplace("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, anthropic-version");
+    headers.emplace("Access-Control-Max-Age", "86400");
+    response->write(SimpleWeb::StatusCode::success_no_content, "", headers);
+  }
+
+  // ===== AI Proxy shared interface =====
+
+  bool
+  isAiEnabled() {
+    auto cfg = loadAiConfig();
+    return cfg.value("enabled", false) &&
+           !cfg.value("apiKey", "").empty() &&
+           !cfg.value("apiBase", "").empty();
+  }
+
+  /**
+   * @brief Prepare AI proxy request: validate config, build URL, headers, convert body.
+   * @return empty targetUrl on error (result is filled with error info)
+   */
+  static bool
+  prepareAiRequest(
+    const std::string &requestBody,
+    std::string &targetUrl,
+    std::string &processedBody,
+    std::map<std::string, std::string> &proxyHeaders,
+    bool &isAnthropic,
+    bool &isStream,
+    AiProxyResult &result) {
+
+    auto cfg = loadAiConfig();
+
+    if (!cfg.value("enabled", false)) {
+      result = {403, R"({"error":{"message":"AI proxy is not enabled","type":"invalid_request_error"}})", "application/json"};
+      return false;
+    }
+
+    std::string apiBase = cfg.value("apiBase", "");
+    std::string apiKey = cfg.value("apiKey", "");
+    std::string defaultModel = cfg.value("model", "");
+
+    if (apiBase.empty() || apiKey.empty()) {
+      result = {400, R"({"error":{"message":"AI proxy not configured: missing apiBase or apiKey","type":"invalid_request_error"}})", "application/json"};
+      return false;
+    }
+
+    if (requestBody.empty()) {
+      result = {400, R"({"error":{"message":"Empty request body","type":"invalid_request_error"}})", "application/json"};
+      return false;
+    }
+
+    processedBody = requestBody;
+    isStream = false;
+
+    try {
+      auto reqJson = nlohmann::json::parse(processedBody);
+      isStream = reqJson.value("stream", false);
+      if (!reqJson.contains("model") && !defaultModel.empty()) {
+        reqJson["model"] = defaultModel;
+        processedBody = reqJson.dump();
+      }
+    } catch (...) {}
+
+    isAnthropic = isAnthropicProvider(cfg);
+
+    while (!apiBase.empty() && apiBase.back() == '/') {
+      apiBase.pop_back();
+    }
+    targetUrl = isAnthropic
+      ? apiBase + "/v1/messages"
+      : apiBase + "/chat/completions";
+
+    if (isAnthropic) {
+      processedBody = convertToAnthropicFormat(processedBody, defaultModel);
+      proxyHeaders["x-api-key"] = apiKey;
+      proxyHeaders["anthropic-version"] = "2023-06-01";
+    } else {
+      proxyHeaders["Authorization"] = "Bearer " + apiKey;
+    }
+
+    BOOST_LOG(info) << "AI proxy forwarding to: " << targetUrl << (isStream ? " (stream)" : "");
+    return true;
+  }
+
+  AiProxyResult
+  processAiChat(const std::string &requestBody) {
+    std::string targetUrl, processedBody;
+    std::map<std::string, std::string> proxyHeaders;
+    bool isAnthropic = false, isStream = false;
+    AiProxyResult result;
+
+    if (!prepareAiRequest(requestBody, targetUrl, processedBody, proxyHeaders, isAnthropic, isStream, result)) {
+      return result;
+    }
+
+    std::string responseBody;
+    long httpCode = 0;
+
+    try {
+      bool ok = http::post_json(targetUrl, processedBody, proxyHeaders, responseBody, httpCode, 120);
+      if (ok) {
+        if (isAnthropic && httpCode >= 200 && httpCode < 300) {
+          responseBody = convertFromAnthropicFormat(responseBody);
+        }
+        int statusCode = (httpCode >= 200 && httpCode < 300) ? 200 : 502;
+        return {statusCode, responseBody, "application/json"};
+      } else {
+        return {502, R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})", "application/json"};
+      }
+    } catch (const std::exception &e) {
+      BOOST_LOG(error) << "AI proxy exception: " << e.what();
+      nlohmann::json err;
+      err["error"]["message"] = std::string("AI proxy exception: ") + e.what();
+      err["error"]["type"] = "internal_error";
+      return {500, err.dump(), "application/json"};
+    }
+  }
+
+  /**
+   * @brief curl write callback for streaming with std::function
+   */
+  struct StreamCallbackContext {
+    std::function<void(const char *, size_t)> callback;
+  };
+
+  static size_t
+  stream_func_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t realsize = size * nmemb;
+    auto *ctx = static_cast<StreamCallbackContext *>(userdata);
+    ctx->callback(ptr, realsize);
+    return realsize;
+  }
+
+  AiProxyResult
+  processAiChatStream(
+    const std::string &requestBody,
+    std::function<void(const char *, size_t)> chunkCallback) {
+
+    std::string targetUrl, processedBody;
+    std::map<std::string, std::string> proxyHeaders;
+    bool isAnthropic = false, isStream = false;
+    AiProxyResult result;
+
+    if (!prepareAiRequest(requestBody, targetUrl, processedBody, proxyHeaders, isAnthropic, isStream, result)) {
+      return result;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+      return {500, R"({"error":{"message":"Failed to initialize CURL","type":"internal_error"}})", "application/json"};
+    }
+
+    StreamCallbackContext ctx;
+    ctx.callback = std::move(chunkCallback);
+
+    struct curl_slist *header_list = nullptr;
+    header_list = curl_slist_append(header_list, "Content-Type: application/json");
+    for (const auto &[key, value] : proxyHeaders) {
+      std::string header_line = key + ": " + value;
+      header_list = curl_slist_append(header_list, header_line.c_str());
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, targetUrl.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, processedBody.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(processedBody.size()));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_func_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+
+    CURLcode curlResult = curl_easy_perform(curl);
+    curl_slist_free_all(header_list);
+    curl_easy_cleanup(curl);
+
+    if (curlResult != CURLE_OK) {
+      return {502, R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})", "application/json"};
+    }
+    return {200, "", "text/event-stream"};
+  }
+
   /**
    * @brief 计算文件的SHA256哈希值
    * @param filepath 文件路径
@@ -2132,6 +2619,10 @@ namespace confighttp {
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
+    server.resource["^/api/ai/config$"]["GET"] = getAiConfig;
+    server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
+    server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
+    server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
