@@ -55,11 +55,22 @@ rem ============================================================================
 echo Cleaning up existing Virtual Mouse driver...
 
 rem Remove ALL existing device nodes (loop until none remain)
+set "CLEANUP_COUNT=0"
 :remove_loop
 "%NEFCON%" --remove-device-node --hardware-id Root\ZakoVirtualMouse --class-guid 745a17a0-74d3-11d0-b6fe-00a0c90f57da
 if not errorlevel 1 (
+    set /a CLEANUP_COUNT+=1
     echo Removed a device node, checking for more...
+    timeout /t 1 /nobreak >nul
     goto remove_loop
+)
+echo Removed !CLEANUP_COUNT! device node(s) via nefcon.
+
+rem Fallback: use pnputil to remove any remaining device instances
+for /f "tokens=*" %%d in ('powershell -NoProfile -Command ^
+    "Get-PnpDevice -InstanceId 'ROOT\ZAKOVIRTUALMOUSE\*' -ErrorAction SilentlyContinue | ForEach-Object { $_.InstanceId }"') do (
+    echo Removing remaining device: %%d
+    pnputil /remove-device "%%d" >nul 2>&1
 )
 echo All existing device nodes removed.
 
@@ -96,6 +107,8 @@ if not errorlevel 1 (
     echo Virtual Mouse driver installation completed successfully!
 ) else (
     echo Virtual Mouse driver installation failed with error !ERRORLEVEL!
+    echo Rolling back: removing device node...
+    "%NEFCON%" --remove-device-node --hardware-id Root\ZakoVirtualMouse --class-guid 745a17a0-74d3-11d0-b6fe-00a0c90f57da
 )
 
 rem ============================================================================
