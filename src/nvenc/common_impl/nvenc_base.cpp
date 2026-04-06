@@ -564,12 +564,14 @@ namespace nvenc {
             format_config.enableIntraRefresh = 1;
             format_config.intraRefreshPeriod = 300;
             format_config.intraRefreshCnt = 299;
+#if NVENC_INT_VERSION >= 1200
             if (get_encoder_cap(NV_ENC_CAPS_SINGLE_SLICE_INTRA_REFRESH)) {
               format_config.singleSliceIntraRefresh = 1;
             }
             else {
               BOOST_LOG(warning) << "NvEnc: Single Slice Intra Refresh not supported";
             }
+#endif
           }
           else {
             BOOST_LOG(error) << "NvEnc: Client asked for intra-refresh but the encoder does not support intra-refresh";

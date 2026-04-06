@@ -27,6 +27,10 @@ extern "C" {
 // clang-format on
 }
 
+#ifndef DATA_SHARDS_MAX
+  #define DATA_SHARDS_MAX 255
+#endif
+
 #include "config.h"
 #include "display_device/session.h"
 #include "globals.h"
