@@ -9,11 +9,25 @@
         </h1>
       </div>
 
-      <div class="row">
-        <!-- Left Column -->
-        <div class="col-lg-6">
-          <!-- Logout -->
+      <!-- Row 1: 重新打开新手引导 | 登出 -->
+      <div class="row mb-4">
+        <div class="col-lg-6 d-flex">
           <TroubleshootingCard
+            class="flex-fill"
+            icon="fa-magic"
+            color="success"
+            :title="$t('troubleshooting.reopen_setup_wizard')"
+            :description="$t('troubleshooting.reopen_setup_wizard_desc')"
+          >
+            <button class="btn btn-success" @click="handleReopenSetupWizard">
+              <i class="fas fa-redo me-2"></i>
+              {{ $t('troubleshooting.reopen_setup_wizard') }}
+            </button>
+          </TroubleshootingCard>
+        </div>
+        <div class="col-lg-6 d-flex">
+          <TroubleshootingCard
+            class="flex-fill"
             icon="fa-sign-out-alt"
             color="danger"
             :title="$t('troubleshooting.logout')"
@@ -24,9 +38,14 @@
               {{ $t('troubleshooting.logout') }}
             </button>
           </TroubleshootingCard>
+        </div>
+      </div>
 
-          <!-- Force Close App -->
+      <!-- Row 2: 强制关闭 | Boom -->
+      <div class="row mb-4">
+        <div class="col-lg-6 d-flex">
           <TroubleshootingCard
+            class="flex-fill"
             icon="fa-times-circle"
             color="warning"
             :title="$t('troubleshooting.force_close')"
@@ -47,31 +66,10 @@
               {{ $t('troubleshooting.force_close') }}
             </button>
           </TroubleshootingCard>
-
-          <!-- Restart Sunshine -->
-          <TroubleshootingCard
-            icon="fa-sync-alt"
-            color="info"
-            :title="$t('troubleshooting.restart_sunshine')"
-            :description="$t('troubleshooting.restart_sunshine_desc')"
-          >
-            <template #alerts>
-              <div class="alert alert-success d-flex align-items-center" v-if="restartPressed">
-                <i class="fas fa-check-circle me-2"></i>
-                {{ $t('troubleshooting.restart_sunshine_success') }}
-              </div>
-            </template>
-            <button class="btn btn-info text-white" :disabled="restartPressed" @click="restart">
-              <i class="fas fa-redo me-2"></i>
-              {{ $t('troubleshooting.restart_sunshine') }}
-            </button>
-          </TroubleshootingCard>
         </div>
-
-        <!-- Right Column -->
-        <div class="col-lg-6">
-          <!-- Boom Sunshine -->
+        <div class="col-lg-6 d-flex">
           <TroubleshootingCard
+            class="flex-fill"
             icon="fa-bomb"
             color="danger"
             :title="$t('troubleshooting.boom_sunshine')"
@@ -88,10 +86,14 @@
               {{ $t('troubleshooting.boom_sunshine') }}
             </button>
           </TroubleshootingCard>
+        </div>
+      </div>
 
-          <!-- Reset persistent display device settings -->
+      <!-- Row 3: 重置显示器设置 | 重启 Sunshine -->
+      <div class="row mb-4">
+        <div class="col-lg-6 d-flex" v-if="platform === 'windows'">
           <TroubleshootingCard
-            v-if="platform === 'windows'"
+            class="flex-fill"
             icon="fa-desktop"
             color="info"
             :title="$t('troubleshooting.reset_display_device_windows')"
@@ -117,17 +119,24 @@
               {{ $t('troubleshooting.reset_display_device_windows') }}
             </button>
           </TroubleshootingCard>
-
-          <!-- Reopen Setup Wizard -->
+        </div>
+        <div class="col-lg-6 d-flex">
           <TroubleshootingCard
-            icon="fa-magic"
-            color="primary"
-            :title="$t('troubleshooting.reopen_setup_wizard')"
-            :description="$t('troubleshooting.reopen_setup_wizard_desc')"
+            class="flex-fill"
+            icon="fa-sync-alt"
+            color="info"
+            :title="$t('troubleshooting.restart_sunshine')"
+            :description="$t('troubleshooting.restart_sunshine_desc')"
           >
-            <button class="btn btn-primary" @click="handleReopenSetupWizard">
+            <template #alerts>
+              <div class="alert alert-success d-flex align-items-center" v-if="restartPressed">
+                <i class="fas fa-check-circle me-2"></i>
+                {{ $t('troubleshooting.restart_sunshine_success') }}
+              </div>
+            </template>
+            <button class="btn btn-info text-white" :disabled="restartPressed" @click="restart">
               <i class="fas fa-redo me-2"></i>
-              {{ $t('troubleshooting.reopen_setup_wizard') }}
+              {{ $t('troubleshooting.restart_sunshine') }}
             </button>
           </TroubleshootingCard>
         </div>

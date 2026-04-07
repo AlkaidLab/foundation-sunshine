@@ -123,18 +123,38 @@ const ignoreCaseModel = computed({
   set: (value) => emit('update:ignoreCase', value),
 })
 
-const downloadLogs = () => {
+const downloadLogs = async () => {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
-  const blob = new Blob([props.actualLogs], { type: 'text/plain;charset=utf-8' })
+  const filename = `sunshine-logs-${timestamp}.txt`
+  const content = props.actualLogs
+
+  // Tauri WebView2: use Rust save_text_file command (dialog + fs write)
+  if (window.__TAURI_INTERNALS__) {
+    try {
+      await window.__TAURI_INTERNALS__.invoke('save_text_file', {
+        content,
+        defaultName: filename,
+        filterName: 'Text Files',
+        extensions: ['txt'],
+      })
+      return
+    } catch (e) {
+      if (e === 'cancelled') return
+      console.warn('Tauri save_text_file failed, falling back:', e)
+    }
+  }
+
+  // Standard browser download
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
-  
   const link = Object.assign(document.createElement('a'), {
     href: url,
-    download: `sunshine-logs-${timestamp}.txt`,
+    download: filename,
   })
-  
+  document.body.appendChild(link)
   link.click()
-  URL.revokeObjectURL(url)
+  document.body.removeChild(link)
+  setTimeout(() => URL.revokeObjectURL(url), 3000)
 }
 </script>
 

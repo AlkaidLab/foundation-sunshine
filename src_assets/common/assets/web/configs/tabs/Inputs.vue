@@ -287,6 +287,7 @@ const vmouseStatusLabel = computed(() => {
                v-model="config.virtual_mouse" true-value="enabled" false-value="disabled">
         <label class="form-check-label" for="virtual_mouse">
           {{ $t('config.virtual_mouse') }}
+          <span class="badge bg-warning text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">{{ $t('config.experimental') }}</span>
         </label>
       </div>
       <div class="form-text">{{ $t('config.virtual_mouse_desc') }}</div>

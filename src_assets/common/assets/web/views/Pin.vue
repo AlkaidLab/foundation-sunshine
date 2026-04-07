@@ -11,6 +11,10 @@
             <i class="fas fa-qrcode me-2"></i>{{ $t('pin.qr_pairing') }}
           </h5>
           <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
+          <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
+            <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
+            <span>{{ $t('pin.qr_pairing_warning') }}</span>
+          </div>
 
           <!-- QR Code Display -->
           <div v-if="qrActive" class="qr-display">
@@ -587,7 +591,7 @@ watch(clients, initTooltips, { deep: true })
   display: flex;
   align-items: center;
   text-align: center;
-  color: var(--text-muted, #6c757d);
+  color: var(--bs-body-color, #dee2e6);
   font-size: 0.875rem;
 
   &::before,

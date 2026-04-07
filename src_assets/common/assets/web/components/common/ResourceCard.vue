@@ -9,13 +9,49 @@
         </h5>
       </div>
       <div class="card-body">
-        <p class="text-muted mb-4">{{ $t('resource_card.resources_desc') }}</p>
+
+        <!-- 基地官网 -->
+        <div class="resource-group mb-4">
+          <h6 class="resource-group-title">
+            <i class="fas fa-globe text-primary me-2"></i>
+            {{ $t('resource_card.official_website') }}
+          </h6>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <a class="resource-link resource-link-primary" :href="officialWebsiteUrl" target="_blank">
+                <div class="resource-icon">
+                  <i class="fas fa-globe"></i>
+                </div>
+                <div class="resource-content">
+                  <span class="resource-title">{{ $t('resource_card.official_website_title') }}</span>
+                </div>
+                <i class="fas fa-external-link-alt resource-arrow"></i>
+              </a>
+            </div>
+            <div class="col-md-6">
+              <a
+                class="resource-link resource-link-github"
+                href="https://github.com/AlkaidLab/foundation-sunshine"
+                target="_blank"
+              >
+                <div class="resource-icon">
+                  <i class="fab fa-github"></i>
+                </div>
+                <div class="resource-content">
+                  <span class="resource-title">Sunshine Foundation</span>
+                  <span class="resource-desc">{{ $t('resource_card.open_source_desc') }}</span>
+                </div>
+                <i class="fas fa-star resource-arrow text-warning"></i>
+              </a>
+            </div>
+          </div>
+        </div>
 
         <!-- 快速入门 -->
         <div class="resource-group mb-4">
           <h6 class="resource-group-title">
             <i class="fas fa-rocket text-success me-2"></i>
-            快速入门
+            {{ $t('resource_card.quick_start') }}
           </h6>
           <div class="row g-3">
             <div class="col-md-6">
@@ -28,8 +64,8 @@
                   <i class="fas fa-file-alt"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">使用教程</span>
-                  <span class="resource-desc">详细的配置与使用指南</span>
+                  <span class="resource-title">{{ $t('resource_card.tutorial') }}</span>
+                  <span class="resource-desc">{{ $t('resource_card.tutorial_desc') }}</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
@@ -40,8 +76,8 @@
                   <i class="fab fa-qq"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">加入串流裙</span>
-                  <span class="resource-desc">获取帮助与交流经验</span>
+                  <span class="resource-title">{{ $t('resource_card.join_group') }}</span>
+                  <span class="resource-desc">{{ $t('resource_card.join_group_desc') }}</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
@@ -53,7 +89,7 @@
         <div class="resource-group mb-4">
           <h6 class="resource-group-title">
             <i class="fas fa-download text-primary me-2"></i>
-            客户端下载
+            {{ $t('resource_card.client_downloads') }}
           </h6>
           <div class="row g-3">
             <div class="col-md-6 col-lg-4">
@@ -66,40 +102,24 @@
                   <i class="fab fa-android"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">Moonlight-VPLUS</span>
-                  <span class="resource-desc">Android 推荐</span>
+                  <span class="resource-title">安卓 Moonlight V+</span>
+                  <span class="resource-desc">Android / Android TV</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
             </div>
             <div class="col-md-6 col-lg-4">
               <a
-                class="resource-link resource-link-android"
-                href="https://github.com/WACrown/moonlight-android"
-                target="_blank"
+                class="resource-link resource-link-harmony"
+                href="javascript:void(0)"
+                @click.prevent="openHarmonyModal"
               >
                 <div class="resource-icon">
-                  <i class="fas fa-crown"></i>
+                  <i class="fas fa-mobile-alt"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">王冠版</span>
-                  <span class="resource-desc">Android</span>
-                </div>
-                <i class="fas fa-external-link-alt resource-arrow"></i>
-              </a>
-            </div>
-            <div class="col-md-6 col-lg-4">
-              <a
-                class="resource-link resource-link-apple"
-                href="https://apps.apple.com/cn/app/voidlink/id6747717070"
-                target="_blank"
-              >
-                <div class="resource-icon">
-                  <i class="fab fa-apple"></i>
-                </div>
-                <div class="resource-content">
-                  <span class="resource-title">虚空终端</span>
-                  <span class="resource-desc">iOS / iPadOS</span>
+                  <span class="resource-title">{{ $t('resource_card.harmony_client') }}</span>
+                  <span class="resource-desc">HarmonyOS NEXT</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
@@ -114,8 +134,24 @@
                   <i class="fas fa-desktop"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">Moonlight-PC</span>
+                  <span class="resource-title">Moonlight PC</span>
                   <span class="resource-desc">Windows / macOS / Linux</span>
+                </div>
+                <i class="fas fa-external-link-alt resource-arrow"></i>
+              </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+              <a
+                class="resource-link resource-link-apple"
+                href="https://apps.apple.com/cn/app/voidlink/id6747717070"
+                target="_blank"
+              >
+                <div class="resource-icon">
+                  <i class="fab fa-apple"></i>
+                </div>
+                <div class="resource-content">
+                  <span class="resource-title">{{ $t('resource_card.voidlink_title') }}</span>
+                  <span class="resource-desc">iOS / iPadOS</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
@@ -123,27 +159,27 @@
           </div>
         </div>
 
-        <!-- 开源项目 -->
+        <!-- 友情链接 -->
         <div class="resource-group">
           <h6 class="resource-group-title">
-            <i class="fab fa-github text-dark me-2"></i>
-            开源项目
+            <i class="fas fa-code-branch text-dark me-2"></i>
+            {{ $t('resource_card.third_party_moonlight') }}
           </h6>
           <div class="row g-3">
-            <div class="col-12">
+            <div class="col-md-6">
               <a
-                class="resource-link resource-link-github"
-                href="https://github.com/qiin2333/Sunshine-Foundation"
+                class="resource-link resource-link-android"
+                href="https://github.com/WACrown/moonlight-android"
                 target="_blank"
               >
                 <div class="resource-icon">
-                  <i class="fab fa-github"></i>
+                  <i class="fas fa-crown"></i>
                 </div>
                 <div class="resource-content">
-                  <span class="resource-title">Sunshine Foundation</span>
-                  <span class="resource-desc">Star & Fork 支持项目发展</span>
+                  <span class="resource-title">{{ $t('resource_card.crown_edition') }}</span>
+                  <span class="resource-desc">Android</span>
                 </div>
-                <i class="fas fa-star resource-arrow text-warning"></i>
+                <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
             </div>
           </div>
@@ -160,7 +196,7 @@
         </h5>
       </div>
       <div class="card-body">
-        <p class="text-muted mb-4">{{ $t('resource_card.legal_desc') }}</p>
+        <p class="mb-4">{{ $t('resource_card.legal_desc') }}</p>
 
         <!-- GPL v3.0 Badge -->
         <div class="gpl-badge mb-4">
@@ -170,7 +206,7 @@
               GNU General Public License v3.0
             </span>
           </div>
-          <p class="text-center text-muted small mt-2 mb-0">
+          <p class="text-center small mt-2 mb-0">
             {{ $t('resource_card.gpl_license_text_1') }}
             <br />
             {{ $t('resource_card.gpl_license_text_2') }}
@@ -189,7 +225,7 @@
               </div>
               <div class="resource-content">
                 <span class="resource-title">{{ $t('resource_card.license') }}</span>
-                <span class="resource-desc">查看完整许可证</span>
+                <span class="resource-desc">{{ $t('resource_card.view_license') }}</span>
               </div>
               <i class="fas fa-external-link-alt resource-arrow"></i>
             </a>
@@ -205,7 +241,7 @@
               </div>
               <div class="resource-content">
                 <span class="resource-title">{{ $t('resource_card.third_party_notice') }}</span>
-                <span class="resource-desc">第三方组件声明</span>
+                <span class="resource-desc">{{ $t('resource_card.third_party_desc') }}</span>
               </div>
               <i class="fas fa-external-link-alt resource-arrow"></i>
             </a>
@@ -213,8 +249,59 @@
         </div>
       </div>
     </div>
+
+    <!-- Harmony Link Modal -->
+    <Transition name="fade">
+      <div v-if="showHarmonyModal" class="harmony-modal-overlay" @click.self="closeHarmonyModal">
+        <div class="harmony-modal">
+          <div class="harmony-modal-header">
+            <h5>{{ $t('resource_card.harmony_client') }}</h5>
+            <button class="btn-close" @click="closeHarmonyModal"></button>
+          </div>
+          <div class="harmony-modal-body">
+            <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
+            <p>{{ $t('setup.harmony_modal_desc') }}</p>
+          </div>
+          <div class="harmony-modal-footer">
+            <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
+              <i class="fas fa-external-link-alt me-1"></i>
+              {{ $t('setup.harmony_goto_repo') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<script>
+export default {
+  name: 'ResourceCard',
+  data() {
+    return {
+      showHarmonyModal: false
+    }
+  },
+  computed: {
+    officialWebsiteUrl() {
+      return 'https://www.alkaidlab.com/'
+    }
+  },
+  methods: {
+    openHarmonyModal() {
+      this.showHarmonyModal = true
+    },
+    closeHarmonyModal() {
+      this.showHarmonyModal = false
+    },
+    confirmHarmonyLink() {
+      window.open('https://github.com/AlkaidLab/moonlight-harmony', '_blank')
+      this.closeHarmonyModal()
+    }
+  }
+}
+</script>
 
 <style scoped>
 .resource-group {
@@ -327,6 +414,11 @@
   --icon-gradient: linear-gradient(135deg, #6c757d 0%, #495057 100%);
 }
 
+.resource-link-harmony {
+  --link-color: 206, 48, 48;
+  --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
+}
+
 .resource-link-github {
   --icon-gradient: linear-gradient(135deg, #6c757d 0%, #868e96 100%);
 }
@@ -343,6 +435,7 @@
 .resource-link-apple,
 .resource-link-desktop,
 .resource-link-github,
+.resource-link-harmony,
 .resource-link-danger {
   background: linear-gradient(135deg, rgba(var(--link-color), 0.15) 0%, rgba(var(--link-color), 0.08) 100%);
 }
@@ -353,6 +446,7 @@
 .resource-link-apple .resource-icon,
 .resource-link-desktop .resource-icon,
 .resource-link-github .resource-icon,
+.resource-link-harmony .resource-icon,
 .resource-link-danger .resource-icon {
   background: var(--icon-gradient);
 }
@@ -363,6 +457,7 @@
 .resource-link-apple:hover,
 .resource-link-desktop:hover,
 .resource-link-github:hover,
+.resource-link-harmony:hover,
 .resource-link-danger:hover {
   border-color: rgba(var(--link-color), 0.4);
 }
@@ -478,6 +573,7 @@
 [data-bs-theme='dark'] .resource-link-primary,
 [data-bs-theme='dark'] .resource-link-info,
 [data-bs-theme='dark'] .resource-link-android,
+[data-bs-theme='dark'] .resource-link-harmony,
 [data-bs-theme='dark'] .resource-link-danger {
   background: linear-gradient(135deg, rgba(var(--link-color), 0.25) 0%, rgba(var(--link-color), 0.12) 100%);
 }
@@ -512,5 +608,109 @@
 
 [data-bs-theme='dark'] .resource-group {
   border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Harmony Modal */
+.harmony-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: hidden;
+}
+
+[data-bs-theme='light'] .harmony-modal-overlay {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.harmony-modal {
+  background: rgba(30, 30, 50, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+  animation: harmonyModalSlideUp 0.3s ease;
+}
+
+[data-bs-theme='light'] .harmony-modal {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes harmonyModalSlideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.harmony-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.harmony-modal-header h5 {
+  margin: 0;
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+[data-bs-theme='light'] .harmony-modal-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+[data-bs-theme='light'] .harmony-modal-header h5 {
+  color: #000;
+}
+
+.harmony-modal-body {
+  padding: 24px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #fff;
+}
+
+[data-bs-theme='light'] .harmony-modal-body {
+  color: #000;
+}
+
+.harmony-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-bs-theme='light'] .harmony-modal-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
