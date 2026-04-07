@@ -405,6 +405,10 @@ namespace abr {
           state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
           break;
       }
+      // Guard against inverted range when initial_bitrate is very low
+      if (state.config.min_bitrate_kbps > state.config.max_bitrate_kbps) {
+        state.config.min_bitrate_kbps = state.config.max_bitrate_kbps;
+      }
     }
 
     BOOST_LOG(info) << "ABR enabled for client '" << client_name
@@ -476,9 +480,12 @@ namespace abr {
     auto &state = it->second;
     auto now = std::chrono::steady_clock::now();
 
-    // Update current bitrate from client report
+    // Update current bitrate from client report, clamped to session range
     if (feedback.current_bitrate_kbps > 0) {
-      state.current_bitrate_kbps = feedback.current_bitrate_kbps;
+      state.current_bitrate_kbps = std::clamp(
+        feedback.current_bitrate_kbps,
+        state.config.min_bitrate_kbps,
+        state.config.max_bitrate_kbps);
     }
 
     // Add to feedback history
