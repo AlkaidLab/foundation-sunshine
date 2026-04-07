@@ -166,7 +166,7 @@
             {{ $t('resource_card.third_party_moonlight') }}
           </h6>
           <div class="row g-3">
-            <div class="col-md-6">
+            <div class="col-12">
               <a
                 class="resource-link resource-link-android"
                 href="https://github.com/WACrown/moonlight-android"
@@ -177,7 +177,39 @@
                 </div>
                 <div class="resource-content">
                   <span class="resource-title">{{ $t('resource_card.crown_edition') }}</span>
-                  <span class="resource-desc">Android</span>
+                  <span class="resource-desc">{{ $t('resource_card.crown_edition_desc') }}</span>
+                </div>
+                <i class="fas fa-external-link-alt resource-arrow"></i>
+              </a>
+            </div>
+            <div class="col-12">
+              <a
+                class="resource-link resource-link-harmony"
+                href="https://gitee.com/smdsbz/moonlight-ohos"
+                target="_blank"
+              >
+                <div class="resource-icon">
+                  <i class="fas fa-mobile-alt"></i>
+                </div>
+                <div class="resource-content">
+                  <span class="resource-title">{{ $t('resource_card.moonlight_ohos') }}</span>
+                  <span class="resource-desc">{{ $t('resource_card.moonlight_ohos_desc') }}</span>
+                </div>
+                <i class="fas fa-external-link-alt resource-arrow"></i>
+              </a>
+            </div>
+            <div class="col-12">
+              <a
+                class="resource-link resource-link-apple"
+                href="https://github.com/skyhua0224/moonlight-macos-enhanced"
+                target="_blank"
+              >
+                <div class="resource-icon">
+                  <i class="fab fa-apple"></i>
+                </div>
+                <div class="resource-content">
+                  <span class="resource-title">{{ $t('resource_card.moonlight_macos_enhanced') }}</span>
+                  <span class="resource-desc">{{ $t('resource_card.moonlight_macos_enhanced_desc') }}</span>
                 </div>
                 <i class="fas fa-external-link-alt resource-arrow"></i>
               </a>
@@ -370,7 +402,7 @@ export default {
 .resource-desc {
   display: block;
   font-size: 0.8rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--bs-body-color, #495057);
 }
 
 .resource-arrow {
