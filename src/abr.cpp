@@ -227,8 +227,12 @@ Set bitrate to 0 ONLY if current is within 5% of the type-appropriate target AND
     int max_br = state.config.max_bitrate_kbps;
 
     return replace_placeholders(load_prompt_template(), {
-      { "FOREGROUND_TITLE",  state.foreground_title.empty() ? "Unknown" : state.foreground_title },
-      { "FOREGROUND_EXE",    state.foreground_exe.empty() ? "Unknown" : state.foreground_exe },
+      { "FOREGROUND_TITLE",  !state.foreground_title.empty() ? state.foreground_title
+                             : !state.app_name.empty()       ? state.app_name
+                             : "Unknown" },
+      { "FOREGROUND_EXE",    !state.foreground_exe.empty() ? state.foreground_exe
+                             : !state.app_name.empty()     ? state.app_name
+                             : "Unknown" },
       { "MODE",              mode_to_string(state.config.mode) },
       { "CURRENT_BITRATE",   std::to_string(state.current_bitrate_kbps) },
       { "MIN_BITRATE",       std::to_string(state.config.min_bitrate_kbps) },
