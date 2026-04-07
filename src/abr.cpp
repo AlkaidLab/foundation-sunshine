@@ -2,9 +2,14 @@
  * @file src/abr.cpp
  * @brief Adaptive Bitrate (ABR) decision engine using LLM AI.
  *
- * Uses the configured LLM API to make intelligent bitrate decisions
- * based on client network feedback and the running game type.
- * Falls back to simple threshold logic when the LLM is unavailable.
+ * Architecture: two-tier bitrate control —
+ *   1. Real-time fallback: threshold-based reactions to network conditions
+ *      (always active, rate-limited to every 3 seconds).
+ *   2. Event-driven LLM: queries the configured LLM API for optimal target
+ *      bitrate on app switches and network recovery events.
+ *
+ * The fallback layer handles immediate network degradation, while the LLM
+ * provides intelligent per-game bitrate targets that guide probe-up behavior.
  */
 
 #include "abr.h"
@@ -126,8 +131,8 @@ namespace abr {
 
   /**
    * @brief Load prompt template from external file.
-   * File location: same directory as ai_config.json (config dir / abr_prompt.md).
-   * Cached after first successful load. Returns empty string if file not found.
+   * Search order: config dir (user override) → assets dir (bundled default).
+   * Cached after first successful load. Returns empty string if not found.
    */
   static const std::string &
   load_prompt_template() {
@@ -135,22 +140,28 @@ namespace abr {
     static bool loaded = false;
     if (loaded) return cached;
 
+    // Search paths: config dir first (user override), then assets dir (bundled default)
+    std::vector<std::filesystem::path> search_paths;
     try {
-      auto config_dir = std::filesystem::path(config::sunshine.config_file).parent_path();
-      auto path = config_dir / "abr_prompt.md";
-      std::ifstream file(path);
-      if (file.is_open()) {
-        cached.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-        BOOST_LOG(info) << "ABR: loaded prompt template from " << path;
-      }
-      else {
-        BOOST_LOG(warning) << "ABR: prompt template not found at " << path << ", LLM decisions will be unavailable";
-      }
+      search_paths.push_back(std::filesystem::path(config::sunshine.config_file).parent_path() / "abr_prompt.md");
     }
-    catch (const std::exception &e) {
-      BOOST_LOG(warning) << "ABR: failed to load prompt template: " << e.what();
+    catch (...) {}
+    search_paths.push_back(std::filesystem::path(SUNSHINE_ASSETS_DIR) / "abr_prompt.md");
+
+    for (const auto &path : search_paths) {
+      try {
+        std::ifstream file(path);
+        if (file.is_open()) {
+          cached.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+          BOOST_LOG(info) << "ABR: loaded prompt template from " << path;
+          loaded = true;
+          return cached;
+        }
+      }
+      catch (...) {}
     }
 
+    BOOST_LOG(warning) << "ABR: prompt template not found, LLM decisions will be unavailable";
     loaded = true;
     return cached;
   }
@@ -300,13 +311,15 @@ namespace abr {
         // Clamp to configured range
         bitrate = std::clamp(bitrate, state.config.min_bitrate_kbps, state.config.max_bitrate_kbps);
 
-        // Ignore negligible changes (< 2%)
-        if (std::abs(bitrate - state.current_bitrate_kbps) < state.current_bitrate_kbps / 50) {
-          action.new_bitrate_kbps = 0;
-          action.reason = "no_change: delta too small";
+        // Always record the LLM's recommended target
+        action.target_bitrate_kbps = bitrate;
+
+        // Only signal an immediate action if the change is significant (>= 2%)
+        if (std::abs(bitrate - state.current_bitrate_kbps) >= state.current_bitrate_kbps / 50) {
+          action.new_bitrate_kbps = bitrate;
         }
         else {
-          action.new_bitrate_kbps = bitrate;
+          action.reason = "no_change: delta too small";
         }
       }
     }
@@ -370,10 +383,13 @@ namespace abr {
     state.recent_feedback.clear();
     state.consecutive_high_loss = 0;
     state.stable_ticks = 0;
+    state.llm_target_bitrate_kbps = 0;
+    state.app_changed = true;  // Trigger initial LLM call for app classification
+    state.network_recovered = false;
     state.last_llm_call = std::chrono::steady_clock::time_point {};
+    state.last_fallback_time = std::chrono::steady_clock::time_point {};
     state.last_fg_detect = std::chrono::steady_clock::time_point {};
     state.last_fg_pid = 0;
-    state.cached_action = {};
     state.llm_in_flight = false;
     static uint64_t generation_counter = 0;
     state.generation = ++generation_counter;
@@ -411,6 +427,12 @@ namespace abr {
       }
     }
 
+    // Clamp current bitrate to the computed range
+    state.current_bitrate_kbps = std::clamp(
+      state.current_bitrate_kbps,
+      state.config.min_bitrate_kbps,
+      state.config.max_bitrate_kbps);
+
     BOOST_LOG(info) << "ABR enabled for client '" << client_name
                     << "': app=" << app_name
                     << " mode=" << mode_to_string(cfg.mode)
@@ -434,11 +456,12 @@ namespace abr {
   }
 
   /**
-   * @brief Background worker: calls LLM and stores result.
+   * @brief Background worker: calls LLM and stores target bitrate recommendation.
    * Spawned as detached thread; communicates via sessions map.
+   * Unlike old design, the LLM sets a target (not an immediate action).
    */
   static void
-  llm_worker(const std::string &client_name, uint64_t generation, std::string request_body, network_feedback_t last_feedback) {
+  llm_worker(const std::string &client_name, uint64_t generation, std::string request_body) {
     auto result = confighttp::processAiChat(request_body);
 
     std::lock_guard lock(sessions_mutex);
@@ -450,19 +473,16 @@ namespace abr {
     state.llm_in_flight = false;
 
     if (result.httpCode != 200) {
-      BOOST_LOG(warning) << "ABR LLM call failed (HTTP " << result.httpCode << "), using fallback";
-      state.cached_action = fallback_decision(state, last_feedback);
-    }
-    else {
-      state.cached_action = parse_llm_response(result.body, state);
+      BOOST_LOG(warning) << "ABR LLM call failed (HTTP " << result.httpCode << ")";
+      return;
     }
 
-    if (state.cached_action.new_bitrate_kbps > 0) {
-      state.current_bitrate_kbps = state.cached_action.new_bitrate_kbps;
-      state.stable_ticks = 0;
-      BOOST_LOG(info) << "ABR LLM decision for '" << client_name
-                      << "': " << state.cached_action.new_bitrate_kbps << " Kbps"
-                      << " (" << state.cached_action.reason << ")";
+    auto action = parse_llm_response(result.body, state);
+    if (action.target_bitrate_kbps > 0) {
+      state.llm_target_bitrate_kbps = action.target_bitrate_kbps;
+      BOOST_LOG(info) << "ABR LLM target for '" << client_name
+                      << "': " << action.target_bitrate_kbps << " Kbps"
+                      << " (" << action.reason << ")";
     }
   }
 
@@ -474,7 +494,7 @@ namespace abr {
 
     auto it = sessions.find(client_name);
     if (it == sessions.end() || !it->second.config.enabled) {
-      return { 0, "ABR not enabled" };
+      return { .reason = "ABR not enabled" };
     }
 
     auto &state = it->second;
@@ -494,47 +514,7 @@ namespace abr {
       state.recent_feedback.pop_front();
     }
 
-    // Consume cached action from completed LLM call (if any)
-    action_t result_action;
-    if (state.cached_action.new_bitrate_kbps > 0) {
-      result_action = std::exchange(state.cached_action, {});
-    }
-
-    // Emergency: high packet loss — immediate fallback regardless of LLM state
-    if (feedback.packet_loss > 5.0) {
-      auto action = fallback_decision(state, feedback);
-      if (action.new_bitrate_kbps > 0) {
-        state.current_bitrate_kbps = action.new_bitrate_kbps;
-        result_action = action;
-      }
-      return result_action;
-    }
-
-    // Decide whether to launch a new LLM call
-    auto since_last_llm = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_llm_call).count();
-    bool should_call_llm = since_last_llm >= session_state_t::LLM_CALL_INTERVAL_SECONDS;
-
-    if (!should_call_llm || state.llm_in_flight) {
-      return result_action;
-    }
-
-    // LLM not available or prompt template missing → use fallback synchronously
-    if (!confighttp::isAiEnabled() || load_prompt_template().empty()) {
-      auto action = fallback_decision(state, feedback);
-      if (action.new_bitrate_kbps > 0) {
-        state.current_bitrate_kbps = action.new_bitrate_kbps;
-        BOOST_LOG(info) << "ABR fallback for '" << client_name
-                        << "': " << action.new_bitrate_kbps << " Kbps"
-                        << " (" << action.reason << ")";
-      }
-      // Merge: prefer new fallback over stale cached
-      if (action.new_bitrate_kbps > 0) {
-        result_action = action;
-      }
-      return result_action;
-    }
-
-    // Detect foreground window/process (rate limited)
+    // ── Phase 1: Foreground detection (rate limited) ──
     auto since_last_fg = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_fg_detect).count();
     if (since_last_fg >= session_state_t::FG_DETECT_INTERVAL_SECONDS) {
       auto fg = detect_foreground_app();
@@ -543,22 +523,78 @@ namespace abr {
         state.foreground_title = fg.window_title;
         state.foreground_exe = fg.exe_name;
         state.last_fg_pid = fg.pid;
-        BOOST_LOG(debug) << "ABR: foreground changed to '" << fg.window_title
-                         << "' (" << fg.exe_name << ") pid=" << fg.pid;
+        state.app_changed = true;
+        BOOST_LOG(info) << "ABR: foreground changed to '" << fg.window_title
+                        << "' (" << fg.exe_name << ") pid=" << fg.pid;
       }
       else if (fg.pid == state.last_fg_pid && !fg.window_title.empty()) {
         state.foreground_title = fg.window_title;
       }
     }
 
-    // Build prompt and launch async LLM call
-    state.last_llm_call = now;
-    state.llm_in_flight = true;
+    // ── Phase 2: Fallback decisions (real-time, rate-limited to FALLBACK_INTERVAL_SECONDS) ──
+    action_t result_action;
+    auto since_last_fallback = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_fallback_time).count();
+    bool can_fallback = since_last_fallback >= session_state_t::FALLBACK_INTERVAL_SECONDS;
 
-    auto prompt = build_llm_prompt(state);
-    auto request_body = build_llm_request(prompt);
+    // Emergency: high packet loss — immediate, no rate limit
+    if (feedback.packet_loss > 5.0) {
+      auto action = fallback_decision(state, feedback);
+      if (action.new_bitrate_kbps > 0) {
+        state.current_bitrate_kbps = action.new_bitrate_kbps;
+        state.last_fallback_time = now;
+        result_action = action;
+      }
+      return result_action;
+    }
 
-    std::thread(llm_worker, client_name, state.generation, std::move(request_body), feedback).detach();
+    // Regular fallback: moderate loss, probe-up, etc.
+    if (can_fallback) {
+      state.last_fallback_time = now;
+      auto action = fallback_decision(state, feedback);
+      if (action.new_bitrate_kbps > 0) {
+        // When probing up with LLM target, don't exceed the target
+        if (state.llm_target_bitrate_kbps > 0 && action.reason.find("probe_up") != std::string::npos) {
+          action.new_bitrate_kbps = std::min(action.new_bitrate_kbps, state.llm_target_bitrate_kbps);
+          if (action.new_bitrate_kbps <= state.current_bitrate_kbps) {
+            action.new_bitrate_kbps = 0;  // Already at or above LLM target, don't probe further
+          }
+        }
+        if (action.new_bitrate_kbps > 0) {
+          state.current_bitrate_kbps = action.new_bitrate_kbps;
+          BOOST_LOG(info) << "ABR fallback for '" << client_name
+                          << "': " << action.new_bitrate_kbps << " Kbps"
+                          << " (" << action.reason << ")";
+          result_action = action;
+        }
+      }
+    }
+
+    // Track network recovery: edge-trigger when stable_ticks crosses threshold
+    if (state.stable_ticks == 5 && state.consecutive_high_loss == 0) {
+      state.network_recovered = true;  // Signal for LLM (set once on transition)
+    }
+
+    // ── Phase 3: LLM trigger (event-driven, NOT periodic) ──
+    bool should_trigger_llm = (state.app_changed || state.network_recovered)
+                              && !state.llm_in_flight
+                              && confighttp::isAiEnabled()
+                              && !load_prompt_template().empty();
+
+    if (should_trigger_llm) {
+      auto since_last_llm = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_llm_call).count();
+      if (since_last_llm >= session_state_t::LLM_MIN_INTERVAL_SECONDS) {
+        state.app_changed = false;
+        state.network_recovered = false;
+        state.last_llm_call = now;
+        state.llm_in_flight = true;
+
+        auto prompt = build_llm_prompt(state);
+        auto request_body = build_llm_request(prompt);
+
+        std::thread(llm_worker, client_name, state.generation, std::move(request_body)).detach();
+      }
+    }
 
     return result_action;
   }
@@ -570,9 +606,7 @@ namespace abr {
 
   void
   cleanup(const std::string &client_name) {
-    std::lock_guard lock(sessions_mutex);
-    sessions.erase(client_name);
-    BOOST_LOG(debug) << "ABR state cleaned up for client '" << client_name << "'";
+    disable(client_name);
   }
 
 }  // namespace abr
