@@ -17,6 +17,14 @@ set(CPACK_STRIP_FILES YES)
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"
         PATTERN "web" EXCLUDE)
+
+# install ABR prompt template
+install(FILES "${PROJECT_SOURCE_DIR}/src/assets/abr_prompt.md"
+        DESTINATION "${SUNSHINE_ASSETS_DIR}")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets")
+configure_file("${PROJECT_SOURCE_DIR}/src/assets/abr_prompt.md"
+               "${CMAKE_CURRENT_BINARY_DIR}/assets/abr_prompt.md"
+               COPYONLY)
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
         RELATIVE "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/" "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/*")
