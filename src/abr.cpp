@@ -527,23 +527,21 @@ Set bitrate to 0 ONLY if current is within 5% of the type-appropriate target AND
       result_action = std::exchange(state.cached_action, {});
     }
 
+    // Emergency: high packet loss — immediate fallback regardless of LLM state
+    if (feedback.packet_loss > 5.0) {
+      auto action = fallback_decision(state, feedback);
+      if (action.new_bitrate_kbps > 0) {
+        state.current_bitrate_kbps = action.new_bitrate_kbps;
+        result_action = action;
+      }
+      return result_action;
+    }
+
     // Decide whether to launch a new LLM call
     auto since_last_llm = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_llm_call).count();
     bool should_call_llm = since_last_llm >= session_state_t::LLM_CALL_INTERVAL_SECONDS;
 
-    // Emergency: high packet loss bypasses rate limit
-    if (feedback.packet_loss > 5.0) {
-      should_call_llm = true;
-    }
-
     if (!should_call_llm || state.llm_in_flight) {
-      // Not time yet, or LLM already working — check if fallback needed for emergency
-      if (feedback.packet_loss > 5.0 && result_action.new_bitrate_kbps == 0 && !confighttp::isAiEnabled()) {
-        result_action = fallback_decision(state, feedback);
-        if (result_action.new_bitrate_kbps > 0) {
-          state.current_bitrate_kbps = result_action.new_bitrate_kbps;
-        }
-      }
       return result_action;
     }
 
