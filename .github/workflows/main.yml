@@ -112,6 +112,7 @@ jobs:
       - name: Update Windows dependencies
         env:
           gcc_version: '15.1.0-5'
+          opus_version: '1.6.1-1'
         shell: msys2 {0}
         run: |
           broken_deps=(
@@ -128,6 +129,10 @@ jobs:
 
             tarballs="${tarballs} ${tarball}"
           done
+
+          # download pinned opus version
+          opus_tarball="mingw-w64-ucrt-x86_64-opus-${opus_version}-any.pkg.tar.zst"
+          wget https://repo.msys2.org/mingw/ucrt64/${opus_tarball}
 
           # install broken dependencies
           if [ -n "$tarballs" ]; then
@@ -149,12 +154,14 @@ jobs:
             # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
-            "mingw-w64-ucrt-x86_64-opus"
             "mingw-w64-ucrt-x86_64-toolchain"
             "mingw-w64-ucrt-x86_64-autotools"
           )
 
           pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+
+          # install pinned opus after Syu to prevent upgrade
+          pacman --noconfirm -U ${opus_tarball}
 
       - name: Verify Build Tools
         shell: msys2 {0}
@@ -174,7 +181,6 @@ jobs:
         with:
           path: node_modules
           key: npm-${{ hashFiles('package-lock.json') }}
-          restore-keys: npm-
 
       - name: Build Windows
         shell: msys2 {0}
