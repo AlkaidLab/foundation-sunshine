@@ -31,6 +31,7 @@ export function useApps() {
   const scannedAppsSearchQuery = ref('')
   const showGamesOnly = ref(false)
   const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
+  const deleteConfirmIndex = ref(null)
 
   // 计算属性
   const messageClass = computed(() => ({
@@ -131,10 +132,19 @@ export function useApps() {
     }
   }
 
-  const showDeleteForm = async (index) => {
-    if (await confirm(`确定要删除应用 "${apps.value[index].name}" 吗？`)) {
-      await deleteApp(index)
-    }
+  const showDeleteForm = (index) => {
+    deleteConfirmIndex.value = index
+  }
+
+  const cancelDeleteApp = () => {
+    deleteConfirmIndex.value = null
+  }
+
+  const confirmDeleteApp = async () => {
+    const index = deleteConfirmIndex.value
+    if (index === null) return
+    deleteConfirmIndex.value = null
+    await deleteApp(index)
   }
 
   const deleteApp = async (index) => {
@@ -540,6 +550,9 @@ export function useApps() {
     handleSaveApp,
     showDeleteForm,
     deleteApp,
+    cancelDeleteApp,
+    confirmDeleteApp,
+    deleteConfirmIndex,
     save,
     hasUnsavedChanges,
     onDragStart,

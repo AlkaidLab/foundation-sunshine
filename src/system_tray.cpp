@@ -446,7 +446,7 @@ namespace system_tray {
   };
 
   auto tray_visit_project_sunshine_cb = [](struct tray_menu *item) {
-    platf::open_url_in_browser("https://github.com/qiin2333/Sunshine-Foundation");
+    platf::open_url_in_browser("https://github.com/AlkaidLab/foundation-sunshine");
   };
 
   auto tray_visit_project_moonlight_cb = [](struct tray_menu *item) {

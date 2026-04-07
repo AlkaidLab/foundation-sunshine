@@ -1,5 +1,5 @@
 <template>
-  <div class="card shadow-sm mb-4">
+  <div class="card shadow-sm">
     <div :class="['card-header', 'border-bottom-0', headerClass]">
       <h5 class="card-title mb-0">
         <i :class="iconClass"></i>

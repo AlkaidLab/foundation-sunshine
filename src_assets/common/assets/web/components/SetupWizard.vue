@@ -68,7 +68,7 @@
             <h3 class="mb-4">{{ $t('setup.step2_description') }}</h3>
             
             <div class="mb-3">
-              <label for="adapterSelect" class="form-label">{{ $t('setup.select_adapter') }}</label>
+              <label for="adapterSelect" class="form-label adapter-label">{{ $t('setup.select_adapter') }}</label>
               <select id="adapterSelect" 
                       class="form-select form-select-large" 
                       v-model="selectedAdapter">
@@ -88,30 +88,37 @@
               </div>
 
               <!-- GPU选择提示框 -->
-              <div class="form-text mt-3 adapter-hint-box">
-                {{ $t('config.adapter_name_desc_windows') }}<br>
-              </div>
+              <div class="form-text mt-3 adapter-hint-box" v-html="$t('config.adapter_name_desc_windows')"></div>
           </div>
 
           <!-- 步骤 3: 选择串流显示器 -->
           <div v-else-if="currentStep === 3">
             <h3 class="mb-4">{{ $t('setup.step1_description') }}</h3>
-            <p class="text-muted mb-4">{{ $t('setup.step1_vdd_intro') }}</p>
+            <p class="vdd-intro-text mb-4">{{ $t('setup.step1_vdd_intro') }}</p>
             
+            <!-- 基地显示器标题 -->
+            <h5 class="my-3 physical-display-title">
+              <i class="fas fa-tv"></i>
+              {{ $t('setup.base_display_title') }}
+            </h5>
             <!-- 虚拟显示器选项 -->
             <div class="option-card" 
                  :class="{ selected: selectedDisplay === 'ZakoHDR' }"
                  @click="selectedDisplay = 'ZakoHDR'">
-              <div class="option-icon">
-                <i class="fas fa-tv"></i>
+              <div class="d-flex align-items-center">
+                <div class="option-icon-small">
+                  <i class="fas fa-tv"></i>
+                </div>
+                <div class="flex-grow-1">
+                  <h4>{{ $t('setup.virtual_display') }}</h4>
+                  <p>{{ $t('setup.virtual_display_desc') }}</p>
+                </div>
               </div>
-              <h4>{{ $t('setup.virtual_display') }}</h4>
-              <p>{{ $t('setup.virtual_display_desc') }}</p>
             </div>
 
             <!-- 物理显示器列表 -->
             <div v-if="displayDevices && displayDevices.length > 0">
-              <h5 class="my-3">
+              <h5 class="my-3 physical-display-title">
                 <i class="fas fa-desktop"></i>
                 {{ $t('setup.physical_display') }}
               </h5>
@@ -191,14 +198,16 @@
 
           <!-- 步骤 5: 完成 -->
           <div v-else-if="currentStep === 5">
-            <div class="text-center">
-              <div class="mb-3" style="font-size: 3em; color: #28a745;">
-                <i class="fas fa-check-circle"></i>
+            <div>
+              <div class="text-center mb-3">
+                <h3 class="mb-1">
+                  <i class="fas fa-check-circle setup-complete-icon"></i>
+                  {{ $t('setup.setup_complete') }}
+                </h3>
+                <p class="mb-0">{{ $t('setup.setup_complete_desc') }}</p>
               </div>
-              <h3 class="mb-2">{{ $t('setup.setup_complete') }}</h3>
-              <p class="mb-3">{{ $t('setup.setup_complete_desc') }}</p>
               
-              <div class="alert alert-info" v-if="saveSuccess">
+              <div class="alert alert-info text-center" v-if="saveSuccess">
                 <i class="fas fa-info-circle"></i>
                 {{ $t('setup.config_saved') }}
               </div>
@@ -208,29 +217,75 @@
                 {{ saveError }}
               </div>
 
-              <!-- 客户端下载二维码 -->
+              <!-- 客户端下载 -->
               <div class="client-download-section mt-3">
                 <h5 class="mb-3">
-                  <i class="fas fa-mobile-alt"></i>
+                  <i class="fas fa-download"></i>
                   {{ $t('setup.download_clients') }}
                 </h5>
-                <div class="qr-codes-container">
-                  <div class="qr-code-item">
-                    <div class="qr-code-box">
-                      <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
-                    </div>
-                    <div class="qr-code-label">
-                      <i class="fab fa-android"></i>
-                      {{ $t('setup.android_client') }}
-                    </div>
+                <div class="client-download-layout">
+                  <!-- 左侧：应用下载链接 -->
+                  <div class="client-links">
+                    <a class="resource-link resource-link-android"
+                       href="https://github.com/qiin2333/moonlight-vplus"
+                       target="_blank">
+                      <div class="resource-icon"><i class="fab fa-android"></i></div>
+                      <div class="resource-content">
+                        <span class="resource-title">安卓 Moonlight V+</span>
+                        <span class="resource-desc">Android / Android TV</span>
+                      </div>
+                      <i class="fas fa-external-link-alt resource-arrow"></i>
+                    </a>
+                    <a class="resource-link resource-link-harmony"
+                       href="javascript:void(0)"
+                       @click.prevent="openHarmonyModal">
+                      <div class="resource-icon"><i class="fas fa-mobile-alt"></i></div>
+                      <div class="resource-content">
+                        <span class="resource-title">鸿蒙 Moonlight V+</span>
+                        <span class="resource-desc">HarmonyOS NEXT</span>
+                      </div>
+                      <i class="fas fa-external-link-alt resource-arrow"></i>
+                    </a>
+                    <a class="resource-link resource-link-apple"
+                       href="https://apps.apple.com/cn/app/voidlink/id6747717070"
+                       target="_blank">
+                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
+                      <div class="resource-content">
+                        <span class="resource-title">虚空终端 (VoidLink)</span>
+                        <span class="resource-desc">iOS / iPadOS</span>
+                      </div>
+                      <i class="fas fa-external-link-alt resource-arrow"></i>
+                    </a>
+                    <a class="resource-link resource-link-desktop"
+                       href="https://github.com/qiin2333/moonlight-qt"
+                       target="_blank">
+                      <div class="resource-icon"><i class="fas fa-desktop"></i></div>
+                      <div class="resource-content">
+                        <span class="resource-title">Moonlight PC</span>
+                        <span class="resource-desc">Windows / macOS / Linux</span>
+                      </div>
+                      <i class="fas fa-external-link-alt resource-arrow"></i>
+                    </a>
                   </div>
-                  <div class="qr-code-item">
-                    <div class="qr-code-box">
-                      <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
+                  <!-- 右侧：二维码 -->
+                  <div class="client-qrcodes">
+                    <div class="qr-code-item">
+                      <div class="qr-code-box">
+                        <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
+                      </div>
+                      <div class="qr-code-label">
+                        <i class="fab fa-android"></i>
+                        {{ $t('setup.android_client') }}
+                      </div>
                     </div>
-                    <div class="qr-code-label">
-                      <i class="fab fa-apple"></i>
-                      {{ $t('setup.ios_client') }}
+                    <div class="qr-code-item">
+                      <div class="qr-code-box">
+                        <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
+                      </div>
+                      <div class="qr-code-label">
+                        <i class="fab fa-apple"></i>
+                        {{ $t('setup.ios_client') }}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -294,11 +349,66 @@
         </div>
       </div>
     </Transition>
+
+    <!-- Harmony Link Modal -->
+    <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="showHarmonyModal" class="skip-wizard-overlay" @click.self="closeHarmonyModal">
+        <div class="skip-wizard-modal">
+          <div class="skip-wizard-header">
+            <h5>鸿蒙Moonlight V+</h5>
+            <button class="btn-close" @click="closeHarmonyModal"></button>
+          </div>
+          <div class="skip-wizard-body">
+            <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
+            <p>{{ $t('setup.harmony_modal_desc') }}</p>
+          </div>
+          <div class="skip-wizard-footer">
+            <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
+              <i class="fas fa-external-link-alt me-1"></i>
+              {{ $t('setup.harmony_goto_repo') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    </Teleport>
+
+    <!-- Restart Countdown Modal -->
+    <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="showRestartModal" class="skip-wizard-overlay">
+        <div class="skip-wizard-modal">
+          <div class="skip-wizard-header">
+            <h5><i class="fas fa-sync-alt me-2"></i>{{ $t('setup.restart_title') }}</h5>
+          </div>
+          <div class="skip-wizard-body text-center">
+            <p>{{ $t('setup.restart_desc') }}</p>
+            <div class="restart-countdown my-3">
+              <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
+              <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
+            </div>
+            <div class="progress" style="height: 6px;">
+              <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
+            </div>
+          </div>
+          <div class="skip-wizard-footer">
+            <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
+              <i class="fas fa-arrow-right me-1"></i>
+              {{ $t('setup.restart_go_now') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    </Teleport>
   </div>
 </template>
 
 <script>
 import { trackEvents } from '../config/firebase.js'
+import { openExternalUrl } from '../utils/helpers.js'
 
 export default {
   name: 'SetupWizard',
@@ -320,13 +430,17 @@ export default {
     return {
       currentStep: 1,
       selectedLocale: 'zh', // 默认中文
-      selectedDisplay: null, // 选择的显示器（虚拟或物理）
+      selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
       saveSuccess: false,
       saveError: null,
       saving: false,
       showSkipModal: false, // 跳过向导确认弹窗
+      showHarmonyModal: false, // 鸿蒙链接提醒弹窗
+      showRestartModal: false, // 重启倒计时弹窗
+      restartCountdown: 8, // 倒计时秒数
+      restartTimer: null, // 倒计时定时器
       // 客户端下载链接
       androidQrCode: 'https://assets.alkaidlab.com/androidQrCode.png',
       iosQrCode: 'https://assets.alkaidlab.com/iosQrCode.png',
@@ -354,6 +468,12 @@ export default {
     // 如果只有一个显卡，自动选择
     if (this.uniqueAdapters.length === 1) {
       this.selectedAdapter = this.uniqueAdapters[0].name
+    }
+  },
+  beforeUnmount() {
+    if (this.restartTimer) {
+      clearInterval(this.restartTimer)
+      this.restartTimer = null
     }
   },
   computed: {
@@ -502,6 +622,20 @@ export default {
     closeSkipModal() {
       this.showSkipModal = false
     },
+    openHarmonyModal() {
+      this.showHarmonyModal = true
+    },
+    closeHarmonyModal() {
+      this.showHarmonyModal = false
+    },
+    async confirmHarmonyLink() {
+      this.closeHarmonyModal()
+      try {
+        await openExternalUrl('https://github.com/AlkaidLab/moonlight-harmony')
+      } catch (error) {
+        console.error('Failed to open URL:', error)
+      }
+    },
     async confirmSkipWizard() {
       // 关闭模态框
       this.closeSkipModal()
@@ -558,7 +692,36 @@ export default {
       trackEvents.userAction('setup_go_to_apps', {
         from_step: this.currentStep
       })
-      window.location.href = '/apps'
+      // 触发重启并显示倒计时
+      this.triggerRestartAndRedirect()
+    },
+    async triggerRestartAndRedirect() {
+      // 调用重启 API
+      try {
+        await fetch('/api/restart', { method: 'POST' })
+      } catch {
+        // 重启请求可能会断开连接，忽略错误
+      }
+      // 显示倒计时弹窗
+      this.showRestartModal = true
+      this.restartCountdown = 8
+      this.restartTimer = setInterval(() => {
+        this.restartCountdown--
+        if (this.restartCountdown <= 0) {
+          this.finishRedirect()
+        }
+      }, 1000)
+    },
+    skipRestartCountdown() {
+      this.finishRedirect()
+    },
+    finishRedirect() {
+      if (this.restartTimer) {
+        clearInterval(this.restartTimer)
+        this.restartTimer = null
+      }
+      this.showRestartModal = false
+      window.location.href = '/'
     },
     getDisplayName(device) {
       // 解析 device.data，提取友好名称
@@ -764,7 +927,8 @@ export default {
 
 .option-card p {
   margin: 0;
-  color: var(--bs-secondary-color);
+  color: var(--bs-body-color);
+  opacity: 0.85;
   font-size: 0.85em;
   line-height: 1.3;
 }
@@ -810,8 +974,9 @@ export default {
 
 .option-card-compact .option-text p {
   margin: 0;
-  color: var(--bs-secondary-color);
-  font-size: 0.78em;
+  color: var(--bs-body-color);
+  opacity: 0.75;
+  font-size: 0.85em;
   line-height: 1.3;
 }
 
@@ -821,6 +986,17 @@ export default {
   border-radius: 8px;
   border: 2px solid var(--bs-border-color);
   transition: all 0.3s ease;
+}
+
+/* 显卡适配器标签 */
+.adapter-label {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+/* 物理显示器标题 */
+.physical-display-title {
+  font-size: 0.95em;
 }
 
 .form-select-large:focus {
@@ -908,8 +1084,17 @@ export default {
   padding: 0.8em 1em;
   border-radius: 8px;
   border-left: 3px solid #667eea;
-  font-size: 0.85em;
+  font-size: 0.9em;
   line-height: 1.5;
+  color: var(--bs-body-color);
+  font-weight: 500;
+}
+
+/* VDD 介绍文字样式 */
+.vdd-intro-text {
+  color: var(--bs-body-color);
+  opacity: 0.75;
+  font-size: 0.95em;
 }
 
 .adapter-vdd-hint {
@@ -940,7 +1125,15 @@ export default {
   background: rgba(102, 126, 234, 0.5);
 }
 
-/* 客户端下载二维码样式 */
+/* 完成页面标题 */
+.setup-complete-icon {
+  font-size: 1.2em;
+  color: #28a745;
+  margin-right: 0.3em;
+  vertical-align: middle;
+}
+
+/* 客户端下载样式 */
 .client-download-section {
   background: var(--bs-secondary-bg);
   padding: 1em;
@@ -953,35 +1146,136 @@ export default {
   color: var(--bs-body-color);
 }
 
-.qr-codes-container {
+.client-download-layout {
   display: flex;
+  gap: 1.5em;
+  align-items: flex-start;
+}
+
+.client-links {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  min-width: 240px;
+}
+
+.client-qrcodes {
+  display: flex;
+  flex-direction: row;
+  gap: 1em;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Resource link styles (from ResourceCard) */
+.resource-link {
+  display: flex;
+  align-items: center;
+  padding: 0.6em 0.8em;
+  border-radius: 8px;
+  text-decoration: none;
+  background: linear-gradient(135deg, rgba(var(--link-color), 0.15) 0%, rgba(var(--link-color), 0.08) 100%);
+  border: 1px solid transparent;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.resource-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+  text-decoration: none;
+  border-color: rgba(var(--link-color), 0.4);
+}
+
+.resource-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 2em;
-  flex-wrap: wrap;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-right: 0.8em;
+  color: white;
+  background: var(--icon-gradient);
+}
+
+.resource-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--bs-body-color);
+  margin-bottom: 1px;
+}
+
+.resource-desc {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+}
+
+.resource-arrow {
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+  margin-left: 0.5rem;
+  transition: transform 0.2s ease;
+}
+
+.resource-link:hover .resource-arrow {
+  transform: translateX(3px);
+}
+
+.resource-link-android {
+  --link-color: 61, 220, 132;
+  --icon-gradient: linear-gradient(135deg, #3ddc84 0%, #00c853 100%);
+}
+
+.resource-link-apple {
+  --link-color: 128, 128, 128;
+  --icon-gradient: linear-gradient(135deg, #555 0%, #777 100%);
+}
+
+.resource-link-desktop {
+  --link-color: 108, 117, 125;
+  --icon-gradient: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+}
+
+.resource-link-harmony {
+  --link-color: 206, 48, 48;
+  --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
 }
 
 .qr-code-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5em;
+  gap: 0.3em;
+  flex: 1;
 }
 
 .qr-code-box {
   background: white;
-  padding: 0.5em;
+  padding: 0.4em;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  width: 100%;
 }
 
 .qr-code-image {
-  width: 120px;
-  height: 120px;
+  width: 100%;
+  aspect-ratio: 1;
   display: block;
 }
 
 .qr-code-label {
-  font-size: 0.9em;
+  font-size: 0.8em;
   font-weight: 500;
   color: var(--bs-body-color);
 }

@@ -308,6 +308,29 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
         </div>
       </div>
     </div>
+
+    <!-- 删除确认对话框 -->
+    <Transition name="fade">
+      <div v-if="deleteConfirmIndex !== null" class="delete-app-overlay" @click.self="cancelDeleteApp">
+        <div class="delete-app-modal">
+          <div class="delete-app-header">
+            <h5>
+              <i class="fas fa-exclamation-triangle me-2"></i>{{ $t('_common.delete') }}
+            </h5>
+            <button class="btn-close" @click="cancelDeleteApp"></button>
+          </div>
+          <div class="delete-app-body">
+            <p>{{ $t('apps.delete_confirm', { name: apps[deleteConfirmIndex]?.name || '' }) }}</p>
+          </div>
+          <div class="delete-app-footer">
+            <button type="button" class="btn btn-secondary" @click="cancelDeleteApp">{{ $t('_common.cancel') }}</button>
+            <button type="button" class="btn btn-danger" @click="confirmDeleteApp">
+              {{ $t('_common.delete') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -352,6 +375,9 @@ const {
   closeAppEditor,
   handleSaveApp,
   showDeleteForm,
+  cancelDeleteApp,
+  confirmDeleteApp,
+  deleteConfirmIndex,
   save,
   hasUnsavedChanges,
   onDragStart,

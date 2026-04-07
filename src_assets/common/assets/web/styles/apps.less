@@ -2069,3 +2069,112 @@ td {
     color: #6c757d;
   }
 }
+
+// ============================================================================
+// DELETE APP CONFIRM MODAL
+// ============================================================================
+
+.delete-app-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg, 20px);
+  overflow: hidden;
+
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+.delete-app-modal {
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  border-radius: var(--border-radius-xl, 12px);
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  animation: modalSlideUp 0.3s ease;
+
+  [data-bs-theme='light'] & {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.delete-app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  h5 {
+    margin: 0;
+    color: var(--text-primary, #fff);
+    font-size: var(--font-size-lg, 1.1rem);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+  }
+
+  [data-bs-theme='light'] & {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+
+    h5 {
+      color: #000000;
+    }
+  }
+}
+
+.delete-app-body {
+  padding: var(--spacing-lg, 24px);
+  font-size: var(--font-size-md, 0.95rem);
+  line-height: 1.5;
+  color: var(--text-primary, #fff);
+
+  [data-bs-theme='light'] & {
+    color: #000000;
+  }
+}
+
+.delete-app-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  [data-bs-theme='light'] & {
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  button {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
