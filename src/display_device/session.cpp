@@ -287,7 +287,13 @@ namespace display_device {
         !current_vdd_client_id.empty() && !new_client_id.empty() &&
         current_vdd_client_id != new_client_id) {
         BOOST_LOG(info) << "New session detected with different client ID, cleaning up VDD state";
-        stop_timer_and_clear_vdd_state();
+        // Only cancel timer and pending restore from the old session.
+        // Keep current_vdd_client_id intact so prepare_vdd() can detect the client
+        // switch and properly rebuild VDD (destroy old, create new, clean up stale
+        // persistent data with old device IDs).
+        timer->setup_timer(nullptr);
+        pending_restore_ = false;
+        SessionEventListener::clear_unlock_task();
       }
     }
 

@@ -201,9 +201,25 @@ namespace display_device {
      */
     boost::optional<device_display_mode_map_t>
     handle_display_mode_configuration(const boost::optional<resolution_t> &resolution, const boost::optional<refresh_rate_t> &refresh_rate, const device_display_mode_map_t &previous_display_modes, const topology_metadata_t &metadata) {
+      // Collect valid device IDs from the current topology for filtering stale entries
+      const auto valid_device_ids { get_device_ids_from_topology(metadata.current_topology) };
+      const std::unordered_set<std::string> valid_ids_set(valid_device_ids.begin(), valid_device_ids.end());
+
       if (resolution || refresh_rate) {
-        const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(get_device_ids_from_topology(metadata.current_topology)) : previous_display_modes };
-        const auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
+        const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(valid_device_ids) : previous_display_modes };
+        auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
+
+        // Remove stale device IDs that no longer exist in the current topology
+        // (e.g. old VDD device IDs left in persistent_data after client switch)
+        for (auto it = new_display_modes.begin(); it != new_display_modes.end();) {
+          if (valid_ids_set.find(it->first) == valid_ids_set.end()) {
+            BOOST_LOG(warning) << "Removing stale device from display modes: " << it->first;
+            it = new_display_modes.erase(it);
+          }
+          else {
+            ++it;
+          }
+        }
 
         BOOST_LOG(info) << "Changing display modes to: " << to_string(new_display_modes);
         if (!set_display_modes(new_display_modes)) {
