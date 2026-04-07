@@ -158,7 +158,6 @@ namespace display_device {
 
   void
   session_t::clear_vdd_state() {
-    current_vdd_client_id.clear();
     last_vdd_setting.clear();
     current_device_prep.reset();
     current_vdd_prep.reset();
@@ -287,6 +286,9 @@ namespace display_device {
         !current_vdd_client_id.empty() && !new_client_id.empty() &&
         current_vdd_client_id != new_client_id) {
         BOOST_LOG(info) << "New session detected with different client ID, cleaning up VDD state";
+        // Cancel any pending restore from the old session before it can interfere
+        pending_restore_ = false;
+        SessionEventListener::clear_unlock_task();
         stop_timer_and_clear_vdd_state();
       }
     }
@@ -401,6 +403,7 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
+    current_vdd_client_id.clear();
     return vdd_utils::destroy_vdd_monitor();
   }
 
@@ -467,7 +470,7 @@ namespace display_device {
         BOOST_LOG(info) << "独立VDD模式，重建VDD设备（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
         
         const auto old_vdd_id = device_zako;
-        vdd_utils::destroy_vdd_monitor();
+        destroy_vdd_monitor();
         clear_vdd_state();
         device_zako.clear();
         
@@ -582,7 +585,10 @@ namespace display_device {
   session_t::reset_persistence() {
     std::lock_guard lock { mutex };
     settings.reset_persistence();
+    pending_restore_ = false;
+    SessionEventListener::clear_unlock_task();
     stop_timer_and_clear_vdd_state();
+    current_vdd_client_id.clear();
   }
 
   void
@@ -679,7 +685,18 @@ namespace display_device {
         BOOST_LOG(info) << "apply_config 未执行（无persistent_data），销毁VDD并跳过拓扑恢复";
         should_destroy = true;
       }
-      
+
+      // 无头主机保护：如果销毁后会变成无头（VDD 是唯一显示设备），跳过销毁
+      // 这避免了无意义的销毁+重建循环（device ID 变化导致 persistent_data 失效）
+      if (should_destroy && config::video.vdd_headless_create_enabled) {
+        auto devices = display_device::enum_available_devices();
+        bool only_vdd = (devices.size() == 1 && devices.count(vdd_id));
+        if (only_vdd || devices.empty()) {
+          BOOST_LOG(info) << "无头主机检测：VDD 是唯一显示设备，跳过销毁";
+          should_destroy = false;
+        }
+      }
+
       if (should_destroy) {
         destroy_vdd_monitor();
         std::this_thread::sleep_for(1000ms);
@@ -691,20 +708,6 @@ namespace display_device {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
       stop_timer_and_clear_vdd_state();
       return;
-    }
-
-    // 无头主机自动创建检查（在 VDD 清理之后、拓扑恢复之前执行）
-    if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
-      auto devices = display_device::enum_available_devices();
-      if (devices.empty()) {
-        BOOST_LOG(info) << "无头主机检测：未找到显示设备，自动创建基地显示器";
-        create_vdd_monitor("");
-        constexpr int max_attempts = 5;
-        constexpr auto wait_time = std::chrono::milliseconds(233);
-        for (int i = 0; i < max_attempts && !is_display_on(); ++i) {
-          std::this_thread::sleep_for(wait_time);
-        }
-      }
     }
 
     // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
