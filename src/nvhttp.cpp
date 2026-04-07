@@ -47,6 +47,7 @@
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
+#include "abr.h"
 #include "video.h"
 #include "webhook.h"
 
@@ -1470,6 +1471,260 @@ namespace nvhttp {
     }
   }
 
+  // ============================================================================
+  // ABR (Adaptive Bitrate) API handlers
+  // ============================================================================
+
+  /**
+   * @brief Resolve the client name from the HTTPS request's source IP.
+   * Matches the connecting client's address against active streaming sessions.
+   * @return {client_name, bitrate, app_name} or empty client_name on failure.
+   */
+  struct resolved_client_t {
+    std::string name;
+    int bitrate = 0;
+    std::string app_name;
+  };
+
+  static resolved_client_t
+  resolve_client(req_https_t request) {
+    auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
+    try {
+      auto sessions_info = stream::session::get_all_sessions_info();
+      for (const auto &si : sessions_info) {
+        if (si.client_address == client_addr && si.state == "RUNNING") {
+          return { si.client_name, si.bitrate, si.app_name };
+        }
+      }
+    }
+    catch (...) {}
+    return {};
+  }
+
+  /**
+   * @brief GET /api/abr/capabilities — Query server ABR support.
+   */
+  void
+  getAbrCapabilities(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    auto caps = abr::get_capabilities();
+
+    json resp_json;
+    resp_json["supported"] = caps.supported;
+    resp_json["version"] = caps.version;
+    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold" });
+    resp_json["llmEnabled"] = confighttp::isAiEnabled();
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+  }
+
+  /**
+   * @brief POST /api/abr — Enable/disable ABR, set mode and bitrate range.
+   *
+   * Request body (JSON):
+   * {
+   *   "enabled": true,
+   *   "minBitrate": 2000,
+   *   "maxBitrate": 150000,
+   *   "mode": "balanced"
+   * }
+   *
+   * Client identity is resolved from the TLS connection's source IP.
+   */
+  void
+  configureAbr(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+
+    try {
+      auto client = resolve_client(request);
+      if (client.name.empty()) {
+        json err;
+        err["success"] = false;
+        err["error"] = "No active streaming session for this client";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      auto body = json::parse(ss.str());
+
+      bool enabled = body.value("enabled", false);
+
+      if (!enabled) {
+        abr::disable(client.name);
+        json resp_json;
+        resp_json["success"] = true;
+        resp_json["enabled"] = false;
+        response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+        return;
+      }
+
+      // Parse and validate mode
+      std::string mode_str = body.value("mode", "balanced");
+      abr::mode_e mode;
+      if (mode_str == "balanced") {
+        mode = abr::mode_e::BALANCED;
+      }
+      else if (mode_str == "quality") {
+        mode = abr::mode_e::QUALITY;
+      }
+      else if (mode_str == "lowLatency") {
+        mode = abr::mode_e::LOW_LATENCY;
+      }
+      else {
+        json err;
+        err["success"] = false;
+        err["error"] = "Invalid mode: must be 'balanced', 'quality', or 'lowLatency'";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
+      abr::config_t cfg;
+      cfg.enabled = true;
+      cfg.min_bitrate_kbps = body.value("minBitrate", 0);
+      cfg.max_bitrate_kbps = body.value("maxBitrate", 0);
+      cfg.mode = mode;
+
+      // Validate bitrate range
+      if (cfg.min_bitrate_kbps < 0 || cfg.max_bitrate_kbps < 0) {
+        json err;
+        err["success"] = false;
+        err["error"] = "minBitrate and maxBitrate must be non-negative";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+      if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0 && cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
+        json err;
+        err["success"] = false;
+        err["error"] = "minBitrate must not exceed maxBitrate";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
+      int initial_bitrate = client.bitrate > 0 ? client.bitrate
+                            : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
+                            : 20000;
+
+      abr::enable(client.name, cfg, initial_bitrate, client.app_name);
+
+      json resp_json;
+      resp_json["success"] = true;
+      resp_json["enabled"] = true;
+      resp_json["mode"] = mode_str;
+      resp_json["minBitrate"] = cfg.min_bitrate_kbps;
+      resp_json["maxBitrate"] = cfg.max_bitrate_kbps;
+      resp_json["initialBitrate"] = initial_bitrate;
+      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+    }
+    catch (const json::exception &e) {
+      BOOST_LOG(warning) << "ABR configure: JSON parse error: " << e.what();
+      json err;
+      err["success"] = false;
+      err["error"] = "Invalid JSON body";
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "ABR configure: " << e.what();
+      json err;
+      err["success"] = false;
+      err["error"] = e.what();
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
+    }
+  }
+
+  /**
+   * @brief POST /api/abr/feedback — Client sends network metrics, server returns bitrate decision.
+   *
+   * Request body (JSON):
+   * {
+   *   "packetLoss": 1.5,
+   *   "rttMs": 25.0,
+   *   "decodeFps": 59.8,
+   *   "droppedFrames": 2,
+   *   "currentBitrate": 15000
+   * }
+   *
+   * Response (JSON):
+   * {
+   *   "newBitrate": 14000,
+   *   "reason": "moderate_drop: packet_loss=1.5%"
+   * }
+   *
+   * Client identity is resolved from the TLS connection's source IP.
+   */
+  void
+  abrFeedback(resp_https_t response, req_https_t request) {
+    // No verbose logging for per-second feedback to avoid spam
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+
+    try {
+      auto client_name = resolve_client(request).name;
+      if (client_name.empty()) {
+        json err;
+        err["error"] = "No active streaming session for this client";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
+      if (!abr::is_enabled(client_name)) {
+        json err;
+        err["error"] = "ABR not enabled for this client";
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      auto body = json::parse(ss.str());
+
+      abr::network_feedback_t feedback;
+      feedback.packet_loss = body.value("packetLoss", 0.0);
+      feedback.rtt_ms = body.value("rttMs", 0.0);
+      feedback.decode_fps = body.value("decodeFps", 0.0);
+      feedback.dropped_frames = body.value("droppedFrames", 0);
+      feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
+
+      auto action = abr::process_feedback(client_name, feedback);
+
+      // If server decided on a new bitrate, apply it to the encoder
+      if (action.new_bitrate_kbps > 0) {
+        video::dynamic_param_t param;
+        param.type = video::dynamic_param_type_e::BITRATE;
+        param.value.int_value = action.new_bitrate_kbps;
+        param.valid = true;
+
+        stream::session::change_dynamic_param_for_client(client_name, param);
+      }
+
+      json resp_json;
+      if (action.new_bitrate_kbps > 0) {
+        resp_json["newBitrate"] = action.new_bitrate_kbps;
+      }
+      resp_json["reason"] = action.reason;
+      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+    }
+    catch (const json::exception &e) {
+      json err;
+      err["error"] = "Invalid JSON body";
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "ABR feedback: " << e.what();
+      json err;
+      err["error"] = e.what();
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
+    }
+  }
+
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -2111,6 +2366,11 @@ namespace nvhttp {
     https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
     https_server.resource["^/stream/settings$"]["GET"] = changeDynamicParam;
     https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
+
+    // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
+    https_server.resource["^/api/abr/capabilities$"]["GET"] = getAbrCapabilities;
+    https_server.resource["^/api/abr$"]["POST"] = configureAbr;
+    https_server.resource["^/api/abr/feedback$"]["POST"] = abrFeedback;
 
     // AI LLM proxy route — uses client cert auth from pairing
     https_server.resource["^/ai/completions$"]["POST"] = [](resp_https_t response, req_https_t request) {

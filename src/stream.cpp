@@ -20,6 +20,8 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/lock_guard.hpp>
 
+#include "abr.h"
+
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
@@ -2859,6 +2861,9 @@ namespace stream {
           }
         }
       }
+
+      // Clean up ABR state for this client
+      abr::cleanup(session.client_name);
 
       BOOST_LOG(debug) << "Session ended"sv;
     }
