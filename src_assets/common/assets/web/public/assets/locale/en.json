@@ -647,7 +647,12 @@
   "resource_card": {
     "android_recommended": "Android Recommended",
     "client_downloads": "Client Downloads",
-    "crown_edition": "Crown Edition",
+    "crown_edition": "moonlight-android (Crown)",
+    "crown_edition_desc": "by WACrown · Android",
+    "moonlight_macos_enhanced": "moonlight-macos-enhanced",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · macOS native enhanced client",
+    "moonlight_ohos": "moonlight-ohos",
+    "moonlight_ohos_desc": "by smdsbz · OpenHarmony pioneer",
     "github_discussions": "GitHub Discussions",
     "gpl_license_text_1": "This software is licensed under GPL-3.0. You are free to use, modify, and distribute it.",
     "gpl_license_text_2": "To protect the open source ecosystem, please avoid using software that violates the GPL-3.0 license.",
