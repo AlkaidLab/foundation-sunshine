@@ -187,6 +187,23 @@ namespace display_device {
     }
 
     /**
+     * @brief Remove entries from a device_id-keyed map whose keys are not in the valid set.
+     */
+    template<typename MapT>
+    void
+    filter_stale_devices(MapT &map, const std::unordered_set<std::string> &valid_ids, const char *label) {
+      for (auto it = map.begin(); it != map.end();) {
+        if (valid_ids.find(it->first) == valid_ids.end()) {
+          BOOST_LOG(warning) << "Removing stale device from " << label << ": " << it->first;
+          it = map.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+
+    /**
      * @brief Modify the display modes based on the configuration and previously configured display modes.
      *
      * The function performs the necessary steps for changing the display modes if needed.
@@ -210,16 +227,7 @@ namespace display_device {
         const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(valid_device_ids) : previous_display_modes };
         auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
 
-        // Filter out stale device IDs not in current topology
-        for (auto it = new_display_modes.begin(); it != new_display_modes.end();) {
-          if (valid_ids_set.find(it->first) == valid_ids_set.end()) {
-            BOOST_LOG(warning) << "Removing stale device from display modes: " << it->first;
-            it = new_display_modes.erase(it);
-          }
-          else {
-            ++it;
-          }
-        }
+        filter_stale_devices(new_display_modes, valid_ids_set, "display modes");
 
         BOOST_LOG(info) << "Changing display modes to: " << to_string(new_display_modes);
         if (!set_display_modes(new_display_modes)) {
@@ -232,17 +240,8 @@ namespace display_device {
       }
 
       if (!previous_display_modes.empty()) {
-        // Filter out stale device IDs before reverting
         device_display_mode_map_t filtered_modes { previous_display_modes };
-        for (auto it = filtered_modes.begin(); it != filtered_modes.end();) {
-          if (valid_ids_set.find(it->first) == valid_ids_set.end()) {
-            BOOST_LOG(warning) << "Removing stale device from rollback display modes: " << it->first;
-            it = filtered_modes.erase(it);
-          }
-          else {
-            ++it;
-          }
-        }
+        filter_stale_devices(filtered_modes, valid_ids_set, "rollback display modes");
 
         if (!filtered_modes.empty()) {
           BOOST_LOG(info) << "Changing display modes back to: " << to_string(filtered_modes);
@@ -434,9 +433,14 @@ namespace display_device {
      */
     boost::optional<hdr_state_map_t>
     handle_hdr_state_configuration(const boost::optional<bool> &change_hdr_state, const hdr_state_map_t &previous_hdr_states, const topology_metadata_t &metadata) {
+      // Build valid device ID set from current topology to filter stale entries
+      const auto valid_device_ids { get_device_ids_from_topology(metadata.current_topology) };
+      const std::unordered_set<std::string> valid_ids_set(valid_device_ids.begin(), valid_device_ids.end());
+
       if (change_hdr_state) {
-        const auto original_hdr_states { previous_hdr_states.empty() ? get_current_hdr_states(get_device_ids_from_topology(metadata.current_topology)) : previous_hdr_states };
-        const auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
+        const auto original_hdr_states { previous_hdr_states.empty() ? get_current_hdr_states(valid_device_ids) : previous_hdr_states };
+        auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
+        filter_stale_devices(new_hdr_states, valid_ids_set, "HDR states");
 
         BOOST_LOG(info) << "Changing hdr states to: " << to_string(new_hdr_states);
         if (!blank_hdr_states(new_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(new_hdr_states)) {
@@ -449,10 +453,15 @@ namespace display_device {
       }
 
       if (!previous_hdr_states.empty()) {
-        BOOST_LOG(info) << "Changing hdr states back to: " << to_string(previous_hdr_states);
-        if (!blank_hdr_states(previous_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(previous_hdr_states)) {
-          // Error already logged
-          return boost::none;
+        hdr_state_map_t filtered_hdr { previous_hdr_states };
+        filter_stale_devices(filtered_hdr, valid_ids_set, "rollback HDR states");
+
+        if (!filtered_hdr.empty()) {
+          BOOST_LOG(info) << "Changing hdr states back to: " << to_string(filtered_hdr);
+          if (!blank_hdr_states(filtered_hdr, metadata.newly_enabled_devices) || !set_hdr_states(filtered_hdr)) {
+            // Error already logged
+            return boost::none;
+          }
         }
       }
 
