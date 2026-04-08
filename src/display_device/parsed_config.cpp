@@ -688,7 +688,10 @@ namespace display_device {
     }
 
     // 准备VDD设备
-    display_device::session_t::get().prepare_vdd(parsed_config, session);
+    if (!display_device::session_t::get().prepare_vdd(parsed_config, session)) {
+      BOOST_LOG(error) << "VDD准备失败，无法继续配置显示设备";
+      return boost::none;
+    }
 
     return parsed_config;
   }

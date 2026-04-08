@@ -441,7 +441,7 @@ namespace display_device {
     std::this_thread::sleep_for(1200ms);
   }
 
-  void
+  bool
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
@@ -522,12 +522,13 @@ namespace display_device {
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
         vdd_utils::disable_enable_vdd();
-        return;
+        return false;
       }
     }
 
     if (device_zako.empty()) {
-      return;
+      BOOST_LOG(error) << "VDD设备ID为空，准备失败";
+      return false;
     }
 
     if (original_output_name.empty()) {
@@ -578,6 +579,8 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
       vdd_utils::set_hdr_state(false);
     }
+
+    return true;
   }
 
   void

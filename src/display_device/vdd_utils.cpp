@@ -96,9 +96,14 @@ namespace display_device {
         auto child = platf::run_command(true, true, cmd, working_dir, _env, nullptr, ec, nullptr);
         if (!ec) {
           BOOST_LOG(info) << "成功执行VDD " << action_str << " 命令";
-          // 等待进程完成，避免资源泄漏
+          // 等待进程完成，避免资源泄漏（带超时保护）
           std::error_code wait_ec;
-          child.wait(wait_ec);
+          if (!child.wait_for(std::chrono::seconds(30), wait_ec)) {
+            BOOST_LOG(error) << "VDD命令进程超时(30s)，强制终止";
+            child.terminate(wait_ec);
+            child.wait(wait_ec);
+            return false;
+          }
           if (wait_ec) {
             BOOST_LOG(warning) << "等待VDD命令进程完成时出错: " << wait_ec.message();
           }

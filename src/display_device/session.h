@@ -166,9 +166,10 @@ namespace display_device {
     is_display_on();
 
     /**
-     * @brief Prepares VDD for use
+     * @brief Prepares VDD for use.
+     * @returns True if VDD is ready (created or already present), false if preparation failed.
      */
-    void
+    bool
     prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session);
 
     /**
