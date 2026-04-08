@@ -3052,6 +3052,13 @@ namespace stream {
 
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
+      // 先检查是否有活动的广播引用，避免在无活跃session时
+      // 触发start_broadcast/end_broadcast循环（"僵尸广播"），
+      // 这可能阻塞HTTPS服务器线程导致客户端显示主机离线
+      if (!broadcast_shared.has_ref()) {
+        return false;
+      }
+
       auto broadcast_ref = broadcast_shared.ref();
       if (!broadcast_ref) {
         BOOST_LOG(warning) << "No broadcast context available when changing dynamic parameter for client";

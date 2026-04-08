@@ -794,6 +794,15 @@ namespace display_device {
         // 这里不修改拓扑，分辨率、刷新率、HDR 等设置仍然会应用
         BOOST_LOG(info) << "VDD mode: topology controlled by vdd_prep in prepare_vdd, only getting current topology metadata";
         topology_result = get_current_topology_metadata(config.device_id);
+
+        // 如果有预保存的初始拓扑（在 VDD 创建前保存的物理显示器拓扑），
+        // 用它替换 get_current_topology_metadata 返回的初始拓扑。
+        // 否则恢复时 remove_vdd_from_topology 会将初始拓扑清空，
+        // 导致物理显示器无法被重新启用。
+        if (topology_result && pre_saved_initial_topology && !pre_saved_initial_topology->empty()) {
+          BOOST_LOG(info) << "VDD mode: using pre-saved initial topology (physical displays) instead of current VDD-only topology";
+          topology_result->pair.initial = *pre_saved_initial_topology;
+        }
       }
       else {
         // 普通模式：device_prep 控制拓扑
