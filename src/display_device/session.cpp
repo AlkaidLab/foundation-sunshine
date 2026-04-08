@@ -710,13 +710,6 @@ namespace display_device {
       return;
     }
 
-    // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
-    if (is_no_operation) {
-      BOOST_LOG(info) << "无操作模式，跳过拓扑恢复";
-      stop_timer_and_clear_vdd_state();
-      return;
-    }
-
     // 添加诊断日志
     const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
     BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
