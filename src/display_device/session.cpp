@@ -509,8 +509,17 @@ namespace display_device {
       const std::string vdd_identifier = config::video.vdd_reuse
         ? "shared_vdd"  // 固定标识符，所有客户端共用同一GUID
         : current_client_id;  // 为每个客户端生成不同GUID
-      vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size);
-      std::this_thread::sleep_for(200ms);
+      if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
+        BOOST_LOG(error) << "创建虚拟显示器失败（驱动报告错误），尝试恢复";
+        if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
+          BOOST_LOG(error) << "VDD设备最终初始化失败";
+          vdd_utils::disable_enable_vdd();
+          return;
+        }
+      }
+      else {
+        std::this_thread::sleep_for(200ms);
+      }
     }
 
     // Wait for device to be ready
@@ -622,11 +631,15 @@ namespace display_device {
         auto devices = display_device::enum_available_devices();
         if (devices.empty()) {
           BOOST_LOG(info) << "无头主机检测：未找到显示设备，自动创建基地显示器";
-          create_vdd_monitor("");
-          constexpr int max_attempts = 5;
-          constexpr auto wait_time = std::chrono::milliseconds(233);
-          for (int i = 0; i < max_attempts && !is_display_on(); ++i) {
-            std::this_thread::sleep_for(wait_time);
+          if (!create_vdd_monitor("")) {
+            BOOST_LOG(error) << "无头主机自动创建显示器失败";
+          }
+          else {
+            constexpr int max_attempts = 5;
+            constexpr auto wait_time = std::chrono::milliseconds(233);
+            for (int i = 0; i < max_attempts && !is_display_on(); ++i) {
+              std::this_thread::sleep_for(wait_time);
+            }
           }
         }
       }
