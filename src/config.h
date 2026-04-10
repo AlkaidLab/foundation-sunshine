@@ -73,6 +73,7 @@ namespace config {
       std::optional<int> amd_vbaq;
       int amd_coder;
       int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
+      int amd_ltr_frames = 1;  // LTR frames for RFI (0=disabled, default=1)
     } amd;
 
     struct {
