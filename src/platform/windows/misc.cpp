@@ -2082,10 +2082,15 @@ namespace platf {
           BOOST_LOG(error) << "Unable to create high_precision_timer, CreateWaitableTimerEx() failed: " << GetLastError();
         }
       }
+      interrupt_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+      if (!interrupt_event) {
+        BOOST_LOG(warning) << "Unable to create interrupt event for high_precision_timer: " << GetLastError();
+      }
     }
 
     ~win32_high_precision_timer() {
       if (timer) CloseHandle(timer);
+      if (interrupt_event) CloseHandle(interrupt_event);
     }
 
     void
@@ -2109,12 +2114,51 @@ namespace platf {
       WaitForSingleObject(timer, INFINITE);
     }
 
+    bool
+    sleep_for_interruptible(const std::chrono::nanoseconds &duration) override {
+      if (!timer) {
+        BOOST_LOG(error) << "Attempting high_precision_timer::sleep_for_interruptible() with uninitialized timer";
+        return false;
+      }
+      if (!interrupt_event) {
+        sleep_for(duration);
+        return false;
+      }
+      if (duration < 0s) {
+        return false;
+      }
+      if (duration > 5s) {
+        return false;
+      }
+
+      LARGE_INTEGER due_time;
+      due_time.QuadPart = duration.count() / -100;
+      SetWaitableTimer(timer, &due_time, 0, nullptr, nullptr, false);
+
+      HANDLE handles[] = { timer, interrupt_event };
+      auto result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+      return result == WAIT_OBJECT_0 + 1;
+    }
+
+    void
+    interrupt() override {
+      if (interrupt_event) {
+        SetEvent(interrupt_event);
+      }
+    }
+
+    void *
+    get_interrupt_event_handle() const override {
+      return interrupt_event;
+    }
+
     operator bool() override {
       return timer != NULL;
     }
 
   private:
     HANDLE timer = NULL;
+    HANDLE interrupt_event = NULL;
   };
 
   std::unique_ptr<high_precision_timer>

@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <atomic>
+
 #include "entry_handler.h"
 #include "thread_pool.h"
 /**
@@ -20,6 +22,22 @@ extern thread_pool_util::ThreadPool task_pool;
  * @brief A boolean flag to indicate whether the cursor should be displayed.
  */
 extern bool display_cursor;
+
+/**
+ * @brief Atomic flag set by the input path to notify the capture thread that input has arrived.
+ * @details When set, the capture thread skips frame pacing sleep to reduce input-to-display latency.
+ */
+extern std::atomic<bool> capture_input_activity;
+
+namespace platf {
+  struct high_precision_timer;
+}
+
+/**
+ * @brief Pointer to the active capture timer, used by the input path to interrupt frame pacing sleep.
+ * @details Set by the capture thread when starting, cleared when stopping. Thread-safe via atomic.
+ */
+extern std::atomic<platf::high_precision_timer *> active_capture_timer;
 
 #ifdef _WIN32
   // Declare global singleton used for NVIDIA control panel modifications

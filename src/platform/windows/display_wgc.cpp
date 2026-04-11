@@ -207,6 +207,10 @@ namespace platf::dxgi {
 
   wgc_capture_t::wgc_capture_t() {
     InitializeConditionVariable(&frame_present_cv);
+    frame_event = CreateEvent(nullptr, TRUE, FALSE, nullptr);  // Manual-reset, initially non-signaled
+    if (!frame_event) {
+      BOOST_LOG(warning) << "Failed to create WGC frame event: " << GetLastError();
+    }
   }
 
   wgc_capture_t::~wgc_capture_t() {
@@ -219,6 +223,10 @@ namespace platf::dxgi {
     item = nullptr;
     capture_session = nullptr;
     frame_pool = nullptr;
+    if (frame_event) {
+      CloseHandle(frame_event);
+      frame_event = nullptr;
+    }
   }
 
   /**
@@ -487,6 +495,9 @@ namespace platf::dxgi {
       }
 
       produced_frame = frame;
+      if (frame_event) {
+        SetEvent(frame_event);
+      }
       ReleaseSRWLockExclusive(&frame_lock);
       WakeConditionVariable(&frame_present_cv);
     }
@@ -517,6 +528,10 @@ namespace platf::dxgi {
     if (produced_frame) {
       consumed_frame = produced_frame;
       produced_frame = nullptr;
+      // Reset event under lock so it stays synchronized with produced_frame state
+      if (frame_event) {
+        ResetEvent(frame_event);
+      }
     }
     ReleaseSRWLockExclusive(&frame_lock);
     if (consumed_frame == nullptr) {  // spurious wakeup

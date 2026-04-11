@@ -7,6 +7,8 @@
 safe::mail_t mail::man;
 thread_pool_util::ThreadPool task_pool;
 bool display_cursor = true;
+std::atomic<bool> capture_input_activity{false};
+std::atomic<platf::high_precision_timer *> active_capture_timer{nullptr};
 
 #ifdef _WIN32
 nvprefs::nvprefs_interface nvprefs_instance;

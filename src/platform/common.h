@@ -1061,6 +1061,32 @@ namespace platf {
     sleep_for(const std::chrono::nanoseconds &duration) = 0;
 
     /**
+     * @brief Sleep for the duration, but can be interrupted from another thread.
+     * @param duration Sleep duration.
+     * @return true if interrupted early, false if slept full duration.
+     */
+    virtual bool
+    sleep_for_interruptible(const std::chrono::nanoseconds &duration) {
+      sleep_for(duration);
+      return false;
+    }
+
+    /**
+     * @brief Interrupt an in-progress sleep_for_interruptible() call from another thread.
+     */
+    virtual void
+    interrupt() {}
+
+    /**
+     * @brief Get the platform-specific interrupt event handle for use with WaitForMultipleObjects.
+     * @return Opaque handle (HANDLE on Windows), or nullptr if not supported.
+     */
+    virtual void *
+    get_interrupt_event_handle() const {
+      return nullptr;
+    }
+
+    /**
      * @brief Check if platform-specific timer backend has been initialized successfully
      * @return `true` on success, `false` on error
      */

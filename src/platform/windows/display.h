@@ -296,6 +296,15 @@ namespace platf::dxgi {
     release_snapshot() = 0;
     virtual int
     complete_img(img_t *img, bool dummy) = 0;
+
+    /**
+     * @brief Get a frame event handle for event-driven capture backends (e.g., WGC).
+     * @return HANDLE to an event signaled on frame arrival, or nullptr for polling backends.
+     */
+    virtual HANDLE
+    get_frame_event_handle() const {
+      return nullptr;
+    }
   };
 
   /**
@@ -428,6 +437,7 @@ namespace platf::dxgi {
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame produced_frame { nullptr }, consumed_frame { nullptr };
     SRWLOCK frame_lock = SRWLOCK_INIT;
     CONDITION_VARIABLE frame_present_cv;
+    HANDLE frame_event = nullptr;  // Manual-reset event signaled when a new frame is available
     void
     on_frame_arrived(winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool const &sender, winrt::Windows::Foundation::IInspectable const &);
 
@@ -447,6 +457,15 @@ namespace platf::dxgi {
     release_frame();
     int
     set_cursor_visible(bool);
+
+    /**
+     * @brief Get the frame event handle for use in WaitForMultipleObjects.
+     * @return HANDLE to a manual-reset event that is signaled when a frame is available.
+     */
+    HANDLE
+    get_frame_event() const {
+      return frame_event;
+    }
     
     /**
      * @brief Check if the captured window is still valid.
@@ -471,6 +490,12 @@ namespace platf::dxgi {
     snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
     capture_e
     release_snapshot() override;
+
+  protected:
+    HANDLE
+    get_frame_event_handle() const override {
+      return dup.get_frame_event();
+    }
   };
 
   /**
@@ -488,6 +513,12 @@ namespace platf::dxgi {
     snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
     capture_e
     release_snapshot() override;
+
+  protected:
+    HANDLE
+    get_frame_event_handle() const override {
+      return dup.get_frame_event();
+    }
   };
 
   class amd_capture_t {

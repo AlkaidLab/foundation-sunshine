@@ -1638,6 +1638,14 @@ namespace input {
       input->input_queue.push_back(std::move(input_data));
     }
     task_pool.push(passthrough_next_message, input);
+
+    // Signal the capture thread that input has arrived to reduce input-to-display latency.
+    // This wakes the capture thread from its frame pacing sleep so it can capture and
+    // encode the next frame as soon as the desktop updates from this input.
+    capture_input_activity.store(true, std::memory_order_release);
+    if (auto t = active_capture_timer.load(std::memory_order_acquire)) {
+      t->interrupt();
+    }
   }
 
   void

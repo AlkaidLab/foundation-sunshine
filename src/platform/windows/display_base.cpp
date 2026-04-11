@@ -257,6 +257,7 @@ namespace platf::dxgi {
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    std::optional<std::chrono::steady_clock::time_point> last_frame_time;
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
 
@@ -270,6 +271,12 @@ namespace platf::dxgi {
     });
 
     sleep_overshoot_logger.reset();
+
+    // Register the timer globally so the input path can interrupt frame pacing sleep
+    active_capture_timer.store(timer.get(), std::memory_order_release);
+    auto clear_active_timer = util::fail_guard([]() {
+      active_capture_timer.store(nullptr, std::memory_order_release);
+    });
 
     while (true) {
       // This will return false if the HDR state changes or for any number of other
@@ -309,97 +316,206 @@ namespace platf::dxgi {
       platf::capture_e status = capture_e::ok;
       std::shared_ptr<img_t> img_out;
 
-      // Try to continue frame pacing group, snapshot() is called with zero timeout after waiting for client frame interval
-      if (frame_pacing_group_start) {
-        const uint32_t seconds = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator / client_frame_rate_adjusted.Numerator;
-        const uint32_t remainder = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator % client_frame_rate_adjusted.Numerator;
-        const auto sleep_target = *frame_pacing_group_start +
-                                  std::chrono::nanoseconds(1s) * seconds +
-                                  std::chrono::nanoseconds(1s) * remainder / client_frame_rate_adjusted.Numerator;
-        const auto sleep_period = sleep_target - std::chrono::steady_clock::now();
+      // Event-driven capture: poll for frames with short timeouts instead of sleeping
+      // for a fixed frame interval. This minimizes the latency between a desktop update
+      // (e.g., from input injection) and frame capture.
+      //
+      // Short timeouts are required because AcquireNextFrame holds the D3D11 device lock
+      // for the entire duration. Releasing between polls allows the encoding thread to
+      // acquire the lock for GPU operations.
+      auto short_timeout = std::chrono::milliseconds(16);
+      if (display_refresh_rate_rounded > 0) {
+        auto frame_interval_ms = 1000.0 / display_refresh_rate_rounded;
+        short_timeout = std::chrono::milliseconds(std::max(4, std::min(16, static_cast<int>(frame_interval_ms / 2))));
+      }
 
-        if (sleep_period <= 0ns) {
-          // We missed next frame time, invalidating current frame pacing group
-          frame_pacing_group_start = std::nullopt;
-          frame_pacing_group_frames = 0;
-          status = capture_e::timeout;
+      // Rate limiting: don't capture faster than the client framerate to avoid
+      // wasting encode/network resources. Calculate minimum frame interval.
+      const auto min_frame_interval = std::chrono::nanoseconds(
+        std::chrono::nanoseconds(1s) * client_frame_rate_adjusted.Denominator / client_frame_rate_adjusted.Numerator
+      );
+
+      // Determine capture strategy based on backend capabilities
+      HANDLE frame_event = get_frame_event_handle();
+
+      if (frame_event) {
+        // WGC path: true event-driven capture using WaitForMultipleObjects.
+        // WGC doesn't hold the D3D11 device lock during the wait, so we can use
+        // long timeouts without starving the encoder.
+        bool rate_limit_handled = false;
+
+        // Rate limiting: wait until min_frame_interval has elapsed before looking for the next frame.
+        // This prevents capturing at the display refresh rate when it exceeds the client framerate.
+        // The wait is interruptible so input can trigger an early capture attempt.
+        if (last_frame_time) {
+          auto now = std::chrono::steady_clock::now();
+          auto elapsed = now - *last_frame_time;
+          if (elapsed < min_frame_interval) {
+            auto remaining = min_frame_interval - elapsed;
+            bool interrupted = timer->sleep_for_interruptible(remaining);
+            if (interrupted) {
+              capture_input_activity.store(false, std::memory_order_release);
+              // Input arrived during rate limit — try to capture immediately
+              status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+              if (status == capture_e::timeout) {
+                status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+              }
+              if (status == capture_e::ok && img_out) {
+                last_frame_time = img_out->frame_timestamp;
+                if (!last_frame_time) {
+                  last_frame_time = std::chrono::steady_clock::now();
+                }
+              }
+              rate_limit_handled = true;
+            }
+          }
         }
-        else {
-          timer->sleep_for(sleep_period);
-          sleep_overshoot_logger.first_point(sleep_target);
-          sleep_overshoot_logger.second_point_now_and_log();
 
-          // Try with 0ms timeout first (non-blocking check)
-          status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+        if (!rate_limit_handled) {
+          // Wait for the next frame event or input interrupt
+          HANDLE handles[2];
+          DWORD handle_count = 0;
+          handles[handle_count++] = frame_event;
 
-          // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
-          // This helps catch frames that arrive slightly early or late due to timing variations
-          if (status == capture_e::timeout) {
-            const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
-            // If we're within 2ms of the target time, try one more time with a small timeout
-            if (time_since_target < 2ms && time_since_target > -2ms) {
-              status = snapshot(pull_free_image_cb, img_out, 2ms, *cursor);
+          HANDLE interrupt_handle = timer ? static_cast<HANDLE>(timer->get_interrupt_event_handle()) : nullptr;
+          if (interrupt_handle) {
+            handles[handle_count++] = interrupt_handle;
+          }
+
+          auto result = WaitForMultipleObjects(handle_count, handles, FALSE, 200);
+
+          if (result == WAIT_OBJECT_0) {
+            // Frame event signaled — get the frame immediately
+            status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+          }
+          else if (interrupt_handle && result == WAIT_OBJECT_0 + 1) {
+            // Input interrupt — clear flag and try to get current frame
+            capture_input_activity.store(false, std::memory_order_release);
+            status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+            if (status == capture_e::timeout) {
+              status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+            }
+          }
+          else {
+            // Timeout — try to get any available frame
+            status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+          }
+
+          if (status == capture_e::ok && img_out) {
+            last_frame_time = img_out->frame_timestamp;
+            if (!last_frame_time) {
+              last_frame_time = std::chrono::steady_clock::now();
+            }
+          }
+        }
+      }
+      else {
+        // DDX path: precise frame pacing with interruptible sleep for input responsiveness.
+        // Uses frame pacing group to track cumulative timing and avoid drift.
+
+        // Try to continue frame pacing group, snapshot() is called with zero timeout after waiting for client frame interval
+        if (frame_pacing_group_start) {
+          const uint32_t seconds = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator / client_frame_rate_adjusted.Numerator;
+          const uint32_t remainder = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator % client_frame_rate_adjusted.Numerator;
+          const auto sleep_target = *frame_pacing_group_start +
+                                    std::chrono::nanoseconds(1s) * seconds +
+                                    std::chrono::nanoseconds(1s) * remainder / client_frame_rate_adjusted.Numerator;
+          const auto sleep_period = sleep_target - std::chrono::steady_clock::now();
+
+          if (sleep_period <= 0ns) {
+            // We missed next frame time, invalidating current frame pacing group
+            frame_pacing_group_start = std::nullopt;
+            frame_pacing_group_frames = 0;
+            status = capture_e::timeout;
+          }
+          else {
+            // Use interruptible sleep so input can wake us early
+            bool interrupted = timer->sleep_for_interruptible(sleep_period);
+            bool captured_early = false;
+
+            if (interrupted) {
+              capture_input_activity.store(false, std::memory_order_release);
+
+              // Input arrived during sleep — try to capture a frame the input may have triggered
+              status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+              if (status == capture_e::timeout) {
+                // No frame yet — briefly poll to catch the input-response frame
+                status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+              }
+
+              if (status == capture_e::ok && img_out) {
+                // Got a frame early — advance pacing group without destroying it
+                frame_pacing_group_frames += 1;
+                captured_early = true;
+              }
+              else {
+                // No frame captured after interrupt. Resume sleeping to the original
+                // sleep_target to preserve pacing group timing integrity.
+                auto remaining = sleep_target - std::chrono::steady_clock::now();
+                if (remaining > 0ns) {
+                  timer->sleep_for(remaining);
+                }
+                // Fall through to normal target-time capture below
+              }
+            }
+
+            if (!captured_early) {
+              // Normal capture at target time (timer expired naturally, or resumed after interrupt)
+              sleep_overshoot_logger.first_point(sleep_target);
+              sleep_overshoot_logger.second_point_now_and_log();
+
+              // Try with 0ms timeout first (non-blocking check)
+              status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+
+              // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
+              if (status == capture_e::timeout) {
+                const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
+                if (time_since_target < 2ms && time_since_target > -2ms) {
+                  status = snapshot(pull_free_image_cb, img_out, 2ms, *cursor);
+                }
+              }
+
+              if (status == capture_e::ok && img_out) {
+                frame_pacing_group_frames += 1;
+              }
+              else {
+                frame_pacing_group_start = std::nullopt;
+                frame_pacing_group_frames = 0;
+              }
+            }
+          }
+        }
+
+        // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
+        if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
+          constexpr auto max_total_timeout = 200ms;
+          const auto max_attempts = static_cast<int>((max_total_timeout.count() + short_timeout.count() - 1) / short_timeout.count());
+
+          status = capture_e::timeout;
+          for (int attempt = 0; attempt < max_attempts && status == capture_e::timeout; ++attempt) {
+            status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+
+            if (status != capture_e::timeout) {
+              break;
+            }
+
+            release_snapshot();
+
+            if (attempt < max_attempts - 1) {
+              std::this_thread::sleep_for(1ms);
             }
           }
 
           if (status == capture_e::ok && img_out) {
-            frame_pacing_group_frames += 1;
+            frame_pacing_group_start = img_out->frame_timestamp;
+
+            if (!frame_pacing_group_start) {
+              BOOST_LOG(warning) << "snapshot() provided image without timestamp";
+              frame_pacing_group_start = std::chrono::steady_clock::now();
+            }
+
+            frame_pacing_group_frames = 1;
           }
-          else {
-            frame_pacing_group_start = std::nullopt;
-            frame_pacing_group_frames = 0;
-          }
-        }
-      }
-
-      // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
-      if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
-        // Optimization: Use short timeout polling instead of long timeout to reduce lock contention.
-        // The D3D11 device is protected by an unfair lock that is held the entire time that
-        // IDXGIOutputDuplication::AcquireNextFrame() is running. Using short timeouts based on
-        // display refresh rate allows us to release the lock more frequently, giving the encoding
-        // thread opportunities to acquire it for operations like creating dummy images or initializing shared state.
-        // This prevents encoder reinitialization from taking several seconds due to lock starvation.
-        //
-        // Calculate optimal short timeout based on display refresh rate (aim for ~half a frame interval)
-        // This ensures we poll frequently enough to catch frames quickly while still releasing the lock regularly.
-        auto short_timeout = std::chrono::milliseconds(16);  // Default to ~60fps frame interval
-        if (display_refresh_rate_rounded > 0) {
-          // Calculate half a frame interval in milliseconds, with minimum of 4ms and maximum of 16ms
-          auto frame_interval_ms = 1000.0 / display_refresh_rate_rounded;
-          short_timeout = std::chrono::milliseconds(std::max(4, std::min(16, static_cast<int>(frame_interval_ms / 2))));
-        }
-        constexpr auto max_total_timeout = 200ms;
-        const auto max_attempts = static_cast<int>((max_total_timeout.count() + short_timeout.count() - 1) / short_timeout.count());
-
-        status = capture_e::timeout;
-        for (int attempt = 0; attempt < max_attempts && status == capture_e::timeout; ++attempt) {
-          status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
-
-          // If we got a frame or error, break immediately
-          if (status != capture_e::timeout) {
-            break;
-          }
-
-          // Release the snapshot to free the lock before next attempt
-          // This gives encoding thread a chance to acquire the device lock
-          release_snapshot();
-
-          // Small sleep to yield CPU and allow encoding thread to run
-          if (attempt < max_attempts - 1) {
-            std::this_thread::sleep_for(1ms);
-          }
-        }
-
-        if (status == capture_e::ok && img_out) {
-          frame_pacing_group_start = img_out->frame_timestamp;
-
-          if (!frame_pacing_group_start) {
-            BOOST_LOG(warning) << "snapshot() provided image without timestamp";
-            frame_pacing_group_start = std::chrono::steady_clock::now();
-          }
-
-          frame_pacing_group_frames = 1;
         }
       }
 
