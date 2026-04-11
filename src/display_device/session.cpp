@@ -441,7 +441,7 @@ namespace display_device {
     std::this_thread::sleep_for(1200ms);
   }
 
-  void
+  bool
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
@@ -522,12 +522,13 @@ namespace display_device {
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
         vdd_utils::disable_enable_vdd();
-        return;
+        return false;
       }
     }
 
     if (device_zako.empty()) {
-      return;
+      BOOST_LOG(error) << "VDD设备ID为空，准备失败";
+      return false;
     }
 
     if (original_output_name.empty()) {
@@ -552,6 +553,11 @@ namespace display_device {
     // Apply VDD prep settings to handle display topology
     // This determines how VDD interacts with physical displays
     // VDD模式下的拓扑控制与普通模式分开处理
+
+    // Save topology checkpoint BEFORE any topology modification,
+    // so crash recovery can restore the original state on next startup.
+    settings.save_topology_checkpoint();
+
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
       // User has specified a display configuration, apply it
       if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
@@ -573,6 +579,8 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
       vdd_utils::set_hdr_state(false);
     }
+
+    return true;
   }
 
   void
@@ -593,42 +601,45 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
-    // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
+    // === VDD 生命周期决策（统一入口） ===
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-
-    // 常驻模式：只影响 VDD 是否销毁，不影响拓扑恢复
     const bool is_keep_enabled = config::video.vdd_keep_enabled;
+    bool vdd_destroyed = false;
 
-    // 如果没有会话配置过（current_use_vdd 为 nullopt），说明：
-    // 1. 程序刚启动进行崩溃恢复（init() 调用）
-    // 2. 或者上一次会话已经正常结束且清理了状态
-    // 此时不需要恢复拓扑（没有拓扑被修改过），只需要清理可能残留的 VDD
-    if (!current_use_vdd.has_value()) {
-      BOOST_LOG(debug) << " 无会话配置（current_use_vdd=nullopt），仅执行 VDD 清理";
-      
-      if (!vdd_id.empty() && !is_keep_enabled) {
-        if (settings.has_persistent_data()) {
-          BOOST_LOG(info) << "非常驻模式，销毁残留 VDD";
-        }
-        else {
-          BOOST_LOG(info) << "检测到异常残留的 VDD（无 persistent_data），清理 VDD";
-        }
-        destroy_vdd_monitor();
-        std::this_thread::sleep_for(1000ms);
+    if (!vdd_id.empty()) {
+      if (is_keep_enabled) {
+        BOOST_LOG(debug) << "常驻模式，保留 VDD";
       }
-
-      // 无头主机自动创建检查
-      if (reason == revert_reason_e::stream_ended && config::video.vdd_headless_create_enabled) {
-        auto devices = display_device::enum_available_devices();
-        if (devices.empty()) {
-          BOOST_LOG(info) << "无头主机检测：未找到显示设备，自动创建基地显示器";
-          create_vdd_monitor("");
-          constexpr int max_attempts = 5;
-          constexpr auto wait_time = std::chrono::milliseconds(233);
-          for (int i = 0; i < max_attempts && !is_display_on(); ++i) {
-            std::this_thread::sleep_for(wait_time);
+      else {
+        // 无头主机保护：如果销毁后会变成无头（VDD 是唯一显示设备），跳过销毁
+        // 这避免了无意义的销毁+重建循环（device ID 变化导致 persistent_data 失效）
+        bool skip_destroy = false;
+        if (config::video.vdd_headless_create_enabled) {
+          auto devices = display_device::enum_available_devices();
+          bool only_vdd = (devices.size() == 1 && devices.count(vdd_id));
+          if (only_vdd || devices.empty()) {
+            BOOST_LOG(info) << "无头主机检测：VDD 是唯一显示设备，跳过销毁";
+            skip_destroy = true;
           }
         }
+
+        if (!skip_destroy) {
+          BOOST_LOG(info) << "非常驻模式，销毁 VDD";
+          destroy_vdd_monitor();
+          std::this_thread::sleep_for(1000ms);
+          vdd_destroyed = true;
+        }
+      }
+    }
+
+    // === 拓扑恢复 ===
+    if (!current_use_vdd.has_value()) {
+      // 启动恢复路径：程序刚启动或上次会话已正常清理
+      // 通过 persistent_data（original_display_settings.json）恢复上次 apply_config 保存的拓扑
+      BOOST_LOG(debug) << "无会话配置（current_use_vdd=nullopt），执行启动恢复";
+
+      if ((vdd_destroyed || vdd_id.empty()) && !settings.is_changing_settings_going_to_fail()) {
+        settings.revert_settings(reason, true /* VDD 已处理 */);
       }
 
       stop_timer_and_clear_vdd_state();
@@ -666,42 +677,7 @@ namespace display_device {
     // 检查 apply_config 是否曾成功执行（persistent_data 是否存在）
     const bool has_persistent = settings.has_persistent_data();
 
-    // 立即执行完整 restore
-    // VDD 销毁逻辑
-    if (!vdd_id.empty()) {
-      bool should_destroy = false;
-      
-      // 判断1：常驻模式 - 保留VDD
-      if (is_keep_enabled) {
-        BOOST_LOG(debug) << "常驻模式，保留VDD";
-      }
-      // 判断2：非常驻模式 - 销毁VDD（无论是否是无操作模式）
-      else if (has_persistent) {
-        BOOST_LOG(info) << "非常驻模式，销毁VDD";
-        should_destroy = true;
-      }
-      // 判断3：无persistent_data - apply_config 从未执行成功（如锁屏中退出串流）
-      else {
-        BOOST_LOG(info) << "apply_config 未执行（无persistent_data），销毁VDD并跳过拓扑恢复";
-        should_destroy = true;
-      }
-
-      // 无头主机保护：如果销毁后会变成无头（VDD 是唯一显示设备），跳过销毁
-      // 这避免了无意义的销毁+重建循环（device ID 变化导致 persistent_data 失效）
-      if (should_destroy && config::video.vdd_headless_create_enabled) {
-        auto devices = display_device::enum_available_devices();
-        bool only_vdd = (devices.size() == 1 && devices.count(vdd_id));
-        if (only_vdd || devices.empty()) {
-          BOOST_LOG(info) << "无头主机检测：VDD 是唯一显示设备，跳过销毁";
-          should_destroy = false;
-        }
-      }
-
-      if (should_destroy) {
-        destroy_vdd_monitor();
-        std::this_thread::sleep_for(1000ms);
-      }
-    }
+    // VDD 已在函数顶部统一处理，此处无需重复
 
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {

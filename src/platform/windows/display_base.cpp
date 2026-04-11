@@ -567,6 +567,7 @@ namespace platf::dxgi {
     adapter_t::pointer adapter_p;
     for (int tries = 0; tries < 2 && !output; ++tries) {
       if (tries == 1) {
+        BOOST_LOG(warning) << "[Display Init] 首次未找到匹配的显示器，唤醒显示器后重试...";
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
         Sleep(500);
       }
@@ -629,6 +630,28 @@ namespace platf::dxgi {
 
     if (!output) {
       BOOST_LOG(error) << "Failed to locate an output device"sv;
+
+      // 诊断：记录配置的显示器名和所有可用显示器
+      if (!output_name.empty()) {
+        BOOST_LOG(error) << "  配置的显示器: " << to_utf8(output_name);
+      }
+      BOOST_LOG(error) << "  可用显示器列表:";
+      adapter_t::pointer diag_adapter_p;
+      for (int x = 0; factory->EnumAdapters1(x, &diag_adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+        dxgi::adapter_t diag_adapter { diag_adapter_p };
+        DXGI_ADAPTER_DESC1 diag_desc;
+        diag_adapter->GetDesc1(&diag_desc);
+        dxgi::output_t::pointer diag_output_p;
+        for (int y = 0; diag_adapter->EnumOutputs(y, &diag_output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+          dxgi::output_t diag_output { diag_output_p };
+          DXGI_OUTPUT_DESC diag_out_desc;
+          diag_output->GetDesc(&diag_out_desc);
+          BOOST_LOG(error) << "    - " << to_utf8(diag_out_desc.DeviceName)
+                           << " (adapter: " << to_utf8(diag_desc.Description) << ")"
+                           << (diag_out_desc.AttachedToDesktop ? " [attached]" : " [detached]");
+        }
+      }
+
       return -1;
     }
 

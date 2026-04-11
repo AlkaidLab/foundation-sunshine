@@ -58,10 +58,6 @@ namespace display_device::vdd_utils {
   std::chrono::milliseconds
   calculate_exponential_backoff(int attempt);
 
-  // VDD命令执行
-  bool
-  execute_vdd_command(const std::string &action);
-
   // 管道相关函数
   HANDLE
   connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries = 3);
@@ -108,12 +104,6 @@ namespace display_device::vdd_utils {
    */
   void
   destroy_vdd_monitor_nolog();
-
-  void
-  enable_vdd();
-
-  void
-  disable_vdd();
 
   void
   disable_enable_vdd();

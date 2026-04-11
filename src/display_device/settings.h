@@ -235,6 +235,21 @@ namespace display_device {
     void
     replace_vdd_id(const std::string& old_id, const std::string& new_id);
 
+    /**
+     * @brief Save current topology as checkpoint to prevent data loss on crash.
+     *
+     * Called BEFORE topology-modifying operations (e.g., apply_vdd_prep) to ensure
+     * that if Sunshine crashes mid-operation, the original topology can be restored
+     * on next startup.
+     *
+     * If persistent_data already exists (from a previous apply_config), this is a no-op
+     * since the recovery data is already saved.
+     *
+     * @returns True if checkpoint was saved or already exists.
+     */
+    bool
+    save_topology_checkpoint();
+
   private:
     std::unique_ptr<persistent_data_t> persistent_data; /**< Platform specific persistent data. */
     std::unique_ptr<audio_data_t> audio_data; /**< Platform specific temporary audio data. */

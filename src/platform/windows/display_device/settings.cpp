@@ -689,13 +689,32 @@ namespace display_device {
       }
 
       try {
-        std::ofstream file(filepath, std::ios::out | std::ios::trunc);
-        nlohmann::json json_data = data;
+        // Write to a temporary file first, then atomically rename to the target.
+        // This prevents data loss if Sunshine crashes mid-write.
+        auto tmp_filepath = filepath;
+        tmp_filepath += ".tmp";
 
-        // Write json with indentation
-        file << std::setw(4) << json_data << std::endl;
-        BOOST_LOG(debug) << "Saved persistent display settings:\n"
-                         << json_data.dump(4);
+        {
+          std::ofstream file(tmp_filepath, std::ios::out | std::ios::trunc);
+          if (!file.is_open()) {
+            BOOST_LOG(error) << "Failed to open temp file for saving: " << tmp_filepath;
+            return false;
+          }
+
+          nlohmann::json json_data = data;
+          file << std::setw(4) << json_data << std::endl;
+          file.flush();
+
+          if (file.fail()) {
+            BOOST_LOG(error) << "Failed to write display settings to temp file";
+            return false;
+          }
+        }
+
+        // Atomic rename (on NTFS, rename is atomic for same-volume operations)
+        std::filesystem::rename(tmp_filepath, filepath);
+
+        BOOST_LOG(debug) << "Saved persistent display settings to: " << filepath.string();
         return true;
       }
       catch (const std::exception &err) {
@@ -718,6 +737,15 @@ namespace display_device {
     std::unique_ptr<settings_t::persistent_data_t>
     load_settings(const std::filesystem::path &filepath) {
       try {
+        // Clean up stale .tmp file from a previous interrupted save
+        auto tmp_filepath = filepath;
+        tmp_filepath += ".tmp";
+        std::error_code ec;
+        if (std::filesystem::exists(tmp_filepath, ec)) {
+          BOOST_LOG(warning) << "发现上次保存残留的临时文件，清理: " << tmp_filepath;
+          std::filesystem::remove(tmp_filepath, ec);
+        }
+
         if (!filepath.empty() && std::filesystem::exists(filepath)) {
           std::ifstream file(filepath);
           return std::make_unique<settings_t::persistent_data_t>(nlohmann::json::parse(file));
@@ -1088,6 +1116,33 @@ namespace display_device {
     
     // Save updated persistent data
     save_settings(filepath, *persistent_data);
+  }
+
+  bool
+  settings_t::save_topology_checkpoint() {
+    if (persistent_data) {
+      // Recovery data already exists, nothing to do
+      return true;
+    }
+
+    auto current_topology = get_current_topology();
+    if (current_topology.empty()) {
+      BOOST_LOG(warning) << "save_topology_checkpoint: 无法获取当前拓扑";
+      return false;
+    }
+
+    persistent_data = std::make_unique<persistent_data_t>();
+    persistent_data->topology.initial = current_topology;
+    persistent_data->topology.modified = current_topology;
+
+    if (!save_settings(filepath, *persistent_data)) {
+      BOOST_LOG(error) << "save_topology_checkpoint: 保存拓扑检查点失败";
+      persistent_data = nullptr;
+      return false;
+    }
+
+    BOOST_LOG(info) << "已保存拓扑检查点，用于崩溃恢复";
+    return true;
   }
 
   void
