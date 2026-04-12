@@ -565,6 +565,8 @@
     "wgc_user_mode_available": "当前以用户模式运行，WGC 捕获可用。",
     "window_title": "窗口标题",
     "window_title_desc": "要捕获的窗口标题（部分匹配，不区分大小写）。如果留空，将自动使用当前运行的应用名称。",
+    "wgc_disable_secure_desktop": "自动提升 UAC（WGC 模式）",
+    "wgc_disable_secure_desktop_desc": "使用 WGC 捕获时，临时禁用 UAC 提示，管理员权限请求将自动通过而不弹出确认对话框。这可以避免远程串流时 UAC 弹窗导致的中断。串流结束后自动恢复原始 UAC 设置。警告：这会降低系统安全性——串流期间任何程序请求管理员权限将被静默提升。",
     "window_title_placeholder": "例如：yuanshen"
   },
   "index": {

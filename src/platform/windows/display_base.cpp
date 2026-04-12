@@ -1077,6 +1077,9 @@ namespace platf {
    */
   std::shared_ptr<display_t>
   display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config) {
+    // Recover ConsentPromptBehaviorAdmin if Sunshine previously crashed during WGC capture (runs only once)
+    dxgi::recover_secure_desktop();
+
     auto try_init = [&](auto disp) -> std::shared_ptr<display_t> {
       if (!disp->init(config, display_name)) {
         return disp;

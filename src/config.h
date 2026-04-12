@@ -113,6 +113,7 @@ namespace config {
     int minimum_fps_target;  // Minimum FPS target (0 = auto, 1-1000 = minimum FPS to maintain)
     std::string downscaling_quality;  // Downscaling quality: "fast" (bilinear+8pt), "balanced" (bicubic), "high_quality" (future: lanczos)
     bool hdr_luminance_analysis;  // Enable per-frame HDR luminance analysis for dynamic metadata
+    bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
   };
 
   struct audio_t {

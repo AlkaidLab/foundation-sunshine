@@ -418,6 +418,13 @@ namespace platf::dxgi {
   };
 
   /**
+   * @brief Recover ConsentPromptBehaviorAdmin registry value if a previous WGC session crashed.
+   * Safe to call from any capture mode — checks for backup file and restores if found.
+   */
+  void
+  recover_secure_desktop();
+
+  /**
    * Display duplicator that uses the Windows.Graphics.Capture API.
    */
   class wgc_capture_t {

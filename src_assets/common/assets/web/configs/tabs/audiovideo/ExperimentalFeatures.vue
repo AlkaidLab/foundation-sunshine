@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
+import Checkbox from '../../../components/Checkbox.vue'
 
 const props = defineProps({
   platform: String,
@@ -77,6 +78,15 @@ function addRemapping(type) {
                 />
                 <div class="form-text">{{ $t('config.window_title_desc') }}</div>
               </div>
+
+              <!-- WGC Disable Secure Desktop -->
+              <Checkbox
+                class="mb-3"
+                id="wgc_disable_secure_desktop"
+                locale-prefix="config"
+                v-model="config.wgc_disable_secure_desktop"
+                default="false"
+              ></Checkbox>
 
               <!-- Display Mode Remapping -->
               <div

@@ -565,6 +565,8 @@
     "wgc_user_mode_available": "Currently running in user mode. WGC capture is available.",
     "window_title": "Window Title",
     "window_title_desc": "The title of the window to capture (partial match, case-insensitive). If left empty, the current running application name will be used automatically.",
+    "wgc_disable_secure_desktop": "Auto-Elevate UAC (WGC Mode)",
+    "wgc_disable_secure_desktop_desc": "When using WGC capture, temporarily disable UAC prompts by auto-elevating admin requests without user confirmation. This allows seamless remote operation without UAC dialog interruptions. The original UAC settings are restored when streaming ends. WARNING: This reduces system security — any program requesting admin privileges will be silently elevated during streaming.",
     "window_title_placeholder": "e.g., Application Name"
   },
   "index": {
