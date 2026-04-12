@@ -688,7 +688,7 @@ namespace display_device {
 
       // 无头主机保护：如果销毁后会变成无头（VDD 是唯一显示设备），跳过销毁
       // 这避免了无意义的销毁+重建循环（device ID 变化导致 persistent_data 失效）
-      if (should_destroy && config::video.vdd_headless_create_enabled) {
+      if (should_destroy) {
         auto devices = display_device::enum_available_devices();
         bool only_vdd = (devices.size() == 1 && devices.count(vdd_id));
         if (only_vdd || devices.empty()) {
@@ -706,13 +706,6 @@ namespace display_device {
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
-      stop_timer_and_clear_vdd_state();
-      return;
-    }
-
-    // 无操作模式：跳过拓扑恢复（因为拓扑从未被修改过）
-    if (is_no_operation) {
-      BOOST_LOG(info) << "无操作模式，跳过拓扑恢复";
       stop_timer_and_clear_vdd_state();
       return;
     }
