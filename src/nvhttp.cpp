@@ -2010,23 +2010,30 @@ namespace nvhttp {
   sleep(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    boost::process::v1::environment _env = boost::this_process::environment();
-    auto working_dir = boost::filesystem::path();
-    std::error_code ec;
-    std::string cmd = "rundll32.exe powrprof.dll,SetSuspendState 0,1,0";
-
-    auto child = platf::run_command(false, true, cmd, working_dir, _env, nullptr, ec, nullptr);
-    if (ec) {
-      BOOST_LOG(warning) << "Couldn't run cmd ["sv << cmd << "]: System: "sv << ec.message();
+    bool success = true;
+    switch (config::nvhttp.sleep_mode) {
+      case config::SLEEP_MODE_HIBERNATE:
+        BOOST_LOG(info) << "Sleep command: hibernate (S4)"sv;
+        success = platf::system_hibernate();
+        break;
+      case config::SLEEP_MODE_AWAY:
+        BOOST_LOG(info) << "Sleep command: away mode (display off)"sv;
+        platf::enter_away_mode();
+        break;
+      case config::SLEEP_MODE_SUSPEND:
+      default:
+        BOOST_LOG(info) << "Sleep command: suspend (S3)"sv;
+        success = platf::system_sleep();
+        break;
     }
-    else {
-      BOOST_LOG(info) << "Executing sleep cmd ["sv << cmd << "]"sv;
-      child.detach();
+
+    if (!success) {
+      BOOST_LOG(warning) << "Sleep command failed"sv;
     }
 
     pt::ptree tree;
-    tree.put("root.pcsleep", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
+    tree.put("root.pcsleep", success ? 1 : 0);
+    tree.put("root.<xmlattr>.status_code", success ? 200 : 500);
 
     std::ostringstream data;
 
