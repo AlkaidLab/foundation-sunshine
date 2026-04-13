@@ -273,21 +273,6 @@ namespace display_device {
             changes_applied = true;
           }
         }
-
-        // Also update desktop image info if present
-        const UINT32 desktop_idx { path->targetInfo.desktopModeInfoIdx };
-        if (desktop_idx != DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID && desktop_idx < display_data->modes.size()) {
-          auto &desktop_mode_info = display_data->modes[desktop_idx];
-          if (desktop_mode_info.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE) {
-            auto &desktop = desktop_mode_info.desktopImageInfo;
-            desktop.PathSourceSize.cx = mode.resolution.width;
-            desktop.PathSourceSize.cy = mode.resolution.height;
-            desktop.DesktopImageRegion.right = mode.resolution.width;
-            desktop.DesktopImageRegion.bottom = mode.resolution.height;
-            desktop.DesktopImageClip.right = mode.resolution.width;
-            desktop.DesktopImageClip.bottom = mode.resolution.height;
-          }
-        }
       }
 
       if (!changes_applied) {
