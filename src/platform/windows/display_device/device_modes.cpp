@@ -198,6 +198,112 @@ namespace display_device {
       return true;
     };
 
+    /**
+     * @brief Attempt to set display modes by explicitly specifying both source and target mode parameters.
+     *
+     * This is a fallback for cases where Windows CCD cannot automatically match source modes to target modes
+     * (e.g., non-standard resolutions like 2560x1600 on newly created virtual display paths).
+     * Instead of clearing the target mode index and relying on Windows' mode matching algorithm,
+     * this function directly modifies the existing target mode entry with the desired parameters.
+     *
+     * @param modes The desired display modes to set.
+     * @return True if successfully applied, false otherwise.
+     */
+    bool
+    do_set_modes_with_explicit_target(const device_display_mode_map_t &modes) {
+      auto display_data { w_utils::query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
+      if (!display_data) {
+        return false;
+      }
+
+      bool changes_applied { false };
+      for (const auto &[device_id, mode] : modes) {
+        auto path { w_utils::get_active_path(device_id, display_data->paths) };
+        if (!path) {
+          BOOST_LOG(error) << "Failed to find device for explicit target mode set: " << device_id << "!";
+          return false;
+        }
+
+        auto source_mode { w_utils::get_source_mode(w_utils::get_source_index(*path, display_data->modes), display_data->modes) };
+        if (!source_mode) {
+          BOOST_LOG(error) << "Active device does not have a source mode: " << device_id << "!";
+          return false;
+        }
+
+        // Update source mode with desired resolution
+        const bool resolution_changed { source_mode->width != mode.resolution.width || source_mode->height != mode.resolution.height };
+        if (resolution_changed) {
+          source_mode->width = mode.resolution.width;
+          source_mode->height = mode.resolution.height;
+          changes_applied = true;
+        }
+
+        // Update path refresh rate
+        const bool refresh_rate_changed { path->targetInfo.refreshRate.Numerator != mode.refresh_rate.numerator ||
+                                          path->targetInfo.refreshRate.Denominator != mode.refresh_rate.denominator };
+        if (refresh_rate_changed) {
+          path->targetInfo.refreshRate = { mode.refresh_rate.numerator, mode.refresh_rate.denominator };
+          changes_applied = true;
+        }
+
+        // Instead of clearing the target index, try to update the target mode entry in-place.
+        // This avoids relying on Windows CCD's automatic source-to-target mode matching,
+        // which can fail for non-standard resolutions on newly created virtual display paths.
+        const UINT32 target_idx { path->targetInfo.targetModeInfoIdx };
+        if (target_idx != DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID && target_idx < display_data->modes.size()) {
+          auto &target_mode_info = display_data->modes[target_idx];
+          if (target_mode_info.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_TARGET) {
+            auto &signal = target_mode_info.targetMode.targetVideoSignalInfo;
+            const UINT32 width = mode.resolution.width;
+            const UINT32 height = mode.resolution.height;
+            const UINT32 vsync_num = mode.refresh_rate.numerator;
+            const UINT32 vsync_den = mode.refresh_rate.denominator > 0 ? mode.refresh_rate.denominator : 1;
+
+            signal.activeSize.cx = width;
+            signal.activeSize.cy = height;
+            signal.totalSize.cx = width;
+            signal.totalSize.cy = height;
+            signal.vSyncFreq.Numerator = vsync_num;
+            signal.vSyncFreq.Denominator = vsync_den;
+            signal.hSyncFreq.Numerator = vsync_num * height;
+            signal.hSyncFreq.Denominator = vsync_den;
+            signal.pixelRate = static_cast<UINT64>(vsync_num) * width * height / vsync_den;
+            signal.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+
+            changes_applied = true;
+          }
+        }
+
+        // Also update desktop image info if present
+        const UINT32 desktop_idx { path->targetInfo.desktopModeInfoIdx };
+        if (desktop_idx != DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID && desktop_idx < display_data->modes.size()) {
+          auto &desktop_mode_info = display_data->modes[desktop_idx];
+          if (desktop_mode_info.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE) {
+            auto &desktop = desktop_mode_info.desktopImageInfo;
+            desktop.PathSourceSize.cx = mode.resolution.width;
+            desktop.PathSourceSize.cy = mode.resolution.height;
+            desktop.DesktopImageRegion.right = mode.resolution.width;
+            desktop.DesktopImageRegion.bottom = mode.resolution.height;
+            desktop.DesktopImageClip.right = mode.resolution.width;
+            desktop.DesktopImageClip.bottom = mode.resolution.height;
+          }
+        }
+      }
+
+      if (!changes_applied) {
+        return false;
+      }
+
+      const UINT32 flags { SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE | SDC_VIRTUAL_MODE_AWARE };
+      const LONG result { SetDisplayConfig(display_data->paths.size(), display_data->paths.data(), display_data->modes.size(), display_data->modes.data(), flags) };
+      if (result != ERROR_SUCCESS) {
+        BOOST_LOG(warning) << w_utils::get_error_string(result) << " failed to set display mode with explicit target!";
+        return false;
+      }
+
+      return true;
+    }
+
   }  // namespace
 
   device_display_mode_map_t
@@ -329,6 +435,17 @@ namespace display_device {
       // flag.
       BOOST_LOG(info) << "Failed to change display modes using Windows recommended modes, trying to set modes more strictly!";
       if (do_set_modes(modes, !allow_changes)) {
+        current_modes = get_current_display_modes(device_ids);
+        if (!current_modes.empty() && all_modes_match(current_modes)) {
+          return true;
+        }
+      }
+
+      // Fallback: explicitly set target mode parameters instead of relying on Windows CCD mode matching.
+      // This helps with non-standard resolutions (e.g. 16:10 like 2560x1600) on newly created virtual
+      // display paths where the CCD topology database has no matching mode entries.
+      BOOST_LOG(info) << "CCD mode matching failed, trying to set modes with explicit target mode parameters.";
+      if (do_set_modes_with_explicit_target(modes)) {
         current_modes = get_current_display_modes(device_ids);
         if (!current_modes.empty() && all_modes_match(current_modes)) {
           return true;
