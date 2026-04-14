@@ -448,6 +448,13 @@ namespace platf::dxgi {
         auto status = img_ctx.encoder_mutex->AcquireSync(0, INFINITE);
         if (status != S_OK) {
           BOOST_LOG(error) << "Failed to acquire encoder mutex [0x"sv << util::hex(status).to_string_view() << ']';
+          // Check if the D3D11 device is lost (TDR, driver crash, etc.)
+          if (device.get()) {
+            auto removed_reason = device->GetDeviceRemovedReason();
+            if (removed_reason != S_OK) {
+              BOOST_LOG(error) << "D3D11 device lost during convert, reason: 0x"sv << util::hex(removed_reason).to_string_view();
+            }
+          }
           return -1;
         }
 

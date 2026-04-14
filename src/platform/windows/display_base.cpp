@@ -154,6 +154,10 @@ namespace platf::dxgi {
       case DXGI_ERROR_ACCESS_LOST:
       case DXGI_ERROR_ACCESS_DENIED:
         return capture_e::reinit;
+      case DXGI_ERROR_DEVICE_REMOVED:
+      case DXGI_ERROR_DEVICE_RESET:
+        BOOST_LOG(error) << "D3D11 device lost during AcquireNextFrame [0x"sv << util::hex(status).to_string_view() << "], requesting reinit"sv;
+        return capture_e::reinit;
       default:
         BOOST_LOG(error) << "Couldn't acquire next frame [0x"sv << util::hex(status).to_string_view();
         return capture_e::error;
@@ -186,6 +190,11 @@ namespace platf::dxgi {
         return capture_e::ok;
 
       case DXGI_ERROR_ACCESS_LOST:
+        return capture_e::reinit;
+
+      case DXGI_ERROR_DEVICE_REMOVED:
+      case DXGI_ERROR_DEVICE_RESET:
+        BOOST_LOG(error) << "D3D11 device lost during ReleaseFrame [0x"sv << util::hex(status).to_string_view() << "], requesting reinit"sv;
         return capture_e::reinit;
 
       default:

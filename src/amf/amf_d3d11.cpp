@@ -17,6 +17,7 @@
 
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/utility.h"
 
 namespace amf {
 
@@ -604,6 +605,13 @@ namespace amf {
     auto res = context->CreateSurfaceFromDX11Native(input_texture, &surface, nullptr);
     if (res != AMF_OK || !surface) {
       BOOST_LOG(error) << "AMF: CreateSurfaceFromDX11Native failed, error: " << res;
+      // Check if the D3D11 device is lost (TDR, driver crash, etc.)
+      if (device) {
+        auto removed_reason = device->GetDeviceRemovedReason();
+        if (removed_reason != S_OK) {
+          BOOST_LOG(error) << "AMF: D3D11 device lost, reason: 0x" << util::hex(removed_reason).to_string_view();
+        }
+      }
       return result;
     }
 
@@ -702,6 +710,13 @@ namespace amf {
     }
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: SubmitInput failed, error: " << res;
+      // Check if the D3D11 device is lost (TDR, driver crash, etc.)
+      if (device) {
+        auto removed_reason = device->GetDeviceRemovedReason();
+        if (removed_reason != S_OK) {
+          BOOST_LOG(error) << "AMF: D3D11 device lost after SubmitInput, reason: 0x" << util::hex(removed_reason).to_string_view();
+        }
+      }
       return result;
     }
 

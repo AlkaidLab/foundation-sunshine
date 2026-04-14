@@ -2884,7 +2884,8 @@ namespace video {
           frame_timestamp = img->frame_timestamp;
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
-            return;
+            // Don't exit permanently — break to let the outer reinit loop handle recovery
+            break;
           }
           has_new_frame = true;
         }
@@ -2906,7 +2907,8 @@ namespace video {
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
-        return;
+        // Don't exit permanently — break to let the outer reinit loop handle recovery
+        break;
       }
 
       session->request_normal_frame();
