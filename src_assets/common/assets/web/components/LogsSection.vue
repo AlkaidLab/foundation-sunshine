@@ -127,39 +127,36 @@ const downloadLogs = async () => {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
   const filename = `sunshine-logs-${timestamp}.txt`
 
-  try {
-    // Fetch full log file from server (no X-Log-Offset header = full file download)
-    const response = await fetch('/api/logs')
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const content = await response.text()
-
-    // Tauri WebView2: use Rust save_text_file command (dialog + fs write)
-    if (window.__TAURI_INTERNALS__) {
-      try {
-        await window.__TAURI_INTERNALS__.invoke('save_text_file', {
-          content,
-          defaultName: filename,
-          filterName: 'Text Files',
-          extensions: ['txt'],
-        })
-        return
-      } catch (e) {
-        if (e === 'cancelled') return
-        console.warn('Tauri save_text_file failed, falling back:', e)
-      }
+  // Tauri WebView2: fetch into memory then use Rust save_text_file command (dialog + fs write)
+  if (window.__TAURI_INTERNALS__) {
+    try {
+      const response = await fetch('/api/logs')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const content = await response.text()
+      await window.__TAURI_INTERNALS__.invoke('save_text_file', {
+        content,
+        defaultName: filename,
+        filterName: 'Text Files',
+        extensions: ['txt'],
+      })
+      return
+    } catch (e) {
+      if (e === 'cancelled') return
+      console.warn('Tauri save_text_file failed, falling back:', e)
     }
+  }
 
-    // Standard browser download
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
+  // Standard browser: let browser download directly via <a> link
+  // Server returns Content-Disposition: attachment, so the browser handles
+  // the download natively without buffering the entire file in JS memory.
+  try {
     const link = Object.assign(document.createElement('a'), {
-      href: url,
+      href: '/api/logs',
       download: filename,
     })
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    setTimeout(() => URL.revokeObjectURL(url), 3000)
   } catch (e) {
     console.error('Failed to download logs:', e)
   }

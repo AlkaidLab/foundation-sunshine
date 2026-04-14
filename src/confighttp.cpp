@@ -597,12 +597,6 @@ namespace confighttp {
     // --- Mode 1: No X-Log-Offset header → stream full file from disk (download) ---
     auto offset_it = request->header.find("X-Log-Offset");
     if (offset_it == request->header.end()) {
-      std::error_code ec;
-      auto fsize = std::filesystem::file_size(log_path, ec);
-      if (ec) {
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
-        return;
-      }
       std::ifstream in(log_path.string(), std::ios::binary);
       if (!in.is_open()) {
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open log file");
@@ -611,7 +605,9 @@ namespace confighttp {
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/plain; charset=utf-8");
       headers.emplace("Content-Disposition", "attachment; filename=\"sunshine.log\"");
-      headers.emplace("Content-Length", std::to_string(fsize));
+      // Omit Content-Length: log file is actively written, so size may change
+      // between file_size() and the end of the stream (TOCTOU). Letting the
+      // server use chunked transfer encoding avoids truncation or hang.
       response->write(SimpleWeb::StatusCode::success_ok, in, headers);
       return;
     }
@@ -735,14 +731,22 @@ namespace confighttp {
         }
         // Delta too large or read failed: return last MAX_RESPONSE_SIZE bytes
         auto tail = read_file_tail(log_path, MAX_RESPONSE_SIZE);
+        if (!tail) {
+          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+          return;
+        }
         headers.emplace("X-Log-Range", "full");
-        response->write(SimpleWeb::StatusCode::success_ok, tail ? *tail : std::string(), headers);
+        response->write(SimpleWeb::StatusCode::success_ok, *tail, headers);
       }
       else {
         // First request or invalid offset: return tail
         auto tail = read_file_tail(log_path, MAX_RESPONSE_SIZE);
+        if (!tail) {
+          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+          return;
+        }
         headers.emplace("X-Log-Range", "full");
-        response->write(SimpleWeb::StatusCode::success_ok, tail ? *tail : std::string(), headers);
+        response->write(SimpleWeb::StatusCode::success_ok, *tail, headers);
       }
     }
   }
