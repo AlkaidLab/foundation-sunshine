@@ -632,11 +632,11 @@ namespace confighttp {
           new_content = read_file_range(log_path, read_start, read_len);
         }
         if (!new_content) {
+          if (current_size > 0) {
+            response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+            return;
+          }
           new_content = std::make_shared<const std::string>();
-        }
-        if (new_content->empty() && !std::filesystem::exists(log_path, ec)) {
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Log file not available");
-          return;
         }
         new_snap->content = std::move(new_content);
         new_snap->start_offset = current_size - new_snap->content->size();
