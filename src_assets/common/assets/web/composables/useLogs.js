@@ -27,7 +27,8 @@ export function useLogs() {
 
   const fetchLogs = async () => {
     try {
-      const response = await fetch('/api/logs')
+      // Use X-Log-Offset: 0 to get cached tail (not full file download)
+      const response = await fetch('/api/logs', { headers: { 'X-Log-Offset': '0' } })
       if (response.ok) {
         logs.value = await response.text()
         return true

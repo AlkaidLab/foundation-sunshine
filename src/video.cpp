@@ -3320,6 +3320,7 @@ namespace video {
         auto lg = ref->display_wp.lock();
         if (ref->display_wp->expired()) {
           BOOST_LOG(verbose) << "[Display] Display object expired, waiting for reinit...";
+          std::this_thread::sleep_for(20ms);
           continue;
         }
         display = ref->display_wp->lock();

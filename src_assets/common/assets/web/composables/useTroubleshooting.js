@@ -2,6 +2,7 @@ import { ref, computed, onUnmounted } from 'vue'
 
 const LOG_REFRESH_INTERVAL = 5000
 const STATUS_RESET_DELAY = 5000
+const MAX_LOG_DISPLAY_SIZE = 4 * 1024 * 1024 // 4 MB cap for in-memory log string
 
 /**
  * Creates a delayed status reset helper
@@ -90,7 +91,8 @@ export function useTroubleshooting() {
   const refreshLogs = async () => {
     try {
       const offset = Number(logOffset.value)
-      const headers = (!Number.isNaN(offset) && offset > 0) ? { 'X-Log-Offset': String(offset) } : {}
+      // Always send X-Log-Offset to use cached tail mode (without it, server returns full file for download)
+      const headers = { 'X-Log-Offset': String(Number.isNaN(offset) ? 0 : offset) }
       const response = await fetch('/api/logs', { headers })
 
       if (response.status === 304) {
@@ -114,6 +116,10 @@ export function useTroubleshooting() {
         logs.value += text
       } else {
         logs.value = text
+      }
+      // Cap in-memory log string to prevent unbounded frontend memory growth
+      if (logs.value.length > MAX_LOG_DISPLAY_SIZE) {
+        logs.value = logs.value.slice(-MAX_LOG_DISPLAY_SIZE)
       }
 
       logOffset.value = newSize
