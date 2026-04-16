@@ -86,3 +86,8 @@ src_assets/windows/misc/vmouse/driver/*.cat
 # Generated files
 src_assets/common/assets/web/welcome.html
 src_assets/common/assets/web/dist/
+# Local dev scripts
+build.sh
+
+# Vulkan HDR layer source (standalone tool, not part of Sunshine)
+src/vk_layer_hdr_inject/
