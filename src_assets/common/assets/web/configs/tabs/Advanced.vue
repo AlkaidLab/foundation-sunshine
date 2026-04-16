@@ -19,6 +19,11 @@ const isWGCSelected = computed(() => {
   return props.platform === 'windows' && config.value.capture === 'wgc'
 })
 
+// 检查是否选择了 AMD Display Capture
+const isAMDCaptureSelected = computed(() => {
+  return props.platform === 'windows' && config.value.capture === 'amd'
+})
+
 // Sunshine 运行模式状态
 const isUserMode = ref(false)
 const isCheckingMode = ref(false)
@@ -199,6 +204,10 @@ watch(isWGCSelected, (newValue) => {
           <span v-if="isCheckingMode">{{ $t('config.wgc_checking_running_mode') }}</span>
           <span v-else-if="isUserMode">{{ $t('config.wgc_user_mode_available') }}</span>
           <span v-else>{{ $t('config.wgc_service_mode_warning') }}</span>
+        </span>
+        <span v-if="isAMDCaptureSelected" class="d-block mt-1 text-warning">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          {{ $t('config.amd_capture_no_virtual_display') }}
         </span>
       </div>
     </div>

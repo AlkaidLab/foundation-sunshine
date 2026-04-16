@@ -224,6 +224,7 @@
     "bind_address_desc": "Set the specific IP address Sunshine will bind to. If left blank, Sunshine will bind to all available addresses.",
     "capture": "Force a Specific Capture Method",
     "capture_desc": "On automatic mode Sunshine will use the first one that works. NvFBC requires patched nvidia drivers.",
+    "amd_capture_no_virtual_display": "AMD Display Capture does not support virtual display drivers (e.g. IddCx/VDD). If you are using a virtual display, please use WGC or Desktop Duplication API instead.",
     "capture_target": "Capture Target",
     "capture_target_desc": "Select the type of target to capture. When selecting 'Window', you can capture a specific application window (such as AI frame interpolation software) instead of the entire display.",
     "capture_target_display": "Display",
