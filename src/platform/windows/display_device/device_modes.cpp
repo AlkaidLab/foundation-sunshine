@@ -270,6 +270,12 @@ namespace display_device {
             signal.pixelRate = static_cast<UINT64>(vsync_num) * width * height / vsync_den;
             signal.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
 
+            // Clear the desktop image index so Windows reselects it.
+            // A stale DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE entry (with old size)
+            // can cause SetDisplayConfig to fail with ERROR_GEN_FAILURE when using
+            // SDC_VIRTUAL_MODE_AWARE, even though we are keeping the target index.
+            w_utils::set_desktop_index(*path, boost::none);
+
             changes_applied = true;
           }
         }
