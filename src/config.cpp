@@ -563,6 +563,7 @@ namespace config {
     {},  // Bind address
     platf::appdata().string() + "/sunshine.log",  // log file
     false,  // restore_log - 默认不恢复日志文件
+    50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
     {},  // prep commands
@@ -1390,6 +1391,10 @@ namespace config {
     }
 
     bool_f(vars, "restore_log"s, sunshine.restore_log);
+    int_f(vars, "max_log_size_mb"s, sunshine.max_log_size_mb);
+    if (sunshine.max_log_size_mb < 0) {
+      sunshine.max_log_size_mb = 0;
+    }
 
     // Webhook configuration
     bool_f(vars, "webhook_enabled"s, webhook.enabled);

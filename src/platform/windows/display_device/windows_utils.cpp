@@ -637,43 +637,62 @@ namespace display_device::w_utils {
 
   boost::optional<path_and_mode_data_t>
   query_display_config(bool active_only) {
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-    LONG result = ERROR_SUCCESS;
-
     // When we want to enable/disable displays, we need to get all paths as they will not be active.
     // This will require some additional filtering of duplicate and otherwise useless paths.
-    UINT32 flags = active_only ? QDC_ONLY_ACTIVE_PATHS : QDC_ALL_PATHS;
-    flags |= QDC_VIRTUAL_MODE_AWARE;  // supported from W10 onwards
+    UINT32 base_flags = active_only ? QDC_ONLY_ACTIVE_PATHS : QDC_ALL_PATHS;
 
-    do {
-      UINT32 path_count { 0 };
-      UINT32 mode_count { 0 };
+    // Try with QDC_VIRTUAL_MODE_AWARE first (supported from W10), then fallback without it.
+    for (bool virtual_mode_aware : { true, false }) {
+      UINT32 flags = base_flags | (virtual_mode_aware ? QDC_VIRTUAL_MODE_AWARE : 0);
 
-      result = GetDisplayConfigBufferSizes(flags, &path_count, &mode_count);
-      if (result != ERROR_SUCCESS) {
-        BOOST_LOG(error) << get_error_string(result) << " failed to get display paths and modes!";
-        return boost::none;
+      std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+      std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+      LONG result = ERROR_SUCCESS;
+
+      do {
+        UINT32 path_count { 0 };
+        UINT32 mode_count { 0 };
+
+        result = GetDisplayConfigBufferSizes(flags, &path_count, &mode_count);
+        if (result != ERROR_SUCCESS) {
+          BOOST_LOG(virtual_mode_aware ? warning : error)
+            << get_error_string(result) << " GetDisplayConfigBufferSizes failed"
+            << (virtual_mode_aware ? " (with QDC_VIRTUAL_MODE_AWARE)" : "") << "!";
+          break;
+        }
+
+        // No display paths exist (e.g. headless machine before VDD creation).
+        // Return empty data instead of calling QueryDisplayConfig with 0-sized buffers.
+        if (path_count == 0 && mode_count == 0) {
+          return path_and_mode_data_t { {}, {} };
+        }
+
+        paths.resize(path_count);
+        modes.resize(mode_count);
+        result = QueryDisplayConfig(flags, &path_count, paths.data(), &mode_count, modes.data(), nullptr);
+
+        // The function may have returned fewer paths/modes than estimated
+        paths.resize(path_count);
+        modes.resize(mode_count);
+
+        // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
+        // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
+      } while (result == ERROR_INSUFFICIENT_BUFFER);
+
+      if (result == ERROR_SUCCESS) {
+        return path_and_mode_data_t { std::move(paths), std::move(modes) };
       }
 
-      paths.resize(path_count);
-      modes.resize(mode_count);
-      result = QueryDisplayConfig(flags, &path_count, paths.data(), &mode_count, modes.data(), nullptr);
+      if (virtual_mode_aware) {
+        BOOST_LOG(warning) << get_error_string(result) << " failed to query display paths and modes with QDC_VIRTUAL_MODE_AWARE, retrying without...";
+        continue;
+      }
 
-      // The function may have returned fewer paths/modes than estimated
-      paths.resize(path_count);
-      modes.resize(mode_count);
-
-      // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
-      // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
-    } while (result == ERROR_INSUFFICIENT_BUFFER);
-
-    if (result != ERROR_SUCCESS) {
       BOOST_LOG(error) << get_error_string(result) << " failed to query display paths and modes!";
       return boost::none;
     }
 
-    return path_and_mode_data_t { paths, modes };
+    return boost::none;  // unreachable: loop always returns in both iterations
   }
 
   const DISPLAYCONFIG_PATH_INFO *
@@ -738,6 +757,12 @@ namespace display_device::w_utils {
     auto display_data { query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
     if (!display_data) {
       BOOST_LOG(debug) << "test_no_access_to_ccd_api failed in query_display_config.";
+      return true;
+    }
+
+    // No active displays (e.g. headless machine) - can't test CCD access without paths
+    if (display_data->paths.empty()) {
+      BOOST_LOG(debug) << "test_no_access_to_ccd_api: no active display paths, assuming no access.";
       return true;
     }
 

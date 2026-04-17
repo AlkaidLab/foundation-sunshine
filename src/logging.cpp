@@ -16,8 +16,10 @@
 #include <boost/log/common.hpp>
 #include <boost/log/expressions.hpp>
 #include <boost/log/sinks.hpp>
+#include <boost/log/sinks/text_file_backend.hpp>
 #include <boost/log/sources/severity_logger.hpp>
 #include <boost/log/utility/exception_handler.hpp>
+#include <boost/log/utility/setup/file.hpp>
 
 // local includes
 #include "logging.h"
@@ -30,7 +32,9 @@ using namespace std::literals;
 
 namespace bl = boost::log;
 
-boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> sink;
+boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> console_sink;
+boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>> file_sink_ptr;
+boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> file_ostream_sink;
 
 bl::sources::severity_logger<int> verbose(0);  // Dominating output
 bl::sources::severity_logger<int> debug(1);  // Follow what is happening
@@ -52,8 +56,18 @@ namespace logging {
   void
   deinit() {
     log_flush();
-    bl::core::get()->remove_sink(sink);
-    sink.reset();
+    if (console_sink) {
+      bl::core::get()->remove_sink(console_sink);
+      console_sink.reset();
+    }
+    if (file_sink_ptr) {
+      bl::core::get()->remove_sink(file_sink_ptr);
+      file_sink_ptr.reset();
+    }
+    if (file_ostream_sink) {
+      bl::core::get()->remove_sink(file_ostream_sink);
+      file_ostream_sink.reset();
+    }
   }
 
   /**
@@ -172,40 +186,78 @@ namespace logging {
    */
   [[nodiscard]] std::unique_ptr<deinit_t>
   init(int min_log_level, const std::string &log_file, bool restore_log) {
-    if (sink) {
+    if (console_sink || file_sink_ptr || file_ostream_sink) {
       // Deinitialize the logging system before reinitializing it. This can probably only ever be hit in tests.
       deinit();
     }
 
     setup_av_logging(min_log_level);
 
-    sink = boost::make_shared<text_sink>();
-
+    // Console sink (async, stdout)
 #ifndef SUNSHINE_TESTS
+    console_sink = boost::make_shared<text_sink>();
     boost::shared_ptr<std::ostream> stream { &std::cout, boost::null_deleter() };
-    sink->locked_backend()->add_stream(stream);
+    console_sink->locked_backend()->add_stream(stream);
+    console_sink->locked_backend()->auto_flush(true);
+    console_sink->set_filter(severity >= min_log_level);
+    console_sink->set_formatter(&formatter);
+    console_sink->set_exception_handler(bl::make_exception_suppressor());
+    bl::core::get()->add_sink(console_sink);
 #endif
-    
+
     // 转写现有日志文件
     if (config::sunshine.restore_log) {
       archive_existing_log(log_file);
     }
 
-    std::ios_base::openmode mode = std::ios_base::out;
-    sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_file, mode));
-    sink->set_filter(severity >= min_log_level);
-    sink->set_formatter(&formatter);
+    // File sink with rotation support
+    namespace fs = std::filesystem;
+    const auto max_log_size_mb = config::sunshine.max_log_size_mb;
+    const auto log_dir = fs::path(log_file).parent_path();
+    const auto log_filename = fs::path(log_file).filename().string();
 
-    // Prevent the async sink's background thread from dying on backend exceptions.
-    // Without this, a single I/O error (disk full, file locked, broken stdout, etc.)
-    // kills the thread and all subsequent log records are silently lost.
-    sink->set_exception_handler(bl::make_exception_suppressor());
+    if (max_log_size_mb > 0) {
+      // When restore_log is false, truncate the existing log file before starting rotation
+      if (!config::sunshine.restore_log && fs::exists(log_file)) {
+        std::error_code ec;
+        fs::remove(log_file, ec);
+      }
 
-    // Flush after each log record to ensure log file contents on disk isn't stale.
-    // This is particularly important when running from a Windows service.
-    sink->locked_backend()->auto_flush(true);
+      // Use text_file_backend with automatic size-based rotation
+      auto file_backend = boost::make_shared<bl::sinks::text_file_backend>(
+        bl::keywords::file_name = log_file,
+        bl::keywords::rotation_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024,
+        bl::keywords::open_mode = std::ios_base::out | std::ios_base::app
+      );
 
-    bl::core::get()->add_sink(sink);
+      // Set up file collector to manage rotated log files
+      file_backend->set_file_collector(bl::sinks::file::make_collector(
+        bl::keywords::target = (log_dir / "logs_archive").string(),
+        bl::keywords::max_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024 * 5,  // Keep up to 5x max_size total
+        bl::keywords::max_files = 10
+      ));
+
+      file_backend->auto_flush(true);
+      // Scan for any previously rotated files to properly manage the archive
+      file_backend->scan_for_files();
+
+      file_sink_ptr = boost::make_shared<file_sink>(file_backend);
+      file_sink_ptr->set_filter(severity >= min_log_level);
+      file_sink_ptr->set_formatter(&formatter);
+      file_sink_ptr->set_exception_handler(bl::make_exception_suppressor());
+      bl::core::get()->add_sink(file_sink_ptr);
+    }
+    else {
+      // No rotation: use simple text_ostream_backend (original behavior)
+      file_ostream_sink = boost::make_shared<text_sink>();
+      file_ostream_sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_file, std::ios_base::out));
+      file_ostream_sink->locked_backend()->auto_flush(true);
+      file_ostream_sink->set_filter(severity >= min_log_level);
+      file_ostream_sink->set_formatter(&formatter);
+      file_ostream_sink->set_exception_handler(bl::make_exception_suppressor());
+      bl::core::get()->add_sink(file_ostream_sink);
+    }
+
     return std::make_unique<deinit_t>();
   }
 
@@ -245,8 +297,14 @@ namespace logging {
 
   void
   log_flush() {
-    if (sink) {
-      sink->flush();
+    if (console_sink) {
+      console_sink->flush();
+    }
+    if (file_sink_ptr) {
+      file_sink_ptr->flush();
+    }
+    if (file_ostream_sink) {
+      file_ostream_sink->flush();
     }
   }
 
