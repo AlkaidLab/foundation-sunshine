@@ -642,6 +642,7 @@ namespace display_device::w_utils {
     UINT32 base_flags = active_only ? QDC_ONLY_ACTIVE_PATHS : QDC_ALL_PATHS;
 
     // Try with QDC_VIRTUAL_MODE_AWARE first (supported from W10), then fallback without it.
+    LONG last_error = ERROR_SUCCESS;
     for (bool virtual_mode_aware : { true, false }) {
       UINT32 flags = base_flags | (virtual_mode_aware ? QDC_VIRTUAL_MODE_AWARE : 0);
 
@@ -655,8 +656,10 @@ namespace display_device::w_utils {
 
         result = GetDisplayConfigBufferSizes(flags, &path_count, &mode_count);
         if (result != ERROR_SUCCESS) {
-          BOOST_LOG(error) << get_error_string(result) << " failed to get display paths and modes!";
-          return boost::none;
+          BOOST_LOG(virtual_mode_aware ? warning : error)
+            << get_error_string(result) << " GetDisplayConfigBufferSizes failed"
+            << (virtual_mode_aware ? " (with QDC_VIRTUAL_MODE_AWARE)" : "") << "!";
+          break;
         }
 
         // No display paths exist (e.g. headless machine before VDD creation).
@@ -681,8 +684,10 @@ namespace display_device::w_utils {
         return path_and_mode_data_t { paths, modes };
       }
 
+      last_error = result;
+
       if (virtual_mode_aware) {
-        BOOST_LOG(warning) << get_error_string(result) << " QueryDisplayConfig failed with QDC_VIRTUAL_MODE_AWARE, retrying without...";
+        BOOST_LOG(warning) << get_error_string(result) << " failed to query display paths and modes with QDC_VIRTUAL_MODE_AWARE, retrying without...";
         continue;
       }
 
@@ -690,7 +695,8 @@ namespace display_device::w_utils {
       return boost::none;
     }
 
-    // Unreachable, but satisfy the compiler
+    // Both attempts failed (only reachable if GetDisplayConfigBufferSizes failed on fallback too)
+    BOOST_LOG(error) << get_error_string(last_error) << " failed to query display paths and modes (all attempts exhausted)!";
     return boost::none;
   }
 
@@ -756,6 +762,12 @@ namespace display_device::w_utils {
     auto display_data { query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
     if (!display_data) {
       BOOST_LOG(debug) << "test_no_access_to_ccd_api failed in query_display_config.";
+      return true;
+    }
+
+    // No active displays (e.g. headless machine) - can't test CCD access without paths
+    if (display_data->paths.empty()) {
+      BOOST_LOG(debug) << "test_no_access_to_ccd_api: no active display paths, assuming no access.";
       return true;
     }
 
