@@ -1391,10 +1391,7 @@ namespace config {
     }
 
     bool_f(vars, "restore_log"s, sunshine.restore_log);
-    int_f(vars, "max_log_size_mb"s, sunshine.max_log_size_mb);
-    if (sunshine.max_log_size_mb < 0) {
-      sunshine.max_log_size_mb = 0;
-    }
+    int_between_f(vars, "max_log_size_mb"s, sunshine.max_log_size_mb, { 0, 10240 });
 
     // Webhook configuration
     bool_f(vars, "webhook_enabled"s, webhook.enabled);

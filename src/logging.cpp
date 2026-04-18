@@ -32,9 +32,11 @@ using namespace std::literals;
 
 namespace bl = boost::log;
 
-boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> console_sink;
-boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>> file_sink_ptr;
-boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> file_ostream_sink;
+namespace {
+  boost::shared_ptr<text_sink> console_sink;
+  boost::shared_ptr<file_sink> file_sink_ptr;
+  boost::shared_ptr<text_sink> file_ostream_sink;
+}  // anonymous namespace
 
 bl::sources::severity_logger<int> verbose(0);  // Dominating output
 bl::sources::severity_logger<int> debug(1);  // Follow what is happening
@@ -87,7 +89,12 @@ namespace logging {
       // 获取当前时间
       auto now = std::chrono::system_clock::now();
       auto time_t = std::chrono::system_clock::to_time_t(now);
-      auto tm = *std::localtime(&time_t);
+      std::tm tm {};
+#ifdef _WIN32
+      localtime_s(&tm, &time_t);
+#else
+      localtime_r(&time_t, &tm);
+#endif
       
       // 生成带日期的备份文件名（只精确到日期）
       std::ostringstream backup_name;
@@ -168,7 +175,12 @@ namespace logging {
       now - std::chrono::time_point_cast<std::chrono::seconds>(now));
 
     auto t = std::chrono::system_clock::to_time_t(now);
-    auto lt = *std::localtime(&t);
+    std::tm lt {};
+#ifdef _WIN32
+    localtime_s(&lt, &t);
+#else
+    localtime_r(&t, &lt);
+#endif
 
     os << "["sv << std::put_time(&lt, "%Y-%m-%d %H:%M:%S.") << boost::format("%03u") % ms.count() << "]: "sv
        << log_type << view.attribute_values()[message].extract<std::string>();
