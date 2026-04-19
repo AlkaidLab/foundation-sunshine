@@ -156,7 +156,7 @@ const config = ref(props.config)
       <label for="amd_slices_per_frame" class="form-label">{{ $t('config.amd_slices_per_frame') }}</label>
       <select id="amd_slices_per_frame" class="form-select" v-model="config.amd_slices_per_frame">
         <option value="0">{{ $t('config.amd_slices_per_frame_auto') }}</option>
-        <option value="1">1 ({{ $t('_common.disabled') }})</option>
+        <option value="1">1</option>
         <option value="2">2</option>
         <option value="3">3</option>
         <option value="4">4</option>
