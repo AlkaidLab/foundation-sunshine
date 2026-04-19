@@ -174,6 +174,11 @@ namespace amf {
         encoder->SetProperty(AMF_VIDEO_ENCODER_INTRA_REFRESH_NUM_MBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs);
       }
 
+      // Slices per frame
+      if (client_config.slicesPerFrame > 1) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
+      }
+
       // Statistics feedback
       if (config.enable_statistics_feedback) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK, true);
@@ -231,6 +236,11 @@ namespace amf {
       // Intra refresh
       if (config.intra_refresh_mbs) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INTRA_REFRESH_NUM_CTBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs);
+      }
+
+      // Slices per frame
+      if (client_config.slicesPerFrame > 1) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
       }
 
       // Statistics feedback
@@ -305,6 +315,11 @@ namespace amf {
         if (config.av1_intra_refresh_stripes) {
           encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INTRAREFRESH_STRIPES, (amf_int64) *config.av1_intra_refresh_stripes);
         }
+      }
+
+      // Tiles per frame
+      if (client_config.slicesPerFrame > 1) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TILES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
       }
 
       // Statistics feedback
@@ -560,7 +575,8 @@ namespace amf {
                       (video_format == 2) ? "AV1" : "Unknown";
     BOOST_LOG(info) << "AMF: standalone " << codec_name << " encoder created ("
                     << client_config.width << "x" << client_config.height << " @ "
-                    << client_config.framerate << "fps, LTR=" << max_ltr_frames << ")";
+                    << client_config.framerate << "fps, LTR=" << max_ltr_frames
+                    << ", slices=" << client_config.slicesPerFrame << ")";
     return true;
   }
 

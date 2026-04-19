@@ -150,6 +150,19 @@ const config = ref(props.config)
         </div>
       </div>
     </div>
+
+    <!-- Slices Per Frame -->
+    <div class="mb-3" v-if="platform === 'windows'">
+      <label for="amd_slices_per_frame" class="form-label">{{ $t('config.amd_slices_per_frame') }}</label>
+      <select id="amd_slices_per_frame" class="form-select" v-model="config.amd_slices_per_frame">
+        <option value="0">{{ $t('config.amd_slices_per_frame_auto') }}</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+      <div class="form-text">{{ $t('config.amd_slices_per_frame_desc') }}</div>
+    </div>
   </div>
 </template>
 

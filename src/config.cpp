@@ -1181,6 +1181,7 @@ namespace config {
     bool_f(vars, "amd_enforce_hrd", (bool &) video.amd.amd_enforce_hrd);
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
+    int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
