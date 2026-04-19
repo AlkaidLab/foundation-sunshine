@@ -74,6 +74,7 @@ namespace config {
       int amd_coder;
       int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
       int amd_ltr_frames = 1;  // LTR frames for RFI (0=disabled, default=1)
+      int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
     } amd;
 
     struct {

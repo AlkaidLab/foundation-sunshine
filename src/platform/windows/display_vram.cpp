@@ -1718,7 +1718,13 @@ namespace platf::dxgi {
       // High motion quality boost at encoder level
       amf_cfg.high_motion_quality_boost_enable = true;
 
-      if (!amf_d3d->create_encoder(amf_cfg, client_config, colorspace, buffer_format)) return false;
+      // Apply server-side slices per frame override if configured
+      auto effective_config = client_config;
+      if (config::video.amd.amd_slices_per_frame > 0) {
+        effective_config.slicesPerFrame = std::max(effective_config.slicesPerFrame, config::video.amd.amd_slices_per_frame);
+      }
+
+      if (!amf_d3d->create_encoder(amf_cfg, effective_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
       return base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) == 0;
