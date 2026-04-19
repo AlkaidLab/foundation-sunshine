@@ -150,7 +150,7 @@ jobs:
             "mingw-w64-ucrt-x86_64-MinHook"
             "mingw-w64-ucrt-x86_64-miniupnpc"
             "mingw-w64-ucrt-x86_64-nlohmann-json"
-            "mingw-w64-ucrt-x86_64-nodejs"
+            # "mingw-w64-ucrt-x86_64-nodejs"  # Replaced by actions/setup-node (vite 8 requires MSVC Node.js)
             # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
@@ -176,11 +176,25 @@ jobs:
           echo "  Ninja: $(ninja --version)"
           echo "  GCC: $(gcc --version | head -1)"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Cache npm dependencies
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: npm-${{ hashFiles('package-lock.json') }}
+          key: npm-${{ hashFiles('package.json') }}
+
+      - name: Build Web UI
+        shell: pwsh
+        run: |
+          npm install
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
+          $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
+          npm run build
 
       - name: Build Windows
         shell: msys2 {0}
@@ -196,6 +210,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
