@@ -877,10 +877,12 @@ namespace platf::dxgi {
       // Try to enable the compute-shader fast path for HDR P010 (Phase 1).
       // Falls back to PS silently if any precondition or capability check fails.
       {
-        int active_w = static_cast<int>(out_width_f);
-        int active_h = static_cast<int>(out_height_f);
-        int active_off_x = static_cast<int>(offsetX);
-        int active_off_y = static_cast<int>(offsetY);
+        // Use rounding (not truncation) so near-integer floats map correctly
+        // and stay consistent with the viewports derived from the same values.
+        int active_w = static_cast<int>(std::lround(out_width_f));
+        int active_h = static_cast<int>(std::lround(out_height_f));
+        int active_off_x = static_cast<int>(std::lround(offsetX));
+        int active_off_y = static_cast<int>(std::lround(offsetY));
         init_compute_path(out_width, out_height, active_w, active_h, active_off_x, active_off_y, colorspace);
       }
 
@@ -1183,8 +1185,7 @@ namespace platf::dxgi {
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
 
     // ===== Compute-shader RGB->P010 fast path (Phase 1: HDR PQ/HLG, type0, no scale/rotation) =====
-    cs_t cs_p010_pq;                       // PQ converter CS
-    cs_t cs_p010_hlg;                      // HLG converter CS
+    cs_t cs_p010;                          // Selected PQ or HLG converter CS (one-shot per init_output)
     texture2d_t cs_scratch_tex;            // P010 scratch texture (UAV-bindable). Empty when writing directly to output_texture.
     uav_t cs_y_uav;                        // R16_UNORM UAV on the Y plane (of scratch OR output_texture)
     uav_t cs_uv_uav;                       // R16G16_UNORM UAV on the UV plane (of scratch OR output_texture)
@@ -1554,8 +1555,7 @@ namespace platf::dxgi {
                       const ::video::sunshine_colorspace_t &colorspace) {
       cs_path_active = false;
       cs_writes_output_directly = false;
-      cs_p010_pq.reset();
-      cs_p010_hlg.reset();
+      cs_p010.reset();
       cs_scratch_tex.reset();
       cs_y_uav.reset();
       cs_uv_uav.reset();
@@ -1689,13 +1689,8 @@ namespace platf::dxgi {
       }
 
       // --- Create CS itself ---
-      HRESULT cs_status;
-      if (use_pq) {
-        cs_status = device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cs_p010_pq);
-      }
-      else {
-        cs_status = device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cs_p010_hlg);
-      }
+      HRESULT cs_status = device->CreateComputeShader(
+        blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cs_p010);
       if (FAILED(cs_status)) {
         BOOST_LOG(info) << "CS path skipped: CreateComputeShader failed: " << util::log_hex(cs_status);
         cs_scratch_tex.reset();
@@ -1719,8 +1714,7 @@ namespace platf::dxgi {
       cs_layout_cbuf = make_buffer(device.get(), layout);
       if (!cs_layout_cbuf) {
         BOOST_LOG(info) << "CS path skipped: failed to create layout cbuffer";
-        cs_p010_pq.reset();
-        cs_p010_hlg.reset();
+        cs_p010.reset();
         cs_scratch_tex.reset();
         cs_y_uav.reset();
         cs_uv_uav.reset();
@@ -1750,15 +1744,14 @@ namespace platf::dxgi {
     try_dispatch_cs_convert(ID3D11ShaderResourceView *input_srv) {
       if (!cs_path_active) return false;
 
-      cs_t &active = cs_use_pq ? cs_p010_pq : cs_p010_hlg;
-      if (!active) return false;
+      if (!cs_p010) return false;
 
       // Unbind PS-side render targets to avoid SRV/RTV hazards.
       ID3D11RenderTargetView *null_rtv[2] = { nullptr, nullptr };
       device_ctx->OMSetRenderTargets(2, null_rtv, nullptr);
 
       // Bind CS resources. Sampler intentionally not bound: CS uses Load(), not Sample().
-      device_ctx->CSSetShader(active.get(), nullptr, 0);
+      device_ctx->CSSetShader(cs_p010.get(), nullptr, 0);
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
       ID3D11UnorderedAccessView *uavs[2] = { cs_y_uav.get(), cs_uv_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
