@@ -148,12 +148,12 @@ Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
 [Components]
 Name: "application"; Description: "{cm:ComponentApplication}"; Types: recommended full compact custom; Flags: fixed
 Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full compact custom; Flags: fixed
-Name: "vdd"; Description: "{cm:ComponentVDD}%n{cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
-Name: "firewall"; Description: "{cm:ComponentFirewall}%n{cm:ComponentFirewallDesc}"; Types: recommended full compact
-Name: "autostart"; Description: "{cm:ComponentAutostart}%n{cm:ComponentAutostartDesc}"; Types: recommended full
-Name: "gamepad"; Description: "{cm:ComponentGamepad}%n{cm:ComponentGamepadDesc}"; Types: full
-Name: "vmouse"; Description: "{cm:ComponentVmouse}%n{cm:ComponentVmouseDesc}"; Types: full
-Name: "tools"; Description: "{cm:ComponentTools}%n{cm:ComponentToolsDesc}"; Types: full
+Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
+Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
+Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
+Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
+Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
