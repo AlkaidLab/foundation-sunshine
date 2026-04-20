@@ -74,9 +74,16 @@ english.ComponentFirewall=Add firewall exclusions
 english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
 english.ComponentVmouse=Virtual Mouse Driver (UMDF)
 english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
-english.TypeFull=Full installation
-english.TypeCompact=Compact installation
+english.TypeRecommended=Recommended (virtual display + firewall + autostart)
+english.TypeFull=Full installation (all components)
+english.TypeCompact=Compact installation (core only)
 english.TypeCustom=Custom installation
+english.ComponentVDDDesc=Required for headless/remote streaming without a physical monitor. Enables HDR passthrough.
+english.ComponentFirewallDesc=Allows Moonlight clients to discover and connect to this PC over the network.
+english.ComponentAutostartDesc=Sunshine will start automatically when Windows boots. Recommended for always-on streaming.
+english.ComponentGamepadDesc=Emulates Xbox controller for games. Install only if you need gamepad input from the client.
+english.ComponentVmouseDesc=Provides smooth absolute mouse positioning. Install if cursor feels laggy.
+english.ComponentToolsDesc=dxgi-info, audio-info for troubleshooting display and audio issues.
 english.StatusResetPermissions=Resetting file permissions...
 english.StatusUpdatePath=Updating system PATH...
 english.StatusMigrateConfig=Migrating configuration files...
@@ -104,9 +111,16 @@ chinesesimplified.ComponentFirewall=添加防火墙规则
 chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
 chinesesimplified.ComponentVmouse=虚拟鼠标驱动（UMDF）
 chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
-chinesesimplified.TypeFull=完全安装
-chinesesimplified.TypeCompact=简洁安装
+chinesesimplified.TypeRecommended=推荐安装（虚拟显示器 + 防火墙 + 开机自启）
+chinesesimplified.TypeFull=完全安装（所有组件）
+chinesesimplified.TypeCompact=简洁安装（仅核心）
 chinesesimplified.TypeCustom=自定义安装
+chinesesimplified.ComponentVDDDesc=无头/远程串流必装。无需外接显示器即可串流，支持 HDR 直通。
+chinesesimplified.ComponentFirewallDesc=允许 Moonlight 客户端通过网络发现并连接本机。
+chinesesimplified.ComponentAutostartDesc=Windows 启动时自动运行 Sunshine。推荐常驻串流使用。
+chinesesimplified.ComponentGamepadDesc=模拟 Xbox 手柄。仅需要从客户端传入手柄输入时安装。
+chinesesimplified.ComponentVmouseDesc=提供平滑的绝对定位鼠标。如鼠标延迟可尝试安装。
+chinesesimplified.ComponentToolsDesc=dxgi-info、audio-info 等，用于排查显示和音频问题。
 chinesesimplified.StatusResetPermissions=正在重置文件权限...
 chinesesimplified.StatusUpdatePath=正在更新系统 PATH...
 chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
@@ -126,19 +140,20 @@ chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
 chinesesimplified.StatusStoppingProcesses=正在停止 Sunshine 进程...
 
 [Types]
+Name: "recommended"; Description: "{cm:TypeRecommended}"
 Name: "full"; Description: "{cm:TypeFull}"
 Name: "compact"; Description: "{cm:TypeCompact}"
 Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
 
 [Components]
-Name: "application"; Description: "{cm:ComponentApplication}"; Types: full compact custom; Flags: fixed
-Name: "assets"; Description: "{cm:ComponentAssets}"; Types: full compact custom; Flags: fixed
-Name: "vdd"; Description: "{cm:ComponentVDD}"; Types: full
-Name: "autostart"; Description: "{cm:ComponentAutostart}"; Types: full
-Name: "firewall"; Description: "{cm:ComponentFirewall}"; Types: full compact
-Name: "gamepad"; Description: "{cm:ComponentGamepad}"; Types: full
-Name: "vmouse"; Description: "{cm:ComponentVmouse}"; Types: full
-Name: "tools"; Description: "{cm:ComponentTools}"; Types: full
+Name: "application"; Description: "{cm:ComponentApplication}"; Types: recommended full compact custom; Flags: fixed
+Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full compact custom; Flags: fixed
+Name: "vdd"; Description: "{cm:ComponentVDD}%n{cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
+Name: "firewall"; Description: "{cm:ComponentFirewall}%n{cm:ComponentFirewallDesc}"; Types: recommended full compact
+Name: "autostart"; Description: "{cm:ComponentAutostart}%n{cm:ComponentAutostartDesc}"; Types: recommended full
+Name: "gamepad"; Description: "{cm:ComponentGamepad}%n{cm:ComponentGamepadDesc}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse}%n{cm:ComponentVmouseDesc}"; Types: full
+Name: "tools"; Description: "{cm:ComponentTools}%n{cm:ComponentToolsDesc}"; Types: full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"

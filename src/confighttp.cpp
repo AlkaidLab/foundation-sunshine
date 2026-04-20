@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <stdexcept>
@@ -757,13 +758,22 @@ namespace confighttp {
     pt::ptree inputTree, fileTree;
 
     try {
-      // TODO: Input Validation
       pt::read_json(ss, inputTree);
       pt::read_json(config::stream.file_apps, fileTree);
 
       auto &apps_node = fileTree.get_child("apps"s);
       auto &input_apps_node = inputTree.get_child("apps"s);
       auto &input_edit_node = inputTree.get_child("editApp"s);
+
+      // Validate app name when editing a specific app
+      if (!input_edit_node.empty()) {
+        auto app_name = input_edit_node.get<std::string>("name", "");
+        if (app_name.empty() || app_name.size() > 256) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "App name must be 1-256 characters");
+          return;
+        }
+      }
 
       if (input_edit_node.empty()) {
         fileTree.erase("apps");
@@ -1163,11 +1173,23 @@ namespace confighttp {
     pt::ptree inputTree;
 
     try {
-      // TODO: Input Validation
       pt::read_json(ss, inputTree);
       std::string resArray = inputTree.get<std::string>("resolutions", "[]");
       std::string fpsArray = inputTree.get<std::string>("fps", "[]");
       std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
+
+      // Validate config field lengths to prevent abuse
+      auto sunshine_name = inputTree.get<std::string>("sunshine_name", "");
+      if (sunshine_name.size() > 256) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "sunshine_name too long (max 256)");
+        return;
+      }
+      if (gpu_name.size() > 256) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "adapter_name too long (max 256)");
+        return;
+      }
 
       saveVddSettings(resArray, fpsArray, gpu_name);
 
@@ -1249,13 +1271,25 @@ namespace confighttp {
     });
 
     try {
-      // TODO: Input Validation
       pt::read_json(ss, inputTree);
       auto username = inputTree.count("currentUsername") > 0 ? inputTree.get<std::string>("currentUsername") : "";
       auto newUsername = inputTree.get<std::string>("newUsername");
       auto password = inputTree.count("currentPassword") > 0 ? inputTree.get<std::string>("currentPassword") : "";
       auto newPassword = inputTree.count("newPassword") > 0 ? inputTree.get<std::string>("newPassword") : "";
       auto confirmPassword = inputTree.count("confirmNewPassword") > 0 ? inputTree.get<std::string>("confirmNewPassword") : "";
+
+      // Validate credential lengths
+      if (newUsername.size() > 128) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Username too long (max 128)");
+        return;
+      }
+      if (newPassword.size() > 256) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Password too long (max 256)");
+        return;
+      }
+
       if (newUsername.length() == 0) newUsername = username;
       if (newUsername.length() == 0) {
         outputTree.put("status", false);
@@ -1306,10 +1340,23 @@ namespace confighttp {
     });
 
     try {
-      // TODO: Input Validation
       pt::read_json(ss, inputTree);
       std::string pin = inputTree.get<std::string>("pin");
       std::string name = inputTree.get<std::string>("name");
+
+      // Validate PIN: must be numeric digits only, 4-8 characters
+      if (pin.size() < 4 || pin.size() > 8 || !std::all_of(pin.begin(), pin.end(), ::isdigit)) {
+        outputTree.put("status", false);
+        outputTree.put("error", "PIN must be 4-8 digits");
+        return;
+      }
+      // Validate client name
+      if (name.empty() || name.size() > 256) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Client name must be 1-256 characters");
+        return;
+      }
+
       bool pin_result = nvhttp::pin(pin, name);
       outputTree.put("status", pin_result);
 
@@ -1528,9 +1575,16 @@ namespace confighttp {
     });
 
     try {
-      // TODO: Input Validation
       pt::read_json(ss, inputTree);
       std::string uuid = inputTree.get<std::string>("uuid");
+
+      // Validate UUID format (hex + hyphens, reasonable length)
+      if (uuid.empty() || uuid.size() > 64) {
+        outputTree.put("status", false);
+        outputTree.put("error", "Invalid client UUID");
+        return;
+      }
+
       outputTree.put("status", nvhttp::unpair_client(uuid));
     }
     catch (std::exception &e) {
