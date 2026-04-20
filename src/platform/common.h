@@ -639,7 +639,7 @@ namespace platf {
     set_sink(const std::string &sink) = 0;
 
     virtual std::unique_ptr<mic_t>
-    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) = 0;
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
 
     /**
      * @brief Check if the audio sink is available in the system.
@@ -730,6 +730,9 @@ namespace platf {
   };
   void
   adjust_thread_priority(thread_priority_e priority);
+
+  void
+  enable_mouse_keys();
 
   // Allow OS-specific actions to be taken to prepare for streaming
   void
