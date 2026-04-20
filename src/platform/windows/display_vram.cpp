@@ -1185,12 +1185,15 @@ namespace platf::dxgi {
     // ===== Compute-shader RGB->P010 fast path (Phase 1: HDR PQ/HLG, type0, no scale/rotation) =====
     cs_t cs_p010_pq;                       // PQ converter CS
     cs_t cs_p010_hlg;                      // HLG converter CS
-    texture2d_t cs_scratch_tex;            // P010 scratch texture (UAV-bindable)
-    uav_t cs_scratch_y_uav;                // R16_UNORM UAV on the Y plane of scratch
-    uav_t cs_scratch_uv_uav;               // R16G16_UNORM UAV on the UV plane of scratch
+    texture2d_t cs_scratch_tex;            // P010 scratch texture (UAV-bindable). Empty when writing directly to output_texture.
+    uav_t cs_y_uav;                        // R16_UNORM UAV on the Y plane (of scratch OR output_texture)
+    uav_t cs_uv_uav;                       // R16G16_UNORM UAV on the UV plane (of scratch OR output_texture)
     buf_t cs_layout_cbuf;                  // Layout cbuffer (b1) for CS
+    int  cs_dispatch_groups_x = 0;         // Dispatch dims over the active rect (saves work in letterbox case)
+    int  cs_dispatch_groups_y = 0;
     bool cs_path_active = false;           // True when CS conversion path is initialized for this output
     bool cs_use_pq = false;                // Selected transfer function (PQ or HLG)
+    bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 128;
@@ -1550,11 +1553,12 @@ namespace platf::dxgi {
                       int active_offset_x, int active_offset_y,
                       const ::video::sunshine_colorspace_t &colorspace) {
       cs_path_active = false;
+      cs_writes_output_directly = false;
       cs_p010_pq.reset();
       cs_p010_hlg.reset();
       cs_scratch_tex.reset();
-      cs_scratch_y_uav.reset();
-      cs_scratch_uv_uav.reset();
+      cs_y_uav.reset();
+      cs_uv_uav.reset();
       cs_layout_cbuf.reset();
 
       // Phase 1: P010 only.
@@ -1607,44 +1611,81 @@ namespace platf::dxgi {
         return;
       }
 
-      // --- Create scratch P010 with UAV ---
-      D3D11_TEXTURE2D_DESC scratch_desc = {};
-      scratch_desc.Width = out_width;
-      scratch_desc.Height = out_height;
-      scratch_desc.MipLevels = 1;
-      scratch_desc.ArraySize = 1;
-      scratch_desc.SampleDesc.Count = 1;
-      scratch_desc.Format = DXGI_FORMAT_P010;
-      scratch_desc.Usage = D3D11_USAGE_DEFAULT;
-      scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-      auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
-      if (FAILED(status)) {
-        BOOST_LOG(info) << "CS path skipped: failed to create P010 scratch with UAV bind: "
-                        << util::log_hex(status);
-        return;
-      }
-
-      // Y plane UAV (R16_UNORM)
+      // --- Try to bind UAVs directly on output_texture first (fast path).
+      //     If output_texture wasn't created with BIND_UNORDERED_ACCESS (typical for
+      //     ffmpeg/NVENC/AMF input pools), CreateUnorderedAccessView returns E_INVALIDARG
+      //     and we fall back to a scratch + CopyResource.
       D3D11_UNORDERED_ACCESS_VIEW_DESC y_uav_desc = {};
       y_uav_desc.Format = DXGI_FORMAT_R16_UNORM;
       y_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-      status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &y_uav_desc, &cs_scratch_y_uav);
-      if (FAILED(status)) {
-        BOOST_LOG(info) << "CS path skipped: failed to create Y-plane UAV: " << util::log_hex(status);
-        cs_scratch_tex.reset();
-        return;
-      }
 
-      // UV plane UAV (R16G16_UNORM)
       D3D11_UNORDERED_ACCESS_VIEW_DESC uv_uav_desc = {};
       uv_uav_desc.Format = DXGI_FORMAT_R16G16_UNORM;
       uv_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-      status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &uv_uav_desc, &cs_scratch_uv_uav);
-      if (FAILED(status)) {
-        BOOST_LOG(info) << "CS path skipped: failed to create UV-plane UAV: " << util::log_hex(status);
-        cs_scratch_tex.reset();
-        cs_scratch_y_uav.reset();
-        return;
+
+      bool direct_ok = false;
+      if (output_texture) {
+        uav_t y_uav_try, uv_uav_try;
+        auto s1 = device->CreateUnorderedAccessView(output_texture.get(), &y_uav_desc, &y_uav_try);
+        auto s2 = SUCCEEDED(s1)
+                    ? device->CreateUnorderedAccessView(output_texture.get(), &uv_uav_desc, &uv_uav_try)
+                    : s1;
+        if (SUCCEEDED(s1) && SUCCEEDED(s2)) {
+          cs_y_uav = std::move(y_uav_try);
+          cs_uv_uav = std::move(uv_uav_try);
+          cs_writes_output_directly = true;
+          direct_ok = true;
+        }
+      }
+
+      // --- Fall back to scratch P010 with UAV when direct binding isn't possible.
+      if (!direct_ok) {
+        D3D11_TEXTURE2D_DESC scratch_desc = {};
+        scratch_desc.Width = out_width;
+        scratch_desc.Height = out_height;
+        scratch_desc.MipLevels = 1;
+        scratch_desc.ArraySize = 1;
+        scratch_desc.SampleDesc.Count = 1;
+        scratch_desc.Format = DXGI_FORMAT_P010;
+        scratch_desc.Usage = D3D11_USAGE_DEFAULT;
+        scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create P010 scratch with UAV bind: "
+                          << util::log_hex(status);
+          return;
+        }
+
+        status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &y_uav_desc, &cs_y_uav);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create Y-plane UAV: " << util::log_hex(status);
+          cs_scratch_tex.reset();
+          return;
+        }
+
+        status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &uv_uav_desc, &cs_uv_uav);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create UV-plane UAV: " << util::log_hex(status);
+          cs_scratch_tex.reset();
+          cs_y_uav.reset();
+          return;
+        }
+      }
+
+      // --- One-time clear: ensure letterbox/aspect-padding pixels are black.
+      //     CS only writes inside the active rect (saves dispatch work, see below);
+      //     pixels outside the active rect must be initialized to studio/full-range
+      //     black (Y=0) and chroma neutral (UV=0.5), matching the PS path's
+      //     ClearRenderTargetView semantics.
+      //     - For scratch: must clear (freshly allocated, contents undefined).
+      //     - For direct path: output_texture was already cleared via RTV in init_output()
+      //       above (rtv_simple_clear branch for P010), but we re-clear via UAV anyway
+      //       to be defensive (CS UAV writes won't hit border pixels per frame).
+      {
+        const float y_black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        const float uv_neutral[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+        device_ctx->ClearUnorderedAccessViewFloat(cs_y_uav.get(), y_black);
+        device_ctx->ClearUnorderedAccessViewFloat(cs_uv_uav.get(), uv_neutral);
       }
 
       // --- Create CS itself ---
@@ -1658,8 +1699,8 @@ namespace platf::dxgi {
       if (FAILED(cs_status)) {
         BOOST_LOG(info) << "CS path skipped: CreateComputeShader failed: " << util::log_hex(cs_status);
         cs_scratch_tex.reset();
-        cs_scratch_y_uav.reset();
-        cs_scratch_uv_uav.reset();
+        cs_y_uav.reset();
+        cs_uv_uav.reset();
         return;
       }
 
@@ -1681,20 +1722,29 @@ namespace platf::dxgi {
         cs_p010_pq.reset();
         cs_p010_hlg.reset();
         cs_scratch_tex.reset();
-        cs_scratch_y_uav.reset();
-        cs_scratch_uv_uav.reset();
+        cs_y_uav.reset();
+        cs_uv_uav.reset();
         return;
       }
+
+      // Dispatch only over the active rect: avoids running threads on the
+      // letterbox/pillarbox border pixels (those were initialized to black
+      // by the one-time clear above and never need per-frame writes).
+      cs_dispatch_groups_x = (active_w + 15) / 16;
+      cs_dispatch_groups_y = (active_h + 15) / 16;
 
       cs_path_active = true;
       cs_use_pq = use_pq;
       BOOST_LOG(info) << "CS RGB->P010 fast path enabled ("
                       << (use_pq ? "PQ" : "HLG") << ", "
                       << active_w << "x" << active_h
-                      << " into " << out_width << "x" << out_height << ")";
+                      << " into " << out_width << "x" << out_height
+                      << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
+                      << ")";
     }
 
-    // Dispatch the CS converter and copy scratch -> output_texture.
+    // Dispatch the CS converter. Writes directly into output_texture's UAVs when
+    // the device allowed it, otherwise into a P010 scratch then CopyResource.
     // Caller must already hold the encoder mutex on `input_srv`.
     bool
     try_dispatch_cs_convert(ID3D11ShaderResourceView *input_srv) {
@@ -1707,36 +1757,32 @@ namespace platf::dxgi {
       ID3D11RenderTargetView *null_rtv[2] = { nullptr, nullptr };
       device_ctx->OMSetRenderTargets(2, null_rtv, nullptr);
 
-      // Bind CS resources.
+      // Bind CS resources. Sampler intentionally not bound: CS uses Load(), not Sample().
       device_ctx->CSSetShader(active.get(), nullptr, 0);
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
-      ID3D11SamplerState *sampler = sampler_point.get();
-      device_ctx->CSSetSamplers(0, 1, &sampler);
-      ID3D11UnorderedAccessView *uavs[2] = { cs_scratch_y_uav.get(), cs_scratch_uv_uav.get() };
+      ID3D11UnorderedAccessView *uavs[2] = { cs_y_uav.get(), cs_uv_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
       ID3D11Buffer *cbufs[2] = { color_matrix.get(), cs_layout_cbuf.get() };
       device_ctx->CSSetConstantBuffers(0, 2, cbufs);
 
-      // Dispatch over the active rect (Y-plane resolution), 16x16 threads per group.
-      D3D11_TEXTURE2D_DESC scratch_desc = {};
-      cs_scratch_tex->GetDesc(&scratch_desc);
-      uint32_t groups_x = (scratch_desc.Width + 15) / 16;
-      uint32_t groups_y = (scratch_desc.Height + 15) / 16;
-      device_ctx->Dispatch(groups_x, groups_y, 1);
+      // Dispatch covers only the active rect (precomputed in init_compute_path).
+      // Letterbox/pillarbox borders were initialized once via ClearUnorderedAccessViewFloat
+      // and stay black; matching PS path's one-time ClearRenderTargetView semantics.
+      device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
 
-      // Unbind CS resources to release the UAVs before the copy.
+      // Unbind CS resources to release the UAVs before any subsequent ops.
       ID3D11ShaderResourceView *null_srv = nullptr;
       ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
       device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
       ID3D11Buffer *null_cb[2] = { nullptr, nullptr };
       device_ctx->CSSetConstantBuffers(0, 2, null_cb);
-      ID3D11SamplerState *null_sampler = nullptr;
-      device_ctx->CSSetSamplers(0, 1, &null_sampler);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
 
-      // Copy scratch P010 -> encoder output P010 (same desc, GPU DMA).
-      device_ctx->CopyResource(output_texture.get(), cs_scratch_tex.get());
+      // Only copy when we couldn't bind the UAV directly to output_texture.
+      if (!cs_writes_output_directly) {
+        device_ctx->CopyResource(output_texture.get(), cs_scratch_tex.get());
+      }
       return true;
     }
 
