@@ -23,10 +23,14 @@ NvEncodeAPIGetMaxSupportedVersion(uint32_t *version);
 namespace {
   using namespace nvenc;
 
-  constexpr std::array factory_priorities = {
-    std::tuple(&nvenc_dynamic_factory_1202::get, 1202),
-    std::tuple(&nvenc_dynamic_factory_1200::get, 1200),
-    std::tuple(&nvenc_dynamic_factory_1100::get, 1100),
+  // Priority key is taken from each factory's compile-time-derived sdk_version
+  // (defined in nvenc_dynamic_factory_blueprint.h via the SDK headers it includes),
+  // so submodules like `1202` can keep tracking master indefinitely without the
+  // priority key ever going stale. Order: highest-versioned factory first.
+  const std::array factory_priorities = {
+    std::tuple(&nvenc_dynamic_factory_1202::get, nvenc_dynamic_factory_1202::sdk_version),
+    std::tuple(&nvenc_dynamic_factory_1200::get, nvenc_dynamic_factory_1200::sdk_version),
+    std::tuple(&nvenc_dynamic_factory_1100::get, nvenc_dynamic_factory_1100::sdk_version),
   };
   constexpr auto min_driver_version = "456.71";
 
