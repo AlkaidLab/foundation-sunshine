@@ -461,6 +461,7 @@ namespace config {
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
     false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
+    "auto"s,  // capture_compute_shader (default: auto -> off until validated)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
   };
 
@@ -1256,6 +1257,19 @@ namespace config {
       BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality 
                          << "], valid options are: fast, balanced, high_quality. Defaulting to 'balanced'"sv;
       video.downscaling_quality = "balanced";
+    }
+
+    // Compute-shader RGB->YUV conversion (HDR fast path).
+    string_f(vars, "capture_compute_shader", video.capture_compute_shader);
+    if (video.capture_compute_shader.empty()) {
+      video.capture_compute_shader = "auto";
+    }
+    if (video.capture_compute_shader != "auto" &&
+        video.capture_compute_shader != "on" &&
+        video.capture_compute_shader != "off") {
+      BOOST_LOG(warning) << "Invalid capture_compute_shader: ["sv << video.capture_compute_shader
+                         << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
+      video.capture_compute_shader = "auto";
     }
 
     path_f(vars, "pkey", nvhttp.pkey);

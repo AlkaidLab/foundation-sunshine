@@ -146,6 +146,14 @@ namespace platf::dxgi {
   blob_t simple_cursor_ps_hlsl;
   blob_t hdr_luminance_analysis_cs_hlsl;
   blob_t hdr_luminance_reduce_cs_hlsl;
+  blob_t convert_yuv420_p010_cs_perceptual_quantizer_hlsl;
+  blob_t convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
+  blob_t convert_yuv420_nv12_cs_passthrough_hlsl;
+  blob_t convert_yuv420_nv12_cs_linear_hlsl;
+  blob_t convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl;
+  blob_t convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl;
+  blob_t convert_yuv420_nv12_cs_passthrough_scaled_hlsl;
+  blob_t convert_yuv420_nv12_cs_linear_scaled_hlsl;
 
   struct img_d3d_t: public platf::img_t {
     // These objects are owned by the display_t's ID3D11Device
@@ -504,7 +512,30 @@ namespace platf::dxgi {
         }
 
         // Draw captured frame
-        draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        // Try compute-shader fast path first (HDR PQ/HLG -> P010, or SDR -> NV12;
+        // type0, no rotation; scaling supported via *_scaled variants).
+        const bool input_is_linear_fp16 = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+        bool cs_used = false;
+        if (cs_path_active) {
+          if (cs_for_p010) {
+            // HDR P010: shader expects linear scRGB FP16 input.
+            if (input_is_linear_fp16) {
+              cs_t &shader = cs_is_scaled ? cs_p010_scaled : cs_p010;
+              cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get(), shader);
+            }
+          } else {
+            // SDR NV12: pick variant based on per-frame input format.
+            cs_t &shader = input_is_linear_fp16
+                             ? (cs_is_scaled ? cs_nv12_linear_scaled : cs_nv12_linear)
+                             : (cs_is_scaled ? cs_nv12_pass_scaled : cs_nv12_pass);
+            if (shader) {
+              cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get(), shader);
+            }
+          }
+        }
+        if (!cs_used) {
+          draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        }
 
         ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
         device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
@@ -863,6 +894,18 @@ namespace platf::dxgi {
         rtvs_cleared = false;
       }
 
+      // Try to enable the compute-shader fast path for HDR P010 (Phase 1).
+      // Falls back to PS silently if any precondition or capability check fails.
+      {
+        // Use rounding (not truncation) so near-integer floats map correctly
+        // and stay consistent with the viewports derived from the same values.
+        int active_w = static_cast<int>(std::lround(out_width_f));
+        int active_h = static_cast<int>(std::lround(out_height_f));
+        int active_off_x = static_cast<int>(std::lround(offsetX));
+        int active_off_y = static_cast<int>(std::lround(offsetY));
+        init_compute_path(out_width, out_height, active_w, active_h, active_off_x, active_off_y, colorspace);
+      }
+
       return 0;
     }
 
@@ -1160,6 +1203,28 @@ namespace platf::dxgi {
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
+
+    // ===== Compute-shader RGB->P010/NV12 fast path =====
+    // Phase 1: HDR PQ/HLG -> P010. Phase 2A: SDR sRGB/scRGB -> NV12.
+    // Phase 2B: same with scaling (active rect != source size), via 5-tap
+    // Catmull-Rom-via-bilinear (Y) + hardware bilinear box (UV) sampler path.
+    cs_t cs_p010;                          // HDR P010 converter, no-scale (PQ or HLG)
+    cs_t cs_nv12_pass;                     // SDR NV12 converter, no-scale, sRGB BGRA8 input
+    cs_t cs_nv12_linear;                   // SDR NV12 converter, no-scale, linear scRGB FP16 input
+    cs_t cs_p010_scaled;                   // HDR P010 converter, scaling (PQ or HLG)
+    cs_t cs_nv12_pass_scaled;              // SDR NV12 converter, scaling, sRGB BGRA8 input
+    cs_t cs_nv12_linear_scaled;            // SDR NV12 converter, scaling, linear scRGB FP16 input
+    texture2d_t cs_scratch_tex;            // Scratch texture (UAV-bindable). Empty when writing directly to output_texture.
+    uav_t cs_y_uav;                        // Y plane UAV (R8_UNORM for NV12, R16_UNORM for P010)
+    uav_t cs_uv_uav;                       // UV plane UAV (R8G8_UNORM for NV12, R16G16_UNORM for P010)
+    buf_t cs_layout_cbuf;                  // Layout cbuffer (b1) for CS
+    int  cs_dispatch_groups_x = 0;         // Dispatch dims over the active rect (saves work in letterbox case)
+    int  cs_dispatch_groups_y = 0;
+    bool cs_path_active = false;           // True when CS conversion path is initialized for this output
+    bool cs_use_pq = false;                // Selected transfer function (PQ or HLG) for HDR variant
+    bool cs_for_p010 = false;              // True for HDR P010 path, false for SDR NV12 path
+    bool cs_is_scaled = false;             // True when active rect != source (use *_scaled variants)
+    bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 128;
@@ -1507,6 +1572,318 @@ namespace platf::dxgi {
 
       device_ctx->Unmap(hdr_staging_buf.get(), 0);
       hdr_analysis_pending = false;
+    }
+
+    // ===== Compute-shader RGB->P010 fast path (Phase 1) =====
+    // Allocates a P010 scratch texture with UAV bind, creates plane UAVs and a layout cbuffer.
+    // Probes runtime support; if anything fails, leaves cs_path_active = false (PS path stays active).
+    // Called from init_output() after standard setup. Non-fatal on failure.
+    void
+    init_compute_path(int out_width, int out_height,
+                      int active_w, int active_h,
+                      int active_offset_x, int active_offset_y,
+                      const ::video::sunshine_colorspace_t &colorspace) {
+      cs_path_active = false;
+      cs_writes_output_directly = false;
+      cs_for_p010 = false;
+      cs_is_scaled = false;
+      cs_p010.reset();
+      cs_nv12_pass.reset();
+      cs_nv12_linear.reset();
+      cs_p010_scaled.reset();
+      cs_nv12_pass_scaled.reset();
+      cs_nv12_linear_scaled.reset();
+      cs_scratch_tex.reset();
+      cs_y_uav.reset();
+      cs_uv_uav.reset();
+      cs_layout_cbuf.reset();
+
+      // Phase 1/2: only NV12 (SDR) or P010 (HDR) supported.
+      const bool is_p010 = (format == DXGI_FORMAT_P010);
+      const bool is_nv12 = (format == DXGI_FORMAT_NV12);
+      if (!is_p010 && !is_nv12) return;
+
+      // For HDR P010 we require PQ or HLG colorspace (linear-light source).
+      const bool use_pq = ::video::colorspace_is_pq(colorspace);
+      const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
+      if (is_p010 && !use_pq && !use_hlg) return;
+      // For SDR NV12 we require a non-PQ/HLG colorspace.
+      if (is_nv12 && (use_pq || use_hlg)) return;
+
+      // Phase 2B: scaling supported via *_scaled variants. Rotation still TBD.
+      const bool is_scaled = (active_w != display->width || active_h != display->height);
+      if (display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
+          display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) return;
+
+      // Config gate: "auto" defers to off for now; user must opt in with "on".
+      const auto &cfg = config::video.capture_compute_shader;
+      if (cfg != "on") return;
+
+      // Output dimensions must be even (4:2:0 sub-sampling) and aligned for plane UAV.
+      if ((out_width & 1) != 0 || (out_height & 1) != 0) return;
+      if ((active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) return;
+
+      // Compile-time blobs present?
+      if (is_p010) {
+        auto &blob = is_scaled
+                       ? (use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl
+                                 : convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl)
+                       : (use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
+                                 : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl);
+        if (!blob) {
+          BOOST_LOG(info) << "CS path skipped: P010 compute shader blob unavailable";
+          return;
+        }
+      } else {
+        // SDR NV12: need at least one of passthrough/linear (for the right scale mode) to be useful.
+        const bool any_blob = is_scaled
+                                ? (convert_yuv420_nv12_cs_passthrough_scaled_hlsl ||
+                                   convert_yuv420_nv12_cs_linear_scaled_hlsl)
+                                : (convert_yuv420_nv12_cs_passthrough_hlsl ||
+                                   convert_yuv420_nv12_cs_linear_hlsl);
+        if (!any_blob) {
+          BOOST_LOG(info) << "CS path skipped: NV12 compute shader blobs unavailable";
+          return;
+        }
+      }
+
+      // --- Probe device support: typed UAV stores for plane formats ---
+      auto has_uav_typed_store = [&](DXGI_FORMAT fmt) -> bool {
+        D3D11_FEATURE_DATA_FORMAT_SUPPORT2 fs = { fmt };
+        if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &fs, sizeof(fs)))) return false;
+        return (fs.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+      };
+      const DXGI_FORMAT y_fmt = is_p010 ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
+      const DXGI_FORMAT uv_fmt = is_p010 ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
+      if (!has_uav_typed_store(y_fmt) || !has_uav_typed_store(uv_fmt)) {
+        BOOST_LOG(info) << "CS path skipped: device lacks typed UAV store for plane formats";
+        return;
+      }
+
+      // The output format itself must support typed UAVs (for direct or scratch).
+      D3D11_FEATURE_DATA_FORMAT_SUPPORT fs_yuv = { format };
+      if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &fs_yuv, sizeof(fs_yuv))) ||
+          !(fs_yuv.OutFormatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
+        BOOST_LOG(info) << "CS path skipped: device lacks typed UAV support for output format";
+        return;
+      }
+
+      // --- Try to bind UAVs directly on output_texture first (fast path).
+      //     If output_texture wasn't created with BIND_UNORDERED_ACCESS (typical for
+      //     ffmpeg/NVENC/AMF input pools), CreateUnorderedAccessView returns E_INVALIDARG
+      //     and we fall back to a scratch + CopyResource.
+      D3D11_UNORDERED_ACCESS_VIEW_DESC y_uav_desc = {};
+      y_uav_desc.Format = y_fmt;
+      y_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+      D3D11_UNORDERED_ACCESS_VIEW_DESC uv_uav_desc = {};
+      uv_uav_desc.Format = uv_fmt;
+      uv_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+      bool direct_ok = false;
+      if (output_texture) {
+        uav_t y_uav_try, uv_uav_try;
+        auto s1 = device->CreateUnorderedAccessView(output_texture.get(), &y_uav_desc, &y_uav_try);
+        auto s2 = SUCCEEDED(s1)
+                    ? device->CreateUnorderedAccessView(output_texture.get(), &uv_uav_desc, &uv_uav_try)
+                    : s1;
+        if (SUCCEEDED(s1) && SUCCEEDED(s2)) {
+          cs_y_uav = std::move(y_uav_try);
+          cs_uv_uav = std::move(uv_uav_try);
+          cs_writes_output_directly = true;
+          direct_ok = true;
+        }
+      }
+
+      // --- Fall back to scratch (same format as output) with UAV when direct binding isn't possible.
+      if (!direct_ok) {
+        D3D11_TEXTURE2D_DESC scratch_desc = {};
+        scratch_desc.Width = out_width;
+        scratch_desc.Height = out_height;
+        scratch_desc.MipLevels = 1;
+        scratch_desc.ArraySize = 1;
+        scratch_desc.SampleDesc.Count = 1;
+        scratch_desc.Format = format;
+        scratch_desc.Usage = D3D11_USAGE_DEFAULT;
+        scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create scratch with UAV bind: "
+                          << util::log_hex(status);
+          return;
+        }
+
+        status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &y_uav_desc, &cs_y_uav);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create Y-plane UAV: " << util::log_hex(status);
+          cs_scratch_tex.reset();
+          return;
+        }
+
+        status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &uv_uav_desc, &cs_uv_uav);
+        if (FAILED(status)) {
+          BOOST_LOG(info) << "CS path skipped: failed to create UV-plane UAV: " << util::log_hex(status);
+          cs_scratch_tex.reset();
+          cs_y_uav.reset();
+          return;
+        }
+      }
+
+      // --- One-time clear: ensure letterbox/aspect-padding pixels are black (Y=0)
+      //     and chroma neutral (UV=0.5). CS only writes inside the active rect
+      //     to save dispatch work; matches PS path's one-shot ClearRenderTargetView.
+      {
+        const float y_black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        const float uv_neutral[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+        device_ctx->ClearUnorderedAccessViewFloat(cs_y_uav.get(), y_black);
+        device_ctx->ClearUnorderedAccessViewFloat(cs_uv_uav.get(), uv_neutral);
+      }
+
+      // --- Create CS shader(s) ---
+      auto make_cs = [&](ID3DBlob *blob, cs_t &out) -> bool {
+        if (!blob) return false;
+        HRESULT s = device->CreateComputeShader(
+          blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &out);
+        if (FAILED(s)) {
+          BOOST_LOG(info) << "CS path: CreateComputeShader failed: " << util::log_hex(s);
+          out.reset();
+          return false;
+        }
+        return true;
+      };
+
+      bool any_cs_created = false;
+      if (is_p010) {
+        if (is_scaled) {
+          auto &blob = use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl
+                              : convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl;
+          any_cs_created = make_cs(blob.get(), cs_p010_scaled);
+        } else {
+          auto &blob = use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
+                              : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
+          any_cs_created = make_cs(blob.get(), cs_p010);
+        }
+      } else {
+        if (is_scaled) {
+          bool a = make_cs(convert_yuv420_nv12_cs_passthrough_scaled_hlsl.get(), cs_nv12_pass_scaled);
+          bool b = make_cs(convert_yuv420_nv12_cs_linear_scaled_hlsl.get(), cs_nv12_linear_scaled);
+          any_cs_created = a || b;
+        } else {
+          bool a = make_cs(convert_yuv420_nv12_cs_passthrough_hlsl.get(), cs_nv12_pass);
+          bool b = make_cs(convert_yuv420_nv12_cs_linear_hlsl.get(), cs_nv12_linear);
+          any_cs_created = a || b;
+        }
+      }
+      if (!any_cs_created) {
+        cs_scratch_tex.reset();
+        cs_y_uav.reset();
+        cs_uv_uav.reset();
+        return;
+      }
+
+      // --- Layout cbuffer ---
+      struct LayoutCB {
+        int32_t out_rect_offset[2];
+        int32_t out_rect_size[2];
+        int32_t src_size[2];
+        int32_t pad[2];
+      } layout = {
+        { active_offset_x, active_offset_y },
+        { active_w, active_h },
+        { display->width, display->height },
+        { 0, 0 },
+      };
+      cs_layout_cbuf = make_buffer(device.get(), layout);
+      if (!cs_layout_cbuf) {
+        BOOST_LOG(info) << "CS path skipped: failed to create layout cbuffer";
+        cs_p010.reset();
+        cs_nv12_pass.reset();
+        cs_nv12_linear.reset();
+        cs_p010_scaled.reset();
+        cs_nv12_pass_scaled.reset();
+        cs_nv12_linear_scaled.reset();
+        cs_scratch_tex.reset();
+        cs_y_uav.reset();
+        cs_uv_uav.reset();
+        return;
+      }
+
+      // Dispatch only over the active rect (saves work on letterbox/pillarbox borders;
+      // those were initialized to black by the one-time clear above).
+      cs_dispatch_groups_x = (active_w + 15) / 16;
+      cs_dispatch_groups_y = (active_h + 15) / 16;
+
+      cs_path_active = true;
+      cs_use_pq = use_pq;
+      cs_for_p010 = is_p010;
+      cs_is_scaled = is_scaled;
+      if (is_p010) {
+        BOOST_LOG(info) << "CS RGB->P010 fast path enabled ("
+                        << (use_pq ? "PQ" : "HLG") << ", "
+                        << (is_scaled ? "scaled, " : "")
+                        << display->width << "x" << display->height << " -> "
+                        << active_w << "x" << active_h
+                        << " into " << out_width << "x" << out_height
+                        << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
+                        << ")";
+      } else {
+        const bool has_pass = is_scaled ? bool(cs_nv12_pass_scaled) : bool(cs_nv12_pass);
+        const bool has_lin = is_scaled ? bool(cs_nv12_linear_scaled) : bool(cs_nv12_linear);
+        BOOST_LOG(info) << "CS RGB->NV12 fast path enabled (SDR"
+                        << (is_scaled ? ", scaled" : "")
+                        << (has_pass ? ", passthrough" : "")
+                        << (has_lin ? ", linear" : "")
+                        << ", " << display->width << "x" << display->height << " -> "
+                        << active_w << "x" << active_h
+                        << " into " << out_width << "x" << out_height
+                        << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
+                        << ")";
+      }
+    }
+
+    // Dispatch the CS converter. Writes directly into output_texture's UAVs when
+    // the device allowed it, otherwise into a scratch then CopyResource.
+    // Caller must already hold the encoder mutex on `input_srv`.
+    bool
+    try_dispatch_cs_convert(ID3D11ShaderResourceView *input_srv, cs_t &shader) {
+      if (!cs_path_active) return false;
+      if (!shader) return false;
+
+      // Unbind PS-side render targets to avoid SRV/RTV hazards.
+      ID3D11RenderTargetView *null_rtv[2] = { nullptr, nullptr };
+      device_ctx->OMSetRenderTargets(2, null_rtv, nullptr);
+
+      // Bind CS resources. Sampler is bound for the *_scaled variants which
+      // call SampleLevel; the no-scale variants only Load() and ignore it
+      // (binding is cheap and avoids per-dispatch branches).
+      device_ctx->CSSetShader(shader.get(), nullptr, 0);
+      device_ctx->CSSetShaderResources(0, 1, &input_srv);
+      ID3D11SamplerState *cs_samp = sampler_linear.get();
+      device_ctx->CSSetSamplers(0, 1, &cs_samp);
+      ID3D11UnorderedAccessView *uavs[2] = { cs_y_uav.get(), cs_uv_uav.get() };
+      device_ctx->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+      ID3D11Buffer *cbufs[2] = { color_matrix.get(), cs_layout_cbuf.get() };
+      device_ctx->CSSetConstantBuffers(0, 2, cbufs);
+
+      // Dispatch covers only the active rect (precomputed in init_compute_path).
+      device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
+
+      // Unbind CS resources to release the UAVs before any subsequent ops.
+      ID3D11ShaderResourceView *null_srv = nullptr;
+      ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
+      ID3D11SamplerState *null_samp = nullptr;
+      device_ctx->CSSetShaderResources(0, 1, &null_srv);
+      device_ctx->CSSetSamplers(0, 1, &null_samp);
+      device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
+      ID3D11Buffer *null_cb[2] = { nullptr, nullptr };
+      device_ctx->CSSetConstantBuffers(0, 2, null_cb);
+      device_ctx->CSSetShader(nullptr, nullptr, 0);
+
+      // Only copy when we couldn't bind the UAV directly to output_texture.
+      if (!cs_writes_output_directly) {
+        device_ctx->CopyResource(output_texture.get(), cs_scratch_tex.get());
+      }
+      return true;
     }
 
     // Intermediate storage for luminance stats (written by readback, consumed by convert caller)
@@ -2982,6 +3359,54 @@ namespace platf::dxgi {
     hdr_luminance_reduce_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_reduce_cs.hlsl");
     if (!hdr_luminance_reduce_cs_hlsl) {
       BOOST_LOG(warning) << "Failed to compile HDR luminance reduce CS, per-frame HDR metadata will use defaults";
+    }
+
+    // Compile HDR RGB->P010 compute shaders (Phase 1 fast path; non-fatal if fails).
+    convert_yuv420_p010_cs_perceptual_quantizer_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer.hlsl");
+    if (!convert_yuv420_p010_cs_perceptual_quantizer_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile P010 PQ compute shader, HDR PQ compute fast path disabled";
+    }
+    convert_yuv420_p010_cs_hybrid_log_gamma_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl");
+    if (!convert_yuv420_p010_cs_hybrid_log_gamma_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile P010 HLG compute shader, HDR HLG compute fast path disabled";
+    }
+
+    // Compile SDR RGB->NV12 compute shaders (Phase 2 fast path; non-fatal if fails).
+    convert_yuv420_nv12_cs_passthrough_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough.hlsl");
+    if (!convert_yuv420_nv12_cs_passthrough_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 passthrough compute shader, SDR gamma compute fast path disabled";
+    }
+    convert_yuv420_nv12_cs_linear_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear.hlsl");
+    if (!convert_yuv420_nv12_cs_linear_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 linear compute shader, SDR linear compute fast path disabled";
+    }
+
+    // Compile scaling variants (Phase 2B). Each uses 5-tap Catmull-Rom-via-bilinear
+    // for Y and hardware bilinear for UV; non-fatal if any fails (path stays
+    // limited to no-scale for that variant).
+    convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer_scaled.hlsl");
+    if (!convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile P010 PQ scaled compute shader, HDR PQ scaled fast path disabled";
+    }
+    convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma_scaled.hlsl");
+    if (!convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile P010 HLG scaled compute shader, HDR HLG scaled fast path disabled";
+    }
+    convert_yuv420_nv12_cs_passthrough_scaled_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough_scaled.hlsl");
+    if (!convert_yuv420_nv12_cs_passthrough_scaled_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 passthrough scaled compute shader, SDR scaled fast path disabled";
+    }
+    convert_yuv420_nv12_cs_linear_scaled_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear_scaled.hlsl");
+    if (!convert_yuv420_nv12_cs_linear_scaled_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 linear scaled compute shader, SDR scaled fast path disabled";
     }
 
     BOOST_LOG(debug) << "Compiled shaders"sv;
