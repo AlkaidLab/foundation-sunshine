@@ -55,6 +55,7 @@ const DEFAULT_TABS = [
       adapter_name: '',
       output_name: '',
       capture_target: 'display',
+      capture_compute_shader: 'auto',
       window_title: '',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
