@@ -148,6 +148,8 @@ namespace platf::dxgi {
   blob_t hdr_luminance_reduce_cs_hlsl;
   blob_t convert_yuv420_p010_cs_perceptual_quantizer_hlsl;
   blob_t convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
+  blob_t convert_yuv420_nv12_cs_passthrough_hlsl;
+  blob_t convert_yuv420_nv12_cs_linear_hlsl;
 
   struct img_d3d_t: public platf::img_t {
     // These objects are owned by the display_t's ID3D11Device
@@ -506,12 +508,24 @@ namespace platf::dxgi {
         }
 
         // Draw captured frame
-        // Try compute-shader fast path first (HDR PQ/HLG, type0, no rotation/scaling).
-        // Falls back to PS path if not active or input format mismatches.
-        const bool cs_input_compatible = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+        // Try compute-shader fast path first (HDR PQ/HLG -> P010, or SDR -> NV12;
+        // type0, no rotation/scaling). Falls back to PS path if not active.
+        const bool input_is_linear_fp16 = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
         bool cs_used = false;
-        if (cs_path_active && cs_input_compatible) {
-          cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get());
+        if (cs_path_active) {
+          if (cs_for_p010) {
+            // HDR P010: shader expects linear scRGB FP16 input.
+            if (input_is_linear_fp16) {
+              cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get(), cs_p010);
+            }
+          } else {
+            // SDR NV12: pick variant based on per-frame input format.
+            if (input_is_linear_fp16 && cs_nv12_linear) {
+              cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get(), cs_nv12_linear);
+            } else if (!input_is_linear_fp16 && cs_nv12_pass) {
+              cs_used = try_dispatch_cs_convert(img_ctx.encoder_input_res.get(), cs_nv12_pass);
+            }
+          }
         }
         if (!cs_used) {
           draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
@@ -1184,16 +1198,23 @@ namespace platf::dxgi {
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
 
-    // ===== Compute-shader RGB->P010 fast path (Phase 1: HDR PQ/HLG, type0, no scale/rotation) =====
-    cs_t cs_p010;                          // Selected PQ or HLG converter CS (one-shot per init_output)
-    texture2d_t cs_scratch_tex;            // P010 scratch texture (UAV-bindable). Empty when writing directly to output_texture.
-    uav_t cs_y_uav;                        // R16_UNORM UAV on the Y plane (of scratch OR output_texture)
-    uav_t cs_uv_uav;                       // R16G16_UNORM UAV on the UV plane (of scratch OR output_texture)
+    // ===== Compute-shader RGB->P010/NV12 fast path =====
+    // Phase 1: HDR PQ/HLG -> P010. Phase 2: SDR sRGB/scRGB -> NV12.
+    // For HDR, exactly one of cs_p010 / cs_nv12_pass / cs_nv12_linear is non-null.
+    // For SDR (NV12), both cs_nv12_pass and cs_nv12_linear may be created so we
+    // can pick the right one per-frame based on img.linear_gamma + format.
+    cs_t cs_p010;                          // HDR P010 converter (PQ or HLG, picked at init)
+    cs_t cs_nv12_pass;                     // SDR NV12 converter for sRGB BGRA8 input
+    cs_t cs_nv12_linear;                   // SDR NV12 converter for linear scRGB FP16 input
+    texture2d_t cs_scratch_tex;            // Scratch texture (UAV-bindable). Empty when writing directly to output_texture.
+    uav_t cs_y_uav;                        // Y plane UAV (R8_UNORM for NV12, R16_UNORM for P010)
+    uav_t cs_uv_uav;                       // UV plane UAV (R8G8_UNORM for NV12, R16G16_UNORM for P010)
     buf_t cs_layout_cbuf;                  // Layout cbuffer (b1) for CS
     int  cs_dispatch_groups_x = 0;         // Dispatch dims over the active rect (saves work in letterbox case)
     int  cs_dispatch_groups_y = 0;
     bool cs_path_active = false;           // True when CS conversion path is initialized for this output
-    bool cs_use_pq = false;                // Selected transfer function (PQ or HLG)
+    bool cs_use_pq = false;                // Selected transfer function (PQ or HLG) for HDR variant
+    bool cs_for_p010 = false;              // True for HDR P010 path, false for SDR NV12 path
     bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
 
     // Must match HLSL GroupResult layout exactly
@@ -1555,26 +1576,33 @@ namespace platf::dxgi {
                       const ::video::sunshine_colorspace_t &colorspace) {
       cs_path_active = false;
       cs_writes_output_directly = false;
+      cs_for_p010 = false;
       cs_p010.reset();
+      cs_nv12_pass.reset();
+      cs_nv12_linear.reset();
       cs_scratch_tex.reset();
       cs_y_uav.reset();
       cs_uv_uav.reset();
       cs_layout_cbuf.reset();
 
-      // Phase 1: P010 only.
-      if (format != DXGI_FORMAT_P010) return;
+      // Phase 1/2: only NV12 (SDR) or P010 (HDR) supported.
+      const bool is_p010 = (format == DXGI_FORMAT_P010);
+      const bool is_nv12 = (format == DXGI_FORMAT_NV12);
+      if (!is_p010 && !is_nv12) return;
 
-      // Phase 1: HDR PQ or HLG only (linear-light source).
+      // For HDR P010 we require PQ or HLG colorspace (linear-light source).
       const bool use_pq = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
-      if (!use_pq && !use_hlg) return;
+      if (is_p010 && !use_pq && !use_hlg) return;
+      // For SDR NV12 we require a non-PQ/HLG colorspace.
+      if (is_nv12 && (use_pq || use_hlg)) return;
 
-      // Phase 1: no scaling (rect must equal source) and no rotation.
+      // Phase 1/2: no scaling (rect must equal source) and no rotation.
       if (active_w != display->width || active_h != display->height) return;
       if (display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
           display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) return;
 
-      // Config gate: "auto" defers to off in Phase 1; user must set "on".
+      // Config gate: "auto" defers to off for now; user must opt in with "on".
       const auto &cfg = config::video.capture_compute_shader;
       if (cfg != "on") return;
 
@@ -1582,32 +1610,40 @@ namespace platf::dxgi {
       if ((out_width & 1) != 0 || (out_height & 1) != 0) return;
       if ((active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) return;
 
-      // Compile-time blob present?
-      auto &blob = use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
-                          : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
-      if (!blob) {
-        BOOST_LOG(info) << "CS path skipped: compute shader blob unavailable";
-        return;
+      // Compile-time blobs present?
+      if (is_p010) {
+        auto &blob = use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
+                            : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
+        if (!blob) {
+          BOOST_LOG(info) << "CS path skipped: P010 compute shader blob unavailable";
+          return;
+        }
+      } else {
+        // SDR NV12: need at least one of passthrough/linear to be useful.
+        if (!convert_yuv420_nv12_cs_passthrough_hlsl && !convert_yuv420_nv12_cs_linear_hlsl) {
+          BOOST_LOG(info) << "CS path skipped: NV12 compute shader blobs unavailable";
+          return;
+        }
       }
 
-      // --- Probe device support ---
-      // Need typed UAV stores for R16_UNORM / R16G16_UNORM (used as plane formats).
+      // --- Probe device support: typed UAV stores for plane formats ---
       auto has_uav_typed_store = [&](DXGI_FORMAT fmt) -> bool {
         D3D11_FEATURE_DATA_FORMAT_SUPPORT2 fs = { fmt };
         if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &fs, sizeof(fs)))) return false;
         return (fs.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
       };
-      if (!has_uav_typed_store(DXGI_FORMAT_R16_UNORM) ||
-          !has_uav_typed_store(DXGI_FORMAT_R16G16_UNORM)) {
-        BOOST_LOG(info) << "CS path skipped: device lacks typed UAV store for R16/R16G16";
+      const DXGI_FORMAT y_fmt = is_p010 ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
+      const DXGI_FORMAT uv_fmt = is_p010 ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
+      if (!has_uav_typed_store(y_fmt) || !has_uav_typed_store(uv_fmt)) {
+        BOOST_LOG(info) << "CS path skipped: device lacks typed UAV store for plane formats";
         return;
       }
 
-      // Need P010 to support being created with UAV bind.
-      D3D11_FEATURE_DATA_FORMAT_SUPPORT fs_p010 = { DXGI_FORMAT_P010 };
-      if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &fs_p010, sizeof(fs_p010))) ||
-          !(fs_p010.OutFormatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
-        BOOST_LOG(info) << "CS path skipped: device lacks P010 typed UAV support";
+      // The output format itself must support typed UAVs (for direct or scratch).
+      D3D11_FEATURE_DATA_FORMAT_SUPPORT fs_yuv = { format };
+      if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &fs_yuv, sizeof(fs_yuv))) ||
+          !(fs_yuv.OutFormatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
+        BOOST_LOG(info) << "CS path skipped: device lacks typed UAV support for output format";
         return;
       }
 
@@ -1616,11 +1652,11 @@ namespace platf::dxgi {
       //     ffmpeg/NVENC/AMF input pools), CreateUnorderedAccessView returns E_INVALIDARG
       //     and we fall back to a scratch + CopyResource.
       D3D11_UNORDERED_ACCESS_VIEW_DESC y_uav_desc = {};
-      y_uav_desc.Format = DXGI_FORMAT_R16_UNORM;
+      y_uav_desc.Format = y_fmt;
       y_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 
       D3D11_UNORDERED_ACCESS_VIEW_DESC uv_uav_desc = {};
-      uv_uav_desc.Format = DXGI_FORMAT_R16G16_UNORM;
+      uv_uav_desc.Format = uv_fmt;
       uv_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 
       bool direct_ok = false;
@@ -1638,7 +1674,7 @@ namespace platf::dxgi {
         }
       }
 
-      // --- Fall back to scratch P010 with UAV when direct binding isn't possible.
+      // --- Fall back to scratch (same format as output) with UAV when direct binding isn't possible.
       if (!direct_ok) {
         D3D11_TEXTURE2D_DESC scratch_desc = {};
         scratch_desc.Width = out_width;
@@ -1646,12 +1682,12 @@ namespace platf::dxgi {
         scratch_desc.MipLevels = 1;
         scratch_desc.ArraySize = 1;
         scratch_desc.SampleDesc.Count = 1;
-        scratch_desc.Format = DXGI_FORMAT_P010;
+        scratch_desc.Format = format;
         scratch_desc.Usage = D3D11_USAGE_DEFAULT;
         scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
         auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
         if (FAILED(status)) {
-          BOOST_LOG(info) << "CS path skipped: failed to create P010 scratch with UAV bind: "
+          BOOST_LOG(info) << "CS path skipped: failed to create scratch with UAV bind: "
                           << util::log_hex(status);
           return;
         }
@@ -1672,15 +1708,9 @@ namespace platf::dxgi {
         }
       }
 
-      // --- One-time clear: ensure letterbox/aspect-padding pixels are black.
-      //     CS only writes inside the active rect (saves dispatch work, see below);
-      //     pixels outside the active rect must be initialized to studio/full-range
-      //     black (Y=0) and chroma neutral (UV=0.5), matching the PS path's
-      //     ClearRenderTargetView semantics.
-      //     - For scratch: must clear (freshly allocated, contents undefined).
-      //     - For direct path: output_texture was already cleared via RTV in init_output()
-      //       above (rtv_simple_clear branch for P010), but we re-clear via UAV anyway
-      //       to be defensive (CS UAV writes won't hit border pixels per frame).
+      // --- One-time clear: ensure letterbox/aspect-padding pixels are black (Y=0)
+      //     and chroma neutral (UV=0.5). CS only writes inside the active rect
+      //     to save dispatch work; matches PS path's one-shot ClearRenderTargetView.
       {
         const float y_black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         const float uv_neutral[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
@@ -1688,11 +1718,30 @@ namespace platf::dxgi {
         device_ctx->ClearUnorderedAccessViewFloat(cs_uv_uav.get(), uv_neutral);
       }
 
-      // --- Create CS itself ---
-      HRESULT cs_status = device->CreateComputeShader(
-        blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cs_p010);
-      if (FAILED(cs_status)) {
-        BOOST_LOG(info) << "CS path skipped: CreateComputeShader failed: " << util::log_hex(cs_status);
+      // --- Create CS shader(s) ---
+      auto make_cs = [&](ID3DBlob *blob, cs_t &out) -> bool {
+        if (!blob) return false;
+        HRESULT s = device->CreateComputeShader(
+          blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &out);
+        if (FAILED(s)) {
+          BOOST_LOG(info) << "CS path: CreateComputeShader failed: " << util::log_hex(s);
+          out.reset();
+          return false;
+        }
+        return true;
+      };
+
+      bool any_cs_created = false;
+      if (is_p010) {
+        auto &blob = use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
+                            : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
+        any_cs_created = make_cs(blob.get(), cs_p010);
+      } else {
+        bool a = make_cs(convert_yuv420_nv12_cs_passthrough_hlsl.get(), cs_nv12_pass);
+        bool b = make_cs(convert_yuv420_nv12_cs_linear_hlsl.get(), cs_nv12_linear);
+        any_cs_created = a || b;
+      }
+      if (!any_cs_created) {
         cs_scratch_tex.reset();
         cs_y_uav.reset();
         cs_uv_uav.reset();
@@ -1715,43 +1764,54 @@ namespace platf::dxgi {
       if (!cs_layout_cbuf) {
         BOOST_LOG(info) << "CS path skipped: failed to create layout cbuffer";
         cs_p010.reset();
+        cs_nv12_pass.reset();
+        cs_nv12_linear.reset();
         cs_scratch_tex.reset();
         cs_y_uav.reset();
         cs_uv_uav.reset();
         return;
       }
 
-      // Dispatch only over the active rect: avoids running threads on the
-      // letterbox/pillarbox border pixels (those were initialized to black
-      // by the one-time clear above and never need per-frame writes).
+      // Dispatch only over the active rect (saves work on letterbox/pillarbox borders;
+      // those were initialized to black by the one-time clear above).
       cs_dispatch_groups_x = (active_w + 15) / 16;
       cs_dispatch_groups_y = (active_h + 15) / 16;
 
       cs_path_active = true;
       cs_use_pq = use_pq;
-      BOOST_LOG(info) << "CS RGB->P010 fast path enabled ("
-                      << (use_pq ? "PQ" : "HLG") << ", "
-                      << active_w << "x" << active_h
-                      << " into " << out_width << "x" << out_height
-                      << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
-                      << ")";
+      cs_for_p010 = is_p010;
+      if (is_p010) {
+        BOOST_LOG(info) << "CS RGB->P010 fast path enabled ("
+                        << (use_pq ? "PQ" : "HLG") << ", "
+                        << active_w << "x" << active_h
+                        << " into " << out_width << "x" << out_height
+                        << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
+                        << ")";
+      } else {
+        BOOST_LOG(info) << "CS RGB->NV12 fast path enabled (SDR"
+                        << (cs_nv12_pass ? ", passthrough" : "")
+                        << (cs_nv12_linear ? ", linear" : "")
+                        << ", " << active_w << "x" << active_h
+                        << " into " << out_width << "x" << out_height
+                        << (cs_writes_output_directly ? ", direct UAV" : ", scratch+CopyResource")
+                        << ")";
+      }
     }
 
     // Dispatch the CS converter. Writes directly into output_texture's UAVs when
-    // the device allowed it, otherwise into a P010 scratch then CopyResource.
+    // the device allowed it, otherwise into a scratch then CopyResource.
     // Caller must already hold the encoder mutex on `input_srv`.
     bool
-    try_dispatch_cs_convert(ID3D11ShaderResourceView *input_srv) {
+    try_dispatch_cs_convert(ID3D11ShaderResourceView *input_srv, cs_t &shader) {
       if (!cs_path_active) return false;
-
-      if (!cs_p010) return false;
+      if (!shader) return false;
 
       // Unbind PS-side render targets to avoid SRV/RTV hazards.
       ID3D11RenderTargetView *null_rtv[2] = { nullptr, nullptr };
       device_ctx->OMSetRenderTargets(2, null_rtv, nullptr);
 
       // Bind CS resources. Sampler intentionally not bound: CS uses Load(), not Sample().
-      device_ctx->CSSetShader(cs_p010.get(), nullptr, 0);
+      device_ctx->CSSetShader(shader.get(), nullptr, 0);
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
       ID3D11UnorderedAccessView *uavs[2] = { cs_y_uav.get(), cs_uv_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
@@ -1759,8 +1819,6 @@ namespace platf::dxgi {
       device_ctx->CSSetConstantBuffers(0, 2, cbufs);
 
       // Dispatch covers only the active rect (precomputed in init_compute_path).
-      // Letterbox/pillarbox borders were initialized once via ClearUnorderedAccessViewFloat
-      // and stay black; matching PS path's one-time ClearRenderTargetView semantics.
       device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
 
       // Unbind CS resources to release the UAVs before any subsequent ops.
@@ -3264,6 +3322,18 @@ namespace platf::dxgi {
       SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl");
     if (!convert_yuv420_p010_cs_hybrid_log_gamma_hlsl) {
       BOOST_LOG(warning) << "Failed to compile P010 HLG compute shader, HDR HLG compute fast path disabled";
+    }
+
+    // Compile SDR RGB->NV12 compute shaders (Phase 2 fast path; non-fatal if fails).
+    convert_yuv420_nv12_cs_passthrough_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough.hlsl");
+    if (!convert_yuv420_nv12_cs_passthrough_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 passthrough compute shader, SDR gamma compute fast path disabled";
+    }
+    convert_yuv420_nv12_cs_linear_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear.hlsl");
+    if (!convert_yuv420_nv12_cs_linear_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile NV12 linear compute shader, SDR linear compute fast path disabled";
     }
 
     BOOST_LOG(debug) << "Compiled shaders"sv;
