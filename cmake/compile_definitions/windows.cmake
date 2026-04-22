@@ -74,6 +74,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"

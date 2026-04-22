@@ -13,6 +13,7 @@
 #include <ViGEm/Client.h>
 
 #include "dsu_server.h"
+#include "clipboard.h"
 #include "keylayout.h"
 #include "misc.h"
 #include "virtual_mouse.h"
@@ -1930,6 +1931,8 @@ namespace platf {
     else {
       BOOST_LOG(warning) << "Touch input requires Windows 10 1809 or later"sv;
     }
+
+    caps |= clipboard::supported_capabilities();
 
     return caps;
   }

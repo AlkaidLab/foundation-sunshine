@@ -243,6 +243,19 @@ const vmouseStatusLabel = computed(() => {
       <div class="form-text">{{ $t('config.key_rightalt_to_key_win_desc') }}</div>
     </div>
 
+    <!-- Clipboard sync -->
+    <hr v-if="platform === 'windows'">
+    <div class="mb-3" v-if="platform === 'windows'">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="clipboard_sync"
+               v-model="config.clipboard_sync" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="clipboard_sync">
+          {{ $t('config.clipboard_sync') }}
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.clipboard_sync_desc') }}</div>
+    </div>
+
     <!-- Enable Mouse Input -->
     <hr>
     <div class="mb-3">
