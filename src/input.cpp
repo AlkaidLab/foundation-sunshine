@@ -1333,11 +1333,12 @@ namespace input {
   batch(PNV_REL_MOUSE_MOVE_PACKET dest, PNV_REL_MOUSE_MOVE_PACKET src) {
     short deltaX, deltaY;
 
-    // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
+    // Batching is safe as long as the result doesn't overflow a 16-bit integer.
+    // __builtin_add_overflow returns TRUE when overflow occurs.
+    if (__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
       return batch_result_e::terminate_batch;
     }
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
+    if (__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1397,8 +1398,9 @@ namespace input {
   batch(PSS_HSCROLL_PACKET dest, PSS_HSCROLL_PACKET src) {
     short scrollAmt;
 
-    // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
+    // Batching is safe as long as the result doesn't overflow a 16-bit integer.
+    // __builtin_add_overflow returns TRUE when overflow occurs.
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 
