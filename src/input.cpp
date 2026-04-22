@@ -1730,15 +1730,17 @@ namespace input {
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
     auto *payload = (PNV_INPUT_HEADER) input_data.data();
 
+#ifdef __APPLE__
     // Fast-path on macOS: handle mouse move and button packets before queueing
     // so the dedicated mouse thread observes a single ordered stream. Button
     // packets still reuse the existing per-packet logic via the overload below.
+    // Other platforms fall through to the queue path and use the slow-path
+    // platf::move_mouse / platf::abs_mouse implementations via passthrough_next_message.
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5: {
         if (!config::input.mouse) return;
         auto pkt = (PNV_REL_MOUSE_MOVE_PACKET) payload;
         input->mouse_left_button_timeout = DISABLE_LEFT_BUTTON_DELAY;
-#ifdef __APPLE__
         input->local_cursor_session = true;
         display_cursor = false;
         if (input->server_cursor_visible) {
@@ -1746,7 +1748,6 @@ namespace input {
           input->server_cursor_visible = false;
           BOOST_LOG(info) << "Switched to local mouse mode — hiding server cursor";
         }
-#endif
         platf::mouse_move_rel_fast(platf_input,
           util::endian::big(pkt->deltaX), util::endian::big(pkt->deltaY));
         return;
@@ -1754,7 +1755,6 @@ namespace input {
       case MOUSE_MOVE_ABS_MAGIC: {
         if (!config::input.mouse) return;
         auto pkt = (PNV_ABS_MOUSE_MOVE_PACKET) payload;
-#ifdef __APPLE__
         if (input->local_cursor_session) {
           BOOST_LOG(debug) << "Keeping server cursor hidden during local-cursor session";
         }
@@ -1772,11 +1772,6 @@ namespace input {
             input->mouse_left_button_timeout = ENABLE_LEFT_BUTTON_DELAY;
           }
         }
-#else
-        if (input->mouse_left_button_timeout == DISABLE_LEFT_BUTTON_DELAY) {
-          input->mouse_left_button_timeout = ENABLE_LEFT_BUTTON_DELAY;
-        }
-#endif
         if (!pkt->width || !pkt->height) return;
         float x = util::endian::big(pkt->x);
         float y = util::endian::big(pkt->y);
@@ -1797,6 +1792,7 @@ namespace input {
       default:
         break;
     }
+#endif
 
     // All other input: queue through task_pool as before
     {
@@ -1812,8 +1808,11 @@ namespace input {
     task_pool.cancel(input->mouse_left_button_timeout);
 
 #ifdef __APPLE__
+    // 无条件兜底：掉线/断流场景下，即使 server_cursor_visible 还是 true，
+    // 全局 display_cursor 也可能已被相对鼠标包置为 false；若不强制复位，
+    // 下一次串流开始时服务端光标会持续隐藏。
+    display_cursor = true;
     if (!input->server_cursor_visible) {
-      display_cursor = true;
       platf::set_cursor_visible(true);
       input->server_cursor_visible = true;
     }
@@ -1824,7 +1823,14 @@ namespace input {
     task_pool.push([]() {
       for (int x = 0; x < mouse_press.size(); ++x) {
         if (mouse_press[x]) {
+#ifdef __APPLE__
+          // macOS 运行时按键走 mouse_button_fast（通过 button_ring 投递给
+          // 实时鼠标线程），reset 也必须走同一条路，才能让鼠标线程本地
+          // mouse_down[3] 的状态一起清零，否则下一次 move 会被误判为 drag。
+          platf::mouse_button_fast(platf_input, x, true);
+#else
           platf::button_mouse(platf_input, x, true);
+#endif
           mouse_press[x] = false;
         }
       }

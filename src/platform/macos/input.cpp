@@ -814,6 +814,34 @@ const KeyCodeMap kKeyCodesMap[] = {
       dispatch_semaphore_wait(mi->mouse_semaphore,
                               dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC));
 
+      // 1) 先处理待 pending 的移动，把 mt_pos_x/y 推进到最新位置，
+      //    后续按键事件才会落在"当前"光标处而不是上一次的位置。
+      uint32_t seq = mi->mouse_state.move_seq.load(std::memory_order_acquire);
+      if (seq != last_move_seq) {
+        last_move_seq = seq;
+        CGEventType move_type = mt_event_type(mouse_down);
+
+        if (mi->mouse_state.is_absolute.load(std::memory_order_relaxed)) {
+          float ax = mi->mouse_state.abs_x.load(std::memory_order_relaxed);
+          float ay = mi->mouse_state.abs_y.load(std::memory_order_relaxed);
+          float px = mi->mouse_state.abs_prev_x.load(std::memory_order_relaxed);
+          float py = mi->mouse_state.abs_prev_y.load(std::memory_order_relaxed);
+          mt_post_event(mi, move_type, kCGMouseButtonLeft, ax, ay, px, py, 0);
+        }
+        else {
+          int dx = mi->mouse_state.rel_dx.exchange(0, std::memory_order_relaxed);
+          int dy = mi->mouse_state.rel_dy.exchange(0, std::memory_order_relaxed);
+          if (dx != 0 || dy != 0) {
+            float nx = mi->mt_pos_x + dx * mi->mouse_sensitivity;
+            float ny = mi->mt_pos_y + dy * mi->mouse_sensitivity;
+            mt_post_event(mi, move_type, kCGMouseButtonLeft, nx, ny,
+                          mi->mt_pos_x, mi->mt_pos_y, 0);
+          }
+        }
+      }
+
+      // 2) 再 drain 按键环。此时 mt_pos_x/y 已经是最新坐标，
+      //    "先移动再点击" 的包序在 macOS 这一端终于能被正确还原。
       uint32_t br = mi->mouse_state.button_read_idx.load(std::memory_order_relaxed);
       uint32_t bw = mi->mouse_state.button_write_idx.load(std::memory_order_acquire);
       while (br != bw) {
@@ -850,30 +878,6 @@ const KeyCodeMap kKeyCodesMap[] = {
         br++;
       }
       mi->mouse_state.button_read_idx.store(br, std::memory_order_release);
-
-      uint32_t seq = mi->mouse_state.move_seq.load(std::memory_order_acquire);
-      if (seq == last_move_seq) continue;
-      last_move_seq = seq;
-
-      CGEventType move_type = mt_event_type(mouse_down);
-
-      if (mi->mouse_state.is_absolute.load(std::memory_order_relaxed)) {
-        float ax = mi->mouse_state.abs_x.load(std::memory_order_relaxed);
-        float ay = mi->mouse_state.abs_y.load(std::memory_order_relaxed);
-        float px = mi->mouse_state.abs_prev_x.load(std::memory_order_relaxed);
-        float py = mi->mouse_state.abs_prev_y.load(std::memory_order_relaxed);
-        mt_post_event(mi, move_type, kCGMouseButtonLeft, ax, ay, px, py, 0);
-      }
-      else {
-        int dx = mi->mouse_state.rel_dx.exchange(0, std::memory_order_relaxed);
-        int dy = mi->mouse_state.rel_dy.exchange(0, std::memory_order_relaxed);
-        if (dx != 0 || dy != 0) {
-          float nx = mi->mt_pos_x + dx * mi->mouse_sensitivity;
-          float ny = mi->mt_pos_y + dy * mi->mouse_sensitivity;
-          mt_post_event(mi, move_type, kCGMouseButtonLeft, nx, ny,
-                        mi->mt_pos_x, mi->mt_pos_y, 0);
-        }
-      }
     }
 
     BOOST_LOG(info) << "Mouse thread stopped";
