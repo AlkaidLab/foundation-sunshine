@@ -15,7 +15,6 @@
 
 #include "display.h"
 #include "misc.h"
-#include "src/display_device/vdd_utils.h"
 #include "src/main.h"
 
 #include <d3d11_1.h>
@@ -265,8 +264,18 @@ namespace platf::dxgi {
   // against the DXGI output's reported size. Then opens the shared texture
   // on the same D3D11 device as display_base_t to avoid cross-device copies.
 
+  // Probes Global\ZakoVDD_Meta_<i> for valid producers and returns:
+  //   1) the index whose Width/Height exactly match target, or
+  //   2) if no exact match exists but exactly one valid producer is present,
+  //      that single producer's index (lets us start streaming and rely on
+  //      vdd_capture_t::next_frame() to issue capture_e::reinit once the
+  //      producer publishes new dimensions matching the requested mode), or
+  //   3) -1 when no producer is reachable.
   static int
   resolve_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe = 16) {
+    int exact = -1;
+    int only_valid = -1;
+    int valid_count = 0;
     for (unsigned int i = 0; i < max_probe; ++i) {
       std::wstring meta_name = L"Global\\ZakoVDD_Meta_" + std::to_wstring(i);
       HANDLE h = OpenFileMappingW(FILE_MAP_READ, FALSE, meta_name.c_str());
@@ -277,16 +286,42 @@ namespace platf::dxgi {
         continue;
       }
       auto *meta = static_cast<const SharedFrameMetadata *>(p);
-      bool match = (meta->Magic == VDD_META_MAGIC) &&
-                   (meta->Width == target_w) &&
-                   (meta->Height == target_h);
+      bool valid = (meta->Magic == VDD_META_MAGIC);
+      unsigned mw = valid ? meta->Width : 0;
+      unsigned mh = valid ? meta->Height : 0;
+      unsigned mfmt = valid ? meta->DxgiFormat : 0;
+      bool mhdr = valid && (meta->IsHdr != 0);
       UnmapViewOfFile(p);
       CloseHandle(h);
-      if (match) {
-        BOOST_LOG(info) << "[vdd] resolved monitor index "sv << i
-                        << " for "sv << target_w << "x"sv << target_h;
-        return static_cast<int>(i);
+      if (!valid) continue;
+      BOOST_LOG(info) << "[vdd] probe meta_"sv << i
+                      << ": "sv << mw << "x"sv << mh
+                      << " fmt="sv << mfmt << " hdr="sv << mhdr;
+      ++valid_count;
+      only_valid = static_cast<int>(i);
+      if (exact < 0 && mw == target_w && mh == target_h) {
+        exact = static_cast<int>(i);
       }
+    }
+    if (exact >= 0) {
+      BOOST_LOG(info) << "[vdd] resolved monitor index "sv << exact
+                      << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
+      return exact;
+    }
+    if (valid_count == 1 && only_valid >= 0) {
+      BOOST_LOG(info) << "[vdd] no exact match for "sv << target_w << "x"sv << target_h
+                      << "; falling back to sole producer monitor "sv << only_valid
+                      << " (will reinit when producer publishes target mode)"sv;
+      return only_valid;
+    }
+    if (valid_count == 0) {
+      BOOST_LOG(warning) << "[vdd] no valid VDD producer found (no Meta_* mappings). "sv
+                         << "Is the ZakoVDD driver installed and running?"sv;
+    } else {
+      BOOST_LOG(warning) << "[vdd] "sv << valid_count
+                         << " VDD producers present but none match "sv
+                         << target_w << "x"sv << target_h
+                         << " and ambiguity prevents fallback."sv;
     }
     return -1;
   }
@@ -300,37 +335,15 @@ namespace platf::dxgi {
 
     // Try to identify which VDD monitor backs this DXGI output by matching
     // dimensions. width/height come from DXGI DesktopCoordinates / orientation.
+    // NOTE: We intentionally do NOT trigger CREATEMONITOR here. Sunshine's
+    // display-device layer (prepare_vdd) already manages monitor lifecycle, and
+    // adding a 3s NamedPipe round-trip per encoder probe wastes ~20s on every
+    // startup with no real benefit. If no producer is reachable, we just fail
+    // and let the upper layer try a different backend.
     int idx = resolve_vdd_monitor_index(static_cast<unsigned>(width_before_rotation),
                                         static_cast<unsigned>(height_before_rotation));
     if (idx < 0) {
-      // Self-check: the selected display either isn't a VDD monitor at all, or
-      // VDD has no active monitors yet. Try to ask the driver to create one
-      // via its NamedPipe, then poll the meta mapping again.
-      BOOST_LOG(info) << "[vdd] no matching VDD monitor; sending CREATEMONITOR via NamedPipe..."sv;
-      std::string response;
-      bool timed_out = false;
-      bool sent = display_device::vdd_utils::execute_pipe_command(
-        display_device::vdd_utils::kVddPipeName, L"CREATEMONITOR", &response, &timed_out);
-      if (!sent) {
-        BOOST_LOG(warning) << "[vdd] CREATEMONITOR failed (driver not running or pipe unreachable). "sv
-                           << "Is the selected display a ZakoVDD virtual display?"sv;
-        return -1;
-      }
-      // Poll for up to ~3s for a producer to appear.
-      using namespace std::chrono_literals;
-      const auto deadline = std::chrono::steady_clock::now() + 3s;
-      while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(200ms);
-        idx = resolve_vdd_monitor_index(static_cast<unsigned>(width_before_rotation),
-                                        static_cast<unsigned>(height_before_rotation));
-        if (idx >= 0) break;
-      }
-      if (idx < 0) {
-        BOOST_LOG(warning) << "[vdd] CREATEMONITOR succeeded but no monitor matches "sv
-                           << width_before_rotation << "x"sv << height_before_rotation
-                           << " within 3s."sv;
-        return -1;
-      }
+      return -1;
     }
     monitor_idx = static_cast<unsigned int>(idx);
 
