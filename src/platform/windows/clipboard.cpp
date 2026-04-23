@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +31,7 @@ namespace platf::clipboard {
     constexpr std::uint64_t fnv_prime = 1099511628211ull;
     constexpr auto clipboard_retry_delay = std::chrono::milliseconds(8);
     constexpr int clipboard_retry_count = 8;
+    constexpr std::size_t max_decoded_image_bytes = 64U * 1024U * 1024U;
 
     struct clipboard_guard_t {
       bool open = false;
@@ -222,6 +224,67 @@ namespace platf::clipboard {
       return true;
     }
 
+    bool
+    checked_mul(std::size_t lhs, std::size_t rhs, std::size_t &result) {
+      if (lhs != 0 && rhs > std::numeric_limits<std::size_t>::max() / lhs) {
+        return false;
+      }
+
+      result = lhs * rhs;
+      return true;
+    }
+
+    bool
+    checked_add(std::size_t lhs, std::size_t rhs, std::size_t &result) {
+      if (rhs > std::numeric_limits<std::size_t>::max() - lhs) {
+        return false;
+      }
+
+      result = lhs + rhs;
+      return true;
+    }
+
+    bool
+    decoded_image_size_valid(int width,
+                             int height,
+                             std::size_t bytes_per_pixel,
+                             std::size_t &pixel_bytes) {
+      if (width <= 0 || height <= 0 || bytes_per_pixel == 0) {
+        return false;
+      }
+
+      std::size_t area = 0;
+      if (!checked_mul(static_cast<std::size_t>(width),
+                       static_cast<std::size_t>(height),
+                       area) ||
+          !checked_mul(area, bytes_per_pixel, pixel_bytes) ||
+          pixel_bytes > max_decoded_image_bytes) {
+        return false;
+      }
+
+      return true;
+    }
+
+    bool
+    dib_stride_valid(int width, int bit_count, std::size_t &stride) {
+      if (width <= 0 || bit_count <= 0) {
+        return false;
+      }
+
+      std::size_t bits_per_row = 0;
+      if (!checked_mul(static_cast<std::size_t>(width),
+                       static_cast<std::size_t>(bit_count),
+                       bits_per_row)) {
+        return false;
+      }
+
+      if (!checked_add(bits_per_row, 31, bits_per_row)) {
+        return false;
+      }
+      bits_per_row /= 32;
+      return checked_mul(bits_per_row, 4, stride);
+    }
+
 
     bool
     encode_png_from_rgba(int width,
@@ -270,6 +333,10 @@ namespace platf::clipboard {
         GlobalUnlock(dib_handle);
         return false;
       }
+      if (info.biSize < sizeof(BITMAPINFOHEADER) || info.biSize > total_size) {
+        GlobalUnlock(dib_handle);
+        return false;
+      }
 
       const int width = info.biWidth;
       const int height = info.biHeight > 0 ? info.biHeight : -info.biHeight;
@@ -285,17 +352,27 @@ namespace platf::clipboard {
 
       std::size_t pixel_offset = info.biSize;
       if (compression == BI_BITFIELDS) {
-        pixel_offset += 3 * sizeof(DWORD);
+        if (!checked_add(pixel_offset, 3 * sizeof(DWORD), pixel_offset)) {
+          GlobalUnlock(dib_handle);
+          return false;
+        }
       }
 
-      const auto stride = static_cast<std::size_t>(((width * bit_count + 31) / 32) * 4);
-      if (pixel_offset + stride * static_cast<std::size_t>(height) > total_size) {
+      std::size_t stride = 0;
+      std::size_t pixel_data_bytes = 0;
+      std::size_t required_size = 0;
+      std::size_t rgba_bytes = 0;
+      if (!dib_stride_valid(width, bit_count, stride) ||
+          !checked_mul(stride, static_cast<std::size_t>(height), pixel_data_bytes) ||
+          !checked_add(pixel_offset, pixel_data_bytes, required_size) ||
+          required_size > total_size ||
+          !decoded_image_size_valid(width, height, 4, rgba_bytes)) {
         GlobalUnlock(dib_handle);
         return false;
       }
 
       const auto *pixels = reinterpret_cast<const std::uint8_t *>(header) + pixel_offset;
-      std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+      std::vector<std::uint8_t> rgba(rgba_bytes);
       bool has_non_zero_alpha = false;
 
       for (int y = 0; y < height; ++y) {
@@ -445,6 +522,14 @@ namespace platf::clipboard {
       std::memcpy(locked, text.c_str(), bytes);
       GlobalUnlock(mem);
 
+      if (!EmptyClipboard()) {
+        GlobalFree(mem);
+        if (reason) {
+          *reason = "EmptyClipboard failed";
+        }
+        return false;
+      }
+
       if (SetClipboardData(CF_UNICODETEXT, mem) == nullptr) {
         GlobalFree(mem);
         if (reason) {
@@ -458,6 +543,13 @@ namespace platf::clipboard {
 
     bool
     write_png_image(const item_t &item, std::string *reason) {
+      if (item.data.size() > image_size_limit) {
+        if (reason) {
+          *reason = "PNG clipboard payload exceeded encoded image size limit";
+        }
+        return false;
+      }
+
       int width = 0;
       int height = 0;
       int components = 0;
@@ -478,9 +570,17 @@ namespace platf::clipboard {
         return false;
       }
 
-      const std::size_t pixel_bytes =
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
-      const std::size_t dib_size = sizeof(BITMAPV5HEADER) + pixel_bytes;
+      std::size_t pixel_bytes = 0;
+      std::size_t dib_size = 0;
+      if (!decoded_image_size_valid(width, height, 4, pixel_bytes) ||
+          !checked_add(sizeof(BITMAPV5HEADER), pixel_bytes, dib_size)) {
+        stbi_image_free(rgba);
+        if (reason) {
+          *reason = "PNG clipboard payload exceeded decoded image size limit";
+        }
+        return false;
+      }
+
       HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, dib_size);
       if (mem == nullptr) {
         stbi_image_free(rgba);
@@ -524,6 +624,14 @@ namespace platf::clipboard {
 
       GlobalUnlock(mem);
       stbi_image_free(rgba);
+
+      if (!EmptyClipboard()) {
+        GlobalFree(mem);
+        if (reason) {
+          *reason = "EmptyClipboard failed";
+        }
+        return false;
+      }
 
       if (SetClipboardData(CF_DIBV5, mem) == nullptr) {
         GlobalFree(mem);
@@ -603,19 +711,18 @@ namespace platf::clipboard {
       return false;
     }
 
-    if (!EmptyClipboard()) {
-      if (reason) {
-        *reason = "EmptyClipboard failed";
-      }
-      return false;
-    }
-
     switch (item.type) {
       case LI_CLIPBOARD_ITEM_TYPE_TEXT:
         return write_unicode_text(item, reason);
       case LI_CLIPBOARD_ITEM_TYPE_IMAGE:
         return write_png_image(item, reason);
       case LI_CLIPBOARD_ITEM_TYPE_NONE:
+        if (!EmptyClipboard()) {
+          if (reason) {
+            *reason = "EmptyClipboard failed";
+          }
+          return false;
+        }
         return true;
       default:
         if (reason) {

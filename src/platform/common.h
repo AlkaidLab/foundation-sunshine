@@ -290,7 +290,7 @@ namespace platf {
     int width, height;
   };
 
-  // These values must match Limelight-internal.h's SS_FF_* constants!
+  // These are Sunshine-specific capability flags for clipboard sync.
   namespace platform_caps {
     typedef uint32_t caps_t;
 

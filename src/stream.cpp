@@ -730,6 +730,8 @@ namespace stream {
     }
   }  // namespace clipboard_payload
 
+  constexpr std::uint32_t max_clipboard_text_size = 1U * 1024U * 1024U;
+
   bool
   clipboard_transfer_length_valid(uint8_t item_type, std::uint32_t total_length) {
     switch (item_type) {
@@ -738,9 +740,26 @@ namespace stream {
       case LI_CLIPBOARD_ITEM_TYPE_IMAGE:
         return total_length <= LI_CLIPBOARD_MAX_IMAGE_SIZE;
       case LI_CLIPBOARD_ITEM_TYPE_TEXT:
+        return total_length <= max_clipboard_text_size;
       default:
-        return true;
+        return false;
     }
+  }
+
+  bool
+  clipboard_transfer_chunk_next_length(std::uint32_t received_length,
+                                       std::uint32_t total_length,
+                                       std::uint32_t chunk_offset,
+                                       std::uint16_t chunk_length,
+                                       std::uint32_t &next_received_length) {
+    if (chunk_offset != received_length ||
+        chunk_offset > total_length ||
+        chunk_length > total_length - chunk_offset) {
+      return false;
+    }
+
+    next_received_length = received_length + static_cast<std::uint32_t>(chunk_length);
+    return true;
   }
 
   /**
@@ -1472,7 +1491,7 @@ namespace stream {
       session->control.clipboard.received_length = 0;
       session->control.clipboard.mime_type.clear();
       session->control.clipboard.name.clear();
-      session->control.clipboard.data.clear();
+      std::vector<std::uint8_t>().swap(session->control.clipboard.data);
     };
 
 #ifdef _WIN32
@@ -1541,6 +1560,24 @@ namespace stream {
                       << " flags=0x" << std::hex << static_cast<int>(transfer_flags) << std::dec;
       return 0;
     };
+
+    auto maybe_send_host_clipboard_update = [send_host_clipboard_snapshot](session_t *session) {
+      if (!config::input.clipboard_sync ||
+          !session->control.clipboard.bound ||
+          !platf::clipboard::is_backend_available()) {
+        return;
+      }
+
+      const auto host_sequence = platf::clipboard::current_sequence_number();
+      if (host_sequence != 0 &&
+          host_sequence != session->control.clipboard.last_host_sequence) {
+        if (send_host_clipboard_snapshot(session, 0, true) != 0) {
+          BOOST_LOG(warning) << "Failed to send clipboard change update to client " << session->client_name;
+        }
+      }
+    };
+#else
+    auto maybe_send_host_clipboard_update = [](session_t *) {};
 #endif
 
     auto read_u16_le = [](const char *ptr) -> std::uint16_t {
@@ -1729,10 +1766,19 @@ namespace stream {
             return;
           }
 
-          if (payload.size() < pos + chunk_length ||
-              chunk_offset > session->control.clipboard.total_length ||
-              chunk_length > session->control.clipboard.total_length - chunk_offset) {
+          if (payload.size() < pos + chunk_length) {
             BOOST_LOG(warning) << "Clipboard ITEM_CHUNK bounds were invalid";
+            reset_clipboard_transfer(session);
+            return;
+          }
+
+          std::uint32_t next_received_length = 0;
+          if (!clipboard_transfer_chunk_next_length(session->control.clipboard.received_length,
+                                                    session->control.clipboard.total_length,
+                                                    chunk_offset,
+                                                    chunk_length,
+                                                    next_received_length)) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK was out of order or invalid";
             reset_clipboard_transfer(session);
             return;
           }
@@ -1742,9 +1788,7 @@ namespace stream {
                         payload.data() + pos,
                         chunk_length);
           }
-          session->control.clipboard.received_length =
-            std::max(session->control.clipboard.received_length,
-                     chunk_offset + static_cast<std::uint32_t>(chunk_length));
+          session->control.clipboard.received_length = next_received_length;
           break;
         }
         case LI_CLIPBOARD_MSG_ITEM_END: {
@@ -2237,19 +2281,7 @@ namespace stream {
               }
             }
 
-#ifdef _WIN32
-            if (config::input.clipboard_sync &&
-                session->control.clipboard.bound &&
-                platf::clipboard::is_backend_available()) {
-              const auto host_sequence = platf::clipboard::current_sequence_number();
-              if (host_sequence != 0 &&
-                  host_sequence != session->control.clipboard.last_host_sequence) {
-                if (send_host_clipboard_snapshot(session, 0, true) != 0) {
-                  BOOST_LOG(warning) << "Failed to send clipboard change update to client " << session->client_name;
-                }
-              }
-            }
-#endif
+            maybe_send_host_clipboard_update(session);
           }
 
           ++pos;
