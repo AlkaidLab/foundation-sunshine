@@ -1124,6 +1124,12 @@ namespace platf {
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
         ret = try_init(std::make_shared<dxgi::display_amd_vram_t>());
       }
+      else if (type == "vdd" && hwdevice_type == mem_type_e::dxgi) {
+        // ZakoVDD direct shared-texture capture. Works in SYSTEM context and
+        // before user logon. Only valid when the selected display is a VDD
+        // virtual monitor.
+        ret = try_init(std::make_shared<dxgi::display_vdd_vram_t>());
+      }
       else if (type == "ddx") {
         if (hwdevice_type == mem_type_e::dxgi) {
           ret = try_init(std::make_shared<dxgi::display_ddup_vram_t>());
