@@ -632,6 +632,14 @@ namespace platf::dxgi {
     snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
     capture_e
     release_snapshot() override;
+
+    // Override HDR queries to use producer-reported metadata from
+    // SharedFrameMetadata, instead of querying DXGI on the virtual output
+    // (which may not propagate the producer's static HDR meta correctly).
+    bool
+    is_hdr() override;
+    bool
+    get_hdr_metadata(SS_HDR_METADATA &metadata) override;
   };
 
 }  // namespace platf::dxgi

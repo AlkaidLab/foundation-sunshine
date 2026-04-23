@@ -342,11 +342,70 @@ namespace platf::dxgi {
     // Use producer-reported format as our capture format. complete_img() / image
     // pool will be created against this format.
     capture_format = dup.format();
+
+    // Validate the producer-reported format against the formats display_vram_t
+    // can actually consume (RTV creation, shaders, color conversion). Anything
+    // outside this whitelist would crash later in capture/encoding paths.
+    {
+      auto supported = get_supported_capture_formats();
+      bool ok = false;
+      for (auto f : supported) {
+        if (f == capture_format) { ok = true; break; }
+      }
+      if (!ok) {
+        BOOST_LOG(error) << "[vdd] producer format "sv
+                         << dxgi_format_to_string(capture_format)
+                         << " is not in display_vram_t::get_supported_capture_formats(); "sv
+                         << "rejecting. Extending RTV/shader paths is required to add it."sv;
+        return -1;
+      }
+    }
+
     BOOST_LOG(info) << "[vdd] backend ready: monitor="sv << monitor_idx
                     << " "sv << dup.width() << "x"sv << dup.height()
                     << " fmt="sv << dxgi_format_to_string(capture_format)
                     << " hdr="sv << dup.is_hdr();
     return 0;
+  }
+
+  bool
+  display_vdd_vram_t::is_hdr() {
+    return dup.is_hdr();
+  }
+
+  bool
+  display_vdd_vram_t::get_hdr_metadata(SS_HDR_METADATA &metadata) {
+    std::memset(&metadata, 0, sizeof(metadata));
+    if (!dup.is_hdr()) {
+      return false;
+    }
+
+    // Report Rec. 2020 primaries with D65 white point. Mirrors
+    // display_base_t::get_hdr_metadata(): the actual primaries depend on
+    // shader-side conversion (scRGB FP16 -> PQ in Rec. 2020), so reporting
+    // 2020 is the safe / consistent choice. Most clients only consume the
+    // luminance fields anyway.
+    metadata.displayPrimaries[0].x = 0.708f * 50000;
+    metadata.displayPrimaries[0].y = 0.292f * 50000;
+    metadata.displayPrimaries[1].x = 0.170f * 50000;
+    metadata.displayPrimaries[1].y = 0.797f * 50000;
+    metadata.displayPrimaries[2].x = 0.131f * 50000;
+    metadata.displayPrimaries[2].y = 0.046f * 50000;
+    metadata.whitePoint.x = 0.3127f * 50000;
+    metadata.whitePoint.y = 0.3290f * 50000;
+
+    // Producer-reported luminance, in nits. SS_HDR_METADATA expects:
+    //   maxDisplayLuminance      : nits
+    //   minDisplayLuminance      : units of 0.0001 nits
+    //   maxFullFrameLuminance    : nits
+    metadata.maxDisplayLuminance = static_cast<uint16_t>(dup.max_nits());
+    metadata.minDisplayLuminance = static_cast<uint32_t>(dup.min_nits() * 10000.0f);
+    metadata.maxFullFrameLuminance = static_cast<uint16_t>(dup.max_fall());
+
+    // Producer doesn't currently track per-frame content light levels.
+    metadata.maxContentLightLevel = 0;
+    metadata.maxFrameAverageLightLevel = 0;
+    return true;
   }
 
   // NOTE: snapshot() and release_snapshot() are implemented in display_vram.cpp,

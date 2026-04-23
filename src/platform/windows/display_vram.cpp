@@ -3441,6 +3441,18 @@ namespace platf::dxgi {
       return status;
     }
 
+    // RAII: ensure the producer keyed-mutex hold and the borrowed COM ref are
+    // released on every early-return path below. Disarmed only on the success
+    // path so release_snapshot() (called by the caller) takes ownership.
+    bool armed = true;
+    auto cleanup = util::fail_guard([&]() {
+      if (armed && current_frame) {
+        dup.release_frame();
+        current_frame->Release();
+        current_frame = nullptr;
+      }
+    });
+
     auto frame_timestamp = std::chrono::steady_clock::now() -
                            qpc_time_difference(qpc_counter(), frame_qpc);
 
@@ -3478,6 +3490,7 @@ namespace platf::dxgi {
 
     img_out = img;
     img_out->frame_timestamp = frame_timestamp;
+    armed = false;  // success: ownership of current_frame transfers to release_snapshot()
     return capture_e::ok;
   }
 
