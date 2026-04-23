@@ -290,7 +290,7 @@ namespace platf {
     int width, height;
   };
 
-  // These are Sunshine-specific capability flags for clipboard sync.
+  // These are Sunshine-specific platform capability flags.
   namespace platform_caps {
     typedef uint32_t caps_t;
 

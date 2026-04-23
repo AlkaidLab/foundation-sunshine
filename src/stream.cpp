@@ -1833,9 +1833,9 @@ namespace stream {
           if (platf::clipboard::is_backend_available()) {
             platf::clipboard::item_t item;
             item.type = session->control.clipboard.item_type;
-            item.data = session->control.clipboard.data;
-            item.mime_type = session->control.clipboard.mime_type;
-            item.name = session->control.clipboard.name;
+            item.data = std::move(session->control.clipboard.data);
+            item.mime_type = std::move(session->control.clipboard.mime_type);
+            item.name = std::move(session->control.clipboard.name);
             item.content_hash = session->control.clipboard.content_hash;
 
             std::string reason;

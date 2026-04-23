@@ -32,6 +32,7 @@ namespace platf::clipboard {
     constexpr auto clipboard_retry_delay = std::chrono::milliseconds(8);
     constexpr int clipboard_retry_count = 8;
     constexpr std::size_t max_decoded_image_bytes = 64U * 1024U * 1024U;
+    constexpr std::size_t max_text_clipboard_bytes = 1U * 1024U * 1024U;
 
     struct clipboard_guard_t {
       bool open = false;
@@ -266,6 +267,28 @@ namespace platf::clipboard {
     }
 
     bool
+    png_decoded_size_valid(const std::vector<std::uint8_t> &png_bytes,
+                           std::size_t &pixel_bytes) {
+      if (png_bytes.empty() ||
+          png_bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return false;
+      }
+
+      int width = 0;
+      int height = 0;
+      int components = 0;
+      if (stbi_info_from_memory(png_bytes.data(),
+                                static_cast<int>(png_bytes.size()),
+                                &width,
+                                &height,
+                                &components) == 0) {
+        return false;
+      }
+
+      return decoded_image_size_valid(width, height, 4, pixel_bytes);
+    }
+
+    bool
     dib_stride_valid(int width, int bit_count, std::size_t &stride) {
       if (width <= 0 || bit_count <= 0) {
         return false;
@@ -339,7 +362,13 @@ namespace platf::clipboard {
       }
 
       const int width = info.biWidth;
-      const int height = info.biHeight > 0 ? info.biHeight : -info.biHeight;
+      const auto raw_height = static_cast<std::int64_t>(info.biHeight);
+      const auto absolute_height = raw_height > 0 ? raw_height : -raw_height;
+      if (absolute_height > std::numeric_limits<int>::max()) {
+        GlobalUnlock(dib_handle);
+        return false;
+      }
+      const int height = static_cast<int>(absolute_height);
       const bool top_down = info.biHeight < 0;
       const int bit_count = info.biBitCount;
       const DWORD compression = info.biCompression;
@@ -431,6 +460,31 @@ namespace platf::clipboard {
       while (length < max_chars && wide[length] != L'\0') {
         ++length;
       }
+      if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        GlobalUnlock(handle);
+        if (reason) {
+          *reason = "CF_UNICODETEXT exceeded supported length";
+        }
+        item.type = LI_CLIPBOARD_ITEM_TYPE_NONE;
+        return true;
+      }
+      const int utf8_length = WideCharToMultiByte(CP_UTF8,
+                                                  0,
+                                                  wide,
+                                                  static_cast<int>(length),
+                                                  nullptr,
+                                                  0,
+                                                  nullptr,
+                                                  nullptr);
+      if ((length != 0 && utf8_length <= 0) ||
+          static_cast<std::size_t>(utf8_length) > max_text_clipboard_bytes) {
+        GlobalUnlock(handle);
+        if (reason) {
+          *reason = "CF_UNICODETEXT exceeded clipboard text size limit";
+        }
+        item.type = LI_CLIPBOARD_ITEM_TYPE_NONE;
+        return true;
+      }
 
       std::wstring text(wide, length);
       GlobalUnlock(handle);
@@ -454,6 +508,14 @@ namespace platf::clipboard {
         if (png_bytes.size() > image_size_limit) {
           if (reason) {
             *reason = "PNG clipboard item exceeded image size limit";
+          }
+          item.type = LI_CLIPBOARD_ITEM_TYPE_NONE;
+          return true;
+        }
+        std::size_t pixel_bytes = 0;
+        if (!png_decoded_size_valid(png_bytes, pixel_bytes)) {
+          if (reason) {
+            *reason = "PNG clipboard item exceeded decoded image size limit";
           }
           item.type = LI_CLIPBOARD_ITEM_TYPE_NONE;
           return true;
@@ -553,6 +615,13 @@ namespace platf::clipboard {
       if (item.data.size() > image_size_limit) {
         if (reason) {
           *reason = "PNG clipboard payload exceeded encoded image size limit";
+        }
+        return false;
+      }
+      std::size_t expected_pixel_bytes = 0;
+      if (!png_decoded_size_valid(item.data, expected_pixel_bytes)) {
+        if (reason) {
+          *reason = "PNG clipboard payload exceeded decoded image size limit";
         }
         return false;
       }

@@ -52,6 +52,10 @@ TEST(ConcatAndInsertTests, ConcatSmallStrideTest) {
 TEST(ClipboardTransferValidationTests, RejectsOversizedTextAndUnknownTypes) {
   constexpr std::uint32_t one_megabyte = 1024U * 1024U;
 
+  EXPECT_TRUE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_NONE, 0));
+  EXPECT_FALSE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_NONE, 1));
+  EXPECT_TRUE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_IMAGE, LI_CLIPBOARD_MAX_IMAGE_SIZE));
+  EXPECT_FALSE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_IMAGE, LI_CLIPBOARD_MAX_IMAGE_SIZE + 1));
   EXPECT_TRUE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_TEXT, one_megabyte));
   EXPECT_FALSE(stream::clipboard_transfer_length_valid(LI_CLIPBOARD_ITEM_TYPE_TEXT, one_megabyte + 1));
   EXPECT_FALSE(stream::clipboard_transfer_length_valid(0xFE, 16));
@@ -62,6 +66,10 @@ TEST(ClipboardTransferValidationTests, AcceptsSequentialChunksOnly) {
 
   EXPECT_TRUE(stream::clipboard_transfer_chunk_next_length(0, 10, 0, 4, next_received_length));
   EXPECT_EQ(next_received_length, 4U);
+  EXPECT_TRUE(stream::clipboard_transfer_chunk_next_length(4, 10, 4, 6, next_received_length));
+  EXPECT_EQ(next_received_length, 10U);
+  EXPECT_TRUE(stream::clipboard_transfer_chunk_next_length(10, 10, 10, 0, next_received_length));
+  EXPECT_EQ(next_received_length, 10U);
 
   EXPECT_FALSE(stream::clipboard_transfer_chunk_next_length(4, 10, 6, 2, next_received_length));
   EXPECT_FALSE(stream::clipboard_transfer_chunk_next_length(4, 10, 2, 2, next_received_length));
