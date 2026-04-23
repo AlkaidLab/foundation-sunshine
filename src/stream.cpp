@@ -1369,8 +1369,14 @@ namespace stream {
 
   int
   send_clipboard_payload(session_t *session, const std::string_view &clipboard_payload) {
+    constexpr std::size_t max_clipboard_control_payload = 0xFFFFu;
+
     if (!session->control.peer) {
       BOOST_LOG(warning) << "Couldn't send clipboard payload, still waiting for PING from Moonlight"sv;
+      return -1;
+    }
+    if (clipboard_payload.size() > max_clipboard_control_payload) {
+      BOOST_LOG(error) << "Clipboard control payload too large: " << clipboard_payload.size();
       return -1;
     }
 

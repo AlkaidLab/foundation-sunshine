@@ -425,7 +425,14 @@ namespace platf::clipboard {
         return false;
       }
 
-      std::wstring text(wide);
+      const auto size_bytes = GlobalSize(handle);
+      const auto max_chars = size_bytes / sizeof(wchar_t);
+      std::size_t length = 0;
+      while (length < max_chars && wide[length] != L'\0') {
+        ++length;
+      }
+
+      std::wstring text(wide, length);
       GlobalUnlock(handle);
 
       const std::string utf8 = normalize_newlines_to_lf(wide_to_utf8(text));
