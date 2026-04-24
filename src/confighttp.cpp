@@ -1706,6 +1706,12 @@ namespace confighttp {
 
       for (const auto &session_info : sessions_info) {
         json session_obj;
+        session_obj["runtime_id"] = session_info.runtime_id;
+        session_obj["launch_session_id"] = session_info.launch_session_id;
+        session_obj["control_generation"] = session_info.control_generation;
+        session_obj["client_cert_uuid"] = session_info.client_cert_uuid;
+        session_obj["client_unique_id"] = session_info.client_unique_id;
+        session_obj["trusted_client_identity"] = session_info.trusted_client_identity;
         session_obj["client_name"] = session_info.client_name;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
@@ -1717,6 +1723,8 @@ namespace confighttp {
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["display_owner"] = session_info.display_owner;
+        session_obj["display_owner_runtime_id"] = session_info.display_owner_runtime_id;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
         
@@ -1783,6 +1791,7 @@ namespace confighttp {
       auto args = request->parse_query_string();
       auto bitrate_param = args.find("bitrate");
       auto clientname_param = args.find("clientname");
+      auto runtime_id_param = args.find("runtime_id");
 
       // 验证参数
       if (bitrate_param == args.end()) {
@@ -1798,9 +1807,9 @@ namespace confighttp {
         return;
       }
 
-      if (clientname_param == args.end()) {
+      if (clientname_param == args.end() && runtime_id_param == args.end()) {
         std::ostringstream msg_stream;
-        msg_stream << "Missing clientname parameter when changing bitrate";
+        msg_stream << "Missing runtime_id or clientname parameter when changing bitrate";
         BOOST_LOG(warning) << msg_stream.str();
         json error_json;
         error_json["success"] = false;
@@ -1826,7 +1835,22 @@ namespace confighttp {
         return;
       }
 
-      std::string client_name = clientname_param->second;
+      std::string client_name = clientname_param == args.end() ? "" : clientname_param->second;
+      std::uint64_t runtime_id = 0;
+      if (runtime_id_param != args.end()) {
+        try {
+          runtime_id = std::stoull(runtime_id_param->second);
+        }
+        catch (...) {
+          json error_json;
+          error_json["success"] = false;
+          error_json["status_code"] = 400;
+          error_json["status_message"] = "Invalid runtime_id parameter format";
+          response->write(error_json.dump());
+          response->close_connection_after_response = true;
+          return;
+        }
+      }
 
       // 验证码率范围
       if (bitrate <= 0 || bitrate > 800000) {
@@ -1856,8 +1880,9 @@ namespace confighttp {
         // 继续执行，即使获取会话信息失败，仍然尝试修改码率
       }
       
-      BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name 
-                      << "' to " << bitrate << " Kbps";
+      BOOST_LOG(info) << "Config API: Attempting to change bitrate for "
+                      << (runtime_id != 0 ? "runtime_id '" + std::to_string(runtime_id) + "'" : "client '" + client_name + "'")
+                      << " to " << bitrate << " Kbps";
       if (!available_clients.empty()) {
         BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
       }
@@ -1868,7 +1893,9 @@ namespace confighttp {
       param.value.int_value = bitrate;
       param.valid = true;
       
-      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
+      bool success = runtime_id != 0 ?
+        stream::session::change_dynamic_param_for_runtime(runtime_id, param) :
+        stream::session::change_dynamic_param_for_client(client_name, param);
 
       json response_json;
       if (success) {
@@ -1876,12 +1903,16 @@ namespace confighttp {
         response_json["status_code"] = 200;
         response_json["status_message"] = "Bitrate change request sent to client session";
         response_json["bitrate"] = bitrate;
+        response_json["runtime_id"] = runtime_id;
         response_json["client_name"] = client_name;
         
-        BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '" 
-                       << client_name << "': " << bitrate << " Kbps";
+        BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for "
+                        << (runtime_id != 0 ? "runtime_id '" + std::to_string(runtime_id) + "'" : "client '" + client_name + "'")
+                        << ": " << bitrate << " Kbps";
       } else {
-        std::string error_msg = "No active streaming session found for client: " + client_name;
+        std::string error_msg = runtime_id != 0 ?
+          "No active streaming session found for runtime_id: " + std::to_string(runtime_id) :
+          "No active streaming session found for client: " + client_name;
         if (!available_clients.empty()) {
           error_msg += ". Available clients: " + boost::algorithm::join(available_clients, ", ");
         } else {

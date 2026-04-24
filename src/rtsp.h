@@ -9,6 +9,7 @@
 #include <boost/process/v1.hpp>
 
 #include "crypto.h"
+#include "session_runtime.h"
 #include "thread_safe.h"
 
 namespace rtsp_stream {
@@ -22,6 +23,7 @@ namespace rtsp_stream {
 
     std::string av_ping_payload;
     uint32_t control_connect_data;
+    session_runtime::identity_t identity;
 
     boost::process::v1::environment env;
 

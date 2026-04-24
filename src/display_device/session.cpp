@@ -241,7 +241,7 @@ namespace display_device {
     bool
     try_recover_vdd_device(const std::string &client_id, const std::string &client_name, const vdd_utils::hdr_brightness_t &hdr_brightness, std::string &device_zako) {
       constexpr int max_retries = 3;
-      const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
+      const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_id, client_name);
 
       // 复用模式使用固定标识符，否则使用客户端ID
       const std::string vdd_identifier = config::video.vdd_reuse
@@ -445,7 +445,7 @@ namespace display_device {
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
-    const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
+    const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(current_client_id, session.client_name);
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 

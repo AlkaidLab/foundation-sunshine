@@ -104,6 +104,7 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace stream {
+  static std::atomic<std::uint64_t> next_runtime_id { 1 };
 
   enum class socket_e : int {
     video,  ///< Video
@@ -346,6 +347,82 @@ namespace stream {
     }
   }
 
+  class session_registry_t {
+  public:
+    void
+    register_session(session_t *session);
+
+    void
+    unregister_session(session_t *session);
+
+    void
+    bind_control_peer(session_t *session, net::peer_t peer);
+
+    void
+    unbind_control_peer(session_t *session);
+
+    session_t *
+    find_by_runtime_id(std::uint64_t runtime_id);
+
+    session_t *
+    find_by_control_peer(net::peer_t peer);
+
+    session_t *
+    find_waiting_by_connect_data(std::uint32_t connect_data);
+
+    std::vector<session_t *>
+    find_by_client_cert_key(std::uint64_t client_cert_key);
+
+  private:
+    sync_util::sync_t<std::unordered_map<std::uint64_t, session_t *>> _runtime_to_session;
+    sync_util::sync_t<std::unordered_map<std::uint32_t, session_t *>> _connect_data_to_session;
+    sync_util::sync_t<std::unordered_map<net::peer_t, session_t *>> _control_peer_to_session;
+    sync_util::sync_t<std::unordered_map<std::uint64_t, std::vector<session_t *>>> _cert_key_to_sessions;
+  };
+
+  class feature_lease_registry_t {
+  public:
+    session_runtime::owner_token_t
+    acquire(session_runtime::feature_e feature, const session_t &session);
+
+    void
+    release(session_runtime::feature_e feature, const session_t &session);
+
+    void
+    release_all(const session_t &session);
+
+    bool
+    validate(session_runtime::feature_e feature, const session_t &session);
+
+    session_runtime::owner_token_t
+    owner(session_runtime::feature_e feature);
+
+  private:
+    static std::uint8_t
+    feature_key(session_runtime::feature_e feature) {
+      return static_cast<std::uint8_t>(feature);
+    }
+
+    sync_util::sync_t<std::unordered_map<std::uint8_t, session_runtime::owner_token_t>> _owners;
+  };
+
+  class resource_allocator_t {
+  public:
+    session_runtime::owner_token_t
+    acquire_display_owner(const session_t &session);
+
+    void
+    release_display_owner(const session_t &session);
+
+    session_runtime::owner_token_t
+    display_owner();
+
+  private:
+    sync_util::sync_t<session_runtime::owner_token_t> _display_owner { session_runtime::owner_token_t {
+      session_runtime::feature_e::display,
+    } };
+  };
+
   class control_server_t {
   public:
     int
@@ -410,6 +487,8 @@ namespace stream {
     // ENet peer to session mapping for sessions with a peer connected
     sync_util::sync_t<std::unordered_map<net::peer_t, session_t *>> _peer_to_session;
 
+    session_registry_t _registry;
+
     ENetAddress _addr;
     net::host_t _host;
   };
@@ -439,9 +518,10 @@ namespace stream {
     struct mic_cipher_ctx_t {
       crypto::cipher::cbc_t cipher;
       crypto::aes_t iv;
+      session_runtime::owner_token_t owner;
 
-      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding, std::uint32_t avRiKeyId)
-          : cipher(key, padding), iv(16) {
+      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding, std::uint32_t avRiKeyId, session_runtime::owner_token_t owner)
+          : cipher(key, padding), iv(16), owner(owner) {
         // 初始化 IV：前 4 字节存储 baseIv（大端序）
         // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
         // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
@@ -454,11 +534,13 @@ namespace stream {
       mic_cipher_ctx_t &operator=(mic_cipher_ctx_t &&) noexcept = default;
     };
 
-    // Per-client 加密表：IP -> shared_ptr<cipher_ctx>
+    // Per-session mic owner/cipher table. It is keyed by IP only as a legacy
+    // transport limitation; the owner token prevents silent cross-session reuse.
     // shared_ptr 允许在锁外安全使用 cipher_ctx（即使 map 中的条目被其他线程移除，
     // 持有 shared_ptr 的线程仍可安全完成解密操作）
     // 使用 boost::container::flat_map 获得更好的缓存局部性（客户端数 N≤5，线性扫描比哈希更快）
     boost::container::flat_map<std::string, boost::shared_ptr<mic_cipher_ctx_t>> mic_ciphers;
+    boost::container::flat_map<std::string, session_runtime::owner_token_t> mic_owners;
     boost::mutex mic_cipher_mutex;
 
     // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
@@ -466,6 +548,9 @@ namespace stream {
 
     std::map<std::string, std::string> client_ip_to_name;
     boost::mutex client_name_mutex;
+
+    feature_lease_registry_t feature_leases;
+    resource_allocator_t resources;
   };
 
   struct session_t {
@@ -484,7 +569,9 @@ namespace stream {
 
     boost::asio::ip::address localAddress;
 
-    // 添加客户端名称字段
+    session_runtime::identity_t identity;
+
+    // Legacy display/logging field. Critical routing must use identity/runtime IDs.
     std::string client_name;
 
     struct {
@@ -560,6 +647,225 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  void
+  session_registry_t::register_session(session_t *session) {
+    if (!session || session->identity.runtime_id == 0) {
+      return;
+    }
+
+    {
+      auto lg = _runtime_to_session.lock();
+      _runtime_to_session->emplace(session->identity.runtime_id, session);
+    }
+
+    if (session->identity.control_connect_data != 0) {
+      auto lg = _connect_data_to_session.lock();
+      _connect_data_to_session->emplace(session->identity.control_connect_data, session);
+    }
+
+    if (session->identity.client_cert_key != 0) {
+      auto lg = _cert_key_to_sessions.lock();
+      (*_cert_key_to_sessions)[session->identity.client_cert_key].push_back(session);
+    }
+  }
+
+  void
+  session_registry_t::unregister_session(session_t *session) {
+    if (!session) {
+      return;
+    }
+
+    {
+      auto lg = _runtime_to_session.lock();
+      _runtime_to_session->erase(session->identity.runtime_id);
+    }
+
+    if (session->identity.control_connect_data != 0) {
+      auto lg = _connect_data_to_session.lock();
+      auto it = _connect_data_to_session->find(session->identity.control_connect_data);
+      if (it != _connect_data_to_session->end() && it->second == session) {
+        _connect_data_to_session->erase(it);
+      }
+    }
+
+    if (session->control.peer) {
+      auto lg = _control_peer_to_session.lock();
+      auto it = _control_peer_to_session->find(session->control.peer);
+      if (it != _control_peer_to_session->end() && it->second == session) {
+        _control_peer_to_session->erase(it);
+      }
+    }
+
+    if (session->identity.client_cert_key != 0) {
+      auto lg = _cert_key_to_sessions.lock();
+      auto it = _cert_key_to_sessions->find(session->identity.client_cert_key);
+      if (it != _cert_key_to_sessions->end()) {
+        auto &sessions = it->second;
+        sessions.erase(std::remove(sessions.begin(), sessions.end(), session), sessions.end());
+        if (sessions.empty()) {
+          _cert_key_to_sessions->erase(it);
+        }
+      }
+    }
+  }
+
+  void
+  session_registry_t::bind_control_peer(session_t *session, net::peer_t peer) {
+    if (!session || !peer) {
+      return;
+    }
+
+    auto lg = _control_peer_to_session.lock();
+    (*_control_peer_to_session)[peer] = session;
+  }
+
+  void
+  session_registry_t::unbind_control_peer(session_t *session) {
+    if (!session || !session->control.peer) {
+      return;
+    }
+
+    auto lg = _control_peer_to_session.lock();
+    auto it = _control_peer_to_session->find(session->control.peer);
+    if (it != _control_peer_to_session->end() && it->second == session) {
+      _control_peer_to_session->erase(it);
+    }
+  }
+
+  session_t *
+  session_registry_t::find_by_runtime_id(std::uint64_t runtime_id) {
+    if (runtime_id == 0) {
+      return nullptr;
+    }
+
+    auto lg = _runtime_to_session.lock();
+    auto it = _runtime_to_session->find(runtime_id);
+    return it == _runtime_to_session->end() ? nullptr : it->second;
+  }
+
+  session_t *
+  session_registry_t::find_by_control_peer(net::peer_t peer) {
+    if (!peer) {
+      return nullptr;
+    }
+
+    auto lg = _control_peer_to_session.lock();
+    auto it = _control_peer_to_session->find(peer);
+    return it == _control_peer_to_session->end() ? nullptr : it->second;
+  }
+
+  session_t *
+  session_registry_t::find_waiting_by_connect_data(std::uint32_t connect_data) {
+    if (connect_data == 0) {
+      return nullptr;
+    }
+
+    auto lg = _connect_data_to_session.lock();
+    auto it = _connect_data_to_session->find(connect_data);
+    if (it == _connect_data_to_session->end() ||
+        it->second->control.peer ||
+        !(it->second->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
+      return nullptr;
+    }
+
+    return it->second;
+  }
+
+  std::vector<session_t *>
+  session_registry_t::find_by_client_cert_key(std::uint64_t client_cert_key) {
+    if (client_cert_key == 0) {
+      return {};
+    }
+
+    auto lg = _cert_key_to_sessions.lock();
+    auto it = _cert_key_to_sessions->find(client_cert_key);
+    return it == _cert_key_to_sessions->end() ? std::vector<session_t *> {} : it->second;
+  }
+
+  session_runtime::owner_token_t
+  feature_lease_registry_t::acquire(session_runtime::feature_e feature, const session_t &session) {
+    session_runtime::owner_token_t token {
+      feature,
+      session.identity.runtime_id,
+      session.identity.client_cert_key,
+      session.identity.control_generation,
+    };
+
+    auto lg = _owners.lock();
+    (*_owners)[feature_key(feature)] = token;
+    return token;
+  }
+
+  void
+  feature_lease_registry_t::release(session_runtime::feature_e feature, const session_t &session) {
+    auto lg = _owners.lock();
+    auto it = _owners->find(feature_key(feature));
+    if (it != _owners->end() &&
+        it->second.runtime_id == session.identity.runtime_id) {
+      _owners->erase(it);
+    }
+  }
+
+  void
+  feature_lease_registry_t::release_all(const session_t &session) {
+    auto lg = _owners.lock();
+    for (auto it = _owners->begin(); it != _owners->end();) {
+      if (it->second.runtime_id == session.identity.runtime_id) {
+        it = _owners->erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+  }
+
+  bool
+  feature_lease_registry_t::validate(session_runtime::feature_e feature, const session_t &session) {
+    auto lg = _owners.lock();
+    auto it = _owners->find(feature_key(feature));
+    return it != _owners->end() &&
+           it->second.runtime_id == session.identity.runtime_id &&
+           it->second.control_generation == session.identity.control_generation;
+  }
+
+  session_runtime::owner_token_t
+  feature_lease_registry_t::owner(session_runtime::feature_e feature) {
+    auto lg = _owners.lock();
+    auto it = _owners->find(feature_key(feature));
+    return it == _owners->end() ? session_runtime::owner_token_t { feature } : it->second;
+  }
+
+  session_runtime::owner_token_t
+  resource_allocator_t::acquire_display_owner(const session_t &session) {
+    auto lg = _display_owner.lock();
+    if (_display_owner->runtime_id == 0) {
+      *_display_owner = session_runtime::owner_token_t {
+        session_runtime::feature_e::display,
+        session.identity.runtime_id,
+        session.identity.client_cert_key,
+        session.identity.control_generation,
+      };
+    }
+
+    return *_display_owner;
+  }
+
+  void
+  resource_allocator_t::release_display_owner(const session_t &session) {
+    auto lg = _display_owner.lock();
+    if (_display_owner->runtime_id == session.identity.runtime_id) {
+      *_display_owner = session_runtime::owner_token_t {
+        session_runtime::feature_e::display,
+      };
+    }
+  }
+
+  session_runtime::owner_token_t
+  resource_allocator_t::display_owner() {
+    auto lg = _display_owner.lock();
+    return *_display_owner;
+  }
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -661,6 +967,7 @@ namespace stream {
   reset_mic_encryption(broadcast_ctx_t &ctx) {
     boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
     ctx.mic_ciphers.clear();
+    ctx.mic_owners.clear();
   }
 
   /**
@@ -673,6 +980,7 @@ namespace stream {
   remove_mic_encryption(broadcast_ctx_t &ctx, const std::string &client_ip) {
     boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
     ctx.mic_ciphers.erase(client_ip);
+    ctx.mic_owners.erase(client_ip);
   }
 
   /**
@@ -708,17 +1016,28 @@ namespace stream {
 
     // 检查是否需要启用 MIC 加密
     bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
+    auto owner = ctx.feature_leases.acquire(session_runtime::feature_e::microphone, session);
     if (should_enable_mic_encryption) {
       boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-      // Per-client cipher：用当前会话的密钥为该客户端创建独立的加密上下文
+      // Current protocol has no mic stream token, so only one reliable mic owner
+      // can be active without risking same-IP/VM/NAT cross-session reuse.
+      ctx.mic_ciphers.clear();
+      ctx.mic_owners.clear();
       ctx.mic_ciphers[client_ip] = boost::make_shared<broadcast_ctx_t::mic_cipher_ctx_t>(
-        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId);
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED (per-client cipher registered for " << client_ip << ")";
+        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId, owner);
+      ctx.mic_owners[client_ip] = owner;
+      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED"
+                      << " (runtime_id=" << session.identity.runtime_id
+                      << ", owner registered for " << client_ip << ")";
     }
     else {
-      // 该客户端未启用加密，移除其加密上下文（如果有的话）
-      remove_mic_encryption(ctx, client_ip);
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED";
+      boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+      ctx.mic_ciphers.clear();
+      ctx.mic_owners.clear();
+      ctx.mic_owners[client_ip] = owner;
+      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED"
+                      << " (runtime_id=" << session.identity.runtime_id
+                      << ", plaintext owner registered for " << client_ip << ")";
     }
 
     return true;
@@ -735,11 +1054,33 @@ namespace stream {
   control_server_t::get_session(const net::peer_t peer, uint32_t connect_data) {
     {
       // Fast path - look up existing session by peer
-      auto lg = _peer_to_session.lock();
-      auto it = _peer_to_session->find(peer);
-      if (it != _peer_to_session->end()) {
-        return it->second;
+      auto session = _registry.find_by_control_peer(peer);
+      if (session) {
+        return session;
       }
+    }
+
+    if (auto session = _registry.find_waiting_by_connect_data(connect_data)) {
+      TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
+
+      rtsp_stream::launch_session_clear(session->launch_session_id);
+
+      session->control.peer = peer;
+      session->identity.control_generation++;
+
+      auto local_address = platf::from_sockaddr((sockaddr *) &peer->localAddress.address);
+      session->localAddress = boost::asio::ip::make_address(local_address);
+
+      BOOST_LOG(debug) << "Initialized new control stream session by connect data match [registry]"
+                       << " runtime_id=" << session->identity.runtime_id
+                       << " generation=" << session->identity.control_generation;
+      BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
+      BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
+
+      _registry.bind_control_peer(session, peer);
+      auto ptslg = _peer_to_session.lock();
+      _peer_to_session->emplace(peer, session);
+      return session;
     }
 
     // Slow path - process new session
@@ -776,6 +1117,7 @@ namespace stream {
       rtsp_stream::launch_session_clear(session_p->launch_session_id);
 
       session_p->control.peer = peer;
+      session_p->identity.control_generation++;
 
       // Use the local address from the control connection as the source address
       // for other communications to the client. This is necessary to ensure
@@ -787,6 +1129,7 @@ namespace stream {
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
 
       // Insert this into the map for O(1) lookups in the future
+      _registry.bind_control_peer(session_p, peer);
       auto ptslg = _peer_to_session.lock();
       _peer_to_session->emplace(peer, session_p);
       return session_p;
@@ -1724,8 +2067,11 @@ namespace stream {
           }
 
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
+            session->broadcast_ref->feature_leases.release_all(*session);
+            server->_registry.unregister_session(session);
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
             pos = server->_sessions->erase(pos);
+
 
             if (session->control.peer) {
               {
@@ -1886,13 +2232,25 @@ namespace stream {
       // 仅在锁内拷贝 shared_ptr，解密和写入在锁外进行
       // 避免在持有 mutex 期间调用可能阻塞的 write_mic_data（含 WASAPI Sleep）
       boost::shared_ptr<broadcast_ctx_t::mic_cipher_ctx_t> cipher_ctx;
+      session_runtime::owner_token_t mic_owner {
+        session_runtime::feature_e::microphone,
+      };
       {
         boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+        auto owner_it = ctx.mic_owners.find(client_ip);
+        if (owner_it != ctx.mic_owners.end()) {
+          mic_owner = owner_it->second;
+        }
         auto it = ctx.mic_ciphers.find(client_ip);
         if (it != ctx.mic_ciphers.end()) {
           cipher_ctx = it->second;
         }
       }
+
+      if (!mic_owner) {
+        return;
+      }
+
       if (cipher_ctx) {
           // 根据 sequenceNumber 更新 IV
           // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
@@ -3026,6 +3384,7 @@ namespace stream {
             display_device::session_t::get().restore_state();
           }
 
+          session.broadcast_ref->resources.release_display_owner(session);
           platf::streaming_will_stop();
         }
         else {
@@ -3046,6 +3405,7 @@ namespace stream {
               BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
             }
           }
+          session.broadcast_ref->resources.release_display_owner(session);
         }
       }
 
@@ -3076,6 +3436,7 @@ namespace stream {
       {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
+        session.broadcast_ref->control_server._registry.register_session(&session);
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
@@ -3107,6 +3468,16 @@ namespace stream {
         BOOST_LOG(debug) << "Control-only session started (total sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
+        auto display_owner = session.broadcast_ref->resources.acquire_display_owner(session);
+        if (display_owner.runtime_id == session.identity.runtime_id) {
+          BOOST_LOG(debug) << "Runtime session " << session.identity.runtime_id << " owns the shared display resource";
+        }
+        else {
+          BOOST_LOG(debug) << "Runtime session " << session.identity.runtime_id
+                           << " is sharing display resource owned by runtime session "
+                           << display_owner.runtime_id;
+        }
+
         // 非仅控制流会话：增加两个计数器
         ++running_sessions;
         // If this is the first non-control-only session, invoke the platform callbacks
@@ -3146,6 +3517,12 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->identity = launch_session.identity;
+      session->identity.runtime_id = next_runtime_id.fetch_add(1, std::memory_order_relaxed);
+      session->identity.launch_session_id = launch_session.id;
+      session->identity.control_generation = 0;
+      session->identity.control_connect_data = launch_session.control_connect_data;
+      session->identity.av_ping_payload = launch_session.av_ping_payload;
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
@@ -3243,6 +3620,51 @@ namespace stream {
       return session;
     }
 
+    static bool
+    apply_dynamic_param_to_session(session_t *session_p, const video::dynamic_param_t &param, const std::string &target_label) {
+      if (!session_p ||
+          session_p->state.load(std::memory_order_relaxed) != state_e::RUNNING) {
+        return false;
+      }
+
+      // Update session's current total bitrate if this is a bitrate change
+      if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
+        // The param.value.int_value is the total bitrate (user-configured, including FEC)
+        session_p->current_total_bitrate = param.value.int_value;
+        BOOST_LOG(info) << "Updated session total bitrate for " << target_label
+                        << ": " << param.value.int_value << " Kbps (including FEC)";
+      }
+
+      session_p->video.dynamic_param_change_events->raise(param);
+      BOOST_LOG(info) << "Sent dynamic parameter change event to " << target_label
+                      << ": type=" << (int) param.type;
+      return true;
+    }
+
+    bool
+    change_dynamic_param_for_runtime(std::uint64_t runtime_id, const video::dynamic_param_t &param) {
+      // 先检查是否有活动的广播引用，避免在无活跃session时
+      // 触发start_broadcast/end_broadcast循环（"僵尸广播"），
+      // 这可能阻塞HTTPS服务器线程导致客户端显示主机离线
+      if (!broadcast_shared.has_ref()) {
+        return false;
+      }
+
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) {
+        BOOST_LOG(warning) << "No broadcast context available when changing dynamic parameter for client";
+        return false;
+      }
+
+      auto session_p = broadcast_ref->control_server._registry.find_by_runtime_id(runtime_id);
+      if (apply_dynamic_param_to_session(session_p, param, "runtime session '" + std::to_string(runtime_id) + "'")) {
+        return true;
+      }
+
+      BOOST_LOG(warning) << "No active session found for runtime_id: " << runtime_id;
+      return false;
+    }
+
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
       // 先检查是否有活动的广播引用，避免在无活跃session时
@@ -3261,18 +3683,7 @@ namespace stream {
       auto lg = broadcast_ref->control_server._sessions.lock();
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name == client_name &&
-            session_p->state.load(std::memory_order_relaxed) == state_e::RUNNING) {
-          // Update session's current total bitrate if this is a bitrate change
-          if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
-            // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            session_p->current_total_bitrate = param.value.int_value;
-            BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
-                            << "': " << param.value.int_value << " Kbps (including FEC)";
-          }
-
-          session_p->video.dynamic_param_change_events->raise(param);
-          BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
-                          << "': type=" << (int) param.type;
+            apply_dynamic_param_to_session(session_p, param, "legacy client '" + client_name + "'")) {
           return true;
         }
       }
@@ -3309,8 +3720,14 @@ namespace stream {
         try {
           session_info_t info;
 
+          info.runtime_id = session_p->identity.runtime_id;
+          info.launch_session_id = session_p->identity.launch_session_id;
+          info.control_generation = session_p->identity.control_generation;
+          info.client_cert_uuid = session_p->identity.client_cert_uuid;
+          info.client_unique_id = session_p->identity.client_unique_id;
           info.client_name = session_p->client_name;
           info.session_id = session_p->launch_session_id;
+          info.trusted_client_identity = session_p->identity.has_trusted_client_identity();
 
           // Get client address
           if (session_p->control.peer) {
@@ -3358,6 +3775,9 @@ namespace stream {
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
+          auto display_owner = broadcast_ref->resources.display_owner();
+          info.display_owner = display_owner.runtime_id == session_p->identity.runtime_id;
+          info.display_owner_runtime_id = display_owner.runtime_id;
 
           // Get app information
           try {

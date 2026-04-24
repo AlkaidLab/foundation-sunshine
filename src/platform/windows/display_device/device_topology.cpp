@@ -512,17 +512,25 @@ namespace display_device {
   }
 
   bool
-  apply_hdr_profile(const std::string &client_name) {
+  apply_hdr_profile(const std::string &client_identifier, const std::string &fallback_client_name) {
     pt::ptree clientArray;
     std::stringstream ss(config::nvhttp.clients);
     read_json(ss, clientArray);
 
     std::string profile_name;
+    std::string matched_client_label;
     for (const auto &client : clientArray) {
-      if (client.second.get<std::string>("name") == client_name) {
+      const std::string uuid = client.second.get<std::string>("uuid", "");
+      const std::string name = client.second.get<std::string>("name", "");
+      const bool uuid_match = !client_identifier.empty() && uuid == client_identifier;
+      const bool name_match = !fallback_client_name.empty() ?
+        name == fallback_client_name :
+        (!client_identifier.empty() && name == client_identifier);
+      if (uuid_match || name_match) {
         if (auto profile = client.second.get_optional<std::string>("hdrProfile")) {
           profile_name = *profile;
         }
+        matched_client_label = uuid_match ? uuid : name;
         break;
       }
     }
@@ -541,7 +549,7 @@ namespace display_device {
 
     if (driver_path.empty()) return false;
 
-    BOOST_LOG(info) << "Applying hdr profile: " << profile_name << " for " << client_name;
+    BOOST_LOG(info) << "Applying hdr profile: " << profile_name << " for " << matched_client_label;
 
     // set hdr profile to registry
     boost::process::v1::environment _env = boost::this_process::environment();

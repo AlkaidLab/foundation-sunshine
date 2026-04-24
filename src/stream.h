@@ -3,6 +3,7 @@
  * @brief Declarations for the streaming protocols.
  */
 #pragma once
+#include <cstdint>
 #include <utility>
 #include <vector>
 #include <string>
@@ -38,10 +39,16 @@ namespace stream {
 
   // Session information structure for API responses
   struct session_info_t {
+    uint64_t runtime_id;
+    uint32_t launch_session_id;
+    uint32_t control_generation;
+    std::string client_cert_uuid;
+    std::string client_unique_id;
     std::string client_name;
     std::string client_address;
     std::string state;
     uint32_t session_id;
+    bool trusted_client_identity;
     int width;
     int height;
     int fps;
@@ -49,6 +56,8 @@ namespace stream {
     bool host_audio;
     bool enable_hdr;
     bool enable_mic;
+    bool display_owner;
+    uint64_t display_owner_runtime_id;
     std::string app_name;
     int app_id;
   };
@@ -82,6 +91,15 @@ namespace stream {
      */
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
+
+    /**
+     * @brief Send dynamic parameter change event to a specific runtime session.
+     * @param runtime_id The runtime session ID to target.
+     * @param param The dynamic parameter to change.
+     * @return true if the event was sent successfully, false otherwise.
+     */
+    bool
+    change_dynamic_param_for_runtime(std::uint64_t runtime_id, const video::dynamic_param_t &param);
 
     /**
      * @brief Get information about all active sessions.

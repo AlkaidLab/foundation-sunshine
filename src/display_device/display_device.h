@@ -315,11 +315,12 @@ namespace display_device {
 
   /**
    * @brief Apply the HDR profile to the specified client.
-   * @param client_name Name of the client to apply the HDR profile to.
+   * @param client_identifier Stable client identifier, preferably paired certificate UUID.
+   * @param fallback_client_name Legacy client name fallback.
    * @returns True if the HDR profile has been applied, false otherwise.
    *
    */
   bool
-  apply_hdr_profile(const std::string &client_name);
+  apply_hdr_profile(const std::string &client_identifier, const std::string &fallback_client_name = "");
 
 }  // namespace display_device

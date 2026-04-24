@@ -87,7 +87,7 @@ namespace display_device::vdd_utils {
    * @return 物理尺寸结构，如果未找到则返回默认值（0,0）
    */
   physical_size_t
-  get_client_physical_size(const std::string &client_name);
+  get_client_physical_size(const std::string &client_identifier, const std::string &fallback_client_name = "");
 
   /**
    * @brief 创建VDD监视器

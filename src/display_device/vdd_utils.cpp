@@ -286,12 +286,13 @@ namespace display_device {
 
     /**
      * @brief 从客户端配置中获取物理尺寸
-     * @param client_name 客户端名称
+     * @param client_identifier 客户端稳定标识符，优先匹配配对证书 UUID
+     * @param fallback_client_name 旧客户端/旧配置的客户端名称回退
      * @return 物理尺寸结构，如果未找到则返回默认值（0,0）
      */
     physical_size_t
-    get_client_physical_size(const std::string &client_name) {
-      if (client_name.empty()) {
+    get_client_physical_size(const std::string &client_identifier, const std::string &fallback_client_name) {
+      if (client_identifier.empty() && fallback_client_name.empty()) {
         return {};
       }
 
@@ -308,7 +309,13 @@ namespace display_device {
         pt::read_json(ss, clientArray);
 
         for (const auto &client : clientArray) {
-          if (client.second.get<std::string>("name", "") == client_name) {
+          const std::string uuid = client.second.get<std::string>("uuid", "");
+          const std::string name = client.second.get<std::string>("name", "");
+          const bool uuid_match = !client_identifier.empty() && uuid == client_identifier;
+          const bool name_match = !fallback_client_name.empty() ?
+            name == fallback_client_name :
+            (!client_identifier.empty() && name == client_identifier);
+          if (uuid_match || name_match) {
             const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
             auto it = size_map.find(device_size);
             return (it != size_map.end()) ? it->second : size_map.at("medium");

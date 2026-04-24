@@ -983,11 +983,12 @@ namespace display_device {
       }
 
       if (config.change_hdr_state) {
-        std::thread { [&client_name = session.client_name]() {
-          if (!display_device::apply_hdr_profile(client_name)) {
-            BOOST_LOG(warning) << "Failed to apply HDR profile for client: " << client_name << "retrying later...";
+        std::thread { [client_identifier = session.identity.client_cert_uuid, client_name = session.client_name]() {
+          const auto label = client_identifier.empty() ? client_name : client_identifier;
+          if (!display_device::apply_hdr_profile(client_identifier, client_name)) {
+            BOOST_LOG(warning) << "Failed to apply HDR profile for client: " << label << " retrying later...";
             std::this_thread::sleep_for(2s);
-            display_device::apply_hdr_profile(client_name);
+            display_device::apply_hdr_profile(client_identifier, client_name);
           }
         } }
           .detach();

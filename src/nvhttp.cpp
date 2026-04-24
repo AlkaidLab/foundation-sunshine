@@ -491,6 +491,9 @@ namespace nvhttp {
     }
     launch_session->unique_id = (get_arg(args, "uniqueid", "unknown"));
     launch_session->client_name = (get_arg(args, "clientname", "unknown"));
+    launch_session->identity.launch_session_id = launch_session->id;
+    launch_session->identity.client_unique_id = launch_session->unique_id;
+    launch_session->identity.client_name = launch_session->client_name;
     launch_session->appid = util::from_view(get_arg(args, "appid", "unknown"));
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
@@ -525,6 +528,8 @@ namespace nvhttp {
     RAND_bytes(raw_payload, sizeof(raw_payload));
     launch_session->av_ping_payload = util::hex_vec(raw_payload);
     RAND_bytes((unsigned char *) &launch_session->control_connect_data, sizeof(launch_session->control_connect_data));
+    launch_session->identity.av_ping_payload = launch_session->av_ping_payload;
+    launch_session->identity.control_connect_data = launch_session->control_connect_data;
 
     launch_session->iv.resize(16);
     uint32_t prepend_iv = util::endian::big<uint32_t>(util::from_view(get_arg(args, "rikeyid")));
@@ -1840,6 +1845,7 @@ namespace nvhttp {
     // 获取客户端证书UUID（稳定的客户端标识符）
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->identity.set_client_cert_uuid(client_cert_uuid);
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
@@ -1972,6 +1978,7 @@ namespace nvhttp {
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->identity.set_client_cert_uuid(client_cert_uuid);
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
