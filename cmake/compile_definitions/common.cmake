@@ -107,6 +107,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/stream.h"
         "${CMAKE_SOURCE_DIR}/src/clipboard_bridge.cpp"
         "${CMAKE_SOURCE_DIR}/src/clipboard_bridge.h"
+        "${CMAKE_SOURCE_DIR}/src/clipboard_http.cpp"
+        "${CMAKE_SOURCE_DIR}/src/clipboard_http.h"
         "${CMAKE_SOURCE_DIR}/src/video.cpp"
         "${CMAKE_SOURCE_DIR}/src/video.h"
         "${CMAKE_SOURCE_DIR}/src/video_colorspace.cpp"
