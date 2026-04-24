@@ -65,6 +65,40 @@ using namespace std::literals;
 namespace video {
 
   namespace {
+    class scoped_capture_override_t {
+    public:
+      explicit scoped_capture_override_t(const std::optional<std::string> &capture_override) {
+        if (capture_override && config::video.capture != *capture_override) {
+          previous_capture = config::video.capture;
+          config::video.capture = *capture_override;
+          active = true;
+        }
+      }
+
+      ~scoped_capture_override_t() {
+        if (active) {
+          config::video.capture = previous_capture;
+        }
+      }
+
+      scoped_capture_override_t(const scoped_capture_override_t &) = delete;
+      scoped_capture_override_t &operator=(const scoped_capture_override_t &) = delete;
+
+    private:
+      bool active = false;
+      std::string previous_capture;
+    };
+
+    std::optional<std::string>
+    capture_override_for_encoder_probe() {
+#ifdef _WIN32
+      if (config::video.capture == "vdd") {
+        return std::string { "ddx" };
+      }
+#endif
+      return std::nullopt;
+    }
+
     /**
      * @brief Check if we can allow probing for the encoders.
      * @return True if there should be no issues with the probing, false if we should prevent it.
@@ -3579,11 +3613,20 @@ namespace video {
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure) {
     std::shared_ptr<platf::display_t> disp;
+    const auto configured_capture_backend = config::video.capture;
+    auto probe_capture_override = capture_override_for_encoder_probe();
+    scoped_capture_override_t capture_override_guard { probe_capture_override };
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] failed"sv;
     });
+
+    if (probe_capture_override) {
+      BOOST_LOG(info) << "Temporarily using capture backend ["sv << *probe_capture_override
+                      << "] for encoder probe while configured capture backend is ["sv
+                      << configured_capture_backend << "]"sv;
+    }
 
     // Quick GPU compatibility check: skip encoders that definitely won't work on this GPU
     // This optimization prevents testing encoders on incompatible hardware (e.g., NVIDIA NVENC on AMD GPU)
