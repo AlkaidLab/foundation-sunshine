@@ -23,6 +23,7 @@ extern "C" {
 #include "clipboard.h"
 
 #include "src/platform/common.h"
+#include "src/logging.h"
 #include "src/stb_image.h"
 #include "src/stb_image_write.h"
 
@@ -619,6 +620,14 @@ namespace platf::clipboard {
 
     bool
     write_unicode_text(const item_t &item, std::string *reason) {
+      if (item.data.size() > max_text_clipboard_bytes ||
+          item.data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        if (reason) {
+          *reason = "Text clipboard payload exceeded size limit";
+        }
+        return false;
+      }
+
       const std::wstring text = normalize_newlines_to_crlf(std::string_view {
         reinterpret_cast<const char *>(item.data.data()),
         item.data.size(),
@@ -771,8 +780,8 @@ namespace platf::clipboard {
       }
 
       const UINT png_format = RegisterClipboardFormatW(L"PNG");
-      if (png_format != 0) {
-        write_hglobal_bytes(png_format, item.data);
+      if (png_format != 0 && !write_hglobal_bytes(png_format, item.data)) {
+        BOOST_LOG(debug) << "Failed to set registered PNG clipboard format";
       }
 
       return true;
