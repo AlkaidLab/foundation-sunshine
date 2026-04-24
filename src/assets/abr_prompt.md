@@ -37,4 +37,5 @@ IMPORTANT: If current bitrate differs significantly from the adjusted target, yo
 
 ## Response
 JSON only: {"bitrate": <integer_kbps>, "reason": "<reason>"}
+Do not include `<think>`, markdown fences, commentary, or any text before/after the JSON object.
 Set bitrate to 0 ONLY if current is within 5% of the type-appropriate target AND network is stable.

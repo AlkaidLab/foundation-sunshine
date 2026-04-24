@@ -68,10 +68,25 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
 
+add_executable(abr_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/abr.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
+target_include_directories(abr_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(abr_unit_tests
+        ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES})
+target_compile_definitions(abr_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(abr_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)
+target_link_options(abr_unit_tests PRIVATE)
+set_target_properties(abr_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 
 if (WIN32)
