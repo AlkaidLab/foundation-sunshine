@@ -67,9 +67,7 @@ namespace clipboard_http {
     }
 
     void
-    fanout_inbound(clipboard_bridge::session_id sid, const clipboard_bridge::payload_t &bytes) {
-      const std::string frame = build_event(sid, bytes);
-
+    fanout_frame(const std::string &frame) {
       std::vector<std::shared_ptr<subscriber_t>> snapshot;
       {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -103,6 +101,16 @@ namespace clipboard_http {
     }
 
     void
+    fanout_inbound(clipboard_bridge::session_id sid, const clipboard_bridge::payload_t &bytes) {
+      fanout_frame(build_event(sid, bytes));
+    }
+
+    void
+    fanout_keepalive() {
+      fanout_frame(": clipboard-keepalive\n\n");
+    }
+
+    void
     ensure_inbound_sink() {
       // Idempotent: install once on first /events subscription.
       std::lock_guard<std::mutex> lk(g_mu);
@@ -123,6 +131,7 @@ namespace clipboard_http {
 
       auto &bridge = clipboard_bridge::bridge_t::instance();
       bridge.notify_gui_alive();
+      fanout_keepalive();
 
       nlohmann::json out;
       out["ok"] = true;
@@ -188,14 +197,16 @@ namespace clipboard_http {
       ensure_inbound_sink();
       clipboard_bridge::bridge_t::instance().notify_gui_alive();
 
-      // Send SSE preamble. Use raw write so we can keep the stream open and
-      // push events from the bridge callback.
-      *resp << "HTTP/1.1 200 OK\r\n";
-      *resp << "Content-Type: text/event-stream\r\n";
-      *resp << "Cache-Control: no-cache\r\n";
-      *resp << "Connection: keep-alive\r\n";
-      *resp << "X-Accel-Buffering: no\r\n";
-      *resp << "\r\n";
+      resp->close_connection_after_response = true;
+
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "text/event-stream");
+      headers.emplace("Cache-Control", "no-cache");
+      headers.emplace("Connection", "keep-alive");
+      headers.emplace("X-Accel-Buffering", "no");
+      resp->write(headers);
+      resp->send();
+
       // Initial comment frame to flush headers through any intermediaries.
       *resp << ": clipboard-stream-ready\n\n";
       resp->send();
