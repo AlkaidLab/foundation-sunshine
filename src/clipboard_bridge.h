@@ -1,38 +1,48 @@
 /**
  * @file src/clipboard_bridge.h
  * @brief Pure byte-forwarder between the streaming protocol and the user-session
- *        Rust GUI agent. The C++ service intentionally has zero clipboard
- *        protocol knowledge here -- no item-type parsing, no chunk reassembly,
- *        no PNG/UTF handling. All of that lives in the GUI.
+ *        Rust GUI agent.
  *
- * Inbound  (client -> host): stream.cpp receives an `IDX_CLIPBOARD` control
- *          packet, decrypts it to plaintext, and calls `on_inbound()`. The
- *          bytes are forwarded verbatim to the GUI via the registered inbound
- *          sink (HTTP/SSE).
+ * The C++ service intentionally has zero clipboard protocol knowledge -- no
+ * item-type parsing, no chunk reassembly, no PNG/UTF handling. The Rust GUI
+ * does all of that.
  *
- * Outbound (host -> client): the GUI POSTs a clipboard control payload to the
- *          HTTP layer, which calls `broadcast()` (or `send_to()`). Each bound
- *          stream session re-encrypts and emits the bytes as an
- *          `IDX_CLIPBOARD` packet.
+ * Wiring:
+ *
+ *   client -> stream.cpp::IDX_CLIPBOARD handler
+ *           -> bridge.on_inbound(sid, bytes)
+ *           -> inbound_sink (HTTP/SSE) -> GUI
+ *
+ *   GUI -> POST /api/v1/clipboard/item
+ *       -> bridge.enqueue_outbound(target_sid_or_0, bytes)
+ *       -> controlBroadcastThread drains via drain_outbound()
+ *       -> encrypted IDX_CLIPBOARD packet -> client
+ *
+ * No callbacks ever cross thread boundaries holding session_t pointers; outbound
+ * is strictly pull-based from the enet thread, which also owns session_t state.
  */
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace clipboard_bridge {
   using payload_t = std::vector<std::uint8_t>;
   using session_id = std::uint64_t;
 
-  /// Sink installed by stream.cpp on session start; emits an outbound packet
-  /// to the specific remote client backing this session.
-  using session_sink_fn = std::function<void(const payload_t &)>;
+  /// 0 means broadcast to every currently-active session.
+  constexpr session_id kBroadcast = 0;
 
-  /// Sink installed by the HTTP layer when a GUI subscribes; receives every
-  /// inbound packet plus the originating session id.
   using inbound_sink_fn = std::function<void(session_id, const payload_t &)>;
+
+  struct outbound_msg_t {
+    session_id target;  ///< kBroadcast or a specific session id
+    payload_t bytes;
+  };
 
   class bridge_t {
   public:
@@ -40,24 +50,29 @@ namespace clipboard_bridge {
 
     // ---- Inbound: stream.cpp -> GUI ----
     void on_inbound(session_id sid, payload_t bytes);
-
-    // ---- Outbound: GUI -> stream sessions ----
-    /// Returns the number of sessions notified.
-    std::size_t broadcast(const payload_t &bytes);
-    /// Returns true if the session is currently registered.
-    bool send_to(session_id sid, const payload_t &bytes);
-
-    // ---- Session registration (stream.cpp) ----
-    void register_session(session_id sid, session_sink_fn sink);
-    void unregister_session(session_id sid);
-
-    // ---- GUI subscription (HTTP layer) ----
     void set_inbound_sink(inbound_sink_fn cb);
 
-    // ---- Liveness / capability ----
+    // ---- Outbound: GUI -> stream sessions ----
+    /// Enqueue a payload to be sent on the next controlBroadcastThread tick.
+    /// `target` may be `kBroadcast` to fan out to every session.
+    void enqueue_outbound(session_id target, payload_t bytes);
+
+    /// Drain all queued outbound messages into `out`. Called by
+    /// controlBroadcastThread once per tick. Appends to `out`.
+    void drain_outbound(std::deque<outbound_msg_t> &out);
+
+    // ---- Session liveness (stream.cpp) ----
+    void session_started(session_id sid);
+    void session_stopped(session_id sid);
+    /// Snapshot the count of currently active sessions. Used by HTTP layer
+    /// for diagnostics; capability negotiation only uses gui_alive().
+    std::size_t session_count() const;
+
+    // ---- GUI heartbeat / capability gate ----
     void notify_gui_alive();
-    /// True iff a GUI checked in within the heartbeat window AND is currently
-    /// subscribed. Used by stream.cpp to decide capability negotiation.
+    /// True iff a GUI checked in within the heartbeat window AND has an
+    /// inbound sink registered. Used by rtsp.cpp to decide whether to
+    /// advertise `platform_caps::clipboard_*` in the SDP feature flags.
     bool gui_alive() const;
 
     bridge_t(const bridge_t &) = delete;

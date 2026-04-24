@@ -46,6 +46,7 @@ extern "C" {
 #include "thread_safe.h"
 #include "utility.h"
 
+#include "clipboard_bridge.h"
 #include "platform/common.h"
 
 #define IDX_START_A 0
@@ -67,6 +68,7 @@ extern "C" {
 #define IDX_MIC_CONFIG 17
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
+#define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -89,6 +91,7 @@ static const short packetTypes[] = {
   0x5505,  // Microphone config (Sunshine protocol extension)
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
+  0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
 };
 
 namespace asio = boost::asio;
@@ -1440,6 +1443,20 @@ namespace stream {
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
+    server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
+      // Forward opaque payload to the user-session GUI agent. Drop silently if
+      // disabled by config or if the GUI is not currently subscribed.
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+      auto &bridge = clipboard_bridge::bridge_t::instance();
+      if (!bridge.gui_alive()) {
+        return;
+      }
+      clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
+      bridge.on_inbound(session->launch_session_id, std::move(bytes));
+    });
+
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
 
@@ -1565,6 +1582,7 @@ namespace stream {
           }
 
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
+            clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
             if (session->control.peer) {
@@ -2890,6 +2908,7 @@ namespace stream {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
+      clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
       auto addr = boost::asio::ip::make_address(addr_string);
       session.video.peer.address(addr);
