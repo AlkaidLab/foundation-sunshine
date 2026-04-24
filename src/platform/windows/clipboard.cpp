@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,12 +35,64 @@ namespace platf::clipboard {
     constexpr std::size_t max_decoded_image_bytes = 64U * 1024U * 1024U;
     constexpr std::size_t max_text_clipboard_bytes = 1U * 1024U * 1024U;
 
+    constexpr wchar_t clipboard_owner_window_class[] = L"SunshineClipboardOwnerWindow";
+    std::mutex clipboard_owner_window_mutex;
+    HWND clipboard_owner_window = nullptr;
+
+    bool
+    ensure_clipboard_owner_window() {
+      std::lock_guard<std::mutex> lock(clipboard_owner_window_mutex);
+      if (clipboard_owner_window != nullptr && IsWindow(clipboard_owner_window)) {
+        return true;
+      }
+
+      const HINSTANCE instance = GetModuleHandleW(nullptr);
+      WNDCLASSEXW wnd_class {};
+      wnd_class.cbSize = sizeof(wnd_class);
+      wnd_class.lpfnWndProc = DefWindowProcW;
+      wnd_class.hInstance = instance;
+      wnd_class.lpszClassName = clipboard_owner_window_class;
+
+      if (RegisterClassExW(&wnd_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        clipboard_owner_window = nullptr;
+        return false;
+      }
+
+      clipboard_owner_window = CreateWindowExW(0,
+                                               clipboard_owner_window_class,
+                                               L"Sunshine Clipboard Owner Window",
+                                               0,
+                                               0,
+                                               0,
+                                               0,
+                                               0,
+                                               HWND_MESSAGE,
+                                               nullptr,
+                                               instance,
+                                               nullptr);
+      return clipboard_owner_window != nullptr;
+    }
+
+    enum class clipboard_open_mode {
+      read,
+      write,
+    };
+
     struct clipboard_guard_t {
       bool open = false;
 
-      clipboard_guard_t() {
+      explicit clipboard_guard_t(clipboard_open_mode mode = clipboard_open_mode::read) {
+        HWND owner = nullptr;
+        if (mode == clipboard_open_mode::write) {
+          if (!ensure_clipboard_owner_window()) {
+            return;
+          }
+
+          owner = clipboard_owner_window;
+        }
+
         for (int attempt = 0; attempt < clipboard_retry_count; ++attempt) {
-          if (OpenClipboard(nullptr)) {
+          if (OpenClipboard(owner)) {
             open = true;
             break;
           }
@@ -779,7 +832,7 @@ namespace platf::clipboard {
 
   bool
   write_item(const item_t &item, std::string *reason) {
-    clipboard_guard_t clipboard;
+    clipboard_guard_t clipboard { clipboard_open_mode::write };
     if (!clipboard) {
       if (reason) {
         *reason = "OpenClipboard failed";
