@@ -498,23 +498,57 @@ namespace amf {
     encode_width = client_config.width;
     encode_height = client_config.height;
     res = encoder->Init(amf_format, client_config.width, client_config.height);
-    if (res != AMF_OK && config.rc_mode) {
-      // Init failed with custom RC mode - retry without it (driver may not support it)
-      BOOST_LOG(warning) << "AMF: Init failed with rc_mode=" << *config.rc_mode << ", retrying with default RC";
-      encoder->Terminate();
-      encoder = nullptr;
-      res = factory->CreateComponent(context, get_codec_id(), &encoder);
-      if (res == AMF_OK && encoder) {
-        auto config_fallback = config;
-        config_fallback.rc_mode = std::nullopt;
-        if (configure_encoder(config_fallback, client_config, colorspace)) {
-          res = encoder->Init(amf_format, client_config.width, client_config.height);
-        }
+
+    // Init fallback chain: some driver/hardware combinations reject specific
+    // properties (especially PreAnalysis with high quality_preset on older VCN).
+    // Try progressively disabling problematic features instead of failing the
+    // whole session, which previously caused "server keeps restarting" loops.
+    // The fallback is *cumulative*: once a feature is disabled in one step it
+    // stays disabled in subsequent steps, so we don't accidentally re-enable
+    // the failing feature on a later retry.
+    auto config_fallback = config;
+    auto try_with_fallback = [&](const char *what, auto mutator) {
+      if (res == AMF_OK) return;
+      BOOST_LOG(warning) << "AMF: Init failed (error " << res << "), retrying without " << what;
+      if (encoder) {
+        encoder->Terminate();
+        encoder = nullptr;
       }
+      auto recreate_res = factory->CreateComponent(context, get_codec_id(), &encoder);
+      if (recreate_res != AMF_OK || !encoder) {
+        res = recreate_res;
+        return;
+      }
+      mutator(config_fallback);
+      if (!configure_encoder(config_fallback, client_config, colorspace)) {
+        res = AMF_FAIL;
+        return;
+      }
+      res = encoder->Init(amf_format, client_config.width, client_config.height);
+    };
+
+    if (config.preanalysis && *config.preanalysis) {
+      try_with_fallback("PreAnalysis", [](amf_config &c) { c.preanalysis = false; });
     }
+    if (config.rc_mode) {
+      try_with_fallback("custom rc_mode", [](amf_config &c) { c.rc_mode = std::nullopt; });
+    }
+    if (config.quality_preset) {
+      try_with_fallback("quality_preset", [](amf_config &c) { c.quality_preset = std::nullopt; });
+    }
+
     if (res != AMF_OK) {
-      BOOST_LOG(error) << "AMF: encoder Init failed, error: " << res;
+      BOOST_LOG(error) << "AMF: encoder Init failed after fallbacks, error: " << res;
       return false;
+    }
+
+    // Derive runtime watchdog threshold from framerate so the fatal-error
+    // signal fires after roughly 1s of wall-clock time regardless of fps.
+    // Floor at 30 to give the PreAnalysis lookahead pipeline time to fill
+    // at startup without false-positive reinit.
+    {
+      int fps = client_config.framerate > 0 ? client_config.framerate : 60;
+      max_consecutive_failures = std::max(30, fps);
     }
 
     // Check if driver supports QUERY_TIMEOUT by reading back the property (FFmpeg pattern)
@@ -731,10 +765,17 @@ namespace amf {
         auto removed_reason = device->GetDeviceRemovedReason();
         if (removed_reason != S_OK) {
           BOOST_LOG(error) << "AMF: D3D11 device lost after SubmitInput, reason: 0x" << util::hex(removed_reason).to_string_view();
+          result.fatal = true;  // Device gone — must reinit, no point retrying
+          return result;
         }
+      }
+      if (++consecutive_submit_failures >= max_consecutive_failures) {
+        BOOST_LOG(error) << "AMF: " << consecutive_submit_failures << " consecutive SubmitInput failures, signaling reinit";
+        result.fatal = true;
       }
       return result;
     }
+    consecutive_submit_failures = 0;
 
     // Query output — if we already drained output during SubmitInput retry, use that
     ::amf::AMFDataPtr output_data;
@@ -756,10 +797,16 @@ namespace amf {
         }
       }
       if (!output_data) {
-        // Encoder needs more input or no output yet (pipeline filling)
+        // Encoder needs more input or no output yet (pipeline filling).
+        // Track this in case the pipeline gets stuck (driver hang, PA stall, etc.)
+        if (++consecutive_empty_outputs >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_empty_outputs << " consecutive frames with no encoder output, signaling reinit";
+          result.fatal = true;
+        }
         return result;
       }
     }
+    consecutive_empty_outputs = 0;
 
     // Extract encoded bitstream
     ::amf::AMFBufferPtr buffer(output_data);
