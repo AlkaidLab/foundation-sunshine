@@ -18,6 +18,7 @@
 #include "logging.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -182,6 +183,112 @@ namespace abr {
     return tmpl;
   }
 
+  static std::string
+  trim_copy(std::string text) {
+    auto is_not_space = [](unsigned char ch) {
+      return !std::isspace(ch);
+    };
+
+    auto begin = std::find_if(text.begin(), text.end(), is_not_space);
+    if (begin == text.end()) {
+      return {};
+    }
+
+    auto end = std::find_if(text.rbegin(), text.rend(), is_not_space).base();
+    return std::string(begin, end);
+  }
+
+  static size_t
+  find_case_insensitive(const std::string &haystack, const std::string &needle, size_t start_pos = 0) {
+    if (needle.empty() || start_pos >= haystack.size()) {
+      return std::string::npos;
+    }
+
+    auto it = std::search(
+      haystack.begin() + static_cast<std::ptrdiff_t>(start_pos),
+      haystack.end(),
+      needle.begin(),
+      needle.end(),
+      [](unsigned char lhs, unsigned char rhs) {
+        return std::tolower(lhs) == std::tolower(rhs);
+      });
+
+    return it == haystack.end() ? std::string::npos : static_cast<size_t>(it - haystack.begin());
+  }
+
+  static void
+  strip_reasoning_blocks(std::string &text) {
+    static constexpr auto think_open = "<think";
+    static constexpr auto think_close = "</think>";
+
+    size_t open = find_case_insensitive(text, think_open);
+    while (open != std::string::npos) {
+      size_t open_end = text.find('>', open);
+      if (open_end == std::string::npos) {
+        break;
+      }
+
+      size_t close = find_case_insensitive(text, think_close, open_end + 1);
+      if (close == std::string::npos) {
+        text.erase(open, open_end - open + 1);
+        break;
+      }
+
+      text.erase(open, close + std::char_traits<char>::length(think_close) - open);
+      open = find_case_insensitive(text, think_open, open);
+    }
+  }
+
+  static std::string
+  extract_first_json_object(const std::string &text) {
+    size_t start = std::string::npos;
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (size_t i = 0; i < text.size(); ++i) {
+      char ch = text[i];
+
+      if (start == std::string::npos) {
+        if (ch == '{') {
+          start = i;
+          depth = 1;
+          in_string = false;
+          escaped = false;
+        }
+        continue;
+      }
+
+      if (in_string) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (ch == '\\') {
+          escaped = true;
+        }
+        else if (ch == '"') {
+          in_string = false;
+        }
+        continue;
+      }
+
+      if (ch == '"') {
+        in_string = true;
+      }
+      else if (ch == '{') {
+        ++depth;
+      }
+      else if (ch == '}') {
+        --depth;
+        if (depth == 0) {
+          return text.substr(start, i - start + 1);
+        }
+      }
+    }
+
+    return {};
+  }
+
   /**
    * @brief Build the LLM prompt by filling the template with session state.
    */
@@ -227,7 +334,7 @@ namespace abr {
    * Reads: system_prompt, temperature, max_tokens.
    */
   struct llm_params_t {
-    std::string system_prompt = "You are a streaming bitrate optimizer. Always respond with valid JSON only.";
+    std::string system_prompt = "You are a streaming bitrate optimizer. Respond with a single valid JSON object only. Do not include markdown, code fences, or reasoning tags such as <think>.";
     double temperature = 0.1;
     int max_tokens = 150;
   };
@@ -280,6 +387,7 @@ namespace abr {
   static action_t
   parse_llm_response(const std::string &response_body, const session_state_t &state) {
     action_t action;
+    std::string parse_target;
     try {
       auto resp = json::parse(response_body);
 
@@ -293,16 +401,29 @@ namespace abr {
         return action;
       }
 
-      // Strip markdown code fence if present
-      if (content.find("```") != std::string::npos) {
-        auto start = content.find('{');
-        auto end = content.rfind('}');
-        if (start != std::string::npos && end != std::string::npos) {
-          content = content.substr(start, end - start + 1);
+      parse_target = trim_copy(content);
+      if (!json::accept(parse_target)) {
+        auto normalized = trim_copy(content);
+        strip_reasoning_blocks(normalized);
+        normalized = trim_copy(normalized);
+
+        if (json::accept(normalized)) {
+          parse_target = normalized;
+        }
+        else {
+          parse_target = extract_first_json_object(normalized);
         }
       }
 
-      auto decision = json::parse(content);
+      if (parse_target.empty()) {
+        action.reason = "llm_parse_error: no JSON object in content";
+        BOOST_LOG(warning) << "ABR LLM parse error: no JSON object in content. body: "
+                           << response_body.substr(0, 200)
+                           << " content: " << content.substr(0, 200);
+        return action;
+      }
+
+      auto decision = json::parse(parse_target);
 
       int bitrate = decision.value("bitrate", 0);
       action.reason = decision.value("reason", "llm_decision");
@@ -325,7 +446,9 @@ namespace abr {
     }
     catch (const json::exception &e) {
       action.reason = std::string("llm_parse_error: ") + e.what();
-      BOOST_LOG(warning) << "ABR LLM parse error: " << e.what() << " body: " << response_body.substr(0, 200);
+      BOOST_LOG(warning) << "ABR LLM parse error: " << e.what()
+                         << " body: " << response_body.substr(0, 200)
+                         << " extracted: " << parse_target.substr(0, 200);
     }
 
     return action;
@@ -610,3 +733,81 @@ namespace abr {
   }
 
 }  // namespace abr
+
+#ifdef SUNSHINE_TESTS
+  #include <gtest/gtest.h>
+
+namespace {
+
+  abr::session_state_t
+  make_test_session_state(int current_bitrate_kbps = 20000, int min_bitrate_kbps = 10000, int max_bitrate_kbps = 50000) {
+    abr::session_state_t state;
+    state.current_bitrate_kbps = current_bitrate_kbps;
+    state.config.min_bitrate_kbps = min_bitrate_kbps;
+    state.config.max_bitrate_kbps = max_bitrate_kbps;
+    return state;
+  }
+
+}  // namespace
+
+TEST(AbrLlmParseTests, ExtractsJsonAfterThinkBlock) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>Need to compare packet loss and app type.</think>\n{\"bitrate\":42000,\"reason\":\"fps_game_upper_range\"}"},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state(20000, 10000, 45000);
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 42000);
+  EXPECT_EQ(action.target_bitrate_kbps, 42000);
+  EXPECT_EQ(action.reason, "fps_game_upper_range");
+}
+
+TEST(AbrLlmParseTests, ExtractsFirstJsonObjectFromMixedContent) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "Here is the result you asked for:\n```json\n{\"bitrate\":52000,\"reason\":\"quality_probe\"}\n```\nUse it carefully."},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state(30000, 10000, 50000);
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 50000);
+  EXPECT_EQ(action.target_bitrate_kbps, 50000);
+  EXPECT_EQ(action.reason, "quality_probe");
+}
+
+TEST(AbrLlmParseTests, ReportsMissingJsonWhenContentHasOnlyReasoning) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>I should answer with JSON, but I forgot.</think>Still thinking..."},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state();
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 0);
+  EXPECT_EQ(action.target_bitrate_kbps, 0);
+  EXPECT_EQ(action.reason, "llm_parse_error: no JSON object in content");
+}
+
+#endif
