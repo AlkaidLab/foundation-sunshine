@@ -503,6 +503,10 @@ namespace amf {
     // properties (especially PreAnalysis with high quality_preset on older VCN).
     // Try progressively disabling problematic features instead of failing the
     // whole session, which previously caused "server keeps restarting" loops.
+    // The fallback is *cumulative*: once a feature is disabled in one step it
+    // stays disabled in subsequent steps, so we don't accidentally re-enable
+    // the failing feature on a later retry.
+    auto config_fallback = config;
     auto try_with_fallback = [&](const char *what, auto mutator) {
       if (res == AMF_OK) return;
       BOOST_LOG(warning) << "AMF: Init failed (error " << res << "), retrying without " << what;
@@ -515,7 +519,6 @@ namespace amf {
         res = recreate_res;
         return;
       }
-      auto config_fallback = config;
       mutator(config_fallback);
       if (!configure_encoder(config_fallback, client_config, colorspace)) {
         res = AMF_FAIL;
@@ -531,16 +534,21 @@ namespace amf {
       try_with_fallback("custom rc_mode", [](amf_config &c) { c.rc_mode = std::nullopt; });
     }
     if (config.quality_preset) {
-      try_with_fallback("quality_preset", [](amf_config &c) {
-        c.quality_preset = std::nullopt;
-        c.preanalysis = false;
-        c.rc_mode = std::nullopt;
-      });
+      try_with_fallback("quality_preset", [](amf_config &c) { c.quality_preset = std::nullopt; });
     }
 
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: encoder Init failed after fallbacks, error: " << res;
       return false;
+    }
+
+    // Derive runtime watchdog threshold from framerate so the fatal-error
+    // signal fires after roughly 1s of wall-clock time regardless of fps.
+    // Floor at 30 to give the PreAnalysis lookahead pipeline time to fill
+    // at startup without false-positive reinit.
+    {
+      int fps = client_config.framerate > 0 ? client_config.framerate : 60;
+      max_consecutive_failures = std::max(30, fps);
     }
 
     // Check if driver supports QUERY_TIMEOUT by reading back the property (FFmpeg pattern)
@@ -761,7 +769,7 @@ namespace amf {
           return result;
         }
       }
-      if (++consecutive_submit_failures >= MAX_CONSECUTIVE_FAILURES) {
+      if (++consecutive_submit_failures >= max_consecutive_failures) {
         BOOST_LOG(error) << "AMF: " << consecutive_submit_failures << " consecutive SubmitInput failures, signaling reinit";
         result.fatal = true;
       }
@@ -791,7 +799,7 @@ namespace amf {
       if (!output_data) {
         // Encoder needs more input or no output yet (pipeline filling).
         // Track this in case the pipeline gets stuck (driver hang, PA stall, etc.)
-        if (++consecutive_empty_outputs >= MAX_CONSECUTIVE_FAILURES) {
+        if (++consecutive_empty_outputs >= max_consecutive_failures) {
           BOOST_LOG(error) << "AMF: " << consecutive_empty_outputs << " consecutive frames with no encoder output, signaling reinit";
           result.fatal = true;
         }
