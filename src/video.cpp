@@ -2049,6 +2049,13 @@ namespace video {
   int
   encode_amf(int64_t frame_nr, amf_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     auto encoded_frame = session.encode_frame(frame_nr);
+    if (encoded_frame.fatal) {
+      // Encoder is in unrecoverable state (device lost or repeated failures);
+      // propagate fatal so the session reinitializes instead of silently
+      // producing no video (which causes the client to time out and reconnect repeatedly).
+      BOOST_LOG(error) << "AMF: encoder in unrecoverable state, requesting reinit";
+      return -1;
+    }
     if (encoded_frame.data.empty()) {
       if (encoded_frame.frame_index == static_cast<uint64_t>(frame_nr)) {
         BOOST_LOG(debug) << "AMF: frame " << frame_nr << " buffered, waiting for more input";

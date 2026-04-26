@@ -109,6 +109,15 @@ namespace amf {
     bool psnr_enabled = false;
     bool ssim_enabled = false;
 
+    // Runtime fault watchdog: count consecutive failures so we can signal
+    // a fatal error to the upper layer (triggering a real reinit) instead
+    // of silently producing no output forever. Threshold is derived from
+    // client framerate in create_encoder() so the watchdog fires after
+    // roughly the same wall-clock time regardless of fps.
+    int consecutive_submit_failures = 0;
+    int consecutive_empty_outputs = 0;
+    int max_consecutive_failures = 60;  // Set to ~1s of frames in create_encoder()
+
     std::string last_error_string;
   };
 
