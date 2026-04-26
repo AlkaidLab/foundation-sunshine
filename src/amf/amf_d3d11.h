@@ -109,6 +109,13 @@ namespace amf {
     bool psnr_enabled = false;
     bool ssim_enabled = false;
 
+    // Runtime fault watchdog: count consecutive failures so we can signal
+    // a fatal error to the upper layer (triggering a real reinit) instead
+    // of silently producing no output forever.
+    int consecutive_submit_failures = 0;
+    int consecutive_empty_outputs = 0;
+    static constexpr int MAX_CONSECUTIVE_FAILURES = 60;  // ~1s at 60fps
+
     std::string last_error_string;
   };
 
