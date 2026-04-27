@@ -2435,6 +2435,29 @@ namespace nvhttp {
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);
     https_server.config.port = port_https;
+    // Run nvhttps server with a small thread pool. The HTTPS endpoint serves
+    // SSL handshakes + request handlers on the same io_service. With the default
+    // single thread, any slow handshake / aborted SSL cleanup (e.g. a client
+    // sending TCP RST while in-flight HTTP/2 streams are open) blocks accept
+    // for all other clients until Sunshine is restarted. Multiple worker
+    // threads keep the listener responsive under such conditions.
+    https_server.config.thread_pool_size = 4;
+
+    // Clean up request_cert_uuid_map entries when a request fails before
+    // get_client_cert_uuid_from_request() is reached, otherwise stale entries
+    // (with expired weak_ptr) accumulate over the lifetime of the process.
+    https_server.on_error = [](req_https_t request, const SimpleWeb::error_code & /*ec*/) {
+      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
+      request_cert_uuid_map.erase(request.get());
+      // Opportunistic sweep of any other entries whose request has gone away.
+      for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
+        if (it->second.first.expired()) {
+          it = request_cert_uuid_map.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    };
 
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
     http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
