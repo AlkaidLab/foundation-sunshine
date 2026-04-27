@@ -90,6 +90,18 @@ namespace nvhttp {
 
   static std::string last_pair_name;
 
+  // Protects map_id_sess and last_pair_name. Pairing is rare and short-lived,
+  // a plain mutex is fine. The pair() request handler holds this for its full
+  // critical section (incl. nested calls to remove_session / fail_pair).
+  std::mutex map_id_sess_mutex;
+
+  // Protects client_root. Reads (SSL verify on every TLS handshake) are hot,
+  // writes (pair completion / unpair / rename / load_state) are rare, so use
+  // a shared_mutex. NEVER call save_state() while holding this mutex with
+  // unique ownership: save_state() takes a shared lock and std::shared_mutex
+  // does not support recursive locking.
+  std::shared_mutex client_root_mutex;
+
   // Preset PIN for QR code pairing
   static struct {
     std::string pin;
@@ -217,6 +229,7 @@ namespace nvhttp {
                   if (x509) {
                     std::string client_cert_pem = crypto::pem(x509);
                     // Find matching certificate UUID
+                    std::shared_lock<std::shared_mutex> cl(client_root_mutex);
                     for (const auto &named_cert : client_root.named_devices) {
                       if (named_cert.cert == client_cert_pem) {
                         // Store UUID in map using request pointer as key
@@ -325,16 +338,18 @@ namespace nvhttp {
     root.erase("root"s);
 
     root.put("root.uniqueid", http::unique_id);
-    client_t &client = client_root;
     pt::ptree node;
 
     pt::ptree named_cert_nodes;
-    for (auto &named_cert : client.named_devices) {
-      pt::ptree named_cert_node;
-      named_cert_node.put("name"s, named_cert.name);
-      named_cert_node.put("cert"s, named_cert.cert);
-      named_cert_node.put("uuid"s, named_cert.uuid);
-      named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
+    {
+      std::shared_lock<std::shared_mutex> cl(client_root_mutex);
+      for (auto &named_cert : client_root.named_devices) {
+        pt::ptree named_cert_node;
+        named_cert_node.put("name"s, named_cert.name);
+        named_cert_node.put("cert"s, named_cert.cert);
+        named_cert_node.put("uuid"s, named_cert.uuid);
+        named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
+      }
     }
     root.add_child("root.named_devices"s, named_cert_nodes);
 
@@ -413,17 +428,22 @@ namespace nvhttp {
       }
     }
 
-    client_root = client;
+    {
+      std::unique_lock<std::shared_mutex> ul(client_root_mutex);
+      client_root = std::move(client);
+    }
   }
 
   void
   add_authorized_client(const std::string &name, std::string &&cert) {
-    client_t &client = client_root;
     named_cert_t named_cert;
     named_cert.name = name;
     named_cert.cert = std::move(cert);
     named_cert.uuid = uuid_util::uuid_t::generate().string();
-    client.named_devices.emplace_back(named_cert);
+    {
+      std::unique_lock<std::shared_mutex> ul(client_root_mutex);
+      client_root.named_devices.emplace_back(std::move(named_cert));
+    }
 
     if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
       save_state();
@@ -529,6 +549,9 @@ namespace nvhttp {
 
   void
   remove_session(const pair_session_t &sess) {
+    // Caller MUST hold map_id_sess_mutex (called from fail_pair /
+    // clientpairingsecret, both invoked inside the pair() handler critical
+    // section).
     map_id_sess.erase(sess.client.uniqueID);
   }
 
@@ -835,6 +858,13 @@ namespace nvhttp {
 
     auto uniqID { get_arg(args, "uniqueid") };
 
+    // Serialize all access to map_id_sess and last_pair_name. The pair flow is
+    // multi-step (emplace -> later access via iterator -> later erase) and the
+    // map / iterators must not be touched by another worker thread mid-flight.
+    // Holding this for the whole handler is fine: pairing is rare and crypto
+    // is CPU-bound (no async waits).
+    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
+
     args_t::const_iterator it;
     if (it = args.find("phrase"); it != std::end(args)) {
       if (it->second == "getservercert"sv) {
@@ -915,6 +945,7 @@ namespace nvhttp {
   bool
   pin(std::string pin, std::string name) {
     pt::ptree tree;
+    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
     if (map_id_sess.empty()) {
       return false;
     }
@@ -1064,8 +1095,8 @@ namespace nvhttp {
   nlohmann::json
   get_all_clients() {
     nlohmann::json named_cert_nodes = nlohmann::json::array();
-    client_t &client = client_root;
-    for (auto &named_cert : client.named_devices) {
+    std::shared_lock<std::shared_mutex> cl(client_root_mutex);
+    for (auto &named_cert : client_root.named_devices) {
       nlohmann::json named_cert_node;
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
@@ -1077,6 +1108,7 @@ namespace nvhttp {
 
   std::string
   get_pair_name() {
+    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
     return last_pair_name;
   }
 
@@ -2514,8 +2546,10 @@ namespace nvhttp {
 
   void
   erase_all_clients() {
-    client_t client;
-    client_root = client;
+    {
+      std::unique_lock<std::shared_mutex> ul(client_root_mutex);
+      client_root = client_t {};
+    }
     {
       std::unique_lock<std::shared_mutex> ul(cert_chain_mutex);
       cert_chain.clear();
@@ -2526,14 +2560,17 @@ namespace nvhttp {
   int
   unpair_client(std::string uuid) {
     bool removed = false;
-    client_t &client = client_root;
-    for (auto it = client.named_devices.begin(); it != client.named_devices.end();) {
-      if ((*it).uuid == uuid) {
-        it = client.named_devices.erase(it);
-        removed = true;
-      }
-      else {
-        ++it;
+    {
+      std::unique_lock<std::shared_mutex> ul(client_root_mutex);
+      auto &devices = client_root.named_devices;
+      for (auto it = devices.begin(); it != devices.end();) {
+        if (it->uuid == uuid) {
+          it = devices.erase(it);
+          removed = true;
+        }
+        else {
+          ++it;
+        }
       }
     }
 
@@ -2544,14 +2581,20 @@ namespace nvhttp {
 
   bool
   rename_client(const std::string &uuid, const std::string &new_name) {
-    client_t &client = client_root;
-    for (auto &named_cert : client.named_devices) {
-      if (named_cert.uuid == uuid) {
-        named_cert.name = new_name;
-        save_state();
-        return true;
+    bool renamed = false;
+    {
+      std::unique_lock<std::shared_mutex> ul(client_root_mutex);
+      for (auto &named_cert : client_root.named_devices) {
+        if (named_cert.uuid == uuid) {
+          named_cert.name = new_name;
+          renamed = true;
+          break;
+        }
       }
     }
-    return false;
+    if (renamed) {
+      save_state();
+    }
+    return renamed;
   }
 }  // namespace nvhttp
