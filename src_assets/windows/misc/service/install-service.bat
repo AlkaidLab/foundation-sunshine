@@ -9,6 +9,11 @@ set "SERVICE_BIN=%ROOT_DIR%\tools\sunshinesvc.exe"
 set "SERVICE_CONFIG_DIR=%LOCALAPPDATA%\LizardByte\Sunshine"
 set "SERVICE_CONFIG_FILE=%SERVICE_CONFIG_DIR%\service_start_type.txt"
 
+if not exist "%SERVICE_BIN%" (
+    echo ERROR: Service binary not found: "%SERVICE_BIN%"
+    exit /b 1
+)
+
 rem Set service to demand start. It will be changed to auto later if the user selected that option.
 set SERVICE_START_TYPE=demand
 
@@ -58,13 +63,47 @@ if exist "%SERVICE_CONFIG_FILE%" (
 echo Setting service start type set to: [!SERVICE_START_TYPE!]
 
 rem Run the sc command to create/reconfigure the service
-sc %SC_CMD% %SERVICE_NAME% binPath= "%SERVICE_BIN%" start= %SERVICE_START_TYPE% DisplayName= "Sunshine Service"
+set "SC_START_TYPE=!SERVICE_START_TYPE!"
+if /I "!SERVICE_START_TYPE!"=="delayed-auto" set "SC_START_TYPE=auto"
+
+sc !SC_CMD! %SERVICE_NAME% binPath= "%SERVICE_BIN%" start= !SC_START_TYPE! DisplayName= "Sunshine Service"
+if errorlevel 1 (
+    echo ERROR: Failed to !SC_CMD! %SERVICE_NAME%.
+    exit /b 1
+)
+
+if /I "!SERVICE_START_TYPE!"=="delayed-auto" (
+    sc config %SERVICE_NAME% start= delayed-auto
+    if errorlevel 1 (
+        echo ERROR: Failed to configure delayed auto-start for %SERVICE_NAME%.
+        exit /b 1
+    )
+)
+
+sc qc %SERVICE_NAME% >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: %SERVICE_NAME% was not created.
+    exit /b 1
+)
 
 rem Set the description of the service
 sc description %SERVICE_NAME% "Sunshine is a self-hosted game stream host for Moonlight."
+if errorlevel 1 (
+    echo ERROR: Failed to set %SERVICE_NAME% description.
+    exit /b 1
+)
+
+if /I "!SERVICE_START_TYPE!"=="disabled" (
+    echo %SERVICE_NAME% installed with disabled start type; skipping service start.
+    exit /b 0
+)
 
 rem Start the new service
 net start %SERVICE_NAME%
+if errorlevel 1 (
+    echo ERROR: Failed to start %SERVICE_NAME%.
+    exit /b 1
+)
 
 rem Determine the Web UI port from config (default base port 47989 + 1 = 47990)
 set /a WEB_PORT=47990
@@ -100,3 +139,5 @@ set /a WAIT_COUNT+=1
 timeout /t 1 /nobreak >nul
 goto :wait_loop
 :wait_done
+
+exit /b 0
