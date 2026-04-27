@@ -99,6 +99,8 @@ english.FinishOpenDocs=Open documentation
 english.FinishLaunchGUI=Launch Sunshine GUI
 english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nIt must be uninstalled before continuing.%n%nUninstall the previous version now?
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
+english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
+english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%nPlease check the installer log and run the installer as administrator.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
@@ -137,6 +139,8 @@ chinesesimplified.FinishOpenDocs=打开使用文档
 chinesesimplified.FinishLaunchGUI=启动 Sunshine 管理界面
 chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%n需要先卸载才能继续。%n%n是否现在卸载旧版本？
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
+chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
+chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n请检查安装日志，并确认以管理员身份运行安装程序。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
@@ -464,6 +468,35 @@ begin
   end;
 end;
 
+// Best-effort: extract the install directory from the NSIS UninstallString
+// (which is typically the absolute path of Uninstall.exe, optionally quoted).
+function GetOldNSISInstallDir(UninstallString: String): String;
+var
+  Path: String;
+  SlashPos: Integer;
+begin
+  Result := '';
+  Path := RemoveQuotes(UninstallString);
+  if Path = '' then
+    Exit;
+  SlashPos := Length(Path);
+  while (SlashPos > 0) and (Path[SlashPos] <> '\') and (Path[SlashPos] <> '/') do
+    SlashPos := SlashPos - 1;
+  if SlashPos > 1 then
+    Result := Copy(Path, 1, SlashPos - 1);
+end;
+
+// Force-delete the NSIS uninstall registry entries left behind by an old
+// installation. Used as a fallback when the silent uninstall finishes but
+// the registry still claims the product is installed (or when the install
+// directory is already gone).
+function CleanupOldNSISRegistry(): Boolean;
+begin
+  RegDeleteKeyIncludingSubkeys(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  RegDeleteKeyIncludingSubkeys(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  Result := not DetectOldNSISInstall();
+end;
+
 // Read previous install directory from registry
 function GetPreviousInstallDir(Default: String): String;
 var
@@ -503,35 +536,91 @@ end;
 function InitializeSetup(): Boolean;
 var
   UninstallString: String;
+  UninstallExe: String;
+  InstallDir: String;
+  Params: String;
   ResultCode: Integer;
+  Waited: Integer;
 begin
   Result := True;
 
-  if DetectOldNSISInstall() then
+  if not DetectOldNSISInstall() then
+    Exit;
+
+  UninstallString := GetOldNSISUninstallString();
+  if UninstallString = '' then
+    Exit;
+
+  UninstallExe := RemoveQuotes(UninstallString);
+  InstallDir := GetOldNSISInstallDir(UninstallString);
+
+  // If the uninstaller binary itself is gone, the registry entry is just stale
+  // metadata. Offer to clean it up rather than blocking the install entirely.
+  if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    UninstallString := GetOldNSISUninstallString();
-    if UninstallString <> '' then
+    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
     begin
-      if MsgBox(CustomMessage('MsgOldNSISDetected'),
-        mbConfirmation, MB_YESNO) = IDYES then
+      if not CleanupOldNSISRegistry() then
       begin
-        // Run the NSIS uninstaller silently
-        Exec(RemoveQuotes(UninstallString), '/S', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
-        // Give it a moment to finish
-        Sleep(2000);
-        // Check if uninstall was successful
-        if DetectOldNSISInstall() then
-        begin
-          MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
-          Result := False;
-        end;
-      end
-      else
-      begin
+        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
         Result := False;
       end;
+    end
+    else
+    begin
+      Result := False;
+    end;
+    Exit;
+  end;
+
+  if MsgBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  // NSIS silent uninstall quirk: with bare '/S' the uninstaller copies itself
+  // to %TEMP% and re-launches a detached process, so ewWaitUntilTerminated
+  // returns almost immediately while the real cleanup is still running. Pass
+  // '_?=<InstallDir>' so the uninstaller runs in-place and we actually wait.
+  Params := '/S';
+  if (InstallDir <> '') and DirExists(InstallDir) then
+    Params := Params + ' _?=' + InstallDir;
+
+  Exec(UninstallExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  // Poll for up to ~60 seconds in case the uninstaller still detached or its
+  // post-uninstall steps (firewall/service/driver scripts) take a while.
+  Waited := 0;
+  while DetectOldNSISInstall() and (Waited < 60) do
+  begin
+    Sleep(1000);
+    Waited := Waited + 1;
+  end;
+
+  if not DetectOldNSISInstall() then
+    Exit;
+
+  // Still detected. If the install directory is empty/gone, the uninstaller
+  // succeeded at removing files but failed to delete its own registry key
+  // (a known NSIS issue when launched with _?=). Offer to clean it up so
+  // the user is not stuck in an unrecoverable state.
+  if (InstallDir = '') or (not DirExists(InstallDir)) or
+     (not FileExists(UninstallExe)) then
+  begin
+    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      if not CleanupOldNSISRegistry() then
+      begin
+        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        Result := False;
+      end;
+      Exit;
     end;
   end;
+
+  MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
+  Result := False;
 end;
 
 // Stop services and processes before installation to avoid locked files
