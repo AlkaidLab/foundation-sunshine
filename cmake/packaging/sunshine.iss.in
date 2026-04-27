@@ -537,8 +537,22 @@ begin
   // Fall back to HKLM32 for legacy 32-bit installs that wrote into Wow6432Node.
   if not Found then
     Found := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
-  if Found and (InstallDir <> '') and DirExists(InstallDir) and
+  if not Found or (InstallDir = '') then
+    Exit;
+  if DirExists(InstallDir) and
      FileExists(AddBackslash(InstallDir) + '{#MyAppExeName}') then
+  begin
+    Result := InstallDir;
+    Exit;
+  end;
+  // Silent-mode safety net (auto-update path):
+  // The GUI updater launches us with /VERYSILENT (no dir page, no user
+  // interaction). If the previous sunshine.exe is missing (user deleted/moved
+  // it, AV quarantine, etc.) but the registry still points at a real
+  // directory, prefer that directory over falling back to {autopf}\Sunshine
+  // so the silent auto-update reliably overwrites the original location
+  // instead of creating a duplicate install in Program Files.
+  if WizardSilent and DirExists(InstallDir) then
     Result := InstallDir;
 end;
 
