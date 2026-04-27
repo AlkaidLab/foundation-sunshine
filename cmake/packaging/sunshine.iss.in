@@ -501,17 +501,24 @@ end;
 function GetPreviousInstallDir(Default: String): String;
 var
   InstallDir: String;
+  Found: Boolean;
 begin
   Result := Default;
-  if RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir) then
-  begin
-    if DirExists(InstallDir) and FileExists(AddBackslash(InstallDir) + '{#MyAppExeName}') then
-      Result := InstallDir;
-  end;
+  Found := RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  // Fall back to HKLM32 for legacy 32-bit installs that wrote into Wow6432Node.
+  if not Found then
+    Found := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  if Found and (InstallDir <> '') and DirExists(InstallDir) and
+     FileExists(AddBackslash(InstallDir) + '{#MyAppExeName}') then
+    Result := InstallDir;
 end;
 
 procedure DeleteInstallDirRegistry();
 begin
+  // The HKLM64 InstallDir value is also covered by [Registry] uninsdeletevalue,
+  // but we explicitly clean HKLM32 legacy values (older installs may have
+  // written there) and prune empty parent keys regardless of the user's
+  // "keep data" choice.
   RegDeleteValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
   RegDeleteValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
   RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine');
@@ -523,13 +530,36 @@ end;
 procedure VerifyServiceInstalled();
 var
   ResultCode: Integer;
-  ExpectedPath: String;
+  TmpFile, ExpectedPath, Line, Lower: String;
+  Lines: TArrayOfString;
+  i: Integer;
+  Matched: Boolean;
 begin
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
-  if (not Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService | find /I "' + ExpectedPath + '" >nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+  TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice.txt');
+  // Redirect to a temp file and parse in Pascal so we don't depend on cmd.exe
+  // performing %VAR% expansion on the captured path or on `find` substring
+  // matching (which would mis-handle e.g. "sunshinesvc.exe.bak").
+  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Matched := False;
+  if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
   begin
-    RaiseException(CustomMessage('MsgServiceInstallFailed'));
+    Lower := Lowercase(ExpectedPath);
+    for i := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Line := Trim(Lines[i]);
+      if (Pos('BINARY_PATH_NAME', Uppercase(Line)) = 1) and
+         (Pos(Lower, Lowercase(Line)) > 0) then
+      begin
+        Matched := True;
+        Break;
+      end;
+    end;
   end;
+  DeleteFile(TmpFile);
+  if not Matched then
+    RaiseException(CustomMessage('MsgServiceInstallFailed'));
 end;
 
 // Initialization: handle old NSIS upgrade

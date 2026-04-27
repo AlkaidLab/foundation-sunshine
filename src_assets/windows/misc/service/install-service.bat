@@ -80,17 +80,20 @@ if /I "!SERVICE_START_TYPE!"=="delayed-auto" (
     )
 )
 
-sc qc %SERVICE_NAME% >nul 2>&1
+rem Verify the service was created/reconfigured AND that its binPath actually
+rem points to the binary we just shipped. Substring match is enough here
+rem because %SERVICE_BIN% is fully qualified and unique per install.
+sc qc %SERVICE_NAME% | find /I "%SERVICE_BIN%" >nul
 if errorlevel 1 (
-    echo ERROR: %SERVICE_NAME% was not created.
+    echo ERROR: %SERVICE_NAME% binPath does not match "%SERVICE_BIN%".
     exit /b 1
 )
 
-rem Set the description of the service
+rem Set the description of the service. Description is metadata only and can
+rem fail under SCM contention or AV interference; never abort install for it.
 sc description %SERVICE_NAME% "Sunshine is a self-hosted game stream host for Moonlight."
 if errorlevel 1 (
-    echo ERROR: Failed to set %SERVICE_NAME% description.
-    exit /b 1
+    echo WARNING: Failed to set %SERVICE_NAME% description; continuing.
 )
 
 if /I "!SERVICE_START_TYPE!"=="disabled" (
@@ -98,11 +101,16 @@ if /I "!SERVICE_START_TYPE!"=="disabled" (
     exit /b 0
 )
 
-rem Start the new service
+rem Start the new service. net start returns non-zero when the service is
+rem already running (e.g. SCM auto-started it after sc config), so verify the
+rem actual state via sc query before treating that as a failure.
 net start %SERVICE_NAME%
 if errorlevel 1 (
-    echo ERROR: Failed to start %SERVICE_NAME%.
-    exit /b 1
+    sc query %SERVICE_NAME% | find /I "RUNNING" >nul
+    if errorlevel 1 (
+        echo ERROR: Failed to start %SERVICE_NAME%.
+        exit /b 1
+    )
 )
 
 rem Determine the Web UI port from config (default base port 47989 + 1 = 47990)
