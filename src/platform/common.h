@@ -290,12 +290,14 @@ namespace platf {
     int width, height;
   };
 
-  // These values must match Limelight-internal.h's SS_FF_* constants!
+  // These are Sunshine-specific platform capability flags.
   namespace platform_caps {
     typedef uint32_t caps_t;
 
     constexpr caps_t pen_touch = 0x01;  // Pen and touch events
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
+    constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync
+    constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync
   };  // namespace platform_caps
 
   struct gamepad_state_t {
