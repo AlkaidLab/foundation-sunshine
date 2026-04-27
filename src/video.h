@@ -47,7 +47,7 @@ namespace video {
   };
 
   // 动态参数调节事件类型
-  using dynamic_param_change_event_t = safe::mail_raw_t::event_t<dynamic_param_t>;
+  using dynamic_param_change_event_t = safe::mail_raw_t::queue_t<dynamic_param_t>;
 
   /* Encoding configuration requested by remote client */
   struct config_t {
@@ -55,6 +55,9 @@ namespace video {
     int height;  // Video height in pixels
     int framerate;  // Requested framerate, used in individual frame bitrate budget calculation
     int bitrate;  // Video bitrate in kilobits (1000 bits) for requested framerate
+    int qualityCeilingBitrate;  // Maximum video bitrate permitted after probing, in kilobits
+    int qualityCeilingFramerate;  // Maximum framerate permitted after probing
+    int contentType;  // Client content hint: desktop/text/motion/game
     int slicesPerFrame;  // Number of slices per frame
     int numRefFrames;  // Max number of reference frames
 
@@ -431,7 +434,7 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
+    std::optional<dynamic_param_change_event_t> dynamic_param_events = std::nullopt);
 
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure);

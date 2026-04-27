@@ -5,6 +5,7 @@
 #include <csignal>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -1841,6 +1842,26 @@ namespace platf {
     DWORD bytes_sent;
     if (WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) == SOCKET_ERROR) {
       auto winerr = WSAGetLastError();
+      if (winerr == WSAEINVAL || winerr == WSAEADDRNOTAVAIL) {
+        std::vector<char> fallback_packet;
+        fallback_packet.reserve(send_info.header_size + send_info.payload_size);
+        if (send_info.header) {
+          fallback_packet.insert(fallback_packet.end(), send_info.header, send_info.header + send_info.header_size);
+        }
+        fallback_packet.insert(fallback_packet.end(), send_info.payload, send_info.payload + send_info.payload_size);
+
+        if (fallback_packet.size() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+            sendto((SOCKET) send_info.native_socket,
+                   fallback_packet.data(),
+                   static_cast<int>(fallback_packet.size()),
+                   0,
+                   msg.name,
+                   msg.namelen) != SOCKET_ERROR) {
+          BOOST_LOG(debug) << "WSASendMsg() failed with "sv << winerr
+                           << "; sent UDP packet via sendto fallback"sv;
+          return true;
+        }
+      }
       BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr;
       return false;
     }

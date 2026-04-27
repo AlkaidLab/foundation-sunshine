@@ -5,6 +5,9 @@
 #include "process.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
 #include <future>
 #include <iomanip>
 #include <queue>
@@ -46,9 +49,13 @@ extern "C" {
 #include "system_tray.h"
 #include "thread_safe.h"
 #include "utility.h"
+#include "weak_net_controller.h"
 
-#include "clipboard_bridge.h"
 #include "platform/common.h"
+
+#ifdef _WIN32
+  #include "platform/windows/clipboard.h"
+#endif
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -69,7 +76,7 @@ extern "C" {
 #define IDX_MIC_CONFIG 17
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
-#define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
+#define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -92,7 +99,7 @@ static const short packetTypes[] = {
   0x5505,  // Microphone config (Sunshine protocol extension)
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
-  0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
+  SS_CLIPBOARD_PTYPE,  // Clipboard sync (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -281,6 +288,11 @@ namespace stream {
     std::uint32_t ssrc;
   };
 
+  struct rtp_packet_session_ext_t {
+    rtp_packet_ext_t rtp;
+    char sessionToken[16];
+  };
+
 #pragma pack(pop)
 
   constexpr std::size_t
@@ -322,6 +334,9 @@ namespace stream {
           audio_payload::kPcmS16MaxFrameBytes,
           audio_payload::kOpusMaxFrameBytes,
       }) + audio_payload::kHeadroomBytes;
+
+  using audio_aes_t = std::array<char, round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE)>;
+  using mic_session_token_t = std::array<char, 16>;
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
@@ -394,6 +409,9 @@ namespace stream {
     bool
     validate(session_runtime::feature_e feature, const session_t &session);
 
+    bool
+    validate(const session_runtime::owner_token_t &token);
+
     session_runtime::owner_token_t
     owner(session_runtime::feature_e feature);
 
@@ -408,19 +426,17 @@ namespace stream {
 
   class resource_allocator_t {
   public:
-    session_runtime::owner_token_t
-    acquire_display_owner(const session_t &session);
+    session_runtime::display_allocation_t
+    acquire_display_resource(const session_t &session);
 
     void
-    release_display_owner(const session_t &session);
+    release_display_resource(const session_t &session);
 
-    session_runtime::owner_token_t
-    display_owner();
+    session_runtime::display_allocation_t
+    display_resource();
 
   private:
-    sync_util::sync_t<session_runtime::owner_token_t> _display_owner { session_runtime::owner_token_t {
-      session_runtime::feature_e::display,
-    } };
+    sync_util::sync_t<session_runtime::display_allocation_t> _display_resource;
   };
 
   class control_server_t {
@@ -541,6 +557,8 @@ namespace stream {
     // 使用 boost::container::flat_map 获得更好的缓存局部性（客户端数 N≤5，线性扫描比哈希更快）
     boost::container::flat_map<std::string, boost::shared_ptr<mic_cipher_ctx_t>> mic_ciphers;
     boost::container::flat_map<std::string, session_runtime::owner_token_t> mic_owners;
+    boost::container::flat_map<mic_session_token_t, boost::shared_ptr<mic_cipher_ctx_t>> mic_ciphers_by_token;
+    boost::container::flat_map<mic_session_token_t, session_runtime::owner_token_t> mic_owners_by_token;
     boost::mutex mic_cipher_mutex;
 
     // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
@@ -585,7 +603,7 @@ namespace stream {
 
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
-      safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
+      video::dynamic_param_change_event_t dynamic_param_change_events;  // 新增：动态参数调整队列
 
       std::unique_ptr<platf::deinit_t> qos;
     } video;
@@ -624,6 +642,23 @@ namespace stream {
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
+      struct {
+        bool bound { false };
+        bool transfer_active { false };
+        uint8_t item_type { LI_CLIPBOARD_ITEM_TYPE_NONE };
+        uint8_t transfer_flags { 0 };
+        std::uint64_t item_id { 0 };
+        std::uint64_t content_hash { 0 };
+        std::uint32_t total_length { 0 };
+        std::uint32_t received_length { 0 };
+        std::string mime_type;
+        std::string name;
+        std::vector<uint8_t> data;
+        std::uint32_t last_host_sequence { 0 };
+        std::uint64_t last_sent_hash { 0 };
+        bool suppress_next_host_echo { false };
+        std::uint64_t suppressed_host_hash { 0 };
+      } clipboard;
     } control;
 
     std::uint32_t launch_session_id;
@@ -643,6 +678,18 @@ namespace stream {
     // Current total bitrate for this session (including FEC overhead) in Kbps
     // This is the user-configured bitrate, not the encoding bitrate
     std::atomic<int> current_total_bitrate { 0 };
+    std::atomic<int> current_fec_percentage { 0 };
+    std::atomic<int> pacing_total_bitrate { 0 };
+    weak_net::controller_t weak_net_controller;
+    std::chrono::steady_clock::time_point last_weak_net_fec_feedback {};
+    std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
+    std::chrono::steady_clock::time_point weak_net_recovery_ready_after {};
+    int last_applied_weak_net_bitrate { 0 };
+    int last_applied_weak_net_fec { -1 };
+    int last_applied_weak_net_fps { 0 };
+    std::chrono::steady_clock::time_point last_weak_net_bitrate_apply {};
+    std::chrono::steady_clock::time_point last_weak_net_fec_apply {};
+    std::chrono::steady_clock::time_point last_weak_net_fps_apply {};
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
@@ -826,7 +873,22 @@ namespace stream {
     auto it = _owners->find(feature_key(feature));
     return it != _owners->end() &&
            it->second.runtime_id == session.identity.runtime_id &&
+           it->second.client_cert_key == session.identity.client_cert_key &&
            it->second.control_generation == session.identity.control_generation;
+  }
+
+  bool
+  feature_lease_registry_t::validate(const session_runtime::owner_token_t &token) {
+    if (!token) {
+      return false;
+    }
+
+    auto lg = _owners.lock();
+    auto it = _owners->find(feature_key(token.feature));
+    return it != _owners->end() &&
+           it->second.runtime_id == token.runtime_id &&
+           it->second.client_cert_key == token.client_cert_key &&
+           it->second.control_generation == token.control_generation;
   }
 
   session_runtime::owner_token_t
@@ -836,11 +898,39 @@ namespace stream {
     return it == _owners->end() ? session_runtime::owner_token_t { feature } : it->second;
   }
 
-  session_runtime::owner_token_t
-  resource_allocator_t::acquire_display_owner(const session_t &session) {
-    auto lg = _display_owner.lock();
-    if (_display_owner->runtime_id == 0) {
-      *_display_owner = session_runtime::owner_token_t {
+  static const char *
+  resource_scope_name(session_runtime::resource_scope_e scope) {
+    switch (scope) {
+      case session_runtime::resource_scope_e::per_session:
+        return "per-session";
+      case session_runtime::resource_scope_e::per_device:
+        return "per-device";
+      case session_runtime::resource_scope_e::global_exclusive:
+        return "global-exclusive";
+      case session_runtime::resource_scope_e::shared_global:
+      default:
+        return "shared-global";
+    }
+  }
+
+  static const char *
+  display_allocation_mode_name(session_runtime::display_allocation_mode_e mode) {
+    switch (mode) {
+      case session_runtime::display_allocation_mode_e::shared_follower:
+        return "shared-follower";
+      case session_runtime::display_allocation_mode_e::dedicated:
+        return "dedicated";
+      case session_runtime::display_allocation_mode_e::shared_owner:
+      default:
+        return "shared-owner";
+    }
+  }
+
+  session_runtime::display_allocation_t
+  resource_allocator_t::acquire_display_resource(const session_t &session) {
+    auto lg = _display_resource.lock();
+    if (!_display_resource->owner) {
+      _display_resource->owner = session_runtime::owner_token_t {
         session_runtime::feature_e::display,
         session.identity.runtime_id,
         session.identity.client_cert_key,
@@ -848,23 +938,201 @@ namespace stream {
       };
     }
 
-    return *_display_owner;
+    auto allocation = *_display_resource;
+    allocation.mode = allocation.owner.runtime_id == session.identity.runtime_id ?
+                        session_runtime::display_allocation_mode_e::shared_owner :
+                        session_runtime::display_allocation_mode_e::shared_follower;
+    return allocation;
   }
 
   void
-  resource_allocator_t::release_display_owner(const session_t &session) {
-    auto lg = _display_owner.lock();
-    if (_display_owner->runtime_id == session.identity.runtime_id) {
-      *_display_owner = session_runtime::owner_token_t {
+  resource_allocator_t::release_display_resource(const session_t &session) {
+    auto lg = _display_resource.lock();
+    if (_display_resource->owner.runtime_id == session.identity.runtime_id) {
+      _display_resource->owner = session_runtime::owner_token_t {
         session_runtime::feature_e::display,
       };
     }
   }
 
-  session_runtime::owner_token_t
-  resource_allocator_t::display_owner() {
-    auto lg = _display_owner.lock();
-    return *_display_owner;
+  session_runtime::display_allocation_t
+  resource_allocator_t::display_resource() {
+    auto lg = _display_resource.lock();
+    return *_display_resource;
+  }
+
+  static std::uint16_t
+  read_be16_unaligned(const void *ptr) {
+    std::uint16_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return util::endian::big(value);
+  }
+
+  static std::uint32_t
+  read_be32_unaligned(const void *ptr) {
+    std::uint32_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return util::endian::big(value);
+  }
+
+  static const char *
+  weak_net_state_name(weak_net::state_e state) {
+    switch (state) {
+      case weak_net::state_e::healthy:
+        return "healthy";
+      case weak_net::state_e::constrained:
+        return "constrained";
+      case weak_net::state_e::crisis:
+        return "crisis";
+      case weak_net::state_e::recovering:
+        return "recovering";
+      default:
+        return "unknown";
+    }
+  }
+
+  static int
+  total_video_bitrate_from_encoding_bitrate(int encoding_bitrate_kbps, int fec_percentage) {
+    if (encoding_bitrate_kbps <= 0) {
+      return encoding_bitrate_kbps;
+    }
+
+    fec_percentage = std::clamp(fec_percentage, 0, 80);
+    if (fec_percentage == 0) {
+      return encoding_bitrate_kbps;
+    }
+
+    return static_cast<int>(std::lround(
+      static_cast<double>(encoding_bitrate_kbps) * 100.0 /
+      static_cast<double>(100 - fec_percentage)));
+  }
+
+  bool
+  should_synthesize_weak_net_recovery_feedback(int ml_feature_flags) {
+    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+  }
+
+  bool
+  should_apply_frame_fec_weak_net_feedback(int ml_feature_flags) {
+    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+  }
+
+  static void
+  apply_weak_net_action(session_t *session, const weak_net::action_t &action, const char *source) {
+    if (!session || !action.changed) {
+      return;
+    }
+
+    const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 80);
+    const auto target_encoding_bitrate = action.target_bitrate_kbps;
+    const auto target_fps = action.target_fps;
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_weak_net_bitrate);
+    const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_weak_net_bitrate) / 50);
+    const bool apply_bitrate = target_encoding_bitrate > 0 &&
+                               (session->last_applied_weak_net_bitrate <= 0 ||
+                                (bitrate_delta >= bitrate_threshold &&
+                                 (session->last_weak_net_bitrate_apply.time_since_epoch().count() == 0 ||
+                                  now - session->last_weak_net_bitrate_apply >= 400ms)));
+    const bool apply_fec = target_fec_percentage >= 0 &&
+                           (session->last_applied_weak_net_fec < 0 ||
+                            (target_fec_percentage != session->last_applied_weak_net_fec &&
+                             (session->last_weak_net_fec_apply.time_since_epoch().count() == 0 ||
+                              now - session->last_weak_net_fec_apply >= 750ms)));
+    const bool apply_fps = target_fps > 0 &&
+                           (session->last_applied_weak_net_fps <= 0 ||
+                            (std::abs(target_fps - session->last_applied_weak_net_fps) >= 3 &&
+                             (session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ||
+                              now - session->last_weak_net_fps_apply >= 2500ms)));
+
+    const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
+                                                                                target_fec_percentage);
+    const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
+    session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
+    session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
+    session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
+
+    if (apply_fec) {
+      video::dynamic_param_t fec_param;
+      fec_param.type = video::dynamic_param_type_e::FEC_PERCENTAGE;
+      fec_param.value.int_value = target_fec_percentage;
+      fec_param.valid = true;
+      session->video.dynamic_param_change_events->raise(fec_param);
+      session->last_applied_weak_net_fec = target_fec_percentage;
+      session->last_weak_net_fec_apply = now;
+    }
+
+    if (apply_bitrate) {
+      video::dynamic_param_t bitrate_param;
+      bitrate_param.type = video::dynamic_param_type_e::BITRATE;
+      bitrate_param.value.int_value = target_encoding_bitrate;
+      bitrate_param.valid = true;
+      session->video.dynamic_param_change_events->raise(bitrate_param);
+      session->last_applied_weak_net_bitrate = target_encoding_bitrate;
+      session->last_weak_net_bitrate_apply = now;
+    }
+
+    if (apply_fps) {
+      video::dynamic_param_t fps_param;
+      fps_param.type = video::dynamic_param_type_e::FPS;
+      fps_param.value.float_value = static_cast<float>(target_fps);
+      fps_param.valid = true;
+      session->video.dynamic_param_change_events->raise(fps_param);
+      session->last_applied_weak_net_fps = target_fps;
+      session->last_weak_net_fps_apply = now;
+    }
+
+    if (action.request_idr) {
+      session->video.idr_events->raise(true);
+    }
+
+    BOOST_LOG(info) << "Weak-net controller [" << source << "] runtime="
+                    << session->identity.runtime_id
+                    << " state=" << weak_net_state_name(action.state)
+                    << " encoding=" << target_encoding_bitrate << " Kbps"
+                    << " total=" << target_total_bitrate << " Kbps"
+                    << " fps=" << target_fps
+                    << " fec=" << target_fec_percentage << "%"
+                    << " pacing=" << pacing_total_bitrate << " Kbps"
+                    << " apply(bitrate=" << (apply_bitrate ? 1 : 0)
+                    << ",fps=" << (apply_fps ? 1 : 0)
+                    << ",fec=" << (apply_fec ? 1 : 0) << ")"
+                    << (action.request_idr ? " idr=1" : "");
+  }
+
+  static void
+  report_weak_net_recovery_request(session_t *session, const char *source) {
+    if (!session) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (session->weak_net_recovery_ready_after.time_since_epoch().count() != 0 &&
+        now < session->weak_net_recovery_ready_after) {
+      return;
+    }
+    if (!should_synthesize_weak_net_recovery_feedback(session->config.mlFeatureFlags)) {
+      return;
+    }
+
+    if (session->last_weak_net_recovery_feedback.time_since_epoch().count() != 0 &&
+        now - session->last_weak_net_recovery_feedback < 250ms) {
+      return;
+    }
+    session->last_weak_net_recovery_feedback = now;
+
+    auto action = session->weak_net_controller.on_feedback({
+      .duration_ms = 250,
+      .frames_seen = 1,
+      .complete_frames = 0,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 1,
+      .missing_packets = 1,
+      .total_packets = 1,
+      .received_packets = 0,
+      .rtt_variance_ms = 120,
+    });
+    apply_weak_net_action(session, action, source);
   }
 
   /**
@@ -925,6 +1193,160 @@ namespace stream {
     return std::string_view { (char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq) };
   }
 
+  static inline std::string_view
+  encode_control(session_t *session, const std::string_view &plaintext, std::vector<std::uint8_t> &tagged_cipher) {
+    if (session->config.controlProtocolType != 13) {
+      return plaintext;
+    }
+
+    const auto minimum_size =
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size;
+    if (tagged_cipher.size() < minimum_size) {
+      return {};
+    }
+
+    auto seq = session->control.seq++;
+
+    auto &iv = session->control.outgoing_iv;
+    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
+      iv.resize(12);
+      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+      iv[10] = 'H';
+      iv[11] = 'C';
+    }
+    else {
+      iv.resize(16);
+      iv[0] = (std::uint8_t) seq;
+    }
+
+    auto packet = (control_encrypted_p) tagged_cipher.data();
+    auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
+    if (bytes <= 0) {
+      BOOST_LOG(error) << "Couldn't encrypt control data"sv;
+      return {};
+    }
+
+    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    packet->encryptedHeaderType = util::endian::little(0x0001);
+    packet->length = util::endian::little(packet_length);
+    packet->seq = util::endian::little(seq);
+
+    return std::string_view {
+      (char *) tagged_cipher.data(),
+      packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq),
+    };
+  }
+
+  namespace clipboard_payload {
+    std::vector<uint8_t>
+    build_item_start(uint8_t transfer_flags,
+                     uint8_t item_type,
+                     std::uint64_t item_id,
+                     std::uint64_t content_hash,
+                     std::uint32_t total_length,
+                     const std::string_view &mime_type,
+                     const std::string_view &name) {
+      std::vector<uint8_t> payload;
+      payload.reserve(1 + 1 + 1 + 1 + sizeof(std::uint64_t) + sizeof(std::uint64_t) +
+                      sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) +
+                      mime_type.size() + name.size());
+
+      auto append_bytes = [&payload](const auto &value) {
+        const auto *bytes = reinterpret_cast<const uint8_t *>(&value);
+        payload.insert(payload.end(), bytes, bytes + sizeof(value));
+      };
+
+      payload.push_back(LI_CLIPBOARD_MSG_ITEM_START);
+      payload.push_back(transfer_flags);
+      payload.push_back(item_type);
+      payload.push_back(0);
+
+      const auto little_item_id = util::endian::little(item_id);
+      const auto little_content_hash = util::endian::little(content_hash);
+      const auto little_total_length = util::endian::little(total_length);
+      const auto little_mime_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(mime_type.size()));
+      const auto little_name_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(name.size()));
+
+      append_bytes(little_item_id);
+      append_bytes(little_content_hash);
+      append_bytes(little_total_length);
+      append_bytes(little_mime_length);
+      append_bytes(little_name_length);
+      payload.insert(payload.end(), mime_type.begin(), mime_type.end());
+      payload.insert(payload.end(), name.begin(), name.end());
+      return payload;
+    }
+
+    std::vector<uint8_t>
+    build_item_chunk(std::uint64_t item_id,
+                     std::uint32_t chunk_offset,
+                     const std::string_view &chunk) {
+      std::vector<uint8_t> payload;
+      payload.reserve(1 + 1 + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint32_t) + chunk.size());
+
+      const auto little_chunk_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(chunk.size()));
+      const auto little_item_id = util::endian::little(item_id);
+      const auto little_chunk_offset = util::endian::little(chunk_offset);
+
+      payload.push_back(LI_CLIPBOARD_MSG_ITEM_CHUNK);
+      payload.push_back(0);
+      payload.insert(payload.end(),
+                     reinterpret_cast<const uint8_t *>(&little_chunk_length),
+                     reinterpret_cast<const uint8_t *>(&little_chunk_length) + sizeof(little_chunk_length));
+      payload.insert(payload.end(),
+                     reinterpret_cast<const uint8_t *>(&little_item_id),
+                     reinterpret_cast<const uint8_t *>(&little_item_id) + sizeof(little_item_id));
+      payload.insert(payload.end(),
+                     reinterpret_cast<const uint8_t *>(&little_chunk_offset),
+                     reinterpret_cast<const uint8_t *>(&little_chunk_offset) + sizeof(little_chunk_offset));
+      payload.insert(payload.end(), chunk.begin(), chunk.end());
+      return payload;
+    }
+
+    std::array<std::uint8_t, 1 + sizeof(std::uint64_t)>
+    build_item_end(std::uint64_t item_id) {
+      std::array<std::uint8_t, 1 + sizeof(std::uint64_t)> payload {};
+      payload[0] = LI_CLIPBOARD_MSG_ITEM_END;
+      const auto little_item_id = util::endian::little(item_id);
+      std::memcpy(payload.data() + 1, &little_item_id, sizeof(little_item_id));
+      return payload;
+    }
+  }  // namespace clipboard_payload
+
+  constexpr std::uint32_t max_clipboard_text_size = 1U * 1024U * 1024U;
+
+  bool
+  clipboard_transfer_length_valid(uint8_t item_type, std::uint32_t total_length) {
+    switch (item_type) {
+      case LI_CLIPBOARD_ITEM_TYPE_NONE:
+        return total_length == 0;
+      case LI_CLIPBOARD_ITEM_TYPE_IMAGE:
+        return total_length <= LI_CLIPBOARD_MAX_IMAGE_SIZE;
+      case LI_CLIPBOARD_ITEM_TYPE_TEXT:
+        return total_length <= max_clipboard_text_size;
+      default:
+        return false;
+    }
+  }
+
+  bool
+  clipboard_transfer_chunk_next_length(std::uint32_t received_length,
+                                       std::uint32_t total_length,
+                                       std::uint32_t chunk_offset,
+                                       std::uint16_t chunk_length,
+                                       std::uint32_t &next_received_length) {
+    if (chunk_offset != received_length ||
+        chunk_offset > total_length ||
+        chunk_length > total_length - chunk_offset) {
+      return false;
+    }
+
+    next_received_length = received_length + static_cast<std::uint32_t>(chunk_length);
+    return true;
+  }
+
   /**
    * @brief 确保麦克风 socket 处于打开状态。
    * 如果 socket 已关闭（上次会话结束时被关闭），则重新 open + bind。
@@ -968,19 +1390,116 @@ namespace stream {
     boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
     ctx.mic_ciphers.clear();
     ctx.mic_owners.clear();
+    ctx.mic_ciphers_by_token.clear();
+    ctx.mic_owners_by_token.clear();
   }
 
-  /**
-   * @brief 移除指定客户端的麦克风加密上下文。
-   * 在单个客户端会话结束时调用，不影响其他客户端的加密状态。
-   * @param ctx broadcast 上下文
-   * @param client_ip 客户端 IP 地址字符串
-   */
   void
-  remove_mic_encryption(broadcast_ctx_t &ctx, const std::string &client_ip) {
+  remove_mic_encryption_for_session(broadcast_ctx_t &ctx, const session_t &session) {
+    const auto client_ip = session.audio.peer.address().to_string();
     boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
     ctx.mic_ciphers.erase(client_ip);
     ctx.mic_owners.erase(client_ip);
+
+    for (auto it = ctx.mic_ciphers_by_token.begin(); it != ctx.mic_ciphers_by_token.end();) {
+      if (it->second && it->second->owner.runtime_id == session.identity.runtime_id) {
+        it = ctx.mic_ciphers_by_token.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+
+    for (auto it = ctx.mic_owners_by_token.begin(); it != ctx.mic_owners_by_token.end();) {
+      if (it->second.runtime_id == session.identity.runtime_id) {
+        it = ctx.mic_owners_by_token.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+  }
+
+  std::optional<mic_session_token_t>
+  mic_session_token_for_session(const session_t &session) {
+    if (session.audio.ping_payload.size() != std::tuple_size<mic_session_token_t>::value) {
+      return std::nullopt;
+    }
+
+    mic_session_token_t token {};
+    std::copy_n(session.audio.ping_payload.data(), token.size(), token.begin());
+    return token;
+  }
+
+  bool
+  activate_mic_owner_for_session(session_t &session) {
+    if (!session.audio.enable_mic || !session.broadcast_ref) {
+      return false;
+    }
+
+    auto &ctx = *session.broadcast_ref.get();
+    auto owner = ctx.feature_leases.acquire(session_runtime::feature_e::microphone, session);
+    const auto client_ip = session.audio.peer.address().to_string();
+    const bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
+
+    {
+      boost::lock_guard<boost::mutex> lg(ctx.client_name_mutex);
+      ctx.client_ip_to_name[client_ip] = session.client_name;
+    }
+
+    boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
+    ctx.mic_ciphers.clear();
+    ctx.mic_owners.clear();
+    ctx.mic_ciphers_by_token.clear();
+    ctx.mic_owners_by_token.clear();
+
+    boost::shared_ptr<broadcast_ctx_t::mic_cipher_ctx_t> cipher_ctx;
+    if (should_enable_mic_encryption) {
+      cipher_ctx = boost::make_shared<broadcast_ctx_t::mic_cipher_ctx_t>(
+        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId, owner);
+      ctx.mic_ciphers[client_ip] = cipher_ctx;
+    }
+    ctx.mic_owners[client_ip] = owner;
+    if (auto token = mic_session_token_for_session(session)) {
+      ctx.mic_owners_by_token[*token] = owner;
+      if (cipher_ctx) {
+        ctx.mic_ciphers_by_token[*token] = cipher_ctx;
+      }
+    }
+
+    BOOST_LOG(info) << "Client " << session.client_name << ": Microphone owner is runtime session "
+                    << session.identity.runtime_id << " for " << client_ip
+                    << (should_enable_mic_encryption ? " with encryption" : " without encryption");
+    return true;
+  }
+
+  bool
+  promote_mic_owner_if_needed(broadcast_ctx_t &ctx, const session_t *ended_session) {
+    auto owner = ctx.feature_leases.owner(session_runtime::feature_e::microphone);
+    if (owner &&
+        (!ended_session || owner.runtime_id != ended_session->identity.runtime_id) &&
+        ctx.feature_leases.validate(owner)) {
+      return true;
+    }
+
+    auto sessions_lock = ctx.control_server._sessions.lock();
+    for (auto *candidate : *ctx.control_server._sessions) {
+      if (!candidate ||
+          candidate == ended_session ||
+          candidate->control_only ||
+          !candidate->audio.enable_mic ||
+          candidate->state.load(std::memory_order_acquire) != session::state_e::RUNNING) {
+        continue;
+      }
+
+      return activate_mic_owner_for_session(*candidate);
+    }
+
+    if (ended_session) {
+      ctx.feature_leases.release(session_runtime::feature_e::microphone, *ended_session);
+    }
+    reset_mic_encryption(ctx);
+    return false;
   }
 
   /**
@@ -1006,41 +1525,12 @@ namespace stream {
 
     ctx.mic_socket_enabled.store(true);
 
-    // 注册客户端 IP → 名称映射（用于麦克风统计日志）
-    std::string client_ip = session.audio.peer.address().to_string();
-    {
-      boost::lock_guard<boost::mutex> lg(ctx.client_name_mutex);
-      ctx.client_ip_to_name[client_ip] = session.client_name;
-      BOOST_LOG(debug) << "Registered client mapping: " << client_ip << " -> " << session.client_name;
-    }
+    return activate_mic_owner_for_session(session);
+  }
 
-    // 检查是否需要启用 MIC 加密
-    bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
-    auto owner = ctx.feature_leases.acquire(session_runtime::feature_e::microphone, session);
-    if (should_enable_mic_encryption) {
-      boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-      // Current protocol has no mic stream token, so only one reliable mic owner
-      // can be active without risking same-IP/VM/NAT cross-session reuse.
-      ctx.mic_ciphers.clear();
-      ctx.mic_owners.clear();
-      ctx.mic_ciphers[client_ip] = boost::make_shared<broadcast_ctx_t::mic_cipher_ctx_t>(
-        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId, owner);
-      ctx.mic_owners[client_ip] = owner;
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED"
-                      << " (runtime_id=" << session.identity.runtime_id
-                      << ", owner registered for " << client_ip << ")";
-    }
-    else {
-      boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-      ctx.mic_ciphers.clear();
-      ctx.mic_owners.clear();
-      ctx.mic_owners[client_ip] = owner;
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED"
-                      << " (runtime_id=" << session.identity.runtime_id
-                      << ", plaintext owner registered for " << client_ip << ")";
-    }
-
-    return true;
+  void
+  refresh_mic_owner_for_session(session_t &session) {
+    activate_mic_owner_for_session(session);
   }
 
   int
@@ -1078,6 +1568,7 @@ namespace stream {
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
 
       _registry.bind_control_peer(session, peer);
+      refresh_mic_owner_for_session(*session);
       auto ptslg = _peer_to_session.lock();
       _peer_to_session->emplace(peer, session);
       return session;
@@ -1130,6 +1621,7 @@ namespace stream {
 
       // Insert this into the map for O(1) lookups in the future
       _registry.bind_control_peer(session_p, peer);
+      refresh_mic_owner_for_session(*session_p);
       auto ptslg = _peer_to_session.lock();
       _peer_to_session->emplace(peer, session_p);
       return session_p;
@@ -1567,117 +2059,288 @@ namespace stream {
     return 0;
   }
 
-  /**
-   * Variable-length sibling of encode_control(). Encrypts an arbitrary-sized
-   * plaintext into the caller-provided output buffer. The output buffer must be
-   * at least `sizeof(control_encrypted_t) + round_to_pkcs7_padded(plaintext.size()) + tag_size`.
-   * Returns the encoded view, or empty on failure / insufficient capacity.
-   */
-  static std::string_view
-  encode_control_buf(session_t *session, std::string_view plaintext, std::uint8_t *out, std::size_t out_cap) {
-    const std::size_t needed = sizeof(control_encrypted_t)
-                               + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
-                               + crypto::cipher::tag_size;
-    if (out_cap < needed) {
-      BOOST_LOG(error) << "encode_control_buf: insufficient buffer ("sv << out_cap << " < "sv << needed << ")"sv;
-      return {};
+  int
+  send_clipboard_payload(session_t *session, const std::string_view &clipboard_payload) {
+    constexpr std::size_t max_clipboard_control_payload = 0xFFFFu;
+
+    if (!session->control.peer) {
+      BOOST_LOG(warning) << "Couldn't send clipboard payload, still waiting for PING from Moonlight"sv;
+      return -1;
+    }
+    if (clipboard_payload.size() > max_clipboard_control_payload) {
+      BOOST_LOG(error) << "Clipboard control payload too large: " << clipboard_payload.size();
+      return -1;
     }
 
-    if (session->config.controlProtocolType != 13) {
-      // Pre-v2 control protocol — caller must already have written plaintext;
-      // not used by clipboard sync (gated by gui_alive() + capability flags).
-      return plaintext;
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + clipboard_payload.size());
+    auto *header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    header->type = packetTypes[IDX_CLIPBOARD];
+    header->payloadLength = static_cast<std::uint16_t>(clipboard_payload.size());
+    if (!clipboard_payload.empty()) {
+      std::memcpy(header->payload(), clipboard_payload.data(), clipboard_payload.size());
     }
 
-    auto seq = session->control.seq++;
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
 
-    auto &iv = session->control.outgoing_iv;
-    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
-      iv.resize(12);
-      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
-      iv[10] = 'H';
-      iv[11] = 'C';
-    }
-    else {
-      iv.resize(16);
-      iv[0] = (std::uint8_t) seq;
-    }
-
-    auto packet = (control_encrypted_p) out;
-    auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
-    if (bytes <= 0) {
-      BOOST_LOG(error) << "encode_control_buf: encrypt failed"sv;
-      return {};
+    auto payload = encode_control(session,
+                                  std::string_view {
+                                    reinterpret_cast<char *>(plaintext.data()),
+                                    plaintext.size(),
+                                  },
+                                  encrypted_payload);
+    if (payload.empty()) {
+      BOOST_LOG(error) << "Couldn't encode clipboard control payload";
+      return -1;
     }
 
-    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
-    packet->encryptedHeaderType = util::endian::little(0x0001);
-    packet->length = util::endian::little(packet_length);
-    packet->seq = util::endian::little(seq);
+    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send clipboard payload to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
 
-    return std::string_view {
-      (char *) out,
-      packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)
-    };
+    return 0;
   }
 
-  /**
-   * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
-   * an opaque byte string; this function adds the framing header and encrypts.
-   * Returns 0 on success, -1 on failure or oversized payload. The raw payload
-   * is capped below 65535 bytes so the encrypted control frame length also
-   * fits in the protocol's 16-bit length field.
-   */
   int
-  send_clipboard(session_t *session, const clipboard_bridge::payload_t &payload) {
-    if (!session->control.peer) {
+  send_small_clipboard_payload(session_t *session, const std::string_view &clipboard_payload) {
+    constexpr std::size_t max_clipboard_plaintext_payload = 128;
+    if (clipboard_payload.size() > max_clipboard_plaintext_payload) {
+      BOOST_LOG(error) << "Clipboard payload too large for small-payload helper: " << clipboard_payload.size();
+      return -1;
+    }
+    return send_clipboard_payload(session, clipboard_payload);
+  }
+
+  int
+  send_clipboard_item(session_t *session,
+                      uint8_t transfer_flags,
+                      uint8_t item_type,
+                      const std::string_view &mime_type,
+                      const std::string_view &name,
+                      const std::vector<std::uint8_t> &data,
+                      std::uint64_t content_hash) {
+    const auto item_id = static_cast<std::uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+
+    const auto start_payload = clipboard_payload::build_item_start(transfer_flags,
+                                                                   item_type,
+                                                                   item_id,
+                                                                   content_hash,
+                                                                   static_cast<std::uint32_t>(data.size()),
+                                                                   mime_type,
+                                                                   name);
+    if (send_clipboard_payload(session,
+                               std::string_view {
+                                 reinterpret_cast<const char *>(start_payload.data()),
+                                 start_payload.size(),
+                               }) != 0) {
       return -1;
     }
 
-    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
-    const std::size_t encrypted_packet_length =
-      crypto::cipher::round_to_pkcs7_padded(plaintext_size)
-      + crypto::cipher::tag_size
-      + sizeof(control_encrypted_t::seq);
-    if (payload.size() > clipboard_bridge::kMaxPayloadBytes ||
-        encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
-      BOOST_LOG(warning) << "send_clipboard: payload too large ("sv << payload.size()
-                         << " bytes; encrypted control frame would be "sv
-                         << encrypted_packet_length << " bytes)"sv;
-      return -1;
+    for (std::size_t offset = 0; offset < data.size(); offset += LI_CLIPBOARD_MAX_CHUNK_SIZE) {
+      const auto chunk_length = std::min<std::size_t>(LI_CLIPBOARD_MAX_CHUNK_SIZE, data.size() - offset);
+      const auto chunk_payload = clipboard_payload::build_item_chunk(item_id,
+                                                                     static_cast<std::uint32_t>(offset),
+                                                                     std::string_view {
+                                                                       reinterpret_cast<const char *>(data.data() + offset),
+                                                                       chunk_length,
+                                                                     });
+      if (send_clipboard_payload(session,
+                                 std::string_view {
+                                   reinterpret_cast<const char *>(chunk_payload.data()),
+                                   chunk_payload.size(),
+                                 }) != 0) {
+        return -1;
+      }
     }
 
-    std::vector<std::uint8_t> plaintext(plaintext_size);
-    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
-    hdr->type = packetTypes[IDX_CLIPBOARD];
-    hdr->payloadLength = (std::uint16_t) payload.size();
-    if (!payload.empty()) {
-      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
-    }
+    const auto end_payload = clipboard_payload::build_item_end(item_id);
+    return send_small_clipboard_payload(session,
+                                        std::string_view {
+                                          reinterpret_cast<const char *>(end_payload.data()),
+                                          end_payload.size(),
+                                        });
+  }
 
-    std::vector<std::uint8_t> encrypted(
-      sizeof(control_encrypted_t)
-      + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
-      + crypto::cipher::tag_size);
-
-    auto view = encode_control_buf(
-      session,
-      std::string_view { (char *) plaintext.data(), plaintext.size() },
-      encrypted.data(),
-      encrypted.size());
-    if (view.empty()) {
-      return -1;
-    }
-
-    if (session->broadcast_ref->control_server.send(view, session->control.peer)) {
-      BOOST_LOG(warning) << "Couldn't send clipboard packet"sv;
-      return -1;
-    }
-    return 0;
+  int
+  send_empty_clipboard_snapshot(session_t *session) {
+    return send_clipboard_item(session,
+                               LI_CLIPBOARD_TRANSFER_FLAG_SNAPSHOT,
+                               LI_CLIPBOARD_ITEM_TYPE_NONE,
+                               {},
+                               {},
+                               {},
+                               0);
   }
 
   void
   controlBroadcastThread(control_server_t *server) {
+    auto reset_clipboard_transfer = [](session_t *session) {
+      session->control.clipboard.transfer_active = false;
+      session->control.clipboard.item_type = LI_CLIPBOARD_ITEM_TYPE_NONE;
+      session->control.clipboard.transfer_flags = 0;
+      session->control.clipboard.item_id = 0;
+      session->control.clipboard.content_hash = 0;
+      session->control.clipboard.total_length = 0;
+      session->control.clipboard.received_length = 0;
+      session->control.clipboard.mime_type.clear();
+      session->control.clipboard.name.clear();
+      std::vector<std::uint8_t>().swap(session->control.clipboard.data);
+    };
+
+    auto clear_clipboard_binding = [reset_clipboard_transfer](session_t *session) {
+      session->control.clipboard.bound = false;
+      session->control.clipboard.last_host_sequence = 0;
+      session->control.clipboard.last_sent_hash = 0;
+      session->control.clipboard.suppress_next_host_echo = false;
+      session->control.clipboard.suppressed_host_hash = 0;
+      reset_clipboard_transfer(session);
+    };
+
+    auto is_clipboard_owner = [](session_t *session) {
+      return session &&
+             session->control.clipboard.bound &&
+             session->broadcast_ref &&
+             session->broadcast_ref->feature_leases.validate(session_runtime::feature_e::clipboard, *session);
+    };
+
+    auto client_supports_clipboard = [](session_t *session) {
+      return session &&
+             (session->config.mlFeatureFlags & (ML_FF_CLIPBOARD_TEXT | ML_FF_CLIPBOARD_IMAGE)) != 0;
+    };
+
+    auto client_supports_clipboard_item = [](session_t *session, uint8_t item_type) {
+      if (!session) {
+        return false;
+      }
+
+      switch (item_type) {
+        case LI_CLIPBOARD_ITEM_TYPE_NONE:
+          return true;
+        case LI_CLIPBOARD_ITEM_TYPE_TEXT:
+          return (session->config.mlFeatureFlags & ML_FF_CLIPBOARD_TEXT) != 0;
+        case LI_CLIPBOARD_ITEM_TYPE_IMAGE:
+          return (session->config.mlFeatureFlags & ML_FF_CLIPBOARD_IMAGE) != 0;
+        default:
+          return false;
+      }
+    };
+
+#ifdef _WIN32
+    auto send_host_clipboard_snapshot = [client_supports_clipboard_item](session_t *session,
+                                                                         uint8_t transfer_flags,
+                                                                         bool update_sequence_tracking) {
+      platf::clipboard::item_t item;
+      std::string reason;
+      const auto sequence = platf::clipboard::current_sequence_number();
+
+      if (!platf::clipboard::read_current_item(item, &reason)) {
+        BOOST_LOG(warning) << "Failed to read Windows clipboard: " << reason;
+        return -1;
+      }
+
+      if (item.type == LI_CLIPBOARD_ITEM_TYPE_NONE) {
+        if (update_sequence_tracking) {
+          session->control.clipboard.last_host_sequence = sequence;
+          session->control.clipboard.last_sent_hash = 0;
+        }
+
+        if ((transfer_flags & LI_CLIPBOARD_TRANSFER_FLAG_SNAPSHOT) != 0) {
+          return send_empty_clipboard_snapshot(session);
+        }
+
+        if (reason.find("size limit") != std::string::npos) {
+          BOOST_LOG(info) << "Skipping clipboard update: " << reason;
+        }
+        else {
+          BOOST_LOG(debug) << "Skipping empty/unsupported clipboard update: " << reason;
+        }
+        return 0;
+      }
+
+      if (!client_supports_clipboard_item(session, item.type)) {
+        BOOST_LOG(debug) << "Skipping host clipboard item type " << static_cast<int>(item.type)
+                         << " because client did not negotiate this clipboard capability";
+        return 0;
+      }
+
+      if (session->control.clipboard.suppress_next_host_echo &&
+          session->control.clipboard.suppressed_host_hash == item.content_hash) {
+        session->control.clipboard.suppress_next_host_echo = false;
+        session->control.clipboard.suppressed_host_hash = 0;
+        if (update_sequence_tracking) {
+          session->control.clipboard.last_host_sequence = sequence;
+          session->control.clipboard.last_sent_hash = item.content_hash;
+        }
+        BOOST_LOG(debug) << "Suppressed echoed host clipboard item hash=" << item.content_hash;
+        return 0;
+      }
+
+      if (send_clipboard_item(session,
+                              transfer_flags,
+                              item.type,
+                              item.mime_type,
+                              item.name,
+                              item.data,
+                              item.content_hash) != 0) {
+        BOOST_LOG(warning) << "Failed to send host clipboard item to client " << session->client_name;
+        return -1;
+      }
+
+      if (update_sequence_tracking) {
+        session->control.clipboard.last_host_sequence = sequence;
+        session->control.clipboard.last_sent_hash = item.content_hash;
+      }
+
+      BOOST_LOG(info) << "Sent host clipboard item to client " << session->client_name
+                      << " type=" << static_cast<int>(item.type)
+                      << " length=" << item.data.size()
+                      << " flags=0x" << std::hex << static_cast<int>(transfer_flags) << std::dec;
+      return 0;
+    };
+
+    auto maybe_send_host_clipboard_update = [send_host_clipboard_snapshot, is_clipboard_owner, client_supports_clipboard](session_t *session) {
+      if (!config::input.clipboard_sync ||
+          !client_supports_clipboard(session) ||
+          !is_clipboard_owner(session) ||
+          !platf::clipboard::is_backend_available()) {
+        return;
+      }
+
+      const auto host_sequence = platf::clipboard::current_sequence_number();
+      if (host_sequence != 0 &&
+          host_sequence != session->control.clipboard.last_host_sequence) {
+        if (send_host_clipboard_snapshot(session, 0, true) != 0) {
+          BOOST_LOG(warning) << "Failed to send clipboard change update to client " << session->client_name;
+        }
+      }
+    };
+#else
+    auto maybe_send_host_clipboard_update = [](session_t *) {};
+#endif
+
+    auto read_u16_le = [](const char *ptr) -> std::uint16_t {
+      std::uint16_t value {};
+      std::memcpy(&value, ptr, sizeof(value));
+      return util::endian::little(value);
+    };
+
+    auto read_u32_le = [](const char *ptr) -> std::uint32_t {
+      std::uint32_t value {};
+      std::memcpy(&value, ptr, sizeof(value));
+      return util::endian::little(value);
+    };
+
+    auto read_u64_le = [](const char *ptr) -> std::uint64_t {
+      std::uint64_t value {};
+      std::memcpy(&value, ptr, sizeof(value));
+      return util::endian::little(value);
+    };
+
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
     });
@@ -1688,6 +2351,275 @@ namespace stream {
 
     server->map(packetTypes[IDX_START_B], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_START_B]"sv;
+    });
+
+    server->map(packetTypes[IDX_CLIPBOARD], [&, reset_clipboard_transfer, clear_clipboard_binding, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item, read_u16_le, read_u32_le, read_u64_le](session_t *session, const std::string_view &payload) {
+      BOOST_LOG(debug) << "type [IDX_CLIPBOARD]"sv;
+
+#ifdef _WIN32
+      if (!config::input.clipboard_sync || !platf::clipboard::is_backend_available()) {
+        session->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *session);
+        clear_clipboard_binding(session);
+        BOOST_LOG(debug) << "Ignoring clipboard control packet because clipboard sync is disabled"sv;
+        return;
+      }
+#endif
+
+      if (payload.empty()) {
+        BOOST_LOG(warning) << "Clipboard payload was empty";
+        return;
+      }
+
+      const auto *bytes = reinterpret_cast<const std::uint8_t *>(payload.data());
+      std::size_t pos = 1;
+      const auto kind = bytes[0];
+
+      switch (kind) {
+        case LI_CLIPBOARD_MSG_BIND: {
+          if (!client_supports_clipboard(session)) {
+            BOOST_LOG(warning) << "Ignoring clipboard bind from client without negotiated clipboard capability " << session->client_name;
+            break;
+          }
+          auto sessions_lock = server->_sessions.lock();
+          for (auto *other: *server->_sessions) {
+            if (other != session) {
+              clear_clipboard_binding(other);
+            }
+          }
+          reset_clipboard_transfer(session);
+          session->broadcast_ref->feature_leases.acquire(session_runtime::feature_e::clipboard, *session);
+          session->control.clipboard.bound = true;
+          session->control.clipboard.last_host_sequence = 0;
+          session->control.clipboard.last_sent_hash = 0;
+          session->control.clipboard.suppress_next_host_echo = false;
+          session->control.clipboard.suppressed_host_hash = 0;
+          BOOST_LOG(info) << "Clipboard session bound for client " << session->client_name;
+          break;
+        }
+        case LI_CLIPBOARD_MSG_UNBIND:
+          session->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *session);
+          clear_clipboard_binding(session);
+          BOOST_LOG(info) << "Clipboard session unbound for client " << session->client_name;
+          break;
+        case LI_CLIPBOARD_MSG_SNAPSHOT_REQUEST:
+          if (!is_clipboard_owner(session)) {
+            BOOST_LOG(warning) << "Ignoring clipboard snapshot request from non-owner client " << session->client_name;
+            break;
+          }
+          if (!client_supports_clipboard(session)) {
+            BOOST_LOG(warning) << "Ignoring clipboard snapshot request from client without negotiated clipboard capability " << session->client_name;
+            break;
+          }
+          BOOST_LOG(info) << "Clipboard snapshot requested by client " << session->client_name;
+#ifdef _WIN32
+          if (platf::clipboard::is_backend_available()) {
+            if (send_host_clipboard_snapshot(session, LI_CLIPBOARD_TRANSFER_FLAG_SNAPSHOT, true) != 0) {
+              BOOST_LOG(warning) << "Failed to send clipboard snapshot to client " << session->client_name;
+            }
+            break;
+          }
+#endif
+          if (send_empty_clipboard_snapshot(session) != 0) {
+            BOOST_LOG(warning) << "Failed to send empty clipboard snapshot to client " << session->client_name;
+          }
+          break;
+        case LI_CLIPBOARD_MSG_ITEM_START: {
+          constexpr std::size_t header_size =
+            1 + 1 + 1 + 1 + sizeof(std::uint64_t) + sizeof(std::uint64_t) +
+            sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t);
+          if (!is_clipboard_owner(session)) {
+            reset_clipboard_transfer(session);
+            BOOST_LOG(warning) << "Ignoring clipboard item start from non-owner client " << session->client_name;
+            return;
+          }
+          if (payload.size() < header_size) {
+            BOOST_LOG(warning) << "Clipboard ITEM_START was truncated";
+            return;
+          }
+
+          const auto transfer_flags = bytes[pos++];
+          const auto item_type = bytes[pos++];
+          pos++;  // reserved
+          if (!client_supports_clipboard_item(session, item_type)) {
+            reset_clipboard_transfer(session);
+            BOOST_LOG(warning) << "Ignoring clipboard item type " << static_cast<int>(item_type)
+                               << " from client without negotiated type capability " << session->client_name;
+            return;
+          }
+          const auto item_id = read_u64_le(payload.data() + pos);
+          pos += sizeof(std::uint64_t);
+          const auto content_hash = read_u64_le(payload.data() + pos);
+          pos += sizeof(std::uint64_t);
+          const auto total_length = read_u32_le(payload.data() + pos);
+          pos += sizeof(std::uint32_t);
+          const auto mime_length = read_u16_le(payload.data() + pos);
+          pos += sizeof(std::uint16_t);
+          const auto name_length = read_u16_le(payload.data() + pos);
+          pos += sizeof(std::uint16_t);
+
+          if (payload.size() < pos + mime_length + name_length) {
+            BOOST_LOG(warning) << "Clipboard ITEM_START metadata exceeded payload size";
+            return;
+          }
+
+          if (!clipboard_transfer_length_valid(item_type, total_length)) {
+            BOOST_LOG(warning) << "Clipboard ITEM_START exceeded size limits for client "
+                               << session->client_name
+                               << " type=" << static_cast<int>(item_type)
+                               << " length=" << total_length;
+            return;
+          }
+
+          reset_clipboard_transfer(session);
+          session->control.clipboard.transfer_active = true;
+          session->control.clipboard.transfer_flags = transfer_flags;
+          session->control.clipboard.item_type = item_type;
+          session->control.clipboard.item_id = item_id;
+          session->control.clipboard.content_hash = content_hash;
+          session->control.clipboard.total_length = total_length;
+          session->control.clipboard.received_length = 0;
+          session->control.clipboard.mime_type.assign(payload.substr(pos, mime_length));
+          pos += mime_length;
+          session->control.clipboard.name.assign(payload.substr(pos, name_length));
+          pos += name_length;
+          session->control.clipboard.data.assign(total_length, 0);
+          BOOST_LOG(info) << "Clipboard ITEM_START from client " << session->client_name
+                          << " type=" << static_cast<int>(item_type)
+                          << " length=" << total_length;
+          break;
+        }
+        case LI_CLIPBOARD_MSG_ITEM_CHUNK: {
+          constexpr std::size_t header_size =
+            1 + 1 + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint32_t);
+          if (!is_clipboard_owner(session)) {
+            reset_clipboard_transfer(session);
+            BOOST_LOG(warning) << "Ignoring clipboard item chunk from non-owner client " << session->client_name;
+            return;
+          }
+          if (payload.size() < header_size) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK was truncated";
+            return;
+          }
+
+          pos++;  // reserved
+          const auto chunk_length = read_u16_le(payload.data() + pos);
+          pos += sizeof(std::uint16_t);
+          const auto item_id = read_u64_le(payload.data() + pos);
+          pos += sizeof(std::uint64_t);
+          const auto chunk_offset = read_u32_le(payload.data() + pos);
+          pos += sizeof(std::uint32_t);
+
+          if (!session->control.clipboard.transfer_active ||
+              session->control.clipboard.item_id != item_id) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK had no active transfer";
+            return;
+          }
+
+          if (payload.size() < pos + chunk_length) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK bounds were invalid";
+            reset_clipboard_transfer(session);
+            return;
+          }
+
+          std::uint32_t next_received_length = 0;
+          if (!clipboard_transfer_chunk_next_length(session->control.clipboard.received_length,
+                                                    session->control.clipboard.total_length,
+                                                    chunk_offset,
+                                                    chunk_length,
+                                                    next_received_length)) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK was out of order or invalid";
+            reset_clipboard_transfer(session);
+            return;
+          }
+
+          if (chunk_length != 0) {
+            std::memcpy(session->control.clipboard.data.data() + chunk_offset,
+                        payload.data() + pos,
+                        chunk_length);
+          }
+          session->control.clipboard.received_length = next_received_length;
+          break;
+        }
+        case LI_CLIPBOARD_MSG_ITEM_END: {
+          constexpr std::size_t header_size = 1 + sizeof(std::uint64_t);
+          if (!is_clipboard_owner(session)) {
+            reset_clipboard_transfer(session);
+            BOOST_LOG(warning) << "Ignoring clipboard item end from non-owner client " << session->client_name;
+            return;
+          }
+          if (payload.size() < header_size) {
+            BOOST_LOG(warning) << "Clipboard ITEM_END was truncated";
+            return;
+          }
+
+          const auto item_id = read_u64_le(payload.data() + pos);
+          if (!session->control.clipboard.transfer_active ||
+              session->control.clipboard.item_id != item_id) {
+            BOOST_LOG(warning) << "Clipboard ITEM_END had no matching transfer";
+            return;
+          }
+
+          if (session->control.clipboard.received_length !=
+              session->control.clipboard.total_length) {
+            BOOST_LOG(warning) << "Clipboard ITEM_END before transfer completion";
+            reset_clipboard_transfer(session);
+            return;
+          }
+
+          BOOST_LOG(info) << "Clipboard item fully received from client "
+                          << session->client_name
+                          << " type=" << static_cast<int>(session->control.clipboard.item_type)
+                          << " length=" << session->control.clipboard.total_length
+                          << " mime=" << session->control.clipboard.mime_type
+                          << " name=" << session->control.clipboard.name;
+#ifdef _WIN32
+          if (platf::clipboard::is_backend_available()) {
+            platf::clipboard::item_t item;
+            item.type = session->control.clipboard.item_type;
+            item.data = std::move(session->control.clipboard.data);
+            item.mime_type = std::move(session->control.clipboard.mime_type);
+            item.name = std::move(session->control.clipboard.name);
+            item.content_hash = session->control.clipboard.content_hash;
+
+            std::string reason;
+            if (platf::clipboard::write_item(item, &reason)) {
+              session->control.clipboard.suppress_next_host_echo = item.content_hash != 0;
+              session->control.clipboard.suppressed_host_hash = item.content_hash;
+              BOOST_LOG(info) << "Applied client clipboard item to Windows clipboard"
+                              << " type=" << static_cast<int>(item.type)
+                              << " length=" << item.data.size();
+            }
+            else {
+              BOOST_LOG(warning) << "Failed to apply client clipboard item to Windows clipboard: " << reason;
+            }
+          }
+#endif
+          reset_clipboard_transfer(session);
+          break;
+        }
+        case LI_CLIPBOARD_MSG_ITEM_CANCEL: {
+          constexpr std::size_t header_size = 1 + sizeof(std::uint64_t);
+          if (payload.size() < header_size) {
+            BOOST_LOG(warning) << "Clipboard ITEM_CANCEL was truncated";
+            return;
+          }
+
+          if (!is_clipboard_owner(session)) {
+            reset_clipboard_transfer(session);
+            BOOST_LOG(warning) << "Ignoring clipboard item cancel from non-owner client " << session->client_name;
+            return;
+          }
+
+          const auto item_id = read_u64_le(payload.data() + pos);
+          if (item_id == 0 || session->control.clipboard.item_id == item_id) {
+            reset_clipboard_transfer(session);
+          }
+          break;
+        }
+        default:
+          BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(kind);
+          break;
+      }
     });
 
     server->map(packetTypes[IDX_LOSS_STATS], [&](session_t *session, const std::string_view &payload) {
@@ -1706,9 +2638,140 @@ namespace stream {
         << "---end stats---";
     });
 
+    server->map(SS_FRAME_FEC_PTYPE, [&](session_t *session, const std::string_view &payload) {
+      if (!should_apply_frame_fec_weak_net_feedback(session->config.mlFeatureFlags)) {
+        return;
+      }
+      if (payload.size() < sizeof(SS_FRAME_FEC_STATUS)) {
+        BOOST_LOG(warning) << "Ignoring truncated frame FEC status payload: " << payload.size();
+        return;
+      }
+
+      const auto now = std::chrono::steady_clock::now();
+      if (session->last_weak_net_fec_feedback.time_since_epoch().count() != 0 &&
+          now - session->last_weak_net_fec_feedback < 250ms) {
+        return;
+      }
+      session->last_weak_net_fec_feedback = now;
+
+      const auto *status = reinterpret_cast<const SS_FRAME_FEC_STATUS *>(payload.data());
+      const auto total_data = read_be16_unaligned(&status->totalDataPackets);
+      const auto total_parity = read_be16_unaligned(&status->totalParityPackets);
+      const auto received_data = read_be16_unaligned(&status->receivedDataPackets);
+      const auto received_parity = read_be16_unaligned(&status->receivedParityPackets);
+      const auto missing = read_be16_unaligned(&status->missingPacketsBeforeHighestReceived);
+      const auto total_packets = static_cast<std::uint32_t>(total_data + total_parity);
+      const auto received_packets = static_cast<std::uint32_t>(received_data + received_parity);
+      const auto unrecoverable = received_packets < total_data ? 1U : 0U;
+      const auto recovered = !unrecoverable && received_data < total_data ? 1U : 0U;
+
+      auto action = session->weak_net_controller.on_feedback({
+        .duration_ms = 100,
+        .frames_seen = 1,
+        .complete_frames = unrecoverable ? 0U : 1U,
+        .recovered_frames = recovered,
+        .unrecoverable_frames = unrecoverable,
+        .missing_packets = missing,
+        .total_packets = total_packets,
+        .received_packets = received_packets,
+      });
+      apply_weak_net_action(session, action, "fec");
+    });
+
+    server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1)) {
+        BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
+        return;
+      }
+      if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V1)) {
+        BOOST_LOG(warning) << "Ignoring truncated network feedback payload: " << payload.size();
+        return;
+      }
+
+      const auto *feedback = reinterpret_cast<const SS_NETWORK_FEEDBACK_V1 *>(payload.data());
+      const auto version = read_be16_unaligned(&feedback->version);
+      const auto size = read_be16_unaligned(&feedback->size);
+      if (version != SS_NETWORK_FEEDBACK_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V1)) {
+        BOOST_LOG(warning) << "Ignoring unsupported network feedback version=" << version
+                           << " size=" << size;
+        return;
+      }
+
+      const auto total_data = read_be32_unaligned(&feedback->totalDataPackets);
+      const auto total_parity = read_be32_unaligned(&feedback->totalParityPackets);
+      const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
+      const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
+
+      auto action = session->weak_net_controller.on_feedback({
+        .duration_ms = read_be32_unaligned(&feedback->durationMs),
+        .frames_seen = read_be32_unaligned(&feedback->framesSeen),
+        .complete_frames = read_be32_unaligned(&feedback->completeFrames),
+        .recovered_frames = read_be32_unaligned(&feedback->recoveredFrames),
+        .unrecoverable_frames = read_be32_unaligned(&feedback->unrecoverableFrames),
+        .missing_packets = read_be32_unaligned(&feedback->missingPackets),
+        .total_packets = total_data + total_parity,
+        .received_packets = received_data + received_parity,
+        .video_bytes = read_be32_unaligned(&feedback->videoBytes),
+        .rtt_ms = read_be32_unaligned(&feedback->rttMs),
+        .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
+        .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
+      });
+      apply_weak_net_action(session, action, "feedback");
+    });
+
+    server->map(SS_NETWORK_FEEDBACK_V2_PTYPE, [&](session_t *session, const std::string_view &payload) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2)) {
+        BOOST_LOG(debug) << "Ignoring v2 network feedback from client without negotiated support";
+        return;
+      }
+      if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V2)) {
+        BOOST_LOG(warning) << "Ignoring truncated v2 network feedback payload: " << payload.size();
+        return;
+      }
+
+      const auto *feedback = reinterpret_cast<const SS_NETWORK_FEEDBACK_V2 *>(payload.data());
+      const auto version = read_be16_unaligned(&feedback->version);
+      const auto size = read_be16_unaligned(&feedback->size);
+      if (version != SS_NETWORK_FEEDBACK_V2_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V2)) {
+        BOOST_LOG(warning) << "Ignoring unsupported v2 network feedback version=" << version
+                           << " size=" << size;
+        return;
+      }
+
+      const auto total_data = read_be32_unaligned(&feedback->totalDataPackets);
+      const auto total_parity = read_be32_unaligned(&feedback->totalParityPackets);
+      const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
+      const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
+
+      auto action = session->weak_net_controller.on_feedback({
+        .duration_ms = read_be32_unaligned(&feedback->durationMs),
+        .frames_seen = read_be32_unaligned(&feedback->framesSeen),
+        .complete_frames = read_be32_unaligned(&feedback->completeFrames),
+        .recovered_frames = read_be32_unaligned(&feedback->recoveredFrames),
+        .unrecoverable_frames = read_be32_unaligned(&feedback->unrecoverableFrames),
+        .missing_packets = read_be32_unaligned(&feedback->missingPackets),
+        .total_packets = total_data + total_parity,
+        .received_packets = received_data + received_parity,
+        .video_bytes = read_be32_unaligned(&feedback->videoBytes),
+        .rtt_ms = read_be32_unaligned(&feedback->rttMs),
+        .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
+        .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
+        .decode_queue_depth = read_be32_unaligned(&feedback->decodeQueueDepth),
+        .render_queue_depth = read_be32_unaligned(&feedback->renderQueueDepth),
+        .late_frames = read_be32_unaligned(&feedback->lateFrames),
+        .displayed_frames = read_be32_unaligned(&feedback->displayedFrames),
+        .input_queue_depth = read_be32_unaligned(&feedback->inputQueueDepth),
+        .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
+        .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
+      });
+      apply_weak_net_action(session, action, "feedback-v2");
+    });
+
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
+      report_weak_net_recovery_request(session, "idr");
       session->video.idr_events->raise(true);
     });
 
@@ -1889,7 +2952,9 @@ namespace stream {
           validate_and_raise(param_value >= 0 && param_value <= 51, param_value, "QP");
           break;
         case video::dynamic_param_type_e::FEC_PERCENTAGE:
-          validate_and_raise(param_value >= 0 && param_value <= 100, param_value, "FEC percentage", "%");
+          if (validate_and_raise(param_value >= 0 && param_value <= 100, param_value, "FEC percentage", "%")) {
+            session->current_fec_percentage = param_value;
+          }
           break;
         case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
           bool enabled = (param_value != 0);
@@ -1925,21 +2990,8 @@ namespace stream {
         << "firstFrame [" << firstFrame << ']' << std::endl
         << "lastFrame [" << lastFrame << ']';
 
+      report_weak_net_recovery_request(session, "rfi");
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
-    });
-
-    server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
-      // Forward opaque payload to the user-session GUI agent. Drop silently if
-      // disabled by config or if the GUI is not currently subscribed.
-      if (!config::input.clipboard_sync) {
-        return;
-      }
-      auto &bridge = clipboard_bridge::bridge_t::instance();
-      if (!bridge.gui_alive()) {
-        return;
-      }
-      clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
-      bridge.on_inbound(session->launch_session_id, std::move(bytes));
     });
 
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
@@ -2069,7 +3121,6 @@ namespace stream {
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
             session->broadcast_ref->feature_leases.release_all(*session);
             server->_registry.unregister_session(session);
-            clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
 
@@ -2115,31 +3166,12 @@ namespace stream {
                 send_resolution_change(session, resolution->first, resolution->second);
               }
             }
+
+            maybe_send_host_clipboard_update(session);
           }
 
           ++pos;
         })
-
-        // Drain any clipboard messages enqueued by the GUI HTTP layer and
-        // dispatch them to matching sessions. We're already holding the
-        // _sessions lock here, which serialises with the per-session
-        // erase/insert above.
-        {
-          std::deque<clipboard_bridge::outbound_msg_t> msgs;
-          clipboard_bridge::bridge_t::instance().drain_outbound(msgs);
-          for (auto &msg : msgs) {
-            for (auto *s : *server->_sessions) {
-              if (!s->control.peer) {
-                continue;
-              }
-              if (msg.target != clipboard_bridge::kBroadcast
-                  && s->launch_session_id != msg.target) {
-                continue;
-              }
-              send_clipboard(s, msg.bytes);
-            }
-          }
-        }
       }
 
       // Don't break until any pending sessions either expire or connect
@@ -2167,12 +3199,6 @@ namespace stream {
     auto lg = server->_sessions.lock();
     for (auto pos = std::begin(*server->_sessions); pos != std::end(*server->_sessions); ++pos) {
       auto session = *pos;
-
-      // The normal STOPPING path removes sessions from _sessions and updates
-      // the clipboard bridge immediately. If the control thread exits via the
-      // final shutdown path instead, make the same paired lifecycle update here
-      // so capability/session_count cannot retain stale launch IDs.
-      clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
 
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
@@ -2219,7 +3245,12 @@ namespace stream {
     //   return true;
     // };
 
-    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &peer_addr, const std::string &client_ip) {
+    auto process_audio_data = [&](const uint8_t *audio_data,
+                                  size_t data_size,
+                                  uint16_t sequence_number,
+                                  const std::string &peer_addr,
+                                  const std::string &client_ip,
+                                  const mic_session_token_t *session_token) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
@@ -2237,17 +3268,35 @@ namespace stream {
       };
       {
         boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-        auto owner_it = ctx.mic_owners.find(client_ip);
-        if (owner_it != ctx.mic_owners.end()) {
-          mic_owner = owner_it->second;
+        if (session_token != nullptr) {
+          auto owner_it = ctx.mic_owners_by_token.find(*session_token);
+          if (owner_it != ctx.mic_owners_by_token.end()) {
+            mic_owner = owner_it->second;
+          }
+          auto cipher_it = ctx.mic_ciphers_by_token.find(*session_token);
+          if (cipher_it != ctx.mic_ciphers_by_token.end()) {
+            cipher_ctx = cipher_it->second;
+          }
         }
-        auto it = ctx.mic_ciphers.find(client_ip);
-        if (it != ctx.mic_ciphers.end()) {
-          cipher_ctx = it->second;
+
+        if (!mic_owner) {
+          auto owner_it = ctx.mic_owners.find(client_ip);
+          if (owner_it != ctx.mic_owners.end()) {
+            mic_owner = owner_it->second;
+          }
+        }
+        if (!cipher_ctx) {
+          auto it = ctx.mic_ciphers.find(client_ip);
+          if (it != ctx.mic_ciphers.end()) {
+            cipher_ctx = it->second;
+          }
         }
       }
 
       if (!mic_owner) {
+        return;
+      }
+      if (!ctx.feature_leases.validate(mic_owner)) {
         return;
       }
 
@@ -2371,9 +3420,28 @@ namespace stream {
       }
 
       // 尝试16位扩展包类型
+      if (received_bytes >= sizeof(rtp_packet_session_ext_t)) {
+        auto *header_session_ext = (rtp_packet_session_ext_t *) mic_recv_buffer.data();
+        if (util::endian::little(header_session_ext->rtp.packetType) == packetTypes[IDX_MIC_DATA]) {
+          size_t header_size = sizeof(rtp_packet_session_ext_t);
+          if (received_bytes > header_size) {
+            uint16_t sequence_number = util::endian::little(header_session_ext->rtp.sequenceNumber);
+            mic_session_token_t session_token {};
+            std::copy_n(header_session_ext->sessionToken, session_token.size(), session_token.begin());
+            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+                               received_bytes - header_size,
+                               sequence_number,
+                               client_id,
+                               client_ip,
+                               &session_token);
+          }
+          return;
+        }
+      }
+
       if (received_bytes >= sizeof(rtp_packet_ext_t)) {
         auto *header_ext = (rtp_packet_ext_t *) mic_recv_buffer.data();
-        if (header_ext->packetType == packetTypes[IDX_MIC_DATA]) {
+        if (util::endian::little(header_ext->packetType) == packetTypes[IDX_MIC_DATA]) {
           size_t header_size = sizeof(rtp_packet_ext_t);
           if (received_bytes > header_size) {
             uint16_t sequence_number = util::endian::little(header_ext->sequenceNumber);
@@ -2381,7 +3449,12 @@ namespace stream {
             // if (!validate_mic_ssrc(ssrc, client_id)) {
             //   return;
             // }
-            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_id, client_ip);
+            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+                               received_bytes - header_size,
+                               sequence_number,
+                               client_id,
+                               client_ip,
+                               nullptr);
           }
           return;
         }
@@ -2406,7 +3479,12 @@ namespace stream {
           //                 << " bytes, data=" << data_size 
           //                 << " bytes, sequenceNumber=" << sequence_number << " (little-endian)"
           //                 << " from " << client_id;
-          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_id, client_ip);
+          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+                             data_size,
+                             sequence_number,
+                             client_id,
+                             client_ip,
+                             nullptr);
         }
       }
     };
@@ -2660,7 +3738,7 @@ namespace stream {
         frame_header.frame_processing_latency = 0;
       }
 
-      auto fecPercentage = config::stream.fec_percentage;
+      auto fecPercentage = std::clamp(session->current_fec_percentage.load(std::memory_order_relaxed), 0, 80);
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -2724,14 +3802,25 @@ namespace stream {
       }
 
       try {
-        // Use around 80% of 1Gbps          1Gbps            percent    ms     packet      byte
-        size_t ratecontrol_packets_in_1ms = std::giga::num * 80 / 100 / 1000 / blocksize / 8;
+        auto pacing_total_kbps = session->pacing_total_bitrate.load(std::memory_order_relaxed);
+        if (pacing_total_kbps <= 0) {
+          pacing_total_kbps = std::max(session->current_total_bitrate.load(std::memory_order_relaxed), session->config.monitor.bitrate);
+        }
+        const auto pacing_bytes_per_second = std::max<std::uint64_t>(
+          125000,
+          static_cast<std::uint64_t>(pacing_total_kbps) * 1000 / 8);
+        auto ratecontrol_packet_interval = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::duration<double>(static_cast<double>(blocksize) / static_cast<double>(pacing_bytes_per_second)));
 
         // Send less than 64K in a single batch.
         // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
         // appear in "Other I/O" and begin waiting for interrupts.
         // This gives inconsistent performance so we'd rather avoid it.
-        size_t send_batch_size = 64 * 1024 / blocksize;
+        size_t burst_bytes = std::clamp<size_t>(
+          static_cast<size_t>(pacing_bytes_per_second / 200),
+          blocksize,
+          64 * 1024);
+        size_t send_batch_size = std::max<size_t>(1, burst_bytes / blocksize);
         // Also don't exceed 64 packets, which can happen when Moonlight requests
         // unusually small packet size.
         // Generic Segmentation Offload on Linux can't do more than 64.
@@ -2741,7 +3830,6 @@ namespace stream {
         auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
 
         size_t ratecontrol_frame_packets_sent = 0;
-        size_t ratecontrol_group_packets_sent = 0;
 
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
@@ -2838,21 +3926,10 @@ namespace stream {
 
             if (x - next_shard_to_send + 1 >= send_batch_size ||
                 x + 1 == shards.size()) {
-              // Do pacing within the frame.
-              // Also trigger pacing before the first send_batch() of the frame
-              // to account for the last send_batch() of the previous frame.
-              if (ratecontrol_group_packets_sent >= ratecontrol_packets_in_1ms ||
-                  ratecontrol_frame_packets_sent == 0) {
-                auto due = ratecontrol_frame_start +
-                           std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                             ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
-
-                auto now = std::chrono::steady_clock::now();
-                if (now < due) {
-                  timer->sleep_for(due - now);
-                }
-
-                ratecontrol_group_packets_sent = 0;
+              auto due = ratecontrol_frame_start + ratecontrol_packet_interval * ratecontrol_frame_packets_sent;
+              auto now = std::chrono::steady_clock::now();
+              if (now < due) {
+                timer->sleep_for(due - now);
               }
 
               size_t current_batch_size = x - next_shard_to_send + 1;
@@ -2881,7 +3958,6 @@ namespace stream {
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
 
-              ratecontrol_group_packets_sent += current_batch_size;
               ratecontrol_frame_packets_sent += current_batch_size;
               next_shard_to_send = x + 1;
             }
@@ -2889,8 +3965,7 @@ namespace stream {
 
           // remember this in case the next frame comes immediately
           ratecontrol_next_frame_start = ratecontrol_frame_start +
-                                         std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                                           ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
+                                         ratecontrol_packet_interval * ratecontrol_frame_packets_sent;
 
           frame_network_latency_logger.second_point_now_and_log();
 
@@ -3349,6 +4424,7 @@ namespace stream {
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
+      session.broadcast_ref->feature_leases.release_all(session);
 
       // 对于仅控制流会话，只减少总会话计数，不调用 streaming_will_stop
       // 只有当所有非控制流会话都结束时才调用 streaming_will_stop
@@ -3384,10 +4460,11 @@ namespace stream {
             display_device::session_t::get().restore_state();
           }
 
-          session.broadcast_ref->resources.release_display_owner(session);
+          session.broadcast_ref->resources.release_display_resource(session);
           platf::streaming_will_stop();
         }
         else {
+          auto was_display_owner = session.broadcast_ref->resources.display_resource().owner.runtime_id == session.identity.runtime_id;
           // 非最后一个会话：如果当前会话启用了麦克风，减少计数
           if (session.audio.enable_mic) {
             int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
@@ -3400,16 +4477,31 @@ namespace stream {
             }
             else {
               // 只移除当前客户端的加密上下文，保留其他客户端的
-              std::string client_ip = session.audio.peer.address().to_string();
-              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
+              auto client_ip = session.audio.peer.address().to_string();
+              remove_mic_encryption_for_session(*session.broadcast_ref.get(), session);
+              promote_mic_owner_if_needed(*session.broadcast_ref.get(), &session);
               BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
             }
           }
-          session.broadcast_ref->resources.release_display_owner(session);
+          session.broadcast_ref->resources.release_display_resource(session);
+          if (was_display_owner) {
+            auto sessions_lock = session.broadcast_ref->control_server._sessions.lock();
+            for (auto *candidate : *session.broadcast_ref->control_server._sessions) {
+              if (candidate != &session &&
+                  !candidate->control_only &&
+                  candidate->state.load(std::memory_order_acquire) == state_e::RUNNING) {
+                auto display_resource = session.broadcast_ref->resources.acquire_display_resource(*candidate);
+                BOOST_LOG(debug) << "Promoted runtime session " << display_resource.owner.runtime_id
+                                 << " to shared display resource owner after runtime session "
+                                 << session.identity.runtime_id << " ended";
+                break;
+              }
+            }
+          }
         }
       }
 
-      // Clean up ABR state for this client
+      abr::cleanup_for_runtime(session.identity.runtime_id);
       abr::cleanup(session.client_name);
 
       BOOST_LOG(debug) << "Session ended"sv;
@@ -3438,7 +4530,6 @@ namespace stream {
         session.broadcast_ref->control_server._sessions->push_back(&session);
         session.broadcast_ref->control_server._registry.register_session(&session);
       }
-      clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
       auto addr = boost::asio::ip::make_address(addr_string);
       session.video.peer.address(addr);
@@ -3468,14 +4559,19 @@ namespace stream {
         BOOST_LOG(debug) << "Control-only session started (total sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
-        auto display_owner = session.broadcast_ref->resources.acquire_display_owner(session);
-        if (display_owner.runtime_id == session.identity.runtime_id) {
-          BOOST_LOG(debug) << "Runtime session " << session.identity.runtime_id << " owns the shared display resource";
+        auto display_resource = session.broadcast_ref->resources.acquire_display_resource(session);
+        if (display_resource.owner.runtime_id == session.identity.runtime_id) {
+          BOOST_LOG(debug) << "Runtime session " << session.identity.runtime_id
+                           << " owns the shared display resource"
+                           << " (scope=" << resource_scope_name(display_resource.scope)
+                           << ", mode=" << display_allocation_mode_name(display_resource.mode) << ")";
         }
         else {
           BOOST_LOG(debug) << "Runtime session " << session.identity.runtime_id
                            << " is sharing display resource owned by runtime session "
-                           << display_owner.runtime_id;
+                           << display_resource.owner.runtime_id
+                           << " (scope=" << resource_scope_name(display_resource.scope)
+                           << ", mode=" << display_allocation_mode_name(display_resource.mode) << ")";
         }
 
         // 非仅控制流会话：增加两个计数器
@@ -3536,19 +4632,47 @@ namespace stream {
 
       session->config = config;
 
-      // Initialize current total bitrate (including FEC) from config
-      // config.monitor.bitrate is the encoding bitrate (excluding FEC)
-      // We need to convert it to total bitrate (including FEC)
+      // Initialize encoding and pacing budgets separately. The weak-net
+      // controller adjusts encoder bitrate, while pacing reserves one FEC
+      // overhead pass for the actual send budget.
       int encoding_bitrate = config.monitor.bitrate;
-      int fec_percentage = config::stream.fec_percentage;
-      if (fec_percentage > 0 && fec_percentage <= 80) {
-        // Convert encoding bitrate to total bitrate: total = encoding * 100 / (100 - fec_percentage)
-        session->current_total_bitrate = (int) (encoding_bitrate * 100.f / (100 - fec_percentage));
-      }
-      else {
-        // If FEC percentage is 0 or > 80%, encoding bitrate equals total bitrate
-        session->current_total_bitrate = encoding_bitrate;
-      }
+      int ceiling_encoding_bitrate = config.monitor.qualityCeilingBitrate > 0 ?
+                                       std::max(config.monitor.qualityCeilingBitrate, encoding_bitrate) :
+                                       encoding_bitrate;
+      int ceiling_fps = config.monitor.qualityCeilingFramerate > 0 ?
+                          std::max(config.monitor.qualityCeilingFramerate, config.monitor.framerate) :
+                          config.monitor.framerate;
+      int max_fec_percentage = std::clamp(config::stream.fec_percentage, 0, weak_net::controller_t::max_fec_percentage);
+      int fec_percentage = rtsp_stream::effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
+                                                                                   config.mlFeatureFlags);
+      fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
+      int ceiling_total_bitrate = total_video_bitrate_from_encoding_bitrate(ceiling_encoding_bitrate, fec_percentage);
+      session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate, fec_percentage);
+      session->current_fec_percentage = fec_percentage;
+      session->pacing_total_bitrate = session->current_total_bitrate.load(std::memory_order_relaxed);
+      session->weak_net_controller.configure({
+        .baseline_bitrate_kbps = ceiling_encoding_bitrate,
+        .baseline_fec_percentage = fec_percentage,
+        .max_fec_percentage = max_fec_percentage,
+        .startup_bitrate_kbps = encoding_bitrate,
+        .ceiling_total_bitrate_kbps = ceiling_total_bitrate,
+        .baseline_fps = ceiling_fps,
+        .startup_fps = config.monitor.framerate,
+      });
+      session->last_applied_weak_net_bitrate = encoding_bitrate;
+      session->last_applied_weak_net_fec = fec_percentage;
+      session->last_applied_weak_net_fps = config.monitor.framerate;
+      session->weak_net_recovery_ready_after = std::chrono::steady_clock::now() + 1500ms;
+      BOOST_LOG(info) << "Weak-net startup baseline runtime=" << session->identity.runtime_id
+                      << " encoding=" << encoding_bitrate << " Kbps"
+                      << " total=" << session->current_total_bitrate.load(std::memory_order_relaxed) << " Kbps"
+                      << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps"
+                      << " ceilingTotal=" << ceiling_total_bitrate << " Kbps"
+                      << " fps=" << config.monitor.framerate
+                      << " ceilingFps=" << ceiling_fps
+                      << " fec=" << fec_percentage << "%"
+                      << " maxFec=" << max_fec_percentage << "%"
+                      << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ? " feedback=1" : " feedback=0");
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
@@ -3561,7 +4685,7 @@ namespace stream {
 
       session->video.idr_events = mail->event<bool>(mail::idr);
       session->video.invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
-      session->video.dynamic_param_change_events = mail->event<video::dynamic_param_t>(mail::dynamic_param_change);
+      session->video.dynamic_param_change_events = mail->queue<video::dynamic_param_t>(mail::dynamic_param_change);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;
       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {
@@ -3627,12 +4751,18 @@ namespace stream {
         return false;
       }
 
-      // Update session's current total bitrate if this is a bitrate change
+      // Update session's current send budget if this is an encoder bitrate change
       if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
-        // The param.value.int_value is the total bitrate (user-configured, including FEC)
-        session_p->current_total_bitrate = param.value.int_value;
-        BOOST_LOG(info) << "Updated session total bitrate for " << target_label
-                        << ": " << param.value.int_value << " Kbps (including FEC)";
+        const auto current_fec_percentage = session_p->current_fec_percentage.load(std::memory_order_relaxed);
+        const auto total_bitrate = total_video_bitrate_from_encoding_bitrate(param.value.int_value,
+                                                                             current_fec_percentage);
+        session_p->current_total_bitrate = total_bitrate;
+        session_p->pacing_total_bitrate = std::max(session_p->pacing_total_bitrate.load(std::memory_order_relaxed),
+                                                   total_bitrate);
+        BOOST_LOG(info) << "Updated session bitrate for " << target_label
+                        << ": encoding=" << param.value.int_value
+                        << " Kbps total=" << total_bitrate
+                        << " Kbps fec=" << current_fec_percentage << "%";
       }
 
       session_p->video.dynamic_param_change_events->raise(param);
@@ -3775,9 +4905,15 @@ namespace stream {
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
-          auto display_owner = broadcast_ref->resources.display_owner();
-          info.display_owner = display_owner.runtime_id == session_p->identity.runtime_id;
-          info.display_owner_runtime_id = display_owner.runtime_id;
+          auto display_resource = broadcast_ref->resources.display_resource();
+          info.display_owner = display_resource.owner.runtime_id == session_p->identity.runtime_id;
+          info.display_owner_runtime_id = display_resource.owner.runtime_id;
+          info.display_resource_scope = resource_scope_name(display_resource.scope);
+          info.display_allocation_mode = info.display_owner ?
+                                           display_allocation_mode_name(display_resource.mode) :
+                                           display_allocation_mode_name(session_runtime::display_allocation_mode_e::shared_follower);
+          info.display_resource_slot = display_resource.resource_slot;
+          info.dedicated_display = info.display_allocation_mode == display_allocation_mode_name(session_runtime::display_allocation_mode_e::dedicated);
 
           // Get app information
           try {

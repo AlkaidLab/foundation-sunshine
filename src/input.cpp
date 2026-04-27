@@ -9,12 +9,15 @@ extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
 }
 
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cmath>
 #include <list>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 #include "config.h"
 #include "globals.h"
@@ -48,6 +51,73 @@ namespace input {
   constexpr auto VKEY_MENU = 0x12;
   constexpr auto VKEY_LMENU = 0xA4;
   constexpr auto VKEY_RMENU = 0xA5;
+
+  struct mouse_input_diag_t {
+    std::atomic<std::uint64_t> queued_rel { 0 };
+    std::atomic<std::uint64_t> queued_abs { 0 };
+    std::atomic<std::uint64_t> queued_tasks { 0 };
+    std::atomic<std::uint64_t> batched_rel { 0 };
+    std::atomic<std::uint64_t> batched_abs { 0 };
+    std::atomic<std::uint64_t> os_rel { 0 };
+    std::atomic<std::uint64_t> os_abs { 0 };
+    std::atomic<std::uint64_t> max_queue_depth { 0 };
+    std::mutex log_mutex;
+    std::chrono::steady_clock::time_point last_log { std::chrono::steady_clock::now() };
+  };
+
+  mouse_input_diag_t mouse_input_diag;
+
+  bool
+  is_rel_mouse_magic(std::uint32_t magic) {
+    return magic == MOUSE_MOVE_REL_MAGIC_GEN5 || magic == MOUSE_MOVE_REL_MAGIC;
+  }
+
+  bool
+  is_abs_mouse_magic(std::uint32_t magic) {
+    return magic == MOUSE_MOVE_ABS_MAGIC;
+  }
+
+  void
+  update_mouse_diag_max_queue(std::size_t queue_depth) {
+    auto observed = static_cast<std::uint64_t>(queue_depth);
+    auto current = mouse_input_diag.max_queue_depth.load(std::memory_order_relaxed);
+    while (observed > current &&
+           !mouse_input_diag.max_queue_depth.compare_exchange_weak(current, observed, std::memory_order_relaxed)) {
+    }
+  }
+
+  void
+  maybe_log_mouse_input_diag(const char *reason) {
+    auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lg(mouse_input_diag.log_mutex);
+    if (now - mouse_input_diag.last_log < 1s) {
+      return;
+    }
+
+    auto queued_rel = mouse_input_diag.queued_rel.exchange(0, std::memory_order_relaxed);
+    auto queued_abs = mouse_input_diag.queued_abs.exchange(0, std::memory_order_relaxed);
+    auto queued_tasks = mouse_input_diag.queued_tasks.exchange(0, std::memory_order_relaxed);
+    auto batched_rel = mouse_input_diag.batched_rel.exchange(0, std::memory_order_relaxed);
+    auto batched_abs = mouse_input_diag.batched_abs.exchange(0, std::memory_order_relaxed);
+    auto os_rel = mouse_input_diag.os_rel.exchange(0, std::memory_order_relaxed);
+    auto os_abs = mouse_input_diag.os_abs.exchange(0, std::memory_order_relaxed);
+    auto max_queue_depth = mouse_input_diag.max_queue_depth.exchange(0, std::memory_order_relaxed);
+
+    if (queued_rel == 0 && queued_abs == 0 && batched_rel == 0 && batched_abs == 0 && os_rel == 0 && os_abs == 0) {
+      return;
+    }
+
+    mouse_input_diag.last_log = now;
+    BOOST_LOG(info) << "[inputdiag] mouse 1s reason="sv << reason
+                    << " queued(rel="sv << queued_rel
+                    << ",abs="sv << queued_abs
+                    << ",tasks="sv << queued_tasks
+                    << ") os(rel="sv << os_rel
+                    << ",abs="sv << os_abs
+                    << ") batched(rel="sv << batched_rel
+                    << ",abs="sv << batched_abs
+                    << ") maxQueue="sv << max_queue_depth;
+  }
 
   enum class button_state_e {
     NONE,  ///< No button state
@@ -165,6 +235,7 @@ namespace input {
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
+        input_worker_scheduled {},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
         accumulated_vscroll_delta {},
@@ -181,6 +252,7 @@ namespace input {
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
+    bool input_worker_scheduled;
 
     thread_pool_util::ThreadPool::task_id_t mouse_left_button_timeout;
 
@@ -1252,10 +1324,10 @@ namespace input {
     short deltaX, deltaY;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
+    if (__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
       return batch_result_e::terminate_batch;
     }
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
+    if (__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1294,7 +1366,7 @@ namespace input {
     short scrollAmt;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1315,7 +1387,7 @@ namespace input {
     short scrollAmt;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1526,103 +1598,154 @@ namespace input {
     }
   }
 
+#ifdef SUNSHINE_TESTS
+  std::pair<std::int16_t, std::int16_t>
+  test_batch_relative_mouse_delta(std::int16_t first_x,
+                                  std::int16_t first_y,
+                                  std::int16_t second_x,
+                                  std::int16_t second_y,
+                                  bool &batched) {
+    NV_REL_MOUSE_MOVE_PACKET first {};
+    NV_REL_MOUSE_MOVE_PACKET second {};
+    first.deltaX = util::endian::big(first_x);
+    first.deltaY = util::endian::big(first_y);
+    second.deltaX = util::endian::big(second_x);
+    second.deltaY = util::endian::big(second_y);
+
+    batched = batch(&first, &second) == batch_result_e::batched;
+    return {
+      util::endian::big(first.deltaX),
+      util::endian::big(first.deltaY),
+    };
+  }
+
+  std::int16_t
+  test_batch_scroll_delta(std::int16_t first,
+                          std::int16_t second,
+                          bool &batched) {
+    NV_SCROLL_PACKET first_packet {};
+    NV_SCROLL_PACKET second_packet {};
+    first_packet.scrollAmt1 = util::endian::big(first);
+    first_packet.scrollAmt2 = util::endian::big(first);
+    second_packet.scrollAmt1 = util::endian::big(second);
+    second_packet.scrollAmt2 = util::endian::big(second);
+
+    batched = batch(&first_packet, &second_packet) == batch_result_e::batched;
+    return util::endian::big(first_packet.scrollAmt1);
+  }
+#endif
+
   /**
    * @brief Called on a thread pool thread to process an input message.
    * @param input The input context pointer.
    */
   void
   passthrough_next_message(std::shared_ptr<input_t> input) {
-    // 'entry' backs the 'payload' pointer, so they must remain in scope together
-    std::vector<uint8_t> entry;
-    PNV_INPUT_HEADER payload;
+    for (;;) {
+      // 'entry' backs the 'payload' pointer, so they must remain in scope together
+      std::vector<uint8_t> entry;
+      PNV_INPUT_HEADER payload;
 
-    // Lock the input queue while batching, but release it before sending
-    // the input to the OS. This avoids potentially lengthy lock contention
-    // in the control stream thread while input is being processed by the OS.
-    {
-      std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      // Lock the input queue while batching, but release it before sending
+      // the input to the OS. This avoids potentially lengthy lock contention
+      // in the control stream thread while input is being processed by the OS.
+      {
+        std::lock_guard<std::mutex> lg(input->input_queue_lock);
 
-      // If all entries have already been processed, nothing to do
-      if (input->input_queue.empty()) {
-        return;
+        // If all entries have already been processed, mark the drain worker as idle.
+        if (input->input_queue.empty()) {
+          input->input_worker_scheduled = false;
+          return;
+        }
+
+        // Pop off the first entry, which we will send
+        entry = input->input_queue.front();
+        payload = (PNV_INPUT_HEADER) entry.data();
+        input->input_queue.pop_front();
+
+        // Try to batch with remaining items on the queue
+        auto i = input->input_queue.begin();
+        while (i != input->input_queue.end()) {
+          auto batchable_entry = *i;
+          auto batchable_payload = (PNV_INPUT_HEADER) batchable_entry.data();
+
+          auto batch_result = batch(payload, batchable_payload);
+          if (batch_result == batch_result_e::terminate_batch) {
+            // Stop batching
+            break;
+          }
+          else if (batch_result == batch_result_e::batched) {
+            auto magic = util::endian::little(payload->magic);
+            if (is_rel_mouse_magic(magic)) {
+              mouse_input_diag.batched_rel.fetch_add(1, std::memory_order_relaxed);
+            }
+            else if (is_abs_mouse_magic(magic)) {
+              mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Erase this entry since it was batched
+            i = input->input_queue.erase(i);
+          }
+          else {
+            // We couldn't batch this entry, but try to batch later entries.
+            i++;
+          }
+        }
       }
 
-      // Pop off the first entry, which we will send
-      entry = input->input_queue.front();
-      payload = (PNV_INPUT_HEADER) entry.data();
-      input->input_queue.pop_front();
+      // Print the final input packet
+      input::print((void *) payload);
 
-      // Try to batch with remaining items on the queue
-      auto i = input->input_queue.begin();
-      while (i != input->input_queue.end()) {
-        auto batchable_entry = *i;
-        auto batchable_payload = (PNV_INPUT_HEADER) batchable_entry.data();
-
-        auto batch_result = batch(payload, batchable_payload);
-        if (batch_result == batch_result_e::terminate_batch) {
-          // Stop batching
+      // Send the batched input to the OS
+      switch (util::endian::little(payload->magic)) {
+        case MOUSE_MOVE_REL_MAGIC_GEN5:
+          passthrough(input, (PNV_REL_MOUSE_MOVE_PACKET) payload);
+          mouse_input_diag.os_rel.fetch_add(1, std::memory_order_relaxed);
+          maybe_log_mouse_input_diag("os-rel");
           break;
-        }
-        else if (batch_result == batch_result_e::batched) {
-          // Erase this entry since it was batched
-          i = input->input_queue.erase(i);
-        }
-        else {
-          // We couldn't batch this entry, but try to batch later entries.
-          i++;
-        }
+        case MOUSE_MOVE_ABS_MAGIC:
+          passthrough(input, (PNV_ABS_MOUSE_MOVE_PACKET) payload);
+          mouse_input_diag.os_abs.fetch_add(1, std::memory_order_relaxed);
+          maybe_log_mouse_input_diag("os-abs");
+          break;
+        case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
+        case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
+          passthrough(input, (PNV_MOUSE_BUTTON_PACKET) payload);
+          break;
+        case SCROLL_MAGIC_GEN5:
+          passthrough(input, (PNV_SCROLL_PACKET) payload);
+          break;
+        case SS_HSCROLL_MAGIC:
+          passthrough(input, (PSS_HSCROLL_PACKET) payload);
+          break;
+        case KEY_DOWN_EVENT_MAGIC:
+        case KEY_UP_EVENT_MAGIC:
+          passthrough(input, (PNV_KEYBOARD_PACKET) payload);
+          break;
+        case UTF8_TEXT_EVENT_MAGIC:
+          passthrough((PNV_UNICODE_PACKET) payload);
+          break;
+        case MULTI_CONTROLLER_MAGIC_GEN5:
+          passthrough(input, (PNV_MULTI_CONTROLLER_PACKET) payload);
+          break;
+        case SS_TOUCH_MAGIC:
+          passthrough(input, (PSS_TOUCH_PACKET) payload);
+          break;
+        case SS_PEN_MAGIC:
+          passthrough(input, (PSS_PEN_PACKET) payload);
+          break;
+        case SS_CONTROLLER_ARRIVAL_MAGIC:
+          passthrough(input, (PSS_CONTROLLER_ARRIVAL_PACKET) payload);
+          break;
+        case SS_CONTROLLER_TOUCH_MAGIC:
+          passthrough(input, (PSS_CONTROLLER_TOUCH_PACKET) payload);
+          break;
+        case SS_CONTROLLER_MOTION_MAGIC:
+          passthrough(input, (PSS_CONTROLLER_MOTION_PACKET) payload);
+          break;
+        case SS_CONTROLLER_BATTERY_MAGIC:
+          passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
+          break;
       }
-    }
-
-    // Print the final input packet
-    input::print((void *) payload);
-
-    // Send the batched input to the OS
-    switch (util::endian::little(payload->magic)) {
-      case MOUSE_MOVE_REL_MAGIC_GEN5:
-        passthrough(input, (PNV_REL_MOUSE_MOVE_PACKET) payload);
-        break;
-      case MOUSE_MOVE_ABS_MAGIC:
-        passthrough(input, (PNV_ABS_MOUSE_MOVE_PACKET) payload);
-        break;
-      case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
-      case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
-        passthrough(input, (PNV_MOUSE_BUTTON_PACKET) payload);
-        break;
-      case SCROLL_MAGIC_GEN5:
-        passthrough(input, (PNV_SCROLL_PACKET) payload);
-        break;
-      case SS_HSCROLL_MAGIC:
-        passthrough(input, (PSS_HSCROLL_PACKET) payload);
-        break;
-      case KEY_DOWN_EVENT_MAGIC:
-      case KEY_UP_EVENT_MAGIC:
-        passthrough(input, (PNV_KEYBOARD_PACKET) payload);
-        break;
-      case UTF8_TEXT_EVENT_MAGIC:
-        passthrough((PNV_UNICODE_PACKET) payload);
-        break;
-      case MULTI_CONTROLLER_MAGIC_GEN5:
-        passthrough(input, (PNV_MULTI_CONTROLLER_PACKET) payload);
-        break;
-      case SS_TOUCH_MAGIC:
-        passthrough(input, (PSS_TOUCH_PACKET) payload);
-        break;
-      case SS_PEN_MAGIC:
-        passthrough(input, (PSS_PEN_PACKET) payload);
-        break;
-      case SS_CONTROLLER_ARRIVAL_MAGIC:
-        passthrough(input, (PSS_CONTROLLER_ARRIVAL_PACKET) payload);
-        break;
-      case SS_CONTROLLER_TOUCH_MAGIC:
-        passthrough(input, (PSS_CONTROLLER_TOUCH_PACKET) payload);
-        break;
-      case SS_CONTROLLER_MOTION_MAGIC:
-        passthrough(input, (PSS_CONTROLLER_MOTION_PACKET) payload);
-        break;
-      case SS_CONTROLLER_BATTERY_MAGIC:
-        passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
-        break;
     }
   }
 
@@ -1633,11 +1756,52 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    std::uint32_t magic = 0;
+    bool schedule_worker = false;
+    if (input_data.size() >= sizeof(NV_INPUT_HEADER)) {
+      magic = util::endian::little(((PNV_INPUT_HEADER) input_data.data())->magic);
+      if (is_rel_mouse_magic(magic)) {
+        mouse_input_diag.queued_rel.fetch_add(1, std::memory_order_relaxed);
+      }
+      else if (is_abs_mouse_magic(magic)) {
+        mouse_input_diag.queued_abs.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
-      input->input_queue.push_back(std::move(input_data));
+      if (!input->input_queue.empty() && input_data.size() >= sizeof(NV_INPUT_HEADER)) {
+        auto tail_payload = (PNV_INPUT_HEADER) input->input_queue.back().data();
+        auto incoming_payload = (PNV_INPUT_HEADER) input_data.data();
+        auto batch_result = batch(tail_payload, incoming_payload);
+        if (batch_result == batch_result_e::batched) {
+          if (is_rel_mouse_magic(magic)) {
+            mouse_input_diag.batched_rel.fetch_add(1, std::memory_order_relaxed);
+          }
+          else if (is_abs_mouse_magic(magic)) {
+            mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
+          }
+        }
+        else {
+          input->input_queue.push_back(std::move(input_data));
+        }
+      }
+      else {
+        input->input_queue.push_back(std::move(input_data));
+      }
+      update_mouse_diag_max_queue(input->input_queue.size());
+      if (!input->input_worker_scheduled) {
+        input->input_worker_scheduled = true;
+        schedule_worker = true;
+      }
     }
-    task_pool.push(passthrough_next_message, input);
+    if (is_rel_mouse_magic(magic) || is_abs_mouse_magic(magic)) {
+      maybe_log_mouse_input_diag("queued");
+    }
+    if (schedule_worker) {
+      mouse_input_diag.queued_tasks.fetch_add(1, std::memory_order_relaxed);
+      task_pool.push(passthrough_next_message, input);
+    }
   }
 
   void

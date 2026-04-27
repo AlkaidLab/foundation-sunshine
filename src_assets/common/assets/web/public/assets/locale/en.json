@@ -225,6 +225,8 @@
     "back_button_timeout_desc": "If the Back/Select button is held down for the specified number of milliseconds, a Home/Guide button press is emulated. If set to a value < 0 (default), holding the Back/Select button will not emulate the Home/Guide button.",
     "bind_address": "Bind address (test feature)",
     "bind_address_desc": "Set the specific IP address Sunshine will bind to. If left blank, Sunshine will bind to all available addresses.",
+    "clipboard_sync": "Clipboard Sync",
+    "clipboard_sync_desc": "Enable bidirectional clipboard sync for compatible Moonlight clients. Currently supports text and single-image items.",
     "capture": "Force a Specific Capture Method",
     "capture_desc": "On automatic mode Sunshine will use the first one that works. NvFBC requires patched nvidia drivers.",
     "amd_capture_no_virtual_display": "AMD Display Capture does not support virtual display drivers (e.g. IddCx/VDD). If you are using a virtual display, please use WGC or Desktop Duplication API instead.",

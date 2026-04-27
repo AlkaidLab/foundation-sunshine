@@ -14,7 +14,10 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
+#include <cstdlib>
 #include <set>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -24,14 +27,16 @@ extern "C" {
 #include <boost/bind.hpp>
 
 // local includes
-#include "clipboard_bridge.h"
 #include "config.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "platform/common.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "stream_bitrate.h"
+#include "stream_quality.h"
 #include "sync.h"
 #include "video.h"
 
@@ -43,6 +48,39 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace rtsp_stream {
+  namespace {
+    constexpr int safe_max_stream_fec_percentage = 35;
+    constexpr int enhanced_feedback_startup_fec_percentage = 10;
+  }
+
+  std::uint64_t
+  foundation_streaming_feature_flags2() {
+    return static_cast<std::uint64_t>(LI_FF2_QOS_FEEDBACK_V2) |
+           static_cast<std::uint64_t>(LI_FF2_INPUT_PRIORITY_V1) |
+           static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY_V1);
+  }
+
+  int
+  effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags) {
+    configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
+    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
+      return std::min(configured_fec_percentage, enhanced_feedback_startup_fec_percentage);
+    }
+    return configured_fec_percentage;
+  }
+
+  std::int64_t
+  adjust_configured_video_bitrate_kbps(std::int64_t configured_bitrate_kbps,
+                                       int fec_percentage,
+                                       bool high_quality_audio,
+                                       int audio_channels) {
+    fec_percentage = std::clamp(fec_percentage, 0, safe_max_stream_fec_percentage);
+    return stream_bitrate::encoding_bitrate_from_configured_total_kbps(configured_bitrate_kbps,
+                                                                       fec_percentage,
+                                                                       high_quality_audio,
+                                                                       audio_channels);
+  }
+
   namespace {
     bool
     parse_legacy_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
@@ -584,8 +622,13 @@ namespace rtsp_stream {
       }
 
       auto socket = std::move(next_socket);
+      boost::system::error_code remote_ec;
+      const auto remote_address = net::addr_to_normalized_string(socket->sock.remote_endpoint(remote_ec).address());
+      if (remote_ec) {
+        BOOST_LOG(debug) << "Unable to resolve RTSP peer address: "sv << remote_ec.message();
+      }
 
-      auto launch_session { launch_event.view(0s) };
+      auto launch_session { claim_launch_session(remote_ec ? std::string {} : remote_address) };
       if (launch_session) {
         // Associate the current RTSP session with this socket and start reading
         socket->session = launch_session;
@@ -625,22 +668,36 @@ namespace rtsp_stream {
      */
     void
     session_raise(std::shared_ptr<launch_session_t> launch_session) {
-      // If a launch event is still pending, don't overwrite it.
-      if (launch_event.view(0s)) {
+      if (!launch_session) {
         return;
       }
 
-      // Raise the new launch session to prepare for the RTSP handshake
-      launch_event.raise(std::move(launch_session));
+      launch_session->pending_since = std::chrono::steady_clock::now();
+      {
+        auto lg = _pending_launch_sessions.lock();
+        prune_launch_sessions_locked(*_pending_launch_sessions);
 
-      // Arm the timer to expire this launch session if the client times out
+        if (!launch_session->rtsp_peer_address.empty()) {
+          auto existing = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [&launch_session](const auto &pending_session) {
+            return pending_session && pending_session->rtsp_peer_address == launch_session->rtsp_peer_address;
+          });
+          if (existing != _pending_launch_sessions->end()) {
+            BOOST_LOG(debug) << "Replacing pending RTSP launch session for peer "sv
+                             << launch_session->rtsp_peer_address;
+            *existing = std::move(launch_session);
+            return;
+          }
+        }
+
+        _pending_launch_sessions->push_back(std::move(launch_session));
+      }
+
+      // Arm the timer to expire pending launch sessions if clients time out
       raised_timer.expires_after(config::stream.ping_timeout);
       raised_timer.async_wait([this](const boost::system::error_code &ec) {
         if (!ec) {
-          auto discarded = launch_event.pop(0s);
-          if (discarded) {
-            BOOST_LOG(debug) << "Event timeout: "sv << discarded->unique_id;
-          }
+          auto lg = _pending_launch_sessions.lock();
+          prune_launch_sessions_locked(*_pending_launch_sessions);
         } else {
           BOOST_LOG(debug) << "Timer error: "sv << ec.message();
         }
@@ -653,17 +710,12 @@ namespace rtsp_stream {
      */
     void
     session_clear(uint32_t launch_session_id) {
-      // We currently only support a single pending RTSP session,
-      // so the ID should always match the one for that session.
-      auto launch_session = launch_event.view(0s);
-      if (launch_session) {
-        if (launch_session->id != launch_session_id) {
-          BOOST_LOG(error) << "Attempted to clear unexpected session: "sv << launch_session_id << " vs "sv << launch_session->id;
-        }
-        else {
-          raised_timer.cancel();
-          launch_event.pop();
-        }
+      auto lg = _pending_launch_sessions.lock();
+      auto pos = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [launch_session_id](const auto &launch_session) {
+        return launch_session && launch_session->id == launch_session_id;
+      });
+      if (pos != _pending_launch_sessions->end()) {
+        _pending_launch_sessions->erase(pos);
       }
     }
 
@@ -677,7 +729,56 @@ namespace rtsp_stream {
       return _session_slots->size();
     }
 
-    safe::event_t<std::shared_ptr<launch_session_t>> launch_event;
+    std::shared_ptr<launch_session_t>
+    claim_launch_session(const std::string &remote_address) {
+      auto lg = _pending_launch_sessions.lock();
+      prune_launch_sessions_locked(*_pending_launch_sessions);
+      if (_pending_launch_sessions->empty()) {
+        return nullptr;
+      }
+
+      auto pos = _pending_launch_sessions->end();
+      if (!remote_address.empty()) {
+        pos = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [&remote_address](const auto &launch_session) {
+          return launch_session && launch_session->rtsp_peer_address == remote_address;
+        });
+      }
+
+      if (pos == _pending_launch_sessions->end()) {
+        pos = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [](const auto &launch_session) {
+          return launch_session && launch_session->rtsp_peer_address.empty();
+        });
+      }
+
+      if (pos == _pending_launch_sessions->end() && _pending_launch_sessions->size() == 1) {
+        pos = _pending_launch_sessions->begin();
+      }
+
+      if (pos == _pending_launch_sessions->end()) {
+        return nullptr;
+      }
+
+      return *pos;
+    }
+
+    void
+    prune_launch_sessions_locked(std::vector<std::shared_ptr<launch_session_t>> &launch_sessions) {
+      const auto now = std::chrono::steady_clock::now();
+      launch_sessions.erase(std::remove_if(launch_sessions.begin(), launch_sessions.end(), [now](const auto &launch_session) {
+                              if (!launch_session) {
+                                return true;
+                              }
+
+                              const bool expired = now - launch_session->pending_since > config::stream.ping_timeout;
+                              if (expired) {
+                                BOOST_LOG(debug) << "RTSP launch session timeout: "sv << launch_session->unique_id;
+                              }
+                              return expired;
+                            }),
+                            launch_sessions.end());
+    }
+
+    sync_util::sync_t<std::vector<std::shared_ptr<launch_session_t>>> _pending_launch_sessions;
 
     /**
      * @brief Clear launch sessions.
@@ -688,6 +789,15 @@ namespace rtsp_stream {
      */
     void
     clear(bool all = true) {
+      if (all) {
+        auto pending_lg = _pending_launch_sessions.lock();
+        _pending_launch_sessions->clear();
+      }
+      else {
+        auto pending_lg = _pending_launch_sessions.lock();
+        prune_launch_sessions_locked(*_pending_launch_sessions);
+      }
+
       auto lg = _session_slots.lock();
 
       for (auto i = _session_slots->begin(); i != _session_slots->end();) {
@@ -913,16 +1023,16 @@ namespace rtsp_stream {
     std::stringstream ss;
 
     // Tell the client about our supported features
-    {
-      auto caps = (uint32_t) platf::get_capabilities();
-      // Advertise clipboard sync only when the user opted in AND a user-session
-      // GUI agent is currently subscribed; otherwise the client would attempt
-      // sync into a black hole.
-      if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
-        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
-      }
-      ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
+    auto host_feature_flags = static_cast<std::uint32_t>(platf::get_capabilities());
+    if (!config::input.clipboard_sync) {
+      host_feature_flags &= ~static_cast<std::uint32_t>(platf::platform_caps::clipboard_text |
+                                                         platf::platform_caps::clipboard_image);
     }
+    host_feature_flags |= static_cast<std::uint32_t>(platf::platform_caps::mic_session_id) |
+                          static_cast<std::uint32_t>(platf::platform_caps::network_feedback);
+    ss << "a=x-ss-general.featureFlags:" << host_feature_flags << std::endl;
+    auto host_feature_flags2 = foundation_streaming_feature_flags2();
+    ss << "a=x-ss-general.featureFlags2:" << host_feature_flags2 << std::endl;
 
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
@@ -1161,9 +1271,11 @@ namespace rtsp_stream {
     args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
     args.try_emplace("x-nv-general.featureFlags"sv, "135"sv);
     args.try_emplace("x-ml-general.featureFlags"sv, "0"sv);
+    args.try_emplace("x-ml-general.featureFlags2"sv, "0"sv);
     args.try_emplace("x-nv-vqos[0].qosTrafficType"sv, "5"sv);
     args.try_emplace("x-nv-aqos.qosTrafficType"sv, "4"sv);
     args.try_emplace("x-ml-video.configuredBitrateKbps"sv, "0"sv);
+    args.try_emplace("x-ml-video.contentType"sv, "0"sv);
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
@@ -1179,9 +1291,17 @@ namespace rtsp_stream {
     stream::config_t config;
 
     std::int64_t configuredBitrateKbps;
+    int clientContentType = 0;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     auto getArg = [&args](std::string_view key) {
       return util::from_view(args.at(key));
+    };
+    auto getArgU64 = [&args](std::string_view key) -> std::uint64_t {
+      const auto value = args.at(key);
+      if (value.empty()) {
+        return 0;
+      }
+      return static_cast<std::uint64_t>(std::strtoull(std::string(value).c_str(), nullptr, 0));
     };
 
     try {
@@ -1256,6 +1376,7 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      config.mlFeatureFlags2 = getArgU64("x-ml-general.featureFlags2"sv);
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
@@ -1271,6 +1392,9 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Client requested stream resolution (clientViewport): " << monitor.width << "x" << monitor.height;
       monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
       monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
+      monitor.qualityCeilingBitrate = monitor.bitrate;
+      monitor.qualityCeilingFramerate = monitor.framerate;
+      monitor.contentType = 0;
       monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
@@ -1280,6 +1404,8 @@ namespace rtsp_stream {
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
+      clientContentType = getArg("x-ml-video.contentType"sv);
+      monitor.contentType = clientContentType;
 
       // Only use clientRefreshRateX100 if it's within 2% of maxFPS
       bool useClientRefreshRate = false;
@@ -1342,29 +1468,97 @@ namespace rtsp_stream {
       config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS] = true;
     }
 
-    // If the client sent a configured bitrate, we will choose the actual bitrate ourselves
-    // by using FEC percentage and audio quality settings. If the calculated bitrate ends up
-    // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate
-    // down to nearly nothing.
+    // If the client sent a configured bitrate, choose the video encoder budget after
+    // transport/audio overhead, then use low-bitrate clarity planning to spend that
+    // budget on spatial clarity rather than forcing the bitrate above the user's cap.
     if (configuredBitrateKbps) {
       BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
 
-      // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
-      // traffic doesn't exceed the user's selected bitrate when the FEC shards are included.
-      if (config::stream.fec_percentage <= 80) {
-        configuredBitrateKbps /= 100.f / (100 - config::stream.fec_percentage);
+      auto effectiveFecPercentage = effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
+                                                                               config.mlFeatureFlags);
+
+      configuredBitrateKbps = adjust_configured_video_bitrate_kbps(
+        configuredBitrateKbps,
+        effectiveFecPercentage,
+        config.audio.flags[audio::config_t::HIGH_QUALITY],
+        config.audio.channels);
+      const auto qualityCeilingBitrateKbps = configuredBitrateKbps;
+      const auto qualityCeilingFramerate = config.monitor.framerate;
+
+      auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
+        .width = config.monitor.width,
+        .height = config.monitor.height,
+        .fps = config.monitor.framerate,
+        .video_bitrate_kbps = static_cast<int>(configuredBitrateKbps),
+        .video_format = config.monitor.videoFormat,
+        .chroma_sampling_type = config.monitor.chromaSamplingType,
+        .content_type = clientContentType == 1 ? stream_quality::content_type_e::text :
+                        clientContentType == 2 ? stream_quality::content_type_e::motion :
+                        clientContentType == 3 ? stream_quality::content_type_e::game :
+                                                 stream_quality::content_type_e::desktop,
+      });
+
+      if (clarity_plan.enabled) {
+        if (clarity_plan.effective_chroma_sampling_type != config.monitor.chromaSamplingType) {
+          BOOST_LOG(info) << "Low-bitrate clarity mode: using 4:2:0 to preserve luma detail at "
+                          << configuredBitrateKbps << " Kbps";
+          config.monitor.chromaSamplingType = clarity_plan.effective_chroma_sampling_type;
+        }
+
+        if (clarity_plan.effective_fps > 0 &&
+            clarity_plan.effective_fps < config.monitor.framerate) {
+          BOOST_LOG(info) << "Low-bitrate clarity advisory: preserving requested "
+                          << config.monitor.framerate
+                          << " fps for adaptive pacing; static clarity would prefer "
+                          << clarity_plan.effective_fps << " fps at "
+                          << configuredBitrateKbps << " Kbps"
+                          << " (" << clarity_plan.bits_per_pixel_per_frame
+                          << " bpp/frame)";
+        }
+
+        if (clarity_plan.prefer_intra_refresh && config.monitor.enableIntraRefresh == 0) {
+          BOOST_LOG(info) << "Low-bitrate clarity mode: enabling intra-refresh preference for moving content";
+          config.monitor.enableIntraRefresh = 1;
+        }
+
+        if (clarity_plan.roi_enabled || clarity_plan.target_qp > 0 || clarity_plan.sharpen_alpha > 0.0f) {
+          BOOST_LOG(info) << "Low-bitrate clarity hints: qp=" << clarity_plan.target_qp
+                          << " roi=" << (clarity_plan.roi_enabled ? 1 : 0)
+                          << " ltr=" << (clarity_plan.prefer_long_term_reference ? 1 : 0)
+                          << " sharpen=" << clarity_plan.sharpen_alpha;
+        }
       }
 
-      // Adjust the bitrate to account for audio traffic bandwidth usage (capped at 20% reduction).
-      // The bitrate per channel is 256 Kbps for high quality mode and 96 Kbps for normal quality.
-      auto audioBitrateAdjustment = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;
-      configuredBitrateKbps -= std::min((std::int64_t) audioBitrateAdjustment, configuredBitrateKbps / 5);
-
-      // Reduce it by another 500Kbps to account for A/V packet overhead and control data
-      // traffic (capped at 10% reduction).
-      configuredBitrateKbps -= std::min((std::int64_t) 500, configuredBitrateKbps / 10);
+      if (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) {
+        stream_quality::stream_description_t startup_stream {
+          .width = config.monitor.width,
+          .height = config.monitor.height,
+          .fps = qualityCeilingFramerate,
+          .video_bitrate_kbps = static_cast<int>(qualityCeilingBitrateKbps),
+          .video_format = config.monitor.videoFormat,
+          .chroma_sampling_type = config.monitor.chromaSamplingType,
+          .content_type = clientContentType == 1 ? stream_quality::content_type_e::text :
+                          clientContentType == 2 ? stream_quality::content_type_e::motion :
+                          clientContentType == 3 ? stream_quality::content_type_e::game :
+                                                   stream_quality::content_type_e::desktop,
+        };
+        auto startupBitrateKbps = stream_quality::startup_bitrate_for_ceiling(startup_stream);
+        auto startupFps = stream_quality::startup_fps_for_bitrate(startup_stream, startupBitrateKbps);
+        if ((startupBitrateKbps > 0 && startupBitrateKbps < qualityCeilingBitrateKbps) ||
+            (startupFps > 0 && startupFps < qualityCeilingFramerate)) {
+          BOOST_LOG(info) << "Ceiling-aware startup: starting at "
+                          << startupBitrateKbps << " Kbps / " << startupFps
+                          << " fps under quality ceiling "
+                          << qualityCeilingBitrateKbps << " Kbps / "
+                          << qualityCeilingFramerate << " fps";
+          configuredBitrateKbps = startupBitrateKbps;
+          config.monitor.framerate = startupFps;
+        }
+      }
 
       BOOST_LOG(debug) << "Final adjusted video encoding bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
+      config.monitor.qualityCeilingBitrate = static_cast<int>(qualityCeilingBitrateKbps);
+      config.monitor.qualityCeilingFramerate = qualityCeilingFramerate;
       config.monitor.bitrate = configuredBitrateKbps;
     }
 

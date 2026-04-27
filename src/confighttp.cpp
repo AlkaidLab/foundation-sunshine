@@ -1725,6 +1725,10 @@ namespace confighttp {
         session_obj["enable_mic"] = session_info.enable_mic;
         session_obj["display_owner"] = session_info.display_owner;
         session_obj["display_owner_runtime_id"] = session_info.display_owner_runtime_id;
+        session_obj["display_resource_scope"] = session_info.display_resource_scope;
+        session_obj["display_allocation_mode"] = session_info.display_allocation_mode;
+        session_obj["display_resource_slot"] = session_info.display_resource_slot;
+        session_obj["dedicated_display"] = session_info.dedicated_display;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
         

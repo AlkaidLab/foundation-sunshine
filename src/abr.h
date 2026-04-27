@@ -14,6 +14,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -67,6 +68,7 @@ namespace abr {
   /// Per-client ABR session state
   struct session_state_t {
     config_t config;
+    std::string session_label;
     int current_bitrate_kbps = 0;
     int initial_bitrate_kbps = 0;
     std::string app_name;            ///< Game/app from config (may be launcher name)
@@ -117,17 +119,26 @@ namespace abr {
   void
   enable(const std::string &client_name, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name);
 
+  void
+  enable_for_runtime(std::uint64_t runtime_id, const std::string &session_label, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name);
+
   /**
    * @brief Disable ABR for a client session.
    */
   void
   disable(const std::string &client_name);
 
+  void
+  disable_for_runtime(std::uint64_t runtime_id);
+
   /**
    * @brief Check if ABR is enabled for a client.
    */
   bool
   is_enabled(const std::string &client_name);
+
+  bool
+  is_enabled_for_runtime(std::uint64_t runtime_id);
 
   /**
    * @brief Process network feedback and produce a bitrate action.
@@ -142,6 +153,9 @@ namespace abr {
   action_t
   process_feedback(const std::string &client_name, const network_feedback_t &feedback);
 
+  action_t
+  process_feedback_for_runtime(std::uint64_t runtime_id, const network_feedback_t &feedback);
+
   /**
    * @brief Get ABR capabilities for capability negotiation.
    */
@@ -153,5 +167,8 @@ namespace abr {
    */
   void
   cleanup(const std::string &client_name);
+
+  void
+  cleanup_for_runtime(std::uint64_t runtime_id);
 
 }  // namespace abr

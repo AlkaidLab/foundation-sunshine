@@ -290,14 +290,16 @@ namespace platf {
     int width, height;
   };
 
-  // These values must match Limelight-internal.h's SS_FF_* constants!
+  // These are Sunshine-specific platform capability flags.
   namespace platform_caps {
     typedef uint32_t caps_t;
 
     constexpr caps_t pen_touch = 0x01;  // Pen and touch events
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
-    constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync (negotiated only when GUI agent is alive)
-    constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
+    constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync
+    constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync
+    constexpr caps_t mic_session_id = 0x10;  // Microphone packets include a session token
+    constexpr caps_t network_feedback = 0x20;  // Client-to-host weak-network feedback
   };  // namespace platform_caps
 
   struct gamepad_state_t {

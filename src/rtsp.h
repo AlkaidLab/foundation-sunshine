@@ -5,6 +5,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 
 #include <boost/process/v1.hpp>
 
@@ -24,6 +26,8 @@ namespace rtsp_stream {
     std::string av_ping_payload;
     uint32_t control_connect_data;
     session_runtime::identity_t identity;
+    std::string rtsp_peer_address;
+    std::chrono::steady_clock::time_point pending_since;
 
     boost::process::v1::environment env;
 
@@ -74,6 +78,18 @@ namespace rtsp_stream {
    */
   int
   session_count();
+
+  std::uint64_t
+  foundation_streaming_feature_flags2();
+
+  int
+  effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags);
+
+  std::int64_t
+  adjust_configured_video_bitrate_kbps(std::int64_t configured_bitrate_kbps,
+                                       int fec_percentage,
+                                       bool high_quality_audio,
+                                       int audio_channels);
 
   /**
    * @brief Terminates all running streaming sessions.

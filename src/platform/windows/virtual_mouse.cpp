@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 
@@ -136,6 +137,11 @@ namespace platf {
       // Flush thread
       std::thread flush_thread;
       std::atomic<bool> flush_running { false };
+      std::atomic<std::uint64_t> diag_move_calls { 0 };
+      std::atomic<std::uint64_t> diag_flush_reports { 0 };
+      std::atomic<std::uint64_t> diag_empty_flushes { 0 };
+      std::mutex diag_log_mutex;
+      std::chrono::steady_clock::time_point diag_last_log { std::chrono::steady_clock::now() };
 
       ~impl_t() {
         stop_flush_thread();
@@ -162,12 +168,37 @@ namespace platf {
       }
 
       void
+      maybe_log_diag(const char *reason) {
+        auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lg(diag_log_mutex);
+        if (now - diag_last_log < 1s) {
+          return;
+        }
+
+        auto move_calls = diag_move_calls.exchange(0, std::memory_order_relaxed);
+        auto flush_reports = diag_flush_reports.exchange(0, std::memory_order_relaxed);
+        auto empty_flushes = diag_empty_flushes.exchange(0, std::memory_order_relaxed);
+        if (move_calls == 0 && flush_reports == 0) {
+          return;
+        }
+
+        diag_last_log = now;
+        VMOUSE_LOG(info) << "[inputdiag] vmouse 1s reason="sv << reason
+                         << " moveCalls="sv << move_calls
+                         << " flushReports="sv << flush_reports
+                         << " emptyFlushes="sv << empty_flushes
+                         << " intervalMs="sv << FLUSH_INTERVAL.count();
+      }
+
+      void
       flush_accumulated() {
         int16_t dx, dy;
         uint8_t buttons;
         {
           std::lock_guard<std::mutex> lk(accum_mutex);
-          if (!accum_dirty) return;
+          if (!accum_dirty) {
+            return;
+          }
           dx = static_cast<int16_t>(std::clamp(accum_dx, -32767, 32767));
           dy = static_cast<int16_t>(std::clamp(accum_dy, -32767, 32767));
           buttons = buttonState;
@@ -176,6 +207,8 @@ namespace platf {
           accum_dirty = false;
         }
         sendReportDirect(buttons, dx, dy, 0, 0);
+        diag_flush_reports.fetch_add(1, std::memory_order_relaxed);
+        maybe_log_diag("flush");
       }
 
       void
@@ -316,11 +349,15 @@ namespace platf {
 
     bool
     device_t::move(int16_t delta_x, int16_t delta_y) {
-      // Accumulate deltas; the flush thread will send them periodically
-      std::lock_guard<std::mutex> lk(impl->accum_mutex);
-      impl->accum_dx += delta_x;
-      impl->accum_dy += delta_y;
-      impl->accum_dirty = true;
+      {
+        // Accumulate deltas; the flush thread will send them periodically
+        std::lock_guard<std::mutex> lk(impl->accum_mutex);
+        impl->accum_dx += delta_x;
+        impl->accum_dy += delta_y;
+        impl->accum_dirty = true;
+      }
+      impl->diag_move_calls.fetch_add(1, std::memory_order_relaxed);
+      impl->maybe_log_diag("move");
       return true;
     }
 

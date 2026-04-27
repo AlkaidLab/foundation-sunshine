@@ -28,6 +28,7 @@ namespace stream {
     int packetsize;
     int minRequiredFecPackets;
     int mlFeatureFlags;
+    std::uint64_t mlFeatureFlags2;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;
@@ -58,6 +59,10 @@ namespace stream {
     bool enable_mic;
     bool display_owner;
     uint64_t display_owner_runtime_id;
+    std::string display_resource_scope;
+    std::string display_allocation_mode;
+    uint32_t display_resource_slot;
+    bool dedicated_display;
     std::string app_name;
     int app_id;
   };

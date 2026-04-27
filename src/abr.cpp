@@ -38,6 +38,16 @@ namespace abr {
   static std::mutex sessions_mutex;
   static std::unordered_map<std::string, session_state_t> sessions;
 
+  static std::string
+  legacy_key(const std::string &client_name) {
+    return "client:" + client_name;
+  }
+
+  static std::string
+  runtime_key(std::uint64_t runtime_id) {
+    return "runtime:" + std::to_string(runtime_id);
+  }
+
   /**
    * @brief Sanitize client-provided network feedback values.
    */
@@ -515,13 +525,14 @@ namespace abr {
     return action;
   }
 
-  void
-  enable(const std::string &client_name, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name) {
+  static void
+  enable_impl(const std::string &session_key, const std::string &session_label, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name) {
     std::lock_guard lock(sessions_mutex);
 
-    auto &state = sessions[client_name];
+    auto &state = sessions[session_key];
     state.config = cfg;
     state.config.enabled = true;
+    state.session_label = session_label;
     state.initial_bitrate_kbps = initial_bitrate_kbps;
     state.current_bitrate_kbps = initial_bitrate_kbps;
     state.app_name = app_name;
@@ -578,7 +589,7 @@ namespace abr {
       state.config.min_bitrate_kbps,
       state.config.max_bitrate_kbps);
 
-    BOOST_LOG(info) << "ABR enabled for client '" << client_name
+    BOOST_LOG(info) << "ABR enabled for '" << session_label
                     << "': app=" << app_name
                     << " mode=" << mode_to_string(cfg.mode)
                     << " bitrate=" << initial_bitrate_kbps
@@ -587,17 +598,50 @@ namespace abr {
   }
 
   void
-  disable(const std::string &client_name) {
+  enable(const std::string &client_name, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name) {
+    enable_impl(legacy_key(client_name), client_name, cfg, initial_bitrate_kbps, app_name);
+  }
+
+  void
+  enable_for_runtime(std::uint64_t runtime_id, const std::string &session_label, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name) {
+    enable_impl(runtime_key(runtime_id), session_label + " #" + std::to_string(runtime_id), cfg, initial_bitrate_kbps, app_name);
+  }
+
+  static void
+  disable_impl(const std::string &session_key) {
     std::lock_guard lock(sessions_mutex);
-    sessions.erase(client_name);
-    BOOST_LOG(info) << "ABR disabled for client '" << client_name << "'";
+    auto it = sessions.find(session_key);
+    if (it != sessions.end()) {
+      BOOST_LOG(info) << "ABR disabled for '" << it->second.session_label << "'";
+      sessions.erase(it);
+    }
+  }
+
+  void
+  disable(const std::string &client_name) {
+    disable_impl(legacy_key(client_name));
+  }
+
+  void
+  disable_for_runtime(std::uint64_t runtime_id) {
+    disable_impl(runtime_key(runtime_id));
+  }
+
+  static bool
+  is_enabled_impl(const std::string &session_key) {
+    std::lock_guard lock(sessions_mutex);
+    auto it = sessions.find(session_key);
+    return it != sessions.end() && it->second.config.enabled;
   }
 
   bool
   is_enabled(const std::string &client_name) {
-    std::lock_guard lock(sessions_mutex);
-    auto it = sessions.find(client_name);
-    return it != sessions.end() && it->second.config.enabled;
+    return is_enabled_impl(legacy_key(client_name));
+  }
+
+  bool
+  is_enabled_for_runtime(std::uint64_t runtime_id) {
+    return is_enabled_impl(runtime_key(runtime_id));
   }
 
   /**
@@ -606,11 +650,11 @@ namespace abr {
    * Unlike old design, the LLM sets a target (not an immediate action).
    */
   static void
-  llm_worker(const std::string &client_name, uint64_t generation, std::string request_body) {
+  llm_worker(const std::string &session_key, uint64_t generation, std::string request_body) {
     auto result = confighttp::processAiChat(request_body);
 
     std::lock_guard lock(sessions_mutex);
-    auto it = sessions.find(client_name);
+    auto it = sessions.find(session_key);
     if (it == sessions.end() || it->second.generation != generation) {
       return;  // Session was cleaned up or re-created while LLM was in flight
     }
@@ -625,19 +669,19 @@ namespace abr {
     auto action = parse_llm_response(result.body, state);
     if (action.target_bitrate_kbps > 0) {
       state.llm_target_bitrate_kbps = action.target_bitrate_kbps;
-      BOOST_LOG(info) << "ABR LLM target for '" << client_name
+      BOOST_LOG(info) << "ABR LLM target for '" << state.session_label
                       << "': " << action.target_bitrate_kbps << " Kbps"
                       << " (" << action.reason << ")";
     }
   }
 
-  action_t
-  process_feedback(const std::string &client_name, const network_feedback_t &raw_feedback) {
+  static action_t
+  process_feedback_impl(const std::string &session_key, const network_feedback_t &raw_feedback) {
     auto feedback = sanitize_feedback(raw_feedback);
 
     std::lock_guard lock(sessions_mutex);
 
-    auto it = sessions.find(client_name);
+    auto it = sessions.find(session_key);
     if (it == sessions.end() || !it->second.config.enabled) {
       return { .reason = "ABR not enabled" };
     }
@@ -707,7 +751,7 @@ namespace abr {
         }
         if (action.new_bitrate_kbps > 0) {
           state.current_bitrate_kbps = action.new_bitrate_kbps;
-          BOOST_LOG(info) << "ABR fallback for '" << client_name
+          BOOST_LOG(info) << "ABR fallback for '" << state.session_label
                           << "': " << action.new_bitrate_kbps << " Kbps"
                           << " (" << action.reason << ")";
           result_action = action;
@@ -737,11 +781,21 @@ namespace abr {
         auto prompt = build_llm_prompt(state);
         auto request_body = build_llm_request(prompt);
 
-        std::thread(llm_worker, client_name, state.generation, std::move(request_body)).detach();
+        std::thread(llm_worker, session_key, state.generation, std::move(request_body)).detach();
       }
     }
 
     return result_action;
+  }
+
+  action_t
+  process_feedback(const std::string &client_name, const network_feedback_t &raw_feedback) {
+    return process_feedback_impl(legacy_key(client_name), raw_feedback);
+  }
+
+  action_t
+  process_feedback_for_runtime(std::uint64_t runtime_id, const network_feedback_t &raw_feedback) {
+    return process_feedback_impl(runtime_key(runtime_id), raw_feedback);
   }
 
   capabilities_t
@@ -752,6 +806,11 @@ namespace abr {
   void
   cleanup(const std::string &client_name) {
     disable(client_name);
+  }
+
+  void
+  cleanup_for_runtime(std::uint64_t runtime_id) {
+    disable_for_runtime(runtime_id);
   }
 
 }  // namespace abr

@@ -31,6 +31,23 @@ namespace session_runtime {
     display,
     dynamic_params,
     input_focus,
+    transport_qos,
+    cursor_plane,
+    clipboard_bulk,
+    dynamic_quality,
+  };
+
+  enum class resource_scope_e : std::uint8_t {
+    per_session,
+    per_device,
+    shared_global,
+    global_exclusive,
+  };
+
+  enum class display_allocation_mode_e : std::uint8_t {
+    shared_owner,
+    shared_follower,
+    dedicated,
   };
 
   struct identity_t {
@@ -65,6 +82,13 @@ namespace session_runtime {
     explicit operator bool() const {
       return runtime_id != 0;
     }
+  };
+
+  struct display_allocation_t {
+    owner_token_t owner { feature_e::display };
+    resource_scope_e scope { resource_scope_e::shared_global };
+    display_allocation_mode_e mode { display_allocation_mode_e::shared_owner };
+    std::uint32_t resource_slot {};
   };
 
 }  // namespace session_runtime

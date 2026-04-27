@@ -549,7 +549,7 @@ namespace config {
     true,  // native pen/touch support
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
-    true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
+    true,  // clipboard sync
   };
 
   sunshine_t sunshine {
@@ -1375,9 +1375,9 @@ namespace config {
 
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
+    bool_f(vars, "clipboard_sync", input.clipboard_sync);
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
-    bool_f(vars, "clipboard_sync", input.clipboard_sync);
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 

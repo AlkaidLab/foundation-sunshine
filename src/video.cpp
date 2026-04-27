@@ -53,6 +53,7 @@ struct AMFEncoderContext_Partial {
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
+#include "video_bitrate.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -79,6 +80,11 @@ namespace video {
       }
 #endif
       return std::nullopt;
+    }
+
+    int
+    clamp_fec_percentage(int fec_percentage) {
+      return std::clamp(fec_percentage, 0, 80);
     }
 
     /**
@@ -430,13 +436,7 @@ namespace video {
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx) return;
 
-      // Adjust encoding bitrate considering FEC overhead
-      // When FEC percentage is X%, actual encoding bitrate should be (100-X)% of requested
-      auto adjusted_bitrate_kbps = bitrate_kbps;
-      if (config::stream.fec_percentage > 0 && config::stream.fec_percentage <= 80) {
-        adjusted_bitrate_kbps = bitrate_kbps * (100 - config::stream.fec_percentage) / 100;
-      }
-
+      auto adjusted_bitrate_kbps = dynamic_encoder_bitrate_kbps(bitrate_kbps, current_fec_percentage);
       auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
 
       // Update AVCodecContext fields (for software encoders and as fallback)
@@ -477,7 +477,7 @@ namespace video {
           if (res == AMF_OK) {
             BOOST_LOG(info) << "AMF encoder bitrate dynamically changed to: " << adjusted_bitrate_kbps
                             << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                            << config::stream.fec_percentage << "%)";
+                            << current_fec_percentage << "%)";
             return;
           }
           BOOST_LOG(warning) << "AMF SetProperty for bitrate failed with error: " << res;
@@ -487,7 +487,7 @@ namespace video {
 
       BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                      << config::stream.fec_percentage << "%)";
+                      << current_fec_percentage << "%)";
     }
 
     void
@@ -507,6 +507,11 @@ namespace video {
         case dynamic_param_type_e::BITRATE: {
           // 码率调整通过set_bitrate处理
           set_bitrate(param.value.int_value);
+          break;
+        }
+        case dynamic_param_type_e::FEC_PERCENTAGE: {
+          current_fec_percentage = clamp_fec_percentage(param.value.int_value);
+          BOOST_LOG(info) << "AVCodec encoder FEC percentage changed to: " << current_fec_percentage << "%";
           break;
         }
         case dynamic_param_type_e::QP: {
@@ -539,6 +544,7 @@ namespace video {
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
     std::vector<packet_raw_t::replace_t> replacements;
+    int current_fec_percentage = clamp_fec_percentage(config::stream.fec_percentage);
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -581,17 +587,11 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->nvenc) {
-        // 考虑FEC影响，调整编码码率
-        // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
-
+        auto adjusted_bitrate_kbps = dynamic_encoder_bitrate_kbps(bitrate_kbps, current_fec_percentage);
         device->nvenc->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
                         << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
+                        << current_fec_percentage << "%)";
       }
     }
 
@@ -612,6 +612,11 @@ namespace video {
         case dynamic_param_type_e::BITRATE: {
           // 码率调整通过set_bitrate处理
           set_bitrate(param.value.int_value);
+          break;
+        }
+        case dynamic_param_type_e::FEC_PERCENTAGE: {
+          current_fec_percentage = clamp_fec_percentage(param.value.int_value);
+          BOOST_LOG(info) << "NVENC encoder FEC percentage changed to: " << current_fec_percentage << "%";
           break;
         }
         case dynamic_param_type_e::QP: {
@@ -657,6 +662,7 @@ namespace video {
 
   private:
     std::unique_ptr<platf::nvenc_encode_device_t> device;
+    int current_fec_percentage = clamp_fec_percentage(config::stream.fec_percentage);
     bool force_idr = false;
   };
 
@@ -694,15 +700,11 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->amf) {
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
-
+        auto adjusted_bitrate_kbps = dynamic_encoder_bitrate_kbps(bitrate_kbps, current_fec_percentage);
         device->amf->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
                         << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
+                        << current_fec_percentage << "%)";
       }
     }
 
@@ -713,6 +715,10 @@ namespace video {
       switch (param.type) {
         case dynamic_param_type_e::BITRATE:
           set_bitrate(param.value.int_value);
+          break;
+        case dynamic_param_type_e::FEC_PERCENTAGE:
+          current_fec_percentage = clamp_fec_percentage(param.value.int_value);
+          BOOST_LOG(info) << "AMF standalone encoder FEC percentage changed to: " << current_fec_percentage << "%";
           break;
         default:
           break;
@@ -730,6 +736,7 @@ namespace video {
 
   private:
     std::unique_ptr<platf::amf_encode_device_t> device;
+    int current_fec_percentage = clamp_fec_percentage(config::stream.fec_percentage);
     bool force_idr = false;
   };
 
@@ -2807,7 +2814,7 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
@@ -2847,7 +2854,9 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
-    auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->event<dynamic_param_t>(mail::dynamic_param_change));
+    auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->queue<dynamic_param_t>(mail::dynamic_param_change));
+    auto target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / std::max(1, config.framerate) };
+    auto next_encode_time = std::chrono::steady_clock::now();
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2889,6 +2898,12 @@ namespace video {
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
+          if (param->valid && param->type == dynamic_param_type_e::FPS && param->value.float_value >= 1.0f) {
+            target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / param->value.float_value };
+            minimum_frame_time = target_frame_time;
+            BOOST_LOG(info) << "Encode pacing target changed to " << param->value.float_value
+                            << " fps (" << target_frame_time.count() << "ms)";
+          }
           session->set_dynamic_param(*param);
         }
       }
@@ -2926,6 +2941,14 @@ namespace video {
           continue;
         }
         // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
+      }
+
+      if (has_new_frame && !requested_idr_frame) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < next_encode_time) {
+          continue;
+        }
+        next_encode_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(target_frame_time);
       }
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
@@ -3287,7 +3310,7 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<img_event_t::element_type>();
@@ -3465,7 +3488,7 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);

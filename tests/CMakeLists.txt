@@ -47,6 +47,10 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
+if (NOT WIN32)
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "[/\\\\]tests[/\\\\]tools[/\\\\].*")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "[/\\\\]tests[/\\\\]unit[/\\\\]platform[/\\\\]windows[/\\\\].*")
+endif ()
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES})
@@ -145,4 +149,3 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
-

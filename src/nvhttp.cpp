@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 // lib includes
 #include <Simple-Web-Server/server_http.hpp>
@@ -1532,29 +1533,93 @@ namespace nvhttp {
   // ============================================================================
 
   /**
-   * @brief Resolve the client name from the HTTPS request's source IP.
-   * Matches the connecting client's address against active streaming sessions.
-   * @return {client_name, bitrate, app_name} or empty client_name on failure.
+   * @brief Resolve the runtime session from HTTPS client certificate and optional runtime ID.
+   * Falls back to source IP only for legacy/ambiguous clients.
    */
   struct resolved_client_t {
+    std::uint64_t runtime_id = 0;
     std::string name;
     int bitrate = 0;
     std::string app_name;
+    std::string error;
   };
 
+  static std::uint64_t
+  get_runtime_id_from_body(const json &body) {
+    auto read_field = [&](const char *name) -> std::uint64_t {
+      auto it = body.find(name);
+      if (it == body.end()) {
+        return 0;
+      }
+      if (it->is_number_unsigned()) {
+        return it->get<std::uint64_t>();
+      }
+      if (it->is_number_integer()) {
+        auto value = it->get<std::int64_t>();
+        return value > 0 ? static_cast<std::uint64_t>(value) : 0;
+      }
+      if (it->is_string()) {
+        try {
+          return std::stoull(it->get<std::string>());
+        }
+        catch (...) {
+          return 0;
+        }
+      }
+      return 0;
+    };
+
+    auto runtime_id = read_field("runtime_id");
+    return runtime_id != 0 ? runtime_id : read_field("runtimeId");
+  }
+
   static resolved_client_t
-  resolve_client(req_https_t request) {
+  resolve_client(req_https_t request, std::uint64_t requested_runtime_id = 0) {
     auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
+    auto client_cert_uuid = get_client_cert_uuid_from_request(request);
+
     try {
       auto sessions_info = stream::session::get_all_sessions_info();
-      for (const auto &si : sessions_info) {
-        if (si.client_address == client_addr && si.state == "RUNNING") {
-          return { si.client_name, si.bitrate, si.app_name };
+      if (requested_runtime_id != 0) {
+        for (const auto &si : sessions_info) {
+          if (si.runtime_id != requested_runtime_id || si.state != "RUNNING") {
+            continue;
+          }
+          if (!client_cert_uuid.empty() && !si.client_cert_uuid.empty() && si.client_cert_uuid != client_cert_uuid) {
+            return { .error = "runtime_id does not belong to this client certificate" };
+          }
+          return { si.runtime_id, si.client_name, si.bitrate, si.app_name, {} };
         }
+        return { .error = "No active streaming session for requested runtime_id" };
+      }
+
+      std::vector<stream::session_info_t> matches;
+      if (!client_cert_uuid.empty()) {
+        for (const auto &si : sessions_info) {
+          if (si.client_cert_uuid == client_cert_uuid && si.state == "RUNNING") {
+            matches.push_back(si);
+          }
+        }
+      }
+
+      if (matches.empty()) {
+        for (const auto &si : sessions_info) {
+          if (si.client_address == client_addr && si.state == "RUNNING") {
+            matches.push_back(si);
+          }
+        }
+      }
+
+      if (matches.size() == 1) {
+        const auto &si = matches.front();
+        return { si.runtime_id, si.client_name, si.bitrate, si.app_name, {} };
+      }
+      if (matches.size() > 1) {
+        return { .error = "Multiple active sessions match this client; include runtime_id/runtimeId" };
       }
     }
     catch (...) {}
-    return {};
+    return { .error = "No active streaming session for this client" };
   }
 
   /**
@@ -1588,7 +1653,7 @@ namespace nvhttp {
    *   "mode": "balanced"
    * }
    *
-   * Client identity is resolved from the TLS connection's source IP.
+   * Client identity is resolved from runtime_id when provided, otherwise from the TLS client certificate.
    */
   void
   configureAbr(resp_https_t response, req_https_t request) {
@@ -1598,26 +1663,32 @@ namespace nvhttp {
     headers.emplace("Content-Type", "application/json");
 
     try {
-      auto client = resolve_client(request);
-      if (client.name.empty()) {
-        json err;
-        err["success"] = false;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
       std::stringstream ss;
       ss << request->content.rdbuf();
       auto body = json::parse(ss.str());
 
+      auto client = resolve_client(request, get_runtime_id_from_body(body));
+      if (client.name.empty()) {
+        json err;
+        err["success"] = false;
+        err["error"] = client.error.empty() ? "No active streaming session for this client" : client.error;
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        return;
+      }
+
       bool enabled = body.value("enabled", false);
 
       if (!enabled) {
-        abr::disable(client.name);
+        if (client.runtime_id != 0) {
+          abr::disable_for_runtime(client.runtime_id);
+        }
+        else {
+          abr::disable(client.name);
+        }
         json resp_json;
         resp_json["success"] = true;
         resp_json["enabled"] = false;
+        resp_json["runtimeId"] = client.runtime_id;
         response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
         return;
       }
@@ -1668,11 +1739,17 @@ namespace nvhttp {
                             : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
                             : 20000;
 
-      abr::enable(client.name, cfg, initial_bitrate, client.app_name);
+      if (client.runtime_id != 0) {
+        abr::enable_for_runtime(client.runtime_id, client.name, cfg, initial_bitrate, client.app_name);
+      }
+      else {
+        abr::enable(client.name, cfg, initial_bitrate, client.app_name);
+      }
 
       json resp_json;
       resp_json["success"] = true;
       resp_json["enabled"] = true;
+      resp_json["runtimeId"] = client.runtime_id;
       resp_json["mode"] = mode_str;
       resp_json["minBitrate"] = cfg.min_bitrate_kbps;
       resp_json["maxBitrate"] = cfg.max_bitrate_kbps;
@@ -1713,7 +1790,7 @@ namespace nvhttp {
    *   "reason": "moderate_drop: packet_loss=1.5%"
    * }
    *
-   * Client identity is resolved from the TLS connection's source IP.
+   * Client identity is resolved from runtime_id when provided, otherwise from the TLS client certificate.
    */
   void
   abrFeedback(resp_https_t response, req_https_t request) {
@@ -1723,24 +1800,27 @@ namespace nvhttp {
     headers.emplace("Content-Type", "application/json");
 
     try {
-      auto client_name = resolve_client(request).name;
-      if (client_name.empty()) {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      auto body = json::parse(ss.str());
+
+      auto client = resolve_client(request, get_runtime_id_from_body(body));
+      if (client.name.empty()) {
         json err;
-        err["error"] = "No active streaming session for this client";
+        err["error"] = client.error.empty() ? "No active streaming session for this client" : client.error;
         response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
         return;
       }
 
-      if (!abr::is_enabled(client_name)) {
+      const auto abr_enabled = client.runtime_id != 0 ?
+                                 abr::is_enabled_for_runtime(client.runtime_id) :
+                                 abr::is_enabled(client.name);
+      if (!abr_enabled) {
         json err;
         err["error"] = "ABR not enabled for this client";
         response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
         return;
       }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
 
       abr::network_feedback_t feedback;
       feedback.packet_loss = body.value("packetLoss", 0.0);
@@ -1749,7 +1829,9 @@ namespace nvhttp {
       feedback.dropped_frames = body.value("droppedFrames", 0);
       feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
 
-      auto action = abr::process_feedback(client_name, feedback);
+      auto action = client.runtime_id != 0 ?
+                      abr::process_feedback_for_runtime(client.runtime_id, feedback) :
+                      abr::process_feedback(client.name, feedback);
 
       // If server decided on a new bitrate, apply it to the encoder
       if (action.new_bitrate_kbps > 0) {
@@ -1758,13 +1840,19 @@ namespace nvhttp {
         param.value.int_value = action.new_bitrate_kbps;
         param.valid = true;
 
-        stream::session::change_dynamic_param_for_client(client_name, param);
+        if (client.runtime_id != 0) {
+          stream::session::change_dynamic_param_for_runtime(client.runtime_id, param);
+        }
+        else {
+          stream::session::change_dynamic_param_for_client(client.name, param);
+        }
       }
 
       json resp_json;
       if (action.new_bitrate_kbps > 0) {
         resp_json["newBitrate"] = action.new_bitrate_kbps;
       }
+      resp_json["runtimeId"] = client.runtime_id;
       resp_json["reason"] = action.reason;
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
     }
@@ -1841,6 +1929,7 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     // 获取客户端证书UUID（稳定的客户端标识符）
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
@@ -1974,6 +2063,7 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
