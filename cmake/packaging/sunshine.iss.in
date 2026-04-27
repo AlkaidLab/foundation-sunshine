@@ -468,15 +468,44 @@ begin
   end;
 end;
 
-// Best-effort: extract the install directory from the NSIS UninstallString
-// (which is typically the absolute path of Uninstall.exe, optionally quoted).
+// Strip the executable path out of an UninstallString that may include
+// surrounding quotes and/or trailing arguments (e.g. '"...\Uninstall.exe" /S').
+function GetOldNSISUninstallExe(UninstallString: String): String;
+var
+  Path: String;
+  ClosePos, SpacePos: Integer;
+begin
+  Path := Trim(UninstallString);
+  if Path = '' then
+  begin
+    Result := '';
+    Exit;
+  end;
+  if Path[1] = '"' then
+  begin
+    ClosePos := Pos('"', Copy(Path, 2, Length(Path) - 1));
+    if ClosePos > 0 then
+      Path := Copy(Path, 2, ClosePos - 1)
+    else
+      Path := Copy(Path, 2, Length(Path) - 1);
+  end
+  else
+  begin
+    SpacePos := Pos(' ', Path);
+    if SpacePos > 0 then
+      Path := Copy(Path, 1, SpacePos - 1);
+  end;
+  Result := Path;
+end;
+
+// Best-effort: extract the install directory from the NSIS UninstallString.
 function GetOldNSISInstallDir(UninstallString: String): String;
 var
   Path: String;
   SlashPos: Integer;
 begin
   Result := '';
-  Path := RemoveQuotes(UninstallString);
+  Path := GetOldNSISUninstallExe(UninstallString);
   if Path = '' then
     Exit;
   SlashPos := Length(Path);
@@ -581,7 +610,7 @@ begin
   if UninstallString = '' then
     Exit;
 
-  UninstallExe := RemoveQuotes(UninstallString);
+  UninstallExe := GetOldNSISUninstallExe(UninstallString);
   InstallDir := GetOldNSISInstallDir(UninstallString);
 
   // If the uninstaller binary itself is gone, the registry entry is just stale
