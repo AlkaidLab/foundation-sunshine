@@ -75,6 +75,8 @@ namespace weak_net {
     double ewma_input_pressure_ = 0.0;
     double ewma_audio_pressure_ = 0.0;
     int stable_windows_ = 0;
+    int video_deadline_windows_ = 0;
+    int fps_adjust_cooldown_windows_ = 0;
     int current_bitrate_kbps_ = 0;
     int current_fec_percentage_ = 0;
     int pacing_bitrate_kbps_ = 0;

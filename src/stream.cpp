@@ -46,6 +46,7 @@ extern "C" {
 #include "logging.h"
 #include "network.h"
 #include "stream.h"
+#include "stream_quality.h"
 #include "sync.h"
 #include "system_tray.h"
 #include "thread_safe.h"
@@ -688,6 +689,9 @@ namespace stream {
     int last_applied_weak_net_bitrate { 0 };
     int last_applied_weak_net_fec { -1 };
     int last_applied_weak_net_fps { 0 };
+    std::uint32_t last_dynamic_clarity_flags { 0 };
+    int last_dynamic_clarity_qp { 0 };
+    int last_dynamic_clarity_bitrate { 0 };
     std::chrono::steady_clock::time_point last_weak_net_bitrate_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fec_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fps_apply {};
@@ -1038,6 +1042,67 @@ namespace stream {
       static_cast<double>(100 - fec_percentage)));
   }
 
+  static stream_quality::content_type_e
+  stream_quality_content_type_from_monitor(int content_type) {
+    switch (content_type) {
+      case 1:
+        return stream_quality::content_type_e::text;
+      case 2:
+        return stream_quality::content_type_e::motion;
+      case 3:
+        return stream_quality::content_type_e::game;
+      case 0:
+      default:
+        return stream_quality::content_type_e::desktop;
+    }
+  }
+
+  static void
+  update_dynamic_clarity_intent(session_t *session, int encoding_bitrate_kbps, int fps) {
+    if (!session || encoding_bitrate_kbps <= 0 || fps <= 0) {
+      return;
+    }
+
+    auto &monitor = session->config.monitor;
+    const auto plan = stream_quality::plan_low_bitrate_clarity({
+      .width = monitor.width,
+      .height = monitor.height,
+      .fps = fps,
+      .video_bitrate_kbps = encoding_bitrate_kbps,
+      .video_format = monitor.videoFormat,
+      .chroma_sampling_type = monitor.chromaSamplingType,
+      .content_type = stream_quality_content_type_from_monitor(monitor.contentType),
+    });
+
+    const bool changed = plan.intent_flags != session->last_dynamic_clarity_flags ||
+                         plan.target_qp != session->last_dynamic_clarity_qp ||
+                         std::abs(encoding_bitrate_kbps - session->last_dynamic_clarity_bitrate) >= 1000;
+    monitor.lowBitrateClarityIntentFlags = plan.intent_flags;
+    monitor.lowBitrateTargetQp = plan.target_qp;
+    monitor.lowBitrateSharpenAlpha = plan.sharpen_alpha;
+    session->last_dynamic_clarity_flags = plan.intent_flags;
+    session->last_dynamic_clarity_qp = plan.target_qp;
+    session->last_dynamic_clarity_bitrate = encoding_bitrate_kbps;
+
+    if (!changed || !plan.enabled) {
+      return;
+    }
+
+    BOOST_LOG(info) << "Low-bitrate clarity dynamic runtime=" << session->identity.runtime_id
+                    << " encoding=" << encoding_bitrate_kbps << " Kbps"
+                    << " fps=" << fps
+                    << " bpp=" << plan.bits_per_pixel_per_frame
+                    << " qp=" << plan.target_qp
+                    << " roi=" << (plan.roi_enabled ? 1 : 0)
+                    << " dirtyRegion=" << (plan.dirty_region_priority ? 1 : 0)
+                    << " temporalLayers=" << (plan.prefer_temporal_layers ? 1 : 0)
+                    << " discardableEnhancement=" << (plan.discardable_enhancement_layer ? 1 : 0)
+                    << " ltr=" << (plan.prefer_long_term_reference ? 1 : 0)
+                    << " intraRefresh=" << (plan.prefer_intra_refresh ? 1 : 0)
+                    << " flags=0x" << std::hex << plan.intent_flags << std::dec
+                    << " sharpen=" << plan.sharpen_alpha;
+  }
+
   bool
   should_synthesize_weak_net_recovery_feedback(int ml_feature_flags) {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
@@ -1163,6 +1228,7 @@ namespace stream {
     const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 80);
     const auto target_encoding_bitrate = action.target_bitrate_kbps;
     const auto target_fps = action.target_fps;
+    update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
 
     const auto now = std::chrono::steady_clock::now();
     const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_weak_net_bitrate);
@@ -4811,6 +4877,9 @@ namespace stream {
       session->last_applied_weak_net_bitrate = encoding_bitrate;
       session->last_applied_weak_net_fec = fec_percentage;
       session->last_applied_weak_net_fps = config.monitor.framerate;
+      session->last_dynamic_clarity_flags = config.monitor.lowBitrateClarityIntentFlags;
+      session->last_dynamic_clarity_qp = config.monitor.lowBitrateTargetQp;
+      session->last_dynamic_clarity_bitrate = encoding_bitrate;
       session->weak_net_recovery_ready_after = std::chrono::steady_clock::now() + 1500ms;
       BOOST_LOG(info) << "Weak-net startup baseline runtime=" << session->identity.runtime_id
                       << " encoding=" << encoding_bitrate << " Kbps"

@@ -151,7 +151,8 @@ namespace stream_quality {
                                   (stream.content_type == content_type_e::motion ||
                                    stream.content_type == content_type_e::game));
     plan.prefer_temporal_layers = stream.fps >= 90 &&
-                                  (stream.content_type == content_type_e::motion ||
+                                  (stream.content_type == content_type_e::desktop ||
+                                   stream.content_type == content_type_e::motion ||
                                    stream.content_type == content_type_e::game) &&
                                   plan.bits_per_pixel_per_frame < target_bpp * 1.15;
     plan.discardable_enhancement_layer = plan.prefer_temporal_layers &&

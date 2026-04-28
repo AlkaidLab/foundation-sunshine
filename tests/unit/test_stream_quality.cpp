@@ -185,7 +185,8 @@ TEST(StreamQualityTests, HighRefreshInteractiveDesktopKeepsSixtyFpsFloor) {
 
   EXPECT_TRUE(plan.enabled);
   EXPECT_GE(plan.effective_fps, 60);
-  EXPECT_FALSE(plan.prefer_temporal_layers);
+  EXPECT_TRUE(plan.prefer_temporal_layers);
+  EXPECT_TRUE(plan.discardable_enhancement_layer);
 }
 
 TEST(StreamQualityTests, HighRefreshGameKeepsSixtyFpsFloorAtLowBudget) {

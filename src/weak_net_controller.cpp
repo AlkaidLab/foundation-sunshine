@@ -155,6 +155,8 @@ namespace weak_net {
     current_fps_ = config_.startup_fps;
     state_ = state_e::healthy;
     stable_windows_ = 0;
+    video_deadline_windows_ = 0;
+    fps_adjust_cooldown_windows_ = 0;
     idr_cooldown_windows_ = 0;
     audio_cooldown_windows_ = 0;
     ewma_loss_ = 0.0;
@@ -265,12 +267,32 @@ namespace weak_net {
     if (audio_cooldown_windows_ > 0) {
       --audio_cooldown_windows_;
     }
+    if (fps_adjust_cooldown_windows_ > 0) {
+      --fps_adjust_cooldown_windows_;
+    }
+
+    video_deadline_windows_ = video_deadline_constrained ?
+                                std::min(video_deadline_windows_ + 1, 16) :
+                                0;
+    auto reduce_fps_for_pressure = [&](double scale,
+                                       int cooldown_windows,
+                                       int required_pressure_windows) {
+      if (fps_adjust_cooldown_windows_ > 0 ||
+          video_deadline_windows_ < required_pressure_windows) {
+        return;
+      }
+
+      current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * scale)),
+                               config_.min_fps,
+                               config_.baseline_fps);
+      fps_adjust_cooldown_windows_ = cooldown_windows;
+    };
 
     if (network_crisis) {
       state_ = state_e::crisis;
       stable_windows_ = 0;
       if (video_deadline_constrained) {
-        current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * 0.88)), config_.min_fps, config_.baseline_fps);
+        reduce_fps_for_pressure(0.88, 0, 1);
       }
       current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps, static_cast<int>(std::lround(current_bitrate_kbps_ * 0.76)));
       if (!delay_only_congestion && severe_random_loss) {
@@ -286,7 +308,7 @@ namespace weak_net {
       state_ = state_e::constrained;
       stable_windows_ = 0;
       if (video_deadline_constrained) {
-        current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * 0.92)), config_.min_fps, config_.baseline_fps);
+        reduce_fps_for_pressure(0.92, delay_only_congestion ? 2 : 1, 1);
       }
       current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps, static_cast<int>(std::lround(current_bitrate_kbps_ * 0.90)));
       if (!delay_only_congestion && moderate_random_loss) {
@@ -313,9 +335,9 @@ namespace weak_net {
     else if (video_deadline_constrained) {
       state_ = state_e::constrained;
       stable_windows_ = 0;
-      current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * (hard_video_deadline_miss ? 0.92 : 0.94))),
-                               config_.min_fps,
-                               config_.baseline_fps);
+      reduce_fps_for_pressure(hard_video_deadline_miss ? 0.93 : 0.96,
+                              hard_video_deadline_miss ? 2 : 3,
+                              hard_video_deadline_miss ? 1 : 2);
     }
     else if (input_constrained) {
       state_ = state_e::constrained;
