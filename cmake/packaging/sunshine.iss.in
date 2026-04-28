@@ -28,9 +28,10 @@ DefaultDirName={code:GetPreviousInstallDir|{autopf}\{#MyAppName}}
 ; Always show the directory page so users can recover from a bad remembered path.
 DisableDirPage=no
 DefaultGroupName={#MyAppName}
-; 管理员权限
+; 管理员权限。Sunshine 必须以管理员安装：写 HKLM 注册表、安装服务/驱动/防火墙、
+; 写入 {autopf}\Sunshine 都需要提权。不允许用户在 UAC 对话框中降级到 "为当前用户安装"，
+; 否则 HKLM\SOFTWARE\AlkaidLab\Sunshine 会以错误 5 (拒绝访问) 失败。
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
 ; 输出设置
 OutputDir=@CPACK_PACKAGE_DIRECTORY@
 OutputBaseFilename=Sunshine
