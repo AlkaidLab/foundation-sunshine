@@ -1789,6 +1789,12 @@ namespace stream {
     for (auto pos = std::begin(*server->_sessions); pos != std::end(*server->_sessions); ++pos) {
       auto session = *pos;
 
+      // The normal STOPPING path removes sessions from _sessions and updates
+      // the clipboard bridge immediately. If the control thread exits via the
+      // final shutdown path instead, make the same paired lifecycle update here
+      // so capability/session_count cannot retain stale launch IDs.
+      clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
         auto payload = encode_control(session, util::view(plaintext), encrypted_payload);
