@@ -46,6 +46,7 @@ extern "C" {
 #include "thread_safe.h"
 #include "utility.h"
 
+#include "clipboard_bridge.h"
 #include "platform/common.h"
 
 #define IDX_START_A 0
@@ -67,6 +68,7 @@ extern "C" {
 #define IDX_MIC_CONFIG 17
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
+#define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -89,6 +91,7 @@ static const short packetTypes[] = {
   0x5505,  // Microphone config (Sunshine protocol extension)
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
+  0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
 };
 
 namespace asio = boost::asio;
@@ -1188,6 +1191,115 @@ namespace stream {
     return 0;
   }
 
+  /**
+   * Variable-length sibling of encode_control(). Encrypts an arbitrary-sized
+   * plaintext into the caller-provided output buffer. The output buffer must be
+   * at least `sizeof(control_encrypted_t) + round_to_pkcs7_padded(plaintext.size()) + tag_size`.
+   * Returns the encoded view, or empty on failure / insufficient capacity.
+   */
+  static std::string_view
+  encode_control_buf(session_t *session, std::string_view plaintext, std::uint8_t *out, std::size_t out_cap) {
+    const std::size_t needed = sizeof(control_encrypted_t)
+                               + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+                               + crypto::cipher::tag_size;
+    if (out_cap < needed) {
+      BOOST_LOG(error) << "encode_control_buf: insufficient buffer ("sv << out_cap << " < "sv << needed << ")"sv;
+      return {};
+    }
+
+    if (session->config.controlProtocolType != 13) {
+      // Pre-v2 control protocol — caller must already have written plaintext;
+      // not used by clipboard sync (gated by gui_alive() + capability flags).
+      return plaintext;
+    }
+
+    auto seq = session->control.seq++;
+
+    auto &iv = session->control.outgoing_iv;
+    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
+      iv.resize(12);
+      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+      iv[10] = 'H';
+      iv[11] = 'C';
+    }
+    else {
+      iv.resize(16);
+      iv[0] = (std::uint8_t) seq;
+    }
+
+    auto packet = (control_encrypted_p) out;
+    auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
+    if (bytes <= 0) {
+      BOOST_LOG(error) << "encode_control_buf: encrypt failed"sv;
+      return {};
+    }
+
+    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    packet->encryptedHeaderType = util::endian::little(0x0001);
+    packet->length = util::endian::little(packet_length);
+    packet->seq = util::endian::little(seq);
+
+    return std::string_view {
+      (char *) out,
+      packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)
+    };
+  }
+
+  /**
+   * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
+   * an opaque byte string; this function adds the framing header and encrypts.
+   * Returns 0 on success, -1 on failure or oversized payload. The raw payload
+   * is capped below 65535 bytes so the encrypted control frame length also
+   * fits in the protocol's 16-bit length field.
+   */
+  int
+  send_clipboard(session_t *session, const clipboard_bridge::payload_t &payload) {
+    if (!session->control.peer) {
+      return -1;
+    }
+
+    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
+    const std::size_t encrypted_packet_length =
+      crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+      + crypto::cipher::tag_size
+      + sizeof(control_encrypted_t::seq);
+    if (payload.size() > clipboard_bridge::kMaxPayloadBytes ||
+        encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(warning) << "send_clipboard: payload too large ("sv << payload.size()
+                         << " bytes; encrypted control frame would be "sv
+                         << encrypted_packet_length << " bytes)"sv;
+      return -1;
+    }
+
+    std::vector<std::uint8_t> plaintext(plaintext_size);
+    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    hdr->type = packetTypes[IDX_CLIPBOARD];
+    hdr->payloadLength = (std::uint16_t) payload.size();
+    if (!payload.empty()) {
+      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    }
+
+    std::vector<std::uint8_t> encrypted(
+      sizeof(control_encrypted_t)
+      + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+      + crypto::cipher::tag_size);
+
+    auto view = encode_control_buf(
+      session,
+      std::string_view { (char *) plaintext.data(), plaintext.size() },
+      encrypted.data(),
+      encrypted.size());
+    if (view.empty()) {
+      return -1;
+    }
+
+    if (session->broadcast_ref->control_server.send(view, session->control.peer)) {
+      BOOST_LOG(warning) << "Couldn't send clipboard packet"sv;
+      return -1;
+    }
+    return 0;
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
@@ -1440,6 +1552,20 @@ namespace stream {
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
+    server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
+      // Forward opaque payload to the user-session GUI agent. Drop silently if
+      // disabled by config or if the GUI is not currently subscribed.
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+      auto &bridge = clipboard_bridge::bridge_t::instance();
+      if (!bridge.gui_alive()) {
+        return;
+      }
+      clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
+      bridge.on_inbound(session->launch_session_id, std::move(bytes));
+    });
+
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
 
@@ -1565,6 +1691,7 @@ namespace stream {
           }
 
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
+            clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
             if (session->control.peer) {
@@ -1613,6 +1740,27 @@ namespace stream {
 
           ++pos;
         })
+
+        // Drain any clipboard messages enqueued by the GUI HTTP layer and
+        // dispatch them to matching sessions. We're already holding the
+        // _sessions lock here, which serialises with the per-session
+        // erase/insert above.
+        {
+          std::deque<clipboard_bridge::outbound_msg_t> msgs;
+          clipboard_bridge::bridge_t::instance().drain_outbound(msgs);
+          for (auto &msg : msgs) {
+            for (auto *s : *server->_sessions) {
+              if (!s->control.peer) {
+                continue;
+              }
+              if (msg.target != clipboard_bridge::kBroadcast
+                  && s->launch_session_id != msg.target) {
+                continue;
+              }
+              send_clipboard(s, msg.bytes);
+            }
+          }
+        }
       }
 
       // Don't break until any pending sessions either expire or connect
@@ -1640,6 +1788,12 @@ namespace stream {
     auto lg = server->_sessions.lock();
     for (auto pos = std::begin(*server->_sessions); pos != std::end(*server->_sessions); ++pos) {
       auto session = *pos;
+
+      // The normal STOPPING path removes sessions from _sessions and updates
+      // the clipboard bridge immediately. If the control thread exits via the
+      // final shutdown path instead, make the same paired lifecycle update here
+      // so capability/session_count cannot retain stale launch IDs.
+      clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
 
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
@@ -2890,6 +3044,7 @@ namespace stream {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
+      clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
       auto addr = boost::asio::ip::make_address(addr_string);
       session.video.peer.address(addr);

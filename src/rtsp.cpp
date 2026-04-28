@@ -23,6 +23,7 @@ extern "C" {
 #include <boost/bind.hpp>
 
 // local includes
+#include "clipboard_bridge.h"
 #include "config.h"
 #include "globals.h"
 #include "input.h"
@@ -911,7 +912,16 @@ namespace rtsp_stream {
     std::stringstream ss;
 
     // Tell the client about our supported features
-    ss << "a=x-ss-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
+    {
+      auto caps = (uint32_t) platf::get_capabilities();
+      // Advertise clipboard sync only when the user opted in AND a user-session
+      // GUI agent is currently subscribed; otherwise the client would attempt
+      // sync into a black hole.
+      if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
+        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+      }
+      ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
+    }
 
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
