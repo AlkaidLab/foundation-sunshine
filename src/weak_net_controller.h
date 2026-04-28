@@ -73,12 +73,14 @@ namespace weak_net {
     double ewma_jitter_ = 0.0;
     double ewma_deadline_pressure_ = 0.0;
     double ewma_input_pressure_ = 0.0;
+    double ewma_audio_pressure_ = 0.0;
     int stable_windows_ = 0;
     int current_bitrate_kbps_ = 0;
     int current_fec_percentage_ = 0;
     int pacing_bitrate_kbps_ = 0;
     int current_fps_ = 0;
     int idr_cooldown_windows_ = 0;
+    int audio_cooldown_windows_ = 0;
     config_t config_;
     state_e state_ = state_e::healthy;
     bool configured_ = false;

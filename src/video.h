@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 #include "input.h"
 #include "platform/common.h"
 #include "thread_safe.h"
@@ -78,6 +80,11 @@ namespace video {
     int chromaSamplingType;  // 0 - 4:2:0, 1 - 4:4:4
 
     int enableIntraRefresh;  // 0 - disabled, 1 - enabled
+
+    // Low-bitrate clarity intent emitted by RTSP setup. Bits use stream_quality::clarity_intent_flag.
+    std::uint32_t lowBitrateClarityIntentFlags = 0;
+    int lowBitrateTargetQp = 0;
+    float lowBitrateSharpenAlpha = 0.0f;
 
     // NTSC framerate support: use frameRateNum/frameRateDen for precise framerate
     // e.g., 120000/1001 = 119.88fps (NTSC), 60000/1001 = 59.94fps

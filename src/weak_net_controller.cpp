@@ -96,6 +96,29 @@ namespace weak_net {
       }
       return std::max(std::min(min_bitrate_kbps, std::max(1, ceiling_total_bitrate_kbps)), pacing_bitrate_kbps);
     }
+
+    int
+    linear_fec_target_for_random_loss(int baseline_fec_percentage,
+                                      int max_fec_percentage,
+                                      double packet_loss,
+                                      double recovered_frames,
+                                      double unrecoverable_frames) {
+      const auto random_loss_signal = std::max({
+        packet_loss,
+        recovered_frames * 0.75,
+        unrecoverable_frames * 2.0,
+      });
+      const auto fec_headroom = static_cast<int>(std::ceil(random_loss_signal * 100.0));
+      return clamp_percent(baseline_fec_percentage + fec_headroom, max_fec_percentage);
+    }
+
+    double
+    linear_audio_bitrate_scale(double audio_pressure, bool audio_crisis) {
+      const auto bounded_pressure = std::clamp(audio_pressure, 0.0, 0.5);
+      const auto max_reduction = audio_crisis ? 0.04 : 0.025;
+      const auto reduction = std::clamp(0.01 + bounded_pressure * 0.075, 0.012, max_reduction);
+      return 1.0 - reduction;
+    }
   }  // namespace
 
   void
@@ -133,11 +156,13 @@ namespace weak_net {
     state_ = state_e::healthy;
     stable_windows_ = 0;
     idr_cooldown_windows_ = 0;
+    audio_cooldown_windows_ = 0;
     ewma_loss_ = 0.0;
     ewma_unrecoverable_ = 0.0;
     ewma_jitter_ = 0.0;
     ewma_deadline_pressure_ = 0.0;
     ewma_input_pressure_ = 0.0;
+    ewma_audio_pressure_ = 0.0;
     configured_ = true;
   }
 
@@ -161,6 +186,7 @@ namespace weak_net {
     const auto input_latency_ms = static_cast<double>(
                                     std::max(feedback.input_send_latency_us, feedback.input_ack_latency_us)) /
                                   1000.0;
+    const auto audio_pressure = ratio(feedback.audio_underruns, std::max(feedback.frames_seen, 1U));
     const auto deadline_pressure = std::max({
       late * 3.0,
       decode_queue / 4.0,
@@ -177,20 +203,23 @@ namespace weak_net {
     const bool raw_deadline_clean = late == 0.0 &&
                                     decode_queue == 0.0 &&
                                     render_queue == 0.0 &&
-                                    input_pressure <= 0.15;
+                                    input_pressure <= 0.15 &&
+                                    audio_pressure == 0.0;
 
     ewma_loss_ = ewma(ewma_loss_, loss, raw_network_clean ? 0.72 : 0.45);
     ewma_unrecoverable_ = ewma(ewma_unrecoverable_, unrecoverable, raw_network_clean ? 0.72 : 0.55);
     ewma_jitter_ = ewma(ewma_jitter_, jitter, raw_network_clean ? 0.65 : 0.35);
     ewma_deadline_pressure_ = ewma(ewma_deadline_pressure_, deadline_pressure, raw_deadline_clean ? 0.68 : 0.45);
     ewma_input_pressure_ = ewma(ewma_input_pressure_, input_pressure, raw_deadline_clean ? 0.68 : 0.5);
+    ewma_audio_pressure_ = ewma(ewma_audio_pressure_, audio_pressure, feedback.audio_underruns == 0 ? 0.72 : 0.5);
 
     const auto previous_bitrate = current_bitrate_kbps_;
     const auto previous_fec = current_fec_percentage_;
     const auto previous_fps = current_fps_;
     const auto previous_state = state_;
-    const bool raw_deadline_miss = deadline_pressure >= 0.95 || input_pressure >= 1.1;
-    const bool hard_deadline_miss = ewma_deadline_pressure_ >= 1.15 || ewma_input_pressure_ >= 1.25;
+    const bool raw_video_deadline_miss = deadline_pressure >= 0.95;
+    const bool hard_video_deadline_miss = ewma_deadline_pressure_ >= 1.15;
+    const bool input_constrained = input_pressure >= 1.1 || ewma_input_pressure_ >= 1.25;
     const bool raw_network_crisis = unrecoverable >= 0.10 ||
                                     loss >= 0.12 ||
                                     jitter >= 130.0;
@@ -209,38 +238,88 @@ namespace weak_net {
                                        ewma_loss_ >= 0.035 ||
                                        ewma_jitter_ >= 40.0));
     const bool deadline_crisis = ewma_deadline_pressure_ >= 1.7;
-    const bool deadline_constrained = raw_deadline_miss || hard_deadline_miss || deadline_crisis;
+    const bool video_deadline_constrained = raw_video_deadline_miss || hard_video_deadline_miss || deadline_crisis;
+    const bool observed_packet_loss = loss >= 0.01 ||
+                                      unrecoverable > 0.0 ||
+                                      recovered >= 0.015 ||
+                                      feedback.missing_packets > 0;
+    const bool delay_only_congestion = !observed_packet_loss &&
+                                       (jitter >= 90.0 ||
+                                        feedback.rtt_ms >= 250 ||
+                                        video_deadline_constrained);
+    const bool severe_random_loss = observed_packet_loss &&
+                                    (unrecoverable >= 0.05 ||
+                                     loss >= 0.08);
+    const bool moderate_random_loss = observed_packet_loss &&
+                                      (unrecoverable >= 0.005 ||
+                                       recovered >= 0.015 ||
+                                       loss >= 0.025);
+    const bool audio_constrained = feedback.audio_underruns >= 2 ||
+                                   ewma_audio_pressure_ >= 0.08;
+    const bool audio_crisis = feedback.audio_underruns >= 8 ||
+                              ewma_audio_pressure_ >= 0.14;
 
     if (idr_cooldown_windows_ > 0) {
       --idr_cooldown_windows_;
+    }
+    if (audio_cooldown_windows_ > 0) {
+      --audio_cooldown_windows_;
     }
 
     if (network_crisis) {
       state_ = state_e::crisis;
       stable_windows_ = 0;
-      if (deadline_constrained) {
+      if (video_deadline_constrained) {
         current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * 0.88)), config_.min_fps, config_.baseline_fps);
       }
       current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps, static_cast<int>(std::lround(current_bitrate_kbps_ * 0.76)));
-      current_fec_percentage_ = clamp_percent(std::max(current_fec_percentage_ + 4, config_.baseline_fec_percentage + 6),
-                                              config_.max_fec_percentage);
+      if (!delay_only_congestion && severe_random_loss) {
+        current_fec_percentage_ = std::max(current_fec_percentage_,
+                                           linear_fec_target_for_random_loss(config_.baseline_fec_percentage,
+                                                                             config_.max_fec_percentage,
+                                                                             loss,
+                                                                             recovered,
+                                                                             unrecoverable));
+      }
     }
     else if (network_constrained) {
       state_ = state_e::constrained;
       stable_windows_ = 0;
-      if (deadline_constrained) {
+      if (video_deadline_constrained) {
         current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * 0.92)), config_.min_fps, config_.baseline_fps);
       }
       current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps, static_cast<int>(std::lround(current_bitrate_kbps_ * 0.90)));
-      current_fec_percentage_ = clamp_percent(std::max(current_fec_percentage_ + 2, config_.baseline_fec_percentage + 2),
-                                              config_.max_fec_percentage);
+      if (!delay_only_congestion && moderate_random_loss) {
+        current_fec_percentage_ = std::max(current_fec_percentage_,
+                                           linear_fec_target_for_random_loss(config_.baseline_fec_percentage,
+                                                                             config_.max_fec_percentage,
+                                                                             loss,
+                                                                             recovered,
+                                                                             unrecoverable));
+      }
     }
-    else if (deadline_constrained) {
+    else if (audio_constrained) {
       state_ = state_e::constrained;
       stable_windows_ = 0;
-      current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * (hard_deadline_miss ? 0.92 : 0.94))),
+      if (audio_cooldown_windows_ == 0) {
+        const auto audio_signal = std::max(audio_pressure, ewma_audio_pressure_);
+        current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps,
+                                         static_cast<int>(std::lround(current_bitrate_kbps_ *
+                                                                      linear_audio_bitrate_scale(audio_signal,
+                                                                                                 audio_crisis))));
+        audio_cooldown_windows_ = 2;
+      }
+    }
+    else if (video_deadline_constrained) {
+      state_ = state_e::constrained;
+      stable_windows_ = 0;
+      current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * (hard_video_deadline_miss ? 0.92 : 0.94))),
                                config_.min_fps,
                                config_.baseline_fps);
+    }
+    else if (input_constrained) {
+      state_ = state_e::constrained;
+      stable_windows_ = 0;
     }
     else {
       stable_windows_++;
@@ -278,6 +357,8 @@ namespace weak_net {
       config_.min_bitrate_kbps);
 
     const bool request_idr = network_crisis &&
+                             !delay_only_congestion &&
+                             severe_random_loss &&
                              state_ == state_e::crisis &&
                              previous_state != state_e::crisis &&
                              idr_cooldown_windows_ == 0;

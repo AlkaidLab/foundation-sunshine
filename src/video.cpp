@@ -2857,6 +2857,8 @@ namespace video {
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->queue<dynamic_param_t>(mail::dynamic_param_change));
     auto target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / std::max(1, config.framerate) };
     auto next_encode_time = std::chrono::steady_clock::now();
+    std::uint64_t stale_frame_drop_count = 0;
+    auto last_stale_frame_drop_log = std::chrono::steady_clock::now();
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2919,6 +2921,26 @@ namespace video {
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(minimum_frame_time)) {
+          std::uint32_t dropped_stale_frames = 0;
+          while (!requested_idr_frame && images->peek()) {
+            if (auto newer_img = images->pop(0ms)) {
+              img = std::move(newer_img);
+              ++dropped_stale_frames;
+            }
+            else {
+              break;
+            }
+          }
+          if (dropped_stale_frames > 0) {
+            stale_frame_drop_count += dropped_stale_frames;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_stale_frame_drop_log >= 1000ms) {
+              BOOST_LOG(info) << "Video encode dropped " << stale_frame_drop_count
+                              << " stale captured frames to catch up to latest frame";
+              stale_frame_drop_count = 0;
+              last_stale_frame_drop_log = now;
+            }
+          }
           frame_timestamp = img->frame_timestamp;
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;

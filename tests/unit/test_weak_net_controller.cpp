@@ -394,6 +394,243 @@ TEST(WeakNetControllerTests, PreservesBitrateForRenderPressureWithoutNetworkLoss
   EXPECT_GE(action.target_fps, 110);
 }
 
+TEST(WeakNetControllerTests, InputOnlyPressureDoesNotReconfigureVideoTransport) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 18,
+    .rtt_variance_ms = 3,
+    .decode_queue_depth = 0,
+    .render_queue_depth = 0,
+    .late_frames = 0,
+    .displayed_frames = 60,
+    .input_queue_depth = 10,
+    .input_send_latency_us = 180000,
+    .input_ack_latency_us = 160000,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.target_bitrate_kbps, 20000);
+  EXPECT_EQ(action.target_fps, 120);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_FALSE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, DoesNotRaiseFecForDelayOnlyCongestion) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 420,
+    .rtt_variance_ms = 160,
+    .decode_queue_depth = 2,
+    .render_queue_depth = 2,
+    .late_frames = 2,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_LT(action.target_bitrate_kbps, 20000);
+}
+
+TEST(WeakNetControllerTests, DoesNotRequestIdrForDelayOnlyQueueingCrisis) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 620,
+    .rtt_variance_ms = 180,
+    .decode_queue_depth = 1,
+    .render_queue_depth = 1,
+    .late_frames = 1,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_FALSE(action.request_idr);
+  EXPECT_EQ(action.fec_percentage, 10);
+}
+
+TEST(WeakNetControllerTests, ScalesFecLinearlyWithObservedRandomLoss) {
+  weak_net::controller_t mild_controller;
+  mild_controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto mild_action = mild_controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 59,
+    .missing_packets = 72,
+    .total_packets = 2400,
+    .received_packets = 2328,
+    .rtt_ms = 42,
+    .rtt_variance_ms = 14,
+  });
+
+  weak_net::controller_t severe_controller;
+  severe_controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto severe_action = severe_controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 53,
+    .recovered_frames = 4,
+    .unrecoverable_frames = 3,
+    .missing_packets = 288,
+    .total_packets = 2400,
+    .received_packets = 2112,
+    .rtt_ms = 58,
+    .rtt_variance_ms = 22,
+  });
+
+  EXPECT_GE(mild_action.fec_percentage, 13);
+  EXPECT_LE(mild_action.fec_percentage, 14);
+  EXPECT_GE(severe_action.fec_percentage, 21);
+  EXPECT_LE(severe_action.fec_percentage, 23);
+  EXPECT_GT(severe_action.fec_percentage, mild_action.fec_percentage);
+}
+
+TEST(WeakNetControllerTests, AudioUnderrunsConstrainVideoWithoutRaisingFecOrIdr) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 24,
+    .rtt_variance_ms = 4,
+    .audio_underruns = 8,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_LT(action.target_bitrate_kbps, 20000);
+  EXPECT_EQ(action.target_fps, 120);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_FALSE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, SustainedAudioUnderrunsApplyGentleLinearBitratePressure) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 10; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .rtt_ms = 24,
+      .rtt_variance_ms = 4,
+      .audio_underruns = 8,
+    });
+  }
+
+  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_LT(action.target_bitrate_kbps, 20000);
+  EXPECT_GE(action.target_bitrate_kbps, 17000);
+  EXPECT_EQ(action.target_fps, 120);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_FALSE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, RaisesFecForRandomLossWithAdaptiveHeadroom) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 30,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .min_fps = 45,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 56,
+    .recovered_frames = 3,
+    .unrecoverable_frames = 1,
+    .missing_packets = 96,
+    .total_packets = 2400,
+    .received_packets = 2304,
+    .rtt_ms = 50,
+    .rtt_variance_ms = 18,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_GT(action.fec_percentage, 10);
+  EXPECT_LE(action.fec_percentage, 30);
+  EXPECT_EQ(action.target_fps, 120);
+}
+
 TEST(WeakNetControllerTests, HighRefreshDefaultCanRecoverFromEmergencyLowFps) {
   weak_net::controller_t controller;
   controller.configure({

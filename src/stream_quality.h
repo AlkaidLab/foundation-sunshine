@@ -4,7 +4,18 @@
  */
 #pragma once
 
+#include <cstdint>
+
 namespace stream_quality {
+
+  enum clarity_intent_flag : std::uint32_t {
+    clarity_intent_roi = 1U << 0,
+    clarity_intent_dirty_region = 1U << 1,
+    clarity_intent_temporal_layers = 1U << 2,
+    clarity_intent_discardable_enhancement = 1U << 3,
+    clarity_intent_long_term_reference = 1U << 4,
+    clarity_intent_intra_refresh = 1U << 5,
+  };
 
   enum class content_type_e {
     desktop,
@@ -31,8 +42,12 @@ namespace stream_quality {
     double bits_per_pixel_per_frame = 0.0;
     int target_qp = 0;
     bool roi_enabled = false;
+    bool dirty_region_priority = false;
+    bool prefer_temporal_layers = false;
+    bool discardable_enhancement_layer = false;
     bool prefer_long_term_reference = false;
     bool prefer_intra_refresh = false;
+    std::uint32_t intent_flags = 0;
     float sharpen_alpha = 0.0f;
   };
 

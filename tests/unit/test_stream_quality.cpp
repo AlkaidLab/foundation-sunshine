@@ -68,6 +68,7 @@ TEST(StreamQualityTests, TextDesktopEnablesRoiAndSharperLumaAtLowBitrate) {
   EXPECT_TRUE(plan.enabled);
   EXPECT_EQ(plan.effective_chroma_sampling_type, 0);
   EXPECT_TRUE(plan.roi_enabled);
+  EXPECT_TRUE(plan.dirty_region_priority);
   EXPECT_TRUE(plan.prefer_long_term_reference);
   EXPECT_GE(plan.sharpen_alpha, 0.15f);
   EXPECT_GE(plan.target_qp, 20);
@@ -184,6 +185,7 @@ TEST(StreamQualityTests, HighRefreshInteractiveDesktopKeepsSixtyFpsFloor) {
 
   EXPECT_TRUE(plan.enabled);
   EXPECT_GE(plan.effective_fps, 60);
+  EXPECT_FALSE(plan.prefer_temporal_layers);
 }
 
 TEST(StreamQualityTests, HighRefreshGameKeepsSixtyFpsFloorAtLowBudget) {
@@ -199,4 +201,42 @@ TEST(StreamQualityTests, HighRefreshGameKeepsSixtyFpsFloorAtLowBudget) {
 
   EXPECT_TRUE(plan.enabled);
   EXPECT_GE(plan.effective_fps, 60);
+  EXPECT_TRUE(plan.prefer_temporal_layers);
+  EXPECT_TRUE(plan.discardable_enhancement_layer);
+}
+
+TEST(StreamQualityTests, LowBudgetTextIntentFlagsPreferRoiAndLongTermReference) {
+  auto plan = stream_quality::plan_low_bitrate_clarity({
+    .width = 2560,
+    .height = 1440,
+    .fps = 60,
+    .video_bitrate_kbps = 2500,
+    .video_format = 1,
+    .chroma_sampling_type = 1,
+    .content_type = stream_quality::content_type_e::text,
+  });
+
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_roi, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_dirty_region, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_long_term_reference, 0U);
+  EXPECT_EQ(plan.intent_flags & stream_quality::clarity_intent_temporal_layers, 0U);
+  EXPECT_EQ(plan.intent_flags & stream_quality::clarity_intent_discardable_enhancement, 0U);
+}
+
+TEST(StreamQualityTests, HighRefreshGameIntentFlagsPreferDirtyTemporalEnhancement) {
+  auto plan = stream_quality::plan_low_bitrate_clarity({
+    .width = 3024,
+    .height = 1900,
+    .fps = 120,
+    .video_bitrate_kbps = 2340,
+    .video_format = 1,
+    .chroma_sampling_type = 0,
+    .content_type = stream_quality::content_type_e::game,
+  });
+
+  EXPECT_EQ(plan.intent_flags & stream_quality::clarity_intent_roi, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_dirty_region, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_temporal_layers, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_discardable_enhancement, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_intra_refresh, 0U);
 }

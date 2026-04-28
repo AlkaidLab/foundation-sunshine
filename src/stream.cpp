@@ -11,6 +11,7 @@
 #include <future>
 #include <iomanip>
 #include <queue>
+#include <sstream>
 #include <unordered_map>
 
 #include <fstream>
@@ -690,6 +691,36 @@ namespace stream {
     std::chrono::steady_clock::time_point last_weak_net_bitrate_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fec_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fps_apply {};
+    struct {
+      std::chrono::steady_clock::time_point window_started {};
+      std::uint32_t windows { 0 };
+      std::uint32_t duration_ms { 0 };
+      std::uint32_t frames_seen { 0 };
+      std::uint32_t complete_frames { 0 };
+      std::uint32_t recovered_frames { 0 };
+      std::uint32_t unrecoverable_frames { 0 };
+      std::uint64_t missing_packets { 0 };
+      std::uint64_t total_packets { 0 };
+      std::uint64_t received_packets { 0 };
+      std::uint64_t video_bytes { 0 };
+      std::uint32_t audio_underruns { 0 };
+      std::uint32_t late_frames { 0 };
+      std::uint32_t displayed_frames { 0 };
+      std::uint32_t max_decode_queue_depth { 0 };
+      std::uint32_t max_render_queue_depth { 0 };
+      std::uint32_t max_input_queue_depth { 0 };
+      std::uint32_t max_input_latency_us { 0 };
+      std::uint32_t max_rtt_ms { 0 };
+      std::uint32_t max_rtt_variance_ms { 0 };
+      std::uint32_t healthy_actions { 0 };
+      std::uint32_t constrained_actions { 0 };
+      std::uint32_t crisis_actions { 0 };
+      std::uint32_t recovering_actions { 0 };
+      std::uint32_t bitrate_applies { 0 };
+      std::uint32_t fps_applies { 0 };
+      std::uint32_t fec_applies { 0 };
+      std::uint32_t idr_requests { 0 };
+    } weak_net_diag;
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
@@ -1018,6 +1049,112 @@ namespace stream {
   }
 
   static void
+  record_weak_net_feedback_diag(session_t *session,
+                                const weak_net::feedback_t &feedback,
+                                const weak_net::action_t &action,
+                                const char *source) {
+    if (!session) {
+      return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    auto &diag = session->weak_net_diag;
+    if (diag.window_started.time_since_epoch().count() == 0) {
+      diag.window_started = now;
+    }
+
+    diag.windows++;
+    diag.duration_ms += feedback.duration_ms;
+    diag.frames_seen += feedback.frames_seen;
+    diag.complete_frames += feedback.complete_frames;
+    diag.recovered_frames += feedback.recovered_frames;
+    diag.unrecoverable_frames += feedback.unrecoverable_frames;
+    diag.missing_packets += feedback.missing_packets;
+    diag.total_packets += feedback.total_packets;
+    diag.received_packets += feedback.received_packets;
+    diag.video_bytes += feedback.video_bytes;
+    diag.audio_underruns += feedback.audio_underruns;
+    diag.late_frames += feedback.late_frames;
+    diag.displayed_frames += feedback.displayed_frames;
+    diag.max_decode_queue_depth = std::max(diag.max_decode_queue_depth, feedback.decode_queue_depth);
+    diag.max_render_queue_depth = std::max(diag.max_render_queue_depth, feedback.render_queue_depth);
+    diag.max_input_queue_depth = std::max(diag.max_input_queue_depth, feedback.input_queue_depth);
+    diag.max_input_latency_us = std::max(diag.max_input_latency_us,
+                                          std::max(feedback.input_send_latency_us, feedback.input_ack_latency_us));
+    diag.max_rtt_ms = std::max(diag.max_rtt_ms, feedback.rtt_ms);
+    diag.max_rtt_variance_ms = std::max(diag.max_rtt_variance_ms, feedback.rtt_variance_ms);
+    if (action.request_idr) {
+      diag.idr_requests++;
+    }
+
+    switch (action.state) {
+      case weak_net::state_e::healthy:
+        diag.healthy_actions++;
+        break;
+      case weak_net::state_e::constrained:
+        diag.constrained_actions++;
+        break;
+      case weak_net::state_e::crisis:
+        diag.crisis_actions++;
+        break;
+      case weak_net::state_e::recovering:
+        diag.recovering_actions++;
+        break;
+    }
+
+    if (now - diag.window_started < 1000ms) {
+      return;
+    }
+
+    const auto observed_lost_packets = diag.total_packets > diag.received_packets ?
+                                         diag.total_packets - diag.received_packets :
+                                         diag.missing_packets;
+    const auto loss_percentage = diag.total_packets > 0 ?
+                                   static_cast<double>(std::max(observed_lost_packets, diag.missing_packets)) *
+                                     100.0 / static_cast<double>(diag.total_packets) :
+                                   0.0;
+    const auto input_latency_ms = static_cast<double>(diag.max_input_latency_us) / 1000.0;
+    std::ostringstream message;
+    message << "Weak-net diag runtime=" << session->identity.runtime_id
+            << " source=" << source
+            << " windowMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(now - diag.window_started).count()
+            << " samples=" << diag.windows
+            << " feedbackMs=" << diag.duration_ms
+            << " frames=" << diag.frames_seen
+            << " complete=" << diag.complete_frames
+            << " recovered=" << diag.recovered_frames
+            << " unrecoverable=" << diag.unrecoverable_frames
+            << " loss=" << loss_percentage << "%"
+            << " packets=" << diag.received_packets << "/" << diag.total_packets
+            << " missing=" << diag.missing_packets
+            << " audioUnd=" << diag.audio_underruns
+            << " late=" << diag.late_frames
+            << " displayed=" << diag.displayed_frames
+            << " dqMax=" << diag.max_decode_queue_depth
+            << " rqMax=" << diag.max_render_queue_depth
+            << " inputQMax=" << diag.max_input_queue_depth
+            << " inputLatencyMax=" << input_latency_ms << "ms"
+            << " rttMax=" << diag.max_rtt_ms << "ms"
+            << " jitterMax=" << diag.max_rtt_variance_ms << "ms"
+            << " states(h/c/x/r)=" << diag.healthy_actions << "/"
+            << diag.constrained_actions << "/" << diag.crisis_actions << "/"
+            << diag.recovering_actions
+            << " applies(bitrate/fps/fec)=" << diag.bitrate_applies << "/"
+            << diag.fps_applies << "/" << diag.fec_applies
+            << " idr=" << diag.idr_requests
+            << " current(encoding/fps/fec/total/pacing)="
+            << session->weak_net_controller.current_bitrate_kbps() << "Kbps/"
+            << session->weak_net_controller.current_fps() << "fps/"
+            << session->weak_net_controller.current_fec_percentage() << "%/"
+            << session->current_total_bitrate.load(std::memory_order_relaxed) << "Kbps/"
+            << session->pacing_total_bitrate.load(std::memory_order_relaxed) << "Kbps";
+    BOOST_LOG(info) << message.str();
+
+    diag = {};
+    diag.window_started = now;
+  }
+
+  static void
   apply_weak_net_action(session_t *session, const weak_net::action_t &action, const char *source) {
     if (!session || !action.changed) {
       return;
@@ -1052,6 +1189,9 @@ namespace stream {
     session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
     session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
     session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
+    session->weak_net_diag.bitrate_applies += apply_bitrate ? 1U : 0U;
+    session->weak_net_diag.fps_applies += apply_fps ? 1U : 0U;
+    session->weak_net_diag.fec_applies += apply_fec ? 1U : 0U;
 
     if (apply_fec) {
       video::dynamic_param_t fec_param;
@@ -1121,7 +1261,7 @@ namespace stream {
     }
     session->last_weak_net_recovery_feedback = now;
 
-    auto action = session->weak_net_controller.on_feedback({
+    weak_net::feedback_t feedback {
       .duration_ms = 250,
       .frames_seen = 1,
       .complete_frames = 0,
@@ -1131,8 +1271,10 @@ namespace stream {
       .total_packets = 1,
       .received_packets = 0,
       .rtt_variance_ms = 120,
-    });
+    };
+    auto action = session->weak_net_controller.on_feedback(feedback);
     apply_weak_net_action(session, action, source);
+    record_weak_net_feedback_diag(session, feedback, action, source);
   }
 
   /**
@@ -2665,7 +2807,7 @@ namespace stream {
       const auto unrecoverable = received_packets < total_data ? 1U : 0U;
       const auto recovered = !unrecoverable && received_data < total_data ? 1U : 0U;
 
-      auto action = session->weak_net_controller.on_feedback({
+      weak_net::feedback_t feedback {
         .duration_ms = 100,
         .frames_seen = 1,
         .complete_frames = unrecoverable ? 0U : 1U,
@@ -2674,8 +2816,10 @@ namespace stream {
         .missing_packets = missing,
         .total_packets = total_packets,
         .received_packets = received_packets,
-      });
+      };
+      auto action = session->weak_net_controller.on_feedback(feedback);
       apply_weak_net_action(session, action, "fec");
+      record_weak_net_feedback_diag(session, feedback, action, "fec");
     });
 
     server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
@@ -2702,7 +2846,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      auto action = session->weak_net_controller.on_feedback({
+      weak_net::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -2715,8 +2859,10 @@ namespace stream {
         .rtt_ms = read_be32_unaligned(&feedback->rttMs),
         .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
         .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
-      });
+      };
+      auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
     });
 
     server->map(SS_NETWORK_FEEDBACK_V2_PTYPE, [&](session_t *session, const std::string_view &payload) {
@@ -2744,7 +2890,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      auto action = session->weak_net_controller.on_feedback({
+      weak_net::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -2764,8 +2910,10 @@ namespace stream {
         .input_queue_depth = read_be32_unaligned(&feedback->inputQueueDepth),
         .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
         .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
-      });
+      };
+      auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback-v2");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v2");
     });
 
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
@@ -4642,7 +4790,8 @@ namespace stream {
       int ceiling_fps = config.monitor.qualityCeilingFramerate > 0 ?
                           std::max(config.monitor.qualityCeilingFramerate, config.monitor.framerate) :
                           config.monitor.framerate;
-      int max_fec_percentage = std::clamp(config::stream.fec_percentage, 0, weak_net::controller_t::max_fec_percentage);
+      int max_fec_percentage = rtsp_stream::adaptive_stream_max_fec_percentage_for_client(config::stream.fec_percentage,
+                                                                                          config.mlFeatureFlags);
       int fec_percentage = rtsp_stream::effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                    config.mlFeatureFlags);
       fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
@@ -4673,6 +4822,12 @@ namespace stream {
                       << " fec=" << fec_percentage << "%"
                       << " maxFec=" << max_fec_percentage << "%"
                       << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ? " feedback=1" : " feedback=0");
+      if (config.monitor.lowBitrateClarityIntentFlags != 0) {
+        BOOST_LOG(info) << "Low-bitrate clarity intent runtime=" << session->identity.runtime_id
+                        << " flags=0x" << std::hex << config.monitor.lowBitrateClarityIntentFlags << std::dec
+                        << " qp=" << config.monitor.lowBitrateTargetQp
+                        << " sharpen=" << config.monitor.lowBitrateSharpenAlpha;
+      }
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);

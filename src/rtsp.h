@@ -85,6 +85,9 @@ namespace rtsp_stream {
   int
   effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags);
 
+  int
+  adaptive_stream_max_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags);
+
   std::int64_t
   adjust_configured_video_bitrate_kbps(std::int64_t configured_bitrate_kbps,
                                        int fec_percentage,

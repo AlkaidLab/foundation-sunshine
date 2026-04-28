@@ -16,6 +16,7 @@ extern "C" {
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -51,6 +52,7 @@ namespace rtsp_stream {
   namespace {
     constexpr int safe_max_stream_fec_percentage = 35;
     constexpr int enhanced_feedback_startup_fec_percentage = 10;
+    constexpr int enhanced_feedback_adaptive_fec_percentage = 25;
   }
 
   std::uint64_t
@@ -67,6 +69,16 @@ namespace rtsp_stream {
       return std::min(configured_fec_percentage, enhanced_feedback_startup_fec_percentage);
     }
     return configured_fec_percentage;
+  }
+
+  int
+  adaptive_stream_max_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags) {
+    configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
+    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0 || configured_fec_percentage == 0) {
+      return configured_fec_percentage;
+    }
+
+    return std::max(configured_fec_percentage, enhanced_feedback_adaptive_fec_percentage);
   }
 
   std::int64_t
@@ -1498,6 +1510,10 @@ namespace rtsp_stream {
                                                  stream_quality::content_type_e::desktop,
       });
 
+      config.monitor.lowBitrateClarityIntentFlags = clarity_plan.intent_flags;
+      config.monitor.lowBitrateTargetQp = clarity_plan.target_qp;
+      config.monitor.lowBitrateSharpenAlpha = clarity_plan.sharpen_alpha;
+
       if (clarity_plan.enabled) {
         if (clarity_plan.effective_chroma_sampling_type != config.monitor.chromaSamplingType) {
           BOOST_LOG(info) << "Low-bitrate clarity mode: using 4:2:0 to preserve luma detail at "
@@ -1524,7 +1540,11 @@ namespace rtsp_stream {
         if (clarity_plan.roi_enabled || clarity_plan.target_qp > 0 || clarity_plan.sharpen_alpha > 0.0f) {
           BOOST_LOG(info) << "Low-bitrate clarity hints: qp=" << clarity_plan.target_qp
                           << " roi=" << (clarity_plan.roi_enabled ? 1 : 0)
+                          << " dirtyRegion=" << (clarity_plan.dirty_region_priority ? 1 : 0)
+                          << " temporalLayers=" << (clarity_plan.prefer_temporal_layers ? 1 : 0)
+                          << " discardableEnhancement=" << (clarity_plan.discardable_enhancement_layer ? 1 : 0)
                           << " ltr=" << (clarity_plan.prefer_long_term_reference ? 1 : 0)
+                          << " flags=0x" << std::hex << clarity_plan.intent_flags << std::dec
                           << " sharpen=" << clarity_plan.sharpen_alpha;
         }
       }

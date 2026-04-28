@@ -106,8 +106,12 @@ namespace stream_quality {
       .bits_per_pixel_per_frame = bits_per_pixel_per_frame(stream),
       .target_qp = 0,
       .roi_enabled = false,
+      .dirty_region_priority = false,
+      .prefer_temporal_layers = false,
+      .discardable_enhancement_layer = false,
       .prefer_long_term_reference = false,
       .prefer_intra_refresh = false,
+      .intent_flags = 0,
       .sharpen_alpha = 0.0f,
     };
 
@@ -142,10 +146,38 @@ namespace stream_quality {
     plan.target_qp = target_qp_for_budget(plan.bits_per_pixel_per_frame, stream.content_type);
     plan.roi_enabled = stream.content_type == content_type_e::text ||
                        (plan.bits_per_pixel_per_frame < target_bpp && stream.content_type == content_type_e::desktop);
+    plan.dirty_region_priority = plan.roi_enabled ||
+                                 (plan.bits_per_pixel_per_frame < target_bpp * 0.9 &&
+                                  (stream.content_type == content_type_e::motion ||
+                                   stream.content_type == content_type_e::game));
+    plan.prefer_temporal_layers = stream.fps >= 90 &&
+                                  (stream.content_type == content_type_e::motion ||
+                                   stream.content_type == content_type_e::game) &&
+                                  plan.bits_per_pixel_per_frame < target_bpp * 1.15;
+    plan.discardable_enhancement_layer = plan.prefer_temporal_layers &&
+                                         stream.video_format != 0;
     plan.prefer_long_term_reference = stream.content_type == content_type_e::text ||
                                       stream.content_type == content_type_e::desktop;
     plan.prefer_intra_refresh = stream.content_type == content_type_e::motion ||
                                 stream.content_type == content_type_e::game;
+    if (plan.roi_enabled) {
+      plan.intent_flags |= clarity_intent_roi;
+    }
+    if (plan.dirty_region_priority) {
+      plan.intent_flags |= clarity_intent_dirty_region;
+    }
+    if (plan.prefer_temporal_layers) {
+      plan.intent_flags |= clarity_intent_temporal_layers;
+    }
+    if (plan.discardable_enhancement_layer) {
+      plan.intent_flags |= clarity_intent_discardable_enhancement;
+    }
+    if (plan.prefer_long_term_reference) {
+      plan.intent_flags |= clarity_intent_long_term_reference;
+    }
+    if (plan.prefer_intra_refresh) {
+      plan.intent_flags |= clarity_intent_intra_refresh;
+    }
     if (plan.bits_per_pixel_per_frame < target_bpp) {
       plan.sharpen_alpha = stream.content_type == content_type_e::text ? 0.22f :
                            stream.content_type == content_type_e::desktop ? 0.14f :
@@ -154,6 +186,8 @@ namespace stream_quality {
     plan.enabled = plan.effective_fps < stream.fps ||
                    plan.effective_chroma_sampling_type != stream.chroma_sampling_type ||
                    plan.roi_enabled ||
+                   plan.dirty_region_priority ||
+                   plan.prefer_temporal_layers ||
                    plan.prefer_intra_refresh ||
                    plan.sharpen_alpha > 0.0f;
     return plan;
