@@ -2792,6 +2792,10 @@ namespace confighttp {
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
     server.config.port = port_https;
+    // Use a small thread pool so that a slow request handler (proxy upstream,
+    // file upload, etc.) doesn't block other web UI requests on the same
+    // single-threaded io_service.
+    server.config.thread_pool_size = 2;
 
     auto accept_and_run = [&](https_server_t *server) {
       try {
