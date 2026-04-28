@@ -199,6 +199,7 @@ namespace config {
     bool native_pen_touch;
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
+    bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). Off by default for privacy.
   };
 
   namespace flag {

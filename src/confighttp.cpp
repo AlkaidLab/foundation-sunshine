@@ -40,6 +40,7 @@
 
 #include "config.h"
 #include "confighttp.h"
+#include "clipboard_http.h"
 #include "crypto.h"
 #include "display_device/session.h"
 #include "file_handler.h"
@@ -2788,6 +2789,14 @@ namespace confighttp {
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
+
+    // Clipboard sync routes are registered in a sibling module so the
+    // existing 2700+ line confighttp doesn't grow further. They reuse our
+    // basic-auth via the lambda below.
+    clipboard_http::register_routes(server,
+      [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
+        return authenticate(std::move(resp), std::move(req));
+      });
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
