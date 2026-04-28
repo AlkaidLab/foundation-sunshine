@@ -232,8 +232,22 @@ namespace nvhttp {
                     std::shared_lock<std::shared_mutex> cl(client_root_mutex);
                     for (const auto &named_cert : client_root.named_devices) {
                       if (named_cert.cert == client_cert_pem) {
-                        // Store UUID in map using request pointer as key
+                        // Store UUID in map using request pointer as key.
+                        // Opportunistically sweep expired entries on every
+                        // insert so that requests which never reach
+                        // get_client_cert_uuid_from_request() (e.g. serverinfo
+                        // polling, applist) and never trigger on_error don't
+                        // accumulate forever. This bounds the map size at
+                        // ~(live requests + recently completed requests).
                         std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
+                        for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
+                          if (it->second.first.expired()) {
+                            it = request_cert_uuid_map.erase(it);
+                          }
+                          else {
+                            ++it;
+                          }
+                        }
                         request_cert_uuid_map[session->request.get()] =
                           std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), named_cert.uuid);
                         break;
