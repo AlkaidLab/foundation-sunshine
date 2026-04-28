@@ -23,6 +23,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -36,6 +37,11 @@ namespace clipboard_bridge {
 
   /// 0 means broadcast to every currently-active session.
   constexpr session_id kBroadcast = 0;
+
+  /// Maximum raw clipboard payload that still fits into Sunshine's encrypted
+  /// 16-bit control-frame length after adding control_header_v2, AES padding,
+  /// GCM tag, and sequence number overhead.
+  constexpr std::size_t kMaxPayloadBytes = 65500;
 
   using inbound_sink_fn = std::function<void(session_id, const payload_t &)>;
 

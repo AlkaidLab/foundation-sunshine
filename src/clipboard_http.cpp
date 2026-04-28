@@ -26,6 +26,7 @@ namespace clipboard_http {
     struct subscriber_t {
       resp_https_t resp;
       std::atomic_bool alive { true };
+      std::mutex send_mu;
     };
 
     std::mutex g_mu;
@@ -67,6 +68,42 @@ namespace clipboard_http {
     }
 
     void
+    prune_dead_subscribers_locked() {
+      g_subs.erase(std::remove_if(g_subs.begin(), g_subs.end(),
+                     [](const std::shared_ptr<subscriber_t> &s) {
+                       return !s->alive.load(std::memory_order_acquire);
+                     }),
+        g_subs.end());
+
+      if (g_subs.empty() && g_inbound_sink_installed) {
+        clipboard_bridge::bridge_t::instance().set_inbound_sink({});
+        g_inbound_sink_installed = false;
+      }
+    }
+
+    void
+    send_frame(const std::shared_ptr<subscriber_t> &sub, const std::string &frame) {
+      if (!sub->alive.load(std::memory_order_acquire)) {
+        return;
+      }
+
+      try {
+        std::lock_guard<std::mutex> lk(sub->send_mu);
+        if (sub->alive.load(std::memory_order_acquire)) {
+          *sub->resp << frame;
+          sub->resp->send([sub](const SimpleWeb::error_code &ec) {
+            if (ec) {
+              sub->alive.store(false, std::memory_order_release);
+            }
+          });
+        }
+      } catch (const std::exception &e) {
+        BOOST_LOG(debug) << "clipboard SSE write failed: "sv << e.what();
+        sub->alive.store(false, std::memory_order_release);
+      }
+    }
+
+    void
     fanout_frame(const std::string &frame) {
       std::vector<std::shared_ptr<subscriber_t>> snapshot;
       {
@@ -75,29 +112,12 @@ namespace clipboard_http {
       }
 
       for (auto &sub : snapshot) {
-        if (!sub->alive.load(std::memory_order_acquire)) {
-          continue;
-        }
-        try {
-          *sub->resp << frame;
-          sub->resp->send([sub](const SimpleWeb::error_code &ec) {
-            if (ec) {
-              sub->alive.store(false, std::memory_order_release);
-            }
-          });
-        } catch (const std::exception &e) {
-          BOOST_LOG(debug) << "clipboard SSE write failed: "sv << e.what();
-          sub->alive.store(false, std::memory_order_release);
-        }
+        send_frame(sub, frame);
       }
 
       // Prune dead subscribers (cheap; clipboard events are infrequent).
       std::lock_guard<std::mutex> lk(g_mu);
-      g_subs.erase(std::remove_if(g_subs.begin(), g_subs.end(),
-                     [](const std::shared_ptr<subscriber_t> &s) {
-                       return !s->alive.load(std::memory_order_acquire);
-                     }),
-        g_subs.end());
+      prune_dead_subscribers_locked();
     }
 
     void
@@ -111,14 +131,11 @@ namespace clipboard_http {
     }
 
     void
-    ensure_inbound_sink() {
-      // Idempotent: install once on first /events subscription.
-      std::lock_guard<std::mutex> lk(g_mu);
-      if (g_inbound_sink_installed) {
-        return;
+    ensure_inbound_sink_locked() {
+      if (!g_inbound_sink_installed) {
+        clipboard_bridge::bridge_t::instance().set_inbound_sink(&fanout_inbound);
+        g_inbound_sink_installed = true;
       }
-      clipboard_bridge::bridge_t::instance().set_inbound_sink(&fanout_inbound);
-      g_inbound_sink_installed = true;
     }
 
     // ---- Endpoint handlers ----
@@ -159,6 +176,21 @@ namespace clipboard_http {
       auto &bridge = clipboard_bridge::bridge_t::instance();
       bridge.notify_gui_alive();
 
+      auto content_length = req->header.find("Content-Length");
+      if (content_length != req->header.end() && !content_length->second.empty()) {
+        try {
+          if (std::stoull(content_length->second) > clipboard_bridge::kMaxPayloadBytes) {
+            resp->write(SimpleWeb::StatusCode::client_error_payload_too_large,
+              R"({"error":"payload_too_large"})");
+            return;
+          }
+        } catch (...) {
+          resp->write(SimpleWeb::StatusCode::client_error_bad_request,
+            R"({"error":"bad_content_length"})");
+          return;
+        }
+      }
+
       // Parse optional target sid from header.
       clipboard_bridge::session_id target = clipboard_bridge::kBroadcast;
       auto it = req->header.find("X-Clipboard-Target-Sid");
@@ -181,6 +213,11 @@ namespace clipboard_http {
           R"({"error":"empty_body"})");
         return;
       }
+      if (body.size() > clipboard_bridge::kMaxPayloadBytes) {
+        resp->write(SimpleWeb::StatusCode::client_error_payload_too_large,
+          R"({"error":"payload_too_large"})");
+        return;
+      }
 
       clipboard_bridge::payload_t bytes(body.begin(), body.end());
       bridge.enqueue_outbound(target, std::move(bytes));
@@ -194,28 +231,26 @@ namespace clipboard_http {
         return;
       }
 
-      ensure_inbound_sink();
       clipboard_bridge::bridge_t::instance().notify_gui_alive();
 
-      resp->close_connection_after_response = true;
+      auto sub = std::make_shared<subscriber_t>();
+      sub->resp = std::move(resp);
+      sub->resp->close_connection_after_response = true;
 
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/event-stream");
       headers.emplace("Cache-Control", "no-cache");
       headers.emplace("Connection", "keep-alive");
       headers.emplace("X-Accel-Buffering", "no");
-      resp->write(headers);
-      resp->send();
+      sub->resp->write(headers);
+      sub->resp->send();
 
       // Initial comment frame to flush headers through any intermediaries.
-      *resp << ": clipboard-stream-ready\n\n";
-      resp->send();
-
-      auto sub = std::make_shared<subscriber_t>();
-      sub->resp = std::move(resp);
+      send_frame(sub, ": clipboard-stream-ready\n\n");
 
       std::lock_guard<std::mutex> lk(g_mu);
       g_subs.push_back(std::move(sub));
+      ensure_inbound_sink_locked();
     }
   }  // namespace
 

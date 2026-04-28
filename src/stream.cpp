@@ -1248,21 +1248,30 @@ namespace stream {
   /**
    * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
    * an opaque byte string; this function adds the framing header and encrypts.
-   * Returns 0 on success, -1 on failure or oversized payload (>65535 bytes,
-   * the protocol cap on payloadLength).
+   * Returns 0 on success, -1 on failure or oversized payload. The raw payload
+   * is capped below 65535 bytes so the encrypted control frame length also
+   * fits in the protocol's 16-bit length field.
    */
   int
   send_clipboard(session_t *session, const clipboard_bridge::payload_t &payload) {
     if (!session->control.peer) {
       return -1;
     }
-    if (payload.size() > std::numeric_limits<std::uint16_t>::max()) {
+
+    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
+    const std::size_t encrypted_packet_length =
+      crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+      + crypto::cipher::tag_size
+      + sizeof(control_encrypted_t::seq);
+    if (payload.size() > clipboard_bridge::kMaxPayloadBytes ||
+        encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
       BOOST_LOG(warning) << "send_clipboard: payload too large ("sv << payload.size()
-                         << " bytes; protocol cap is 65535)"sv;
+                         << " bytes; encrypted control frame would be "sv
+                         << encrypted_packet_length << " bytes)"sv;
       return -1;
     }
 
-    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + payload.size());
+    std::vector<std::uint8_t> plaintext(plaintext_size);
     auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
     hdr->type = packetTypes[IDX_CLIPBOARD];
     hdr->payloadLength = (std::uint16_t) payload.size();
