@@ -832,4 +832,28 @@ TEST(AbrLlmParseTests, ReportsMissingJsonWhenContentHasOnlyReasoning) {
   EXPECT_EQ(action.reason, "llm_parse_error: no JSON object in content");
 }
 
+// Regression for the real-world log:
+//   content starts with "<think>Let me analyze this step by step..." and the
+//   response was cut off by max_tokens before the closing tag / JSON appeared.
+TEST(AbrLlmParseTests, DetectsTruncatedReasoningWhenFinishReasonLength) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"finish_reason", "length"},
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>Let me analyze this step by step:\n\n1. **Active Window/Process**: Sunshine Desktop / sunshine-gui.exe\n   - This is a desktop streaming application, not a game\n   - Category: Desktop/Productivity"},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state();
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 0);
+  EXPECT_EQ(action.target_bitrate_kbps, 0);
+  EXPECT_EQ(action.reason, "llm_truncated: reasoning exceeded max_tokens");
+}
+
 #endif
