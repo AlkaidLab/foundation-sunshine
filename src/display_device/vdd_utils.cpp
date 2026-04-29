@@ -141,7 +141,7 @@ namespace display_device {
     }
 
     bool
-    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out) {
+    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out, DWORD read_timeout_ms) {
       auto hPipe = connect_to_pipe_with_retry(pipe_name);
       if (hPipe == INVALID_HANDLE_VALUE) {
         BOOST_LOG(error) << "连接MTT虚拟显示管道失败，已重试多次";
@@ -180,6 +180,7 @@ namespace display_device {
       }
 
       // 读取响应
+      const DWORD effective_read_timeout = (read_timeout_ms > 0) ? read_timeout_ms : kPipeTimeoutMs;
       bool read_timed_out = false;
       if (response) {
         char buffer[kPipeBufferSize];
@@ -190,7 +191,7 @@ namespace display_device {
             return false;
           }
 
-          DWORD waitResult = WaitForSingleObject(overlapped.hEvent, kPipeTimeoutMs);
+          DWORD waitResult = WaitForSingleObject(overlapped.hEvent, effective_read_timeout);
           if (waitResult == WAIT_OBJECT_0 && GetOverlappedResult(hPipe, &overlapped, &bytesRead, FALSE)) {
             buffer[bytesRead] = '\0';
             *response = std::string(buffer, bytesRead);
@@ -322,14 +323,16 @@ namespace display_device {
       }
 
       // 尝试发送命令（带GUID或不带GUID）
+      // 使用更长的读取超时，因为新版驱动会在管道中等待CCD系统就绪
+      constexpr DWORD kCreateMonitorReadTimeoutMs = 20000;
       bool read_timed_out = false;
-      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out);
+      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out, kCreateMonitorReadTimeoutMs);
 
       // 如果带GUID的命令失败，降级为不带GUID的命令（兼容旧版驱动）
       if (!success && !guid_str.empty()) {
         BOOST_LOG(warning) << "带GUID的命令失败，尝试降级为不带GUID的命令";
         read_timed_out = false;
-        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response, &read_timed_out);
+        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response, &read_timed_out, kCreateMonitorReadTimeoutMs);
       }
 
       if (!success) {
@@ -340,7 +343,23 @@ namespace display_device {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
-      BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response << " [return=" << (read_timed_out ? 1 : 0) << "]";
+
+      // 解析驱动响应：OK = CCD已就绪, OK_PENDING = 创建成功但CCD未就绪, FAIL = 创建失败
+      if (response == "FAIL") {
+        BOOST_LOG(error) << "驱动端报告虚拟显示器创建失败";
+        return false;
+      }
+
+      if (response == "OK") {
+        BOOST_LOG(info) << "创建虚拟显示器完成，驱动确认CCD已就绪";
+      }
+      else if (response == "OK_PENDING") {
+        BOOST_LOG(warning) << "创建虚拟显示器完成，但CCD系统尚未就绪（驱动等待超时）";
+      }
+      else {
+        // 旧版驱动不返回响应（read_timed_out=true），视为成功
+        BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response << " [return=" << (read_timed_out ? 1 : 0) << "]";
+      }
       return true;
     }
 
