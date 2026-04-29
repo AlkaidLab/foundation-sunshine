@@ -76,7 +76,9 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         // Bounds check on the UV pixel: we need 2x2 source coverage.
         bool uv_inside = (rect_pos.x + 1 < out_rect_size.x) && (rect_pos.y + 1 < out_rect_size.y);
         // Allow edge UV pixels even when the second column/row is out-of-rect: just clamp the average.
-        float3 rgb_avg;
+        // Initialize to silence fxc X4000 (the else-branch returns, so the read is safe at runtime,
+        // but the compiler's flow analysis cannot prove it through the early `return`).
+        float3 rgb_avg = float3(0, 0, 0);
         if (uv_inside) {
             rgb_avg = (s_rgb[GTid.y    ][GTid.x    ] +
                        s_rgb[GTid.y    ][GTid.x + 1] +
