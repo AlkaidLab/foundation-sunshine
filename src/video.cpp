@@ -67,11 +67,6 @@ namespace video {
   namespace {
     std::optional<std::string>
     capture_override_for_encoder_probe() {
-#ifdef _WIN32
-      if (config::video.capture == "vdd") {
-        return std::string { "ddx" };
-      }
-#endif
       return std::nullopt;
     }
 
