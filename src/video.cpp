@@ -65,6 +65,22 @@ using namespace std::literals;
 namespace video {
 
   namespace {
+    std::optional<std::string>
+    capture_override_for_encoder_probe() {
+#ifdef _WIN32
+      // VDD shared-texture producer may not be ready (metadata mapping / KeyedMutex
+      // not yet published) at encoder-probe time. Probing the real VDD backend
+      // therefore tends to fail on cold start, even though runtime capture works
+      // fine once the producer comes up. Fall back to ddx for the probe only;
+      // this override is injected per-display via config_t::capture_backend_override
+      // so it does not mutate the global config::video.capture used at runtime.
+      if (config::video.capture == "vdd") {
+        return std::string { "ddx" };
+      }
+#endif
+      return std::nullopt;
+    }
+
     /**
      * @brief Check if we can allow probing for the encoders.
      * @return True if there should be no issues with the probing, false if we should prevent it.
@@ -3586,11 +3602,19 @@ namespace video {
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure) {
     std::shared_ptr<platf::display_t> disp;
+    const auto configured_capture_backend = config::video.capture;
+    auto probe_capture_override = capture_override_for_encoder_probe();
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] failed"sv;
     });
+
+    if (probe_capture_override) {
+      BOOST_LOG(info) << "Temporarily using capture backend ["sv << *probe_capture_override
+                      << "] for encoder probe while configured capture backend is ["sv
+                      << configured_capture_backend << "]"sv;
+    }
 
     // Quick GPU compatibility check: skip encoders that definitely won't work on this GPU
     // This optimization prevents testing encoders on incompatible hardware (e.g., NVIDIA NVENC on AMD GPU)
@@ -3615,6 +3639,10 @@ namespace video {
     // Note: videoFormat starts at 0 (H.264), will be changed to 1 (HEVC) or 2 (AV1) later if needed
     config_t config_max_ref_frames { 1920, 1080, 60, 1000, 1, 1, 1, 0, 0, 0, 0 };
     config_t config_autoselect { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 0 };
+    if (probe_capture_override) {
+      config_max_ref_frames.capture_backend_override = *probe_capture_override;
+      config_autoselect.capture_backend_override = *probe_capture_override;
+    }
 
     // If the encoder isn't supported at all (not even H.264), bail early
     const auto output_display_name { display_device::get_display_name(config::video.output_name) };
@@ -3739,7 +3767,10 @@ namespace video {
         encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
       }
       else {
-        const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
+        config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
+        if (probe_capture_override) {
+          generic_hdr_config.capture_backend_override = *probe_capture_override;
+        }
 
         // Reset the display since we're switching from SDR to HDR
         reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);

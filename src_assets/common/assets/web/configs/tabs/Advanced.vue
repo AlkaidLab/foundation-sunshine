@@ -170,6 +170,7 @@ watch(isWGCSelected, (newValue) => {
               <option value="ddx">Desktop Duplication API</option>
               <option value="wgc">Windows.Graphics.Capture {{ $t('_common.beta') }}</option>
               <option value="amd">AMD Display Capture {{ $t('_common.beta') }}</option>
+              <option value="vdd">ZakoVDD Direct Shared Texture {{ $t('_common.beta') }}</option>
             </template>
           </PlatformLayout>
         </select>

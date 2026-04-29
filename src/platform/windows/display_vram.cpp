@@ -3416,4 +3416,90 @@ namespace platf::dxgi {
 
     return 0;
   }
+
+  // ===========================================================================
+  // display_vdd_vram_t snapshot/release_snapshot
+  // ===========================================================================
+  // Implemented here (rather than in display_vdd.cpp) because they need access
+  // to the file-local `img_d3d_t` and `texture_lock_helper` defined above.
+  // init() lives in display_vdd.cpp.
+
+  capture_e
+  display_vdd_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb,
+                               std::shared_ptr<platf::img_t> &img_out,
+                               std::chrono::milliseconds timeout, bool /*cursor_visible*/) {
+    if (current_frame) {
+      // Defensive: caller forgot to call release_snapshot(). Drop the stale ref.
+      dup.release_frame();
+      current_frame->Release();
+      current_frame = nullptr;
+    }
+
+    uint64_t frame_qpc = 0;
+    auto status = dup.next_frame(timeout, &current_frame, frame_qpc);
+    if (status != capture_e::ok) {
+      return status;
+    }
+
+    // RAII: ensure the producer keyed-mutex hold and the borrowed COM ref are
+    // released on every early-return path below. Disarmed only on the success
+    // path so release_snapshot() (called by the caller) takes ownership.
+    bool armed = true;
+    auto cleanup = util::fail_guard([&]() {
+      if (armed && current_frame) {
+        dup.release_frame();
+        current_frame->Release();
+        current_frame = nullptr;
+      }
+    });
+
+    auto frame_timestamp = std::chrono::steady_clock::now() -
+                           qpc_time_difference(qpc_counter(), frame_qpc);
+
+    D3D11_TEXTURE2D_DESC desc{};
+    current_frame->GetDesc(&desc);
+
+    if (desc.Width != static_cast<UINT>(width_before_rotation) ||
+        desc.Height != static_cast<UINT>(height_before_rotation) ||
+        desc.Format != capture_format) {
+      BOOST_LOG(info) << "[vdd] producer reconfigured: "sv
+                      << width_before_rotation << "x"sv << height_before_rotation
+                      << " " << dxgi_format_to_string(capture_format)
+                      << " -> "sv << desc.Width << "x"sv << desc.Height
+                      << " " << dxgi_format_to_string(desc.Format);
+      return capture_e::reinit;
+    }
+
+    std::shared_ptr<platf::img_t> img;
+    if (!pull_free_image_cb(img)) {
+      return capture_e::interrupted;
+    }
+    auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
+    d3d_img->blank = false;
+
+    if (complete_img(d3d_img.get(), false) != 0) {
+      return capture_e::error;
+    }
+
+    texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
+    if (!lock_helper.lock()) {
+      BOOST_LOG(error) << "[vdd] failed to lock capture texture"sv;
+      return capture_e::error;
+    }
+    device_ctx->CopyResource(d3d_img->capture_texture.get(), current_frame);
+
+    img_out = img;
+    img_out->frame_timestamp = frame_timestamp;
+    armed = false;  // success: ownership of current_frame transfers to release_snapshot()
+    return capture_e::ok;
+  }
+
+  capture_e
+  display_vdd_vram_t::release_snapshot() {
+    if (current_frame) {
+      current_frame->Release();
+      current_frame = nullptr;
+    }
+    return dup.release_frame();
+  }
 }  // namespace platf::dxgi
