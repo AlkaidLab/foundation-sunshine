@@ -1021,18 +1021,21 @@ namespace display_device {
       // 尝试恢复设置
       bool data_updated { false };
       bool success = try_revert_settings(*persistent_data, data_updated, skip_vdd_destroy);
-      if (!success) {
+
+      if (success) {
+        // 恢复成功，清理持久化数据
+        remove_file(filepath);
+        persistent_data = nullptr;
+        BOOST_LOG(info) << "显示设备配置已恢复";
+      }
+      else {
         if (data_updated) {
-          save_settings(filepath, *persistent_data);  // 忽略返回值
+          save_settings(filepath, *persistent_data);  // 保存部分恢复的状态以便重试
         }
         BOOST_LOG(error) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
       }
 
-      // 清理持久化数据
-      remove_file(filepath);
-      persistent_data = nullptr;
-
-      // 释放音频数据
+      // 不管成败都释放音频数据（串流已结束）
       if (reason != revert_reason_e::topology_switch) {
         if (audio_data) {
           BOOST_LOG(debug) << "释放捕获的音频接收器";
@@ -1040,9 +1043,7 @@ namespace display_device {
         }
       }
 
-      if (success) {
-        BOOST_LOG(info) << "显示设备配置已恢复";
-      }
+      return success;
     }
     return true;
   }
