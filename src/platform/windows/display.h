@@ -546,4 +546,100 @@ namespace platf::dxgi {
     release_snapshot() override;
   };
 
+  /**
+   * VDD direct-capture: opens the named D3D11 shared texture exported by
+   * the ZakoVDD driver (SharedFrameExporter). This bypasses DXGI Desktop
+   * Duplication / WGC and works in SYSTEM service context, before user logon,
+   * across session switch, and with full HDR — at the cost of only being able
+   * to capture VDD virtual monitors (not physical displays).
+   */
+  class vdd_capture_t {
+  public:
+    vdd_capture_t();
+    ~vdd_capture_t();
+
+    /**
+     * @brief Open the named shared texture / event / metadata for the given
+     *        VDD monitor index. Must be called from the same D3D11 device
+     *        that will be used for downstream encoding.
+     * @param d3d_device  D3D11 device on the same adapter LUID as VDD's RenderAdapter.
+     * @param monitor_idx VDD-internal monitor index (0..N-1).
+     */
+    int
+    init(ID3D11Device *d3d_device, unsigned int monitor_idx);
+
+    /**
+     * @brief Wait for the next frame (event-driven, no polling).
+     * @param timeout         Maximum time to wait.
+     * @param out             Receives a Texture2D reference holding the new frame.
+     *                        The caller MUST call release_frame() before next_frame()
+     *                        to release the keyed mutex.
+     * @param out_frame_qpc   QPC value at producer-side push (for latency tracing).
+     */
+    capture_e
+    next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_frame_qpc);
+
+    /**
+     * @brief Release the current keyed-mutex hold so the producer can write again.
+     */
+    capture_e
+    release_frame();
+
+    /**
+     * @brief Reported producer-side dimensions / format / HDR metadata.
+     */
+    UINT  width()      const { return m_width; }
+    UINT  height()     const { return m_height; }
+    DXGI_FORMAT format() const { return m_format; }
+    bool  is_hdr()     const { return m_is_hdr; }
+    float max_nits()   const { return m_max_nits; }
+    float min_nits()   const { return m_min_nits; }
+    float max_fall()   const { return m_max_fall; }
+
+  private:
+    void close();
+
+    HANDLE m_hMeta = nullptr;
+    void  *m_pMeta = nullptr;
+    HANDLE m_hEvent = nullptr;
+    texture2d_t m_sharedTex;
+    keyed_mutex_t m_keyedMutex;
+    bool m_holdsKey = false;
+
+    UINT m_width = 0;
+    UINT m_height = 0;
+    DXGI_FORMAT m_format = DXGI_FORMAT_UNKNOWN;
+    bool  m_is_hdr = false;
+    float m_max_nits = 0.0f;
+    float m_min_nits = 0.0f;
+    float m_max_fall = 0.0f;
+    UINT64 m_lastFrameCounter = 0;
+  };
+
+  /**
+   * Display backend that consumes frames from the ZakoVDD virtual display
+   * driver via vdd_capture_t. Mirrors display_amd_vram_t / display_wgc_vram_t.
+   */
+  class display_vdd_vram_t: public display_vram_t {
+    vdd_capture_t dup;
+    unsigned int monitor_idx = 0;
+    ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
+
+  public:
+    int
+    init(const ::video::config_t &config, const std::string &display_name);
+    capture_e
+    snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
+    capture_e
+    release_snapshot() override;
+
+    // Override HDR queries to use producer-reported metadata from
+    // SharedFrameMetadata, instead of querying DXGI on the virtual output
+    // (which may not propagate the producer's static HDR meta correctly).
+    bool
+    is_hdr() override;
+    bool
+    get_hdr_metadata(SS_HDR_METADATA &metadata) override;
+  };
+
 }  // namespace platf::dxgi

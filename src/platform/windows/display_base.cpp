@@ -1099,7 +1099,9 @@ namespace platf {
     // Build list of capture methods to try
     std::vector<std::string> try_types;
 
-    if (config::video.capture.empty()) {
+    const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
+
+    if (capture_backend.empty()) {
       if (is_running_as_system_user) {
         // WGC is not available in service mode
         try_types = { "ddx" };
@@ -1109,13 +1111,13 @@ namespace platf {
         try_types = { "ddx", "wgc" };
       }
     }
-    else if (config::video.capture == "wgc" && is_running_as_system_user) {
+    else if (capture_backend == "wgc" && is_running_as_system_user) {
       // WGC explicitly requested but unavailable in service mode
       BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
       try_types = { "ddx" };
     }
     else {
-      try_types = { config::video.capture };
+      try_types = { capture_backend };
     }
 
     for (const auto &type : try_types) {
@@ -1123,6 +1125,12 @@ namespace platf {
 
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
         ret = try_init(std::make_shared<dxgi::display_amd_vram_t>());
+      }
+      else if (type == "vdd" && hwdevice_type == mem_type_e::dxgi) {
+        // ZakoVDD direct shared-texture capture. Works in SYSTEM context and
+        // before user logon. Only valid when the selected display is a VDD
+        // virtual monitor.
+        ret = try_init(std::make_shared<dxgi::display_vdd_vram_t>());
       }
       else if (type == "ddx") {
         if (hwdevice_type == mem_type_e::dxgi) {
