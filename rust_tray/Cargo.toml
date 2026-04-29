@@ -1,0 +1,35 @@
+[package]
+name = "sunshine_tray"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+description = "Windows-only system tray implementation for Sunshine"
+
+[lib]
+name = "tray"
+crate-type = ["staticlib"]
+
+[dependencies]
+tray-icon = "0.19"
+muda = "0.15"
+once_cell = "1.19"
+parking_lot = "0.12"
+log = "0.4"
+
+# Windows-only dependencies
+[target.'cfg(windows)'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_Controls_Dialogs",
+] }
+winrt-notification = "0.5"
+
+[build-dependencies]
+# bindgen = "0.71"  # Disabled: requires LLVM/Clang installation
+
+[profile.release]
+lto = true
+opt-level = "s"

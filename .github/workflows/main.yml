@@ -163,6 +163,10 @@ jobs:
           # install pinned opus after Syu to prevent upgrade
           pacman --noconfirm -U ${opus_tarball}
 
+          # Add MinGW target for rust_tray static library
+          echo "Adding MinGW target for rust_tray..."
+          rustup target add x86_64-pc-windows-gnu
+
       - name: Verify Build Tools
         shell: msys2 {0}
         run: |

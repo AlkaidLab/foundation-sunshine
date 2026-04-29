@@ -1,0 +1,5 @@
+# Cargo configuration for MinGW builds
+
+[target.x86_64-pc-windows-gnu]
+# Static link libgcc to avoid runtime DLL dependency
+rustflags = ["-C", "link-arg=-static-libgcc"]
