@@ -547,7 +547,7 @@ namespace config {
     true,  // native pen/touch support
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
-    false, // clipboard_sync (off by default for privacy; requires Sunshine GUI to perform actual IO)
+    true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
   };
 
   sunshine_t sunshine {
