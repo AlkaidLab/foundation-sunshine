@@ -336,7 +336,10 @@ namespace abr {
   struct llm_params_t {
     std::string system_prompt = "You are a streaming bitrate optimizer. Respond with a single valid JSON object only. Do not include markdown, code fences, or reasoning tags such as <think>.";
     double temperature = 0.1;
-    int max_tokens = 150;
+    // Reasoning models (e.g. "Coder", DeepSeek-R1, QwQ) emit long <think> blocks before the JSON.
+    // 150 tokens almost always truncates them mid-thought, leaving no JSON to parse.
+    // 1024 gives enough headroom for ~600-800 reasoning tokens + the small JSON answer.
+    int max_tokens = 1024;
   };
 
   static const llm_params_t &
@@ -393,8 +396,12 @@ namespace abr {
 
       // Extract the assistant's message content
       std::string content;
+      std::string finish_reason;
       if (resp.contains("choices") && !resp["choices"].empty()) {
         content = resp["choices"][0]["message"]["content"].get<std::string>();
+        if (resp["choices"][0].contains("finish_reason") && resp["choices"][0]["finish_reason"].is_string()) {
+          finish_reason = resp["choices"][0]["finish_reason"].get<std::string>();
+        }
       }
       else {
         action.reason = "llm_parse_error: no choices in response";
@@ -416,10 +423,25 @@ namespace abr {
       }
 
       if (parse_target.empty()) {
-        action.reason = "llm_parse_error: no JSON object in content";
-        BOOST_LOG(warning) << "ABR LLM parse error: no JSON object in content. body: "
-                           << response_body.substr(0, 200)
-                           << " content: " << content.substr(0, 200);
+        // Detect the common case: a reasoning model (e.g. "Coder") emitted a <think>
+        // block but ran out of tokens before producing the JSON answer.
+        bool truncated_reasoning =
+          finish_reason == "length" &&
+          find_case_insensitive(content, "<think") != std::string::npos;
+
+        if (truncated_reasoning) {
+          action.reason = "llm_truncated: reasoning exceeded max_tokens";
+          BOOST_LOG(info) << "ABR LLM response truncated mid-reasoning (finish_reason=length); "
+                          << "increase ai_config.json max_tokens (current default 1024) for this model. "
+                          << "content: " << content.substr(0, 160);
+        }
+        else {
+          action.reason = "llm_parse_error: no JSON object in content";
+          BOOST_LOG(warning) << "ABR LLM parse error: no JSON object in content. "
+                             << "finish_reason=" << (finish_reason.empty() ? "<none>" : finish_reason)
+                             << " body: " << response_body.substr(0, 200)
+                             << " content: " << content.substr(0, 200);
+        }
         return action;
       }
 
