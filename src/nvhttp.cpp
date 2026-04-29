@@ -342,9 +342,15 @@ namespace nvhttp {
   save_state() {
     pt::ptree root;
 
-    if (fs::exists(config::nvhttp.file_state)) {
+    fs::path state_path(config::nvhttp.file_state);
+    if (fs::exists(state_path)) {
       try {
-        pt::read_json(config::nvhttp.file_state, root);
+        std::ifstream ifs(state_path);
+        if (!ifs.is_open()) {
+          BOOST_LOG(error) << "Couldn't open "sv << config::nvhttp.file_state << " for reading";
+          return;
+        }
+        pt::read_json(ifs, root);
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
@@ -371,7 +377,12 @@ namespace nvhttp {
     root.add_child("root.named_devices"s, named_cert_nodes);
 
     try {
-      pt::write_json(config::nvhttp.file_state, root);
+      std::ofstream ofs(state_path);
+      if (!ofs.is_open()) {
+        BOOST_LOG(error) << "Couldn't open "sv << config::nvhttp.file_state << " for writing";
+        return;
+      }
+      pt::write_json(ofs, root);
     }
     catch (std::exception &e) {
       BOOST_LOG(error) << "Couldn't write "sv << config::nvhttp.file_state << ": "sv << e.what();
@@ -381,7 +392,8 @@ namespace nvhttp {
 
   void
   load_state() {
-    if (!fs::exists(config::nvhttp.file_state)) {
+    fs::path state_path(config::nvhttp.file_state);
+    if (!fs::exists(state_path)) {
       BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
       return;
@@ -389,7 +401,13 @@ namespace nvhttp {
 
     pt::ptree tree;
     try {
-      pt::read_json(config::nvhttp.file_state, tree);
+      std::ifstream ifs(state_path);
+      if (!ifs.is_open()) {
+        BOOST_LOG(error) << "Couldn't open "sv << config::nvhttp.file_state << " for reading";
+        http::unique_id = uuid_util::uuid_t::generate().string();
+        return;
+      }
+      pt::read_json(ifs, tree);
     }
     catch (std::exception &e) {
       BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();

@@ -1036,7 +1036,7 @@ namespace platf {
    */
   bp::child
   run_command(bool elevated, bool interactive, const std::string &cmd, boost::filesystem::path &working_dir, const bp::environment &env, FILE *file, std::error_code &ec, bp::group *group) {
-    std::wstring start_dir = from_utf8(working_dir.string());
+    std::wstring start_dir = working_dir.wstring();
     HANDLE job = group ? group->native_handle() : nullptr;
     STARTUPINFOEXW startup_info = create_startup_info(file, job ? &job : nullptr, ec);
     PROCESS_INFORMATION process_info;
@@ -2012,12 +2012,38 @@ namespace platf {
       return {};
     }
 
-    // Get the output size required to store the string
+    // Get the output size required to store the string (strict UTF-8 validation)
     auto output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), nullptr, 0);
     if (output_size == 0) {
       auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr;
-      return {};
+
+      // Log hex dump of the first bytes to help diagnose the invalid string
+      std::ostringstream hex_dump;
+      auto dump_len = std::min<size_t>(string.size(), 64);
+      for (size_t i = 0; i < dump_len; i++) {
+        hex_dump << std::hex << std::setfill('0') << std::setw(2)
+                 << (static_cast<unsigned>(string[i]) & 0xFF);
+        if (i + 1 < dump_len) hex_dump << ' ';
+      }
+      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr
+                       << " (len=" << string.size()
+                       << ", hex=[" << hex_dump.str() << "]"
+                       << ", str=\"" << string.substr(0, 64) << "\")";
+
+      // Fallback: try converting from the system's default ANSI code page (e.g. GBK on Chinese Windows)
+      output_size = MultiByteToWideChar(CP_ACP, 0, string.data(), string.size(), nullptr, 0);
+      if (output_size == 0) {
+        BOOST_LOG(error) << "Fallback ANSI conversion also failed: "sv << GetLastError();
+        return {};
+      }
+      BOOST_LOG(warning) << "from_utf8: falling back to ANSI code page conversion for non-UTF-8 string";
+
+      std::wstring output(output_size, L'\0');
+      output_size = MultiByteToWideChar(CP_ACP, 0, string.data(), string.size(), output.data(), output.size());
+      if (output_size == 0) {
+        return {};
+      }
+      return output;
     }
 
     // Perform the conversion
