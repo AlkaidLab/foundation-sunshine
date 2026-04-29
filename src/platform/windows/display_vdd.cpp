@@ -19,7 +19,9 @@
 
 #include <d3d11_1.h>
 #include <sddl.h>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <thread>
 
@@ -355,6 +357,7 @@ namespace platf::dxgi {
     // Use producer-reported format as our capture format. complete_img() / image
     // pool will be created against this format.
     capture_format = dup.format();
+    capture_linear_gamma = capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 
     // Validate the producer-reported format against the formats display_vram_t
     // can actually consume (RTV creation, shaders, color conversion). Anything
@@ -377,7 +380,8 @@ namespace platf::dxgi {
     BOOST_LOG(info) << "[vdd] backend ready: monitor="sv << monitor_idx
                     << " "sv << dup.width() << "x"sv << dup.height()
                     << " fmt="sv << dxgi_format_to_string(capture_format)
-                    << " hdr="sv << dup.is_hdr();
+                    << " hdr="sv << dup.is_hdr()
+                    << " linear_gamma="sv << capture_linear_gamma;
     return 0;
   }
 
@@ -411,9 +415,16 @@ namespace platf::dxgi {
     //   maxDisplayLuminance      : nits
     //   minDisplayLuminance      : units of 0.0001 nits
     //   maxFullFrameLuminance    : nits
-    metadata.maxDisplayLuminance = static_cast<uint16_t>(dup.max_nits());
-    metadata.minDisplayLuminance = static_cast<uint32_t>(dup.min_nits() * 10000.0f);
-    metadata.maxFullFrameLuminance = static_cast<uint16_t>(dup.max_fall());
+    auto finite_clamped = [](float value, float min_value, float max_value) {
+      if (!std::isfinite(value)) {
+        return min_value;
+      }
+      return std::clamp(value, min_value, max_value);
+    };
+
+    metadata.maxDisplayLuminance = static_cast<uint16_t>(finite_clamped(dup.max_nits(), 0.0f, 65535.0f));
+    metadata.minDisplayLuminance = static_cast<uint32_t>(finite_clamped(dup.min_nits(), 0.0f, 429496.7295f) * 10000.0f);
+    metadata.maxFullFrameLuminance = static_cast<uint16_t>(finite_clamped(dup.max_fall(), 0.0f, 65535.0f));
 
     // Producer doesn't currently track per-frame content light levels.
     metadata.maxContentLightLevel = 0;

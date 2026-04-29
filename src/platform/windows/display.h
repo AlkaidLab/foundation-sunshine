@@ -623,7 +623,7 @@ namespace platf::dxgi {
   class display_vdd_vram_t: public display_vram_t {
     vdd_capture_t dup;
     unsigned int monitor_idx = 0;
-    ID3D11Texture2D *current_frame = nullptr;  // Borrowed ref from dup.next_frame, released in release_snapshot
+    ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
 
   public:
     int

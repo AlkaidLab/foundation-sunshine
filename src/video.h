@@ -86,6 +86,11 @@ namespace video {
     // If empty, use the default display from global configuration
     std::string display_name;
 
+    // Optional per-display initialization capture backend override.
+    // This is intentionally scoped to a single platf::display() call so encoder
+    // probing can avoid mutating the global config::video.capture string.
+    std::string capture_backend_override;
+
     // Helper to get effective framerate as double
     double get_effective_framerate() const {
       if (frameRateNum > 0 && frameRateDen > 0) {

@@ -65,30 +65,6 @@ using namespace std::literals;
 namespace video {
 
   namespace {
-    class scoped_capture_override_t {
-    public:
-      explicit scoped_capture_override_t(const std::optional<std::string> &capture_override) {
-        if (capture_override && config::video.capture != *capture_override) {
-          previous_capture = config::video.capture;
-          config::video.capture = *capture_override;
-          active = true;
-        }
-      }
-
-      ~scoped_capture_override_t() {
-        if (active) {
-          config::video.capture = previous_capture;
-        }
-      }
-
-      scoped_capture_override_t(const scoped_capture_override_t &) = delete;
-      scoped_capture_override_t &operator=(const scoped_capture_override_t &) = delete;
-
-    private:
-      bool active = false;
-      std::string previous_capture;
-    };
-
     std::optional<std::string>
     capture_override_for_encoder_probe() {
 #ifdef _WIN32
@@ -3615,7 +3591,6 @@ namespace video {
     std::shared_ptr<platf::display_t> disp;
     const auto configured_capture_backend = config::video.capture;
     auto probe_capture_override = capture_override_for_encoder_probe();
-    scoped_capture_override_t capture_override_guard { probe_capture_override };
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
@@ -3651,6 +3626,10 @@ namespace video {
     // Note: videoFormat starts at 0 (H.264), will be changed to 1 (HEVC) or 2 (AV1) later if needed
     config_t config_max_ref_frames { 1920, 1080, 60, 1000, 1, 1, 1, 0, 0, 0, 0 };
     config_t config_autoselect { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 0 };
+    if (probe_capture_override) {
+      config_max_ref_frames.capture_backend_override = *probe_capture_override;
+      config_autoselect.capture_backend_override = *probe_capture_override;
+    }
 
     // If the encoder isn't supported at all (not even H.264), bail early
     const auto output_display_name { display_device::get_display_name(config::video.output_name) };
@@ -3775,7 +3754,10 @@ namespace video {
         encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
       }
       else {
-        const config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
+        config_t generic_hdr_config = { 1920, 1080, 60, 1000, 1, 1, 0, 3, 1, 1, 0 };
+        if (probe_capture_override) {
+          generic_hdr_config.capture_backend_override = *probe_capture_override;
+        }
 
         // Reset the display since we're switching from SDR to HDR
         reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
