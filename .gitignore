@@ -65,6 +65,8 @@ venv/
 
 # Dev notes (analysis docs, guide generation, images)
 _dev_notes/
+instructions/
+skills/
 
 # Temp HID trace files
 temphidtrace*
@@ -88,6 +90,3 @@ src_assets/common/assets/web/welcome.html
 src_assets/common/assets/web/dist/
 # Local dev scripts
 build.sh
-
-# Vulkan HDR layer source (standalone tool, not part of Sunshine)
-src/vk_layer_hdr_inject/
