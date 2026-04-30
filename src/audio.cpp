@@ -8,6 +8,15 @@
 // lib includes
 #include <opus/opus_multistream.h>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/frame.h>
+#include <libavutil/mem.h>
+#include <libavutil/opt.h>
+#include <libavutil/samplefmt.h>
+}
+
 // local includes
 #include "audio.h"
 #include "config.h"
@@ -21,6 +30,176 @@ namespace audio {
   using namespace std::literals;
   using opus_t = util::safe_ptr<OpusMSEncoder, opus_multistream_encoder_destroy>;
   using sample_queue_t = std::shared_ptr<safe::queue_t<std::vector<float>>>;
+
+  namespace {
+    void free_avcodec_ctx(AVCodecContext *ctx) {
+      avcodec_free_context(&ctx);
+    }
+    void free_avframe(AVFrame *f) {
+      av_frame_free(&f);
+    }
+    void free_avpacket(AVPacket *p) {
+      av_packet_free(&p);
+    }
+    using avcodec_ctx_t = util::safe_ptr<AVCodecContext, free_avcodec_ctx>;
+    using avframe_t = util::safe_ptr<AVFrame, free_avframe>;
+    using avpacket_t = util::safe_ptr<AVPacket, free_avpacket>;
+  }  // namespace
+
+  // Encodes one Sunshine audio capture stream as AC3 / E-AC3 (passthrough to a
+  // bit-perfect decoder on the client). Returns true if encoding ran to
+  // completion (capture queue drained); false if encoder init failed and the
+  // caller should fall back to Opus.
+  static bool encodeThreadFFmpeg(sample_queue_t samples,
+                                 const opus_stream_config_t &stream,
+                                 const config_t &config,
+                                 void *channel_data) {
+    auto packets = mail::man->queue<packet_t>(mail::audio_packets);
+
+    enum AVCodecID codec_id = (config.codec == CODEC_EAC3) ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
+    const char *codec_name = (codec_id == AV_CODEC_ID_EAC3) ? "E-AC3" : "AC3";
+
+    // AC3 / E-AC3 max 6 channels (5.1). Refuse 7.1+ for now.
+    if (stream.channelCount > 6) {
+      BOOST_LOG(warning) << codec_name << " encoder: capture has "sv << stream.channelCount
+                         << " channels but AC3 only supports up to 5.1; falling back to Opus."sv;
+      return false;
+    }
+
+    const AVCodec *codec = avcodec_find_encoder(codec_id);
+    if (!codec) {
+      BOOST_LOG(warning) << codec_name << " encoder not available in linked FFmpeg; falling back to Opus."sv;
+      return false;
+    }
+
+    avcodec_ctx_t ctx { avcodec_alloc_context3(codec) };
+    if (!ctx) {
+      BOOST_LOG(error) << "Failed to allocate "sv << codec_name << " encoder context"sv;
+      return false;
+    }
+
+    ctx->sample_rate = stream.sampleRate;
+    ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    if (stream.channelCount == 6) {
+      ctx->ch_layout = AV_CHANNEL_LAYOUT_5POINT1;
+    } else if (stream.channelCount == 2) {
+      ctx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+    } else {
+      AVChannelLayout layout;
+      av_channel_layout_default(&layout, stream.channelCount);
+      ctx->ch_layout = layout;
+    }
+
+    // Pick a sane bitrate: client value if provided, else codec defaults.
+    int bit_rate = config.bitrate;
+    if (bit_rate <= 0) {
+      bit_rate = (stream.channelCount >= 6) ? 448000 :
+                 (stream.channelCount == 2)  ? 192000 :
+                                                96000;
+    }
+    ctx->bit_rate = bit_rate;
+
+    int err = avcodec_open2(ctx.get(), codec, nullptr);
+    if (err < 0) {
+      char ebuf[128] {};
+      av_strerror(err, ebuf, sizeof(ebuf));
+      BOOST_LOG(error) << codec_name << " avcodec_open2 failed: "sv << ebuf;
+      return false;
+    }
+
+    // AC3 is fixed at 1536 samples per frame; we already forced
+    // packetDuration=32ms in rtsp::cmd_announce so capture frame_size matches.
+    const int frame_size = ctx->frame_size > 0 ? ctx->frame_size : 1536;
+    const int capture_frame_size = config.packetDuration * stream.sampleRate / 1000;
+    if (capture_frame_size != frame_size) {
+      BOOST_LOG(warning) << codec_name << " encoder expects "sv << frame_size
+                         << " samples/frame but capture is "sv << capture_frame_size
+                         << "; falling back to Opus."sv;
+      return false;
+    }
+
+    avframe_t frame { av_frame_alloc() };
+    if (!frame) {
+      BOOST_LOG(error) << "Failed to allocate AVFrame for "sv << codec_name;
+      return false;
+    }
+    frame->format = AV_SAMPLE_FMT_FLTP;
+    frame->nb_samples = frame_size;
+    if (av_channel_layout_copy(&frame->ch_layout, &ctx->ch_layout) < 0 ||
+        av_frame_get_buffer(frame.get(), 0) < 0) {
+      BOOST_LOG(error) << "Failed to allocate AVFrame buffers for "sv << codec_name;
+      return false;
+    }
+
+    avpacket_t pkt { av_packet_alloc() };
+    if (!pkt) {
+      BOOST_LOG(error) << "Failed to allocate AVPacket for "sv << codec_name;
+      return false;
+    }
+
+    BOOST_LOG(info) << codec_name << " initialized: "sv << stream.sampleRate / 1000
+                    << " kHz, "sv << stream.channelCount << " channels, "sv
+                    << bit_rate / 1000 << " kbps"sv;
+
+    const int channels = stream.channelCount;
+    int64_t pts = 0;
+    while (auto sample = samples->pop()) {
+      // Sunshine capture is interleaved float in speaker_e order
+      // (FL,FR,FC,LFE,BL,BR for 5.1) which already matches
+      // AV_CHANNEL_LAYOUT_5POINT1 channel order, so no remap needed —
+      // just deinterleave into planar.
+      if (av_frame_make_writable(frame.get()) < 0) {
+        BOOST_LOG(error) << codec_name << " av_frame_make_writable failed"sv;
+        packets->stop();
+        return true;
+      }
+
+      const float *src = sample->data();
+      for (int s = 0; s < frame_size; ++s) {
+        for (int c = 0; c < channels; ++c) {
+          ((float *) frame->data[c])[s] = src[s * channels + c];
+        }
+      }
+      frame->pts = pts;
+      pts += frame_size;
+
+      err = avcodec_send_frame(ctx.get(), frame.get());
+      if (err < 0) {
+        char ebuf[128] {};
+        av_strerror(err, ebuf, sizeof(ebuf));
+        BOOST_LOG(error) << codec_name << " avcodec_send_frame: "sv << ebuf;
+        packets->stop();
+        return true;
+      }
+
+      while (true) {
+        err = avcodec_receive_packet(ctx.get(), pkt.get());
+        if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
+          break;
+        }
+        if (err < 0) {
+          char ebuf[128] {};
+          av_strerror(err, ebuf, sizeof(ebuf));
+          BOOST_LOG(error) << codec_name << " avcodec_receive_packet: "sv << ebuf;
+          packets->stop();
+          return true;
+        }
+
+        buffer_t out { (std::size_t) pkt->size };
+        std::memcpy(out.begin(), pkt->data, pkt->size);
+        out.fake_resize(pkt->size);
+        packets->raise(channel_data, std::move(out));
+        av_packet_unref(pkt.get());
+      }
+    }
+
+    // Flush
+    avcodec_send_frame(ctx.get(), nullptr);
+    while (avcodec_receive_packet(ctx.get(), pkt.get()) == 0) {
+      av_packet_unref(pkt.get());
+    }
+    return true;
+  }
 
   static int start_audio_control(audio_ctx_t &ctx);
   static void stop_audio_control(audio_ctx_t &);
@@ -104,6 +283,48 @@ namespace audio {
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
     if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
       apply_surround_params(stream, config.customStreamParams);
+    }
+
+    // AC3 / E-AC3 passthrough requested by client. Try the FFmpeg encoder
+    // path; if it fails (encoder missing, channel layout unsupported, etc.)
+    // transparently downgrade to Opus so the client still gets audio.
+    if (config.codec == CODEC_AC3 || config.codec == CODEC_EAC3) {
+      platf::adjust_thread_priority(platf::thread_priority_e::high);
+      if (encodeThreadFFmpeg(samples, stream, config, channel_data)) {
+        return;
+      }
+      BOOST_LOG(warning) << "Falling back to Opus after "sv
+                         << (config.codec == CODEC_AC3 ? "AC3"sv : "E-AC3"sv)
+                         << " encoder init failure."sv;
+      config.codec = CODEC_OPUS;
+    }
+    else if (config.codec == CODEC_PCM_S16) {
+      platf::adjust_thread_priority(platf::thread_priority_e::high);
+      // Raw LPCM passthrough: float [-1,1] -> s16 LE, no encoder.
+      // packetDuration is forced to 5 ms by the client SDP path; verify.
+      auto frame_samples = config.packetDuration * stream.sampleRate / 1000;
+      auto channels = stream.channelCount;
+      auto pcm_bytes = frame_samples * channels * static_cast<int>(sizeof(int16_t));
+
+      BOOST_LOG(info) << "PCM_S16 passthrough: "sv << stream.sampleRate / 1000 << " kHz, "sv
+                      << channels << " channels, "sv << config.packetDuration << " ms frames ("sv
+                      << pcm_bytes << " B/frame, "sv
+                      << (frame_samples * 1000 / config.packetDuration * channels * 2 * 8 / 1000) << " kbps)"sv;
+
+      while (auto sample = samples->pop()) {
+        buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
+        const float *src = sample->data();
+        auto *dst = reinterpret_cast<int16_t *>(std::begin(packet));
+        // Sample comes in interleaved float; just clamp + scale.
+        for (int i = 0; i < frame_samples * channels; ++i) {
+          float v = src[i];
+          if (v > 1.0f) v = 1.0f;
+          else if (v < -1.0f) v = -1.0f;
+          dst[i] = static_cast<int16_t>(v * 32767.0f);
+        }
+        packets->raise(channel_data, std::move(packet));
+      }
+      return;
     }
 
     // Encoding takes place on this thread
