@@ -5,6 +5,7 @@
 #include "process.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -120,6 +121,20 @@ namespace stream {
     audio,  ///< Audio
     microphone,  ///< Microphone
   };
+
+  const char *
+  socket_name(socket_e type) {
+    switch (type) {
+      case socket_e::video:
+        return "video";
+      case socket_e::audio:
+        return "audio";
+      case socket_e::microphone:
+        return "microphone";
+    }
+
+    return "unknown";
+  }
 
 #pragma pack(push, 1)
 
@@ -640,6 +655,22 @@ namespace stream {
 
       net::peer_t peer;
       std::uint32_t seq;
+      std::chrono::steady_clock::time_point last_periodic_ping_log {};
+      std::chrono::steady_clock::time_point last_rx_diag_log {};
+      std::chrono::steady_clock::time_point last_decrypt_diag_log {};
+      std::chrono::steady_clock::time_point last_input_diag_log {};
+      std::chrono::steady_clock::time_point last_feedback_diag_log {};
+      std::uint64_t rx_events { 0 };
+      std::uint64_t encrypted_rx_events { 0 };
+      std::uint64_t decrypted_rx_events { 0 };
+      std::uint64_t input_rx_events { 0 };
+      std::uint64_t decrypt_failures { 0 };
+      std::uint64_t unencrypted_drops { 0 };
+      std::uint64_t unknown_packets { 0 };
+      std::uint16_t last_wire_type { 0 };
+      std::uint16_t last_decrypted_type { 0 };
+      std::uint32_t last_encrypted_seq { 0 };
+      std::size_t last_payload_size { 0 };
 
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
@@ -682,19 +713,29 @@ namespace stream {
     std::atomic<int> current_total_bitrate { 0 };
     std::atomic<int> current_fec_percentage { 0 };
     std::atomic<int> pacing_total_bitrate { 0 };
+    std::atomic<std::uint64_t> weak_net_frame_area { 0 };
+    std::atomic<std::uint64_t> weak_net_dirty_area { 0 };
+    std::atomic<bool> weak_net_full_frame_dirty { false };
+    std::atomic<std::uint32_t> weak_net_rfi_requests { 0 };
     weak_net::controller_t weak_net_controller;
     std::chrono::steady_clock::time_point last_weak_net_fec_feedback {};
     std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
     std::chrono::steady_clock::time_point weak_net_recovery_ready_after {};
+    std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
+    std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     int last_applied_weak_net_bitrate { 0 };
     int last_applied_weak_net_fec { -1 };
     int last_applied_weak_net_fps { 0 };
+    int last_applied_weak_net_resolution_scale { 100 };
+    int last_applied_weak_net_chroma_sampling_type { -1 };
+    int last_applied_weak_net_dynamic_range { -1 };
     std::uint32_t last_dynamic_clarity_flags { 0 };
     int last_dynamic_clarity_qp { 0 };
     int last_dynamic_clarity_bitrate { 0 };
     std::chrono::steady_clock::time_point last_weak_net_bitrate_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fec_apply {};
     std::chrono::steady_clock::time_point last_weak_net_fps_apply {};
+    std::chrono::steady_clock::time_point last_weak_net_profile_apply {};
     struct {
       std::chrono::steady_clock::time_point window_started {};
       std::uint32_t windows { 0 };
@@ -708,12 +749,22 @@ namespace stream {
       std::uint64_t received_packets { 0 };
       std::uint64_t video_bytes { 0 };
       std::uint32_t audio_underruns { 0 };
+      std::uint32_t audio_concealed_ms { 0 };
+      std::uint32_t late_audio_drops { 0 };
+      std::uint32_t audio_plc_ms { 0 };
+      std::uint32_t audio_fade_ms { 0 };
+      std::uint32_t max_audio_buffer_depth_ms { 0 };
+      std::int32_t max_audio_drift_ppm { 0 };
       std::uint32_t late_frames { 0 };
       std::uint32_t displayed_frames { 0 };
       std::uint32_t max_decode_queue_depth { 0 };
       std::uint32_t max_render_queue_depth { 0 };
       std::uint32_t max_input_queue_depth { 0 };
       std::uint32_t max_input_latency_us { 0 };
+      std::uint64_t max_frame_area { 0 };
+      std::uint64_t max_dirty_area { 0 };
+      std::uint32_t full_frame_dirty_windows { 0 };
+      std::uint32_t rfi_requests { 0 };
       std::uint32_t max_rtt_ms { 0 };
       std::uint32_t max_rtt_variance_ms { 0 };
       std::uint32_t healthy_actions { 0 };
@@ -723,6 +774,7 @@ namespace stream {
       std::uint32_t bitrate_applies { 0 };
       std::uint32_t fps_applies { 0 };
       std::uint32_t fec_applies { 0 };
+      std::uint32_t profile_applies { 0 };
       std::uint32_t idr_requests { 0 };
     } weak_net_diag;
 
@@ -1032,14 +1084,42 @@ namespace stream {
       return encoding_bitrate_kbps;
     }
 
-    fec_percentage = std::clamp(fec_percentage, 0, 80);
+    fec_percentage = std::clamp(fec_percentage, 0, 100);
     if (fec_percentage == 0) {
       return encoding_bitrate_kbps;
     }
 
     return static_cast<int>(std::lround(
-      static_cast<double>(encoding_bitrate_kbps) * 100.0 /
-      static_cast<double>(100 - fec_percentage)));
+      static_cast<double>(encoding_bitrate_kbps) *
+      static_cast<double>(100 + fec_percentage) / 100.0));
+  }
+
+  static int
+  encoding_bitrate_from_total_video_budget(int total_bitrate_kbps, int fec_percentage) {
+    if (total_bitrate_kbps <= 0) {
+      return total_bitrate_kbps;
+    }
+
+    fec_percentage = std::clamp(fec_percentage, 0, 100);
+    if (fec_percentage == 0) {
+      return total_bitrate_kbps;
+    }
+
+    return static_cast<int>(std::lround(
+      static_cast<double>(total_bitrate_kbps) *
+      100.0 / static_cast<double>(100 + fec_percentage)));
+  }
+
+  static int
+  scaled_even_dimension(int dimension, int scale_percent) {
+    if (dimension <= 0) {
+      return 0;
+    }
+
+    auto scaled = static_cast<int>(std::lround(static_cast<double>(dimension) *
+                                               static_cast<double>(scale_percent) / 100.0));
+    scaled = std::max(16, scaled);
+    return std::max(16, scaled - (scaled % 2));
   }
 
   static stream_quality::content_type_e
@@ -1088,7 +1168,7 @@ namespace stream {
       return;
     }
 
-    BOOST_LOG(info) << "Low-bitrate clarity dynamic runtime=" << session->identity.runtime_id
+    BOOST_LOG(info) << "Frame interest intent generated runtime=" << session->identity.runtime_id
                     << " encoding=" << encoding_bitrate_kbps << " Kbps"
                     << " fps=" << fps
                     << " bpp=" << plan.bits_per_pixel_per_frame
@@ -1111,6 +1191,50 @@ namespace stream {
   bool
   should_apply_frame_fec_weak_net_feedback(int ml_feature_flags) {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+  }
+
+  template<typename T>
+  static void
+  atomic_store_max(std::atomic<T> &target, T value) {
+    auto previous = target.load(std::memory_order_relaxed);
+    while (previous < value &&
+           !target.compare_exchange_weak(previous,
+                                         value,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {}
+  }
+
+  static void
+  record_frame_interest_feedback(void *channel_data, const video::frame_interest_feedback_t &feedback) {
+    auto *session = static_cast<session_t *>(channel_data);
+    if (!session) {
+      return;
+    }
+
+    if (feedback.frame_area > 0) {
+      session->weak_net_frame_area.store(feedback.frame_area, std::memory_order_relaxed);
+    }
+    atomic_store_max(session->weak_net_dirty_area, feedback.dirty_area);
+    if (feedback.full_frame_dirty) {
+      session->weak_net_full_frame_dirty.store(true, std::memory_order_relaxed);
+    }
+  }
+
+  static void
+  annotate_feedback_with_host_motion(session_t *session, weak_net::feedback_t &feedback) {
+    if (!session) {
+      return;
+    }
+
+    auto frame_area = session->weak_net_frame_area.load(std::memory_order_relaxed);
+    if (frame_area == 0 && session->config.monitor.width > 0 && session->config.monitor.height > 0) {
+      frame_area = static_cast<std::uint64_t>(session->config.monitor.width) *
+                   static_cast<std::uint64_t>(session->config.monitor.height);
+    }
+    feedback.frame_area = frame_area;
+    feedback.dirty_area = session->weak_net_dirty_area.exchange(0, std::memory_order_relaxed);
+    feedback.full_frame_dirty = session->weak_net_full_frame_dirty.exchange(false, std::memory_order_relaxed);
+    feedback.rfi_requests = session->weak_net_rfi_requests.exchange(0, std::memory_order_relaxed);
   }
 
   static void
@@ -1139,6 +1263,12 @@ namespace stream {
     diag.received_packets += feedback.received_packets;
     diag.video_bytes += feedback.video_bytes;
     diag.audio_underruns += feedback.audio_underruns;
+    diag.audio_concealed_ms += feedback.audio_concealed_ms;
+    diag.late_audio_drops += feedback.late_audio_drops;
+    diag.audio_plc_ms += feedback.audio_plc_ms;
+    diag.audio_fade_ms += feedback.audio_fade_ms;
+    diag.max_audio_buffer_depth_ms = std::max(diag.max_audio_buffer_depth_ms, feedback.audio_buffer_depth_ms);
+    diag.max_audio_drift_ppm = std::max(diag.max_audio_drift_ppm, std::abs(feedback.audio_drift_ppm));
     diag.late_frames += feedback.late_frames;
     diag.displayed_frames += feedback.displayed_frames;
     diag.max_decode_queue_depth = std::max(diag.max_decode_queue_depth, feedback.decode_queue_depth);
@@ -1146,6 +1276,10 @@ namespace stream {
     diag.max_input_queue_depth = std::max(diag.max_input_queue_depth, feedback.input_queue_depth);
     diag.max_input_latency_us = std::max(diag.max_input_latency_us,
                                           std::max(feedback.input_send_latency_us, feedback.input_ack_latency_us));
+    diag.max_frame_area = std::max(diag.max_frame_area, feedback.frame_area);
+    diag.max_dirty_area = std::max(diag.max_dirty_area, feedback.dirty_area);
+    diag.full_frame_dirty_windows += feedback.full_frame_dirty ? 1U : 0U;
+    diag.rfi_requests += feedback.rfi_requests;
     diag.max_rtt_ms = std::max(diag.max_rtt_ms, feedback.rtt_ms);
     diag.max_rtt_variance_ms = std::max(diag.max_rtt_variance_ms, feedback.rtt_variance_ms);
     if (action.request_idr) {
@@ -1171,11 +1305,8 @@ namespace stream {
       return;
     }
 
-    const auto observed_lost_packets = diag.total_packets > diag.received_packets ?
-                                         diag.total_packets - diag.received_packets :
-                                         diag.missing_packets;
     const auto loss_percentage = diag.total_packets > 0 ?
-                                   static_cast<double>(std::max(observed_lost_packets, diag.missing_packets)) *
+                                   static_cast<double>(diag.missing_packets) *
                                      100.0 / static_cast<double>(diag.total_packets) :
                                    0.0;
     const auto input_latency_ms = static_cast<double>(diag.max_input_latency_us) / 1000.0;
@@ -1193,12 +1324,22 @@ namespace stream {
             << " packets=" << diag.received_packets << "/" << diag.total_packets
             << " missing=" << diag.missing_packets
             << " audioUnd=" << diag.audio_underruns
+            << " audioConceal=" << diag.audio_concealed_ms << "ms"
+            << " lateAudioDrop=" << diag.late_audio_drops
+            << " plc=" << diag.audio_plc_ms << "ms"
+            << " fade=" << diag.audio_fade_ms << "ms"
+            << " audioBufMax=" << diag.max_audio_buffer_depth_ms << "ms"
+            << " driftMax=" << diag.max_audio_drift_ppm << "ppm"
             << " late=" << diag.late_frames
             << " displayed=" << diag.displayed_frames
             << " dqMax=" << diag.max_decode_queue_depth
             << " rqMax=" << diag.max_render_queue_depth
             << " inputQMax=" << diag.max_input_queue_depth
             << " inputLatencyMax=" << input_latency_ms << "ms"
+            << " dirtyAreaMax=" << diag.max_dirty_area
+            << " frameAreaMax=" << diag.max_frame_area
+            << " fullFrameDirty=" << diag.full_frame_dirty_windows
+            << " rfiRequests=" << diag.rfi_requests
             << " rttMax=" << diag.max_rtt_ms << "ms"
             << " jitterMax=" << diag.max_rtt_variance_ms << "ms"
             << " states(h/c/x/r)=" << diag.healthy_actions << "/"
@@ -1206,6 +1347,7 @@ namespace stream {
             << diag.recovering_actions
             << " applies(bitrate/fps/fec)=" << diag.bitrate_applies << "/"
             << diag.fps_applies << "/" << diag.fec_applies
+            << " profileApplies=" << diag.profile_applies
             << " idr=" << diag.idr_requests
             << " current(encoding/fps/fec/total/pacing)="
             << session->weak_net_controller.current_bitrate_kbps() << "Kbps/"
@@ -1225,7 +1367,7 @@ namespace stream {
       return;
     }
 
-    const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 80);
+    const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 100);
     const auto target_encoding_bitrate = action.target_bitrate_kbps;
     const auto target_fps = action.target_fps;
     update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
@@ -1243,11 +1385,23 @@ namespace stream {
                             (target_fec_percentage != session->last_applied_weak_net_fec &&
                              (session->last_weak_net_fec_apply.time_since_epoch().count() == 0 ||
                               now - session->last_weak_net_fec_apply >= 750ms)));
-    const bool apply_fps = target_fps > 0 &&
-                           (session->last_applied_weak_net_fps <= 0 ||
-                            (std::abs(target_fps - session->last_applied_weak_net_fps) >= 3 &&
-                             (session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ||
-                              now - session->last_weak_net_fps_apply >= 2500ms)));
+    const bool fps_target_changed = target_fps > 0 &&
+                                    (session->last_applied_weak_net_fps <= 0 ||
+                                     std::abs(target_fps - session->last_applied_weak_net_fps) >= 3);
+    const bool apply_fps = fps_target_changed &&
+                           (session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ||
+                            now - session->last_weak_net_fps_apply >= 750ms);
+    const bool fps_deferred = fps_target_changed && !apply_fps;
+    const bool profile_target_changed =
+      action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale ||
+      action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type ||
+      action.dynamic_range != session->last_applied_weak_net_dynamic_range;
+    const bool profile_deferred = action.profile_tier_deferred && profile_target_changed;
+    const bool apply_profile = action.profile_tier_supported &&
+                               action.profile_tier_changed &&
+                               profile_target_changed &&
+                               (session->last_weak_net_profile_apply.time_since_epoch().count() == 0 ||
+                                now - session->last_weak_net_profile_apply >= 1500ms);
 
     const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
                                                                                 target_fec_percentage);
@@ -1258,6 +1412,7 @@ namespace stream {
     session->weak_net_diag.bitrate_applies += apply_bitrate ? 1U : 0U;
     session->weak_net_diag.fps_applies += apply_fps ? 1U : 0U;
     session->weak_net_diag.fec_applies += apply_fec ? 1U : 0U;
+    session->weak_net_diag.profile_applies += apply_profile ? 1U : 0U;
 
     if (apply_fec) {
       video::dynamic_param_t fec_param;
@@ -1289,6 +1444,44 @@ namespace stream {
       session->last_weak_net_fps_apply = now;
     }
 
+    if (apply_profile) {
+      if (action.resolution_scale_percent > 0 &&
+          action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale) {
+        video::dynamic_param_t resolution_param;
+        resolution_param.type = video::dynamic_param_type_e::RESOLUTION;
+        resolution_param.value.int_array_value[0] = scaled_even_dimension(session->config.monitor.width,
+                                                                          action.resolution_scale_percent);
+        resolution_param.value.int_array_value[1] = scaled_even_dimension(session->config.monitor.height,
+                                                                          action.resolution_scale_percent);
+        resolution_param.valid = resolution_param.value.int_array_value[0] > 0 &&
+                                 resolution_param.value.int_array_value[1] > 0;
+        session->video.dynamic_param_change_events->raise(resolution_param);
+      }
+
+      if (action.chroma_sampling_type >= 0 &&
+          action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type) {
+        video::dynamic_param_t chroma_param;
+        chroma_param.type = video::dynamic_param_type_e::CHROMA_SAMPLING;
+        chroma_param.value.int_value = action.chroma_sampling_type;
+        chroma_param.valid = true;
+        session->video.dynamic_param_change_events->raise(chroma_param);
+      }
+
+      if (action.dynamic_range >= 0 &&
+          action.dynamic_range != session->last_applied_weak_net_dynamic_range) {
+        video::dynamic_param_t dynamic_range_param;
+        dynamic_range_param.type = video::dynamic_param_type_e::DYNAMIC_RANGE;
+        dynamic_range_param.value.int_value = action.dynamic_range;
+        dynamic_range_param.valid = true;
+        session->video.dynamic_param_change_events->raise(dynamic_range_param);
+      }
+
+      session->last_applied_weak_net_resolution_scale = action.resolution_scale_percent;
+      session->last_applied_weak_net_chroma_sampling_type = action.chroma_sampling_type;
+      session->last_applied_weak_net_dynamic_range = action.dynamic_range;
+      session->last_weak_net_profile_apply = now;
+    }
+
     if (action.request_idr) {
       session->video.idr_events->raise(true);
     }
@@ -1296,15 +1489,44 @@ namespace stream {
     BOOST_LOG(info) << "Weak-net controller [" << source << "] runtime="
                     << session->identity.runtime_id
                     << " state=" << weak_net_state_name(action.state)
+                    << " reason=" << weak_net::reason_name(action.reason)
+                    << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
+                    << " effectiveCeiling=" << action.effective_ceiling_kbps << " Kbps"
+                    << " sustainableEstimate=" << action.sustainable_estimate_kbps << " Kbps"
                     << " encoding=" << target_encoding_bitrate << " Kbps"
+                    << " encodingBudget=" << action.encoding_budget_kbps << " Kbps"
+                    << " fecBudget=" << action.fec_budget_kbps << " Kbps"
                     << " total=" << target_total_bitrate << " Kbps"
                     << " fps=" << target_fps
                     << " fec=" << target_fec_percentage << "%"
+                    << " pressure(random/burst/delay/motion/render/audio/input)="
+                    << action.pressures.random_loss << "/"
+                    << action.pressures.burst_loss << "/"
+                    << action.pressures.delay_congestion << "/"
+                    << action.pressures.motion << "/"
+                    << action.pressures.render << "/"
+                    << action.pressures.audio << "/"
+                    << action.pressures.input
+                    << " tier=" << action.quality_tier
+                    << " scale=" << action.resolution_scale_percent << "%"
+                    << " chroma=" << action.chroma_sampling_type
+                    << " dynamicRange=" << action.dynamic_range
+                    << " packetLoss=" << action.packet_loss
+                    << " recoveredLoss=" << action.recovered_loss
+                    << " unrecoverableLoss=" << action.unrecoverable_loss
+                    << " fecEfficiency=" << action.fec_efficiency
                     << " pacing=" << pacing_total_bitrate << " Kbps"
                     << " apply(bitrate=" << (apply_bitrate ? 1 : 0)
                     << ",fps=" << (apply_fps ? 1 : 0)
-                    << ",fec=" << (apply_fec ? 1 : 0) << ")"
-                    << (action.request_idr ? " idr=1" : "");
+                    << ",fec=" << (apply_fec ? 1 : 0)
+                    << ",profile=" << (apply_profile ? 1 : 0) << ")"
+                    << (apply_fps ? " fpsApplied=runtime-pacing" : "")
+                    << (fps_deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
+                    << (profile_deferred ? " profileDeferred=runtime-profile-tier-backend-unavailable" : "")
+                    << (action.profile_tier_changed && !profile_deferred && !apply_profile ?
+                          " profileStable=runtime-profile-tier-no-change" : "")
+                    << (action.request_idr ? " idr=1" : "")
+                    << (action.rfi_limited ? " rfiLimited=1" : "");
   }
 
   static void
@@ -1338,6 +1560,7 @@ namespace stream {
       .received_packets = 0,
       .rtt_variance_ms = 120,
     };
+    annotate_feedback_with_host_motion(session, feedback);
     auto action = session->weak_net_controller.on_feedback(feedback);
     apply_weak_net_action(session, action, source);
     record_weak_net_feedback_diag(session, feedback, action, source);
@@ -1838,6 +2061,54 @@ namespace stream {
     return nullptr;
   }
 
+  static void
+  log_control_peer_diag(session_t *session, net::peer_t peer, const char *reason) {
+    if (!session || !peer) {
+      BOOST_LOG(info) << "Control peer diag [" << reason << "] unavailable";
+      return;
+    }
+
+    const auto service_time = peer->host ? peer->host->serviceTime : 0;
+    const auto elapsed_since = [service_time](enet_uint32 then) -> enet_uint32 {
+      return then != 0 && service_time >= then ? service_time - then : 0;
+    };
+    const auto until = [service_time](enet_uint32 future) -> enet_uint32 {
+      return future != 0 && future >= service_time ? future - service_time : 0;
+    };
+    const auto last_recv_age = elapsed_since(peer->lastReceiveTime);
+    const auto last_send_age = elapsed_since(peer->lastSendTime);
+    const auto next_timeout_in = until(peer->nextTimeout);
+
+    BOOST_LOG(info) << "Control peer diag [" << reason << "] runtime=" << session->identity.runtime_id
+                    << " state=" << peer->state
+                    << " rtt=" << peer->roundTripTime << "ms"
+                    << " loss=" << (static_cast<double>(peer->packetLoss) /
+                                    static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
+                    << "%"
+                    << " lastRecvAge=" << last_recv_age << "ms"
+                    << " lastSendAge=" << last_send_age << "ms"
+                    << " nextTimeoutIn=" << next_timeout_in << "ms"
+                    << " timeout(limit/min/max)=" << peer->timeoutLimit << "/"
+                    << peer->timeoutMinimum << "/" << peer->timeoutMaximum
+                    << " queues(out/sendRel/sentRel/wait/reliableTransit)="
+                    << enet_list_size(&peer->outgoingCommands) << "/"
+                    << enet_list_size(&peer->outgoingSendReliableCommands) << "/"
+                    << enet_list_size(&peer->sentReliableCommands) << "/"
+                    << peer->totalWaitingData << "/"
+                    << peer->reliableDataInTransit
+                    << " rx=" << session->control.rx_events
+                    << " encRx=" << session->control.encrypted_rx_events
+                    << " decRx=" << session->control.decrypted_rx_events
+                    << " decFail=" << session->control.decrypt_failures
+                    << " unencryptedDrop=" << session->control.unencrypted_drops
+                    << " unknown=" << session->control.unknown_packets
+                    << " lastWire=0x" << std::hex << session->control.last_wire_type
+                    << " lastDec=0x" << session->control.last_decrypted_type
+                    << std::dec
+                    << " lastSeq=" << session->control.last_encrypted_seq
+                    << " lastPayload=" << session->control.last_payload_size;
+  }
+
   /**
    * @brief Call the handler for a given control stream message.
    * @param type The message type.
@@ -1849,12 +2120,17 @@ namespace stream {
   control_server_t::call(std::uint16_t type, session_t *session, const std::string_view &payload, bool reinjected) {
     // If we are using the encrypted control stream protocol, drop any messages that come off the wire unencrypted
     if (session->config.controlProtocolType == 13 && !reinjected && type != packetTypes[IDX_ENCRYPTED]) {
-      BOOST_LOG(error) << "Dropping unencrypted message on encrypted control stream: "sv << util::hex(type).to_string_view();
+      session->control.unencrypted_drops++;
+      BOOST_LOG(error) << "Dropping unencrypted message on encrypted control stream runtime="sv
+                       << session->identity.runtime_id
+                       << " type="sv << util::hex(type).to_string_view()
+                       << " drops="sv << session->control.unencrypted_drops;
       return;
     }
 
     auto cb = _map_type_cb.find(type);
     if (cb == std::end(_map_type_cb)) {
+      session->control.unknown_packets++;
       BOOST_LOG(debug)
         << "type [Unknown] { "sv << util::hex(type).to_string_view() << " }"sv << std::endl
         << "---data---"sv << std::endl
@@ -1866,18 +2142,45 @@ namespace stream {
     }
   }
 
+  static void
+  record_control_input_received(session_t *session, std::size_t payload_size, const char *path) {
+    if (!session) {
+      return;
+    }
+
+    session->control.input_rx_events++;
+    const auto now = std::chrono::steady_clock::now();
+    if (session->control.last_input_diag_log.time_since_epoch().count() == 0 ||
+        now - session->control.last_input_diag_log >= 1000ms) {
+      session->control.last_input_diag_log = now;
+      BOOST_LOG(info) << "Control input packet received runtime="sv
+                      << session->identity.runtime_id
+                      << " path="sv << path
+                      << " payloadBytes="sv << payload_size
+                      << " inputRx="sv << session->control.input_rx_events
+                      << " controlRx="sv << session->control.rx_events
+                      << " decrypted="sv << session->control.decrypted_rx_events;
+    }
+  }
+
   void
   control_server_t::iterate(std::chrono::milliseconds timeout) {
-    ENetEvent event;
-    auto res = enet_host_service(_host.get(), &event, timeout.count());
+    constexpr int max_events_per_iter = 256;
 
-    if (res > 0) {
+    for (int events_processed = 0; events_processed < max_events_per_iter; ++events_processed) {
+      ENetEvent event;
+      auto res = enet_host_service(_host.get(), &event, events_processed == 0 ? timeout.count() : 0);
+
+      if (res <= 0) {
+        return;
+      }
+
       auto session = get_session(event.peer, event.data);
       if (!session) {
         BOOST_LOG(warning) << "Rejected connection from ["sv << platf::from_sockaddr((sockaddr *) &event.peer->address.address) << "]: it's not properly set up"sv;
         enet_peer_disconnect_now(event.peer, 0);
 
-        return;
+        continue;
       }
 
       session->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
@@ -1888,18 +2191,58 @@ namespace stream {
 
           auto type = *(std::uint16_t *) packet->data;
           std::string_view payload { (char *) packet->data + sizeof(type), packet->dataLength - sizeof(type) };
+          session->control.rx_events++;
+          session->control.last_wire_type = type;
+          session->control.last_payload_size = payload.size();
+
+          const auto now = std::chrono::steady_clock::now();
+          if (session->control.last_rx_diag_log.time_since_epoch().count() == 0 ||
+              now - session->control.last_rx_diag_log >= 1000ms) {
+            session->control.last_rx_diag_log = now;
+            log_control_peer_diag(session, event.peer, "rx");
+          }
 
           call(type, session, payload, false);
+          enet_host_flush(_host.get());
         } break;
         case ENET_EVENT_TYPE_CONNECT:
-          BOOST_LOG(info) << "CLIENT CONNECTED"sv;
+          enet_peer_timeout(event.peer, 2, 10000, 10000);
+          enet_peer_ping_interval(event.peer, 500);
+          BOOST_LOG(info) << "CLIENT CONNECTED runtime="sv << session->identity.runtime_id
+                          << " peer="sv << platf::from_sockaddr((sockaddr *) &event.peer->address.address)
+                          << " channels="sv << event.peer->channelCount
+                          << " timeout(limit/min/max)="sv << event.peer->timeoutLimit << "/"
+                          << event.peer->timeoutMinimum << "/" << event.peer->timeoutMaximum
+                          << " pingInterval="sv << event.peer->pingInterval << "ms";
+          log_control_peer_diag(session, event.peer, "connect");
+          enet_host_flush(_host.get());
           break;
         case ENET_EVENT_TYPE_DISCONNECT:
-          BOOST_LOG(info) << "CLIENT DISCONNECTED"sv;
+          {
+            log_control_peer_diag(session, event.peer, "disconnect-event");
+            const auto service_time = _host && _host.get() ? _host.get()->serviceTime : 0;
+            const auto last_recv_age = event.peer->lastReceiveTime != 0 ?
+                                         service_time - event.peer->lastReceiveTime :
+                                         0;
+            const auto last_send_age = event.peer->lastSendTime != 0 ?
+                                         service_time - event.peer->lastSendTime :
+                                         0;
+            BOOST_LOG(info) << "CLIENT DISCONNECTED runtime="sv << session->identity.runtime_id
+                            << " eventData="sv << event.data
+                            << " peerState="sv << event.peer->state
+                            << " roundTrip="sv << event.peer->roundTripTime << "ms"
+                            << " packetLoss="sv
+                            << (static_cast<double>(event.peer->packetLoss) /
+                                static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
+                            << "%"
+                            << " lastRecvAge="sv << last_recv_age << "ms"
+                            << " lastSendAge="sv << last_send_age << "ms";
+          }
           // No more clients to send video data to ^_^
           if (session->state == session::state_e::RUNNING) {
             session::stop(*session);
           }
+          enet_host_flush(_host.get());
           break;
         case ENET_EVENT_TYPE_NONE:
           break;
@@ -2093,8 +2436,20 @@ namespace stream {
   int
   send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg) {
     if (!session->control.peer) {
-      BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for PING from Moonlight"sv;
-      // Still waiting for PING from Moonlight
+      const auto now = std::chrono::steady_clock::now();
+      const bool is_motion_feedback = msg.type == platf::gamepad_feedback_e::set_motion_event_state;
+      if (session->last_gamepad_feedback_wait_log.time_since_epoch().count() == 0 ||
+          now - session->last_gamepad_feedback_wait_log >= 2s) {
+        session->last_gamepad_feedback_wait_log = now;
+        if (is_motion_feedback) {
+          BOOST_LOG(debug) << "Gamepad feedback skipped: runtime=" << session->identity.runtime_id
+                           << " reason=waiting-control-peer type=motion";
+        }
+        else {
+          BOOST_LOG(warning) << "Gamepad feedback skipped: runtime=" << session->identity.runtime_id
+                             << " reason=waiting-control-peer type=" << static_cast<int>(msg.type);
+        }
+      }
       return -1;
     }
 
@@ -2197,7 +2552,13 @@ namespace stream {
 
     if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
-      BOOST_LOG(warning) << "Couldn't send gamepad feedback to ["sv << addr << ':' << port << ']';
+      const auto now = std::chrono::steady_clock::now();
+      if (session->last_gamepad_feedback_fail_log.time_since_epoch().count() == 0 ||
+          now - session->last_gamepad_feedback_fail_log >= 2s) {
+        session->last_gamepad_feedback_fail_log = now;
+        BOOST_LOG(warning) << "Gamepad feedback send failed: runtime=" << session->identity.runtime_id
+                           << " peer=["sv << addr << ':' << port << ']';
+      }
 
       return -1;
     }
@@ -2550,7 +2911,18 @@ namespace stream {
     };
 
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
-      BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_periodic_ping_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_periodic_ping_log >= 2s) {
+        const auto timeout_left = session->pingTimeout > now ?
+                                    std::chrono::duration_cast<std::chrono::milliseconds>(session->pingTimeout - now).count() :
+                                    0;
+        BOOST_LOG(info) << "Control periodic ping received runtime="sv
+                        << session->identity.runtime_id
+                        << " payloadBytes="sv << payload.size()
+                        << " timeoutLeft="sv << timeout_left << "ms";
+        session->control.last_periodic_ping_log = now;
+      }
     });
 
     server->map(packetTypes[IDX_START_A], [&](session_t *session, const std::string_view &payload) {
@@ -2883,6 +3255,7 @@ namespace stream {
         .total_packets = total_packets,
         .received_packets = received_packets,
       };
+      annotate_feedback_with_host_motion(session, feedback);
       auto action = session->weak_net_controller.on_feedback(feedback);
       apply_weak_net_action(session, action, "fec");
       record_weak_net_feedback_diag(session, feedback, action, "fec");
@@ -2926,9 +3299,20 @@ namespace stream {
         .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
         .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
       };
+      annotate_feedback_with_host_motion(session, network_feedback);
       auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback");
       record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_feedback_diag_log >= 1000ms) {
+        session->control.last_feedback_diag_log = now;
+        BOOST_LOG(info) << "Control feedback v1 received runtime=" << session->identity.runtime_id
+                        << " duration=" << network_feedback.duration_ms << "ms"
+                        << " frames=" << network_feedback.frames_seen
+                        << " videoBytes=" << network_feedback.video_bytes
+                        << " rtt=" << network_feedback.rtt_ms << "ms";
+      }
     });
 
     server->map(SS_NETWORK_FEEDBACK_V2_PTYPE, [&](session_t *session, const std::string_view &payload) {
@@ -2977,14 +3361,101 @@ namespace stream {
         .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
         .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
       };
+      annotate_feedback_with_host_motion(session, network_feedback);
       auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback-v2");
       record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v2");
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_feedback_diag_log >= 1000ms) {
+        session->control.last_feedback_diag_log = now;
+        BOOST_LOG(info) << "Control feedback v2 received runtime=" << session->identity.runtime_id
+                        << " duration=" << network_feedback.duration_ms << "ms"
+                        << " frames=" << network_feedback.frames_seen
+                        << " videoBytes=" << network_feedback.video_bytes
+                        << " rtt=" << network_feedback.rtt_ms << "ms"
+                        << " late=" << network_feedback.late_frames
+                        << " renderQ=" << network_feedback.render_queue_depth;
+      }
+    });
+
+    server->map(SS_NETWORK_FEEDBACK_V3_PTYPE, [&](session_t *session, const std::string_view &payload) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY_V1)) {
+        BOOST_LOG(debug) << "Ignoring v3 network feedback from client without negotiated support";
+        return;
+      }
+      if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V3)) {
+        BOOST_LOG(warning) << "Ignoring truncated v3 network feedback payload: " << payload.size();
+        return;
+      }
+
+      const auto *feedback = reinterpret_cast<const SS_NETWORK_FEEDBACK_V3 *>(payload.data());
+      const auto version = read_be16_unaligned(&feedback->version);
+      const auto size = read_be16_unaligned(&feedback->size);
+      if (version != SS_NETWORK_FEEDBACK_V3_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V3)) {
+        BOOST_LOG(warning) << "Ignoring unsupported v3 network feedback version=" << version
+                           << " size=" << size;
+        return;
+      }
+
+      const auto total_data = read_be32_unaligned(&feedback->totalDataPackets);
+      const auto total_parity = read_be32_unaligned(&feedback->totalParityPackets);
+      const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
+      const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
+
+      weak_net::feedback_t network_feedback {
+        .duration_ms = read_be32_unaligned(&feedback->durationMs),
+        .frames_seen = read_be32_unaligned(&feedback->framesSeen),
+        .complete_frames = read_be32_unaligned(&feedback->completeFrames),
+        .recovered_frames = read_be32_unaligned(&feedback->recoveredFrames),
+        .unrecoverable_frames = read_be32_unaligned(&feedback->unrecoverableFrames),
+        .missing_packets = read_be32_unaligned(&feedback->missingPackets),
+        .total_packets = total_data + total_parity,
+        .received_packets = received_data + received_parity,
+        .video_bytes = read_be32_unaligned(&feedback->videoBytes),
+        .rtt_ms = read_be32_unaligned(&feedback->rttMs),
+        .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
+        .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
+        .decode_queue_depth = read_be32_unaligned(&feedback->decodeQueueDepth),
+        .render_queue_depth = read_be32_unaligned(&feedback->renderQueueDepth),
+        .late_frames = read_be32_unaligned(&feedback->lateFrames),
+        .displayed_frames = read_be32_unaligned(&feedback->displayedFrames),
+        .input_queue_depth = read_be32_unaligned(&feedback->inputQueueDepth),
+        .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
+        .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
+        .audio_concealed_ms = read_be32_unaligned(&feedback->audioConcealedMs),
+        .late_audio_drops = read_be32_unaligned(&feedback->lateAudioDrops),
+        .audio_plc_ms = read_be32_unaligned(&feedback->audioPlcMs),
+        .audio_fade_ms = read_be32_unaligned(&feedback->audioFadeMs),
+        .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
+        .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
+      };
+      annotate_feedback_with_host_motion(session, network_feedback);
+      auto action = session->weak_net_controller.on_feedback(network_feedback);
+      apply_weak_net_action(session, action, "feedback-v3");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v3");
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_feedback_diag_log >= 1000ms) {
+        session->control.last_feedback_diag_log = now;
+        BOOST_LOG(info) << "Control feedback v3 received runtime=" << session->identity.runtime_id
+                        << " duration=" << network_feedback.duration_ms << "ms"
+                        << " frames=" << network_feedback.frames_seen
+                        << " videoBytes=" << network_feedback.video_bytes
+                        << " rtt=" << network_feedback.rtt_ms << "ms"
+                        << " late=" << network_feedback.late_frames
+                        << " renderQ=" << network_feedback.render_queue_depth
+                        << " audioUnd=" << network_feedback.audio_underruns
+                        << " audioConceal=" << network_feedback.audio_concealed_ms << "ms";
+      }
     });
 
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
+      session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
       report_weak_net_recovery_request(session, "idr");
       session->video.idr_events->raise(true);
     });
@@ -3060,7 +3531,7 @@ namespace stream {
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
     // Payload 格式：
-    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区
+    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区, 9=色度采样, 10=动态范围
     // - 参数值：
     //   * 分辨率 (类型0): 2个int (8字节, width和height)
     //   * FPS (类型1): 1个float (4字节)
@@ -3183,6 +3654,12 @@ namespace stream {
         case video::dynamic_param_type_e::VBV_BUFFER_SIZE:
           validate_and_raise(param_value > 0, param_value, "VBV buffer size", " Kbps");
           break;
+        case video::dynamic_param_type_e::CHROMA_SAMPLING:
+          validate_and_raise(param_value == 0 || param_value == 1, param_value, "chroma sampling");
+          break;
+        case video::dynamic_param_type_e::DYNAMIC_RANGE:
+          validate_and_raise(param_value >= 0 && param_value <= 2, param_value, "dynamic range");
+          break;
         case video::dynamic_param_type_e::PRESET:
           param.value.int_value = param_value;
           session->video.dynamic_param_change_events->raise(param);
@@ -3204,6 +3681,7 @@ namespace stream {
         << "firstFrame [" << firstFrame << ']' << std::endl
         << "lastFrame [" << lastFrame << ']';
 
+      session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
       report_weak_net_recovery_request(session, "rfi");
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
@@ -3231,16 +3709,19 @@ namespace stream {
         std::copy(payload.end() - 16, payload.end(), std::begin(iv));
       }
 
+      record_control_input_received(session, plaintext.size(), "legacy");
       input::passthrough(session->input, std::move(plaintext));
     });
 
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_ENCRYPTED]"sv;
+      session->control.encrypted_rx_events++;
 
       auto header = (control_encrypted_p) (payload.data() - 2);
 
       auto length = util::endian::little(header->length);
       auto seq = util::endian::little(header->seq);
+      session->control.last_encrypted_seq = seq;
 
       if (length < (16 + 4 + 4)) {
         BOOST_LOG(warning) << "Control: Runt packet"sv;
@@ -3277,7 +3758,12 @@ namespace stream {
       if (cipher.decrypt(tagged_cipher, plaintext, &iv)) {
         // something went wrong :(
 
-        BOOST_LOG(error) << "Failed to verify tag"sv;
+        session->control.decrypt_failures++;
+        BOOST_LOG(error) << "Failed to verify control tag runtime="sv
+                         << session->identity.runtime_id
+                         << " seq="sv << seq
+                         << " payloadBytes="sv << payload.size()
+                         << " failures="sv << session->control.decrypt_failures;
 
         session::stop(*session);
         return;
@@ -3285,6 +3771,22 @@ namespace stream {
 
       auto type = *(std::uint16_t *) plaintext.data();
       std::string_view next_payload { (char *) plaintext.data() + 4, plaintext.size() - 4 };
+      session->control.decrypted_rx_events++;
+      session->control.last_decrypted_type = type;
+      session->control.last_payload_size = next_payload.size();
+
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_decrypt_diag_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_decrypt_diag_log >= 1000ms) {
+        session->control.last_decrypt_diag_log = now;
+        BOOST_LOG(info) << "Control encrypted packet decrypted runtime="sv
+                        << session->identity.runtime_id
+                        << " seq="sv << seq
+                        << " type="sv << util::hex(type).to_string_view()
+                        << " payloadBytes="sv << next_payload.size()
+                        << " decrypted="sv << session->control.decrypted_rx_events;
+        log_control_peer_diag(session, session->control.peer, "decrypt");
+      }
 
       if (type == packetTypes[IDX_ENCRYPTED]) {
         BOOST_LOG(error) << "Bad packet type [IDX_ENCRYPTED] found"sv;
@@ -3295,6 +3797,7 @@ namespace stream {
       // IDX_INPUT_DATA callback will attempt to decrypt unencrypted data, therefore we need pass it directly
       if (type == packetTypes[IDX_INPUT_DATA]) {
         plaintext.erase(std::begin(plaintext), std::begin(plaintext) + 4);
+        record_control_input_received(session, plaintext.size(), "encrypted");
         input::passthrough(session->input, std::move(plaintext));
       }
       else {
@@ -3329,6 +3832,7 @@ namespace stream {
           if (now > session->pingTimeout) {
             auto address = session->control.peer ? platf::from_sockaddr((sockaddr *) &session->control.peer->address.address) : session->control.expected_peer_address;
             BOOST_LOG(info) << address << ": Ping Timeout"sv;
+            log_control_peer_diag(session, session->control.peer, "ping-timeout");
             session::stop(*session);
           }
 
@@ -3394,7 +3898,7 @@ namespace stream {
         break;
       }
 
-      server->iterate(150ms);
+      server->iterate(20ms);
     }
 
     // Let all remaining connections know the server is shutting down
@@ -3900,6 +4404,11 @@ namespace stream {
     }
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
+    auto last_video_send_summary = std::chrono::steady_clock::now();
+    std::uint64_t sent_summary_frames = 0;
+    std::uint64_t sent_summary_dupes = 0;
+    std::uint64_t sent_summary_shards = 0;
+    std::uint64_t sent_summary_bytes = 0;
 
     while (auto packet = packets->pop()) {
       if (shutdown_event->peek()) {
@@ -3952,7 +4461,7 @@ namespace stream {
         frame_header.frame_processing_latency = 0;
       }
 
-      auto fecPercentage = std::clamp(session->current_fec_percentage.load(std::memory_order_relaxed), 0, 80);
+      auto fecPercentage = std::clamp(session->current_fec_percentage.load(std::memory_order_relaxed), 0, 100);
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -3992,6 +4501,9 @@ namespace stream {
         fec_blocks_end = std::begin(fec_blocks) + fec_blocks_needed;
 
       BOOST_LOG(verbose) << "Generating "sv << fec_blocks_needed << " FEC blocks"sv;
+      const bool packet_started_without_timestamp = !packet->frame_timestamp;
+      std::uint64_t frame_sent_shards = 0;
+      std::uint64_t frame_sent_bytes = 0;
 
       // Align individual FEC blocks to blocksize
       auto unaligned_size = payload.size() / fec_blocks_needed;
@@ -4073,6 +4585,9 @@ namespace stream {
           auto shards = fec::encode(current_payload, blocksize, fecPercentage, session->config.minRequiredFecPackets,
             session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
           frame_fec_latency_logger.second_point_now_and_log();
+          frame_sent_shards += shards.size();
+          frame_sent_bytes += static_cast<std::uint64_t>(shards.size()) *
+                              static_cast<std::uint64_t>(shards.blocksize + shards.prefixsize);
 
           auto peer_address = session->video.peer.address();
           auto batch_info = platf::batched_send_info_t {
@@ -4194,6 +4709,28 @@ namespace stream {
         });
 
         session->video.lowseq = lowseq;
+        ++sent_summary_frames;
+        sent_summary_dupes += packet_started_without_timestamp ? 1U : 0U;
+        sent_summary_shards += frame_sent_shards;
+        sent_summary_bytes += frame_sent_bytes;
+        const auto summary_now = std::chrono::steady_clock::now();
+        if (summary_now - last_video_send_summary >= 1000ms) {
+          BOOST_LOG(info) << "Video send summary runtime=" << session->identity.runtime_id
+                          << " frames=" << sent_summary_frames
+                          << " dupes=" << sent_summary_dupes
+                          << " shards=" << sent_summary_shards
+                          << " bytes=" << sent_summary_bytes
+                          << " fec=" << fecPercentage << "%"
+                          << " pacing=" << session->pacing_total_bitrate.load(std::memory_order_relaxed)
+                          << " Kbps"
+                          << " peer=" << session->video.peer.address()
+                          << ':' << session->video.peer.port();
+          sent_summary_frames = 0;
+          sent_summary_dupes = 0;
+          sent_summary_shards = 0;
+          sent_summary_bytes = 0;
+          last_video_send_summary = summary_now;
+        }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast video failed "sv << e.what();
@@ -4486,6 +5023,7 @@ namespace stream {
   recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
     av_session_id_t session_id = std::string { expected_payload };
+    const auto type_name = socket_name(type);
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
@@ -4505,11 +5043,14 @@ namespace stream {
 
     auto start_time = std::chrono::steady_clock::now();
     auto current_time = start_time;
+    std::size_t non_ping_count = 0;
+    std::size_t last_non_ping_size = 0;
+    udp::endpoint last_non_ping_peer;
 
-    while (current_time - start_time < config::stream.ping_timeout) {
+    while (current_time - start_time < timeout) {
       auto delta_time = current_time - start_time;
 
-      auto msg_opt = messages->pop(config::stream.ping_timeout - delta_time);
+      auto msg_opt = messages->pop(timeout - delta_time);
       if (!msg_opt) {
         break;
       }
@@ -4517,24 +5058,34 @@ namespace stream {
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
       if (msg.find(expected_payload) != std::string::npos) {
         // Match the new PING payload format
-        BOOST_LOG(debug) << "Received ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
+        BOOST_LOG(debug) << "Received "sv << type_name << " ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
       else if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) && msg == "PING"sv) {
         // Match the legacy fixed PING payload only if the new type is not supported
-        BOOST_LOG(debug) << "Received ping [v1] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
+        BOOST_LOG(debug) << "Received "sv << type_name << " ping [v1] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
       else {
-        BOOST_LOG(debug) << "Received non-ping from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
+        ++non_ping_count;
+        last_non_ping_size = msg.size();
+        last_non_ping_peer = recv_peer;
+        BOOST_LOG(debug) << "Received non-"sv << type_name << "-ping from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
         current_time = std::chrono::steady_clock::now();
         continue;
       }
 
       // Update connection details.
       peer = recv_peer;
+      BOOST_LOG(info) << "Initial "sv << type_name << " ping received from "sv << peer.address() << ':' << peer.port()
+                      << " runtime="sv << session->identity.runtime_id;
       return 0;
     }
 
-    BOOST_LOG(error) << "Initial Ping Timeout"sv;
+    BOOST_LOG(error) << "Initial "sv << type_name << " ping timeout runtime="sv << session->identity.runtime_id
+                     << " timeoutMs="sv << timeout.count()
+                     << " expectedPayload="sv << util::hex_vec(expected_payload)
+                     << " nonPing="sv << non_ping_count
+                     << " lastNonPingBytes="sv << last_non_ping_size
+                     << " lastNonPingPeer="sv << last_non_ping_peer.address() << ':' << last_non_ping_peer.port();
     return -1;
   }
 
@@ -4560,20 +5111,22 @@ namespace stream {
     BOOST_LOG(debug) << "Start capturing Video"sv;
     // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
-    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
+    video::capture(session->mail,
+                   session->config.monitor,
+                   session,
+                   session->video.dynamic_param_change_events,
+                   record_frame_interest_feedback);
   }
 
   void
   audioThread(session_t *session) {
-    auto fg = util::fail_guard([&]() {
-      session::stop(*session);
-    });
-
     while_starting_do_nothing(session->state);
 
     auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::audio, session->audio.ping_payload, session->audio.peer, config::stream.ping_timeout);
     if (error < 0) {
+      BOOST_LOG(warning) << "Audio stream did not receive its initial ping; continuing video/control session without host audio runtime="sv
+                         << session->identity.runtime_id;
       return;
     }
 
@@ -4584,6 +5137,10 @@ namespace stream {
 
     BOOST_LOG(debug) << "Start capturing Audio"sv;
     audio::capture(session->mail, session->config.audio, session);
+    if (session->state.load(std::memory_order_acquire) == session::state_e::RUNNING) {
+      BOOST_LOG(warning) << "Audio capture ended while session is still running; keeping video/control session alive runtime="sv
+                         << session->identity.runtime_id;
+    }
   }
 
   namespace session {
@@ -4850,18 +5407,40 @@ namespace stream {
       // controller adjusts encoder bitrate, while pacing reserves one FEC
       // overhead pass for the actual send budget.
       int encoding_bitrate = config.monitor.bitrate;
-      int ceiling_encoding_bitrate = config.monitor.qualityCeilingBitrate > 0 ?
-                                       std::max(config.monitor.qualityCeilingBitrate, encoding_bitrate) :
-                                       encoding_bitrate;
       int ceiling_fps = config.monitor.qualityCeilingFramerate > 0 ?
                           std::max(config.monitor.qualityCeilingFramerate, config.monitor.framerate) :
                           config.monitor.framerate;
+      const int user_quality_bitrate = config.monitor.qualityCeilingBitrate > 0 ?
+                                         std::max(config.monitor.qualityCeilingBitrate, 1) :
+                                         std::max(encoding_bitrate, 1);
+      const auto pixels_per_second = static_cast<double>(std::max(config.monitor.width, 1)) *
+                                     static_cast<double>(std::max(config.monitor.height, 1)) *
+                                     static_cast<double>(std::max(ceiling_fps, 1));
+      const double fps_protect_bpp = config.monitor.chromaSamplingType == 1 ? 0.024 : 0.020;
+      const double ideal_bpp = config.monitor.chromaSamplingType == 1 ? 0.140 : 0.117;
+      const int fps_needed_bitrate = std::max(
+        user_quality_bitrate,
+        static_cast<int>(std::lround(pixels_per_second * fps_protect_bpp / 1000.0)));
+      const int ideal_demand_bitrate = std::max(
+        fps_needed_bitrate,
+        static_cast<int>(std::lround(pixels_per_second * ideal_bpp / 1000.0)));
+      int ceiling_encoding_bitrate = std::max(user_quality_bitrate, ideal_demand_bitrate);
       int max_fec_percentage = rtsp_stream::adaptive_stream_max_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                           config.mlFeatureFlags);
       int fec_percentage = rtsp_stream::effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                    config.mlFeatureFlags);
       fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
-      int ceiling_total_bitrate = total_video_bitrate_from_encoding_bitrate(ceiling_encoding_bitrate, fec_percentage);
+      const bool enhanced_feedback_client = (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+      const int requested_total_ceiling = total_video_bitrate_from_encoding_bitrate(ceiling_encoding_bitrate,
+                                                                                    fec_percentage);
+      int ceiling_total_bitrate = std::max(requested_total_ceiling, 1);
+      if (enhanced_feedback_client) {
+        const int startup_encoding_limit = encoding_bitrate_from_total_video_budget(ceiling_total_bitrate,
+                                                                                    fec_percentage);
+        encoding_bitrate = std::clamp(encoding_bitrate,
+                                      1,
+                                      std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
+      }
       session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate, fec_percentage);
       session->current_fec_percentage = fec_percentage;
       session->pacing_total_bitrate = session->current_total_bitrate.load(std::memory_order_relaxed);
@@ -4873,10 +5452,21 @@ namespace stream {
         .ceiling_total_bitrate_kbps = ceiling_total_bitrate,
         .baseline_fps = ceiling_fps,
         .startup_fps = config.monitor.framerate,
+        .frame_width = config.monitor.width,
+        .frame_height = config.monitor.height,
+        .chroma_sampling_type = config.monitor.chromaSamplingType,
+        .dynamic_range = config.monitor.dynamicRange,
+        .runtime_profile_tier_supported = false,
+        .user_quality_kbps = user_quality_bitrate,
+        .ideal_demand_kbps = ideal_demand_bitrate,
+        .fps_needed_kbps = fps_needed_bitrate,
       });
       session->last_applied_weak_net_bitrate = encoding_bitrate;
       session->last_applied_weak_net_fec = fec_percentage;
       session->last_applied_weak_net_fps = config.monitor.framerate;
+      session->last_applied_weak_net_resolution_scale = 100;
+      session->last_applied_weak_net_chroma_sampling_type = config.monitor.chromaSamplingType;
+      session->last_applied_weak_net_dynamic_range = config.monitor.dynamicRange;
       session->last_dynamic_clarity_flags = config.monitor.lowBitrateClarityIntentFlags;
       session->last_dynamic_clarity_qp = config.monitor.lowBitrateTargetQp;
       session->last_dynamic_clarity_bitrate = encoding_bitrate;
@@ -4885,6 +5475,9 @@ namespace stream {
                       << " encoding=" << encoding_bitrate << " Kbps"
                       << " total=" << session->current_total_bitrate.load(std::memory_order_relaxed) << " Kbps"
                       << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps"
+                      << " userQuality=" << user_quality_bitrate << " Kbps"
+                      << " idealDemand=" << ideal_demand_bitrate << " Kbps"
+                      << " fpsNeeded=" << fps_needed_bitrate << " Kbps"
                       << " ceilingTotal=" << ceiling_total_bitrate << " Kbps"
                       << " fps=" << config.monitor.framerate
                       << " ceilingFps=" << ceiling_fps
@@ -4892,7 +5485,7 @@ namespace stream {
                       << " maxFec=" << max_fec_percentage << "%"
                       << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ? " feedback=1" : " feedback=0");
       if (config.monitor.lowBitrateClarityIntentFlags != 0) {
-        BOOST_LOG(info) << "Low-bitrate clarity intent runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Frame interest intent generated runtime=" << session->identity.runtime_id
                         << " flags=0x" << std::hex << config.monitor.lowBitrateClarityIntentFlags << std::dec
                         << " qp=" << config.monitor.lowBitrateTargetQp
                         << " sharpen=" << config.monitor.lowBitrateSharpenAlpha;

@@ -6,10 +6,12 @@
 
 #include "nvenc_utils.h"
 
+#include "src/stream_quality.h"
 #include "src/utility.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #define NVENC_INT_VERSION (NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION)
 
@@ -77,6 +79,16 @@ namespace {
       return "P7";
     }
     return "Unknown";
+  }
+
+  constexpr bool
+  has_nvenc_bitstream_temporal_id() {
+    return NVENC_INT_VERSION >= 1200;
+  }
+
+  constexpr bool
+  has_nvenc_hevc_av1_temporal_config_update() {
+    return NVENC_INT_VERSION >= 1202;
   }
 
 }  // namespace
@@ -227,6 +239,14 @@ namespace nvenc {
     }
 
     encoder_params.rfi = get_encoder_cap(NV_ENC_CAPS_SUPPORT_REF_PIC_INVALIDATION);
+    interest_caps = {};
+    pending_interest_map = {};
+    pending_interest_flags = 0;
+    qp_delta_map_enabled = false;
+    qp_delta_block_size = frame_interest::nvenc_qp_delta_block_size_for_video_format(client_config.videoFormat);
+    temporal_svc_enabled = false;
+    temporal_svc_layers = 0;
+    last_qp_delta_applied_log_frame = 0;
 
     init_params.presetGUID = quality_preset_guid_from_number(config.quality_preset);
     init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
@@ -390,6 +410,26 @@ namespace nvenc {
     }
 
     enc_config.rcParams.enableAQ = config.adaptive_quantization;
+#ifdef SUNSHINE_ENABLE_NVENC_FRAME_INTEREST_BACKEND
+    constexpr bool nvenc_frame_interest_backend_enabled = true;
+#else
+    constexpr bool nvenc_frame_interest_backend_enabled = false;
+#endif
+    const bool runtime_dynamic_interest =
+      client_config.qualityCeilingBitrate > client_config.bitrate ||
+      client_config.qualityCeilingFramerate > client_config.framerate ||
+      client_config.lowBitrateClarityIntentFlags != 0;
+    const auto encoder_interest_flags = frame_interest::encoder_qp_delta_interest_flags(
+      client_config.lowBitrateClarityIntentFlags,
+      runtime_dynamic_interest);
+    const auto qp_delta_policy = frame_interest::decide_qp_delta_map_policy(
+      encoder_interest_flags,
+      nvenc_frame_interest_backend_enabled,
+      enc_config.rcParams.enableAQ != 0);
+    if (qp_delta_policy.disable_adaptive_quantization) {
+      BOOST_LOG(info) << "NvEnc: disabling spatial AQ to enable experimental frame interest QP delta map";
+      enc_config.rcParams.enableAQ = 0;
+    }
     
     // Enable temporal AQ if supported and lookahead is enabled
     if (config.enable_temporal_aq && lookahead_enabled) {
@@ -403,6 +443,65 @@ namespace nvenc {
       }
     }
     enc_config.rcParams.averageBitRate = client_config.bitrate * 1000;
+
+    interest_caps.long_term_reference = encoder_params.rfi;
+    interest_caps.intra_refresh = get_encoder_cap(NV_ENC_CAPS_SUPPORT_INTRA_REFRESH) != 0;
+    interest_caps.adaptive_quantization = enc_config.rcParams.enableAQ != 0;
+    const bool video_format_supports_temporal_svc =
+      client_config.videoFormat == 0 ||
+      client_config.videoFormat == 1 ||
+#if NVENC_INT_VERSION >= 1200
+      client_config.videoFormat == 2;
+#else
+      false;
+#endif
+    const bool wants_temporal_svc =
+      nvenc_frame_interest_backend_enabled &&
+      (encoder_interest_flags & stream_quality::clarity_intent_temporal_layers) != 0 &&
+      video_format_supports_temporal_svc;
+    const auto max_temporal_layers = wants_temporal_svc ?
+                                       get_encoder_cap(NV_ENC_CAPS_NUM_MAX_TEMPORAL_LAYERS) :
+                                       0;
+    const bool temporal_svc_supported = wants_temporal_svc &&
+                                        max_temporal_layers >= 2 &&
+                                        get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_SVC) != 0;
+    temporal_svc_enabled = temporal_svc_supported;
+    temporal_svc_layers = temporal_svc_enabled ?
+                            static_cast<std::uint32_t>(std::min(max_temporal_layers, 2)) :
+                            0;
+    interest_caps.temporal_layers = temporal_svc_enabled;
+    if (wants_temporal_svc && temporal_svc_enabled) {
+      BOOST_LOG(info) << "NvEnc: frame interest temporal SVC requested"
+                      << " layers=" << temporal_svc_layers
+                      << " maxLayers=" << max_temporal_layers
+                      << " codec=" << encode_guid_support
+                      << " armedFlags=0x" << std::hex << encoder_interest_flags << std::dec;
+    }
+    else if (wants_temporal_svc) {
+      BOOST_LOG(info) << "NvEnc: frame interest temporal SVC fallback"
+                      << " reason=unsupported-or-disabled"
+                      << " maxLayers=" << max_temporal_layers
+                      << " supportSvc=" << get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_SVC);
+    }
+    qp_delta_map_enabled = qp_delta_policy.enabled && enc_config.rcParams.enableAQ == 0;
+    if (qp_delta_map_enabled) {
+      enc_config.rcParams.qpMapMode = NV_ENC_QP_MAP_DELTA;
+      interest_caps.roi_qp_map = true;
+      interest_caps.dirty_rects = true;
+      const auto qp_blocks_wide = static_cast<std::uint32_t>((encoder_params.width + qp_delta_block_size - 1) / qp_delta_block_size);
+      const auto qp_blocks_high = static_cast<std::uint32_t>((encoder_params.height + qp_delta_block_size - 1) / qp_delta_block_size);
+      BOOST_LOG(info) << "NvEnc: frame interest QP delta map requested"
+                      << " block=" << qp_delta_block_size
+                      << " blocks=" << qp_blocks_wide << "x" << qp_blocks_high
+                      << " bytes=" << qp_blocks_wide * qp_blocks_high
+                      << " aq=" << (enc_config.rcParams.enableAQ ? 1 : 0)
+                      << " runtimeDynamic=" << (runtime_dynamic_interest ? 1 : 0)
+                      << " armedFlags=0x" << std::hex << encoder_interest_flags << std::dec;
+    }
+    else if (qp_delta_policy.fallback_to_adaptive_quantization) {
+      BOOST_LOG(info) << "NvEnc: frame interest QP delta map fallback to spatial AQ"
+                      << " reason=backend-disabled";
+    }
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
       // Use effective framerate for VBV buffer calculation (supports NTSC fractional framerates)
@@ -474,6 +573,13 @@ namespace nvenc {
         enc_config.profileGUID = buffer_is_yuv444() ? NV_ENC_H264_PROFILE_HIGH_444_GUID : NV_ENC_H264_PROFILE_HIGH_GUID;
         auto &format_config = enc_config.encodeCodecConfig.h264Config;
         set_h264_hevc_common_format_config(format_config);
+        if (temporal_svc_enabled) {
+          format_config.enableTemporalSVC = 1;
+          format_config.numTemporalLayers = temporal_svc_layers;
+#if NVENC_INT_VERSION >= 1200
+          format_config.maxTemporalLayers = temporal_svc_layers;
+#endif
+        }
         if (config.h264_cavlc || !get_encoder_cap(NV_ENC_CAPS_SUPPORT_CABAC)) {
           format_config.entropyCodingMode = NV_ENC_H264_ENTROPY_CODING_MODE_CAVLC;
         }
@@ -515,6 +621,12 @@ namespace nvenc {
         // HEVC
         auto &format_config = enc_config.encodeCodecConfig.hevcConfig;
         set_h264_hevc_common_format_config(format_config);
+        if (temporal_svc_enabled) {
+          format_config.maxTemporalLayersMinus1 = temporal_svc_layers - 1;
+#if NVENC_INT_VERSION >= 1202
+          format_config.numTemporalLayers = temporal_svc_layers;
+#endif
+        }
         if (buffer_is_10bit()) {
 #if NVENC_INT_VERSION >= 1202
           format_config.inputBitDepth = NV_ENC_BIT_DEPTH_10;
@@ -586,6 +698,12 @@ namespace nvenc {
         auto &format_config = enc_config.encodeCodecConfig.av1Config;
         format_config.repeatSeqHdr = 1;
         format_config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+        if (temporal_svc_enabled) {
+          format_config.maxTemporalLayersMinus1 = temporal_svc_layers - 1;
+#if NVENC_INT_VERSION >= 1202
+          format_config.numTemporalLayers = temporal_svc_layers;
+#endif
+        }
         if (buffer_is_yuv444()) {
           format_config.chromaFormatIDC = 3;
         }
@@ -652,7 +770,60 @@ namespace nvenc {
 
     init_params.encodeConfig = &enc_config;
 
-    if (nvenc_failed(nvenc->nvEncInitializeEncoder(encoder, &init_params))) {
+    auto disable_temporal_svc = [&] {
+      temporal_svc_enabled = false;
+      temporal_svc_layers = 0;
+      interest_caps.temporal_layers = false;
+      switch (client_config.videoFormat) {
+        case 0:
+          enc_config.encodeCodecConfig.h264Config.enableTemporalSVC = 0;
+          enc_config.encodeCodecConfig.h264Config.numTemporalLayers = 0;
+#if NVENC_INT_VERSION >= 1200
+          enc_config.encodeCodecConfig.h264Config.maxTemporalLayers = 0;
+#endif
+          break;
+        case 1:
+          enc_config.encodeCodecConfig.hevcConfig.maxTemporalLayersMinus1 = 0;
+#if NVENC_INT_VERSION >= 1202
+          enc_config.encodeCodecConfig.hevcConfig.numTemporalLayers = 0;
+#endif
+          break;
+#if NVENC_INT_VERSION >= 1200
+        case 2:
+          enc_config.encodeCodecConfig.av1Config.maxTemporalLayersMinus1 = 0;
+#if NVENC_INT_VERSION >= 1202
+          enc_config.encodeCodecConfig.av1Config.numTemporalLayers = 0;
+#endif
+          break;
+#endif
+        default:
+          break;
+      }
+    };
+
+    auto disable_qp_delta_map = [&] {
+      qp_delta_map_enabled = false;
+      interest_caps.roi_qp_map = false;
+      interest_caps.dirty_rects = false;
+      enc_config.rcParams.qpMapMode = NV_ENC_QP_MAP_DISABLED;
+    };
+
+    auto init_status = nvenc->nvEncInitializeEncoder(encoder, &init_params);
+    if (nvenc_failed(init_status) && temporal_svc_enabled) {
+      BOOST_LOG(warning) << "NvEnc: frame interest temporal SVC rejected during init: "
+                         << last_nvenc_error_string << "; retrying without temporal SVC";
+      disable_temporal_svc();
+      init_params.encodeConfig = &enc_config;
+      init_status = nvenc->nvEncInitializeEncoder(encoder, &init_params);
+    }
+    if (nvenc_failed(init_status) && qp_delta_map_enabled) {
+      BOOST_LOG(warning) << "NvEnc: frame interest QP delta map rejected during init: "
+                         << last_nvenc_error_string << "; retrying without QP map";
+      disable_qp_delta_map();
+      init_params.encodeConfig = &enc_config;
+      init_status = nvenc->nvEncInitializeEncoder(encoder, &init_params);
+    }
+    if (nvenc_failed(init_status)) {
       BOOST_LOG(error) << "NvEnc: NvEncInitializeEncoder() failed: " << last_nvenc_error_string;
       return false;
     }
@@ -708,6 +879,8 @@ namespace nvenc {
         extra += " vbv+" + std::to_string(config.vbv_percentage_increase);
       }
       if (encoder_params.rfi) extra += " rfi";
+      if (qp_delta_map_enabled) extra += " frame-interest-qpdmap";
+      if (temporal_svc_enabled) extra += " frame-interest-temporal-svc=" + std::to_string(temporal_svc_layers);
       if (init_params.enableWeightedPrediction) extra += " weighted-prediction";
       if (enc_config.rcParams.enableAQ) extra += " spatial-aq";
       if (enc_config.rcParams.enableMinQP) extra += " qpmin=" + std::to_string(enc_config.rcParams.minQP.qpInterP);
@@ -796,6 +969,86 @@ namespace nvenc {
     pic_params.bufferFmt = mapped_input_buffer.mappedBufferFmt;
     pic_params.outputBitstream = output_bitstream;
     pic_params.completionEvent = async_event_handle;
+
+    bool temporal_svc_applied = false;
+    std::uint32_t temporal_id_for_log = 0;
+    if (temporal_svc_enabled &&
+        (pending_interest_flags & stream_quality::clarity_intent_temporal_layers) != 0 &&
+        pending_interest_map.temporal_policy != frame_interest::temporal_policy_e::none) {
+      const bool enhancement_allowed =
+        pending_interest_map.temporal_policy == frame_interest::temporal_policy_e::base_with_discardable_enhancement &&
+        (pending_interest_flags & stream_quality::clarity_intent_discardable_enhancement) != 0 &&
+        temporal_svc_layers > 1;
+      temporal_id_for_log = enhancement_allowed ? static_cast<std::uint32_t>(frame_index & 1U) : 0U;
+      temporal_svc_applied = true;
+      switch (video_format) {
+        case 0:
+          pic_params.codecPicParams.h264PicParams.refPicFlag = temporal_id_for_log == 0 ? 1 : 0;
+          pic_params.codecPicParams.h264PicParams.h264ExtPicParams.mvcPicParams.temporalID = temporal_id_for_log;
+          break;
+        case 1:
+          pic_params.codecPicParams.hevcPicParams.refPicFlag = temporal_id_for_log == 0 ? 1 : 0;
+          pic_params.codecPicParams.hevcPicParams.temporalId = temporal_id_for_log;
+#if NVENC_INT_VERSION >= 1202
+          if (temporal_svc_layers > 0) {
+            pic_params.codecPicParams.hevcPicParams.temporalConfigUpdate = frame_index == 1 ? 1 : 0;
+            pic_params.codecPicParams.hevcPicParams.numTemporalLayers = temporal_svc_layers;
+          }
+#endif
+          break;
+#if NVENC_INT_VERSION >= 1200
+        case 2:
+          pic_params.codecPicParams.av1PicParams.refPicFlag = temporal_id_for_log == 0 ? 1 : 0;
+          pic_params.codecPicParams.av1PicParams.temporalId = temporal_id_for_log;
+#if NVENC_INT_VERSION >= 1202
+          pic_params.codecPicParams.av1PicParams.temporalConfigUpdate = frame_index == 1 ? 1 : 0;
+          pic_params.codecPicParams.av1PicParams.numTemporalLayers = temporal_svc_layers;
+#endif
+          break;
+#endif
+        default:
+          break;
+      }
+    }
+
+    std::vector<std::int8_t> qp_delta_storage;
+    bool qp_delta_map_applied = false;
+    bool qp_delta_map_has_roi = false;
+    bool qp_delta_map_has_dirty = false;
+    frame_interest::qp_delta_map_t qp_delta_map_for_log;
+    if (qp_delta_map_enabled && qp_delta_block_size > 0) {
+      const auto blocks_wide = static_cast<int>(std::ceil(static_cast<double>(encoder_params.width) /
+                                                          static_cast<double>(qp_delta_block_size)));
+      const auto blocks_high = static_cast<int>(std::ceil(static_cast<double>(encoder_params.height) /
+                                                          static_cast<double>(qp_delta_block_size)));
+      qp_delta_storage.assign(static_cast<std::size_t>(blocks_wide * blocks_high), 0);
+
+      auto qp_map = frame_interest::build_qp_delta_map(pending_interest_map,
+                                                       qp_delta_block_size,
+                                                       pending_interest_flags);
+      if (qp_map.valid() &&
+          qp_map.blocks_wide == blocks_wide &&
+          qp_map.blocks_high == blocks_high) {
+        qp_delta_storage = std::move(qp_map.deltas);
+        qp_delta_map_applied = true;
+        qp_delta_map_has_roi =
+          (pending_interest_flags & stream_quality::clarity_intent_roi) != 0 &&
+          !pending_interest_map.roi_rects.empty();
+        qp_delta_map_has_dirty =
+          (pending_interest_flags & stream_quality::clarity_intent_dirty_region) != 0 &&
+          !pending_interest_map.dirty_rects.empty() &&
+          !frame_interest::has_full_frame_dirty_region(pending_interest_map);
+        qp_delta_map_for_log = {
+          .block_size = qp_map.block_size,
+          .blocks_wide = qp_map.blocks_wide,
+          .blocks_high = qp_map.blocks_high,
+          .deltas = {},
+        };
+      }
+
+      pic_params.qpDeltaMap = qp_delta_storage.data();
+      pic_params.qpDeltaMapSize = static_cast<std::uint32_t>(qp_delta_storage.size());
+    }
 
 #if NVENC_INT_VERSION >= 1202
     // Prepare HDR metadata structures for per-frame passing (NVENC SDK 12.2+)
@@ -910,6 +1163,31 @@ namespace nvenc {
       lock_bitstream.pictureType == NV_ENC_PIC_TYPE_IDR,
       encoder_state.rfi_needs_confirmation,
     };
+
+    const auto encoded_temporal_id =
+#if NVENC_INT_VERSION >= 1200
+      temporal_svc_applied && has_nvenc_bitstream_temporal_id() ? lock_bitstream.temporalId :
+#endif
+                                                                  temporal_id_for_log;
+    if ((qp_delta_map_applied || temporal_svc_applied) &&
+        (last_qp_delta_applied_log_frame == 0 ||
+         frame_index >= last_qp_delta_applied_log_frame + 120)) {
+      last_qp_delta_applied_log_frame = frame_index;
+      BOOST_LOG(info) << "Frame interest encoder applied encoder=NVENC"
+                      << " roiQpMap=" << (qp_delta_map_applied ? 1 : 0)
+                      << " roiRects=" << (qp_delta_map_has_roi ? pending_interest_map.roi_rects.size() : 0)
+                      << " dirtyQpMap=" << (qp_delta_map_has_dirty ? 1 : 0)
+                      << " dirtyRects=" << (qp_delta_map_has_dirty ? pending_interest_map.dirty_rects.size() : 0)
+                      << " fullFrameDirty=" << (frame_interest::has_full_frame_dirty_region(pending_interest_map) ? 1 : 0)
+                      << " block=" << qp_delta_map_for_log.block_size
+                      << " blocks=" << qp_delta_map_for_log.blocks_wide
+                      << "x" << qp_delta_map_for_log.blocks_high
+                      << " frame=" << frame_index
+                      << " bytes=" << encoded_frame.data.size()
+                      << " temporalLayers=" << (temporal_svc_enabled ? temporal_svc_layers : 0)
+                      << " temporalId=" << encoded_temporal_id
+                      << " temporalPolicy=" << frame_interest::temporal_policy_name(pending_interest_map.temporal_policy);
+    }
 
     if (encoder_state.rfi_needs_confirmation) {
       // Invalidation request has been fulfilled, and video network packet will be marked as such
@@ -1036,6 +1314,7 @@ namespace nvenc {
     if (is_hevc) {
       current_enc_config.rcParams.vbvBufferSize = enc_config.rcParams.vbvBufferSize;
     }
+    saved_init_params.encodeConfig = &current_enc_config;
 
     const char *codec_name = is_hevc ? "HEVC" : (is_av1 ? "AV1" : "AVC");
     BOOST_LOG(info) << "NvEnc: " << codec_name << " 码率已成功调整为 " << bitrate_kbps << " Kbps";
@@ -1058,6 +1337,17 @@ namespace nvenc {
   void
   nvenc_base::set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) {
     luminance_stats = stats;
+  }
+
+  frame_interest::backend_caps_t
+  nvenc_base::frame_interest_caps() const {
+    return interest_caps;
+  }
+
+  void
+  nvenc_base::set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) {
+    pending_interest_map = map;
+    pending_interest_flags = intent_flags;
   }
 
   size_t

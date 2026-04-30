@@ -361,6 +361,8 @@ namespace platf::dxgi {
     init(display_base_t *display, const ::video::config_t &config);
     capture_e
     next_frame(DXGI_OUTDUPL_FRAME_INFO &frame_info, std::chrono::milliseconds timeout, resource_t::pointer *res_p);
+    frame_interest::map_t
+    frame_interest_map(const DXGI_OUTDUPL_FRAME_INFO &frame_info, int frame_width, int frame_height);
     capture_e
     reset(dup_t::pointer dup_p = dup_t::pointer());
     capture_e

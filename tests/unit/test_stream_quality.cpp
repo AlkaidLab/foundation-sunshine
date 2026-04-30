@@ -167,9 +167,27 @@ TEST(StreamQualityTests, MotionLowBudgetTradesExcessFpsForClarity) {
   });
 
   EXPECT_TRUE(plan.enabled);
-  EXPECT_GE(plan.effective_fps, 45);
-  EXPECT_LE(plan.effective_fps, 65);
+  EXPECT_GE(plan.effective_fps, 72);
+  EXPECT_LE(plan.effective_fps, 90);
   EXPECT_TRUE(plan.prefer_intra_refresh);
+}
+
+TEST(StreamQualityTests, HighRefreshGameKeepsInteractiveFpsFloorBeforeBecomingPpt) {
+  auto plan = stream_quality::plan_low_bitrate_clarity({
+    .width = 3024,
+    .height = 1900,
+    .fps = 120,
+    .video_bitrate_kbps = 5000,
+    .video_format = 1,
+    .chroma_sampling_type = 1,
+    .content_type = stream_quality::content_type_e::game,
+  });
+
+  EXPECT_TRUE(plan.enabled);
+  EXPECT_EQ(plan.effective_chroma_sampling_type, 0);
+  EXPECT_GE(plan.effective_fps, 72);
+  EXPECT_TRUE(plan.prefer_temporal_layers);
+  EXPECT_TRUE(plan.discardable_enhancement_layer);
 }
 
 TEST(StreamQualityTests, HighRefreshInteractiveDesktopKeepsSixtyFpsFloor) {
@@ -235,9 +253,46 @@ TEST(StreamQualityTests, HighRefreshGameIntentFlagsPreferDirtyTemporalEnhancemen
     .content_type = stream_quality::content_type_e::game,
   });
 
-  EXPECT_EQ(plan.intent_flags & stream_quality::clarity_intent_roi, 0U);
+  EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_roi, 0U);
   EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_dirty_region, 0U);
   EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_temporal_layers, 0U);
   EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_discardable_enhancement, 0U);
   EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_intra_refresh, 0U);
+}
+
+TEST(StreamQualityTests, AllContentTypesCanGenerateInterestIntentUnderPressure) {
+  for (auto content_type : {
+         stream_quality::content_type_e::desktop,
+         stream_quality::content_type_e::text,
+         stream_quality::content_type_e::motion,
+         stream_quality::content_type_e::game,
+       }) {
+    auto plan = stream_quality::plan_low_bitrate_clarity({
+      .width = 3024,
+      .height = 1900,
+      .fps = 120,
+      .video_bitrate_kbps = 2340,
+      .video_format = 1,
+      .chroma_sampling_type = 0,
+      .content_type = content_type,
+    });
+
+    EXPECT_TRUE(plan.enabled);
+    EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_dirty_region, 0U);
+    EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_roi, 0U);
+    EXPECT_NE(plan.intent_flags & stream_quality::clarity_intent_temporal_layers, 0U);
+  }
+}
+
+TEST(StreamQualityTests, StaticKeepalivePreventsVrrFromStarvingTheClient) {
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, true, 0), 30);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(96, true, 0), 24);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(60, true, 0), 15);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 0), 8);
+}
+
+TEST(StreamQualityTests, StaticKeepaliveHonorsExplicitMinimumFpsTarget) {
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, true, 45), 45);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, false, 45), 45);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 90), 30);
 }

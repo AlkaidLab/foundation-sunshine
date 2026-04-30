@@ -55,11 +55,14 @@ namespace input {
   struct mouse_input_diag_t {
     std::atomic<std::uint64_t> queued_rel { 0 };
     std::atomic<std::uint64_t> queued_abs { 0 };
+    std::atomic<std::uint64_t> queued_motion { 0 };
     std::atomic<std::uint64_t> queued_tasks { 0 };
     std::atomic<std::uint64_t> batched_rel { 0 };
     std::atomic<std::uint64_t> batched_abs { 0 };
+    std::atomic<std::uint64_t> batched_motion { 0 };
     std::atomic<std::uint64_t> os_rel { 0 };
     std::atomic<std::uint64_t> os_abs { 0 };
+    std::atomic<std::uint64_t> os_motion { 0 };
     std::atomic<std::uint64_t> max_queue_depth { 0 };
     std::mutex log_mutex;
     std::chrono::steady_clock::time_point last_log { std::chrono::steady_clock::now() };
@@ -75,6 +78,11 @@ namespace input {
   bool
   is_abs_mouse_magic(std::uint32_t magic) {
     return magic == MOUSE_MOVE_ABS_MAGIC;
+  }
+
+  bool
+  is_controller_motion_magic(std::uint32_t magic) {
+    return magic == SS_CONTROLLER_MOTION_MAGIC;
   }
 
   void
@@ -96,26 +104,34 @@ namespace input {
 
     auto queued_rel = mouse_input_diag.queued_rel.exchange(0, std::memory_order_relaxed);
     auto queued_abs = mouse_input_diag.queued_abs.exchange(0, std::memory_order_relaxed);
+    auto queued_motion = mouse_input_diag.queued_motion.exchange(0, std::memory_order_relaxed);
     auto queued_tasks = mouse_input_diag.queued_tasks.exchange(0, std::memory_order_relaxed);
     auto batched_rel = mouse_input_diag.batched_rel.exchange(0, std::memory_order_relaxed);
     auto batched_abs = mouse_input_diag.batched_abs.exchange(0, std::memory_order_relaxed);
+    auto batched_motion = mouse_input_diag.batched_motion.exchange(0, std::memory_order_relaxed);
     auto os_rel = mouse_input_diag.os_rel.exchange(0, std::memory_order_relaxed);
     auto os_abs = mouse_input_diag.os_abs.exchange(0, std::memory_order_relaxed);
+    auto os_motion = mouse_input_diag.os_motion.exchange(0, std::memory_order_relaxed);
     auto max_queue_depth = mouse_input_diag.max_queue_depth.exchange(0, std::memory_order_relaxed);
 
-    if (queued_rel == 0 && queued_abs == 0 && batched_rel == 0 && batched_abs == 0 && os_rel == 0 && os_abs == 0) {
+    if (queued_rel == 0 && queued_abs == 0 && queued_motion == 0 &&
+        batched_rel == 0 && batched_abs == 0 && batched_motion == 0 &&
+        os_rel == 0 && os_abs == 0 && os_motion == 0) {
       return;
     }
 
     mouse_input_diag.last_log = now;
-    BOOST_LOG(info) << "[inputdiag] mouse 1s reason="sv << reason
+    BOOST_LOG(info) << "[inputdiag] input 1s reason="sv << reason
                     << " queued(rel="sv << queued_rel
                     << ",abs="sv << queued_abs
+                    << ",motion="sv << queued_motion
                     << ",tasks="sv << queued_tasks
                     << ") os(rel="sv << os_rel
                     << ",abs="sv << os_abs
+                    << ",motion="sv << os_motion
                     << ") batched(rel="sv << batched_rel
                     << ",abs="sv << batched_abs
+                    << ",motion="sv << batched_motion
                     << ") maxQueue="sv << max_queue_depth;
   }
 
@@ -1598,6 +1614,36 @@ namespace input {
     }
   }
 
+  bool
+  replace_queued_controller_motion(std::list<std::vector<uint8_t>> &queue,
+                                   const std::vector<uint8_t> &input_data) {
+    if (input_data.size() < sizeof(SS_CONTROLLER_MOTION_PACKET)) {
+      return false;
+    }
+
+    const auto *incoming = reinterpret_cast<const SS_CONTROLLER_MOTION_PACKET *>(input_data.data());
+    std::size_t scanned = 0;
+    for (auto it = queue.rbegin(); it != queue.rend() && scanned < 64; ++it, ++scanned) {
+      if (it->size() < sizeof(SS_CONTROLLER_MOTION_PACKET)) {
+        continue;
+      }
+
+      auto header = (PNV_INPUT_HEADER) it->data();
+      if (util::endian::little(header->magic) != SS_CONTROLLER_MOTION_MAGIC) {
+        continue;
+      }
+
+      auto *queued = reinterpret_cast<SS_CONTROLLER_MOTION_PACKET *>(it->data());
+      if (queued->controllerNumber == incoming->controllerNumber &&
+          queued->motionType == incoming->motionType) {
+        *it = input_data;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
 #ifdef SUNSHINE_TESTS
   std::pair<std::int16_t, std::int16_t>
   test_batch_relative_mouse_delta(std::int16_t first_x,
@@ -1682,6 +1728,9 @@ namespace input {
             else if (is_abs_mouse_magic(magic)) {
               mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
             }
+            else if (is_controller_motion_magic(magic)) {
+              mouse_input_diag.batched_motion.fetch_add(1, std::memory_order_relaxed);
+            }
             // Erase this entry since it was batched
             i = input->input_queue.erase(i);
           }
@@ -1741,6 +1790,8 @@ namespace input {
           break;
         case SS_CONTROLLER_MOTION_MAGIC:
           passthrough(input, (PSS_CONTROLLER_MOTION_PACKET) payload);
+          mouse_input_diag.os_motion.fetch_add(1, std::memory_order_relaxed);
+          maybe_log_mouse_input_diag("os-motion");
           break;
         case SS_CONTROLLER_BATTERY_MAGIC:
           passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
@@ -1766,6 +1817,9 @@ namespace input {
       else if (is_abs_mouse_magic(magic)) {
         mouse_input_diag.queued_abs.fetch_add(1, std::memory_order_relaxed);
       }
+      else if (is_controller_motion_magic(magic)) {
+        mouse_input_diag.queued_motion.fetch_add(1, std::memory_order_relaxed);
+      }
     }
 
     {
@@ -1773,13 +1827,19 @@ namespace input {
       if (!input->input_queue.empty() && input_data.size() >= sizeof(NV_INPUT_HEADER)) {
         auto tail_payload = (PNV_INPUT_HEADER) input->input_queue.back().data();
         auto incoming_payload = (PNV_INPUT_HEADER) input_data.data();
-        auto batch_result = batch(tail_payload, incoming_payload);
+        auto batch_result = is_controller_motion_magic(magic) &&
+                              replace_queued_controller_motion(input->input_queue, input_data) ?
+                              batch_result_e::batched :
+                              batch(tail_payload, incoming_payload);
         if (batch_result == batch_result_e::batched) {
           if (is_rel_mouse_magic(magic)) {
             mouse_input_diag.batched_rel.fetch_add(1, std::memory_order_relaxed);
           }
           else if (is_abs_mouse_magic(magic)) {
             mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
+          }
+          else if (is_controller_motion_magic(magic)) {
+            mouse_input_diag.batched_motion.fetch_add(1, std::memory_order_relaxed);
           }
         }
         else {
@@ -1795,7 +1855,7 @@ namespace input {
         schedule_worker = true;
       }
     }
-    if (is_rel_mouse_magic(magic) || is_abs_mouse_magic(magic)) {
+    if (is_rel_mouse_magic(magic) || is_abs_mouse_magic(magic) || is_controller_motion_magic(magic)) {
       maybe_log_mouse_input_diag("queued");
     }
     if (schedule_worker) {

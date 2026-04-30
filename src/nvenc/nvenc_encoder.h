@@ -89,6 +89,14 @@ namespace nvenc {
      */
     virtual void
     set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) = 0;
+
+    virtual frame_interest::backend_caps_t
+    frame_interest_caps() const {
+      return {};
+    }
+
+    virtual void
+    set_frame_interest(const frame_interest::map_t &, std::uint32_t) {}
   };
 
 }  // namespace nvenc

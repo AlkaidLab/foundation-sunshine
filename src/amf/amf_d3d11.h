@@ -49,6 +49,12 @@ namespace amf {
     void *
     get_input_texture() override;
 
+    frame_interest::backend_caps_t
+    frame_interest_caps() const override;
+
+    void
+    set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) override;
+
   private:
     bool
     init_amf_library();
@@ -108,6 +114,9 @@ namespace amf {
     bool statistics_enabled = false;
     bool psnr_enabled = false;
     bool ssim_enabled = false;
+    frame_interest::backend_caps_t interest_caps {};
+    frame_interest::map_t pending_interest_map {};
+    std::uint32_t pending_interest_flags = 0;
 
     // Runtime fault watchdog: count consecutive failures so we can signal
     // a fatal error to the upper layer (triggering a real reinit) instead

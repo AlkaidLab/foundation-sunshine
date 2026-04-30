@@ -63,4 +63,7 @@ namespace stream_quality {
   int
   startup_fps_for_bitrate(const stream_description_t &stream, int startup_bitrate_kbps);
 
+  int
+  static_frame_keepalive_fps(int requested_fps, bool variable_refresh_rate, int minimum_fps_target);
+
 }  // namespace stream_quality

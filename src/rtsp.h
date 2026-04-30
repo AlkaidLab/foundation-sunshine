@@ -94,6 +94,13 @@ namespace rtsp_stream {
                                        bool high_quality_audio,
                                        int audio_channels);
 
+  std::int64_t
+  video_quality_ceiling_bitrate_kbps(std::int64_t configured_bitrate_kbps,
+                                     int fec_percentage,
+                                     bool high_quality_audio,
+                                     int audio_channels,
+                                     int ml_feature_flags);
+
   /**
    * @brief Terminates all running streaming sessions.
    */

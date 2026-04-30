@@ -112,6 +112,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/clipboard_bridge.h"
         "${CMAKE_SOURCE_DIR}/src/clipboard_http.cpp"
         "${CMAKE_SOURCE_DIR}/src/clipboard_http.h"
+        "${CMAKE_SOURCE_DIR}/src/frame_interest.cpp"
+        "${CMAKE_SOURCE_DIR}/src/frame_interest.h"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.cpp"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.h"
         "${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp"
@@ -151,6 +153,9 @@ endif()
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ASSETS_DIR="${SUNSHINE_ASSETS_DIR_DEF}")
 
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_TRAY=${SUNSHINE_TRAY})
+if(SUNSHINE_ENABLE_NVENC_FRAME_INTEREST_BACKEND)
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ENABLE_NVENC_FRAME_INTEREST_BACKEND=1)
+endif()
 
 # Publisher metadata - escape spaces for proper compilation
 string(REPLACE " " "_" SUNSHINE_PUBLISHER_NAME_SAFE "${SUNSHINE_PUBLISHER_NAME}")

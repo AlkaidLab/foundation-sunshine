@@ -411,6 +411,13 @@ namespace amf {
     statistics_enabled = config.enable_statistics_feedback;
     psnr_enabled = config.enable_psnr_feedback;
     ssim_enabled = config.enable_ssim_feedback;
+    interest_caps = {};
+    interest_caps.long_term_reference = config.max_ltr_frames > 0;
+    interest_caps.intra_refresh = config.intra_refresh_mbs.has_value() ||
+                                  config.av1_intra_refresh_mode.has_value();
+    interest_caps.adaptive_quantization = (config.vbaq && *config.vbaq) ||
+                                          (config.pa_paq_mode.has_value()) ||
+                                          (config.pa_taq_mode.has_value());
 
     // Pre-Analysis sub-system properties (set on encoder when PA is enabled)
     if (config.preanalysis && *config.preanalysis) {
@@ -935,6 +942,17 @@ namespace amf {
     else {
       BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
     }
+  }
+
+  frame_interest::backend_caps_t
+  amf_d3d11::frame_interest_caps() const {
+    return interest_caps;
+  }
+
+  void
+  amf_d3d11::set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) {
+    pending_interest_map = map;
+    pending_interest_flags = intent_flags;
   }
 
   void

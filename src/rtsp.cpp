@@ -50,16 +50,17 @@ using namespace std::literals;
 
 namespace rtsp_stream {
   namespace {
-    constexpr int safe_max_stream_fec_percentage = 35;
+    constexpr int safe_max_stream_fec_percentage = 100;
     constexpr int enhanced_feedback_startup_fec_percentage = 10;
-    constexpr int enhanced_feedback_adaptive_fec_percentage = 25;
+    constexpr int enhanced_feedback_adaptive_fec_percentage = 100;
   }
 
   std::uint64_t
   foundation_streaming_feature_flags2() {
     return static_cast<std::uint64_t>(LI_FF2_QOS_FEEDBACK_V2) |
            static_cast<std::uint64_t>(LI_FF2_INPUT_PRIORITY_V1) |
-           static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY_V1);
+           static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY_V1) |
+           static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY_V1);
   }
 
   int
@@ -91,6 +92,22 @@ namespace rtsp_stream {
                                                                        fec_percentage,
                                                                        high_quality_audio,
                                                                        audio_channels);
+  }
+
+  std::int64_t
+  video_quality_ceiling_bitrate_kbps(std::int64_t configured_bitrate_kbps,
+                                     int fec_percentage,
+                                     bool high_quality_audio,
+                                     int audio_channels,
+                                     int ml_feature_flags) {
+    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
+      return configured_bitrate_kbps;
+    }
+
+    return adjust_configured_video_bitrate_kbps(configured_bitrate_kbps,
+                                                fec_percentage,
+                                                high_quality_audio,
+                                                audio_channels);
   }
 
   namespace {
@@ -1489,11 +1506,12 @@ namespace rtsp_stream {
       auto effectiveFecPercentage = effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                config.mlFeatureFlags);
 
-      configuredBitrateKbps = adjust_configured_video_bitrate_kbps(
+      configuredBitrateKbps = video_quality_ceiling_bitrate_kbps(
         configuredBitrateKbps,
         effectiveFecPercentage,
         config.audio.flags[audio::config_t::HIGH_QUALITY],
-        config.audio.channels);
+        config.audio.channels,
+        config.mlFeatureFlags);
       const auto qualityCeilingBitrateKbps = configuredBitrateKbps;
       const auto qualityCeilingFramerate = config.monitor.framerate;
 
@@ -1538,7 +1556,7 @@ namespace rtsp_stream {
         }
 
         if (clarity_plan.roi_enabled || clarity_plan.target_qp > 0 || clarity_plan.sharpen_alpha > 0.0f) {
-          BOOST_LOG(info) << "Low-bitrate clarity hints: qp=" << clarity_plan.target_qp
+          BOOST_LOG(info) << "Frame interest intent generated qp=" << clarity_plan.target_qp
                           << " roi=" << (clarity_plan.roi_enabled ? 1 : 0)
                           << " dirtyRegion=" << (clarity_plan.dirty_region_priority ? 1 : 0)
                           << " temporalLayers=" << (clarity_plan.prefer_temporal_layers ? 1 : 0)

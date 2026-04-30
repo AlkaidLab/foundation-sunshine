@@ -164,6 +164,94 @@ namespace platf::dxgi {
     }
   }
 
+  frame_interest::map_t
+  duplication_t::frame_interest_map(const DXGI_OUTDUPL_FRAME_INFO &frame_info, int frame_width, int frame_height) {
+    frame_interest::map_t map;
+    map.frame_width = frame_width;
+    map.frame_height = frame_height;
+    map.sequence = static_cast<std::uint64_t>(std::max(frame_info.LastPresentTime.QuadPart,
+                                                       frame_info.LastMouseUpdateTime.QuadPart));
+
+    if (!dup || frame_width <= 0 || frame_height <= 0) {
+      return map;
+    }
+
+    auto rect_from_win32 = [](const RECT &rect) -> frame_interest::rect_t {
+      return {
+        .x = rect.left,
+        .y = rect.top,
+        .width = rect.right - rect.left,
+        .height = rect.bottom - rect.top,
+      };
+    };
+
+    if (frame_info.TotalMetadataBufferSize > 0) {
+      util::buffer_t<std::uint8_t> metadata(frame_info.TotalMetadataBufferSize);
+      UINT used_bytes = 0;
+
+      auto *metadata_bytes = metadata.begin();
+
+      auto status = dup->GetFrameMoveRects(metadata.size(),
+                                           reinterpret_cast<DXGI_OUTDUPL_MOVE_RECT *>(metadata_bytes),
+                                           &used_bytes);
+      if (SUCCEEDED(status)) {
+        const auto move_count = used_bytes / sizeof(DXGI_OUTDUPL_MOVE_RECT);
+        const auto *moves = reinterpret_cast<const DXGI_OUTDUPL_MOVE_RECT *>(metadata_bytes);
+        for (std::size_t i = 0; i < move_count; ++i) {
+          const frame_interest::move_rect_t move_rect {
+            .dest = rect_from_win32(moves[i].DestinationRect),
+            .source_x = moves[i].SourcePoint.x,
+            .source_y = moves[i].SourcePoint.y,
+          };
+          frame_interest::add_move_rect(map, move_rect);
+        }
+      }
+      else {
+        BOOST_LOG(debug) << "Desktop Duplication move rect metadata unavailable [0x"
+                         << util::hex(status).to_string_view() << ']';
+        used_bytes = 0;
+      }
+
+      if (used_bytes <= metadata.size()) {
+        UINT dirty_bytes = 0;
+        status = dup->GetFrameDirtyRects(metadata.size() - used_bytes,
+                                         reinterpret_cast<RECT *>(metadata_bytes + used_bytes),
+                                         &dirty_bytes);
+        if (SUCCEEDED(status)) {
+          const auto dirty_count = dirty_bytes / sizeof(RECT);
+          const auto *dirty_rects = reinterpret_cast<const RECT *>(metadata_bytes + used_bytes);
+          for (std::size_t i = 0; i < dirty_count; ++i) {
+            frame_interest::add_dirty_rect(map, rect_from_win32(dirty_rects[i]));
+          }
+        }
+        else {
+          BOOST_LOG(debug) << "Desktop Duplication dirty rect metadata unavailable [0x"
+                           << util::hex(status).to_string_view() << ']';
+        }
+      }
+    }
+
+    if (frame_info.PointerPosition.Visible) {
+      frame_interest::add_cursor_roi(map,
+                                     frame_info.PointerPosition.Position.x,
+                                     frame_info.PointerPosition.Position.y,
+                                     96,
+                                     -4);
+    }
+
+    frame_interest::finalize(map);
+    if (map.valid) {
+      static auto last_log = std::chrono::steady_clock::time_point {};
+      const auto now = std::chrono::steady_clock::now();
+      if (last_log.time_since_epoch().count() == 0 || now - last_log >= 1000ms) {
+        BOOST_LOG(info) << "Frame interest intent generated: "
+                        << frame_interest::summarize_map(map);
+        last_log = now;
+      }
+    }
+    return map;
+  }
+
   capture_e
   duplication_t::reset(dup_t::pointer dup_p) {
     auto capture_status = release_frame();

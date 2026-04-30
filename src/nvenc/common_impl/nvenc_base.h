@@ -9,6 +9,7 @@
 #include "../nvenc_encoder.h"
 
 #include "src/config.h"
+#include "src/frame_interest.h"
 #include "src/logging.h"
 #include "src/video.h"
 
@@ -56,6 +57,12 @@ namespace nvenc {
 
     void
     set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) override;
+
+    frame_interest::backend_caps_t
+    frame_interest_caps() const override;
+
+    void
+    set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) override;
 
   protected:
     /**
@@ -138,6 +145,14 @@ namespace nvenc {
 
     // Per-frame HDR luminance stats for dynamic metadata
     platf::hdr_frame_luminance_stats_t luminance_stats;
+    frame_interest::backend_caps_t interest_caps;
+    frame_interest::map_t pending_interest_map;
+    std::uint32_t pending_interest_flags = 0;
+    bool qp_delta_map_enabled = false;
+    int qp_delta_block_size = 0;
+    bool temporal_svc_enabled = false;
+    std::uint32_t temporal_svc_layers = 0;
+    uint64_t last_qp_delta_applied_log_frame = 0;
 
     /**
      * @brief Serialize HDR10+ dynamic metadata into ITU-T T.35 SEI payload.

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bitset>
+#include <cmath>
 #include <functional>
 #include <list>
 #include <thread>
@@ -51,6 +52,7 @@ struct AMFEncoderContext_Partial {
 #include "nvenc/nvenc_encoder.h"
 #include "amf/amf_encoder.h"
 #include "platform/common.h"
+#include "stream_quality.h"
 #include "sync.h"
 #include "video.h"
 #include "video_bitrate.h"
@@ -84,7 +86,7 @@ namespace video {
 
     int
     clamp_fec_percentage(int fec_percentage) {
-      return std::clamp(fec_percentage, 0, 80);
+      return std::clamp(fec_percentage, 0, 100);
     }
 
     /**
@@ -534,10 +536,34 @@ namespace video {
           }
           break;
         }
+        case dynamic_param_type_e::CHROMA_SAMPLING:
+          BOOST_LOG(info) << "AVCodec encoder: Chroma sampling change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::DYNAMIC_RANGE:
+          BOOST_LOG(info) << "AVCodec encoder: Dynamic range change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
         default:
           BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
       }
+    }
+
+    const char *
+    encoder_backend_name() const override {
+      return avcodec_ctx && avcodec_ctx->codec && avcodec_ctx->codec->name ?
+               avcodec_ctx->codec->name :
+               "AVCodec";
+    }
+
+    frame_interest::backend_caps_t
+    frame_interest_caps() const override {
+      return {
+        .adaptive_quantization = true,
+      };
     }
 
     avcodec_ctx_t avcodec_ctx;
@@ -640,9 +666,36 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
           break;
         }
+        case dynamic_param_type_e::CHROMA_SAMPLING:
+          BOOST_LOG(info) << "NVENC encoder: Chroma sampling change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::DYNAMIC_RANGE:
+          BOOST_LOG(info) << "NVENC encoder: Dynamic range change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
         default:
           BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
+      }
+    }
+
+    const char *
+    encoder_backend_name() const override {
+      return "NVENC";
+    }
+
+    frame_interest::backend_caps_t
+    frame_interest_caps() const override {
+      return device && device->nvenc ? device->nvenc->frame_interest_caps() : frame_interest::backend_caps_t {};
+    }
+
+    void
+    set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) override {
+      if (device && device->nvenc) {
+        device->nvenc->set_frame_interest(map, intent_flags);
       }
     }
 
@@ -720,8 +773,42 @@ namespace video {
           current_fec_percentage = clamp_fec_percentage(param.value.int_value);
           BOOST_LOG(info) << "AMF standalone encoder FEC percentage changed to: " << current_fec_percentage << "%";
           break;
+        case dynamic_param_type_e::RESOLUTION:
+          BOOST_LOG(info) << "AMF standalone encoder: Resolution change requested (profile-tier fallback, requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::FPS:
+          BOOST_LOG(info) << "AMF standalone encoder: FPS change requested: " << param.value.float_value
+                          << " fps (requires encoder reconfiguration)";
+          break;
+        case dynamic_param_type_e::CHROMA_SAMPLING:
+          BOOST_LOG(info) << "AMF standalone encoder: Chroma sampling change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
+        case dynamic_param_type_e::DYNAMIC_RANGE:
+          BOOST_LOG(info) << "AMF standalone encoder: Dynamic range change requested: "
+                          << param.value.int_value
+                          << " (profile-tier fallback, requires encoder reinitialization)";
+          break;
         default:
           break;
+      }
+    }
+
+    const char *
+    encoder_backend_name() const override {
+      return "AMF";
+    }
+
+    frame_interest::backend_caps_t
+    frame_interest_caps() const override {
+      return device && device->amf ? device->amf->frame_interest_caps() : frame_interest::backend_caps_t {};
+    }
+
+    void
+    set_frame_interest(const frame_interest::map_t &map, std::uint32_t intent_flags) override {
+      if (device && device->amf) {
+        device->amf->set_frame_interest(map, intent_flags);
       }
     }
 
@@ -751,6 +838,7 @@ namespace video {
     config_t config;
     int frame_nr;
     void *channel_data;
+    frame_interest_feedback_fn_t frame_interest_feedback;
   };
 
   struct sync_session_t {
@@ -1948,6 +2036,87 @@ namespace video {
   // Per-session EMA state for temporal smoothing of HDR luminance stats
   static thread_local hdr_luminance_ema_t hdr_ema_state;
 
+  void
+  apply_frame_interest_to_encoder(encode_session_t &session,
+                                  const platf::img_t &img,
+                                  const config_t &config,
+                                  void *channel_data,
+                                  frame_interest_feedback_fn_t frame_interest_feedback) {
+    auto map = img.interest_map;
+    if (map.frame_width <= 0) {
+      map.frame_width = img.width > 0 ? img.width : config.width;
+    }
+    if (map.frame_height <= 0) {
+      map.frame_height = img.height > 0 ? img.height : config.height;
+    }
+
+    auto intent_flags = config.lowBitrateClarityIntentFlags;
+    const bool runtime_dynamic_interest =
+      config.qualityCeilingBitrate > config.bitrate ||
+      config.qualityCeilingFramerate > config.framerate ||
+      config.lowBitrateClarityIntentFlags != 0;
+    intent_flags = frame_interest::encoder_qp_delta_interest_flags(intent_flags, runtime_dynamic_interest);
+    if ((intent_flags & stream_quality::clarity_intent_temporal_layers) != 0 &&
+        map.temporal_policy == frame_interest::temporal_policy_e::none) {
+      map.temporal_policy =
+        (intent_flags & stream_quality::clarity_intent_discardable_enhancement) != 0 ?
+          frame_interest::temporal_policy_e::base_with_discardable_enhancement :
+          frame_interest::temporal_policy_e::base_only;
+    }
+
+    frame_interest::finalize(map);
+    if (frame_interest_feedback && map.valid) {
+      const auto frame_area = map.frame_width > 0 && map.frame_height > 0 ?
+                                static_cast<std::uint64_t>(map.frame_width) *
+                                  static_cast<std::uint64_t>(map.frame_height) :
+                                0;
+      frame_interest_feedback(channel_data, {
+        .frame_area = frame_area,
+        .dirty_area = static_cast<std::uint64_t>(std::max<std::int64_t>(0, frame_interest::total_dirty_area(map))),
+        .full_frame_dirty = frame_interest::has_full_frame_dirty_region(map),
+      });
+    }
+    session.set_frame_interest(map, intent_flags);
+
+    if (!map.valid || intent_flags == 0) {
+      return;
+    }
+
+    const auto caps = session.frame_interest_caps();
+    const auto decision = frame_interest::decide_backend(map, caps, intent_flags);
+    const bool accepted = decision.roi_accepted ||
+                          decision.dirty_rects_accepted ||
+                          decision.move_rects_accepted ||
+                          decision.temporal_layers_accepted;
+    const bool fallback = decision.roi_fallback ||
+                          decision.dirty_rects_fallback ||
+                          decision.move_rects_fallback ||
+                          decision.temporal_layers_fallback;
+    if (!accepted && !fallback) {
+      return;
+    }
+
+    static auto last_backend_log = std::chrono::steady_clock::time_point {};
+    const auto now = std::chrono::steady_clock::now();
+    if (last_backend_log.time_since_epoch().count() != 0 && now - last_backend_log < 1000ms) {
+      return;
+    }
+    last_backend_log = now;
+
+    if (accepted) {
+      BOOST_LOG(info) << "Frame interest metadata available encoder="
+                      << session.encoder_backend_name() << " "
+                      << frame_interest::summarize_decision(decision)
+                      << " " << frame_interest::summarize_map(map);
+    }
+    if (fallback) {
+      BOOST_LOG(info) << "Frame interest backend fallback encoder="
+                      << session.encoder_backend_name() << " "
+                      << frame_interest::summarize_decision(decision)
+                      << " " << frame_interest::summarize_map(map);
+    }
+  }
+
   int
   encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     auto &frame = session.device->frame;
@@ -2814,7 +2983,8 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events,
+    frame_interest_feedback_fn_t frame_interest_feedback) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
@@ -2837,16 +3007,22 @@ namespace video {
       }
     });
 
-    // set minimum frame time based on client-requested target framerate or minimum_fps_target
-    std::chrono::duration<double, std::milli> minimum_frame_time;
+    // Keep sending low-rate duplicate frames for static/VRR scenes so clients do not
+    // interpret "no desktop changes" as a dead video stream.
+    const auto initial_keepalive_fps = stream_quality::static_frame_keepalive_fps(
+      config.framerate,
+      config::video.variable_refresh_rate,
+      config::video.minimum_fps_target);
+    std::chrono::duration<double, std::milli> minimum_frame_time { 1000.0 / initial_keepalive_fps };
     if (config::video.minimum_fps_target > 0) {
-      // Use minimum_fps_target if specified
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
       BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
     }
+    else if (config::video.variable_refresh_rate) {
+      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count()
+                      << "ms, based on VRR static keepalive "sv << initial_keepalive_fps
+                      << " fps for client-requested target framerate "sv << config.framerate << "."sv;
+    }
     else {
-      // Default behavior: about half the stream FPS
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
       BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
     }
 
@@ -2859,6 +3035,27 @@ namespace video {
     auto next_encode_time = std::chrono::steady_clock::now();
     std::uint64_t stale_frame_drop_count = 0;
     auto last_stale_frame_drop_log = std::chrono::steady_clock::now();
+    std::shared_ptr<platf::img_t> last_keepalive_img;
+    std::uint64_t new_frame_encode_count = 0;
+    std::uint64_t keepalive_encode_count = 0;
+    std::uint64_t keepalive_reconvert_count = 0;
+    auto last_encode_loop_log = std::chrono::steady_clock::now();
+    auto refresh_frame_interest_intent = [&config] {
+      const auto content_type = std::clamp(config.contentType, 0, 3);
+      const auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
+        .width = config.width,
+        .height = config.height,
+        .fps = config.framerate,
+        .video_bitrate_kbps = config.bitrate,
+        .video_format = config.videoFormat,
+        .chroma_sampling_type = config.chromaSamplingType,
+        .content_type = static_cast<stream_quality::content_type_e>(content_type),
+      });
+
+      config.lowBitrateClarityIntentFlags = clarity_plan.intent_flags;
+      config.lowBitrateTargetQp = clarity_plan.target_qp;
+      config.lowBitrateSharpenAlpha = clarity_plan.sharpen_alpha;
+    };
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2902,9 +3099,31 @@ namespace video {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
           if (param->valid && param->type == dynamic_param_type_e::FPS && param->value.float_value >= 1.0f) {
             target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / param->value.float_value };
-            minimum_frame_time = target_frame_time;
+            config.framerate = std::max(1, static_cast<int>(std::lround(param->value.float_value)));
+            const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
+              config.framerate,
+              config::video.variable_refresh_rate,
+              config::video.minimum_fps_target);
+            minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / keepalive_fps };
+            refresh_frame_interest_intent();
             BOOST_LOG(info) << "Encode pacing target changed to " << param->value.float_value
-                            << " fps (" << target_frame_time.count() << "ms)";
+                            << " fps (" << target_frame_time.count()
+                            << "ms), static keepalive=" << keepalive_fps
+                            << " fps (" << minimum_frame_time.count() << "ms)";
+          }
+          else if (param->valid && param->type == dynamic_param_type_e::BITRATE && param->value.int_value > 0) {
+            config.bitrate = param->value.int_value;
+            refresh_frame_interest_intent();
+          }
+          else if (param->valid && param->type == dynamic_param_type_e::CHROMA_SAMPLING &&
+                   (param->value.int_value == 0 || param->value.int_value == 1)) {
+            config.chromaSamplingType = param->value.int_value;
+            refresh_frame_interest_intent();
+          }
+          else if (param->valid && param->type == dynamic_param_type_e::DYNAMIC_RANGE &&
+                   param->value.int_value >= 0) {
+            config.dynamicRange = param->value.int_value;
+            refresh_frame_interest_intent();
           }
           session->set_dynamic_param(*param);
         }
@@ -2916,6 +3135,7 @@ namespace video {
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       bool has_new_frame = false;
+      bool has_keepalive_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
@@ -2947,22 +3167,24 @@ namespace video {
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          apply_frame_interest_to_encoder(*session, *img, config, channel_data, frame_interest_feedback);
+          last_keepalive_img = img;
           has_new_frame = true;
         }
         else if (!images->running()) {
           break;
         }
-      }
-
-      // If variable refresh rate is enabled, skip encoding when no new frame is available
-      // This allows the stream framerate to match the render framerate for VRR support
-      // However, if minimum_fps_target is set, we still encode to maintain minimum FPS
-      if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
-        // Only skip if minimum_fps_target is 0 (disabled) or we've already met the minimum
-        if (config::video.minimum_fps_target == 0) {
-          continue;
+        else if (last_keepalive_img) {
+          if (session->convert(*last_keepalive_img)) {
+            BOOST_LOG(error) << "Could not reconvert last image for static keepalive"sv;
+            break;
+          }
+          has_keepalive_frame = true;
+          ++keepalive_reconvert_count;
         }
-        // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
+        else {
+          has_keepalive_frame = true;
+        }
       }
 
       if (has_new_frame && !requested_idr_frame) {
@@ -2977,6 +3199,29 @@ namespace video {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
+      }
+      if (has_new_frame) {
+        ++new_frame_encode_count;
+      }
+      else if (has_keepalive_frame) {
+        ++keepalive_encode_count;
+      }
+      {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_encode_loop_log >= 1000ms) {
+          BOOST_LOG(info) << "Video encode loop runtime summary: newFrames="
+                          << new_frame_encode_count
+                          << " keepaliveFrames=" << keepalive_encode_count
+                          << " keepaliveReconvert=" << keepalive_reconvert_count
+                          << " nextFrame=" << frame_nr
+                          << " imagesRunning=" << (images->running() ? 1 : 0)
+                          << " reinit=" << (reinit_event.peek() ? 1 : 0)
+                          << " shutdown=" << (shutdown_event->peek() ? 1 : 0);
+          new_frame_encode_count = 0;
+          keepalive_encode_count = 0;
+          keepalive_reconvert_count = 0;
+          last_encode_loop_log = now;
+        }
       }
 
       session->request_normal_frame();
@@ -3114,6 +3359,7 @@ namespace video {
       BOOST_LOG(error) << "Could not convert initial image"sv;
       return std::nullopt;
     }
+    apply_frame_interest_to_encoder(*session, img, ctx.config, ctx.channel_data, ctx.frame_interest_feedback);
 
     encode_session.session = std::move(session);
 
@@ -3246,11 +3492,18 @@ namespace video {
             ctx->idr_events->pop();
           }
 
-          if (frame_captured && pos->session->convert(*img)) {
-            BOOST_LOG(error) << "Could not convert image"sv;
-            ctx->shutdown_event->raise(true);
+          if (frame_captured) {
+            if (pos->session->convert(*img)) {
+              BOOST_LOG(error) << "Could not convert image"sv;
+              ctx->shutdown_event->raise(true);
 
-            continue;
+              continue;
+            }
+            apply_frame_interest_to_encoder(*pos->session,
+                                            *img,
+                                            ctx->config,
+                                            ctx->channel_data,
+                                            ctx->frame_interest_feedback);
           }
 
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
@@ -3332,7 +3585,8 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events,
+    frame_interest_feedback_fn_t frame_interest_feedback) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<img_event_t::element_type>();
@@ -3501,7 +3755,7 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events);
+        channel_data, dynamic_param_events, frame_interest_feedback);
     }
   }
 
@@ -3510,12 +3764,13 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<dynamic_param_change_event_t> dynamic_param_events) {
+    std::optional<dynamic_param_change_event_t> dynamic_param_events,
+    frame_interest_feedback_fn_t frame_interest_feedback) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback);
     }
     else {
       safe::signal_t join_event;
@@ -3530,6 +3785,7 @@ namespace video {
         config,
         1,
         channel_data,
+        frame_interest_feedback,
       });
 
       // Wait for join signal

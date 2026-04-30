@@ -12,6 +12,7 @@ TEST(StreamBitrateTests, FiveMbpsHighSurroundKeepsUsableVideoBudget) {
 }
 
 TEST(StreamBitrateTests, FecOverheadIsReservedOnceWithoutChannelCrushing) {
-  EXPECT_EQ(stream_bitrate::encoding_bitrate_from_configured_total_kbps(5000, 35, false, 2), 3250);
-  EXPECT_EQ(stream_bitrate::encoding_bitrate_from_configured_total_kbps(10000, 35, true, 12), 6500);
+  EXPECT_EQ(stream_bitrate::encoding_bitrate_from_configured_total_kbps(5000, 35, false, 2), 3704);
+  EXPECT_EQ(stream_bitrate::encoding_bitrate_from_configured_total_kbps(10000, 35, true, 12), 7407);
+  EXPECT_EQ(stream_bitrate::encoding_bitrate_from_configured_total_kbps(20000, 100, false, 2), 10000);
 }

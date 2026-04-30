@@ -2186,6 +2186,8 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
 
+    auto interest_map = dup.frame_interest_map(frame_info, width, height);
+
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     if (auto qpc_displayed = std::max(frame_info.LastPresentTime.QuadPart, frame_info.LastMouseUpdateTime.QuadPart)) {
       // Translate QueryPerformanceCounter() value to steady_clock time point
@@ -2580,6 +2582,7 @@ namespace platf::dxgi {
 
     if (img_out) {
       img_out->frame_timestamp = frame_timestamp;
+      img_out->interest_map = std::move(interest_map);
     }
 
     return capture_e::ok;

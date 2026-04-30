@@ -30,6 +30,8 @@ namespace video {
     ADAPTIVE_QUANTIZATION, // 自适应量化 - 值：1个bool
     MULTI_PASS,        // 多遍编码 - 值：1个int
     VBV_BUFFER_SIZE,   // VBV缓冲区大小 - 值：1个int
+    CHROMA_SAMPLING,   // 色度采样 - 值：1个int (0=4:2:0, 1=4:4:4)
+    DYNAMIC_RANGE,     // 动态范围 - 值：1个int (0=SDR, >0=HDR)
     MAX_PARAM_TYPE
   };
 
@@ -302,6 +304,19 @@ namespace video {
 
     virtual void
     set_dynamic_param(const dynamic_param_t &param) = 0;  // 新增：通用动态参数调整方法
+
+    virtual const char *
+    encoder_backend_name() const {
+      return "unknown";
+    }
+
+    virtual frame_interest::backend_caps_t
+    frame_interest_caps() const {
+      return {};
+    }
+
+    virtual void
+    set_frame_interest(const frame_interest::map_t &, std::uint32_t) {}
   };
 
   // encoders
@@ -431,6 +446,14 @@ namespace video {
 
   using hdr_info_t = std::unique_ptr<hdr_info_raw_t>;
 
+  struct frame_interest_feedback_t {
+    std::uint64_t frame_area = 0;
+    std::uint64_t dirty_area = 0;
+    bool full_frame_dirty = false;
+  };
+
+  using frame_interest_feedback_fn_t = void (*)(void *, const frame_interest_feedback_t &);
+
   extern int active_hevc_mode;
   extern int active_av1_mode;
   extern bool last_encoder_probe_supported_ref_frames_invalidation;
@@ -441,7 +464,8 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<dynamic_param_change_event_t> dynamic_param_events = std::nullopt);
+    std::optional<dynamic_param_change_event_t> dynamic_param_events = std::nullopt,
+    frame_interest_feedback_fn_t frame_interest_feedback = nullptr);
 
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure);

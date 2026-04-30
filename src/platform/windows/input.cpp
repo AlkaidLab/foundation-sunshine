@@ -7,6 +7,7 @@
 #define WINVER 0x0A00
 #include <windows.h>
 
+#include <chrono>
 #include <cmath>
 #include <thread>
 
@@ -90,6 +91,7 @@ namespace platf {
 
     thread_pool_util::ThreadPool::task_id_t repeat_task {};
     std::chrono::steady_clock::time_point last_report_ts;
+    std::chrono::steady_clock::time_point last_dsu_unavailable_log;
 
     gamepad_feedback_msg_t last_rumble;
     gamepad_feedback_msg_t last_rgb_led;
@@ -1762,7 +1764,11 @@ namespace platf {
     ds4_update_motion(gamepad, motion.motionType, motion.x, motion.y, motion.z);
     ds4_update_ts_and_send(vigem, motion.id.globalIndex);
 
-    if (!raw->dsu_server && config::input.enable_dsu_server) {
+    if (!config::input.enable_dsu_server) {
+      return;
+    }
+
+    if (!raw->dsu_server) {
       raw->init_dsu_server();
     }
 
@@ -1786,7 +1792,12 @@ namespace platf {
       }
     }
     else {
-      BOOST_LOG(warning) << "DSU服务器未初始化，无法发送运动数据";
+      const auto now = std::chrono::steady_clock::now();
+      if (gamepad.last_dsu_unavailable_log.time_since_epoch().count() == 0 ||
+          now - gamepad.last_dsu_unavailable_log >= 5s) {
+        gamepad.last_dsu_unavailable_log = now;
+        BOOST_LOG(warning) << "DSU server unavailable; dropping controller motion export to DSU";
+      }
     }
   }
 

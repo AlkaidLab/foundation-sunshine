@@ -20,6 +20,7 @@
 
 // local includes
 #include "src/config.h"
+#include "src/frame_interest.h"
 #include "src/logging.h"
 #include "src/thread_safe.h"
 #include "src/utility.h"
@@ -402,6 +403,7 @@ namespace platf {
     std::int32_t row_pitch {};
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    frame_interest::map_t interest_map;
 
     virtual ~img_t() = default;
   };

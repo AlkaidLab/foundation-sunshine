@@ -46,7 +46,11 @@ namespace stream_quality {
       if (requested_fps >= 90 &&
           video_bitrate_kbps >= 2200 &&
           content_type != content_type_e::text) {
-        return 60;
+        return video_bitrate_kbps >= 4500 &&
+                   (content_type == content_type_e::motion ||
+                    content_type == content_type_e::game) ?
+                 72 :
+                 60;
       }
 
       if (content_type == content_type_e::motion || content_type == content_type_e::game) {
@@ -144,17 +148,13 @@ namespace stream_quality {
                                                   effective_stream.content_type);
     plan.effective_fps = std::clamp(clarity_fps, std::min(fps_floor, stream.fps), stream.fps);
     plan.target_qp = target_qp_for_budget(plan.bits_per_pixel_per_frame, stream.content_type);
+    const bool interest_pressure = plan.bits_per_pixel_per_frame < target_bpp * 1.15;
+    const bool strong_interest_pressure = plan.bits_per_pixel_per_frame < target_bpp;
     plan.roi_enabled = stream.content_type == content_type_e::text ||
-                       (plan.bits_per_pixel_per_frame < target_bpp && stream.content_type == content_type_e::desktop);
-    plan.dirty_region_priority = plan.roi_enabled ||
-                                 (plan.bits_per_pixel_per_frame < target_bpp * 0.9 &&
-                                  (stream.content_type == content_type_e::motion ||
-                                   stream.content_type == content_type_e::game));
+                       strong_interest_pressure;
+    plan.dirty_region_priority = plan.roi_enabled || interest_pressure;
     plan.prefer_temporal_layers = stream.fps >= 90 &&
-                                  (stream.content_type == content_type_e::desktop ||
-                                   stream.content_type == content_type_e::motion ||
-                                   stream.content_type == content_type_e::game) &&
-                                  plan.bits_per_pixel_per_frame < target_bpp * 1.15;
+                                  interest_pressure;
     plan.discardable_enhancement_layer = plan.prefer_temporal_layers &&
                                          stream.video_format != 0;
     plan.prefer_long_term_reference = stream.content_type == content_type_e::text ||
@@ -246,5 +246,24 @@ namespace stream_quality {
                                      startup_bitrate_kbps >= 1500 ? 45 :
                                      30;
     return std::clamp(fps_from_budget, std::min(min_interactive_fps, stream.fps), stream.fps);
+  }
+
+  int
+  static_frame_keepalive_fps(int requested_fps, bool variable_refresh_rate, int minimum_fps_target) {
+    if (requested_fps <= 0) {
+      return 1;
+    }
+
+    if (minimum_fps_target > 0) {
+      return std::clamp(minimum_fps_target, 1, requested_fps);
+    }
+
+    if (variable_refresh_rate) {
+      const auto keepalive = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / 4.0));
+      return std::clamp(keepalive, 5, std::min(30, requested_fps));
+    }
+
+    const auto legacy_minimum = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / 2.0));
+    return std::clamp(legacy_minimum, 1, requested_fps);
   }
 }  // namespace stream_quality

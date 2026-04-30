@@ -22,13 +22,13 @@ namespace stream_bitrate {
       return configured_bitrate_kbps;
     }
 
-    fec_percentage = std::clamp(fec_percentage, 0, 80);
+    fec_percentage = std::clamp(fec_percentage, 0, 100);
     if (fec_percentage == 0) {
       return configured_bitrate_kbps;
     }
 
     return static_cast<std::int64_t>(std::lround(
       static_cast<double>(configured_bitrate_kbps) *
-      static_cast<double>(100 - fec_percentage) / 100.0));
+      100.0 / static_cast<double>(100 + fec_percentage)));
   }
 }  // namespace stream_bitrate
