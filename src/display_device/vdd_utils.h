@@ -67,7 +67,7 @@ namespace display_device::vdd_utils {
   connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries = 3);
 
   bool
-  execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr, bool *timed_out = nullptr);
+  execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr, bool *timed_out = nullptr, DWORD read_timeout_ms = 0);
 
   // 驱动重载函数
   bool
