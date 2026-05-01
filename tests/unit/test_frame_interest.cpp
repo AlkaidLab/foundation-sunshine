@@ -177,18 +177,52 @@ TEST(FrameInterestTests, QpDeltaMapPolicyHonorsExplicitEnableFlag) {
   EXPECT_FALSE(policy.fallback_to_adaptive_quantization);
 }
 
-TEST(FrameInterestTests, RuntimeDynamicInterestDoesNotArmQpMapBeforePressureAppears) {
+TEST(FrameInterestTests, RuntimeDynamicInterestArmsQpMapBackendForPressureReadySessions) {
   const auto flags = frame_interest::encoder_qp_delta_interest_flags(
     stream_quality::clarity_intent_long_term_reference,
     true);
 
-  EXPECT_EQ(flags & stream_quality::clarity_intent_roi, 0U);
-  EXPECT_EQ(flags & stream_quality::clarity_intent_dirty_region, 0U);
+  EXPECT_NE(flags & stream_quality::clarity_intent_roi, 0U);
+  EXPECT_NE(flags & stream_quality::clarity_intent_dirty_region, 0U);
+  EXPECT_NE(flags & stream_quality::clarity_intent_temporal_layers, 0U);
+  EXPECT_NE(flags & stream_quality::clarity_intent_discardable_enhancement, 0U);
   EXPECT_NE(flags & stream_quality::clarity_intent_long_term_reference, 0U);
 
   auto policy = frame_interest::decide_qp_delta_map_policy(flags, true, true);
-  EXPECT_FALSE(policy.enabled);
-  EXPECT_FALSE(policy.disable_adaptive_quantization);
+  EXPECT_TRUE(policy.enabled);
+  EXPECT_TRUE(policy.disable_adaptive_quantization);
+}
+
+TEST(FrameInterestTests, ScalesCaptureMetadataToEncoderFrameBeforeBuildingQpMap) {
+  frame_interest::map_t map;
+  map.frame_width = 3840;
+  map.frame_height = 2160;
+  frame_interest::add_dirty_rect(map, { 0, 0, 1920, 1080 });
+  frame_interest::add_roi_rect(map, { 1920, 0, 960, 540 }, -5, 50);
+  frame_interest::finalize(map);
+
+  auto scaled = frame_interest::scale_to_frame(map, 3024, 1900);
+  EXPECT_EQ(scaled.frame_width, 3024);
+  EXPECT_EQ(scaled.frame_height, 1900);
+  ASSERT_EQ(scaled.dirty_rects.size(), 1U);
+  EXPECT_EQ(scaled.dirty_rects[0].x, 0);
+  EXPECT_EQ(scaled.dirty_rects[0].y, 0);
+  EXPECT_EQ(scaled.dirty_rects[0].width, 1512);
+  EXPECT_EQ(scaled.dirty_rects[0].height, 950);
+  ASSERT_EQ(scaled.roi_rects.size(), 1U);
+  EXPECT_EQ(scaled.roi_rects[0].rect.x, 1512);
+  EXPECT_EQ(scaled.roi_rects[0].rect.width, 756);
+
+  const auto block_size = frame_interest::nvenc_qp_delta_block_size_for_video_format(1);
+  auto qp_map = frame_interest::build_qp_delta_map(
+    scaled,
+    block_size,
+    stream_quality::clarity_intent_roi | stream_quality::clarity_intent_dirty_region);
+
+  ASSERT_TRUE(qp_map.valid());
+  EXPECT_EQ(qp_map.blocks_wide, 95);
+  EXPECT_EQ(qp_map.blocks_high, 60);
+  EXPECT_EQ(qp_map.deltas.size(), 5700U);
 }
 
 TEST(FrameInterestTests, BuildsBlockQpDeltaMapFromDirtyAndRoiRegions) {

@@ -118,6 +118,9 @@ namespace frame_interest {
   void
   finalize(map_t &map);
 
+  map_t
+  scale_to_frame(const map_t &map, int frame_width, int frame_height);
+
   backend_decision_t
   decide_backend(const map_t &map, const backend_caps_t &caps, std::uint32_t intent_flags);
 

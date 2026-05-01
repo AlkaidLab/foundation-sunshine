@@ -47,6 +47,20 @@ namespace frame_interest {
         }
       }
     }
+
+    int
+    scale_coord(int value, double scale) {
+      return static_cast<int>(std::lround(static_cast<double>(value) * scale));
+    }
+
+    rect_t
+    scale_rect(const rect_t &rect, double scale_x, double scale_y) {
+      const auto left = scale_coord(rect.x, scale_x);
+      const auto top = scale_coord(rect.y, scale_y);
+      const auto right = scale_coord(rect.x + rect.width, scale_x);
+      const auto bottom = scale_coord(rect.y + rect.height, scale_y);
+      return { left, top, right - left, bottom - top };
+    }
   }  // namespace
 
   bool
@@ -177,7 +191,56 @@ namespace frame_interest {
                 (!map.dirty_rects.empty() ||
                  !map.move_rects.empty() ||
                  !map.roi_rects.empty() ||
-                 map.temporal_policy != temporal_policy_e::none);
+                map.temporal_policy != temporal_policy_e::none);
+  }
+
+  map_t
+  scale_to_frame(const map_t &map, int frame_width, int frame_height) {
+    if (frame_width <= 0 ||
+        frame_height <= 0 ||
+        map.frame_width <= 0 ||
+        map.frame_height <= 0 ||
+        (map.frame_width == frame_width && map.frame_height == frame_height)) {
+      auto result = map;
+      result.frame_width = frame_width > 0 ? frame_width : map.frame_width;
+      result.frame_height = frame_height > 0 ? frame_height : map.frame_height;
+      return result;
+    }
+
+    const auto scale_x = static_cast<double>(frame_width) / static_cast<double>(map.frame_width);
+    const auto scale_y = static_cast<double>(frame_height) / static_cast<double>(map.frame_height);
+
+    map_t result;
+    result.frame_width = frame_width;
+    result.frame_height = frame_height;
+    result.sequence = map.sequence;
+    result.temporal_policy = map.temporal_policy;
+
+    result.dirty_rects.reserve(map.dirty_rects.size());
+    for (const auto &rect : map.dirty_rects) {
+      result.dirty_rects.push_back(scale_rect(rect, scale_x, scale_y));
+    }
+
+    result.move_rects.reserve(map.move_rects.size());
+    for (const auto &move : map.move_rects) {
+      result.move_rects.push_back({
+        .dest = scale_rect(move.dest, scale_x, scale_y),
+        .source_x = scale_coord(move.source_x, scale_x),
+        .source_y = scale_coord(move.source_y, scale_y),
+      });
+    }
+
+    result.roi_rects.reserve(map.roi_rects.size());
+    for (const auto &roi : map.roi_rects) {
+      result.roi_rects.push_back({
+        .rect = scale_rect(roi.rect, scale_x, scale_y),
+        .qp_delta = roi.qp_delta,
+        .priority = roi.priority,
+      });
+    }
+
+    finalize(result);
+    return result;
   }
 
   backend_decision_t
@@ -236,7 +299,14 @@ namespace frame_interest {
 
   std::uint32_t
   encoder_qp_delta_interest_flags(std::uint32_t intent_flags, bool runtime_dynamic_interest) {
-    (void) runtime_dynamic_interest;
+    if (runtime_dynamic_interest) {
+      intent_flags |= stream_quality::clarity_intent_roi |
+                      stream_quality::clarity_intent_dirty_region |
+                      stream_quality::clarity_intent_temporal_layers |
+                      stream_quality::clarity_intent_discardable_enhancement |
+                      stream_quality::clarity_intent_long_term_reference |
+                      stream_quality::clarity_intent_intra_refresh;
+    }
     return intent_flags;
   }
 

@@ -2049,6 +2049,11 @@ namespace video {
     if (map.frame_height <= 0) {
       map.frame_height = img.height > 0 ? img.height : config.height;
     }
+    if (config.width > 0 && config.height > 0 &&
+        map.frame_width > 0 && map.frame_height > 0 &&
+        (map.frame_width != config.width || map.frame_height != config.height)) {
+      map = frame_interest::scale_to_frame(map, config.width, config.height);
+    }
 
     auto intent_flags = config.lowBitrateClarityIntentFlags;
     const bool runtime_dynamic_interest =

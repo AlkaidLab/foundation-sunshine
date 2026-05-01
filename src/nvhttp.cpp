@@ -813,6 +813,117 @@ namespace nvhttp {
     BOOST_LOG(warning) << message << " [" << request->query_string << "] from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
   }
 
+  static bool
+  ascii_iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) {
+      return false;
+    }
+
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      const auto ca = a[i] >= 'A' && a[i] <= 'Z' ? static_cast<char>(a[i] - 'A' + 'a') : a[i];
+      const auto cb = b[i] >= 'A' && b[i] <= 'Z' ? static_cast<char>(b[i] - 'A' + 'a') : b[i];
+      if (ca != cb) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  static std::string
+  trim_ascii(std::string value) {
+    auto is_space = [](unsigned char c) {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+      value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+      value.pop_back();
+    }
+    return value;
+  }
+
+  static std::string
+  strip_host_port(std::string host) {
+    host = trim_ascii(std::move(host));
+    if (host.empty()) {
+      return host;
+    }
+
+    if (host.front() == '[') {
+      const auto close = host.find(']');
+      if (close != std::string::npos && close > 1) {
+        return host.substr(1, close - 1);
+      }
+      return {};
+    }
+
+    const auto first_colon = host.find(':');
+    if (first_colon != std::string::npos && host.find(':', first_colon + 1) == std::string::npos) {
+      return host.substr(0, first_colon);
+    }
+
+    return host;
+  }
+
+  static bool
+  usable_rtsp_host(std::string_view host) {
+    return !host.empty() &&
+           host != "*"sv &&
+           host != "0.0.0.0"sv &&
+           host != "::"sv &&
+           host != "[::]"sv;
+  }
+
+  static std::string
+  url_authority_host(std::string host) {
+    host = strip_host_port(std::move(host));
+    if (host.find(':') != std::string::npos) {
+      return "[" + host + "]";
+    }
+    return host;
+  }
+
+  template <class T>
+  std::string
+  request_host_header(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+    for (const auto &[name, value] : request->header) {
+      if (ascii_iequals(name, "host"sv)) {
+        return strip_host_port(value);
+      }
+    }
+    return {};
+  }
+
+  template <class T>
+  std::string
+  rtsp_session_url_for_request(const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+                               std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+    const auto fallback_host = net::addr_to_url_escaped_string(request->local_endpoint().address());
+    auto host = request_host_header<T>(request);
+    if (!usable_rtsp_host(host)) {
+      host = fallback_host;
+    }
+
+    auto authority_host = url_authority_host(host);
+    if (!usable_rtsp_host(authority_host)) {
+      authority_host = fallback_host;
+    }
+
+    if (authority_host != fallback_host) {
+      BOOST_LOG(info) << "NVHTTP sessionUrl0 using request Host header for RTSP route"
+                      << " host=" << authority_host
+                      << " localEndpoint=" << fallback_host
+                      << " remote=" << request->remote_endpoint().address().to_string();
+    }
+
+    return launch_session->rtsp_url_scheme +
+           authority_host + ':' +
+           std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+  }
+
   template <class T>
   void
   not_found(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
@@ -1983,9 +2094,7 @@ namespace nvhttp {
     }
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put("root.sessionUrl0", launch_session->rtsp_url_scheme +
-                                   net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
-                                   std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
+    tree.put("root.sessionUrl0", rtsp_session_url_for_request<SunshineHTTPS>(launch_session, request));
     tree.put("root.gamesession", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
@@ -2102,9 +2211,7 @@ namespace nvhttp {
     }
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put("root.sessionUrl0", launch_session->rtsp_url_scheme +
-                                   net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
-                                   std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
+    tree.put("root.sessionUrl0", rtsp_session_url_for_request<SunshineHTTPS>(launch_session, request));
     tree.put("root.resume", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
