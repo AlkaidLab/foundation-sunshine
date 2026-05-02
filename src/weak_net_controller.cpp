@@ -223,6 +223,46 @@ namespace weak_net {
     }
 
     int
+    delay_congestion_total_cap_kbps(const config_t &config,
+                                    int sustainable_estimate_kbps,
+                                    int configured_encoding_ceiling_kbps,
+                                    bool network_crisis,
+                                    double delay_pressure,
+                                    double render_pressure) {
+      const auto user_budget = user_quality_budget_kbps(config);
+      const auto pressure = std::clamp(std::max(delay_pressure, render_pressure), 0.0, 1.0);
+      const auto user_headroom = network_crisis ? 1.02 : 1.08;
+      auto cap = static_cast<int>(std::lround(static_cast<double>(user_budget) * user_headroom));
+
+      if (pressure >= 0.60) {
+        const auto pressure_scale = network_crisis ? 0.94 : (0.99 - std::min(0.07, (pressure - 0.60) * 0.18));
+        cap = std::min(cap,
+                       static_cast<int>(std::lround(static_cast<double>(user_budget) * pressure_scale)));
+      }
+
+      if (sustainable_estimate_kbps > 0) {
+        const auto sustainable_headroom = std::max(
+          network_crisis ? 500 : 900,
+          static_cast<int>(std::lround(static_cast<double>(sustainable_estimate_kbps) *
+                                       (network_crisis ? 0.04 : 0.075))));
+        cap = std::min(cap, sustainable_estimate_kbps + sustainable_headroom);
+      }
+
+      const auto configured_total_ceiling =
+        total_bitrate_for_encoding_bitrate(configured_encoding_ceiling_kbps,
+                                           config.baseline_fec_percentage);
+      const auto hard_total_ceiling = config.ceiling_total_bitrate_kbps > 0 ?
+                                        std::min(config.ceiling_total_bitrate_kbps,
+                                                 std::max(config.min_bitrate_kbps, configured_total_ceiling)) :
+                                        std::max(config.min_bitrate_kbps, configured_total_ceiling);
+
+      return std::clamp(cap,
+                        std::max(1, config.min_bitrate_kbps),
+                        std::max(std::max(1, config.min_bitrate_kbps),
+                                 hard_total_ceiling));
+    }
+
+    int
     high_refresh_emergency_floor(int baseline_fps) {
       return baseline_fps >= 90 ? 60 : 1;
     }
@@ -608,11 +648,28 @@ namespace weak_net {
                                        ewma_jitter_ >= 40.0));
     const bool deadline_crisis = ewma_deadline_pressure_ >= 1.7;
     const bool video_deadline_constrained = raw_video_deadline_miss || hard_video_deadline_miss || deadline_crisis;
-    const bool delay_only_congestion = !observed_packet_loss &&
-                                       (pressures.delay_congestion >= 0.80 ||
-                                        network_jitter_ms >= 90.0 ||
-                                        network_rtt_ms >= 250 ||
-                                        video_deadline_constrained);
+    const bool transport_delay_evidence =
+      pressures.delay_congestion >= 0.80 ||
+      ewma_delay_pressure_ >= 0.72 ||
+      (network_rtt_ms >= 120 && network_jitter_ms >= 45.0) ||
+      network_jitter_ms >= 90.0 ||
+      network_rtt_ms >= 250 ||
+      input_latency_ms >= 120.0;
+    const bool render_only_deadline =
+      video_deadline_constrained &&
+      !transport_delay_evidence &&
+      !observed_packet_loss &&
+      network_rtt_ms < 120 &&
+      network_jitter_ms < 45.0 &&
+      input_latency_ms < 80.0;
+    const bool loss_requires_fec_first =
+      unrecoverable >= 0.005 ||
+      loss >= 0.04 ||
+      recovered >= 0.08 ||
+      rfi_storm;
+    const bool delay_only_congestion = transport_delay_evidence &&
+                                       !loss_requires_fec_first &&
+                                       !render_only_deadline;
     const bool fec_recoverable_loss = observed_packet_loss &&
                                       feedback.unrecoverable_frames == 0 &&
                                       unrecoverable < 0.005 &&
@@ -652,6 +709,19 @@ namespace weak_net {
       raw_video_deadline_clean &&
       !audio_constrained &&
       !input_constrained;
+    const bool visual_recovery_guard =
+      sustainable_limit_active_ ||
+      network_rtt_ms >= 120 ||
+      pressures.delay_congestion >= 0.24 ||
+      ewma_delay_pressure_ >= 0.24 ||
+      pressures.render >= 0.30 ||
+      ewma_deadline_pressure_ >= 0.45 ||
+      audio_constrained ||
+      ewma_audio_pressure_ >= 0.20;
+    const bool bitrate_probe_allowed =
+      fps_budget_overshoot_allowed &&
+      !visual_recovery_guard &&
+      stable_windows_ >= 2;
     const bool media_stability_crisis =
       (audio_crisis && observed_packet_loss) ||
       (rfi_storm && (unrecoverable >= 0.02 || ewma_burst_pressure_ >= 0.70));
@@ -714,9 +784,10 @@ namespace weak_net {
     };
 
     const bool audio_only_pressure = audio_constrained &&
-                                     !network_crisis &&
-                                     !network_constrained &&
-                                     !video_deadline_constrained &&
+                                     ((raw_network_clean && raw_video_deadline_clean) ||
+                                      (!network_crisis &&
+                                       !network_constrained &&
+                                       !video_deadline_constrained)) &&
                                      !input_constrained;
     const auto audio_only_floor_basis = has_video_delivery_samples ?
                                           pre_action_encoding_ceiling :
@@ -863,11 +934,19 @@ namespace weak_net {
         }
       }
     }
+    else if (render_only_deadline) {
+      state_ = state_e::constrained;
+      reason = reason_e::render_deadline;
+      stable_windows_ = 0;
+      reduce_fps_for_pressure(hard_video_deadline_miss ? 0.93 : 0.96,
+                              hard_video_deadline_miss ? 2 : 3,
+                              hard_video_deadline_miss ? 1 : 2);
+    }
     else if (motion_constrained) {
       state_ = state_e::constrained;
       reason = reason_e::motion_pressure;
       stable_windows_ = 0;
-      if (fps_budget_overshoot_allowed) {
+      if (bitrate_probe_allowed) {
         current_bitrate_kbps_ = std::min(pre_action_encoding_ceiling,
                                          current_bitrate_kbps_ + gentle_probe_step(current_bitrate_kbps_,
                                                                                    pre_action_encoding_ceiling));
@@ -974,6 +1053,45 @@ namespace weak_net {
     auto readable_floor_kbps = preserve_readable_interactive_floor ?
                                  readable_interactive_floor_kbps(config_, configured_encoding_ceiling) :
                                  std::min(config_.min_bitrate_kbps, configured_encoding_ceiling);
+    const bool no_profile_fullres_interactive =
+      !config_.runtime_profile_tier_supported &&
+      preserve_readable_interactive_floor &&
+      (input_active || motion_active) &&
+      !network_crisis &&
+      !rfi_storm &&
+      feedback.waiting_for_rfi_frames == 0 &&
+      unrecoverable < 0.005;
+    const bool safe_no_profile_floor_lift =
+      no_profile_fullres_interactive &&
+      !delay_only_congestion &&
+      pressures.delay_congestion < 0.28 &&
+      ewma_delay_pressure_ < 0.32 &&
+      pressures.render < 0.70 &&
+      ewma_deadline_pressure_ < 0.85 &&
+      !audio_crisis;
+    const bool no_profile_floor_recovery_allowed =
+      no_profile_fullres_interactive &&
+      !network_crisis &&
+      pressures.delay_congestion < 0.55 &&
+      ewma_delay_pressure_ < 0.58 &&
+      pressures.render < 0.95 &&
+      ewma_deadline_pressure_ < 1.10 &&
+      !audio_crisis;
+    if (no_profile_fullres_interactive) {
+      const auto fullres_floor_fraction = safe_no_profile_floor_lift ? 0.42 : 0.32;
+      const auto fullres_floor = std::max(
+        config_.min_bitrate_kbps,
+        static_cast<int>(std::lround(static_cast<double>(user_quality_budget_kbps(config_)) *
+                                     fullres_floor_fraction)));
+      const auto high_refresh_floor = config_.baseline_fps >= 90 ?
+                                        std::min(configured_encoding_ceiling,
+                                                 std::max(config_.min_bitrate_kbps,
+                                                          safe_no_profile_floor_lift ? 5200 : 3800)) :
+                                        config_.min_bitrate_kbps;
+      readable_floor_kbps = std::max(readable_floor_kbps,
+                                     std::min(configured_encoding_ceiling,
+                                              std::max(fullres_floor, high_refresh_floor)));
+    }
     const bool weak_route_recovery_guard =
       sustainable_limit_active_ ||
       network_crisis ||
@@ -1046,6 +1164,7 @@ namespace weak_net {
 
     if (audio_only_pressure) {
       sustainable_limit_active_ = false;
+      current_bitrate_kbps_ = std::max(current_bitrate_kbps_, audio_only_floor);
       sustainable_estimate_kbps_ = std::max(sustainable_estimate_kbps_, current_bitrate_kbps_);
       effective_ceiling_kbps_ = configured_encoding_ceiling;
     }
@@ -1172,6 +1291,27 @@ namespace weak_net {
                                         static_cast<int>(std::lround(static_cast<double>(user_quality_budget_kbps(config_)) * 1.30)));
 
     if (previous_bitrate > 0) {
+      const bool suppress_upward_bitrate_change =
+        current_bitrate_kbps_ > previous_bitrate &&
+        !audio_only_pressure &&
+        !no_profile_floor_recovery_allowed &&
+        (visual_recovery_guard ||
+         network_crisis ||
+         network_constrained ||
+         video_deadline_constrained ||
+         state_ == state_e::constrained ||
+         state_ == state_e::crisis);
+      if (suppress_upward_bitrate_change) {
+        current_bitrate_kbps_ = previous_bitrate;
+      }
+      else if (audio_only_pressure && current_bitrate_kbps_ > previous_bitrate) {
+        // Current network/video path is clean; do not let stale loss EWMA make
+        // audio continuity keep the picture stuck at a post-crisis mosaic floor.
+        current_bitrate_kbps_ = std::max(
+          current_bitrate_kbps_,
+          std::min(effective_ceiling_kbps_,
+                   previous_bitrate + gentle_probe_step(previous_bitrate, effective_ceiling_kbps_)));
+      }
       const auto max_bitrate_down = emergency_return_to_user_budget ?
                                       previous_bitrate :
                                       proportional_step(previous_bitrate,
@@ -1192,10 +1332,12 @@ namespace weak_net {
         raw_motion_clean;
       const auto max_bitrate_up = proportional_step(previous_bitrate,
                                                     clean_audio_only_visual_recovery ? 0.35 :
+                                                    no_profile_floor_recovery_allowed && previous_bitrate < readable_floor_kbps ? 0.55 :
                                                     recent_media_recovery ? 0.18 :
                                                     0.20,
                                                     1200,
                                                     clean_audio_only_visual_recovery ? 7000 :
+                                                    no_profile_floor_recovery_allowed && previous_bitrate < readable_floor_kbps ? 3200 :
                                                     recent_media_recovery ? 5000 :
                                                     8000);
       current_bitrate_kbps_ = clamp_delta_int(previous_bitrate,
@@ -1221,6 +1363,20 @@ namespace weak_net {
       current_fec_percentage_ = clamp_percent(current_fec_percentage_, config_.max_fec_percentage);
     }
 
+    if (delay_only_congestion && config_.user_quality_kbps > 0) {
+      const auto delay_total_cap = delay_congestion_total_cap_kbps(config_,
+                                                                   sustainable_estimate_kbps_,
+                                                                   configured_encoding_ceiling,
+                                                                   network_crisis,
+                                                                   pressures.delay_congestion,
+                                                                   pressures.render);
+      const auto delay_encoding_cap = std::max(
+        config_.min_bitrate_kbps,
+        encoding_bitrate_for_total_budget(delay_total_cap, current_fec_percentage_));
+      current_bitrate_kbps_ = std::min(current_bitrate_kbps_, delay_encoding_cap);
+      effective_ceiling_kbps_ = std::min(effective_ceiling_kbps_, delay_encoding_cap);
+    }
+
     if (previous_fps > 0) {
       const auto max_fps_down = severe_media_stall ? 12 : 8;
       const auto max_fps_up = recent_media_recovery ?
@@ -1243,6 +1399,15 @@ namespace weak_net {
       pacing_budget_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_),
       config_.ceiling_total_bitrate_kbps,
       config_.min_bitrate_kbps);
+    if (delay_only_congestion && config_.user_quality_kbps > 0) {
+      const auto delay_total_cap = delay_congestion_total_cap_kbps(config_,
+                                                                   sustainable_estimate_kbps_,
+                                                                   configured_encoding_ceiling,
+                                                                   network_crisis,
+                                                                   pressures.delay_congestion,
+                                                                   pressures.render);
+      pacing_bitrate_kbps_ = std::min(pacing_bitrate_kbps_, delay_total_cap);
+    }
     const auto total_budget_kbps = total_bitrate_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_);
     const auto fec_budget_kbps = std::max(0, total_budget_kbps - current_bitrate_kbps_);
 

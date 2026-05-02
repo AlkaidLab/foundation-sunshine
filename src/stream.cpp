@@ -723,6 +723,8 @@ namespace stream {
     std::chrono::steady_clock::time_point last_weak_net_fec_feedback {};
     std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
     std::chrono::steady_clock::time_point weak_net_recovery_ready_after {};
+    std::chrono::steady_clock::time_point weak_net_startup_guard_until {};
+    std::chrono::steady_clock::time_point last_weak_net_startup_guard_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     int last_applied_weak_net_bitrate { 0 };
@@ -1445,12 +1447,18 @@ namespace stream {
                             (target_fec_percentage != session->last_applied_weak_net_fec &&
                              (session->last_weak_net_fec_apply.time_since_epoch().count() == 0 ||
                               now - session->last_weak_net_fec_apply >= 750ms)));
+    const auto last_fps = session->last_applied_weak_net_fps;
+    const auto fps_delta = last_fps > 0 ? std::abs(target_fps - last_fps) : target_fps;
+    const bool fps_drop = last_fps > 0 && target_fps < last_fps;
     const bool fps_target_changed = target_fps > 0 &&
-                                    (session->last_applied_weak_net_fps <= 0 ||
-                                     std::abs(target_fps - session->last_applied_weak_net_fps) >= 3);
+                                    (last_fps <= 0 ||
+                                     fps_delta >= 12 ||
+                                     (target_fps <= 60 && last_fps > 72) ||
+                                     (target_fps >= 90 && last_fps < 90));
+    const auto fps_cooldown = fps_drop ? 1500ms : 2500ms;
     const bool apply_fps = fps_target_changed &&
                            (session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ||
-                            now - session->last_weak_net_fps_apply >= 750ms);
+                            now - session->last_weak_net_fps_apply >= fps_cooldown);
     const bool fps_deferred = fps_target_changed && !apply_fps;
     const bool profile_target_changed =
       action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale ||
@@ -1624,6 +1632,53 @@ namespace stream {
     auto action = session->weak_net_controller.on_feedback(feedback);
     apply_weak_net_action(session, action, source);
     record_weak_net_feedback_diag(session, feedback, action, source);
+  }
+
+  static bool
+  should_hold_startup_weak_net_feedback(session_t *session,
+                                        const weak_net::feedback_t &feedback,
+                                        const char *source) {
+    if (!session) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (session->weak_net_startup_guard_until.time_since_epoch().count() == 0 ||
+        now >= session->weak_net_startup_guard_until) {
+      return false;
+    }
+
+    const auto total_packets = feedback.total_packets;
+    const auto missing_packets = feedback.missing_packets;
+    const bool actual_loss =
+      feedback.unrecoverable_frames > 0 ||
+      (total_packets > 0 && missing_packets * 100U >= std::max(1U, total_packets) * 3U);
+    const bool hard_delay =
+      feedback.rtt_ms >= 300 ||
+      feedback.rtt_variance_ms >= 240 ||
+      feedback.waiting_for_rfi_frames >= 8;
+    if (actual_loss || hard_delay) {
+      return false;
+    }
+
+    if (session->last_weak_net_startup_guard_log.time_since_epoch().count() == 0 ||
+        now - session->last_weak_net_startup_guard_log >= 1000ms) {
+      session->last_weak_net_startup_guard_log = now;
+      BOOST_LOG(info) << "Weak-net startup guard holding transient feedback"
+                      << " runtime=" << session->identity.runtime_id
+                      << " source=" << source
+                      << " frames=" << feedback.frames_seen
+                      << " complete=" << feedback.complete_frames
+                      << " displayed=" << feedback.displayed_frames
+                      << " late=" << feedback.late_frames
+                      << " dq=" << feedback.decode_queue_depth
+                      << " rq=" << feedback.render_queue_depth
+                      << " audioUnd=" << feedback.audio_underruns
+                      << " lateAudioDrop=" << feedback.late_audio_drops
+                      << " rtt=" << feedback.rtt_ms << "ms"
+                      << " jitter=" << feedback.rtt_variance_ms << "ms";
+    }
+    return true;
   }
 
   /**
@@ -3472,6 +3527,9 @@ namespace stream {
         .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
       };
       annotate_feedback_with_host_motion(session, network_feedback);
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+        return;
+      }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback");
       record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
@@ -3534,6 +3592,9 @@ namespace stream {
         .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
       };
       annotate_feedback_with_host_motion(session, network_feedback);
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v2")) {
+        return;
+      }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback-v2");
       record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v2");
@@ -3605,6 +3666,9 @@ namespace stream {
         .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
       };
       annotate_feedback_with_host_motion(session, network_feedback);
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v3")) {
+        return;
+      }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
       apply_weak_net_action(session, action, "feedback-v3");
       record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v3");
@@ -5608,6 +5672,8 @@ namespace stream {
       }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+      session.weak_net_startup_guard_until = std::chrono::steady_clock::now() + 3500ms;
+      session.last_weak_net_startup_guard_log = {};
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
