@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <iomanip>
 #include <queue>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 
 #include <fstream>
@@ -917,6 +919,32 @@ namespace stream {
     return it == _cert_key_to_sessions->end() ? std::vector<session_t *> {} : it->second;
   }
 
+
+  static const char *
+  feature_name(session_runtime::feature_e feature) {
+    switch (feature) {
+      case session_runtime::feature_e::clipboard:
+        return "clipboard";
+      case session_runtime::feature_e::microphone:
+        return "microphone";
+      case session_runtime::feature_e::display:
+        return "display";
+      case session_runtime::feature_e::dynamic_params:
+        return "dynamic-params";
+      case session_runtime::feature_e::input_focus:
+        return "input-focus";
+      case session_runtime::feature_e::transport_qos:
+        return "transport-qos";
+      case session_runtime::feature_e::cursor_plane:
+        return "cursor-plane";
+      case session_runtime::feature_e::clipboard_bulk:
+        return "clipboard-bulk";
+      case session_runtime::feature_e::dynamic_quality:
+        return "dynamic-quality";
+    }
+    return "unknown";
+  }
+
   session_runtime::owner_token_t
   feature_lease_registry_t::acquire(session_runtime::feature_e feature, const session_t &session) {
     session_runtime::owner_token_t token {
@@ -926,31 +954,63 @@ namespace stream {
       session.identity.control_generation,
     };
 
-    auto lg = _owners.lock();
-    (*_owners)[feature_key(feature)] = token;
+    session_runtime::owner_token_t previous { feature };
+    {
+      auto lg = _owners.lock();
+      auto it = _owners->find(feature_key(feature));
+      if (it != _owners->end()) {
+        previous = it->second;
+      }
+      (*_owners)[feature_key(feature)] = token;
+    }
+    BOOST_LOG(info) << "Session feature owner acquired"
+                    << " feature=" << feature_name(feature)
+                    << " runtime=" << token.runtime_id
+                    << " previous=" << previous.runtime_id
+                    << " certKey=" << token.client_cert_key
+                    << " generation=" << token.control_generation;
     return token;
   }
 
   void
   feature_lease_registry_t::release(session_runtime::feature_e feature, const session_t &session) {
-    auto lg = _owners.lock();
-    auto it = _owners->find(feature_key(feature));
-    if (it != _owners->end() &&
-        it->second.runtime_id == session.identity.runtime_id) {
-      _owners->erase(it);
+    bool released = false;
+    {
+      auto lg = _owners.lock();
+      auto it = _owners->find(feature_key(feature));
+      if (it != _owners->end() &&
+          it->second.runtime_id == session.identity.runtime_id) {
+        _owners->erase(it);
+        released = true;
+      }
+    }
+    if (released) {
+      BOOST_LOG(info) << "Session feature owner released"
+                      << " feature=" << feature_name(feature)
+                      << " runtime=" << session.identity.runtime_id;
     }
   }
 
   void
   feature_lease_registry_t::release_all(const session_t &session) {
-    auto lg = _owners.lock();
-    for (auto it = _owners->begin(); it != _owners->end();) {
-      if (it->second.runtime_id == session.identity.runtime_id) {
-        it = _owners->erase(it);
+    std::vector<session_runtime::feature_e> released_features;
+    {
+      auto lg = _owners.lock();
+      for (auto it = _owners->begin(); it != _owners->end();) {
+        if (it->second.runtime_id == session.identity.runtime_id) {
+          released_features.push_back(it->second.feature);
+          it = _owners->erase(it);
+        }
+        else {
+          ++it;
+        }
       }
-      else {
-        ++it;
-      }
+    }
+    for (auto feature : released_features) {
+      BOOST_LOG(info) << "Session feature owner released"
+                      << " feature=" << feature_name(feature)
+                      << " runtime=" << session.identity.runtime_id
+                      << " reason=release-all";
     }
   }
 
@@ -1944,7 +2004,12 @@ namespace stream {
   setup_mic_for_session(session_t &session) {
     auto &ctx = *session.broadcast_ref.get();
 
-    ctx.mic_sessions_count.fetch_add(1);
+    const auto mic_count_after_add = ctx.mic_sessions_count.fetch_add(1) + 1;
+    BOOST_LOG(info) << "Client " << session.client_name
+                    << ": Microphone session requested runtime=" << session.identity.runtime_id
+                    << " launchSession=" << session.launch_session_id
+                    << " micSessions=" << mic_count_after_add
+                    << " peer=" << session.audio.peer.address().to_string();
 
     // 确保 mic socket 处于打开状态（上次会话结束时可能已关闭）
     if (!ensure_mic_sock_open(ctx)) {
@@ -1955,6 +2020,10 @@ namespace stream {
     }
 
     ctx.mic_socket_enabled.store(true);
+    BOOST_LOG(info) << "Client " << session.client_name
+                    << ": Microphone socket enabled runtime=" << session.identity.runtime_id
+                    << " micSessions=" << ctx.mic_sessions_count.load()
+                    << " socketOpen=" << ctx.mic_sock.is_open();
 
     return activate_mic_owner_for_session(session);
   }
@@ -2910,6 +2979,48 @@ namespace stream {
       return util::endian::little(value);
     };
 
+    struct control_mic_stats_t {
+      std::uint64_t packets {};
+      std::uint64_t bytes {};
+      std::uint64_t token_mismatch {};
+      std::uint64_t lease_rejected {};
+      std::uint64_t write_ok {};
+      std::uint64_t write_failed {};
+      std::uint64_t invalid {};
+    };
+    std::unordered_map<std::uint64_t, control_mic_stats_t> control_mic_stats;
+    constexpr std::uint32_t control_mic_magic = 0x3143494D;  // 'MIC1'
+    constexpr std::uint16_t control_mic_version = 1;
+    constexpr std::uint16_t control_mic_flag_session_token = 0x0001;
+    constexpr std::size_t control_mic_token_size = 16;
+    constexpr std::size_t control_mic_header_size =
+      sizeof(std::uint32_t) + sizeof(std::uint16_t) * 4 + control_mic_token_size;
+    auto log_control_mic_stats = [&](session_t *session,
+                                     control_mic_stats_t &stats,
+                                     const char *event) {
+      const std::string_view event_view = event ? std::string_view { event } : std::string_view {};
+      const bool important = stats.packets == 1 ||
+                             stats.write_ok == 1 ||
+                             (stats.packets % 250) == 0 ||
+                             (event_view == "control-token-mismatch" && stats.token_mismatch <= 3) ||
+                             (event_view == "control-lease-rejected" && stats.lease_rejected <= 3) ||
+                             (event_view == "control-invalid" && stats.invalid <= 3) ||
+                             (event_view == "control-write-failed" && (stats.write_failed == 1 || (stats.write_failed % 25) == 0));
+      if (!important) {
+        return;
+      }
+      BOOST_LOG(info) << "Microphone receive stats"
+                      << " event=" << event
+                      << " runtime=" << (session ? session->identity.runtime_id : 0)
+                      << " packets=" << stats.packets
+                      << " bytes=" << stats.bytes
+                      << " tokenMismatch=" << stats.token_mismatch
+                      << " leaseReject=" << stats.lease_rejected
+                      << " writeOk=" << stats.write_ok
+                      << " writeFail=" << stats.write_failed
+                      << " invalid=" << stats.invalid;
+    };
+
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_periodic_ping_log.time_since_epoch().count() == 0 ||
@@ -2931,6 +3042,67 @@ namespace stream {
 
     server->map(packetTypes[IDX_START_B], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_START_B]"sv;
+    });
+
+    server->map(packetTypes[IDX_MIC_DATA], [&, read_u16_le, read_u32_le](session_t *session, const std::string_view &payload) {
+      if (!session || !session->broadcast_ref) {
+        return;
+      }
+
+      auto &stats = control_mic_stats[session->identity.runtime_id];
+      stats.packets++;
+      stats.bytes += payload.size();
+
+      if (payload.size() < control_mic_header_size) {
+        stats.invalid++;
+        log_control_mic_stats(session, stats, "control-invalid");
+        return;
+      }
+
+      const auto *data = payload.data();
+      const auto magic = read_u32_le(data);
+      const auto version = read_u16_le(data + 4);
+      const auto sequence_number = read_u16_le(data + 6);
+      const auto payload_length = read_u16_le(data + 8);
+      const auto flags = read_u16_le(data + 10);
+      const auto *token = data + 12;
+      const auto *opus = data + control_mic_header_size;
+      const auto opus_size = payload.size() - control_mic_header_size;
+
+      if (magic != control_mic_magic ||
+          version != control_mic_version ||
+          payload_length != opus_size ||
+          opus_size == 0) {
+        stats.invalid++;
+        log_control_mic_stats(session, stats, "control-invalid");
+        return;
+      }
+
+      if ((flags & control_mic_flag_session_token) != 0 &&
+          session->audio.ping_payload.size() == control_mic_token_size &&
+          std::memcmp(token, session->audio.ping_payload.data(), control_mic_token_size) != 0) {
+        stats.token_mismatch++;
+        log_control_mic_stats(session, stats, "control-token-mismatch");
+        return;
+      }
+
+      if (!session->broadcast_ref->feature_leases.validate(session_runtime::feature_e::microphone, *session)) {
+        stats.lease_rejected++;
+        log_control_mic_stats(session, stats, "control-lease-rejected");
+        return;
+      }
+
+      const int write_result = audio::write_mic_data(reinterpret_cast<const std::uint8_t *>(opus),
+                                                     opus_size,
+                                                     sequence_number);
+      if (write_result >= 0) {
+        stats.write_ok++;
+        log_control_mic_stats(session, stats, "control-write-ok");
+      }
+      else {
+        stats.write_failed++;
+        log_control_mic_stats(session, stats, "control-write-failed");
+      }
     });
 
     server->map(packetTypes[IDX_CLIPBOARD], [&, reset_clipboard_transfer, clear_clipboard_binding, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item, read_u16_le, read_u32_le, read_u64_le](session_t *session, const std::string_view &payload) {
@@ -3950,6 +4122,10 @@ namespace stream {
       uint64_t decrypt_success = 0;
       uint64_t decrypt_failed = 0;
       uint64_t invalid_data = 0;
+      uint64_t no_owner = 0;
+      uint64_t lease_rejected = 0;
+      uint64_t write_success = 0;
+      uint64_t write_failed = 0;
     };
     std::map<std::string, MicStats> client_stats;
 
@@ -3976,6 +4152,34 @@ namespace stream {
       // 更新统计
       auto &stats = client_stats[peer_addr];
       stats.total_packets++;
+      auto maybe_log_mic_stats = [&](const char *event) {
+        const std::string_view event_view = event ? std::string_view { event } : std::string_view {};
+        const bool important = stats.total_packets == 1 ||
+                               stats.write_success == 1 ||
+                               (stats.total_packets % 250) == 0 ||
+                               (event_view == "no-owner" && (stats.no_owner == 1 || (stats.no_owner % 100) == 0)) ||
+                               (event_view == "lease-rejected" && (stats.lease_rejected == 1 || (stats.lease_rejected % 100) == 0)) ||
+                               (event_view == "decrypt-failed" && (stats.decrypt_failed == 1 || (stats.decrypt_failed % 100) == 0)) ||
+                               (event_view == "write-failed-encrypted" && (stats.write_failed == 1 || (stats.write_failed % 25) == 0)) ||
+                               (event_view == "write-failed-plaintext" && (stats.write_failed == 1 || (stats.write_failed % 25) == 0));
+        if (!important) {
+          return;
+        }
+        BOOST_LOG(info) << "Microphone receive stats"
+                        << " event=" << event
+                        << " peer=" << peer_addr
+                        << " clientIp=" << client_ip
+                        << " packets=" << stats.total_packets
+                        << " decryptOk=" << stats.decrypt_success
+                        << " decryptFail=" << stats.decrypt_failed
+                        << " invalid=" << stats.invalid_data
+                        << " noOwner=" << stats.no_owner
+                        << " leaseReject=" << stats.lease_rejected
+                        << " writeOk=" << stats.write_success
+                        << " writeFail=" << stats.write_failed
+                        << " micSocket=" << ctx.mic_socket_enabled.load()
+                        << " micSessions=" << ctx.mic_sessions_count.load();
+      };
 
       // 查找该客户端的 per-client 加密上下文
       // 仅在锁内拷贝 shared_ptr，解密和写入在锁外进行
@@ -4012,9 +4216,13 @@ namespace stream {
       }
 
       if (!mic_owner) {
+        stats.no_owner++;
+        maybe_log_mic_stats("no-owner");
         return;
       }
       if (!ctx.feature_leases.validate(mic_owner)) {
+        stats.lease_rejected++;
+        maybe_log_mic_stats("lease-rejected");
         return;
       }
 
@@ -4035,6 +4243,7 @@ namespace stream {
           if (cipher_ctx->cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
             // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
             stats.decrypt_failed++;
+            maybe_log_mic_stats("decrypt-failed");
             return;  // 丢弃数据包
           }
 
@@ -4063,7 +4272,15 @@ namespace stream {
           }
 
           // 解密成功且数据看起来有效
-          audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
+          const int write_result = audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
+          if (write_result >= 0) {
+            stats.write_success++;
+            maybe_log_mic_stats("write-ok-encrypted");
+          }
+          else {
+            stats.write_failed++;
+            maybe_log_mic_stats("write-failed-encrypted");
+          }
           return;
       }
 
@@ -4073,13 +4290,22 @@ namespace stream {
       if (ctx.mic_reject_plaintext.load()) {
         BOOST_LOG(warning) << "Rejected plaintext microphone data (mic_reject_plaintext enabled)";
         stats.decrypt_failed++;
+        maybe_log_mic_stats("plaintext-rejected");
         return;
       }
 
       // 未加密数据或加密未启用，直接处理
       // 也要统计未加密数据
       stats.decrypt_success++;  // 明文数据算作"成功"
-      audio::write_mic_data(audio_data, data_size, sequence_number);
+      const int write_result = audio::write_mic_data(audio_data, data_size, sequence_number);
+      if (write_result >= 0) {
+        stats.write_success++;
+        maybe_log_mic_stats("write-ok-plaintext");
+      }
+      else {
+        stats.write_failed++;
+        maybe_log_mic_stats("write-failed-plaintext");
+      }
     };
 
     std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
@@ -4137,24 +4363,62 @@ namespace stream {
         }
       }
 
-      // 尝试16位扩展包类型
-      if (received_bytes >= sizeof(rtp_packet_session_ext_t)) {
-        auto *header_session_ext = (rtp_packet_session_ext_t *) mic_recv_buffer.data();
-        if (util::endian::little(header_session_ext->rtp.packetType) == packetTypes[IDX_MIC_DATA]) {
-          size_t header_size = sizeof(rtp_packet_session_ext_t);
-          if (received_bytes > header_size) {
-            uint16_t sequence_number = util::endian::little(header_session_ext->rtp.sequenceNumber);
-            mic_session_token_t session_token {};
-            std::copy_n(header_session_ext->sessionToken, session_token.size(), session_token.begin());
-            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
-                               received_bytes - header_size,
-                               sequence_number,
-                               client_id,
-                               client_ip,
-                               &session_token);
-          }
-          return;
+      auto read_mic_u16 = [&](std::size_t offset) -> std::uint16_t {
+        std::uint16_t value = 0;
+        if (offset + sizeof(value) <= received_bytes) {
+          std::memcpy(&value, mic_recv_buffer.data() + offset, sizeof(value));
         }
+        return util::endian::little(value);
+      };
+
+      auto try_session_mic_header = [&](std::size_t packet_type_offset,
+                                          std::size_t sequence_offset,
+                                          std::size_t token_offset,
+                                          std::size_t header_size,
+                                          const char *layout) -> bool {
+        if (received_bytes < header_size) {
+          return false;
+        }
+        if (read_mic_u16(packet_type_offset) != packetTypes[IDX_MIC_DATA]) {
+          return false;
+        }
+        if (received_bytes > header_size) {
+          const auto sequence_number = read_mic_u16(sequence_offset);
+          mic_session_token_t session_token {};
+          std::copy_n(mic_recv_buffer.data() + token_offset, session_token.size(), session_token.begin());
+          BOOST_LOG(debug) << "Microphone packet session header layout=" << layout
+                           << " bytes=" << received_bytes;
+          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+                             received_bytes - header_size,
+                             sequence_number,
+                             client_id,
+                             client_ip,
+                             &session_token);
+        }
+        return true;
+      };
+
+      // 尝试16位扩展包类型。当前 Enhanced Moonlight common-c 曾经以未 pack 的
+      // C struct 发送 session header（flags 后有 padding，header 为 32 字节），
+      // 而 Sunshine 这里使用 pack(1) 结构（header 为 29 字节）。两者都接受，
+      // 避免麦克风数据到达但因 header 对齐差异被静默丢弃。
+      if (try_session_mic_header(offsetof(rtp_packet_session_ext_t, rtp.packetType),
+                                 offsetof(rtp_packet_session_ext_t, rtp.sequenceNumber),
+                                 offsetof(rtp_packet_session_ext_t, sessionToken),
+                                 sizeof(rtp_packet_session_ext_t),
+                                 "packed")) {
+        return;
+      }
+      constexpr std::size_t padded_session_packet_type_offset = 2;
+      constexpr std::size_t padded_session_sequence_offset = 4;
+      constexpr std::size_t padded_session_token_offset = 16;
+      constexpr std::size_t padded_session_header_size = 32;
+      if (try_session_mic_header(padded_session_packet_type_offset,
+                                 padded_session_sequence_offset,
+                                 padded_session_token_offset,
+                                 padded_session_header_size,
+                                 "padded")) {
+        return;
       }
 
       if (received_bytes >= sizeof(rtp_packet_ext_t)) {
@@ -4203,6 +4467,22 @@ namespace stream {
                              client_id,
                              client_ip,
                              nullptr);
+        }
+      }
+      else {
+        auto &stats = client_stats[client_id];
+        stats.total_packets++;
+        stats.invalid_data++;
+        if (stats.invalid_data == 1 || (stats.invalid_data % 250) == 0) {
+          BOOST_LOG(info) << "Microphone receive stats"
+                          << " event=unrecognized-header"
+                          << " peer=" << client_id
+                          << " bytes=" << received_bytes
+                          << " first=" << static_cast<int>(static_cast<unsigned char>(mic_recv_buffer[0]))
+                          << " second=" << (received_bytes > 1 ? static_cast<int>(static_cast<unsigned char>(mic_recv_buffer[1])) : -1)
+                          << " invalid=" << stats.invalid_data
+                          << " micSocket=" << ctx.mic_socket_enabled.load()
+                          << " micSessions=" << ctx.mic_sessions_count.load();
         }
       }
     };
@@ -4259,7 +4539,11 @@ namespace stream {
                          << "total=" << stats.total_packets
                          << ", success=" << stats.decrypt_success << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
                          << ", failed=" << stats.decrypt_failed
-                         << ", invalid=" << stats.invalid_data;
+                         << ", invalid=" << stats.invalid_data
+                         << ", noOwner=" << stats.no_owner
+                         << ", leaseReject=" << stats.lease_rejected
+                         << ", writeOk=" << stats.write_success
+                         << ", writeFail=" << stats.write_failed;
         }
       }
     }
@@ -5262,8 +5546,11 @@ namespace stream {
                   !candidate->control_only &&
                   candidate->state.load(std::memory_order_acquire) == state_e::RUNNING) {
                 auto display_resource = session.broadcast_ref->resources.acquire_display_resource(*candidate);
+                session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::input_focus, *candidate);
+                session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::dynamic_quality, *candidate);
+                session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::transport_qos, *candidate);
                 BOOST_LOG(debug) << "Promoted runtime session " << display_resource.owner.runtime_id
-                                 << " to shared display resource owner after runtime session "
+                                 << " to shared display/input/dynamic-quality owner after runtime session "
                                  << session.identity.runtime_id << " ended";
                 break;
               }
@@ -5344,6 +5631,9 @@ namespace stream {
                            << " (scope=" << resource_scope_name(display_resource.scope)
                            << ", mode=" << display_allocation_mode_name(display_resource.mode) << ")";
         }
+        session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::input_focus, session);
+        session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::dynamic_quality, session);
+        session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::transport_qos, session);
 
         // 非仅控制流会话：增加两个计数器
         ++running_sessions;
@@ -5722,6 +6012,18 @@ namespace stream {
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
+          auto input_owner = broadcast_ref->feature_leases.owner(session_runtime::feature_e::input_focus);
+          info.input_owner = input_owner.runtime_id == session_p->identity.runtime_id;
+          info.input_owner_runtime_id = input_owner.runtime_id;
+          auto mic_owner = broadcast_ref->feature_leases.owner(session_runtime::feature_e::microphone);
+          info.mic_owner = mic_owner.runtime_id == session_p->identity.runtime_id;
+          info.mic_owner_runtime_id = mic_owner.runtime_id;
+          auto clipboard_owner = broadcast_ref->feature_leases.owner(session_runtime::feature_e::clipboard);
+          info.clipboard_owner = clipboard_owner.runtime_id == session_p->identity.runtime_id;
+          info.clipboard_owner_runtime_id = clipboard_owner.runtime_id;
+          auto dynamic_quality_owner = broadcast_ref->feature_leases.owner(session_runtime::feature_e::dynamic_quality);
+          info.dynamic_quality_owner = dynamic_quality_owner.runtime_id == session_p->identity.runtime_id;
+          info.dynamic_quality_owner_runtime_id = dynamic_quality_owner.runtime_id;
           auto display_resource = broadcast_ref->resources.display_resource();
           info.display_owner = display_resource.owner.runtime_id == session_p->identity.runtime_id;
           info.display_owner_runtime_id = display_resource.owner.runtime_id;

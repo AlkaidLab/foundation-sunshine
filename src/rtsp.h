@@ -79,6 +79,9 @@ namespace rtsp_stream {
   int
   session_count();
 
+  int
+  pending_launch_session_count();
+
   std::uint64_t
   foundation_streaming_feature_flags2();
 

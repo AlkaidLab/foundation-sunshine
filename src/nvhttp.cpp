@@ -7,6 +7,7 @@
 
 // standard includes
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -72,6 +73,93 @@ namespace nvhttp {
   };
 
   crypto::cert_chain_t cert_chain;
+
+  struct nvhttp_runtime_session_summary_t {
+    std::size_t total {};
+    std::size_t running {};
+    std::size_t starting {};
+    std::size_t stopping {};
+    std::size_t mic_enabled {};
+  };
+
+  nvhttp_runtime_session_summary_t
+  runtime_session_summary() {
+    nvhttp_runtime_session_summary_t summary;
+    auto sessions = stream::session::get_all_sessions_info();
+    summary.total = sessions.size();
+    for (const auto &session : sessions) {
+      if (session.state == "RUNNING") {
+        ++summary.running;
+      }
+      else if (session.state == "STARTING") {
+        ++summary.starting;
+      }
+      else if (session.state == "STOPPING") {
+        ++summary.stopping;
+      }
+      if (session.enable_mic) {
+        ++summary.mic_enabled;
+      }
+    }
+    return summary;
+  }
+
+  void
+  log_serverinfo_runtime_state(std::uint32_t current_appid,
+                               int rtsp_active_sessions,
+                               int rtsp_pending_sessions,
+                               const nvhttp_runtime_session_summary_t &summary,
+                               std::string_view request_remote,
+                               std::string_view request_unique_id) {
+    static std::mutex log_mutex;
+    static auto last_log = std::chrono::steady_clock::time_point {};
+    static std::string last_key;
+
+    const auto now = std::chrono::steady_clock::now();
+    std::ostringstream key_stream;
+    key_stream << current_appid << ':'
+               << rtsp_active_sessions << ':'
+               << rtsp_pending_sessions << ':'
+               << summary.total << ':'
+               << summary.running << ':'
+               << summary.starting << ':'
+               << summary.stopping << ':'
+               << summary.mic_enabled;
+    auto key = key_stream.str();
+
+    std::lock_guard lock(log_mutex);
+    if (key == last_key && now - last_log < 5s) {
+      return;
+    }
+    last_key = std::move(key);
+    last_log = now;
+
+    const char *reason = "free";
+    if (current_appid > 0 && summary.running == 0 && summary.starting == 0 &&
+        rtsp_active_sessions == 0 && rtsp_pending_sessions == 0) {
+      reason = "app-running-without-client-session";
+    }
+    else if (current_appid > 0) {
+      reason = "app-running";
+    }
+    else if (summary.total > 0 || rtsp_active_sessions > 0 || rtsp_pending_sessions > 0) {
+      reason = "session-state-without-app";
+    }
+
+    BOOST_LOG(info) << "NVHTTP serverinfo runtime state"
+                    << " state=" << (current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE")
+                    << " reason=" << reason
+                    << " currentgame=" << current_appid
+                    << " rtspActive=" << rtsp_active_sessions
+                    << " rtspPending=" << rtsp_pending_sessions
+                    << " runtimeTotal=" << summary.total
+                    << " runtimeRunning=" << summary.running
+                    << " runtimeStarting=" << summary.starting
+                    << " runtimeStopping=" << summary.stopping
+                    << " micSessions=" << summary.mic_enabled
+                    << " remote=" << request_remote
+                    << " uniqueid=" << request_unique_id;
+  }
 
   struct named_cert_t {
     std::string name;
@@ -502,6 +590,7 @@ namespace nvhttp {
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
+    launch_session->enable_mic = util::from_view(get_arg(args, "microphone", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
     launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
     launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
@@ -899,29 +988,53 @@ namespace nvhttp {
 
   template <class T>
   std::string
+  forwarded_host_header(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+    for (const auto &[name, value] : request->header) {
+      if (ascii_iequals(name, "x-forwarded-host"sv) ||
+          ascii_iequals(name, "x-original-host"sv)) {
+        auto host = value;
+        if (auto comma = host.find(','); comma != std::string::npos) {
+          host = host.substr(0, comma);
+        }
+        return strip_host_port(host);
+      }
+    }
+    return {};
+  }
+
+  template <class T>
+  std::string
   rtsp_session_url_for_request(const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
                                std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     const auto fallback_host = net::addr_to_url_escaped_string(request->local_endpoint().address());
+    std::string host_source = "host";
     auto host = request_host_header<T>(request);
     if (!usable_rtsp_host(host)) {
+      host = forwarded_host_header<T>(request);
+      host_source = "forwarded";
+    }
+    if (!usable_rtsp_host(host)) {
       host = fallback_host;
+      host_source = "local-endpoint";
     }
 
     auto authority_host = url_authority_host(host);
     if (!usable_rtsp_host(authority_host)) {
       authority_host = fallback_host;
+      host_source = "local-endpoint";
     }
 
-    if (authority_host != fallback_host) {
-      BOOST_LOG(info) << "NVHTTP sessionUrl0 using request Host header for RTSP route"
-                      << " host=" << authority_host
-                      << " localEndpoint=" << fallback_host
-                      << " remote=" << request->remote_endpoint().address().to_string();
-    }
+    const auto session_url = launch_session->rtsp_url_scheme +
+                             authority_host + ':' +
+                             std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+    BOOST_LOG(info) << "NVHTTP sessionUrl0 selected for RTSP route"
+                    << " source=" << host_source
+                    << " host=" << authority_host
+                    << " localEndpoint=" << fallback_host
+                    << " remote=" << request->remote_endpoint().address().to_string()
+                    << " url=" << session_url;
 
-    return launch_session->rtsp_url_scheme +
-           authority_host + ':' +
-           std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+    return session_url;
   }
 
   template <class T>
@@ -1218,6 +1331,30 @@ namespace nvhttp {
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
+
+    auto runtime_summary = runtime_session_summary();
+    auto rtsp_active_sessions = rtsp_stream::session_count();
+    auto rtsp_pending_sessions = rtsp_stream::pending_launch_session_count();
+    tree.put("root.rtspActiveSessions", rtsp_active_sessions);
+    tree.put("root.rtspPendingSessions", rtsp_pending_sessions);
+    tree.put("root.runtimeSessions", runtime_summary.total);
+    tree.put("root.runtimeRunningSessions", runtime_summary.running);
+    tree.put("root.runtimeStartingSessions", runtime_summary.starting);
+    tree.put("root.runtimeStoppingSessions", runtime_summary.stopping);
+    tree.put("root.runtimeMicSessions", runtime_summary.mic_enabled);
+
+    auto query_args = request->parse_query_string();
+    std::string request_unique_id;
+    auto unique_it = query_args.find("uniqueid"s);
+    if (unique_it != query_args.end()) {
+      request_unique_id = unique_it->second;
+    }
+    log_serverinfo_runtime_state(static_cast<std::uint32_t>(current_appid),
+                                 rtsp_active_sessions,
+                                 rtsp_pending_sessions,
+                                 runtime_summary,
+                                 request->remote_endpoint().address().to_string(),
+                                 request_unique_id);
 
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
@@ -1613,6 +1750,16 @@ namespace nvhttp {
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["input_owner"] = session_info.input_owner;
+        session_obj["input_owner_runtime_id"] = session_info.input_owner_runtime_id;
+        session_obj["mic_owner"] = session_info.mic_owner;
+        session_obj["mic_owner_runtime_id"] = session_info.mic_owner_runtime_id;
+        session_obj["clipboard_owner"] = session_info.clipboard_owner;
+        session_obj["clipboard_owner_runtime_id"] = session_info.clipboard_owner_runtime_id;
+        session_obj["display_owner"] = session_info.display_owner;
+        session_obj["display_owner_runtime_id"] = session_info.display_owner_runtime_id;
+        session_obj["dynamic_quality_owner"] = session_info.dynamic_quality_owner;
+        session_obj["dynamic_quality_owner_runtime_id"] = session_info.dynamic_quality_owner_runtime_id;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
 
@@ -2041,6 +2188,15 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    BOOST_LOG(info) << "NVHTTP launch session prepared"
+                    << " launchSession=" << launch_session->id
+                    << " client=" << launch_session->client_name
+                    << " uniqueid=" << launch_session->unique_id
+                    << " appid=" << launch_session->appid
+                    << " mode=" << launch_session->width << "x" << launch_session->height << "@" << launch_session->fps
+                    << " mic=" << launch_session->enable_mic
+                    << " hostAudio=" << launch_session->host_audio
+                    << " peer=" << launch_session->rtsp_peer_address;
 
     // 获取客户端证书UUID（稳定的客户端标识符）
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
@@ -2098,6 +2254,10 @@ namespace nvhttp {
     tree.put("root.gamesession", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
+    BOOST_LOG(info) << "NVHTTP launch session raised"
+                    << " launchSession=" << launch_session->id
+                    << " rtspPending=" << rtsp_stream::pending_launch_session_count()
+                    << " rtspActive=" << rtsp_stream::session_count();
 
     // Send webhook notification for successful launch
     webhook::send_event_async(webhook::event_t {
@@ -2173,6 +2333,16 @@ namespace nvhttp {
     }
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    BOOST_LOG(info) << "NVHTTP resume session prepared"
+                    << " launchSession=" << launch_session->id
+                    << " client=" << launch_session->client_name
+                    << " uniqueid=" << launch_session->unique_id
+                    << " appid=" << launch_session->appid
+                    << " mode=" << launch_session->width << "x" << launch_session->height << "@" << launch_session->fps
+                    << " mic=" << launch_session->enable_mic
+                    << " hostAudio=" << launch_session->host_audio
+                    << " peer=" << launch_session->rtsp_peer_address
+                    << " noActiveSessions=" << no_active_sessions;
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
@@ -2182,21 +2352,33 @@ namespace nvhttp {
     }
 
     if (no_active_sessions) {
-      // We want to prepare display only if there are no active sessions at
-      // the moment. This should be done before probing encoders as it could
-      // change the active displays.
-      display_device::session_t::get().configure_display(config::video, *launch_session, false);
+      auto &display_session = display_device::session_t::get();
+      const bool display_fast_resume =
+        display_session.can_fast_resume_display(config::video, *launch_session);
+      if (display_fast_resume) {
+        BOOST_LOG(info) << "NVHTTP resume fast path: reusing prepared display/VDD state"
+                        << " launchSession=" << launch_session->id
+                        << " mode=" << launch_session->width << "x" << launch_session->height
+                        << "@" << launch_session->fps
+                        << " client=" << launch_session->client_name;
+      }
+      else {
+        // We want to prepare display only if there are no active sessions at
+        // the moment. This should be done before probing encoders as it could
+        // change the active displays.
+        display_session.configure_display(config::video, *launch_session, false);
 
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
-        tree.put("root.resume", 0);
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+        // Probe encoders again before streaming to ensure our chosen
+        // encoder matches the active GPU (which could have changed
+        // due to hotplugging, driver crash, primary monitor change,
+        // or any number of other factors).
+        if (video::probe_encoders()) {
+          tree.put("root.resume", 0);
+          tree.put("root.<xmlattr>.status_code", 503);
+          tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
 
-        return;
+          return;
+        }
       }
     }
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -2215,6 +2397,10 @@ namespace nvhttp {
     tree.put("root.resume", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
+    BOOST_LOG(info) << "NVHTTP resume session raised"
+                    << " launchSession=" << launch_session->id
+                    << " rtspPending=" << rtsp_stream::pending_launch_session_count()
+                    << " rtspActive=" << rtsp_stream::session_count();
 
     // Send webhook notification for successful resume
     webhook::send_event_async(webhook::event_t {

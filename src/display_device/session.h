@@ -88,6 +88,19 @@ namespace display_device {
     configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure = false);
 
     /**
+     * @brief Return true when a /resume request can safely reuse the currently
+     *        prepared VDD/display state without re-running VDD preparation and
+     *        encoder probing.
+     *
+     * This is intentionally conservative: it only allows the fast path for the
+     * same VDD client identity, same requested VDD mode, no pending restore, and
+     * an existing VDD device. It is used to avoid the slow pre-RTSP /resume path
+     * after a stream client disconnects while the app is still running.
+     */
+    bool
+    can_fast_resume_display(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+
+    /**
      * @brief Revert the display configuration and restore the previous state.
      * @note This method automatically loads the persistence (if any) from the previous Sunshine session.
      * @note In case the state could not be restored, it will be retried again in X seconds

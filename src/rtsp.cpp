@@ -758,6 +758,13 @@ namespace rtsp_stream {
       return _session_slots->size();
     }
 
+    int
+    pending_session_count() {
+      auto lg = _pending_launch_sessions.lock();
+      prune_launch_sessions_locked(*_pending_launch_sessions);
+      return static_cast<int>(_pending_launch_sessions->size());
+    }
+
     std::shared_ptr<launch_session_t>
     claim_launch_session(const std::string &remote_address) {
       auto lg = _pending_launch_sessions.lock();
@@ -919,6 +926,11 @@ namespace rtsp_stream {
     server.clear(false);
 
     return server.session_count();
+  }
+
+  int
+  pending_launch_session_count() {
+    return server.pending_session_count();
   }
 
   void

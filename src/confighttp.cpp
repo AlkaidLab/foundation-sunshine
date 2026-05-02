@@ -1723,6 +1723,14 @@ namespace confighttp {
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["input_owner"] = session_info.input_owner;
+        session_obj["input_owner_runtime_id"] = session_info.input_owner_runtime_id;
+        session_obj["mic_owner"] = session_info.mic_owner;
+        session_obj["mic_owner_runtime_id"] = session_info.mic_owner_runtime_id;
+        session_obj["clipboard_owner"] = session_info.clipboard_owner;
+        session_obj["clipboard_owner_runtime_id"] = session_info.clipboard_owner_runtime_id;
+        session_obj["dynamic_quality_owner"] = session_info.dynamic_quality_owner;
+        session_obj["dynamic_quality_owner_runtime_id"] = session_info.dynamic_quality_owner_runtime_id;
         session_obj["display_owner"] = session_info.display_owner;
         session_obj["display_owner_runtime_id"] = session_info.display_owner_runtime_id;
         session_obj["display_resource_scope"] = session_info.display_resource_scope;

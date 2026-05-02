@@ -392,6 +392,60 @@ namespace display_device {
   }
 
   bool
+  session_t::can_fast_resume_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session) {
+    std::lock_guard lock { mutex };
+
+    (void) config;
+
+    if (pending_restore_) {
+      BOOST_LOG(debug) << "VDD resume fast path unavailable: pending restore";
+      return false;
+    }
+
+    if (!current_use_vdd.has_value() || !*current_use_vdd) {
+      BOOST_LOG(debug) << "VDD resume fast path unavailable: current session is not VDD-backed";
+      return false;
+    }
+
+    if (!session.use_vdd) {
+      BOOST_LOG(debug) << "VDD resume fast path unavailable: requested session is not VDD-backed";
+      return false;
+    }
+
+    const std::string current_client_id = get_client_id_from_session(session);
+    if (current_client_id.empty() || current_vdd_client_id.empty() ||
+        current_client_id != current_vdd_client_id) {
+      BOOST_LOG(info) << "VDD resume fast path unavailable: client changed"
+                      << " current=" << current_vdd_client_id
+                      << " requested=" << current_client_id;
+      return false;
+    }
+
+    const std::string expected_setting =
+      std::to_string(session.width) + "x" + std::to_string(session.height) +
+      "@" + std::to_string(session.fps);
+    if (last_vdd_setting.empty() || last_vdd_setting != expected_setting) {
+      BOOST_LOG(info) << "VDD resume fast path unavailable: mode changed"
+                      << " current=" << last_vdd_setting
+                      << " requested=" << expected_setting;
+      return false;
+    }
+
+    const auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    if (device_zako.empty()) {
+      BOOST_LOG(info) << "VDD resume fast path unavailable: VDD device missing";
+      return false;
+    }
+
+    BOOST_LOG(info) << "VDD resume fast path eligible"
+                    << " client=" << current_client_id
+                    << " mode=" << expected_setting
+                    << " device=" << device_zako;
+    return true;
+  }
+
+  bool
   session_t::create_vdd_monitor(const std::string &client_name) {
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
     // 复用模式使用固定标识符，否则使用客户端名称
@@ -435,6 +489,16 @@ namespace display_device {
 
     last_vdd_setting = new_setting;
     BOOST_LOG(info) << "VDD配置更新完成: " << new_setting;
+
+    // If no Zako VDD device is present yet, reloading the driver only adds a
+    // slow disable/enable cycle before create_vdd_monitor() below.  Do not use
+    // is_display_on() here: it can be true because a physical monitor is on,
+    // which caused first launch to spend ~8-10s in VDD reload/recovery before
+    // RTSP was even raised.
+    if (display_device::find_device_by_friendlyname(ZAKO_NAME).empty()) {
+      BOOST_LOG(info) << "VDD设备尚未存在，跳过驱动重载；新建虚拟显示器时将使用新配置";
+      return;
+    }
 
     BOOST_LOG(info) << "重新加载VDD驱动...";
     vdd_utils::reload_driver();

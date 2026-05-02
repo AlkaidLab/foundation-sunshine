@@ -414,45 +414,14 @@ namespace platf::audio {
 
     UINT32 availableFrames = bufferFrameCount - padding;
 
-    // 如果缓冲区空间不足，进行多次等待尝试
+    // 如果缓冲区空间不足，直接丢弃本包，避免在网络/串流接收线程里 Sleep。
+    //
+    // 这里的目标是低延迟和不阻塞视频/输入：弱网或虚拟麦克风消费端暂停时，
+    // 麦克风包宁可丢弃，也不能把 RTSP/UDP receive loop 卡住几十到上百毫秒。
     if (framesToWrite > availableFrames) {
-      BOOST_LOG(verbose) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
-
-      // 最多尝试3次，每次等待时间递增
-      const int max_retries = 3;
-      for (int retry = 0; retry < max_retries && framesToWrite > availableFrames; ++retry) {
-        // 根据需要的帧数计算等待时间：帧数 / 48000 * 1000 (ms)
-        // 保守估计，等待所需时间的 80%
-        DWORD wait_ms = static_cast<DWORD>((framesToWrite - availableFrames) * 1000 / 48000 * 0.8);
-        wait_ms = std::max(wait_ms, 5ul);  // 最少等待 5ms
-        wait_ms = std::min(wait_ms, 50ul); // 最多等待 50ms
-        
-        Sleep(wait_ms);
-
-        // 重新检查可用空间
-        status = audio_client->GetCurrentPadding(&padding);
-        if (FAILED(status)) {
-          BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
-          return -1;
-        }
-
-        if (padding > bufferFrameCount) {
-          padding = 0;
-        }
-
-        availableFrames = bufferFrameCount - padding;
-        
-        if (framesToWrite <= availableFrames) {
-          BOOST_LOG(verbose) << "Buffer space available after " << (retry + 1) << " retries";
-          break;
-        }
-      }
-
-      // 如果仍然没有足够空间，降级为 debug 日志并截断
-      if (framesToWrite > availableFrames) {
-        BOOST_LOG(warning) << "Mic write buffer still full after retries: " << framesToWrite << " frames requested, " << availableFrames << " available. Truncating.";
-        framesToWrite = availableFrames;
-      }
+      BOOST_LOG(debug) << "Mic write buffer full; dropping packet instead of blocking. Need: "
+                       << framesToWrite << ", Available: " << availableFrames;
+      return 0;
     }
 
     if (framesToWrite == 0) {

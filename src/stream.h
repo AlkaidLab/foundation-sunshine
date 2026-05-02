@@ -57,8 +57,16 @@ namespace stream {
     bool host_audio;
     bool enable_hdr;
     bool enable_mic;
+    bool input_owner;
+    uint64_t input_owner_runtime_id;
+    bool mic_owner;
+    uint64_t mic_owner_runtime_id;
+    bool clipboard_owner;
+    uint64_t clipboard_owner_runtime_id;
     bool display_owner;
     uint64_t display_owner_runtime_id;
+    bool dynamic_quality_owner;
+    uint64_t dynamic_quality_owner_runtime_id;
     std::string display_resource_scope;
     std::string display_allocation_mode;
     uint32_t display_resource_slot;
