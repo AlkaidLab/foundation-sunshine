@@ -68,6 +68,7 @@ namespace frame_interest {
     bool uses_ltr_fallback = false;
     bool uses_intra_refresh_fallback = false;
     bool uses_aq_fallback = false;
+    std::string fallback_reason;
   };
 
   struct qp_delta_map_t {
@@ -146,5 +147,8 @@ namespace frame_interest {
 
   std::string
   summarize_decision(const backend_decision_t &decision);
+
+  std::string
+  summarize_backend_caps(const backend_caps_t &caps);
 
 }  // namespace frame_interest

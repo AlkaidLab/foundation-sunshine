@@ -267,3 +267,73 @@ TEST(FrameInterestTests, NvencHevcQpDeltaMapUsesCtbGridForOddClientResolution) {
   EXPECT_EQ(qp_map.blocks_high, 62);
   EXPECT_EQ(qp_map.deltas.size(), 5890U);
 }
+
+TEST(FrameInterestTests, QpDeltaMapPolicyCanOverrideAdaptiveQuantizationForRealBackend) {
+  auto policy = frame_interest::decide_qp_delta_map_policy(
+    stream_quality::clarity_intent_roi | stream_quality::clarity_intent_dirty_region,
+    true,
+    true);
+
+  EXPECT_TRUE(policy.enabled);
+  EXPECT_TRUE(policy.disable_adaptive_quantization);
+  EXPECT_FALSE(policy.fallback_to_adaptive_quantization);
+}
+
+TEST(FrameInterestTests, BackendDecisionReportsRoiAndDirtyAppliedWhenQpMapSupported) {
+  frame_interest::map_t map;
+  map.frame_width = 1920;
+  map.frame_height = 1080;
+  frame_interest::add_dirty_rect(map, { 10, 20, 320, 180 });
+  frame_interest::add_cursor_roi(map, 960, 540, 96, -5);
+  frame_interest::finalize(map);
+
+  const auto decision = frame_interest::decide_backend(
+    map,
+    {
+      .roi_qp_map = true,
+      .dirty_rects = true,
+      .move_rects = false,
+      .temporal_layers = false,
+      .long_term_reference = true,
+      .intra_refresh = true,
+      .adaptive_quantization = false,
+    },
+    stream_quality::clarity_intent_roi |
+      stream_quality::clarity_intent_dirty_region);
+
+  EXPECT_TRUE(decision.roi_accepted);
+  EXPECT_FALSE(decision.roi_fallback);
+  EXPECT_TRUE(decision.dirty_rects_accepted);
+  EXPECT_FALSE(decision.dirty_rects_fallback);
+}
+
+TEST(FrameInterestTests, BackendDecisionExplainsTemporalFallbackUntilApplied) {
+  frame_interest::map_t map;
+  map.frame_width = 1920;
+  map.frame_height = 1080;
+  frame_interest::add_cursor_roi(map, 960, 540, 96, -5);
+  map.temporal_policy = frame_interest::temporal_policy_e::base_with_discardable_enhancement;
+  frame_interest::finalize(map);
+
+  const auto decision = frame_interest::decide_backend(
+    map,
+    {
+      .roi_qp_map = true,
+      .dirty_rects = true,
+      .move_rects = false,
+      .temporal_layers = false,
+      .long_term_reference = true,
+      .intra_refresh = true,
+      .adaptive_quantization = false,
+    },
+    stream_quality::clarity_intent_roi |
+      stream_quality::clarity_intent_temporal_layers |
+      stream_quality::clarity_intent_discardable_enhancement);
+
+  EXPECT_TRUE(decision.roi_accepted);
+  EXPECT_FALSE(decision.roi_fallback);
+  EXPECT_FALSE(decision.temporal_layers_accepted);
+  EXPECT_TRUE(decision.temporal_layers_fallback);
+  EXPECT_NE(decision.fallback_reason.find("temporal-svc-disabled-pending-validation"),
+            std::string::npos);
+}

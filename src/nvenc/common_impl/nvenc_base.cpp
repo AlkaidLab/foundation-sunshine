@@ -10,6 +10,7 @@
 #include "src/utility.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 
@@ -20,6 +21,8 @@ namespace {
 #ifdef NVENC_NAMESPACE
   using namespace NVENC_NAMESPACE;
 #endif
+
+  std::atomic_bool g_nvenc_frame_interest_backend_runtime_disabled { false };
 
   GUID
   quality_preset_guid_from_number(unsigned number) {
@@ -411,10 +414,23 @@ namespace nvenc {
 
     enc_config.rcParams.enableAQ = config.adaptive_quantization;
 #ifdef SUNSHINE_ENABLE_NVENC_FRAME_INTEREST_BACKEND
-    constexpr bool nvenc_frame_interest_backend_enabled = true;
+    constexpr bool nvenc_frame_interest_backend_compiled = true;
 #else
-    constexpr bool nvenc_frame_interest_backend_enabled = false;
+    constexpr bool nvenc_frame_interest_backend_compiled = false;
 #endif
+    const bool nvenc_frame_interest_backend_enabled =
+      nvenc_frame_interest_backend_compiled &&
+      !g_nvenc_frame_interest_backend_runtime_disabled.load(std::memory_order_relaxed);
+    if (nvenc_frame_interest_backend_compiled && !nvenc_frame_interest_backend_enabled) {
+      BOOST_LOG(info) << "NvEnc: frame interest QP delta/temporal backend runtime fallback"
+                      << " reason=previous-encode-timeout";
+    }
+    const bool nvenc_qp_delta_map_backend_enabled =
+      nvenc_frame_interest_backend_enabled && !buffer_is_10bit();
+    if (nvenc_frame_interest_backend_enabled && buffer_is_10bit()) {
+      BOOST_LOG(info) << "NvEnc: frame interest QP delta map fallback"
+                      << " reason=10bit-stream-not-yet-runtime-safe";
+    }
     const bool runtime_dynamic_interest =
       client_config.qualityCeilingBitrate > client_config.bitrate ||
       client_config.qualityCeilingFramerate > client_config.framerate ||
@@ -424,7 +440,7 @@ namespace nvenc {
       runtime_dynamic_interest);
     const auto qp_delta_policy = frame_interest::decide_qp_delta_map_policy(
       encoder_interest_flags,
-      nvenc_frame_interest_backend_enabled,
+      nvenc_qp_delta_map_backend_enabled,
       enc_config.rcParams.enableAQ != 0);
     if (qp_delta_policy.disable_adaptive_quantization) {
       BOOST_LOG(info) << "NvEnc: disabling spatial AQ to enable experimental frame interest QP delta map";
@@ -455,10 +471,20 @@ namespace nvenc {
 #else
       false;
 #endif
+    const bool temporal_svc_backend_runtime_enabled = false;  // Keep fallback honest until Windows runtime validation is complete.
     const bool wants_temporal_svc =
+      temporal_svc_backend_runtime_enabled &&
       nvenc_frame_interest_backend_enabled &&
       (encoder_interest_flags & stream_quality::clarity_intent_temporal_layers) != 0 &&
       video_format_supports_temporal_svc;
+    if (!temporal_svc_backend_runtime_enabled &&
+        nvenc_frame_interest_backend_enabled &&
+        (encoder_interest_flags & stream_quality::clarity_intent_temporal_layers) != 0) {
+      BOOST_LOG(info) << "NvEnc: frame interest temporal SVC fallback"
+                      << " reason=temporal-svc-disabled-pending-validation"
+                      << " codecSupported=" << (video_format_supports_temporal_svc ? 1 : 0)
+                      << " armedFlags=0x" << std::hex << encoder_interest_flags << std::dec;
+    }
     const auto max_temporal_layers = wants_temporal_svc ?
                                        get_encoder_cap(NV_ENC_CAPS_NUM_MAX_TEMPORAL_LAYERS) :
                                        0;
@@ -1147,8 +1173,21 @@ namespace nvenc {
     lock_bitstream.doNotWait = async_event_handle ? 1 : 0;
 
     if (async_event_handle && !wait_for_async_event(100)) {
-      BOOST_LOG(error) << "NvEnc: frame " << frame_index << " encode wait timeout";
-      return {};
+      BOOST_LOG(warning) << "NvEnc: frame " << frame_index
+                         << " encode wait exceeded 100ms, extending wait before encoder reset";
+      if (!wait_for_async_event(350)) {
+        BOOST_LOG(error) << "NvEnc: frame " << frame_index << " encode wait timeout";
+        if (qp_delta_map_enabled || temporal_svc_enabled) {
+          g_nvenc_frame_interest_backend_runtime_disabled.store(true, std::memory_order_relaxed);
+          BOOST_LOG(warning) << "NvEnc: disabling frame interest QP delta/temporal backend for this process"
+                             << " reason=encode-wait-timeout"
+                             << " qpDelta=" << (qp_delta_map_enabled ? 1 : 0)
+                             << " temporalSvc=" << (temporal_svc_enabled ? 1 : 0);
+        }
+        return {};
+      }
+      BOOST_LOG(warning) << "NvEnc: frame " << frame_index
+                         << " encode wait recovered after slow async completion";
     }
 
     if (nvenc_failed(nvenc->nvEncLockBitstream(encoder, &lock_bitstream))) {

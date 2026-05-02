@@ -631,9 +631,10 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder: Resolution change requested (requires encoder reinitialization)";
           break;
         case dynamic_param_type_e::FPS:
-          // FPS变更需要重新配置编码器
+          // Runtime FPS changes are applied by the stream pacing loop. Do not
+          // reconfigure NVENC per feedback window; that creates visible stalls.
           BOOST_LOG(info) << "NVENC encoder: FPS change requested: " << param.value.float_value
-                          << " fps (requires encoder reconfiguration)";
+                          << " fps (pacing-only, encoder not reconfigured)";
           break;
         case dynamic_param_type_e::BITRATE: {
           // 码率调整通过set_bitrate处理
@@ -2112,12 +2113,14 @@ namespace video {
       BOOST_LOG(info) << "Frame interest metadata available encoder="
                       << session.encoder_backend_name() << " "
                       << frame_interest::summarize_decision(decision)
+                      << " " << frame_interest::summarize_backend_caps(caps)
                       << " " << frame_interest::summarize_map(map);
     }
     if (fallback) {
       BOOST_LOG(info) << "Frame interest backend fallback encoder="
                       << session.encoder_backend_name() << " "
                       << frame_interest::summarize_decision(decision)
+                      << " " << frame_interest::summarize_backend_caps(caps)
                       << " " << frame_interest::summarize_map(map);
     }
   }

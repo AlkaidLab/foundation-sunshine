@@ -271,6 +271,27 @@ namespace frame_interest {
     decision.uses_ltr_fallback = needs_fallback && caps.long_term_reference;
     decision.uses_intra_refresh_fallback = needs_fallback && caps.intra_refresh;
     decision.uses_aq_fallback = needs_fallback && caps.adaptive_quantization;
+
+    std::ostringstream reason;
+    auto append_reason = [&](const char *value) {
+      if (reason.tellp() > 0) {
+        reason << ",";
+      }
+      reason << value;
+    };
+    if (decision.roi_fallback) {
+      append_reason("roi-qp-map-not-encoder-applied");
+    }
+    if (decision.dirty_rects_fallback) {
+      append_reason(full_frame_dirty ? "dirty-full-frame-motion-not-savings" : "dirty-qp-map-not-encoder-applied");
+    }
+    if (decision.move_rects_fallback) {
+      append_reason("move-rect-backend-unavailable");
+    }
+    if (decision.temporal_layers_fallback) {
+      append_reason("temporal-svc-disabled-pending-validation");
+    }
+    decision.fallback_reason = reason.str();
     return decision;
   }
 
@@ -416,6 +437,23 @@ namespace frame_interest {
        << " fallback(ltr/intra/aq)=" << (decision.uses_ltr_fallback ? 1 : 0) << "/"
        << (decision.uses_intra_refresh_fallback ? 1 : 0) << "/"
        << (decision.uses_aq_fallback ? 1 : 0);
+    if (!decision.fallback_reason.empty()) {
+      ss << " fallbackReason=" << decision.fallback_reason;
+    }
+    return ss.str();
+  }
+
+  std::string
+  summarize_backend_caps(const backend_caps_t &caps) {
+    std::ostringstream ss;
+    ss << "caps(roiQpMap/dirty/move/temporal/ltr/intra/aq)="
+       << (caps.roi_qp_map ? 1 : 0) << "/"
+       << (caps.dirty_rects ? 1 : 0) << "/"
+       << (caps.move_rects ? 1 : 0) << "/"
+       << (caps.temporal_layers ? 1 : 0) << "/"
+       << (caps.long_term_reference ? 1 : 0) << "/"
+       << (caps.intra_refresh ? 1 : 0) << "/"
+       << (caps.adaptive_quantization ? 1 : 0);
     return ss.str();
   }
 }  // namespace frame_interest
