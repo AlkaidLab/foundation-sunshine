@@ -204,8 +204,8 @@ namespace stream_quality {
     }
 
     constexpr int high_ceiling_threshold_kbps = 30000;
-    constexpr int min_safe_startup_kbps = 8000;
-    constexpr int max_safe_startup_kbps = 30000;
+    constexpr int min_safe_startup_kbps = 6000;
+    constexpr int max_safe_startup_kbps = 18000;
     const auto pixels_per_second = static_cast<double>(stream.width) *
                                    static_cast<double>(stream.height) *
                                    static_cast<double>(stream.fps);
@@ -215,7 +215,7 @@ namespace stream_quality {
       return stream.video_bitrate_kbps;
     }
 
-    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * 0.018 / 1000.0));
+    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * 0.012 / 1000.0));
     return std::min(stream.video_bitrate_kbps,
                     std::clamp(startup_from_pixels, min_safe_startup_kbps, max_safe_startup_kbps));
   }

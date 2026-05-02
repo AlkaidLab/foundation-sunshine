@@ -111,8 +111,8 @@ TEST(StreamQualityTests, HighCeilingStreamsUseSafeStartupBudget) {
     .chroma_sampling_type = 1,
   });
 
-  EXPECT_GE(startup_bitrate, 12000);
-  EXPECT_LE(startup_bitrate, 30000);
+  EXPECT_GE(startup_bitrate, 6000);
+  EXPECT_LE(startup_bitrate, 18000);
   EXPECT_LT(startup_bitrate, 120000);
 }
 
@@ -139,7 +139,7 @@ TEST(StreamQualityTests, HighPixelRateEnhancedStreamsRampEvenAtModerateCeiling) 
     .chroma_sampling_type = 0,
   });
 
-  EXPECT_GE(startup_bitrate, 9000);
+  EXPECT_GE(startup_bitrate, 6000);
   EXPECT_LT(startup_bitrate, 18000);
 
   auto startup_fps = stream_quality::startup_fps_for_bitrate({
