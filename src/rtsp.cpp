@@ -1200,7 +1200,11 @@ namespace rtsp_stream {
         else if (codecStr == "eac3"sv) {
           config.audio.codec = audio::CODEC_EAC3;
         }
-        else if (codecStr == "pcm"sv) {
+        else if (codecStr == "pcm"sv || codecStr == "pcm_s16"sv || codecStr == "s16"sv) {
+          // Accept several spellings: "pcm" (legacy short form), "pcm_s16"
+          // (matches the codec_e enum name on both client and server) and
+          // "s16" (FFmpeg-style sample format hint). All map to the same
+          // signed-16-bit interleaved LPCM passthrough.
           config.audio.codec = audio::CODEC_PCM_S16;
         }
         else {

@@ -285,18 +285,24 @@ namespace audio {
       apply_surround_params(stream, config.customStreamParams);
     }
 
-    // AC3 / E-AC3 passthrough requested by client. Try the FFmpeg encoder
-    // path; if it fails (encoder missing, channel layout unsupported, etc.)
-    // transparently downgrade to Opus so the client still gets audio.
+    // AC3 / E-AC3 passthrough requested by client. The codec was already
+    // negotiated via RTSP (see cmd_announce), so the client is committed to
+    // decoding an AC3/E-AC3 bitstream. If the FFmpeg encoder still fails to
+    // initialise here we MUST NOT silently downgrade to Opus -- the client
+    // would feed Opus bytes into its AC3 decoder and play noise. Instead we
+    // stop the audio stream so the client gets silence (and a clear error in
+    // the server log) rather than garbled audio.
     if (config.codec == CODEC_AC3 || config.codec == CODEC_EAC3) {
       platf::adjust_thread_priority(platf::thread_priority_e::high);
       if (encodeThreadFFmpeg(samples, stream, config, channel_data)) {
         return;
       }
-      BOOST_LOG(warning) << "Falling back to Opus after "sv
-                         << (config.codec == CODEC_AC3 ? "AC3"sv : "E-AC3"sv)
-                         << " encoder init failure."sv;
-      config.codec = CODEC_OPUS;
+      BOOST_LOG(error) << (config.codec == CODEC_AC3 ? "AC3"sv : "E-AC3"sv)
+                       << " encoder init failed; stopping audio stream to avoid "
+                          "feeding Opus bytes to the client's AC3 decoder."sv;
+      auto packets = mail::man->queue<packet_t>(mail::audio_packets);
+      packets->stop();
+      return;
     }
     else if (config.codec == CODEC_PCM_S16) {
       platf::adjust_thread_priority(platf::thread_priority_e::high);
