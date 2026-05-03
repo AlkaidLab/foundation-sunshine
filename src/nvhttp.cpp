@@ -121,8 +121,12 @@ namespace nvhttp {
 
     bool
     check_and_record(const std::string &ip) {
-      constexpr int max_attempts = 5;
+      const int max_attempts = config::nvhttp.pair_max_attempts;
       constexpr int window_seconds = 60;
+      // 0 disables rate limiting
+      if (max_attempts <= 0) {
+        return true;
+      }
       std::lock_guard lock { mutex };
       auto now = std::chrono::steady_clock::now();
       auto &entry = attempts[ip];
