@@ -48,8 +48,10 @@ namespace audio {
 
   // Encodes one Sunshine audio capture stream as AC3 / E-AC3 (passthrough to a
   // bit-perfect decoder on the client). Returns true if encoding ran to
-  // completion (capture queue drained); false if encoder init failed and the
-  // caller should fall back to Opus.
+  // completion (capture queue drained); false if encoder init failed. The
+  // codec is already negotiated via RTSP, so the caller MUST stop the audio
+  // stream on failure -- silently downgrading to Opus would feed the client's
+  // AC3 decoder Opus bytes and produce noise.
   static bool encodeThreadFFmpeg(sample_queue_t samples,
                                  const opus_stream_config_t &stream,
                                  const config_t &config,
@@ -61,14 +63,14 @@ namespace audio {
 
     // AC3 / E-AC3 max 6 channels (5.1). Refuse 7.1+ for now.
     if (stream.channelCount > 6) {
-      BOOST_LOG(warning) << codec_name << " encoder: capture has "sv << stream.channelCount
-                         << " channels but AC3 only supports up to 5.1; falling back to Opus."sv;
+      BOOST_LOG(error) << codec_name << " encoder: capture has "sv << stream.channelCount
+                       << " channels but AC3 only supports up to 5.1; audio stream will be stopped."sv;
       return false;
     }
 
     const AVCodec *codec = avcodec_find_encoder(codec_id);
     if (!codec) {
-      BOOST_LOG(warning) << codec_name << " encoder not available in linked FFmpeg; falling back to Opus."sv;
+      BOOST_LOG(error) << codec_name << " encoder not available in linked FFmpeg; audio stream will be stopped."sv;
       return false;
     }
 
@@ -112,9 +114,9 @@ namespace audio {
     const int frame_size = ctx->frame_size > 0 ? ctx->frame_size : 1536;
     const int capture_frame_size = config.packetDuration * stream.sampleRate / 1000;
     if (capture_frame_size != frame_size) {
-      BOOST_LOG(warning) << codec_name << " encoder expects "sv << frame_size
-                         << " samples/frame but capture is "sv << capture_frame_size
-                         << "; falling back to Opus."sv;
+      BOOST_LOG(error) << codec_name << " encoder expects "sv << frame_size
+                       << " samples/frame but capture is "sv << capture_frame_size
+                       << "; audio stream will be stopped."sv;
       return false;
     }
 
@@ -193,9 +195,34 @@ namespace audio {
       }
     }
 
-    // Flush
-    avcodec_send_frame(ctx.get(), nullptr);
-    while (avcodec_receive_packet(ctx.get(), pkt.get()) == 0) {
+    // Flush: drain any remaining packets and forward them to the client so
+    // the tail of the capture isn't lost. Mirrors the main encode loop's
+    // error handling.
+    err = avcodec_send_frame(ctx.get(), nullptr);
+    if (err < 0 && err != AVERROR_EOF) {
+      char ebuf[128] {};
+      av_strerror(err, ebuf, sizeof(ebuf));
+      BOOST_LOG(error) << codec_name << " flush avcodec_send_frame: "sv << ebuf;
+      packets->stop();
+      return true;
+    }
+    while (true) {
+      err = avcodec_receive_packet(ctx.get(), pkt.get());
+      if (err == AVERROR_EOF || err == AVERROR(EAGAIN)) {
+        break;
+      }
+      if (err < 0) {
+        char ebuf[128] {};
+        av_strerror(err, ebuf, sizeof(ebuf));
+        BOOST_LOG(error) << codec_name << " flush avcodec_receive_packet: "sv << ebuf;
+        packets->stop();
+        return true;
+      }
+
+      buffer_t out { (std::size_t) pkt->size };
+      std::memcpy(out.begin(), pkt->data, pkt->size);
+      out.fake_resize(pkt->size);
+      packets->raise(channel_data, std::move(out));
       av_packet_unref(pkt.get());
     }
     return true;
