@@ -297,9 +297,12 @@ namespace stream {
   // Note: AC3/EAC3 packets at this size will exceed Ethernet MTU 1500 and
   // get IP-fragmented at the OS level — that's expected for raw passthrough
   // on a LAN; receivers reassemble before delivering to the RTP layer.
+  //
+  // IMPORTANT: this is THE single source of truth for the per-shard
+  // capacity. session::alloc() below allocates each audio shard as
+  // round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE) bytes. Any other place
+  // assuming a different size would heap-overflow.
   constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 2700;
-
-  using audio_aes_t = std::array<char, round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE)>;
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
@@ -3174,7 +3177,12 @@ namespace stream {
         session->video.gcm_iv_counter = 0;
       }
 
-      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(2048);
+      // Per-shard capacity must match MAX_AUDIO_PACKET_SIZE (defined near
+      // the top of this file). The previous hardcoded 2048 here would
+      // overflow with AC3 frames (~2560 B encrypted) and corrupt neighbour
+      // shards / RS parity for E-AC3 (~1552 B), causing client-side decode
+      // failures even when the encoder reported success.
+      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE);
 
       util::buffer_t<char> shards { RTPA_TOTAL_SHARDS * max_block_size };
       util::buffer_t<uint8_t *> shards_p { RTPA_TOTAL_SHARDS };

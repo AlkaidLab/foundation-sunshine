@@ -347,13 +347,20 @@ namespace audio {
       while (auto sample = samples->pop()) {
         buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
         const float *src = sample->data();
-        auto *dst = reinterpret_cast<int16_t *>(std::begin(packet));
-        // Sample comes in interleaved float; just clamp + scale.
-        for (int i = 0; i < frame_samples * channels; ++i) {
+        // packet is a util::buffer_t<uint8_t> (alignment 1). Casting it to
+        // int16_t* would be UB on architectures with strict alignment, and
+        // would also produce host-endian payload (we need little-endian).
+        // Write each sample as two explicit LE bytes — no alignment
+        // requirement, byte-order portable.
+        auto *out = packet.begin();
+        const int total = frame_samples * channels;
+        for (int i = 0; i < total; ++i) {
           float v = src[i];
           if (v > 1.0f) v = 1.0f;
           else if (v < -1.0f) v = -1.0f;
-          dst[i] = static_cast<int16_t>(v * 32767.0f);
+          const auto s16 = static_cast<int16_t>(v * 32767.0f);
+          out[i * 2 + 0] = static_cast<uint8_t>(static_cast<uint16_t>(s16) & 0xFF);
+          out[i * 2 + 1] = static_cast<uint8_t>((static_cast<uint16_t>(s16) >> 8) & 0xFF);
         }
         packets->raise(channel_data, std::move(packet));
       }
