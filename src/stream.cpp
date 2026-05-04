@@ -285,7 +285,19 @@ namespace stream {
   round_to_pkcs7_padded(std::size_t size) {
     return ((size + 15) / 16) * 16;
   }
-  constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 1400;
+
+  // Maximum payload (bytes) of a single audio RTP packet BEFORE AES-CBC
+  // padding. Sized for the worst-case codec frame:
+  //   Opus:        ~200-400 B  (1 frame)
+  //   PCM_S16 5ms: 960 B       (5 ms × 48 kHz × 2 ch × 2 B)
+  //   E-AC3 @384k: 1536 B      (32 ms frame)
+  //   AC3   @640k: 2560 B      (32 ms frame, max bitrate)
+  // 2700 leaves a comfortable margin without growing memory meaningfully
+  // (each session keeps RTPA_TOTAL_SHARDS shards × this size = ~22 KB).
+  // Note: AC3/EAC3 packets at this size will exceed Ethernet MTU 1500 and
+  // get IP-fragmented at the OS level — that's expected for raw passthrough
+  // on a LAN; receivers reassemble before delivering to the RTP layer.
+  constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 2700;
 
   using audio_aes_t = std::array<char, round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE)>;
 
