@@ -321,65 +321,44 @@ namespace audio {
     },
   };
 
-  void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
+  // Raw LPCM passthrough thread: float [-1,1] -> s16 LE, no encoder
+  // involved. packetDuration is forced to 5 ms by the client SDP path.
+  static void encodePcmThread(sample_queue_t samples,
+                              const opus_stream_config_t &stream,
+                              const config_t &config,
+                              void *channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
-    auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
-    if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
-      apply_surround_params(stream, config.customStreamParams);
-    }
+    const int frame_samples = config.packetDuration * stream.sampleRate / 1000;
+    const int channels = stream.channelCount;
+    const int pcm_bytes = frame_samples * channels * static_cast<int>(sizeof(int16_t));
 
-    // AC3 / E-AC3 passthrough requested by client. The codec was already
-    // negotiated via RTSP (see cmd_announce), so the client is committed to
-    // decoding an AC3/E-AC3 bitstream. If the FFmpeg encoder still fails to
-    // initialise here we MUST NOT silently downgrade to Opus -- the client
-    // would feed Opus bytes into its AC3 decoder and play noise. Instead we
-    // stop the audio stream so the client gets silence (and a clear error in
-    // the server log) rather than garbled audio.
-    if (config.codec == CODEC_AC3 || config.codec == CODEC_EAC3) {
-      platf::adjust_thread_priority(platf::thread_priority_e::high);
-      if (encodeThreadFFmpeg(samples, stream, config, channel_data)) {
-        return;
+    BOOST_LOG(info) << "PCM_S16 passthrough: "sv << stream.sampleRate / 1000 << " kHz, "sv
+                    << channels << " channels, "sv << config.packetDuration << " ms frames ("sv
+                    << pcm_bytes << " B/frame, "sv
+                    << (frame_samples * 1000 / config.packetDuration * channels * 2 * 8 / 1000) << " kbps)"sv;
+
+    while (auto sample = samples->pop()) {
+      buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
+      const float *src = sample->data();
+      auto *out = packet.begin();
+      const int total = frame_samples * channels;
+      for (int i = 0; i < total; ++i) {
+        float v = src[i];
+        if (v > 1.0f) v = 1.0f;
+        else if (v < -1.0f) v = -1.0f;
+        write_s16le(out + i * 2, static_cast<int16_t>(v * 32767.0f));
       }
-      BOOST_LOG(error) << (config.codec == CODEC_AC3 ? "AC3"sv : "E-AC3"sv)
-                       << " encoder init failed; stopping audio stream to avoid "
-                          "feeding Opus bytes to the client's AC3 decoder."sv;
-      auto packets = mail::man->queue<packet_t>(mail::audio_packets);
-      packets->stop();
-      return;
+      packets->raise(channel_data, std::move(packet));
     }
-    else if (config.codec == CODEC_PCM_S16) {
-      platf::adjust_thread_priority(platf::thread_priority_e::high);
-      // Raw LPCM passthrough: float [-1,1] -> s16 LE, no encoder.
-      // packetDuration is forced to 5 ms by the client SDP path; verify.
-      auto frame_samples = config.packetDuration * stream.sampleRate / 1000;
-      auto channels = stream.channelCount;
-      auto pcm_bytes = frame_samples * channels * static_cast<int>(sizeof(int16_t));
+  }
 
-      BOOST_LOG(info) << "PCM_S16 passthrough: "sv << stream.sampleRate / 1000 << " kHz, "sv
-                      << channels << " channels, "sv << config.packetDuration << " ms frames ("sv
-                      << pcm_bytes << " B/frame, "sv
-                      << (frame_samples * 1000 / config.packetDuration * channels * 2 * 8 / 1000) << " kbps)"sv;
-
-      while (auto sample = samples->pop()) {
-        buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
-        const float *src = sample->data();
-        // Write little-endian s16 directly into the byte buffer to avoid
-        // alignment / endianness UB from reinterpret_cast<int16_t*>.
-        auto *out = packet.begin();
-        const int total = frame_samples * channels;
-        for (int i = 0; i < total; ++i) {
-          float v = src[i];
-          if (v > 1.0f) v = 1.0f;
-          else if (v < -1.0f) v = -1.0f;
-          write_s16le(out + i * 2, static_cast<int16_t>(v * 32767.0f));
-        }
-        packets->raise(channel_data, std::move(packet));
-      }
-      return;
-    }
-
-    // Encoding takes place on this thread
-    platf::adjust_thread_priority(platf::thread_priority_e::high);
+  // Opus encoder thread (default audio codec). Bit-exact behaviour as the
+  // pre-split implementation; only moved out of the dispatcher.
+  static void encodeOpusThread(sample_queue_t samples,
+                               const opus_stream_config_t &stream,
+                               const config_t &config,
+                               void *channel_data) {
+    auto packets = mail::man->queue<packet_t>(mail::audio_packets);
 
     opus_t opus {opus_multistream_encoder_create(
       stream.sampleRate,
@@ -410,7 +389,7 @@ namespace audio {
                     << stream.channelCount << " channels, "sv
                     << stream.bitrate / 1000 << " kbps (total), LOWDELAY"sv;
 
-    auto frame_size = config.packetDuration * stream.sampleRate / 1000;
+    const int frame_size = config.packetDuration * stream.sampleRate / 1000;
     while (auto sample = samples->pop()) {
       buffer_t packet {1400};
 
@@ -418,12 +397,47 @@ namespace audio {
       if (bytes < 0) {
         BOOST_LOG(error) << "Couldn't encode audio: "sv << opus_strerror(bytes);
         packets->stop();
-
         return;
       }
 
       packet.fake_resize(bytes);
       packets->raise(channel_data, std::move(packet));
+    }
+  }
+
+  // Dispatcher: pick the right encoder thread based on the negotiated codec.
+  // Each per-codec function owns its own packet-queue handle, init logging
+  // and error path, so adding a new codec is just a new case below + a new
+  // worst-case entry in stream.cpp's audio_payload table.
+  void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
+    platf::adjust_thread_priority(platf::thread_priority_e::high);
+    auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
+    if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
+      apply_surround_params(stream, config.customStreamParams);
+    }
+
+    switch (config.codec) {
+      case CODEC_AC3:
+      case CODEC_EAC3: {
+        // Codec was already negotiated via RTSP cmd_announce, so the client
+        // is committed to decoding an AC3/E-AC3 bitstream. If FFmpeg encoder
+        // init fails we MUST stop the stream rather than fall back to Opus
+        // — feeding Opus bytes to the client's AC3 decoder produces noise.
+        if (encodeThreadFFmpeg(std::move(samples), stream, config, channel_data)) {
+          return;
+        }
+        BOOST_LOG(error) << (config.codec == CODEC_AC3 ? "AC3"sv : "E-AC3"sv)
+                         << " encoder init failed; stopping audio stream to avoid "
+                            "feeding Opus bytes to the client's AC3 decoder."sv;
+        mail::man->queue<packet_t>(mail::audio_packets)->stop();
+        return;
+      }
+      case CODEC_PCM_S16:
+        encodePcmThread(std::move(samples), stream, config, channel_data);
+        return;
+      default:
+        encodeOpusThread(std::move(samples), stream, config, channel_data);
+        return;
     }
   }
 
