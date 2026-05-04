@@ -111,35 +111,19 @@ jobs:
 
       - name: Update Windows dependencies
         env:
-          gcc_version: '15.1.0-5'
           opus_version: '1.6.1-1'
         shell: msys2 {0}
         run: |
-          broken_deps=(
-            "mingw-w64-ucrt-x86_64-gcc"
-            "mingw-w64-ucrt-x86_64-gcc-libs"
-          )
-
-          tarballs=""
-          for dep in "${broken_deps[@]}"; do
-            tarball="${dep}-${gcc_version}-any.pkg.tar.zst"
-
-            # download and install working version
-            wget https://repo.msys2.org/mingw/ucrt64/${tarball}
-
-            tarballs="${tarballs} ${tarball}"
-          done
-
           # download pinned opus version
           opus_tarball="mingw-w64-ucrt-x86_64-opus-${opus_version}-any.pkg.tar.zst"
           wget https://repo.msys2.org/mingw/ucrt64/${opus_tarball}
 
-          # install broken dependencies
-          if [ -n "$tarballs" ]; then
-            pacman -U --noconfirm ${tarballs}
-          fi
-
           # install dependencies
+          # NOTE: gcc/gcc-libs were previously pinned to 15.1.0-5 to work around
+          # a broken upstream gcc 15.x. Since msys2 has moved on to gcc 16.x and
+          # other packages (cmake, etc.) now require gcc-libs 16.x ABI, pinning
+          # an old gcc-libs causes cmake.exe to silently fail to load (exit 127).
+          # Let pacman install the full toolchain at the current upstream version.
           dependencies=(
             "git"
             "mingw-w64-ucrt-x86_64-cmake"
@@ -158,7 +142,7 @@ jobs:
             "mingw-w64-ucrt-x86_64-autotools"
           )
 
-          pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+          pacman -Syu --noconfirm "${dependencies[@]}"
 
           # install pinned opus after Syu to prevent upgrade
           pacman --noconfirm -U ${opus_tarball}

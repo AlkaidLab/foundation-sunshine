@@ -2,6 +2,8 @@
 
 #include "vdd_utils.h"
 
+#include "vdd_ioctl.h"
+
 #include <algorithm>
 #include <boost/filesystem.hpp>
 #include <boost/process/v1.hpp>
@@ -32,8 +34,30 @@ namespace pt = boost::property_tree;
 namespace display_device {
   namespace vdd_utils {
 
+    // ===========================================================
+    // [LEGACY-PIPE] Transitional named-pipe transport
+    // -----------------------------------------------------------
+    // The named pipe was the only way Sunshine talked to ZakoVDD
+    // before the IOCTL device interface (`vdd_ioctl.cpp`) landed.
+    // It is kept as a fallback so this Sunshine build still works
+    // against older driver releases that don't expose the IOCTL
+    // interface yet.
+    //
+    // Once every driver release in the wild speaks IOCTL, the
+    // entire pipe code path can be removed mechanically:
+    //   1. grep -nE '\[LEGACY-PIPE\]' vdd_utils.cpp and delete
+    //      every tagged block (constants, helpers, fallback calls).
+    //   2. Drop kVddPipeName, kPipeTimeoutMs, kPipeBufferSize,
+    //      connect_to_pipe_with_retry, execute_pipe_command, the
+    //      pipe-write half of destroy_vdd_monitor_nolog.
+    // The IOCTL primitives in vdd_ioctl.{h,cpp} stay untouched.
+    // ===========================================================
+
+    // [LEGACY-PIPE]
     const wchar_t *kVddPipeName = L"\\\\.\\pipe\\ZakoVDDPipe";
+    // [LEGACY-PIPE]
     const DWORD kPipeTimeoutMs = 3000;
+    // [LEGACY-PIPE]
     const DWORD kPipeBufferSize = 4096;
     const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
@@ -109,6 +133,7 @@ namespace display_device {
       return false;
     }
 
+    // [LEGACY-PIPE] entire function
     HANDLE
     connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries) {
       HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -140,6 +165,7 @@ namespace display_device {
       return INVALID_HANDLE_VALUE;
     }
 
+    // [LEGACY-PIPE] entire function
     bool
     execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out) {
       auto hPipe = connect_to_pipe_with_retry(pipe_name);
@@ -215,8 +241,32 @@ namespace display_device {
 
     bool
     reload_driver() {
+      // Preferred path: IOCTL device interface (PnP-wakes the driver,
+      // immune to WUDFHost recycle races).
+      switch (vdd_ioctl::send_command(L"RELOAD_DRIVER")) {
+        case vdd_ioctl::result::success:
+          BOOST_LOG(info) << "Reload VDD driver requested (IOCTL)";
+          return true;
+        case vdd_ioctl::result::failed:
+          // Driver is present but rejected the IOCTL -- propagate so the
+          // caller doesn't waste a ~6s pipe timeout retrying the same
+          // command on a transport the driver already answered.
+          BOOST_LOG(error) << "Reload VDD driver via IOCTL failed; not falling back to pipe";
+          return false;
+        case vdd_ioctl::result::interface_missing:
+          // Driver too old to expose the IOCTL interface -- fall through
+          // to the legacy pipe transport.
+          break;
+      }
+
+      // [LEGACY-PIPE] Fallback for older driver builds that do not
+      // expose the IOCTL device interface.
       std::string response;
-      return execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
+      const bool ok = execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
+      if (ok) {
+        BOOST_LOG(info) << "Reload VDD driver requested (PIPE)";
+      }
+      return ok;
     }
 
     std::string
@@ -322,6 +372,25 @@ namespace display_device {
       }
 
       // 尝试发送命令（带GUID或不带GUID）
+      // Preferred path: IOCTL device interface. On success skip pipe entirely.
+      switch (vdd_ioctl::send_command(command)) {
+        case vdd_ioctl::result::success:
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+          system_tray::update_vdd_menu();
+#endif
+          BOOST_LOG(info) << "创建虚拟显示器完成 (IOCTL)";
+          return true;
+        case vdd_ioctl::result::failed:
+          // Driver answered but rejected CREATEMONITOR -- avoid the pipe
+          // retry (could double-allocate monitor state on a partially
+          // applied request).
+          BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL); not falling back to pipe";
+          return false;
+        case vdd_ioctl::result::interface_missing:
+          break;
+      }
+
+      // [LEGACY-PIPE] Fallback for older driver builds.
       bool read_timed_out = false;
       bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out);
 
@@ -352,13 +421,27 @@ namespace display_device {
         return true;
       }
 
-      std::string response;
-      if (!execute_pipe_command(kVddPipeName, L"DESTROYMONITOR", &response)) {
-        BOOST_LOG(error) << "销毁虚拟显示器失败";
-        return false;
+      // Preferred path: IOCTL.
+      switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
+        case vdd_ioctl::result::success:
+          BOOST_LOG(info) << "销毁虚拟显示器完成 (IOCTL)";
+          break;
+        case vdd_ioctl::result::failed:
+          // Driver answered but DESTROYMONITOR errored -- don't redo it
+          // on the pipe (state may already be torn down).
+          BOOST_LOG(error) << "销毁虚拟显示器失败 (IOCTL); not falling back to pipe";
+          return false;
+        case vdd_ioctl::result::interface_missing: {
+          // [LEGACY-PIPE] Fallback for older driver builds.
+          std::string response;
+          if (!execute_pipe_command(kVddPipeName, L"DESTROYMONITOR", &response)) {
+            BOOST_LOG(error) << "销毁虚拟显示器失败";
+            return false;
+          }
+          BOOST_LOG(info) << "销毁虚拟显示器完成 (PIPE)，响应: " << response;
+          break;
+        }
       }
-
-      BOOST_LOG(info) << "销毁虚拟显示器完成，响应: " << response;
 
       // 等待驱动程序完全卸载，避免WUDFHost.exe崩溃
       // 这是必要的，因为驱动程序卸载是异步的
@@ -372,6 +455,19 @@ namespace display_device {
 
     void
     destroy_vdd_monitor_nolog() {
+      // Preferred path: IOCTL. Both success and "driver said no" stop
+      // here -- the latter would just churn through a stale pipe handle
+      // during shutdown, which we explicitly do not want to log about.
+      switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
+        case vdd_ioctl::result::success:
+        case vdd_ioctl::result::failed:
+          return;
+        case vdd_ioctl::result::interface_missing:
+          break;
+      }
+
+      // [LEGACY-PIPE] Best-effort pipe write for shutdown / process-exit
+      // paths where we don't want to log a failure if the pipe is gone.
       HANDLE hPipe = CreateFileW(
         kVddPipeName,
         GENERIC_READ | GENERIC_WRITE,
