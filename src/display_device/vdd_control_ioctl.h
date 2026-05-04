@@ -24,6 +24,8 @@
 
 #pragma once
 
+#if defined(_WIN32) || defined(_WIN64)
+
 #include <Windows.h>
 #include <winioctl.h>
 
@@ -45,3 +47,5 @@ DEFINE_GUID(GUID_DEVINTERFACE_ZAKO_VDD_CONTROL,
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // _WIN32 || _WIN64

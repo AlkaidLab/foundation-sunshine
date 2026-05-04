@@ -26,6 +26,37 @@ namespace display_device::vdd_ioctl {
   namespace {
 
     /**
+     * @brief RAII guard for `HDEVINFO` returned by `SetupDiGetClassDevs*`.
+     *
+     * Ensures the kernel-side device-info list is released on every exit
+     * path (including exceptions thrown by `std::vector` allocation or
+     * `std::wstring` construction below).
+     */
+    class devinfo_guard {
+    public:
+      explicit devinfo_guard(HDEVINFO h):
+          h_ { h } {}
+
+      ~devinfo_guard() {
+        if (h_ != INVALID_HANDLE_VALUE) {
+          SetupDiDestroyDeviceInfoList(h_);
+        }
+      }
+
+      devinfo_guard(const devinfo_guard &) = delete;
+      devinfo_guard &operator=(const devinfo_guard &) = delete;
+      devinfo_guard(devinfo_guard &&) = delete;
+      devinfo_guard &operator=(devinfo_guard &&) = delete;
+
+      HDEVINFO get() const {
+        return h_;
+      }
+
+    private:
+      HDEVINFO h_ { INVALID_HANDLE_VALUE };
+    };
+
+    /**
      * @brief Resolve the first registered VDD control device interface path.
      *
      * The driver registers its custom interface in `VirtualDisplayDriverDeviceAdd`
@@ -37,16 +68,21 @@ namespace display_device::vdd_ioctl {
      */
     std::wstring
     resolve_interface_path() {
-      HDEVINFO h_dev_info = SetupDiGetClassDevsW(
+      HDEVINFO h_raw = SetupDiGetClassDevsW(
         &GUID_DEVINTERFACE_ZAKO_VDD_CONTROL,
         nullptr,
         nullptr,
         DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
 
-      if (h_dev_info == INVALID_HANDLE_VALUE) {
+      if (h_raw == INVALID_HANDLE_VALUE) {
         BOOST_LOG(debug) << "vdd_ioctl: SetupDiGetClassDevsW failed (err=" << GetLastError() << ")";
         return {};
       }
+
+      // RAII: from here on every exit path (including std::bad_alloc from
+      // the std::vector / std::wstring constructions below) destroys the
+      // device-info list.
+      devinfo_guard h_dev_info { h_raw };
 
       SP_DEVICE_INTERFACE_DATA iface_data {};
       iface_data.cbSize = sizeof(iface_data);
@@ -54,7 +90,7 @@ namespace display_device::vdd_ioctl {
       // Only ever use the first instance: the VDD always exposes exactly
       // one control interface per device.
       if (!SetupDiEnumDeviceInterfaces(
-            h_dev_info,
+            h_dev_info.get(),
             nullptr,
             &GUID_DEVINTERFACE_ZAKO_VDD_CONTROL,
             0,
@@ -63,16 +99,14 @@ namespace display_device::vdd_ioctl {
         if (err != ERROR_NO_MORE_ITEMS) {
           BOOST_LOG(debug) << "vdd_ioctl: SetupDiEnumDeviceInterfaces failed (err=" << err << ")";
         }
-        SetupDiDestroyDeviceInfoList(h_dev_info);
         return {};
       }
 
       // First call retrieves the required buffer size.
       DWORD required_size = 0;
-      SetupDiGetDeviceInterfaceDetailW(h_dev_info, &iface_data, nullptr, 0, &required_size, nullptr);
+      SetupDiGetDeviceInterfaceDetailW(h_dev_info.get(), &iface_data, nullptr, 0, &required_size, nullptr);
       if (required_size == 0) {
         BOOST_LOG(debug) << "vdd_ioctl: SetupDiGetDeviceInterfaceDetailW size probe failed (err=" << GetLastError() << ")";
-        SetupDiDestroyDeviceInfoList(h_dev_info);
         return {};
       }
 
@@ -81,20 +115,17 @@ namespace display_device::vdd_ioctl {
       detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
       if (!SetupDiGetDeviceInterfaceDetailW(
-            h_dev_info,
+            h_dev_info.get(),
             &iface_data,
             detail,
             required_size,
             nullptr,
             nullptr)) {
         BOOST_LOG(debug) << "vdd_ioctl: SetupDiGetDeviceInterfaceDetailW failed (err=" << GetLastError() << ")";
-        SetupDiDestroyDeviceInfoList(h_dev_info);
         return {};
       }
 
-      std::wstring path { detail->DevicePath };
-      SetupDiDestroyDeviceInfoList(h_dev_info);
-      return path;
+      return std::wstring { detail->DevicePath };
     }
 
     /**

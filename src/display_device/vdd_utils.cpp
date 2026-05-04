@@ -244,13 +244,18 @@ namespace display_device {
       // Preferred path: IOCTL device interface (PnP-wakes the driver,
       // immune to WUDFHost recycle races).
       if (vdd_ioctl::send_command(L"RELOAD_DRIVER")) {
+        BOOST_LOG(info) << "Reload VDD driver requested (IOCTL)";
         return true;
       }
 
       // [LEGACY-PIPE] Fallback for older driver builds that do not
       // expose the IOCTL device interface.
       std::string response;
-      return execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
+      const bool ok = execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
+      if (ok) {
+        BOOST_LOG(info) << "Reload VDD driver requested (PIPE)";
+      }
+      return ok;
     }
 
     std::string
