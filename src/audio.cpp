@@ -44,6 +44,64 @@ namespace audio {
     using avcodec_ctx_t = util::safe_ptr<AVCodecContext, free_avcodec_ctx>;
     using avframe_t = util::safe_ptr<AVFrame, free_avframe>;
     using avpacket_t = util::safe_ptr<AVPacket, free_avpacket>;
+
+    // Format an FFmpeg error code into a Boost.Log error line. Centralised so
+    // callers don't sprinkle 4-line ebuf/av_strerror snippets everywhere.
+    void log_av_error(const char *codec_name, const char *what, int err) {
+      char ebuf[128] {};
+      av_strerror(err, ebuf, sizeof(ebuf));
+      BOOST_LOG(error) << codec_name << ' ' << what << ": "sv << ebuf;
+    }
+
+    // Build an AVChannelLayout for the supported speaker counts. Returns
+    // true on success; on failure the layout is left zero-initialised and
+    // false is returned so the caller can bail with a sensible log.
+    bool make_channel_layout(int channels, AVChannelLayout &out) {
+      switch (channels) {
+        case 2:
+          out = AV_CHANNEL_LAYOUT_STEREO;
+          return true;
+        case 6:
+          out = AV_CHANNEL_LAYOUT_5POINT1;
+          return true;
+        default:
+          // av_channel_layout_default mirrors FFmpeg's own fallback.
+          av_channel_layout_default(&out, channels);
+          return out.nb_channels == channels;
+      }
+    }
+
+    // Drain all packets currently available from the encoder and forward
+    // them to the audio packet queue. Used both inside the encode loop and
+    // during flush. Returns false on a fatal libav error (caller should
+    // packets->stop() and exit); true otherwise (including on EAGAIN/EOF).
+    template <typename Packets>
+    bool drain_packets(AVCodecContext *ctx, AVPacket *pkt, Packets &packets,
+                       void *channel_data, const char *codec_name) {
+      while (true) {
+        int err = avcodec_receive_packet(ctx, pkt);
+        if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
+          return true;
+        }
+        if (err < 0) {
+          log_av_error(codec_name, "avcodec_receive_packet", err);
+          return false;
+        }
+        buffer_t out { (std::size_t) pkt->size };
+        std::memcpy(out.begin(), pkt->data, pkt->size);
+        packets->raise(channel_data, std::move(out));
+        av_packet_unref(pkt);
+      }
+    }
+
+    // Pack a signed 16-bit sample as two little-endian bytes. Used by the
+    // PCM_S16 path so we don't reinterpret_cast a uint8_t buffer to int16_t*
+    // (alignment + endian UB) and to keep the inner loop one line.
+    inline void write_s16le(uint8_t *dst, int16_t v) {
+      const uint16_t u = static_cast<uint16_t>(v);
+      dst[0] = static_cast<uint8_t>(u & 0xFF);
+      dst[1] = static_cast<uint8_t>((u >> 8) & 0xFF);
+    }
   }  // namespace
 
   // Encodes one Sunshine audio capture stream as AC3 / E-AC3 (passthrough to a
@@ -82,14 +140,9 @@ namespace audio {
 
     ctx->sample_rate = stream.sampleRate;
     ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-    if (stream.channelCount == 6) {
-      ctx->ch_layout = AV_CHANNEL_LAYOUT_5POINT1;
-    } else if (stream.channelCount == 2) {
-      ctx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-    } else {
-      AVChannelLayout layout;
-      av_channel_layout_default(&layout, stream.channelCount);
-      ctx->ch_layout = layout;
+    if (!make_channel_layout(stream.channelCount, ctx->ch_layout)) {
+      BOOST_LOG(error) << codec_name << " unsupported channel count: "sv << stream.channelCount;
+      return false;
     }
 
     // Pick a sane bitrate: client value if provided, else codec defaults.
@@ -103,9 +156,7 @@ namespace audio {
 
     int err = avcodec_open2(ctx.get(), codec, nullptr);
     if (err < 0) {
-      char ebuf[128] {};
-      av_strerror(err, ebuf, sizeof(ebuf));
-      BOOST_LOG(error) << codec_name << " avcodec_open2 failed: "sv << ebuf;
+      log_av_error(codec_name, "avcodec_open2", err);
       return false;
     }
 
@@ -167,63 +218,28 @@ namespace audio {
 
       err = avcodec_send_frame(ctx.get(), frame.get());
       if (err < 0) {
-        char ebuf[128] {};
-        av_strerror(err, ebuf, sizeof(ebuf));
-        BOOST_LOG(error) << codec_name << " avcodec_send_frame: "sv << ebuf;
+        log_av_error(codec_name, "avcodec_send_frame", err);
         packets->stop();
         return true;
       }
 
-      while (true) {
-        err = avcodec_receive_packet(ctx.get(), pkt.get());
-        if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
-          break;
-        }
-        if (err < 0) {
-          char ebuf[128] {};
-          av_strerror(err, ebuf, sizeof(ebuf));
-          BOOST_LOG(error) << codec_name << " avcodec_receive_packet: "sv << ebuf;
-          packets->stop();
-          return true;
-        }
-
-        buffer_t out { (std::size_t) pkt->size };
-        std::memcpy(out.begin(), pkt->data, pkt->size);
-        out.fake_resize(pkt->size);
-        packets->raise(channel_data, std::move(out));
-        av_packet_unref(pkt.get());
+      if (!drain_packets(ctx.get(), pkt.get(), packets, channel_data, codec_name)) {
+        packets->stop();
+        return true;
       }
     }
 
     // Flush: drain any remaining packets and forward them to the client so
-    // the tail of the capture isn't lost. Mirrors the main encode loop's
-    // error handling.
+    // the tail of the capture isn't lost.
     err = avcodec_send_frame(ctx.get(), nullptr);
     if (err < 0 && err != AVERROR_EOF) {
-      char ebuf[128] {};
-      av_strerror(err, ebuf, sizeof(ebuf));
-      BOOST_LOG(error) << codec_name << " flush avcodec_send_frame: "sv << ebuf;
+      log_av_error(codec_name, "flush avcodec_send_frame", err);
       packets->stop();
       return true;
     }
-    while (true) {
-      err = avcodec_receive_packet(ctx.get(), pkt.get());
-      if (err == AVERROR_EOF || err == AVERROR(EAGAIN)) {
-        break;
-      }
-      if (err < 0) {
-        char ebuf[128] {};
-        av_strerror(err, ebuf, sizeof(ebuf));
-        BOOST_LOG(error) << codec_name << " flush avcodec_receive_packet: "sv << ebuf;
-        packets->stop();
-        return true;
-      }
-
-      buffer_t out { (std::size_t) pkt->size };
-      std::memcpy(out.begin(), pkt->data, pkt->size);
-      out.fake_resize(pkt->size);
-      packets->raise(channel_data, std::move(out));
-      av_packet_unref(pkt.get());
+    if (!drain_packets(ctx.get(), pkt.get(), packets, channel_data, codec_name)) {
+      packets->stop();
+      return true;
     }
     return true;
   }
@@ -347,20 +363,15 @@ namespace audio {
       while (auto sample = samples->pop()) {
         buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
         const float *src = sample->data();
-        // packet is a util::buffer_t<uint8_t> (alignment 1). Casting it to
-        // int16_t* would be UB on architectures with strict alignment, and
-        // would also produce host-endian payload (we need little-endian).
-        // Write each sample as two explicit LE bytes — no alignment
-        // requirement, byte-order portable.
+        // Write little-endian s16 directly into the byte buffer to avoid
+        // alignment / endianness UB from reinterpret_cast<int16_t*>.
         auto *out = packet.begin();
         const int total = frame_samples * channels;
         for (int i = 0; i < total; ++i) {
           float v = src[i];
           if (v > 1.0f) v = 1.0f;
           else if (v < -1.0f) v = -1.0f;
-          const auto s16 = static_cast<int16_t>(v * 32767.0f);
-          out[i * 2 + 0] = static_cast<uint8_t>(static_cast<uint16_t>(s16) & 0xFF);
-          out[i * 2 + 1] = static_cast<uint8_t>((static_cast<uint16_t>(s16) >> 8) & 0xFF);
+          write_s16le(out + i * 2, static_cast<int16_t>(v * 32767.0f));
         }
         packets->raise(channel_data, std::move(packet));
       }
