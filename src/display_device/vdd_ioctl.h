@@ -23,27 +23,34 @@
 namespace display_device::vdd_ioctl {
 
   /**
+   * @brief Outcome of an IOCTL transport attempt.
+   *
+   * Three-state so callers can distinguish "transport unavailable, fall
+   * back to the legacy pipe" from "transport reached the driver but the
+   * command itself failed". The latter must NOT silently retry on the
+   * pipe -- the driver already saw the request and a duplicate could
+   * change device state (e.g. CREATEMONITOR twice -> two phantom panels)
+   * or just waste the ~6s pipe-connect timeout while the user waits.
+   */
+  enum class result {
+    success,           ///< IOCTL completed with STATUS_SUCCESS.
+    interface_missing, ///< No registered device interface (driver too old / not installed). Safe to fall back.
+    failed,            ///< Driver was reached but rejected the IOCTL or returned an error. Do NOT fall back.
+  };
+
+  /**
    * @brief Send a UTF-16 command buffer to the VDD driver via IOCTL.
    *
    * Performs `SetupDiGetClassDevsW` on `GUID_DEVINTERFACE_ZAKO_VDD_CONTROL`,
    * opens the first interface instance with `CreateFileW`, and issues
    * `IOCTL_VDD_COMMAND`.
    *
-   * Failure modes (returns `false`):
-   *   - Driver not installed (no interface enumerated)
-   *   - `CreateFileW` failed (e.g. ERROR_NO_SUCH_DEVICE if PnP wake didn't
-   *     produce a usable handle)
-   *   - `DeviceIoControl` returned an error
-   *
-   * The caller is responsible for falling back to another transport
-   * (currently the legacy named pipe) on `false`.
-   *
    * @param command UTF-16 command string identical in grammar to the
    *                legacy pipe protocol (e.g. `L"RELOAD_DRIVER"`,
    *                `L"CREATEMONITOR {GUID}:[..]"`, `L"DESTROYMONITOR"`).
-   * @return `true` if the IOCTL completed with `STATUS_SUCCESS`.
+   * @return tri-state result; see `enum class result`.
    */
-  bool send_command(const std::wstring &command);
+  result send_command(const std::wstring &command);
 
   /**
    * @brief Cheap liveness probe used to decide whether the IOCTL transport

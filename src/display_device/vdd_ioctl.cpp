@@ -135,10 +135,25 @@ namespace display_device::vdd_ioctl {
     public:
       device_handle() = default;
 
-      bool open() {
+      /**
+       * @brief Outcome of `open()`. Mirrors the public `result` enum so the
+       *        per-IOCTL helpers can forward the distinction without an
+       *        extra translation step.
+       */
+      enum class open_result {
+        success,
+        interface_missing,  ///< No registered interface yet -- driver too old / not installed.
+        failed,             ///< Interface enumerated but `CreateFileW` failed -- driver is there but unhappy.
+      };
+
+      open_result open() {
         const std::wstring path = resolve_interface_path();
         if (path.empty()) {
-          return false;
+          // Empty path = SetupDi enumeration found no instance of our
+          // GUID. This is the "driver isn't installed / hasn't registered
+          // yet" case and the only one where falling back to the legacy
+          // pipe is correct.
+          return open_result::interface_missing;
         }
 
         // GENERIC_READ|WRITE matches the FILE_READ_ACCESS|FILE_WRITE_DATA
@@ -154,10 +169,14 @@ namespace display_device::vdd_ioctl {
           nullptr);
 
         if (m_handle == INVALID_HANDLE_VALUE) {
-          BOOST_LOG(debug) << "vdd_ioctl: CreateFileW failed (err=" << GetLastError() << ")";
-          return false;
+          // Interface was enumerated (path resolved) but the kernel still
+          // refused to give us a handle. The driver is present, so the
+          // pipe fallback would either deadlock on the same WUDFHost or
+          // duplicate-execute the command -- propagate failure instead.
+          BOOST_LOG(warning) << "vdd_ioctl: CreateFileW failed (err=" << GetLastError() << ")";
+          return open_result::failed;
         }
-        return true;
+        return open_result::success;
       }
 
       ~device_handle() {
@@ -177,15 +196,20 @@ namespace display_device::vdd_ioctl {
 
   }  // namespace
 
-  bool
+  result
   send_command(const std::wstring &command) {
     if (command.empty()) {
-      return false;
+      return result::failed;
     }
 
     device_handle dev;
-    if (!dev.open()) {
-      return false;
+    switch (dev.open()) {
+      case device_handle::open_result::success:
+        break;
+      case device_handle::open_result::interface_missing:
+        return result::interface_missing;
+      case device_handle::open_result::failed:
+        return result::failed;
     }
 
     // Send the buffer including its terminating L'\0' so the driver-side
@@ -205,17 +229,22 @@ namespace display_device::vdd_ioctl {
       nullptr);
 
     if (!ok) {
+      // The driver answered the IRP with an error status. Do NOT retry
+      // on the legacy pipe: the kernel-side handler may have partially
+      // applied the command (e.g. CREATEMONITOR allocated state before
+      // failing) and re-running it via pipe could double-create or leave
+      // the device in a worse spot than just surfacing the failure.
       BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_COMMAND) failed (err=" << GetLastError() << ")";
-      return false;
+      return result::failed;
     }
 
-    return true;
+    return result::success;
   }
 
   bool
   ping() {
     device_handle dev;
-    if (!dev.open()) {
+    if (dev.open() != device_handle::open_result::success) {
       return false;
     }
 
