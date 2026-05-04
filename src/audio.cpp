@@ -152,6 +152,24 @@ namespace audio {
                  (stream.channelCount == 2)  ? 192000 :
                                                 96000;
     }
+    // Clamp against codec spec maximum so a malicious / mis-configured client
+    // can't ask for a bitrate that would produce a frame larger than the
+    // per-shard buffer in stream.cpp (sized via MAX_AUDIO_PACKET_SIZE).
+    //
+    //   AC3 spec  (ATSC A/52):  640 kbps hard maximum
+    //   E-AC3:                  Sunshine policy ceiling 384 kbps for raw PT
+    //                           (well under spec's 6.144 Mbps; matches the
+    //                            kEac3MaxFrameBytes entry in stream.cpp's
+    //                            audio_payload table — keep them in sync).
+    constexpr int kAc3MaxBitrate  = 640000;
+    constexpr int kEac3MaxBitrate = 384000;
+    const int spec_max = (codec_id == AV_CODEC_ID_EAC3) ? kEac3MaxBitrate : kAc3MaxBitrate;
+    if (bit_rate > spec_max) {
+      BOOST_LOG(warning) << codec_name << " requested bitrate "sv << bit_rate
+                         << " bps exceeds spec max "sv << spec_max
+                         << " bps; clamping to keep frame size within shard buffer."sv;
+      bit_rate = spec_max;
+    }
     ctx->bit_rate = bit_rate;
 
     int err = avcodec_open2(ctx.get(), codec, nullptr);
