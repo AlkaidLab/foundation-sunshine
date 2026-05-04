@@ -4,6 +4,7 @@
  */
 #include "process.h"
 
+#include <algorithm>
 #include <future>
 #include <iomanip>
 #include <queue>
@@ -287,22 +288,39 @@ namespace stream {
   }
 
   // Maximum payload (bytes) of a single audio RTP packet BEFORE AES-CBC
-  // padding. Sized for the worst-case codec frame:
-  //   Opus:        ~200-400 B  (1 frame)
-  //   PCM_S16 5ms: 960 B       (5 ms × 48 kHz × 2 ch × 2 B)
-  //   E-AC3 @384k: 1536 B      (32 ms frame)
-  //   AC3   @640k: 2560 B      (32 ms frame, max bitrate)
-  // 2700 leaves a comfortable margin without growing memory meaningfully
-  // (each session keeps RTPA_TOTAL_SHARDS shards × this size = ~22 KB).
-  // Note: AC3/EAC3 packets at this size will exceed Ethernet MTU 1500 and
-  // get IP-fragmented at the OS level — that's expected for raw passthrough
-  // on a LAN; receivers reassemble before delivering to the RTP layer.
+  // padding. Computed as the worst-case codec frame across all supported
+  // encodings, plus a small headroom. Each value below is the per-frame
+  // payload of the corresponding codec at its highest negotiated setting:
   //
-  // IMPORTANT: this is THE single source of truth for the per-shard
-  // capacity. session::alloc() below allocates each audio shard as
-  // round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE) bytes. Any other place
-  // assuming a different size would heap-overflow.
-  constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 2700;
+  //   AC3 @640 kbps:  640e3 / 8 * (1536 / 48000)         = 2560 B  (32 ms)
+  //   E-AC3 @384k:    384e3 / 8 * (1536 / 48000)         = 1536 B  (32 ms)
+  //   PCM_S16 5ms 8c: 5 * 48 * 8 * sizeof(int16_t)        = 3840 B  (worst PCM)
+  //   Opus (any cfg): bounded well under 1500 B in practice
+  //
+  // The compile-time max() ensures adding a new codec only requires bumping
+  // the corresponding constant (or its formula) — no risk of forgetting a
+  // magic number elsewhere. session::alloc() consumes
+  // round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE) for each shard, so the
+  // shard buffer width auto-tracks this constant.
+  //
+  // Note: large frames will exceed Ethernet MTU 1500 and be IP-fragmented at
+  // the OS level — expected for raw passthrough on a LAN; receivers
+  // reassemble before delivering to the RTP layer.
+  namespace audio_payload {
+    constexpr std::size_t kAc3MaxFrameBytes    = 2560;  // 640 kbps * 32 ms
+    constexpr std::size_t kEac3MaxFrameBytes   = 1536;  // 384 kbps * 32 ms
+    constexpr std::size_t kPcmS16MaxFrameBytes = 5 * 48 * 8 * sizeof(int16_t);  // 5 ms * 48 kHz * 8 ch
+    constexpr std::size_t kOpusMaxFrameBytes   = 1500;  // generous upper bound
+    constexpr std::size_t kHeadroomBytes       = 64;    // future-proofing margin
+  }  // namespace audio_payload
+
+  constexpr std::size_t MAX_AUDIO_PACKET_SIZE =
+      std::max({
+          audio_payload::kAc3MaxFrameBytes,
+          audio_payload::kEac3MaxFrameBytes,
+          audio_payload::kPcmS16MaxFrameBytes,
+          audio_payload::kOpusMaxFrameBytes,
+      }) + audio_payload::kHeadroomBytes;
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
