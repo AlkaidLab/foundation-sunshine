@@ -105,6 +105,13 @@ jobs:
         with:
           msystem: ucrt64
           update: true
+          # windows-latest rolled to win25/20260428.110 in late April 2026,
+          # which is incompatible with the previous setup-msys2 cache entry
+          # and causes the Build Windows step to die with `exit 127` and no
+          # stderr (msys2.CMD wrapper choking before bash starts). Force a
+          # fresh install until either GitHub re-pins the image or
+          # setup-msys2 publishes a fixed cache layout.
+          cache: false
           install: >-
             wget
             curl
