@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Spécifier manuellement un affichage à utiliser pour la capture. Si non défini, l'affichage principal est capturé. Note: Si vous avez spécifié un GPU ci-dessus, cet affichage doit être connecté à ce GPU. Les valeurs appropriées peuvent être trouvées en utilisant la commande suivante :",
     "output_name_unix": "Afficher le numéro",
     "output_name_windows": "Nom de la sortie",
+    "pair_max_attempts": "Limite de tentatives d'appairage PIN",
+    "pair_max_attempts_desc": "Nombre maximum de tentatives d'appairage PIN par IP client en 60 secondes. Plage 0-50, 0 désactive la limite. Valeur par défaut : 10.",
     "ping_timeout": "Timeout du ping",
     "ping_timeout_desc": "Combien de temps attendre en millisecondes pour des données de Moonlight avant de couper le stream",
     "pkey": "Clé privée",

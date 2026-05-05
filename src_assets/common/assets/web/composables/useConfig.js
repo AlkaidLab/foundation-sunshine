@@ -90,6 +90,7 @@ const DEFAULT_TABS = [
       webhook_enabled: 'disabled',
       webhook_skip_ssl_verify: 'disabled',
       webhook_timeout: 1000,
+      pair_max_attempts: 10,
     },
   },
   {

@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Legen Sie eine Anzeige für die Aufnahme manuell fest. Wenn diese nicht aktiviert ist, wird die primäre Anzeige aufgenommen. Hinweis: Wenn Sie eine GPU oben angegeben haben, muss diese Anzeige mit dieser GPU verbunden sein. Die entsprechenden Werte finden Sie mit dem folgenden Befehl:",
     "output_name_unix": "Anzeigenummer",
     "output_name_windows": "Ausgabename",
+    "pair_max_attempts": "PIN-Pairing-Wiederholungslimit",
+    "pair_max_attempts_desc": "Maximale Anzahl von PIN-Pairing-Versuchen pro Client-IP innerhalb von 60 Sekunden. Bereich 0-50, 0 deaktiviert die Begrenzung. Standard ist 10.",
     "ping_timeout": "Ping-Timeout",
     "ping_timeout_desc": "Wie lange warten Sie in Millisekunden auf Daten von Mondlicht bevor Sie den Strom herunterfahren",
     "pkey": "Privater Schlüssel",

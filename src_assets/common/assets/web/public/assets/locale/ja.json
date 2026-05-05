@@ -421,6 +421,8 @@
     "output_name_desc_windows": "キャプチャに使用するディスプレイを手動で指定します。未設定の場合、プライマリディスプレイをキャプチャします。 注意: 上記の GPU を指定した場合、この表示は GPU に接続する必要があります。次のコマンドを使用して適切な値を見つけることができます。",
     "output_name_unix": "番号を表示",
     "output_name_windows": "出力名",
+    "pair_max_attempts": "PINペアリング再試行制限",
+    "pair_max_attempts_desc": "60秒間に同一クライアントIPから許可するPINペアリング試行回数の上限。範囲 0-50、0 で制限を無効化。デフォルトは 10。",
     "ping_timeout": "Pingのタイムアウト",
     "ping_timeout_desc": "Moonlightがデータが止まってからストリームをシャットダウンするまで待機時間をミリ秒で指定",
     "pkey": "プライベートキー",
