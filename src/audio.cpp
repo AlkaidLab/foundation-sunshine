@@ -430,7 +430,7 @@ namespace audio {
   void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
     platf::adjust_thread_priority(platf::thread_priority_e::high);
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
-    if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
+    if (config.codec == CODEC_OPUS && config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
       apply_surround_params(stream, config.customStreamParams);
     }
 
@@ -467,7 +467,7 @@ namespace audio {
       return;
     }
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
-    if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
+    if (config.codec == CODEC_OPUS && config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
       apply_surround_params(stream, config.customStreamParams);
     }
 
