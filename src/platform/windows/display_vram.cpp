@@ -41,6 +41,190 @@ free_frame(AVFrame *frame) {
 using frame_t = util::safe_ptr<AVFrame, free_frame>;
 
 namespace platf::dxgi {
+  namespace {
+    constexpr std::uint64_t cursor_probe_fnv_offset = 14695981039346656037ull;
+    constexpr std::uint64_t cursor_probe_fnv_prime = 1099511628211ull;
+
+    const char *
+    cursor_probe_backend_name(platf::img_t::cursor_probe_backend_e backend) {
+      switch (backend) {
+        case platf::img_t::cursor_probe_backend_e::ddx_ram:
+          return "DDX-RAM";
+        case platf::img_t::cursor_probe_backend_e::ddx_vram:
+          return "DDX-VRAM";
+        case platf::img_t::cursor_probe_backend_e::wgc_ram:
+          return "WGC-RAM";
+        case platf::img_t::cursor_probe_backend_e::wgc_vram:
+          return "WGC-VRAM";
+        case platf::img_t::cursor_probe_backend_e::amd:
+          return "AMD";
+        case platf::img_t::cursor_probe_backend_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    std::uint64_t
+    hash_mapped_cursor_crop(const D3D11_MAPPED_SUBRESOURCE &mapped, int row_pitch, int pixel_pitch, int w, int h) {
+      if (!mapped.pData || row_pitch <= 0 || pixel_pitch <= 0 || w <= 0 || h <= 0) {
+        return 0;
+      }
+
+      auto hash = cursor_probe_fnv_offset;
+      for (int row = 0; row < h; ++row) {
+        const auto *p = static_cast<const std::uint8_t *>(mapped.pData) +
+                        static_cast<std::size_t>(row) * row_pitch;
+        const auto bytes = static_cast<std::size_t>(w) * pixel_pitch;
+        for (std::size_t i = 0; i < bytes; ++i) {
+          hash ^= p[i];
+          hash *= cursor_probe_fnv_prime;
+        }
+      }
+      return hash;
+    }
+
+    bool
+    hash_d3d_cursor_crop(ID3D11Device *device,
+                         ID3D11DeviceContext *device_ctx,
+                         ID3D11Texture2D *texture,
+                         DXGI_FORMAT format,
+                         int pixel_pitch,
+                         int x,
+                         int y,
+                         int w,
+                         int h,
+                         std::uint64_t &hash) {
+      if (!device || !device_ctx || !texture || pixel_pitch <= 0 || w <= 0 || h <= 0 ||
+          format == DXGI_FORMAT_UNKNOWN) {
+        return false;
+      }
+
+      D3D11_TEXTURE2D_DESC desc {};
+      desc.Width = static_cast<UINT>(w);
+      desc.Height = static_cast<UINT>(h);
+      desc.MipLevels = 1;
+      desc.ArraySize = 1;
+      desc.SampleDesc.Count = 1;
+      desc.Usage = D3D11_USAGE_STAGING;
+      desc.Format = format;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+      texture2d_t staging;
+      auto status = device->CreateTexture2D(&desc, nullptr, &staging);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Cursor final-frame proof staging allocation failed [0x"
+                           << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+
+      D3D11_BOX src_box {};
+      src_box.left = static_cast<UINT>(x);
+      src_box.top = static_cast<UINT>(y);
+      src_box.front = 0;
+      src_box.right = static_cast<UINT>(x + w);
+      src_box.bottom = static_cast<UINT>(y + h);
+      src_box.back = 1;
+      device_ctx->CopySubresourceRegion(staging.get(), 0, 0, 0, 0, texture, 0, &src_box);
+
+      D3D11_MAPPED_SUBRESOURCE mapped {};
+      status = device_ctx->Map(staging.get(), 0, D3D11_MAP_READ, 0, &mapped);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Cursor final-frame proof staging map failed [0x"
+                           << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+
+      hash = hash_mapped_cursor_crop(mapped, static_cast<int>(mapped.RowPitch), pixel_pitch, w, h);
+      device_ctx->Unmap(staging.get(), 0);
+      return hash != 0;
+    }
+
+    void
+    update_d3d_cursor_probe(platf::img_t &img,
+                            ID3D11Device *device,
+                            ID3D11DeviceContext *device_ctx,
+                            ID3D11Texture2D *texture,
+                            DXGI_FORMAT format,
+                            platf::img_t::cursor_probe_backend_e backend,
+                            bool capture_cursor,
+                            bool final_video_cursor_enabled,
+                            bool source_present,
+                            bool mouse_update,
+                            bool pointer_visible,
+                            POINT pointer_position,
+                            int display_offset_x,
+                            int display_offset_y,
+                            std::uint64_t &last_hash,
+                            std::uint32_t &sample_count) {
+      auto &probe = img.cursor_probe;
+      probe = {};
+      probe.active = true;
+      probe.backend = backend;
+      probe.prefer_cursor_plane = !capture_cursor;
+      probe.capture_cursor = capture_cursor;
+      probe.final_video_cursor_enabled = final_video_cursor_enabled;
+      probe.source_present = source_present;
+      probe.mouse_update = mouse_update;
+      probe.pointer_visible = pointer_visible;
+      const auto local_x = static_cast<int>(pointer_position.x) - display_offset_x;
+      const auto local_y = static_cast<int>(pointer_position.y) - display_offset_y;
+      probe.x = std::clamp(local_x, 0, std::max(0, img.width - 1));
+      probe.y = std::clamp(local_y, 0, std::max(0, img.height - 1));
+      probe.w = std::min(96, std::max(0, img.width - probe.x));
+      probe.h = std::min(96, std::max(0, img.height - probe.y));
+      probe.sample_index = ++sample_count;
+      const bool should_hash = probe.sample_index <= 80 ||
+                               (mouse_update && probe.sample_index <= 160);
+      probe.crop_valid = should_hash &&
+                         probe.w > 0 && probe.h > 0 &&
+                         hash_d3d_cursor_crop(device,
+                                              device_ctx,
+                                              texture,
+                                              format,
+                                              img.pixel_pitch,
+                                              probe.x,
+                                              probe.y,
+                                              probe.w,
+                                              probe.h,
+                                              probe.hash);
+      if (probe.crop_valid) {
+        probe.crop_changed = last_hash != 0 && probe.hash != last_hash;
+        last_hash = probe.hash;
+      }
+
+      if (probe.sample_index <= 40 || probe.crop_changed || (mouse_update && probe.sample_index <= 160)) {
+        BOOST_LOG(info) << "Cursor capture-output proof"
+                        << " runtime=0"
+                        << " backend=" << cursor_probe_backend_name(backend)
+                        << " preferCursorPlane=" << (probe.prefer_cursor_plane ? 1 : 0)
+                        << " finalVideoCursorEnabled=" << (probe.final_video_cursor_enabled ? 1 : 0)
+                        << " captureCursor=" << (probe.capture_cursor ? 1 : 0)
+                        << " sourcePresent=" << (probe.source_present ? 1 : 0)
+                        << " mouseUpdate=" << (probe.mouse_update ? 1 : 0)
+                        << " pointerVisible=" << (probe.pointer_visible ? 1 : 0)
+                        << " screenPos=" << pointer_position.x << ',' << pointer_position.y
+                        << " displayOffset=" << display_offset_x << ',' << display_offset_y
+                        << " cursorRect=" << probe.x << ',' << probe.y << ',' << probe.w << ',' << probe.h
+                        << " hash=" << probe.hash
+                        << " cropChanged=" << (probe.crop_changed ? 1 : 0);
+      }
+    }
+
+    bool
+    query_system_cursor_probe_point(POINT &point, bool &visible) {
+      CURSORINFO info {};
+      info.cbSize = sizeof(info);
+      if (!GetCursorInfo(&info)) {
+        point = {};
+        visible = false;
+        return false;
+      }
+
+      point = info.ptScreenPos;
+      visible = (info.flags & CURSOR_SHOWING) != 0;
+      return true;
+    }
+  }  // namespace
 
   template <class T>
   buf_t
@@ -2178,9 +2362,33 @@ namespace platf::dxgi {
       return capture_status;
     }
 
-    const bool mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
-    const bool frame_update_flag = frame_info.LastPresentTime.QuadPart != 0;
+    const bool raw_mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
+    const bool cursor_disabled_transition = last_cursor_visible && !cursor_visible;
+    const bool force_clean_frame_for_cursor_plane = !cursor_visible &&
+                                                    client_frame_may_include_cursor &&
+                                                    raw_mouse_update_flag;
+    static bool logged_cursor_plane_no_burn = false;
+    if (!cursor_visible && !logged_cursor_plane_no_burn) {
+      logged_cursor_plane_no_burn = true;
+      BOOST_LOG(info) << "DDX VRAM cursor burn-in disabled at backend"
+                      << " rawMouseUpdate=" << raw_mouse_update_flag
+                      << " pointerShapeBytes=" << frame_info.PointerShapeBufferSize
+                      << " pointerVisible=" << frame_info.PointerPosition.Visible
+                      << " lastPresent=" << frame_info.LastPresentTime.QuadPart
+                      << " lastMouse=" << frame_info.LastMouseUpdateTime.QuadPart;
+    }
+    if (cursor_disabled_transition) {
+      BOOST_LOG(info) << "DDX VRAM cursor burn-in disabled; clearing cursor textures and forcing clean frame";
+      cursor_alpha.clear();
+      cursor_xor.clear();
+      last_frame_variant = {};
+      old_surface_delayed_destruction.reset();
+    }
+    const bool mouse_update_flag = cursor_visible && raw_mouse_update_flag;
+    const bool frame_update_flag = frame_info.LastPresentTime.QuadPart != 0 ||
+                                   force_clean_frame_for_cursor_plane;
     const bool update_flag = mouse_update_flag || frame_update_flag;
+    last_cursor_visible = cursor_visible;
 
     if (!update_flag) {
       return capture_e::timeout;
@@ -2194,7 +2402,7 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (frame_info.PointerShapeBufferSize > 0) {
+    if (cursor_visible && frame_info.PointerShapeBufferSize > 0) {
       DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
 
       util::buffer_t<std::uint8_t> img_data { frame_info.PointerShapeBufferSize };
@@ -2216,15 +2424,38 @@ namespace platf::dxgi {
       }
     }
 
-    if (frame_info.LastMouseUpdateTime.QuadPart) {
+    if (cursor_visible && frame_info.LastMouseUpdateTime.QuadPart) {
       cursor_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
         width, height, display_rotation, frame_info.PointerPosition.Visible);
 
       cursor_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
         width, height, display_rotation, frame_info.PointerPosition.Visible);
     }
+    else if (!cursor_visible) {
+      cursor_alpha.clear();
+      cursor_xor.clear();
+    }
 
-    const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;
+    const bool cursor_texture_present = cursor_alpha.texture.get() || cursor_xor.texture.get();
+    const bool cursor_state_visible = cursor_alpha.visible || cursor_xor.visible;
+    const bool blend_mouse_cursor_flag = cursor_state_visible && cursor_visible;
+    static int cursor_plane_suppressed_mouse_updates_logged = 0;
+    if (!cursor_visible && raw_mouse_update_flag && cursor_plane_suppressed_mouse_updates_logged < 20) {
+      ++cursor_plane_suppressed_mouse_updates_logged;
+      BOOST_LOG(info) << "DDX VRAM cursor-plane mouse update suppressed"
+                      << " sample=" << cursor_plane_suppressed_mouse_updates_logged
+                      << " rawMouseUpdate=" << raw_mouse_update_flag
+                      << " pointerShapeBytes=" << frame_info.PointerShapeBufferSize
+                      << " pointerVisible=" << frame_info.PointerPosition.Visible
+                      << " pos=" << frame_info.PointerPosition.Position.x << ',' << frame_info.PointerPosition.Position.y
+                      << " cursorTexturePresent=" << cursor_texture_present
+                      << " cursorStateVisible=" << cursor_state_visible
+                      << " blend=" << blend_mouse_cursor_flag
+                      << " frameUpdate=" << frame_update_flag
+                      << " update=" << update_flag
+                      << " lastPresent=" << frame_info.LastPresentTime.QuadPart
+                      << " lastMouse=" << frame_info.LastMouseUpdateTime.QuadPart;
+    }
 
     texture2d_t src {};
     if (frame_update_flag) {
@@ -2285,6 +2516,17 @@ namespace platf::dxgi {
       if (src) {
         // We got a new frame from DesktopDuplication...
         if (blend_mouse_cursor_flag) {
+          static int cursor_blend_new_frame_logged = 0;
+          if (cursor_blend_new_frame_logged < 20) {
+            ++cursor_blend_new_frame_logged;
+            BOOST_LOG(info) << "DDX VRAM cursor blend path active action=new-frame"
+                            << " sample=" << cursor_blend_new_frame_logged
+                            << " cursor_visible=" << cursor_visible
+                            << " alphaVisible=" << cursor_alpha.visible
+                            << " xorVisible=" << cursor_xor.visible
+                            << " alphaTex=" << (cursor_alpha.texture.get() ? 1 : 0)
+                            << " xorTex=" << (cursor_xor.texture.get() ? 1 : 0);
+          }
           // ...and we need to blend the mouse cursor onto it.
           // Optimization: Directly copy to target image and blend cursor, avoiding intermediate surface copy.
           // This reduces one texture copy operation when we have a new frame.
@@ -2306,6 +2548,17 @@ namespace platf::dxgi {
       else if (!std::holds_alternative<std::monostate>(last_frame_variant)) {
         // We didn't get a new frame from DesktopDuplication...
         if (blend_mouse_cursor_flag) {
+          static int cursor_blend_cached_frame_logged = 0;
+          if (cursor_blend_cached_frame_logged < 20) {
+            ++cursor_blend_cached_frame_logged;
+            BOOST_LOG(info) << "DDX VRAM cursor blend path active action=cached-frame"
+                            << " sample=" << cursor_blend_cached_frame_logged
+                            << " cursor_visible=" << cursor_visible
+                            << " alphaVisible=" << cursor_alpha.visible
+                            << " xorVisible=" << cursor_xor.visible
+                            << " alphaTex=" << (cursor_alpha.texture.get() ? 1 : 0)
+                            << " xorTex=" << (cursor_xor.texture.get() ? 1 : 0);
+          }
           // ...but we need to blend the mouse cursor.
           if (std::holds_alternative<std::shared_ptr<platf::img_t>>(last_frame_variant)) {
             // We have the shared pointer of the last image, replace it with intermediate surface
@@ -2330,6 +2583,32 @@ namespace platf::dxgi {
           out_frame_action = ofa::forward_last_img;
         }
       }
+    }
+
+    static int cursor_plane_no_blend_frames_logged = 0;
+    if (!cursor_visible && cursor_plane_no_blend_frames_logged < 20 &&
+        (raw_mouse_update_flag || frame_update_flag || update_flag)) {
+      ++cursor_plane_no_blend_frames_logged;
+      const int last_variant = std::holds_alternative<std::shared_ptr<platf::img_t>>(last_frame_variant) ? 1 :
+                         std::holds_alternative<texture2d_t>(last_frame_variant) ? 2 : 0;
+      BOOST_LOG(info) << "DDX VRAM cursor-plane no-video-cursor frame"
+                      << " sample=" << cursor_plane_no_blend_frames_logged
+                      << " cursor_visible=" << cursor_visible
+                      << " rawMouseUpdate=" << raw_mouse_update_flag
+                      << " pointerShapeBytes=" << frame_info.PointerShapeBufferSize
+                      << " pointerVisible=" << frame_info.PointerPosition.Visible
+                      << " pos=" << frame_info.PointerPosition.Position.x << ',' << frame_info.PointerPosition.Position.y
+                      << " srcFrame=" << (src ? 1 : 0)
+                      << " frameUpdate=" << frame_update_flag
+                      << " update=" << update_flag
+                      << " outAction=" << static_cast<int>(out_frame_action)
+                      << " lastAction=" << static_cast<int>(last_frame_action)
+                      << " lastVariant=" << last_variant
+                      << " alphaVisible=" << cursor_alpha.visible
+                      << " xorVisible=" << cursor_xor.visible
+                      << " alphaTex=" << (cursor_alpha.texture.get() ? 1 : 0)
+                      << " xorTex=" << (cursor_xor.texture.get() ? 1 : 0)
+                      << " clientMayIncludeCursor=" << client_frame_may_include_cursor;
     }
 
     auto create_surface = [&](texture2d_t &surface) -> bool {
@@ -2583,6 +2862,50 @@ namespace platf::dxgi {
     if (img_out) {
       img_out->frame_timestamp = frame_timestamp;
       img_out->interest_map = std::move(interest_map);
+      if (auto d3d_img = std::static_pointer_cast<img_d3d_t>(img_out); d3d_img && d3d_img->capture_texture) {
+        texture_lock_helper probe_lock(d3d_img->capture_mutex.get());
+        if (probe_lock.lock()) {
+          update_d3d_cursor_probe(*img_out,
+                                  device.get(),
+                                  device_ctx.get(),
+                                  d3d_img->capture_texture.get(),
+                                  d3d_img->format,
+                                  platf::img_t::cursor_probe_backend_e::ddx_vram,
+                                  cursor_visible,
+                                  blend_mouse_cursor_flag,
+                                  src.get() != nullptr,
+                                  raw_mouse_update_flag,
+                                  frame_info.PointerPosition.Visible,
+                                  frame_info.PointerPosition.Position,
+                                  offset_x,
+                                  offset_y,
+                                  cursor_probe_last_hash,
+                                  cursor_probe_samples);
+        }
+        else {
+          BOOST_LOG(warning) << "Cursor capture-output proof skipped backend=DDX-VRAM reason=lock-failed";
+        }
+      }
+    }
+
+    if (blend_mouse_cursor_flag) {
+      static int cursor_blend_final_logged = 0;
+      if (cursor_blend_final_logged < 20) {
+        ++cursor_blend_final_logged;
+        BOOST_LOG(info) << "DDX VRAM cursor blend final"
+                        << " sample=" << cursor_blend_final_logged
+                        << " cursor_visible=" << cursor_visible
+                        << " outAction=" << static_cast<int>(out_frame_action)
+                        << " lastAction=" << static_cast<int>(last_frame_action)
+                        << " alphaVisible=" << cursor_alpha.visible
+                        << " xorVisible=" << cursor_xor.visible
+                        << " alphaTex=" << (cursor_alpha.texture.get() ? 1 : 0)
+                        << " xorTex=" << (cursor_xor.texture.get() ? 1 : 0);
+      }
+      client_frame_may_include_cursor = true;
+    }
+    else if (!cursor_visible && frame_update_flag) {
+      client_frame_may_include_cursor = false;
     }
 
     return capture_e::ok;
@@ -2802,7 +3125,7 @@ namespace platf::dxgi {
       texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
       if (lock_helper.lock()) {
         device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
-        if (config::input.amf_draw_mouse_cursor) {
+        if (cursor_visible && config::input.amf_draw_mouse_cursor) {
           GetCursorInfo(&pt);
           if (pt.flags == CURSOR_SHOWING) {
             blend_cursor(*d3d_img);
@@ -2928,6 +3251,33 @@ namespace platf::dxgi {
     img_out = img;
     if (img_out) {
       img_out->frame_timestamp = frame_timestamp;
+      POINT cursor_point {};
+      bool cursor_visible_on_host = false;
+      const bool cursor_probe_available = query_system_cursor_probe_point(cursor_point, cursor_visible_on_host);
+      if (auto d3d_img = std::static_pointer_cast<img_d3d_t>(img_out); d3d_img && d3d_img->capture_texture) {
+        texture_lock_helper probe_lock(d3d_img->capture_mutex.get());
+        if (probe_lock.lock()) {
+          update_d3d_cursor_probe(*img_out,
+                                  device.get(),
+                                  device_ctx.get(),
+                                  d3d_img->capture_texture.get(),
+                                  d3d_img->format,
+                                  platf::img_t::cursor_probe_backend_e::wgc_vram,
+                                  cursor_visible,
+                                  cursor_visible,
+                                  true,
+                                  cursor_probe_available,
+                                  cursor_visible_on_host,
+                                  cursor_point,
+                                  offset_x,
+                                  offset_y,
+                                  cursor_probe_last_hash,
+                                  cursor_probe_samples);
+        }
+        else {
+          BOOST_LOG(warning) << "Cursor capture-output proof skipped backend=WGC-VRAM reason=lock-failed";
+        }
+      }
     }
 
     return capture_e::ok;

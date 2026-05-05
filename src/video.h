@@ -88,6 +88,12 @@ namespace video {
     int lowBitrateTargetQp = 0;
     float lowBitrateSharpenAlpha = 0.0f;
 
+    // Client requested a real remote cursor plane for this session. When true,
+    // capture must not burn the host cursor into the video stream, otherwise the
+    // Moonlight local cursor plane creates a duplicate cursor.
+    bool preferCursorPlane = false;
+    std::uint64_t cursorProbeRuntimeId = 0;
+
     // NTSC framerate support: use frameRateNum/frameRateDen for precise framerate
     // e.g., 120000/1001 = 119.88fps (NTSC), 60000/1001 = 59.94fps
     // When frameRateDen is 0 or 1, use integer framerate
@@ -453,6 +459,7 @@ namespace video {
   };
 
   using frame_interest_feedback_fn_t = void (*)(void *, const frame_interest_feedback_t &);
+  using input_activity_fn_t = bool (*)(void *);
 
   extern int active_hevc_mode;
   extern int active_av1_mode;
@@ -465,7 +472,8 @@ namespace video {
     config_t config,
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events = std::nullopt,
-    frame_interest_feedback_fn_t frame_interest_feedback = nullptr);
+    frame_interest_feedback_fn_t frame_interest_feedback = nullptr,
+    input_activity_fn_t input_activity = nullptr);
 
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure);

@@ -2324,3 +2324,800 @@ TEST(WeakNetControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhenNetwor
   EXPECT_GE(action.target_fps, 72);
   EXPECT_TRUE(action.profile_tier_deferred);
 }
+
+TEST(WeakNetControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByInteractivePressure) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 8000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 8000,
+    .baseline_fps = 45,
+    .startup_fps = 45,
+    .min_fps = 18,
+    .frame_width = 1920,
+    .frame_height = 1080,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 5; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 45,
+      .complete_frames = 45,
+      .total_packets = 1600,
+      .received_packets = 1600,
+      .rtt_ms = 180,
+      .rtt_variance_ms = 80,
+      .late_frames = 5,
+      .displayed_frames = 32,
+      .input_queue_depth = 2,
+      .input_send_latency_us = 40000,
+      .input_ack_latency_us = 42000,
+      .frame_area = 1920U * 1080U,
+      .dirty_area = 1920U * 1080U,
+      .full_frame_dirty = true,
+    });
+  }
+
+  EXPECT_LE(action.target_fps, 45);
+  EXPECT_NE(action.target_fps, 72);
+}
+
+TEST(WeakNetControllerTests, HighRefreshDelayPressureStepsDownByAboutFiveFpsNotToStickySeventyTwo) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+  });
+
+  auto first = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 160,
+    .rtt_variance_ms = 82,
+    .decode_queue_depth = 5,
+    .render_queue_depth = 3,
+    .late_frames = 8,
+    .displayed_frames = 92,
+    .input_queue_depth = 2,
+    .input_send_latency_us = 50000,
+    .input_ack_latency_us = 52000,
+    .frame_area = 3024U * 1900U,
+    .dirty_area = 3024U * 1900U,
+    .full_frame_dirty = true,
+  });
+
+  EXPECT_LT(first.target_fps, 120);
+  EXPECT_GE(first.target_fps, 110);
+  EXPECT_NE(first.target_fps, 72);
+}
+
+TEST(WeakNetControllerTests, CleanRecoveryRaisesFpsOneStepTowardTarget) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 120,
+      .complete_frames = 120,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .rtt_ms = 180,
+      .rtt_variance_ms = 90,
+      .decode_queue_depth = 5,
+      .render_queue_depth = 3,
+      .late_frames = 8,
+      .displayed_frames = 90,
+      .frame_area = 3024U * 1900U,
+      .dirty_area = 3024U * 1900U,
+      .full_frame_dirty = true,
+    });
+  }
+  ASSERT_LT(action.target_fps, 120);
+  const auto pressured_fps = action.target_fps;
+
+  action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 18,
+    .rtt_variance_ms = 2,
+    .decode_queue_depth = 0,
+    .render_queue_depth = 0,
+    .late_frames = 0,
+    .displayed_frames = 120,
+    .frame_area = 3024U * 1900U,
+    .dirty_area = 0,
+  });
+
+  EXPECT_EQ(action.target_fps, std::min(120, pressured_fps + 1));
+}
+
+TEST(WeakNetControllerTests, AudioOnlyRecoveryStillRaisesFpsOneStepToAvoidVisibleJumps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 20000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 80,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+  });
+
+  const auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 18,
+    .rtt_variance_ms = 2,
+    .audio_concealed_ms = 24,
+    .displayed_frames = 120,
+    .frame_area = 3024U * 1900U,
+    .dirty_area = 0,
+  });
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::audio_pressure);
+  EXPECT_LE(action.target_fps, 81);
+}
+
+
+TEST(WeakNetControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockCleanVideoRecovery) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 24000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 96,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+    .user_quality_kbps = 24000,
+    .fps_needed_kbps = 26000,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 6; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 1200 * 1024,
+      .rtt_ms = 18,
+      .rtt_variance_ms = 2,
+      .audio_concealed_ms = 24,
+      .audio_fade_ms = 8,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1900U,
+      .dirty_area = 0,
+    });
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::audio_pressure)
+    << "minor PLC/fade should not make video transport visibly oscillate";
+  EXPECT_GE(action.target_fps, 97)
+    << "clean video should still recover FPS one step at a time";
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_FALSE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToAvoidSawtooth) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 100000,
+    .baseline_fps = 120,
+    .startup_fps = 96,
+    .min_fps = 1,
+    .frame_width = 3024,
+    .frame_height = 1964,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+  }
+  ASSERT_GT(action.target_fps, 96);
+  const auto probed_fps = action.target_fps;
+
+  action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .video_bytes = 3000 * 1024,
+    .rtt_ms = 25,
+    .rtt_variance_ms = 4,
+    .late_frames = 24,
+    .displayed_frames = 32,
+    .visual_stale_frames = 8,
+    .frame_area = 3024U * 1964U,
+    .dirty_area = 3024U * 1964U,
+    .full_frame_dirty = true,
+  });
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_LE(action.target_fps, probed_fps - 5);
+  const auto held_fps = action.target_fps;
+
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+    EXPECT_LE(action.target_fps, held_fps)
+      << "window " << i << " should stay in hold after render backpressure failed probe";
+  }
+}
+
+TEST(WeakNetControllerTests, VisualFreshnessPressureTreatsDuplicateOnlyFramesAsRenderPressure) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 12000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 12000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 24,
+      .complete_frames = 24,
+      .total_packets = 600,
+      .received_packets = 600,
+      .video_bytes = 220 * 1024,
+      .rtt_ms = 35,
+      .rtt_variance_ms = 4,
+      .late_frames = 0,
+      .displayed_frames = 1,
+      .frame_area = 3024U * 1900U,
+      .dirty_area = 0,
+      .visual_stale_frames = 24,
+      .duplicate_frames = 24,
+    });
+  }
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_GE(action.pressures.render, 0.40);
+  EXPECT_TRUE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsSmallDropAfterShortCooldown) {
+  const auto decision = weak_net::runtime_fps_apply_decision(120, 115, 500);
+
+  EXPECT_TRUE(decision.target_changed);
+  EXPECT_TRUE(decision.apply);
+  EXPECT_FALSE(decision.deferred);
+  EXPECT_EQ(decision.cooldown_ms, 500);
+}
+
+TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsOneFpsRecoveryStep) {
+  const auto decision = weak_net::runtime_fps_apply_decision(83, 84, 1000);
+
+  EXPECT_TRUE(decision.target_changed);
+  EXPECT_TRUE(decision.apply);
+  EXPECT_FALSE(decision.deferred);
+  EXPECT_EQ(decision.cooldown_ms, 1000);
+}
+
+TEST(WeakNetControllerTests, RuntimeFpsApplyDefersOnlyDuringCooldown) {
+  const auto decision = weak_net::runtime_fps_apply_decision(120, 119, 100);
+
+  EXPECT_TRUE(decision.target_changed);
+  EXPECT_FALSE(decision.apply);
+  EXPECT_TRUE(decision.deferred);
+  EXPECT_EQ(decision.cooldown_ms, 500);
+}
+
+TEST(WeakNetControllerTests, FailedFpsProbeAddsRecoveryHoldAndBackoff) {
+  const auto first = weak_net::fps_probe_backoff_after_failed_recovery(96,
+                                                                       97,
+                                                                       92,
+                                                                       true,
+                                                                       0,
+                                                                       0);
+  EXPECT_EQ(first.failed_probe_count, 1);
+  EXPECT_GE(first.recovery_hold_windows, 8);
+  EXPECT_GE(first.recovery_probe_interval_windows, 2);
+
+  const auto repeated = weak_net::fps_probe_backoff_after_failed_recovery(92,
+                                                                          93,
+                                                                          88,
+                                                                          true,
+                                                                          first.failed_probe_count,
+                                                                          first.recovery_hold_windows);
+  EXPECT_GT(repeated.failed_probe_count, first.failed_probe_count);
+  EXPECT_GT(repeated.recovery_probe_interval_windows, first.recovery_probe_interval_windows);
+  EXPECT_GT(repeated.recovery_hold_windows, first.recovery_hold_windows);
+}
+
+TEST(WeakNetControllerTests, CleanStableWindowsDecayFailedFpsProbeBackoff) {
+  const auto stable = weak_net::fps_probe_backoff_after_failed_recovery(96,
+                                                                        0,
+                                                                        97,
+                                                                        false,
+                                                                        3,
+                                                                        2);
+  EXPECT_EQ(stable.failed_probe_count, 2);
+  EXPECT_EQ(stable.recovery_hold_windows, 1);
+  EXPECT_GE(stable.recovery_probe_interval_windows, 2);
+}
+
+TEST(WeakNetControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextProbe) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 100000,
+    .baseline_fps = 120,
+    .startup_fps = 96,
+    .min_fps = 1,
+    .frame_width = 3024,
+    .frame_height = 1964,
+  });
+
+  weak_net::action_t action;
+  for (int i = 0; i < 3; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+  }
+  ASSERT_GT(action.target_fps, 96);
+  const auto probed_fps = action.target_fps;
+
+  action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .video_bytes = 3000 * 1024,
+    .rtt_ms = 25,
+    .rtt_variance_ms = 4,
+    .late_frames = 20,
+    .displayed_frames = 38,
+    .frame_area = 3024U * 1964U,
+    .dirty_area = 3024U * 1964U,
+    .full_frame_dirty = true,
+  });
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_LE(action.target_fps, probed_fps - 5);
+
+  const auto post_failure_fps = action.target_fps;
+  for (int i = 0; i < 8; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+    EXPECT_LE(action.target_fps, post_failure_fps)
+      << "FPS should hold after a failed upward probe";
+  }
+}
+
+TEST(WeakNetControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhileAllowingVisualRecovery) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 30000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 18000,
+    .ceiling_total_bitrate_kbps = 60000,
+    .baseline_fps = 120,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3024,
+    .frame_height = 1964,
+    .user_quality_kbps = 18000,
+    .ideal_demand_kbps = 60000,
+    .fps_needed_kbps = 30000,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 6; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 1250 * 1024,
+      .rtt_ms = 24,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .audio_underruns = 1,
+      .audio_concealed_ms = 22,
+      .late_audio_drops = 1,
+      .audio_plc_ms = 12,
+      .audio_fade_ms = 6,
+      .audio_buffer_depth_ms = 130,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    });
+    EXPECT_EQ(action.fec_percentage, 10);
+    EXPECT_GE(action.target_fps, 90);
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::audio_pressure);
+  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.target_fps, 96);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_GT(action.target_bitrate_kbps, 18000);
+}
+
+TEST(WeakNetControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawtooth) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 100000,
+    .baseline_fps = 120,
+    .startup_fps = 96,
+    .min_fps = 1,
+    .frame_width = 3024,
+    .frame_height = 1964,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+  }
+  ASSERT_GT(action.target_fps, 96);
+  const auto probed_fps = action.target_fps;
+
+  action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .video_bytes = 3000 * 1024,
+    .rtt_ms = 25,
+    .rtt_variance_ms = 4,
+    .decode_queue_depth = 7,
+    .render_queue_depth = 5,
+    .late_frames = 16,
+    .displayed_frames = 40,
+    .frame_area = 3024U * 1964U,
+    .dirty_area = 3024U * 1964U,
+    .full_frame_dirty = true,
+  });
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_LE(action.target_fps, probed_fps - 5);
+
+  const auto held_fps = action.target_fps;
+  for (int i = 0; i < 14; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 3000 * 1024,
+      .rtt_ms = 25,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1964U,
+      .dirty_area = 3024U * 1964U,
+      .full_frame_dirty = true,
+    });
+    EXPECT_EQ(action.target_fps, held_fps)
+      << "FPS should not probe upward immediately after render backpressure; window=" << i;
+  }
+}
+
+TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 18182,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 8911,
+    .ceiling_total_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 68,
+    .min_fps = 1,
+    .user_quality_kbps = 12000,
+    .ideal_demand_kbps = 18182,
+    .fps_needed_kbps = 18182,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 6; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 1080,
+      .frames_seen = 52,
+      .complete_frames = 52,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 360 * 1024,
+      .rtt_ms = 58,
+      .rtt_variance_ms = 17,
+      .displayed_frames = 52,
+      .audio_underruns = 101,
+      .audio_concealed_ms = 1010,
+      .audio_fade_ms = 606,
+    });
+  }
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::audio_pressure);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_LE(action.target_bitrate_kbps, 10000)
+    << "audio-only continuity pressure should not rapidly probe video bitrate upward";
+  EXPECT_LE(action.target_fps, 69)
+    << "audio-only continuity pressure should not ramp FPS upward";
+}
+
+TEST(WeakNetControllerTests, StartupDelayRenderAudioPressureDoesNotBypassLinearBitrateClamp) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 12000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 8274,
+    .ceiling_total_bitrate_kbps = 88735,
+    .min_bitrate_kbps = 1500,
+    .baseline_fps = 120,
+    .startup_fps = 64,
+    .min_fps = 60,
+    .frame_width = 3024,
+    .frame_height = 1900,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 12000,
+    .ideal_demand_kbps = 80668,
+    .fps_needed_kbps = 13789,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 4360,
+    .frames_seen = 0,
+    .complete_frames = 21,
+    .displayed_frames = 21,
+    .video_bytes = 13680,
+    .rtt_ms = 61,
+    .rtt_variance_ms = 12,
+    .frame_area = 3024ULL * 1900ULL,
+    .dirty_area = 1280,
+  });
+  const int first_bitrate = action.target_bitrate_kbps;
+  EXPECT_GE(first_bitrate, 8200);
+
+  action = controller.on_feedback({
+    .duration_ms = 541,
+    .frames_seen = 12,
+    .complete_frames = 12,
+    .displayed_frames = 12,
+    .video_bytes = 32832,
+    .rtt_ms = 152,
+    .rtt_variance_ms = 108,
+    .decode_queue_depth = 12,
+    .render_queue_depth = 0,
+    .late_frames = 3,
+    .audio_underruns = 51,
+    .audio_concealed_ms = 510,
+    .audio_fade_ms = 306,
+    .input_queue_depth = 1,
+    .input_ack_latency_us = 1000,
+    .frame_area = 3024ULL * 1900ULL,
+    .dirty_area = 3591,
+  });
+  const int second_bitrate = action.target_bitrate_kbps;
+  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_GE(second_bitrate, first_bitrate - 1200);
+
+  action = controller.on_feedback({
+    .duration_ms = 548,
+    .frames_seen = 7,
+    .complete_frames = 7,
+    .displayed_frames = 7,
+    .video_bytes = 19152,
+    .rtt_ms = 149,
+    .rtt_variance_ms = 115,
+    .decode_queue_depth = 5,
+    .render_queue_depth = 0,
+    .audio_underruns = 52,
+    .audio_concealed_ms = 520,
+    .audio_fade_ms = 312,
+    .frame_area = 3024ULL * 1900ULL,
+    .dirty_area = 0,
+  });
+  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_GE(action.target_bitrate_kbps, second_bitrate - 1200);
+  EXPECT_GT(action.target_bitrate_kbps, 5000);
+  EXPECT_GT(action.effective_ceiling_kbps, 5000);
+}
+
+TEST(WeakNetControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 18182,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 8274,
+    .ceiling_total_bitrate_kbps = 20000,
+    .baseline_fps = 120,
+    .startup_fps = 64,
+    .min_fps = 45,
+    .user_quality_kbps = 12000,
+    .ideal_demand_kbps = 80668,
+    .fps_needed_kbps = 13789,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 18; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 550,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 650 * 1024,
+      .rtt_ms = 38,
+      .rtt_variance_ms = 5,
+      .displayed_frames = 60,
+      .input_queue_depth = 1,
+      .frame_area = 3024U * 1900U,
+      .dirty_area = 3024U * 1900U,
+      .full_frame_dirty = true,
+    });
+
+    EXPECT_LE(action.target_bitrate_kbps, 12000);
+    EXPECT_LT(action.pacing_bitrate_kbps, 15000);
+  }
+
+  EXPECT_GT(action.target_fps, 64);
+  EXPECT_LE(action.target_fps, 82);
+}
+
+TEST(WeakNetControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 12000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 12000,
+    .ceiling_total_bitrate_kbps = 15000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 45,
+    .user_quality_kbps = 12000,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 550,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .rtt_ms = 36,
+    .rtt_variance_ms = 4,
+    .displayed_frames = 55,
+    .decode_queue_depth = 0,
+    .render_queue_depth = 4,
+    .late_frames = 8,
+    .frame_area = 3024U * 1900U,
+    .dirty_area = 3024U * 1900U,
+    .full_frame_dirty = true,
+  });
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.target_fps, 115);
+  EXPECT_EQ(action.fec_percentage, 10);
+  EXPECT_LE(action.target_bitrate_kbps, 12000);
+
+  for (int i = 0; i < 3; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 550,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .rtt_ms = 28,
+      .rtt_variance_ms = 3,
+      .displayed_frames = 60,
+      .frame_area = 3024U * 1900U,
+      .dirty_area = 0,
+    });
+  }
+
+  EXPECT_LE(action.target_fps, 115);
+}

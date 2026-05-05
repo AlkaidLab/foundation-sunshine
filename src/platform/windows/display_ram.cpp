@@ -12,6 +12,106 @@ namespace platf {
 }
 
 namespace platf::dxgi {
+  namespace {
+    constexpr std::uint64_t cursor_probe_fnv_offset = 14695981039346656037ull;
+    constexpr std::uint64_t cursor_probe_fnv_prime = 1099511628211ull;
+
+    const char *
+    cursor_probe_backend_name(platf::img_t::cursor_probe_backend_e backend) {
+      switch (backend) {
+        case platf::img_t::cursor_probe_backend_e::ddx_ram:
+          return "DDX-RAM";
+        case platf::img_t::cursor_probe_backend_e::ddx_vram:
+          return "DDX-VRAM";
+        case platf::img_t::cursor_probe_backend_e::wgc_ram:
+          return "WGC-RAM";
+        case platf::img_t::cursor_probe_backend_e::wgc_vram:
+          return "WGC-VRAM";
+        case platf::img_t::cursor_probe_backend_e::amd:
+          return "AMD";
+        case platf::img_t::cursor_probe_backend_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    std::uint64_t
+    hash_cpu_cursor_crop(const img_t &img, int x, int y, int w, int h) {
+      if (!img.data || w <= 0 || h <= 0 || img.pixel_pitch <= 0 || img.row_pitch <= 0) {
+        return 0;
+      }
+
+      auto hash = cursor_probe_fnv_offset;
+      for (int row = 0; row < h; ++row) {
+        const auto *p = img.data + static_cast<std::size_t>(y + row) * img.row_pitch +
+                        static_cast<std::size_t>(x) * img.pixel_pitch;
+        const auto bytes = static_cast<std::size_t>(w) * img.pixel_pitch;
+        for (std::size_t i = 0; i < bytes; ++i) {
+          hash ^= p[i];
+          hash *= cursor_probe_fnv_prime;
+        }
+      }
+      return hash;
+    }
+
+    void
+    update_cpu_cursor_probe(img_t &img,
+                            platf::img_t::cursor_probe_backend_e backend,
+                            bool capture_cursor,
+                            bool final_video_cursor_enabled,
+                            bool source_present,
+                            bool mouse_update,
+                            bool pointer_visible,
+                            POINT pointer_position,
+                            int display_offset_x,
+                            int display_offset_y,
+                            std::uint64_t &last_hash,
+                            std::uint32_t &sample_count) {
+      auto &probe = img.cursor_probe;
+      probe = {};
+      probe.active = true;
+      probe.backend = backend;
+      probe.prefer_cursor_plane = !capture_cursor;
+      probe.capture_cursor = capture_cursor;
+      probe.final_video_cursor_enabled = final_video_cursor_enabled;
+      probe.source_present = source_present;
+      probe.mouse_update = mouse_update;
+      probe.pointer_visible = pointer_visible;
+      const auto local_x = static_cast<int>(pointer_position.x) - display_offset_x;
+      const auto local_y = static_cast<int>(pointer_position.y) - display_offset_y;
+      probe.x = std::clamp(local_x, 0, std::max(0, img.width - 1));
+      probe.y = std::clamp(local_y, 0, std::max(0, img.height - 1));
+      probe.w = std::min(96, std::max(0, img.width - probe.x));
+      probe.h = std::min(96, std::max(0, img.height - probe.y));
+      probe.sample_index = ++sample_count;
+      const bool should_hash = probe.sample_index <= 80 ||
+                               (mouse_update && probe.sample_index <= 160);
+      probe.crop_valid = should_hash && probe.w > 0 && probe.h > 0 && img.data != nullptr;
+      if (probe.crop_valid) {
+        probe.hash = hash_cpu_cursor_crop(img, probe.x, probe.y, probe.w, probe.h);
+        probe.crop_changed = last_hash != 0 && probe.hash != last_hash;
+        last_hash = probe.hash;
+      }
+
+      if (probe.sample_index <= 40 || probe.crop_changed || (mouse_update && probe.sample_index <= 160)) {
+        BOOST_LOG(info) << "Cursor capture-output proof"
+                        << " runtime=0"
+                        << " backend=" << cursor_probe_backend_name(backend)
+                        << " preferCursorPlane=" << (probe.prefer_cursor_plane ? 1 : 0)
+                        << " finalVideoCursorEnabled=" << (probe.final_video_cursor_enabled ? 1 : 0)
+                        << " captureCursor=" << (probe.capture_cursor ? 1 : 0)
+                        << " sourcePresent=" << (probe.source_present ? 1 : 0)
+                        << " mouseUpdate=" << (probe.mouse_update ? 1 : 0)
+                        << " pointerVisible=" << (probe.pointer_visible ? 1 : 0)
+                        << " screenPos=" << pointer_position.x << ',' << pointer_position.y
+                        << " displayOffset=" << display_offset_x << ',' << display_offset_y
+                        << " cursorRect=" << probe.x << ',' << probe.y << ',' << probe.w << ',' << probe.h
+                        << " hash=" << probe.hash
+                        << " cropChanged=" << (probe.crop_changed ? 1 : 0);
+      }
+    }
+  }  // namespace
+
   struct img_t: public ::platf::img_t {
     ~img_t() override {
       delete[] data;
@@ -189,9 +289,31 @@ namespace platf::dxgi {
       return capture_status;
     }
 
-    const bool mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
-    const bool frame_update_flag = frame_info.AccumulatedFrames != 0 || frame_info.LastPresentTime.QuadPart != 0;
+    const bool raw_mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
+    const bool cursor_disabled_transition = last_cursor_visible && !cursor_visible;
+    const bool force_clean_frame_for_cursor_plane = !cursor_visible &&
+                                                    client_frame_may_include_cursor &&
+                                                    raw_mouse_update_flag;
+    static bool logged_cursor_plane_no_burn = false;
+    if (!cursor_visible && !logged_cursor_plane_no_burn) {
+      logged_cursor_plane_no_burn = true;
+      BOOST_LOG(info) << "DDX RAM cursor burn-in disabled at backend"
+                      << " rawMouseUpdate=" << raw_mouse_update_flag
+                      << " pointerShapeBytes=" << frame_info.PointerShapeBufferSize
+                      << " pointerVisible=" << frame_info.PointerPosition.Visible
+                      << " accumulated=" << frame_info.AccumulatedFrames
+                      << " lastPresent=" << frame_info.LastPresentTime.QuadPart
+                      << " lastMouse=" << frame_info.LastMouseUpdateTime.QuadPart;
+    }
+    if (cursor_disabled_transition) {
+      BOOST_LOG(info) << "DDX RAM cursor burn-in disabled; forcing clean frame to clear cached video cursor";
+    }
+    const bool mouse_update_flag = cursor_visible && raw_mouse_update_flag;
+    const bool frame_update_flag = frame_info.AccumulatedFrames != 0 ||
+                                   frame_info.LastPresentTime.QuadPart != 0 ||
+                                   force_clean_frame_for_cursor_plane;
     const bool update_flag = mouse_update_flag || frame_update_flag;
+    last_cursor_visible = cursor_visible;
 
     if (!update_flag) {
       return capture_e::timeout;
@@ -205,7 +327,7 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (frame_info.PointerShapeBufferSize > 0) {
+    if (cursor_visible && frame_info.PointerShapeBufferSize > 0) {
       auto &img_data = cursor.img_data;
 
       img_data.resize(frame_info.PointerShapeBufferSize);
@@ -219,10 +341,13 @@ namespace platf::dxgi {
       }
     }
 
-    if (frame_info.LastMouseUpdateTime.QuadPart) {
+    if (cursor_visible && frame_info.LastMouseUpdateTime.QuadPart) {
       cursor.x = frame_info.PointerPosition.Position.x;
       cursor.y = frame_info.PointerPosition.Position.y;
       cursor.visible = frame_info.PointerPosition.Visible;
+    }
+    else if (!cursor_visible) {
+      cursor.visible = false;
     }
 
     if (frame_update_flag) {
@@ -318,7 +443,24 @@ namespace platf::dxgi {
 
     if (cursor_visible && cursor.visible) {
       blend_cursor(cursor, *img);
+      client_frame_may_include_cursor = true;
     }
+    else if (!cursor_visible && frame_update_flag) {
+      client_frame_may_include_cursor = false;
+    }
+
+    update_cpu_cursor_probe(*img,
+                            platf::img_t::cursor_probe_backend_e::ddx_ram,
+                            cursor_visible,
+                            cursor_visible && cursor.visible,
+                            frame_update_flag,
+                            raw_mouse_update_flag,
+                            frame_info.PointerPosition.Visible,
+                            frame_info.PointerPosition.Position,
+                            offset_x,
+                            offset_y,
+                            cursor_probe_last_hash,
+                            cursor_probe_samples);
 
     if (img) {
       img->frame_timestamp = frame_timestamp;

@@ -82,6 +82,19 @@ namespace rtsp_stream {
   int
   pending_launch_session_count();
 
+#ifdef SUNSHINE_TESTS
+  struct pending_launch_session_test_result_t {
+    bool first_claim_ok = false;
+    bool second_claim_reused = false;
+    bool touch_extended_ttl = false;
+    int pending_after_touch = 0;
+    int pending_after_clear = 0;
+  };
+
+  pending_launch_session_test_result_t
+  pending_launch_session_touch_for_tests();
+#endif
+
   std::uint64_t
   foundation_streaming_feature_flags2();
 

@@ -50,6 +50,19 @@ namespace weak_net {
     bool profile_tier_active = false;
   };
 
+  struct runtime_fps_apply_decision_t {
+    bool target_changed = false;
+    bool apply = false;
+    bool deferred = false;
+    int cooldown_ms = 0;
+  };
+
+  struct fps_probe_backoff_t {
+    int failed_probe_count = 0;
+    int recovery_hold_windows = 0;
+    int recovery_probe_interval_windows = 1;
+  };
+
   struct config_t {
     int baseline_bitrate_kbps = 0;
     int baseline_fec_percentage = 0;
@@ -70,6 +83,17 @@ namespace weak_net {
     int fps_needed_kbps = 0;
   };
 
+  runtime_fps_apply_decision_t
+  runtime_fps_apply_decision(int last_fps, int target_fps, int elapsed_ms_since_last_apply);
+
+  fps_probe_backoff_t
+  fps_probe_backoff_after_failed_recovery(int previous_fps,
+                                          int last_probe_fps,
+                                          int target_fps,
+                                          bool pressure_after_probe,
+                                          int previous_failed_probe_count,
+                                          int previous_hold_windows);
+
   struct feedback_t {
     std::uint32_t duration_ms = 0;
     std::uint32_t frames_seen = 0;
@@ -87,6 +111,8 @@ namespace weak_net {
     std::uint32_t render_queue_depth = 0;
     std::uint32_t late_frames = 0;
     std::uint32_t displayed_frames = 0;
+    std::uint32_t visual_stale_frames = 0;
+    std::uint32_t duplicate_frames = 0;
     std::uint32_t input_queue_depth = 0;
     std::uint32_t input_send_latency_us = 0;
     std::uint32_t input_ack_latency_us = 0;
@@ -161,6 +187,10 @@ namespace weak_net {
     int stable_windows_ = 0;
     int video_deadline_windows_ = 0;
     int fps_adjust_cooldown_windows_ = 0;
+    int fps_recovery_hold_windows_ = 0;
+    int fps_probe_interval_windows_ = 1;
+    int failed_fps_probe_windows_ = 0;
+    int last_recovery_probe_fps_ = 0;
     int profile_tier_cooldown_windows_ = 0;
     int media_recovery_cooldown_windows_ = 0;
     int current_bitrate_kbps_ = 0;

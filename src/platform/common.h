@@ -6,6 +6,7 @@
 
 // standard includes
 #include <bitset>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -387,6 +388,34 @@ namespace platf {
 
   struct img_t: std::enable_shared_from_this<img_t> {
   public:
+    enum class cursor_probe_backend_e: std::uint8_t {
+      unknown,
+      ddx_ram,
+      ddx_vram,
+      wgc_ram,
+      wgc_vram,
+      amd,
+    };
+
+    struct cursor_probe_t {
+      bool active = false;
+      cursor_probe_backend_e backend = cursor_probe_backend_e::unknown;
+      bool prefer_cursor_plane = false;
+      bool final_video_cursor_enabled = false;
+      bool capture_cursor = false;
+      bool source_present = false;
+      bool mouse_update = false;
+      bool pointer_visible = false;
+      bool crop_valid = false;
+      bool crop_changed = false;
+      std::int32_t x = 0;
+      std::int32_t y = 0;
+      std::int32_t w = 0;
+      std::int32_t h = 0;
+      std::uint64_t hash = 0;
+      std::uint32_t sample_index = 0;
+    };
+
     img_t() = default;
 
     img_t(img_t &&) = delete;
@@ -404,6 +433,7 @@ namespace platf {
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     frame_interest::map_t interest_map;
+    cursor_probe_t cursor_probe;
 
     virtual ~img_t() = default;
   };

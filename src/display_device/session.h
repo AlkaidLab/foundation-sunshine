@@ -88,17 +88,23 @@ namespace display_device {
     configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure = false);
 
     /**
-     * @brief Return true when a /resume request can safely reuse the currently
+     * @brief Return true when a /launch or /resume request can safely reuse the currently
      *        prepared VDD/display state without re-running VDD preparation and
      *        encoder probing.
      *
      * This is intentionally conservative: it only allows the fast path for the
      * same VDD client identity, same requested VDD mode, no pending restore, and
-     * an existing VDD device. It is used to avoid the slow pre-RTSP /resume path
+     * an existing VDD device. It is used to avoid the slow pre-RTSP NVHTTP path
      * after a stream client disconnects while the app is still running.
      */
     bool
+    can_fast_reuse_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, const char *reason);
+
+    bool
     can_fast_resume_display(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+
+    bool
+    can_fast_launch_display(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
     /**
      * @brief Revert the display configuration and restore the previous state.
@@ -278,6 +284,15 @@ namespace display_device {
      */
     void
     clear_vdd_state();
+
+    /**
+     * @brief Stop restore timer but keep the prepared VDD/session snapshot for
+     *        the next launch/resume fast path.
+     * @note This method does NOT acquire the mutex! It is intended to be used
+     *       from places where the mutex has already been locked.
+     */
+    void
+    stop_timer_keep_vdd_state();
 
     /**
      * @brief Stop timer and clear VDD state

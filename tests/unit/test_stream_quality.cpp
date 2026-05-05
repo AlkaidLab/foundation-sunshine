@@ -139,7 +139,7 @@ TEST(StreamQualityTests, HighPixelRateEnhancedStreamsRampEvenAtModerateCeiling) 
     .chroma_sampling_type = 0,
   });
 
-  EXPECT_GE(startup_bitrate, 6000);
+  EXPECT_GE(startup_bitrate, 10000);
   EXPECT_LT(startup_bitrate, 18000);
 
   auto startup_fps = stream_quality::startup_fps_for_bitrate({
@@ -151,7 +151,7 @@ TEST(StreamQualityTests, HighPixelRateEnhancedStreamsRampEvenAtModerateCeiling) 
     .chroma_sampling_type = 0,
   }, startup_bitrate);
 
-  EXPECT_GE(startup_fps, 60);
+  EXPECT_GE(startup_fps, 90);
   EXPECT_LT(startup_fps, 120);
 }
 
@@ -202,7 +202,7 @@ TEST(StreamQualityTests, HighRefreshInteractiveDesktopKeepsSixtyFpsFloor) {
   });
 
   EXPECT_TRUE(plan.enabled);
-  EXPECT_GE(plan.effective_fps, 60);
+  EXPECT_GE(plan.effective_fps, 84);
   EXPECT_TRUE(plan.prefer_temporal_layers);
   EXPECT_TRUE(plan.discardable_enhancement_layer);
 }
@@ -295,4 +295,35 @@ TEST(StreamQualityTests, StaticKeepaliveHonorsExplicitMinimumFpsTarget) {
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, true, 45), 45);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, false, 45), 45);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 90), 30);
+}
+
+TEST(StreamQualityTests, StaticKeepaliveRaisesCadenceDuringInteractiveInput) {
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::interactive_input),
+            120);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(96,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::interactive_input),
+            96);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(60,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::interactive_input),
+            60);
+}
+
+TEST(StreamQualityTests, StaticKeepaliveDefaultsRemainBandwidthFriendly) {
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::idle),
+            30);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::idle),
+            8);
 }

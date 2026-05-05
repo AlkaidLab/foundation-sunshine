@@ -1768,10 +1768,57 @@ namespace video {
     // Capture takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::critical);
 
+    std::optional<bool> last_capture_cursor;
+    std::size_t last_cursor_plane_sessions = 0;
+    std::size_t last_legacy_video_cursor_sessions = 0;
+    auto drain_pending_capture_contexts = [&]() {
+      while (capture_ctx_queue->peek()) {
+        capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+      }
+    };
+    auto should_capture_cursor = [&]() {
+      const bool any_cursor_plane_session = std::any_of(
+        std::begin(capture_ctxs),
+        std::end(capture_ctxs),
+        [](const auto &capture_ctx) {
+          return capture_ctx.config.preferCursorPlane;
+        });
+      return display_cursor && !config.preferCursorPlane && !any_cursor_plane_session;
+    };
+    auto refresh_capture_cursor = [&](bool &capture_cursor) {
+      const bool next_capture_cursor = should_capture_cursor();
+      if (!last_capture_cursor || *last_capture_cursor != next_capture_cursor) {
+        const auto cursor_plane_sessions = std::count_if(
+          std::begin(capture_ctxs),
+          std::end(capture_ctxs),
+          [](const auto &capture_ctx) {
+            return capture_ctx.config.preferCursorPlane;
+          });
+        const auto legacy_video_cursor_sessions = capture_ctxs.size() - cursor_plane_sessions;
+        BOOST_LOG(info) << "Capture cursor burn-in " << (next_capture_cursor ? "enabled" : "disabled")
+                        << " displayCursor=" << display_cursor
+                        << " cursorPlaneSessions=" << cursor_plane_sessions
+                        << " legacyVideoCursorSessions=" << legacy_video_cursor_sessions
+                        << " activeCaptureContexts=" << capture_ctxs.size();
+        last_capture_cursor = next_capture_cursor;
+        last_cursor_plane_sessions = cursor_plane_sessions;
+        last_legacy_video_cursor_sessions = legacy_video_cursor_sessions;
+      }
+      capture_cursor = next_capture_cursor;
+    };
+
     while (capture_ctx_queue->running()) {
       bool artificial_reinit = false;
+      bool capture_cursor = false;
 
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        const bool frame_captured_with_cursor = capture_cursor;
+        drain_pending_capture_contexts();
+        refresh_capture_cursor(capture_cursor);
+        const bool drop_burned_cursor_frame_for_cursor_plane =
+          frame_captured && frame_captured_with_cursor && !capture_cursor;
+        static bool logged_cursor_plane_burn_drop = false;
+
         KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
           if (!capture_ctx->images->running()) {
             capture_ctx = capture_ctxs.erase(capture_ctx);
@@ -1780,6 +1827,14 @@ namespace video {
           }
 
           if (frame_captured) {
+            if (drop_burned_cursor_frame_for_cursor_plane && capture_ctx->config.preferCursorPlane) {
+              if (!logged_cursor_plane_burn_drop) {
+                logged_cursor_plane_burn_drop = true;
+                BOOST_LOG(info) << "Dropping cursor-burned frame for cursor-plane client";
+              }
+              ++capture_ctx;
+              continue;
+            }
             capture_ctx->images->raise(img);
           }
 
@@ -1790,10 +1845,6 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
-        }
-
         if (switch_display_event->peek()) {
           artificial_reinit = true;
           return false;
@@ -1802,7 +1853,15 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      drain_pending_capture_contexts();
+      refresh_capture_cursor(capture_cursor);
+      BOOST_LOG(debug) << "Final video cursor decision before backend capture"
+                       << " backend=async"
+                       << " preferCursorPlane=" << ((config.preferCursorPlane || last_cursor_plane_sessions > 0) ? 1 : 0)
+                       << " finalVideoCursorEnabled=" << (capture_cursor ? 1 : 0)
+                       << " cursorPlaneSessions=" << last_cursor_plane_sessions
+                       << " legacyVideoCursorSessions=" << last_legacy_video_cursor_sessions;
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &capture_cursor);
 
       if (artificial_reinit && status != platf::capture_e::error) {
         status = platf::capture_e::reinit;
@@ -2036,6 +2095,56 @@ namespace video {
 
   // Per-session EMA state for temporal smoothing of HDR luminance stats
   static thread_local hdr_luminance_ema_t hdr_ema_state;
+
+  const char *
+  cursor_probe_backend_name(platf::img_t::cursor_probe_backend_e backend) {
+    switch (backend) {
+      case platf::img_t::cursor_probe_backend_e::ddx_ram:
+        return "DDX-RAM";
+      case platf::img_t::cursor_probe_backend_e::ddx_vram:
+        return "DDX-VRAM";
+      case platf::img_t::cursor_probe_backend_e::wgc_ram:
+        return "WGC-RAM";
+      case platf::img_t::cursor_probe_backend_e::wgc_vram:
+        return "WGC-VRAM";
+      case platf::img_t::cursor_probe_backend_e::amd:
+        return "AMD";
+      case platf::img_t::cursor_probe_backend_e::unknown:
+      default:
+        return "unknown";
+    }
+  }
+
+  void
+  log_cursor_encoder_input_probe(const config_t &config, const platf::img_t &img, const char *path) {
+    static std::atomic_uint samples { 0 };
+    const auto sample = ++samples;
+    const auto &probe = img.cursor_probe;
+    if (!probe.active && !config.preferCursorPlane && sample > 20) {
+      return;
+    }
+    if (sample > 160 && !probe.crop_changed) {
+      return;
+    }
+    if (sample > 120 && !probe.crop_changed && !probe.mouse_update) {
+      return;
+    }
+
+    BOOST_LOG(info) << "Cursor encoder-input proof"
+                    << " runtime=" << config.cursorProbeRuntimeId
+                    << " path=" << (path ? path : "unknown")
+                    << " backend=" << cursor_probe_backend_name(probe.backend)
+                    << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                    << " finalVideoCursorEnabled=" << (probe.final_video_cursor_enabled ? 1 : 0)
+                    << " captureCursor=" << (probe.capture_cursor ? 1 : 0)
+                    << " sourcePresent=" << (probe.source_present ? 1 : 0)
+                    << " mouseUpdate=" << (probe.mouse_update ? 1 : 0)
+                    << " pointerVisible=" << (probe.pointer_visible ? 1 : 0)
+                    << " cursorRect=" << probe.x << ',' << probe.y << ',' << probe.w << ',' << probe.h
+                    << " hash=" << probe.hash
+                    << " cropChanged=" << (probe.crop_changed ? 1 : 0)
+                    << " captureSample=" << probe.sample_index;
+  }
 
   void
   apply_frame_interest_to_encoder(encode_session_t &session,
@@ -2992,7 +3101,8 @@ namespace video {
     const encoder_t &encoder,
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
-    frame_interest_feedback_fn_t frame_interest_feedback) {
+    frame_interest_feedback_fn_t frame_interest_feedback,
+    input_activity_fn_t input_activity) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
@@ -3048,6 +3158,7 @@ namespace video {
     std::uint64_t keepalive_encode_count = 0;
     std::uint64_t keepalive_reconvert_count = 0;
     auto last_encode_loop_log = std::chrono::steady_clock::now();
+    auto last_static_frame_mode = stream_quality::static_frame_mode_e::idle;
     auto refresh_frame_interest_intent = [&config] {
       const auto content_type = std::clamp(config.contentType, 0, 3);
       const auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
@@ -3111,7 +3222,8 @@ namespace video {
             const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
               config.framerate,
               config::video.variable_refresh_rate,
-              config::video.minimum_fps_target);
+              config::video.minimum_fps_target,
+              last_static_frame_mode);
             minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / keepalive_fps };
             refresh_frame_interest_intent();
             BOOST_LOG(info) << "Encode pacing target changed to " << param->value.float_value
@@ -3147,6 +3259,24 @@ namespace video {
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
+      const auto static_frame_mode =
+        input_activity && input_activity(channel_data) ?
+          stream_quality::static_frame_mode_e::interactive_input :
+          stream_quality::static_frame_mode_e::idle;
+      if (static_frame_mode != last_static_frame_mode) {
+        const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
+          config.framerate,
+          config::video.variable_refresh_rate,
+          config::video.minimum_fps_target,
+          static_frame_mode);
+        minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / keepalive_fps };
+        BOOST_LOG(info) << "Static frame keepalive mode changed to "
+                        << (static_frame_mode == stream_quality::static_frame_mode_e::interactive_input ?
+                              "interactive-input" : "idle")
+                        << ": " << keepalive_fps << " fps ("
+                        << minimum_frame_time.count() << "ms)";
+        last_static_frame_mode = static_frame_mode;
+      }
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(minimum_frame_time)) {
           std::uint32_t dropped_stale_frames = 0;
@@ -3175,6 +3305,7 @@ namespace video {
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          log_cursor_encoder_input_probe(config, *img, "async");
           apply_frame_interest_to_encoder(*session, *img, config, channel_data, frame_interest_feedback);
           last_keepalive_img = img;
           has_new_frame = true;
@@ -3367,6 +3498,7 @@ namespace video {
       BOOST_LOG(error) << "Could not convert initial image"sv;
       return std::nullopt;
     }
+    log_cursor_encoder_input_probe(ctx.config, img, "sync-initial");
     apply_frame_interest_to_encoder(*session, img, ctx.config, ctx.channel_data, ctx.frame_interest_feedback);
 
     encode_session.session = std::move(session);
@@ -3458,8 +3590,37 @@ namespace video {
     }
 
     auto ec = platf::capture_e::ok;
+    std::optional<bool> last_capture_cursor;
+    std::size_t last_cursor_plane_sessions = 0;
+    std::size_t last_legacy_video_cursor_sessions = 0;
     while (encode_session_ctx_queue.running()) {
+      const bool any_session_prefers_cursor_plane = std::any_of(
+        std::begin(synced_session_ctxs),
+        std::end(synced_session_ctxs),
+        [](const auto &synced_ctx) {
+          return synced_ctx && synced_ctx->config.preferCursorPlane;
+        });
+      bool capture_cursor = display_cursor && !any_session_prefers_cursor_plane;
+      if (!last_capture_cursor || *last_capture_cursor != capture_cursor) {
+        const auto cursor_plane_sessions = std::count_if(
+          std::begin(synced_session_ctxs),
+          std::end(synced_session_ctxs),
+          [](const auto &synced_ctx) {
+            return synced_ctx && synced_ctx->config.preferCursorPlane;
+          });
+        const auto legacy_video_cursor_sessions = synced_session_ctxs.size() - cursor_plane_sessions;
+        BOOST_LOG(info) << "Capture cursor burn-in " << (capture_cursor ? "enabled" : "disabled")
+                        << " displayCursor=" << display_cursor
+                        << " cursorPlaneSessions=" << cursor_plane_sessions
+                        << " legacyVideoCursorSessions=" << legacy_video_cursor_sessions
+                        << " activeSyncSessions=" << synced_session_ctxs.size();
+        last_capture_cursor = capture_cursor;
+        last_cursor_plane_sessions = cursor_plane_sessions;
+        last_legacy_video_cursor_sessions = legacy_video_cursor_sessions;
+      }
+
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        const bool frame_captured_with_cursor = capture_cursor;
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -3476,6 +3637,16 @@ namespace video {
 
           synced_sessions.emplace_back(std::move(*encode_session));
         }
+
+        const bool any_session_prefers_cursor_plane_after_sync = std::any_of(
+          std::begin(synced_session_ctxs),
+          std::end(synced_session_ctxs),
+          [](const auto &synced_ctx) {
+            return synced_ctx && synced_ctx->config.preferCursorPlane;
+          });
+        const bool drop_burned_cursor_frame_for_cursor_plane =
+          frame_captured && frame_captured_with_cursor && any_session_prefers_cursor_plane_after_sync;
+        static bool logged_cursor_plane_sync_burn_drop = false;
 
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
           auto ctx = pos->ctx;
@@ -3501,12 +3672,22 @@ namespace video {
           }
 
           if (frame_captured) {
+            if (drop_burned_cursor_frame_for_cursor_plane && ctx->config.preferCursorPlane) {
+              if (!logged_cursor_plane_sync_burn_drop) {
+                logged_cursor_plane_sync_burn_drop = true;
+                BOOST_LOG(info) << "Dropping first cursor-burned sync frame for cursor-plane client";
+              }
+              pos->session->request_normal_frame();
+              ++pos;
+              continue;
+            }
             if (pos->session->convert(*img)) {
               BOOST_LOG(error) << "Could not convert image"sv;
               ctx->shutdown_event->raise(true);
 
               continue;
             }
+            log_cursor_encoder_input_probe(ctx->config, *img, "sync");
             apply_frame_interest_to_encoder(*pos->session,
                                             *img,
                                             ctx->config,
@@ -3545,7 +3726,13 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      BOOST_LOG(debug) << "Final video cursor decision before backend capture"
+                       << " backend=sync"
+                       << " preferCursorPlane=" << (last_cursor_plane_sessions > 0 ? 1 : 0)
+                       << " finalVideoCursorEnabled=" << (capture_cursor ? 1 : 0)
+                       << " cursorPlaneSessions=" << last_cursor_plane_sessions
+                       << " legacyVideoCursorSessions=" << last_legacy_video_cursor_sessions;
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &capture_cursor);
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:
@@ -3594,7 +3781,8 @@ namespace video {
     config_t &config,
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
-    frame_interest_feedback_fn_t frame_interest_feedback) {
+    frame_interest_feedback_fn_t frame_interest_feedback,
+    input_activity_fn_t input_activity) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<img_event_t::element_type>();
@@ -3763,7 +3951,7 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events, frame_interest_feedback);
+        channel_data, dynamic_param_events, frame_interest_feedback, input_activity);
     }
   }
 
@@ -3773,12 +3961,13 @@ namespace video {
     config_t config,
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
-    frame_interest_feedback_fn_t frame_interest_feedback) {
+    frame_interest_feedback_fn_t frame_interest_feedback,
+    input_activity_fn_t input_activity) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback, input_activity);
     }
     else {
       safe::signal_t join_event;

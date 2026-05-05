@@ -46,11 +46,20 @@ namespace stream_quality {
       if (requested_fps >= 90 &&
           video_bitrate_kbps >= 2200 &&
           content_type != content_type_e::text) {
-        return video_bitrate_kbps >= 4500 &&
-                   (content_type == content_type_e::motion ||
-                    content_type == content_type_e::game) ?
-                 72 :
-                 60;
+        if (video_bitrate_kbps >= 4500 &&
+            (content_type == content_type_e::motion ||
+             content_type == content_type_e::game)) {
+          return 72;
+        }
+
+        // For remote-desktop/game streaming, a cursor/scroll/drag workload that
+        // falls straight to 60fps feels worse than a moderately softer but
+        // temporally stable stream.  Keep the floor proportional to the user's
+        // target instead of sticky-60; weak-net can still step down linearly
+        // when render/network pressure proves the route cannot hold it.
+        return std::clamp(static_cast<int>(std::lround(static_cast<double>(requested_fps) * 0.70)),
+                          60,
+                          requested_fps);
       }
 
       if (content_type == content_type_e::motion || content_type == content_type_e::game) {
@@ -134,9 +143,16 @@ namespace stream_quality {
       plan.effective_chroma_sampling_type = 0;
     }
 
-    const auto target_bpp = target_bpp_for_codec(effective_stream.video_format,
-                                                 effective_stream.chroma_sampling_type,
-                                                 effective_stream.content_type);
+    auto target_bpp = target_bpp_for_codec(effective_stream.video_format,
+                                           effective_stream.chroma_sampling_type,
+                                           effective_stream.content_type);
+    if (effective_stream.fps >= 90 &&
+        effective_stream.content_type != content_type_e::text) {
+      // OBS-like low-latency tradeoff: under high-refresh motion pressure, bias
+      // toward cadence first and rely on AQ/ROI/dirty fallback for local detail.
+      // Do not add buffering or ABR segments.
+      target_bpp *= 0.82;
+    }
     const auto pixels_per_frame = static_cast<double>(effective_stream.width) *
                                   static_cast<double>(effective_stream.height);
     const auto clarity_fps = static_cast<int>(std::lround(
@@ -215,7 +231,12 @@ namespace stream_quality {
       return stream.video_bitrate_kbps;
     }
 
-    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * 0.012 / 1000.0));
+    // High-refresh desktop streams were starting far below the requested FPS
+    // (for example 3024x1900@120Hz -> ~8.3Mbps/64fps at an 18Mbps ceiling),
+    // which made UFOTest look like the controller had immediately "locked" to
+    // ~60fps.  Start closer to the user target, then let weak-net ramp down
+    // linearly if the route cannot hold it.
+    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * 0.015 / 1000.0));
     return std::min(stream.video_bitrate_kbps,
                     std::clamp(startup_from_pixels, min_safe_startup_kbps, max_safe_startup_kbps));
   }
@@ -237,7 +258,7 @@ namespace stream_quality {
                                   static_cast<double>(stream.height);
     const auto startup_target_bpp = target_bpp_for_codec(stream.video_format,
                                                          stream.chroma_sampling_type,
-                                                         stream.content_type) * 1.6;
+                                                         stream.content_type) * 1.35;
     auto fps_from_budget = static_cast<int>(std::floor(
       static_cast<double>(startup_bitrate_kbps) * 1000.0 /
       (pixels_per_frame * startup_target_bpp)));
@@ -249,7 +270,10 @@ namespace stream_quality {
   }
 
   int
-  static_frame_keepalive_fps(int requested_fps, bool variable_refresh_rate, int minimum_fps_target) {
+  static_frame_keepalive_fps(int requested_fps,
+                             bool variable_refresh_rate,
+                             int minimum_fps_target,
+                             static_frame_mode_e mode) {
     if (requested_fps <= 0) {
       return 1;
     }
@@ -259,8 +283,10 @@ namespace stream_quality {
     }
 
     if (variable_refresh_rate) {
-      const auto keepalive = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / 4.0));
-      return std::clamp(keepalive, 5, std::min(30, requested_fps));
+      const auto divisor = mode == static_frame_mode_e::interactive_input ? 1.0 : 4.0;
+      const auto max_keepalive = mode == static_frame_mode_e::interactive_input ? requested_fps : 30;
+      const auto keepalive = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / divisor));
+      return std::clamp(keepalive, 5, std::min(max_keepalive, requested_fps));
     }
 
     const auto legacy_minimum = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / 2.0));

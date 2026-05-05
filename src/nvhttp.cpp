@@ -2206,24 +2206,36 @@ namespace nvhttp {
     }
 
     if (rtsp_stream::session_count() == 0) {
-      // We want to prepare display only if there are no active sessions at
-      // the moment. This should to be done before probing encoders as it could
-      // change display device's state.
-      display_device::session_t::get().configure_display(config::video, *launch_session, true);
+      auto &display_session = display_device::session_t::get();
+      const bool display_fast_launch =
+        display_session.can_fast_launch_display(config::video, *launch_session);
+      if (display_fast_launch) {
+        BOOST_LOG(info) << "NVHTTP launch fast path: reusing prepared display/VDD state"
+                        << " launchSession=" << launch_session->id
+                        << " mode=" << launch_session->width << "x" << launch_session->height
+                        << "@" << launch_session->fps
+                        << " client=" << launch_session->client_name;
+      }
+      else {
+        // We want to prepare display only if there are no active sessions at
+        // the moment. This should to be done before probing encoders as it could
+        // change display device's state.
+        display_session.configure_display(config::video, *launch_session, true);
 
-      // The display should be restored by the fail guard in case something happens.
-      need_to_restore_display_state = true;
+        // The display should be restored by the fail guard in case something happens.
+        need_to_restore_display_state = true;
 
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-        tree.put("root.gamesession", 0);
+        // Probe encoders again before streaming to ensure our chosen
+        // encoder matches the active GPU (which could have changed
+        // due to hotplugging, driver crash, primary monitor change,
+        // or any number of other factors).
+        if (video::probe_encoders()) {
+          tree.put("root.<xmlattr>.status_code", 503);
+          tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+          tree.put("root.gamesession", 0);
 
-        return;
+          return;
+        }
       }
     }
 

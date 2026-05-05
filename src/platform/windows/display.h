@@ -89,15 +89,36 @@ namespace platf::dxgi {
   struct cursor_t {
     std::vector<std::uint8_t> img_data;
 
-    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info;
-    int x, y;
-    bool visible;
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    int x = 0;
+    int y = 0;
+    bool visible = false;
   };
 
   class gpu_cursor_t {
   public:
     gpu_cursor_t():
-        cursor_view { 0, 0, 0, 0, 0.0f, 1.0f } {};
+        texture_width { 0 },
+        texture_height { 0 },
+        topleft_x { 0 },
+        topleft_y { 0 },
+        display_width { 0 },
+        display_height { 0 },
+        display_rotation { DXGI_MODE_ROTATION_UNSPECIFIED },
+        cursor_view { 0, 0, 0, 0, 0.0f, 1.0f },
+        visible { false } {};
+
+    void
+    clear() {
+      texture.reset();
+      input_res.reset();
+      texture_width = 0;
+      texture_height = 0;
+      topleft_x = 0;
+      topleft_y = 0;
+      visible = false;
+      cursor_view = { 0, 0, 0, 0, 0.0f, 1.0f };
+    }
 
     void
     set_pos(LONG topleft_x, LONG topleft_y, LONG display_width, LONG display_height, DXGI_MODE_ROTATION display_rotation, bool visible) {
@@ -196,6 +217,8 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+    std::uint64_t cursor_probe_last_hash = 0;
+    std::uint32_t cursor_probe_samples = 0;
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.
@@ -385,6 +408,8 @@ namespace platf::dxgi {
 
     duplication_t dup;
     cursor_t cursor;
+    bool last_cursor_visible = false;
+    bool client_frame_may_include_cursor = false;
   };
 
   /**
@@ -417,6 +442,8 @@ namespace platf::dxgi {
     texture2d_t old_surface_delayed_destruction;
     std::chrono::steady_clock::time_point old_surface_timestamp;
     std::variant<std::monostate, texture2d_t, std::shared_ptr<platf::img_t>> last_frame_variant;
+    bool last_cursor_visible = false;
+    bool client_frame_may_include_cursor = false;
   };
 
   /**

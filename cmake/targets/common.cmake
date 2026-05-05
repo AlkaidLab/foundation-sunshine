@@ -91,9 +91,13 @@ else()
 endif()
 
 # src/upnp
+set(SUNSHINE_UPNP_COMPILE_FLAGS "-Wno-pedantic")
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    string(APPEND SUNSHINE_UPNP_COMPILE_FLAGS " -O2")
+endif()
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/upnp.cpp"
         DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
-        PROPERTIES COMPILE_FLAGS -Wno-pedantic)
+        PROPERTIES COMPILE_FLAGS "${SUNSHINE_UPNP_COMPILE_FLAGS}")
 
 # third-party/nanors
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/rswrapper.c"
@@ -129,4 +133,23 @@ if("${BUILD_TYPE}" STREQUAL "XDEBUG")
     endif()
 else()
     add_definitions(-DNDEBUG)
+endif()
+
+# MinGW GCC 15 on the Skyindows Windows build host can silently exit with code 1
+# while optimizing these two large, feedback-heavy translation units at -O3.
+# Keep release semantics, but compile only these controller/control-plane units
+# at -O2 so the Windows validation build remains reliable.
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(SUNSHINE_GNU_O3_ICE_WORKAROUND_FILES
+            "${CMAKE_SOURCE_DIR}/src/stream.cpp"
+            "${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp")
+    if (NOT BUILD_TESTS)
+        set_source_files_properties(${SUNSHINE_GNU_O3_ICE_WORKAROUND_FILES}
+                DIRECTORY "${CMAKE_SOURCE_DIR}"
+                PROPERTIES COMPILE_FLAGS -O2)
+    else()
+        set_source_files_properties(${SUNSHINE_GNU_O3_ICE_WORKAROUND_FILES}
+                DIRECTORY "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/tests"
+                PROPERTIES COMPILE_FLAGS -O2)
+    endif()
 endif()

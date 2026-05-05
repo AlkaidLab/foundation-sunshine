@@ -176,6 +176,17 @@ namespace display_device {
     clear_vdd_state();
   }
 
+  void
+  session_t::stop_timer_keep_vdd_state() {
+    timer->setup_timer(nullptr);
+    pending_restore_ = false;
+    SessionEventListener::clear_unlock_task();
+    BOOST_LOG(info) << "VDD fast reuse snapshot kept"
+                    << " client=" << current_vdd_client_id
+                    << " mode=" << last_vdd_setting
+                    << " useVdd=" << (current_use_vdd.value_or(false) ? 1 : 0);
+  }
+
   namespace {
     /**
      * @brief Get client identifier from session.
@@ -392,31 +403,33 @@ namespace display_device {
   }
 
   bool
-  session_t::can_fast_resume_display(const config::video_t &config,
-    const rtsp_stream::launch_session_t &session) {
+  session_t::can_fast_reuse_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const char *reason) {
     std::lock_guard lock { mutex };
 
     (void) config;
+    const auto log_reason = reason != nullptr ? reason : "reuse";
 
     if (pending_restore_) {
-      BOOST_LOG(debug) << "VDD resume fast path unavailable: pending restore";
+      BOOST_LOG(debug) << "VDD " << log_reason << " fast path unavailable: pending restore";
       return false;
     }
 
     if (!current_use_vdd.has_value() || !*current_use_vdd) {
-      BOOST_LOG(debug) << "VDD resume fast path unavailable: current session is not VDD-backed";
+      BOOST_LOG(debug) << "VDD " << log_reason << " fast path unavailable: current session is not VDD-backed";
       return false;
     }
 
     if (!session.use_vdd) {
-      BOOST_LOG(debug) << "VDD resume fast path unavailable: requested session is not VDD-backed";
+      BOOST_LOG(debug) << "VDD " << log_reason << " fast path unavailable: requested session is not VDD-backed";
       return false;
     }
 
     const std::string current_client_id = get_client_id_from_session(session);
     if (current_client_id.empty() || current_vdd_client_id.empty() ||
         current_client_id != current_vdd_client_id) {
-      BOOST_LOG(info) << "VDD resume fast path unavailable: client changed"
+      BOOST_LOG(info) << "VDD " << log_reason << " fast path unavailable: client changed"
                       << " current=" << current_vdd_client_id
                       << " requested=" << current_client_id;
       return false;
@@ -426,7 +439,7 @@ namespace display_device {
       std::to_string(session.width) + "x" + std::to_string(session.height) +
       "@" + std::to_string(session.fps);
     if (last_vdd_setting.empty() || last_vdd_setting != expected_setting) {
-      BOOST_LOG(info) << "VDD resume fast path unavailable: mode changed"
+      BOOST_LOG(info) << "VDD " << log_reason << " fast path unavailable: mode changed"
                       << " current=" << last_vdd_setting
                       << " requested=" << expected_setting;
       return false;
@@ -434,15 +447,27 @@ namespace display_device {
 
     const auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
     if (device_zako.empty()) {
-      BOOST_LOG(info) << "VDD resume fast path unavailable: VDD device missing";
+      BOOST_LOG(info) << "VDD " << log_reason << " fast path unavailable: VDD device missing";
       return false;
     }
 
-    BOOST_LOG(info) << "VDD resume fast path eligible"
+    BOOST_LOG(info) << "VDD " << log_reason << " fast path eligible"
                     << " client=" << current_client_id
                     << " mode=" << expected_setting
                     << " device=" << device_zako;
     return true;
+  }
+
+  bool
+  session_t::can_fast_resume_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session) {
+    return can_fast_reuse_display(config, session, "resume");
+  }
+
+  bool
+  session_t::can_fast_launch_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session) {
+    return can_fast_reuse_display(config, session, "launch");
   }
 
   bool
@@ -481,6 +506,9 @@ namespace display_device {
       return;
     }
 
+    const bool had_known_vdd_setting = !last_vdd_setting.empty();
+    const auto existing_vdd_device = display_device::find_device_by_friendlyname(ZAKO_NAME);
+
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
       BOOST_LOG(error) << "VDD配置保存失败 [resolutions: " << vdd_settings.resolutions
                        << " fps: " << vdd_settings.fps << "]";
@@ -495,8 +523,19 @@ namespace display_device {
     // is_display_on() here: it can be true because a physical monitor is on,
     // which caused first launch to spend ~8-10s in VDD reload/recovery before
     // RTSP was even raised.
-    if (display_device::find_device_by_friendlyname(ZAKO_NAME).empty()) {
+    if (existing_vdd_device.empty()) {
       BOOST_LOG(info) << "VDD设备尚未存在，跳过驱动重载；新建虚拟显示器时将使用新配置";
+      return;
+    }
+
+    // After Sunshine restarts/deploys, last_vdd_setting is empty even when the
+    // same persistent Zako VDD device and mode are already usable.  Reloading
+    // the driver in this state was the 8-10s hostLaunch stall in the latest
+    // logs.  Adopt the requested setting and let the normal display-mode apply
+    // path validate it instead of forcing disable/enable before RTSP exists.
+    if (!had_known_vdd_setting) {
+      BOOST_LOG(info) << "VDD已有设备但本进程无历史配置，采用当前请求配置并跳过驱动重载: "
+                      << new_setting << " device=" << existing_vdd_device;
       return;
     }
 
@@ -767,10 +806,21 @@ namespace display_device {
       }
     }
 
+    const bool vdd_still_available = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
-      stop_timer_and_clear_vdd_state();
+      if (is_vdd_mode && vdd_still_available) {
+        // Keep the VDD/client/mode snapshot so the next /launch can hit the
+        // pre-RTSP fast path instead of re-running configure_display() and
+        // probe_encoders().  This is the common "first RTSP failed/stream
+        // stopped but VDD still exists" case.
+        stop_timer_keep_vdd_state();
+      }
+      else {
+        stop_timer_and_clear_vdd_state();
+      }
       return;
     }
 
@@ -782,7 +832,12 @@ namespace display_device {
     const bool vdd_already_handled = true;
     
     if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
-      stop_timer_and_clear_vdd_state();
+      if (is_vdd_mode && vdd_still_available) {
+        stop_timer_keep_vdd_state();
+      }
+      else {
+        stop_timer_and_clear_vdd_state();
+      }
     }
     else {
       // 无法立即恢复，添加任务到解锁队列

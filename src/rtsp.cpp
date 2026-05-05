@@ -4,8 +4,8 @@
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
-extern "C" {
 #include <moonlight-common-c/src/Limelight-internal.h>
+extern "C" {
 #include <moonlight-common-c/src/Rtsp.h>
 #include <libavcodec/avcodec.h>
 }
@@ -18,6 +18,7 @@ extern "C" {
 #include <cstdlib>
 #include <iomanip>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -53,6 +54,23 @@ namespace rtsp_stream {
     constexpr int safe_max_stream_fec_percentage = 100;
     constexpr int enhanced_feedback_startup_fec_percentage = 10;
     constexpr int enhanced_feedback_adaptive_fec_percentage = 100;
+
+    std::string
+    rtsp_launch_state(const launch_session_t &session) {
+      std::ostringstream ss;
+      ss << "launchSession=" << session.unique_id
+         << " id=" << session.id
+         << " appid=" << session.appid
+         << " peer=" << session.rtsp_peer_address
+         << " mode=" << session.width << "x" << session.height << '@' << session.fps
+         << " mic=" << (session.enable_mic ? 1 : 0)
+         << " setup(video/audio/control/mic)="
+         << (session.setup_video ? 1 : 0) << '/'
+         << (session.setup_audio ? 1 : 0) << '/'
+         << (session.setup_control ? 1 : 0) << '/'
+         << (session.setup_mic ? 1 : 0);
+      return ss.str();
+    }
   }
 
   std::uint64_t
@@ -60,7 +78,9 @@ namespace rtsp_stream {
     return static_cast<std::uint64_t>(LI_FF2_QOS_FEEDBACK_V2) |
            static_cast<std::uint64_t>(LI_FF2_INPUT_PRIORITY_V1) |
            static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY_V1) |
-           static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY_V1);
+           static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE_V1) |
+           static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY_V1) |
+           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS_V1);
   }
 
   int
@@ -625,6 +645,7 @@ namespace rtsp_stream {
 
     void
     handle_msg(tcp::socket &sock, launch_session_t &session, msg_t &&req) {
+      touch_launch_session(session, req->message.request.command);
       auto func = _map_cmd_cb.find(req->message.request.command);
       if (func != std::end(_map_cmd_cb)) {
         func->second(this, sock, session, std::move(req));
@@ -659,6 +680,10 @@ namespace rtsp_stream {
 
       auto launch_session { claim_launch_session(remote_ec ? std::string {} : remote_address) };
       if (launch_session) {
+        BOOST_LOG(info) << "RTSP pending claim accepted launchSession="sv << launch_session->unique_id
+                        << " id="sv << launch_session->id
+                        << " peer="sv << (remote_ec ? "unknown" : remote_address)
+                        << " pendingCount="sv << pending_session_count();
         // Associate the current RTSP session with this socket and start reading
         socket->session = launch_session;
         socket->read();
@@ -711,14 +736,24 @@ namespace rtsp_stream {
             return pending_session && pending_session->rtsp_peer_address == launch_session->rtsp_peer_address;
           });
           if (existing != _pending_launch_sessions->end()) {
-            BOOST_LOG(debug) << "Replacing pending RTSP launch session for peer "sv
-                             << launch_session->rtsp_peer_address;
+            BOOST_LOG(info) << "RTSP pending launch session replace"
+                            << " oldLaunchSession="sv << ((*existing) ? (*existing)->unique_id : std::string {})
+                            << " newLaunchSession="sv << launch_session->unique_id
+                            << " peer="sv << launch_session->rtsp_peer_address
+                            << " pendingCount="sv << _pending_launch_sessions->size();
             *existing = std::move(launch_session);
             return;
           }
         }
 
         _pending_launch_sessions->push_back(std::move(launch_session));
+        if (!_pending_launch_sessions->empty() && _pending_launch_sessions->back()) {
+          BOOST_LOG(info) << "RTSP pending launch session raised"
+                          << " launchSession="sv << _pending_launch_sessions->back()->unique_id
+                          << " id="sv << _pending_launch_sessions->back()->id
+                          << " peer="sv << _pending_launch_sessions->back()->rtsp_peer_address
+                          << " pendingCount="sv << _pending_launch_sessions->size();
+        }
       }
 
       // Arm the timer to expire pending launch sessions if clients time out
@@ -744,6 +779,10 @@ namespace rtsp_stream {
         return launch_session && launch_session->id == launch_session_id;
       });
       if (pos != _pending_launch_sessions->end()) {
+        BOOST_LOG(info) << "RTSP pending launch session cleared"
+                        << " launchSession="sv << ((*pos) ? (*pos)->unique_id : std::string {})
+                        << " id="sv << launch_session_id
+                        << " pendingCountBefore="sv << _pending_launch_sessions->size();
         _pending_launch_sessions->erase(pos);
       }
     }
@@ -791,10 +830,56 @@ namespace rtsp_stream {
       }
 
       if (pos == _pending_launch_sessions->end()) {
+        BOOST_LOG(info) << "RTSP pending claim missed"
+                        << " peer="sv << remote_address
+                        << " pendingCount="sv << _pending_launch_sessions->size();
+        for (const auto &pending : *_pending_launch_sessions) {
+          if (pending) {
+            BOOST_LOG(info) << "RTSP pending available on claim miss "
+                            << rtsp_launch_state(*pending);
+          }
+        }
         return nullptr;
       }
 
+      if (*pos) {
+        (*pos)->pending_since = std::chrono::steady_clock::now();
+        BOOST_LOG(debug) << "RTSP pending claim reused"
+                         << " launchSession="sv << (*pos)->unique_id
+                         << " id="sv << (*pos)->id
+                         << " peer="sv << remote_address
+                         << " pendingCount="sv << _pending_launch_sessions->size();
+      }
       return *pos;
+    }
+
+    bool
+    touch_launch_session(launch_session_t &session, std::string_view stage) {
+      auto lg = _pending_launch_sessions.lock();
+      auto pos = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [&session](const auto &launch_session) {
+        return launch_session && launch_session->id == session.id;
+      });
+      if (pos == _pending_launch_sessions->end() || !*pos) {
+        BOOST_LOG(debug) << "RTSP pending touch skipped"
+                         << " stage="sv << stage
+                         << " launchSession="sv << session.unique_id
+                         << " id="sv << session.id
+                         << " pendingCount="sv << _pending_launch_sessions->size();
+        return false;
+      }
+
+      (*pos)->pending_since = std::chrono::steady_clock::now();
+      BOOST_LOG(debug) << "RTSP pending touch"
+                       << " stage="sv << stage
+                       << " launchSession="sv << (*pos)->unique_id
+                       << " id="sv << (*pos)->id
+                       << " setup(video/audio/control/mic)="sv
+                       << ((*pos)->setup_video ? 1 : 0) << "/"
+                       << ((*pos)->setup_audio ? 1 : 0) << "/"
+                       << ((*pos)->setup_control ? 1 : 0) << "/"
+                       << ((*pos)->setup_mic ? 1 : 0)
+                       << " pendingCount="sv << _pending_launch_sessions->size();
+      return true;
     }
 
     void
@@ -807,7 +892,8 @@ namespace rtsp_stream {
 
                               const bool expired = now - launch_session->pending_since > config::stream.ping_timeout;
                               if (expired) {
-                                BOOST_LOG(debug) << "RTSP launch session timeout: "sv << launch_session->unique_id;
+                                BOOST_LOG(info) << "RTSP launch session timeout "
+                                                << rtsp_launch_state(*launch_session);
                               }
                               return expired;
                             }),
@@ -932,6 +1018,40 @@ namespace rtsp_stream {
   pending_launch_session_count() {
     return server.pending_session_count();
   }
+
+#ifdef SUNSHINE_TESTS
+  pending_launch_session_test_result_t
+  pending_launch_session_touch_for_tests() {
+    rtsp_server_t local_server {};
+
+    auto session = std::make_shared<launch_session_t>();
+    session->id = 0xCAFE;
+    session->unique_id = "rtsp-lifecycle-test";
+    session->rtsp_peer_address = "203.0.113.10";
+    local_server.session_raise(session);
+
+    const auto first = local_server.claim_launch_session("203.0.113.10");
+    if (first) {
+      first->pending_since = std::chrono::steady_clock::now() - config::stream.ping_timeout / 2;
+    }
+
+    const auto before_touch = first ? first->pending_since : std::chrono::steady_clock::time_point {};
+    const bool touched = first ? local_server.touch_launch_session(*first, "DESCRIBE") : false;
+    const auto after_touch = first ? first->pending_since : std::chrono::steady_clock::time_point {};
+    const auto second = local_server.claim_launch_session("203.0.113.10");
+
+    const auto pending_after_touch = local_server.pending_session_count();
+    local_server.session_clear(0xCAFE);
+
+    return {
+      .first_claim_ok = first != nullptr,
+      .second_claim_reused = first != nullptr && second != nullptr && first.get() == second.get(),
+      .touch_extended_ttl = touched && after_touch > before_touch,
+      .pending_after_touch = pending_after_touch,
+      .pending_after_clear = local_server.pending_session_count(),
+    };
+  }
+#endif
 
   void
   terminate_sessions() {
@@ -1063,6 +1183,13 @@ namespace rtsp_stream {
 
     std::stringstream ss;
 
+    BOOST_LOG(info) << "RTSP DESCRIBE start "
+                    << rtsp_launch_state(session)
+                    << " remote="sv << sock.remote_endpoint().address().to_string()
+                    << " cseq="sv << req->sequenceNumber
+                    << " pending="sv << rtsp_stream::pending_launch_session_count()
+                    << " active="sv << rtsp_stream::session_count();
+
     // Tell the client about our supported features
     auto host_feature_flags = static_cast<std::uint32_t>(platf::get_capabilities());
     if (!config::input.clipboard_sync) {
@@ -1126,8 +1253,11 @@ namespace rtsp_stream {
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
     }
 
-    // 添加麦克风流支持（仅在启用时）
-    if (config::audio.stream_mic) {
+    // Advertise the microphone media only for sessions that actually requested
+    // microphone redirection. Some legacy clients (voidlink) will SETUP every
+    // media line they see even when /resume was mic=false; advertising mic
+    // unconditionally leaves them stuck before control SETUP/PLAY.
+    if (config::audio.stream_mic && session.enable_mic) {
       ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
       ss << "a=rtpmap:96 opus/48000/2" << std::endl;
       ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
@@ -1210,6 +1340,12 @@ namespace rtsp_stream {
       port = net::map_port(stream::CONTROL_PORT);
     }
     else if (type == "mic"sv) {
+      if (!session.enable_mic) {
+        BOOST_LOG(warning) << "RTSP SETUP mic rejected because launch session did not request microphone "
+                           << rtsp_launch_state(session);
+        cmd_not_found(sock, session, std::move(req));
+        return;
+      }
       session.enable_mic = true;
       session.setup_mic = true;
       port = net::map_port(stream::MIC_STREAM_PORT);
@@ -1219,6 +1355,17 @@ namespace rtsp_stream {
 
       return;
     }
+
+    BOOST_LOG(info) << "RTSP SETUP"
+                    << " launchSession="sv << session.unique_id
+                    << " id="sv << session.id
+                    << " streamType="sv << type
+                    << " serverPort="sv << port
+                    << " setup(video/audio/control/mic)="sv
+                    << (session.setup_video ? 1 : 0) << "/"
+                    << (session.setup_audio ? 1 : 0) << "/"
+                    << (session.setup_control ? 1 : 0) << "/"
+                    << (session.setup_mic ? 1 : 0);
 
     seqn.next = &session_option;
 
@@ -1260,6 +1407,16 @@ namespace rtsp_stream {
     option.content = const_cast<char *>(seqn_str.c_str());
 
     std::string_view payload { req->payload, (size_t) req->payloadLength };
+
+    BOOST_LOG(info) << "RTSP ANNOUNCE start"
+                    << " launchSession="sv << session.unique_id
+                    << " id="sv << session.id
+                    << " payloadLength="sv << req->payloadLength
+                    << " setup(video/audio/control/mic)="sv
+                    << (session.setup_video ? 1 : 0) << "/"
+                    << (session.setup_audio ? 1 : 0) << "/"
+                    << (session.setup_control ? 1 : 0) << "/"
+                    << (session.setup_mic ? 1 : 0);
 
     std::vector<std::string_view> lines;
 
@@ -1443,6 +1600,15 @@ namespace rtsp_stream {
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
+      monitor.preferCursorPlane =
+        (config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_ACTIVE_V1)) != 0;
+      BOOST_LOG(info) << "Client featureFlags2=0x" << std::hex << config.mlFeatureFlags2 << std::dec
+                      << " cursorPlaneSupport="
+                      << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_V1)) != 0) ? 1 : 0)
+                      << " preferCursorPlane=" << (monitor.preferCursorPlane ? 1 : 0);
+      if (monitor.preferCursorPlane) {
+        BOOST_LOG(info) << "Client requested active cursor plane; disabling video cursor burn-in for this stream";
+      }
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
       clientContentType = getArg("x-ml-video.contentType"sv);
@@ -1656,6 +1822,14 @@ namespace rtsp_stream {
       return;
     }
 
+    BOOST_LOG(info) << "RTSP ANNOUNCE stream started"
+                    << " launchSession="sv << session.unique_id
+                    << " id="sv << session.id
+                    << " peer="sv << sock.remote_endpoint().address().to_string()
+                    << " fps="sv << config.monitor.framerate
+                    << " bitrate="sv << config.monitor.bitrate
+                    << " mic="sv << (session.enable_mic ? 1 : 0);
+
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
 
@@ -1668,6 +1842,18 @@ namespace rtsp_stream {
 
     auto seqn_str = std::to_string(req->sequenceNumber);
     option.content = const_cast<char *>(seqn_str.c_str());
+
+    BOOST_LOG(info) << "RTSP PLAY"
+                    << " launchSession="sv << session.unique_id
+                    << " id="sv << session.id
+                    << " setup(video/audio/control/mic)="sv
+                    << (session.setup_video ? 1 : 0) << "/"
+                    << (session.setup_audio ? 1 : 0) << "/"
+                    << (session.setup_control ? 1 : 0) << "/"
+                    << (session.setup_mic ? 1 : 0)
+                    << " pending="sv << rtsp_stream::pending_launch_session_count()
+                    << " active="sv << rtsp_stream::session_count()
+                    << " remote="sv << sock.remote_endpoint().address().to_string();
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

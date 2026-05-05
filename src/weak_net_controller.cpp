@@ -216,6 +216,9 @@ namespace weak_net {
     configured_encoding_ceiling_kbps(const config_t &config, int fec_percentage) {
       const auto total_limited_encoding = encoding_bitrate_for_total_budget(config.ceiling_total_bitrate_kbps,
                                                                            fec_percentage);
+      if (config.user_quality_kbps > 0) {
+        return std::min(user_quality_budget_kbps(config), total_limited_encoding);
+      }
       const auto requested_runtime_ceiling = std::min(
         std::max(user_quality_budget_kbps(config), fps_protection_budget_kbps(config)),
         ideal_demand_budget_kbps(config));
@@ -264,12 +267,13 @@ namespace weak_net {
 
     int
     high_refresh_emergency_floor(int baseline_fps) {
-      return baseline_fps >= 90 ? 60 : 1;
+      (void) baseline_fps;
+      return 1;
     }
 
     int
     high_refresh_interactive_floor(int baseline_fps) {
-      return baseline_fps >= 90 ? 72 : high_refresh_emergency_floor(baseline_fps);
+      return high_refresh_emergency_floor(baseline_fps);
     }
 
     double
@@ -355,6 +359,8 @@ namespace weak_net {
              feedback.rfi_requests == 0 &&
              feedback.waiting_for_rfi_frames == 0 &&
              feedback.late_frames == 0 &&
+             feedback.visual_stale_frames == 0 &&
+             feedback.duplicate_frames == 0 &&
              feedback.decode_queue_depth == 0 &&
              feedback.render_queue_depth == 0 &&
              feedback.input_queue_depth == 0 &&
@@ -400,12 +406,68 @@ namespace weak_net {
         return current_fps;
       }
 
-      const auto target = bpp_pressure >= 0.72 ? 72 :
-                          bpp_pressure >= 0.52 ? 90 :
-                          105;
-      return std::min(current_fps, std::clamp(target, 72, baseline_fps));
+      const auto step = bpp_pressure >= 0.72 ? 5 :
+                        bpp_pressure >= 0.52 ? 4 :
+                        3;
+      return std::min(current_fps, std::max(1, current_fps - step));
     }
   }  // namespace
+
+  runtime_fps_apply_decision_t
+  runtime_fps_apply_decision(int last_fps, int target_fps, int elapsed_ms_since_last_apply) {
+    runtime_fps_apply_decision_t decision {};
+    if (target_fps <= 0) {
+      return decision;
+    }
+
+    decision.target_changed = last_fps <= 0 || target_fps != last_fps;
+    if (!decision.target_changed) {
+      return decision;
+    }
+
+    const bool fps_drop = last_fps > 0 && target_fps < last_fps;
+    decision.cooldown_ms = fps_drop ? 500 : 1000;
+    decision.apply = last_fps <= 0 ||
+                     elapsed_ms_since_last_apply < 0 ||
+                     elapsed_ms_since_last_apply >= decision.cooldown_ms;
+    decision.deferred = !decision.apply;
+    return decision;
+  }
+
+  fps_probe_backoff_t
+  fps_probe_backoff_after_failed_recovery(int previous_fps,
+                                          int last_probe_fps,
+                                          int target_fps,
+                                          bool pressure_after_probe,
+                                          int previous_failed_probe_count,
+                                          int previous_hold_windows) {
+    fps_probe_backoff_t result {};
+    const bool failed_probe =
+      pressure_after_probe &&
+      last_probe_fps > 0 &&
+      previous_fps >= last_probe_fps - 1 &&
+      target_fps < previous_fps;
+    if (failed_probe) {
+      result.failed_probe_count = std::clamp(previous_failed_probe_count + 1, 1, 8);
+      result.recovery_probe_interval_windows = std::clamp(1 << std::min(result.failed_probe_count, 5),
+                                                          4,
+                                                          32);
+      const auto adaptive_hold = std::clamp(8 + result.failed_probe_count * 4,
+                                            8,
+                                            40);
+      result.recovery_hold_windows = std::max(previous_hold_windows, adaptive_hold);
+      return result;
+    }
+
+    result.failed_probe_count = std::max(0, previous_failed_probe_count - 1);
+    result.recovery_hold_windows = std::max(0, previous_hold_windows - 1);
+    result.recovery_probe_interval_windows = result.failed_probe_count > 0 ?
+                                               std::clamp(1 << std::min(result.failed_probe_count, 5),
+                                                          4,
+                                                          32) :
+                                               1;
+    return result;
+  }
 
   void
   controller_t::configure(config_t config) {
@@ -462,6 +524,10 @@ namespace weak_net {
     stable_windows_ = 0;
     video_deadline_windows_ = 0;
     fps_adjust_cooldown_windows_ = 0;
+    fps_recovery_hold_windows_ = 0;
+    fps_probe_interval_windows_ = 1;
+    failed_fps_probe_windows_ = 0;
+    last_recovery_probe_fps_ = 0;
     profile_tier_cooldown_windows_ = 0;
     media_recovery_cooldown_windows_ = 0;
     idr_cooldown_windows_ = 0;
@@ -491,13 +557,31 @@ namespace weak_net {
     const auto recovered = clamp01(ratio(feedback.recovered_frames, frame_samples));
     const auto jitter = static_cast<double>(feedback.rtt_variance_ms);
     const auto late = clamp01(ratio(feedback.late_frames, frame_samples));
+    const auto visual_stale = clamp01(ratio(feedback.visual_stale_frames, frame_samples));
+    const auto duplicate_visual = clamp01(ratio(feedback.duplicate_frames, frame_samples));
+    const auto displayed_ratio = feedback.frames_seen > 0 ?
+                                   ratio(feedback.displayed_frames, feedback.frames_seen) :
+                                   1.0;
+    const auto visual_starvation = (feedback.frames_seen >= 6 &&
+                                    (feedback.visual_stale_frames > 0 || feedback.duplicate_frames > 0) &&
+                                    displayed_ratio < 0.25) ?
+                                     std::clamp((0.25 - displayed_ratio) * 3.0, 0.0, 1.0) :
+                                     0.0;
+    const auto visual_freshness_pressure = clamp01(std::max({
+      visual_stale,
+      duplicate_visual * 0.95,
+      visual_starvation,
+    }));
     const auto decode_queue = static_cast<double>(feedback.decode_queue_depth);
     const auto render_queue = static_cast<double>(feedback.render_queue_depth);
     const auto input_latency_ms = static_cast<double>(
                                     std::max(feedback.input_send_latency_us, feedback.input_ack_latency_us)) /
                                   1000.0;
     const auto audio_pressure = audio_continuity_pressure(feedback);
-    const auto audio_pressure_signal = clamp01(audio_pressure * 4.0);
+    // Treat audio continuity as a gentle video-pressure signal. Minor PLC,
+    // fade, or isolated stale-drop events should reserve a little bitrate
+    // headroom for audio, not make video FPS/quality visibly sawtooth.
+    const auto audio_pressure_signal = clamp01(audio_pressure * 0.75);
     const bool static_idle_without_video_samples = is_static_idle_without_video_samples(feedback);
     const auto network_rtt_ms = static_idle_without_video_samples ? 0U : feedback.rtt_ms;
     const auto network_jitter_ms = static_idle_without_video_samples ? 0.0 : jitter;
@@ -506,6 +590,7 @@ namespace weak_net {
       late * 3.0,
       decode_queue / 4.0,
       render_queue / 3.0,
+      visual_freshness_pressure * 1.35,
       deadline_jitter_ms / 90.0,
     });
     const auto input_pressure = std::max(static_cast<double>(feedback.input_queue_depth) / 4.0,
@@ -580,9 +665,10 @@ namespace weak_net {
     const bool raw_video_deadline_clean = late == 0.0 &&
                                           decode_queue == 0.0 &&
                                           render_queue == 0.0 &&
-                                          input_pressure <= 0.15;
+                                          visual_freshness_pressure <= 0.03 &&
+                                          input_pressure <= 0.35;
     const bool raw_deadline_clean = raw_video_deadline_clean &&
-                                    audio_pressure == 0.0;
+                                    audio_pressure_signal <= 0.18;
     const bool raw_scene_still = !feedback.full_frame_dirty && dirty_ratio <= 0.05;
     const bool raw_motion_clean = raw_scene_still ||
                                   (pressures.motion <= 0.20 && bpp_pressure <= 0.20);
@@ -648,6 +734,11 @@ namespace weak_net {
                                        ewma_jitter_ >= 40.0));
     const bool deadline_crisis = ewma_deadline_pressure_ >= 1.7;
     const bool video_deadline_constrained = raw_video_deadline_miss || hard_video_deadline_miss || deadline_crisis;
+    const bool visual_refresh_stalled =
+      visual_freshness_pressure >= 0.72 ||
+      (feedback.frames_seen >= 6 &&
+       feedback.displayed_frames <= std::max(1U, feedback.frames_seen / 12U) &&
+       feedback.visual_stale_frames + feedback.duplicate_frames >= feedback.frames_seen / 2U);
     const bool transport_delay_evidence =
       pressures.delay_congestion >= 0.80 ||
       ewma_delay_pressure_ >= 0.72 ||
@@ -692,22 +783,40 @@ namespace weak_net {
                                                      !rfi_storm &&
                                                      network_rtt_ms < 900 &&
                                                      network_jitter_ms < 250.0;
-    const bool audio_constrained = feedback.audio_underruns >= 2 ||
-                                   feedback.late_audio_drops > 0 ||
-                                   feedback.audio_concealed_ms >= 20 ||
-                                   feedback.audio_plc_ms >= 20 ||
-                                   feedback.audio_fade_ms >= 10 ||
-                                   ewma_audio_pressure_ >= 0.30;
-    const bool audio_crisis = feedback.audio_underruns >= 8 ||
-                              feedback.late_audio_drops >= 6 ||
-                              feedback.audio_concealed_ms >= 150 ||
-                              feedback.audio_plc_ms >= 80 ||
-                              ewma_audio_pressure_ >= 0.55;
+    const bool audio_constrained = feedback.audio_underruns >= 18 ||
+                                   feedback.late_audio_drops >= 8 ||
+                                   feedback.audio_concealed_ms >= 180 ||
+                                   feedback.audio_plc_ms >= 180 ||
+                                   feedback.audio_fade_ms >= 120 ||
+                                   ewma_audio_pressure_ >= 0.72;
+    const bool audio_crisis = feedback.audio_underruns >= 32 ||
+                              feedback.late_audio_drops >= 16 ||
+                              feedback.audio_concealed_ms >= 420 ||
+                              feedback.audio_plc_ms >= 300 ||
+                              feedback.audio_fade_ms >= 220 ||
+                              ewma_audio_pressure_ >= 0.88;
+    /*
+     * Client-side audio renderer underruns are not proof that the video
+     * transport is congested.  The Enhanced macOS renderer can report repeated
+     * copied=0 underruns while RTT/loss/render are otherwise usable; treating
+     * that as authoritative weak-net pressure collapses UFOTest into blurry
+     * low-FPS video.  Only let audio pressure drive video pacing/profile when
+     * it has transport evidence (late audio drops, loss, or severe delay), or
+     * when the audio buffer itself is truly accumulating.
+     */
+    const bool audio_transport_evidence =
+      feedback.late_audio_drops >= 8 ||
+      observed_packet_loss ||
+      network_jitter_ms >= 90.0 ||
+      network_rtt_ms >= 250 ||
+      feedback.audio_buffer_depth_ms >= 180;
+    const bool audio_constrained_for_video = audio_constrained && audio_transport_evidence;
+    const bool audio_crisis_for_video = audio_crisis && audio_transport_evidence;
     const bool fps_budget_overshoot_allowed =
       config_.fps_needed_kbps > user_quality_budget_kbps(config_) &&
       raw_network_clean &&
       raw_video_deadline_clean &&
-      !audio_constrained &&
+      !audio_constrained_for_video &&
       !input_constrained;
     const bool visual_recovery_guard =
       sustainable_limit_active_ ||
@@ -716,20 +825,16 @@ namespace weak_net {
       ewma_delay_pressure_ >= 0.24 ||
       pressures.render >= 0.30 ||
       ewma_deadline_pressure_ >= 0.45 ||
-      audio_constrained ||
-      ewma_audio_pressure_ >= 0.20;
+      audio_crisis_for_video ||
+      (audio_transport_evidence && ewma_audio_pressure_ >= 0.68);
     const bool bitrate_probe_allowed =
       fps_budget_overshoot_allowed &&
       !visual_recovery_guard &&
       stable_windows_ >= 2;
     const bool media_stability_crisis =
-      (audio_crisis && observed_packet_loss) ||
+      (audio_crisis_for_video && observed_packet_loss) ||
       (rfi_storm && (unrecoverable >= 0.02 || ewma_burst_pressure_ >= 0.70));
     const auto observed_video_kbps = observed_video_bitrate_kbps(feedback);
-    const bool has_video_delivery_samples = feedback.frames_seen > 0 ||
-                                            feedback.displayed_frames > 0 ||
-                                            feedback.total_packets > 0 ||
-                                            feedback.video_bytes > 0;
     const auto pre_action_encoding_ceiling = configured_encoding_ceiling_kbps(config_, current_fec_percentage_);
 
     if (idr_cooldown_windows_ > 0) {
@@ -751,18 +856,54 @@ namespace weak_net {
     video_deadline_windows_ = video_deadline_constrained ?
                                 std::min(video_deadline_windows_ + 1, 16) :
                                 0;
+    bool fps_adjusted_this_window = false;
     auto reduce_fps_for_pressure = [&](double scale,
                                        int cooldown_windows,
                                        int required_pressure_windows) {
-      if (fps_adjust_cooldown_windows_ > 0 ||
-          video_deadline_windows_ < required_pressure_windows) {
+      const bool failed_recovery_probe =
+        last_recovery_probe_fps_ > 0 &&
+        current_fps_ >= last_recovery_probe_fps_ - 1 &&
+        (raw_video_deadline_miss ||
+         hard_video_deadline_miss ||
+         visual_refresh_stalled ||
+         pressures.render >= 0.40 ||
+         pressures.delay_congestion >= 0.55);
+      if ((!failed_recovery_probe && fps_adjust_cooldown_windows_ > 0) ||
+          fps_adjusted_this_window ||
+          (!failed_recovery_probe && video_deadline_windows_ < required_pressure_windows)) {
         return;
       }
 
-      current_fps_ = clamp_fps(static_cast<int>(std::lround(current_fps_ * scale)),
-                               pressure_fps_floor,
+      const auto scaled_target = static_cast<int>(std::lround(current_fps_ * scale));
+      const auto bounded_target = std::min(scaled_target, current_fps_ - 1);
+      const auto raw_step = std::clamp(current_fps_ - bounded_target, 1, 5);
+      const auto max_possible_step = std::max(1, current_fps_ - config_.min_fps);
+      const auto step = failed_recovery_probe ?
+                          std::min(5, max_possible_step) :
+                          raw_step;
+      current_fps_ = clamp_fps(current_fps_ - step,
+                               config_.min_fps,
                                config_.baseline_fps);
       fps_adjust_cooldown_windows_ = cooldown_windows;
+      const auto backoff = fps_probe_backoff_after_failed_recovery(previous_fps,
+                                                                   last_recovery_probe_fps_,
+                                                                   current_fps_,
+                                                                   true,
+                                                                   failed_fps_probe_windows_,
+                                                                   fps_recovery_hold_windows_);
+      failed_fps_probe_windows_ = backoff.failed_probe_count;
+      fps_recovery_hold_windows_ = backoff.recovery_hold_windows;
+      fps_probe_interval_windows_ = backoff.recovery_probe_interval_windows;
+      if (failed_recovery_probe ||
+          visual_refresh_stalled ||
+          pressures.render >= 0.40 ||
+          feedback.waiting_for_rfi_frames > 0 ||
+          feedback.rfi_requests >= 8) {
+        fps_recovery_hold_windows_ = std::max(fps_recovery_hold_windows_, failed_recovery_probe ? 10 : 6);
+        fps_probe_interval_windows_ = std::max(fps_probe_interval_windows_, failed_recovery_probe ? 8 : 4);
+      }
+      last_recovery_probe_fps_ = 0;
+      fps_adjusted_this_window = true;
     };
     auto bleed_fec_for_delay_only = [&]() {
       if (current_fec_percentage_ > config_.baseline_fec_percentage) {
@@ -783,19 +924,23 @@ namespace weak_net {
       }
     };
 
-    const bool audio_only_pressure = audio_constrained &&
+    const bool audio_only_pressure = audio_constrained_for_video &&
                                      ((raw_network_clean && raw_video_deadline_clean) ||
                                       (!network_crisis &&
                                        !network_constrained &&
                                        !video_deadline_constrained)) &&
                                      !input_constrained;
-    const auto audio_only_floor_basis = has_video_delivery_samples ?
-                                          pre_action_encoding_ceiling :
-                                          std::min(current_bitrate_kbps_, config_.startup_bitrate_kbps);
+    // Audio continuity pressure should reserve a little headroom, but it must
+    // not become a video recovery/probing signal.  The old floor used the
+    // configured ceiling whenever video samples were present, which let
+    // audio-only underruns pull a weak-route stream from ~8-9 Mbps back to
+    // 14-15 Mbps and produced the visible freeze/sawtooth reported during
+    // UFOTest.  Anchor the floor to the current working point instead.
+    const auto audio_only_floor_basis = std::max(config_.min_bitrate_kbps, current_bitrate_kbps_);
     const auto audio_only_floor = std::max(
       config_.min_bitrate_kbps,
       static_cast<int>(std::lround(static_cast<double>(audio_only_floor_basis) *
-                                   (audio_crisis ? 0.92 : 0.96))));
+                                   (audio_crisis_for_video ? 0.92 : 0.96))));
 
     if (network_crisis) {
       state_ = state_e::crisis;
@@ -951,8 +1096,20 @@ namespace weak_net {
                                          current_bitrate_kbps_ + gentle_probe_step(current_bitrate_kbps_,
                                                                                    pre_action_encoding_ceiling));
       }
+      if (current_fps_ < config_.baseline_fps &&
+          raw_network_clean &&
+          raw_video_deadline_clean &&
+          !audio_constrained_for_video &&
+          !input_constrained &&
+          fps_recovery_hold_windows_ == 0 &&
+          media_recovery_cooldown_windows_ == 0 &&
+          pressures.delay_congestion < 0.20 &&
+          pressures.render < 0.20) {
+        current_fps_ = std::min(config_.baseline_fps, current_fps_ + 1);
+        last_recovery_probe_fps_ = current_fps_;
+      }
     }
-    else if (audio_constrained) {
+    else if (audio_constrained_for_video) {
       state_ = state_e::constrained;
       reason = reason_e::audio_pressure;
       if (audio_only_pressure && raw_network_clean && raw_video_deadline_clean && raw_motion_clean) {
@@ -973,18 +1130,13 @@ namespace weak_net {
         current_bitrate_kbps_ = std::max(config_.min_bitrate_kbps,
                                          static_cast<int>(std::lround(current_bitrate_kbps_ *
                                                                       linear_audio_bitrate_scale(audio_signal,
-                                                                                                 audio_crisis))));
+                                                                                                 audio_crisis_for_video))));
         if (audio_only_pressure) {
           current_bitrate_kbps_ = std::max(current_bitrate_kbps_, audio_only_floor);
         }
         audio_cooldown_windows_ = 2;
       }
       if (audio_only_pressure) {
-        current_fps_ = approach_int(current_fps_,
-                                    config_.baseline_fps,
-                                    0.22,
-                                    4,
-                                    std::max(8, config_.baseline_fps / 10));
         const auto audio_only_recovery_ceiling = std::min(
           configured_encoding_ceiling_kbps(config_, current_fec_percentage_),
           effective_ceiling_kbps_);
@@ -1033,11 +1185,32 @@ namespace weak_net {
         const auto bitrate_recovery_ceiling = std::min(
           configured_encoding_ceiling_kbps(config_, current_fec_percentage_),
           effective_ceiling_kbps_);
-        current_fps_ = approach_int(current_fps_,
-                                    config_.baseline_fps,
-                                    0.16,
-                                    1,
-                                    std::max(4, config_.baseline_fps / 12));
+        const auto backoff = fps_probe_backoff_after_failed_recovery(previous_fps,
+                                                                     last_recovery_probe_fps_,
+                                                                     current_fps_,
+                                                                     false,
+                                                                     failed_fps_probe_windows_,
+                                                                     fps_recovery_hold_windows_);
+        failed_fps_probe_windows_ = backoff.failed_probe_count;
+        fps_recovery_hold_windows_ = backoff.recovery_hold_windows;
+        fps_probe_interval_windows_ = backoff.recovery_probe_interval_windows;
+      const bool fps_recovery_probe_allowed =
+        current_fps_ < config_.baseline_fps &&
+        fps_recovery_hold_windows_ == 0 &&
+        media_recovery_cooldown_windows_ == 0 &&
+        feedback.waiting_for_rfi_frames == 0 &&
+        !visual_refresh_stalled &&
+        pressures.render < 0.35 &&
+        (fps_probe_interval_windows_ <= 1 ||
+         (stable_windows_ % fps_probe_interval_windows_) == 0);
+        if (fps_recovery_probe_allowed) {
+          current_fps_ = approach_int(current_fps_,
+                                      config_.baseline_fps,
+                                      0.16,
+                                      1,
+                                      1);
+          last_recovery_probe_fps_ = current_fps_;
+        }
         current_bitrate_kbps_ = std::min(bitrate_recovery_ceiling,
                                          current_bitrate_kbps_ + gentle_probe_step(current_bitrate_kbps_,
                                                                                    bitrate_recovery_ceiling));
@@ -1068,7 +1241,7 @@ namespace weak_net {
       ewma_delay_pressure_ < 0.32 &&
       pressures.render < 0.70 &&
       ewma_deadline_pressure_ < 0.85 &&
-      !audio_crisis;
+      !audio_crisis_for_video;
     const bool no_profile_floor_recovery_allowed =
       no_profile_fullres_interactive &&
       !network_crisis &&
@@ -1076,7 +1249,7 @@ namespace weak_net {
       ewma_delay_pressure_ < 0.58 &&
       pressures.render < 0.95 &&
       ewma_deadline_pressure_ < 1.10 &&
-      !audio_crisis;
+      !audio_crisis_for_video;
     if (no_profile_fullres_interactive) {
       const auto fullres_floor_fraction = safe_no_profile_floor_lift ? 0.42 : 0.32;
       const auto fullres_floor = std::max(
@@ -1097,7 +1270,7 @@ namespace weak_net {
       network_crisis ||
       network_constrained ||
       rfi_storm ||
-      audio_constrained ||
+      audio_crisis_for_video ||
       ewma_unrecoverable_ >= 0.005 ||
       ewma_burst_pressure_ >= 0.30 ||
       ewma_delay_pressure_ >= 0.35 ||
@@ -1174,7 +1347,7 @@ namespace weak_net {
         (network_crisis || network_constrained) &&
         (media_stability_crisis ||
          rfi_storm ||
-         audio_crisis ||
+         audio_crisis_for_video ||
          ewma_burst_pressure_ >= 0.70 ||
          current_fec_percentage_ >= 80);
       const auto headroom = tight_sustainable_budget ?
@@ -1203,7 +1376,7 @@ namespace weak_net {
     const bool profile_recovery_clean = raw_network_clean &&
                                         raw_video_deadline_clean &&
                                         raw_motion_clean &&
-                                        (!audio_constrained || audio_only_pressure) &&
+                                        (!audio_constrained_for_video || audio_only_pressure) &&
                                         stable_windows_ >= 3;
     const auto target_scale = profile_recovery_clean ?
                                 100 :
@@ -1305,12 +1478,13 @@ namespace weak_net {
         current_bitrate_kbps_ = previous_bitrate;
       }
       else if (audio_only_pressure && current_bitrate_kbps_ > previous_bitrate) {
-        // Current network/video path is clean; do not let stale loss EWMA make
-        // audio continuity keep the picture stuck at a post-crisis mosaic floor.
-        current_bitrate_kbps_ = std::max(
-          current_bitrate_kbps_,
-          std::min(effective_ceiling_kbps_,
-                   previous_bitrate + gentle_probe_step(previous_bitrate, effective_ceiling_kbps_)));
+        // Audio-only pressure is not proof that the video path can probe up.
+        // Do not let audio PLC/fade/drop become a video bitrate recovery signal
+        // during otherwise clean visuals.  The audio path may report sustained
+        // startup underruns while video is already trying to settle; probing up
+        // here creates the exact freeze/sawtooth that users perceive as the
+        // stream "starting, then locking up".
+        current_bitrate_kbps_ = previous_bitrate;
       }
       const auto max_bitrate_down = emergency_return_to_user_budget ?
                                       previous_bitrate :
@@ -1318,7 +1492,8 @@ namespace weak_net {
                                                         severe_media_stall ? 0.28 :
                                                         network_crisis ? 0.18 :
                                                         network_constrained ? 0.12 :
-                                                        audio_constrained ? 0.06 :
+                                                        audio_crisis_for_video ? 0.06 :
+                                                        audio_constrained_for_video ? 0.025 :
                                                         0.08,
                                                         500,
                                                         severe_media_stall ? 22000 :
@@ -1331,12 +1506,12 @@ namespace weak_net {
         raw_video_deadline_clean &&
         raw_motion_clean;
       const auto max_bitrate_up = proportional_step(previous_bitrate,
-                                                    clean_audio_only_visual_recovery ? 0.35 :
+                                                    clean_audio_only_visual_recovery ? 0.05 :
                                                     no_profile_floor_recovery_allowed && previous_bitrate < readable_floor_kbps ? 0.55 :
                                                     recent_media_recovery ? 0.18 :
                                                     0.20,
-                                                    1200,
-                                                    clean_audio_only_visual_recovery ? 7000 :
+                                                    clean_audio_only_visual_recovery ? 300 : 1200,
+                                                    clean_audio_only_visual_recovery ? 500 :
                                                     no_profile_floor_recovery_allowed && previous_bitrate < readable_floor_kbps ? 3200 :
                                                     recent_media_recovery ? 5000 :
                                                     8000);
@@ -1373,15 +1548,25 @@ namespace weak_net {
       const auto delay_encoding_cap = std::max(
         config_.min_bitrate_kbps,
         encoding_bitrate_for_total_budget(delay_total_cap, current_fec_percentage_));
-      current_bitrate_kbps_ = std::min(current_bitrate_kbps_, delay_encoding_cap);
-      effective_ceiling_kbps_ = std::min(effective_ceiling_kbps_, delay_encoding_cap);
+      auto linearized_delay_cap = delay_encoding_cap;
+      if (previous_bitrate > 0 && delay_encoding_cap < previous_bitrate) {
+        const auto delay_cap_max_down = proportional_step(previous_bitrate,
+                                                          network_crisis ? 0.18 : 0.12,
+                                                          500,
+                                                          network_crisis ? 14000 : 9000);
+        linearized_delay_cap = std::max(delay_encoding_cap, previous_bitrate - delay_cap_max_down);
+      }
+      current_bitrate_kbps_ = std::min(current_bitrate_kbps_, linearized_delay_cap);
+      // Do not let the delay-only total cap bypass the linear bitrate clamp in
+      // the same control window.  Keep the hard cap as the long-term target,
+      // but expose a per-window linearized ceiling so startup render/audio
+      // pressure cannot collapse 8-9 Mbps to ~1.5 Mbps in a few feedback ticks.
+      effective_ceiling_kbps_ = std::min(effective_ceiling_kbps_, linearized_delay_cap);
     }
 
     if (previous_fps > 0) {
-      const auto max_fps_down = severe_media_stall ? 12 : 8;
-      const auto max_fps_up = recent_media_recovery ?
-                                8 :
-                                std::max(4, config_.baseline_fps / 12);
+      const auto max_fps_down = audio_only_pressure ? 2 : 5;
+      const auto max_fps_up = 1;
       current_fps_ = clamp_delta_int(previous_fps,
                                      current_fps_,
                                      max_fps_down,
@@ -1411,11 +1596,15 @@ namespace weak_net {
     const auto total_budget_kbps = total_bitrate_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_);
     const auto fec_budget_kbps = std::max(0, total_budget_kbps - current_bitrate_kbps_);
 
-    const bool request_idr = network_crisis &&
-                             !delay_only_congestion &&
-                             severe_random_loss &&
-                             state_ == state_e::crisis &&
-                             previous_state != state_e::crisis &&
+    const bool network_idr_request = network_crisis &&
+                                     !delay_only_congestion &&
+                                     severe_random_loss &&
+                                     state_ == state_e::crisis &&
+                                     previous_state != state_e::crisis;
+    const bool visual_stale_idr_request = visual_refresh_stalled &&
+                                          reason == reason_e::render_deadline &&
+                                          video_deadline_windows_ >= 3;
+    const bool request_idr = (network_idr_request || visual_stale_idr_request) &&
                              idr_cooldown_windows_ == 0;
     if (request_idr) {
       idr_cooldown_windows_ = 8;

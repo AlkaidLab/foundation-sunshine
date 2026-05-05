@@ -76,6 +76,98 @@ __mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID const & {
 #endif
 
 namespace platf::dxgi {
+  namespace {
+    constexpr std::uint64_t cursor_probe_fnv_offset = 14695981039346656037ull;
+    constexpr std::uint64_t cursor_probe_fnv_prime = 1099511628211ull;
+
+    std::uint64_t
+    hash_cpu_cursor_crop(const platf::img_t &img, int x, int y, int w, int h) {
+      if (!img.data || w <= 0 || h <= 0 || img.pixel_pitch <= 0 || img.row_pitch <= 0) {
+        return 0;
+      }
+
+      auto hash = cursor_probe_fnv_offset;
+      for (int row = 0; row < h; ++row) {
+        const auto *p = img.data + static_cast<std::size_t>(y + row) * img.row_pitch +
+                        static_cast<std::size_t>(x) * img.pixel_pitch;
+        const auto bytes = static_cast<std::size_t>(w) * img.pixel_pitch;
+        for (std::size_t i = 0; i < bytes; ++i) {
+          hash ^= p[i];
+          hash *= cursor_probe_fnv_prime;
+        }
+      }
+      return hash;
+    }
+
+    bool
+    query_system_cursor_probe_point(POINT &point, bool &visible) {
+      CURSORINFO info {};
+      info.cbSize = sizeof(info);
+      if (!GetCursorInfo(&info)) {
+        point = {};
+        visible = false;
+        return false;
+      }
+
+      point = info.ptScreenPos;
+      visible = (info.flags & CURSOR_SHOWING) != 0;
+      return true;
+    }
+
+    void
+    update_wgc_ram_cursor_probe(platf::img_t &img,
+                                bool capture_cursor,
+                                POINT pointer_position,
+                                bool pointer_visible,
+                                bool mouse_update,
+                                int display_offset_x,
+                                int display_offset_y,
+                                std::uint64_t &last_hash,
+                                std::uint32_t &sample_count) {
+      auto &probe = img.cursor_probe;
+      probe = {};
+      probe.active = true;
+      probe.backend = platf::img_t::cursor_probe_backend_e::wgc_ram;
+      probe.prefer_cursor_plane = !capture_cursor;
+      probe.capture_cursor = capture_cursor;
+      probe.final_video_cursor_enabled = capture_cursor;
+      probe.source_present = true;
+      probe.mouse_update = mouse_update;
+      probe.pointer_visible = pointer_visible;
+      const auto local_x = static_cast<int>(pointer_position.x) - display_offset_x;
+      const auto local_y = static_cast<int>(pointer_position.y) - display_offset_y;
+      probe.x = std::clamp(local_x, 0, std::max(0, img.width - 1));
+      probe.y = std::clamp(local_y, 0, std::max(0, img.height - 1));
+      probe.w = std::min(96, std::max(0, img.width - probe.x));
+      probe.h = std::min(96, std::max(0, img.height - probe.y));
+      probe.sample_index = ++sample_count;
+      const bool should_hash = probe.sample_index <= 80 ||
+                               (mouse_update && probe.sample_index <= 160);
+      probe.crop_valid = should_hash && probe.w > 0 && probe.h > 0 && img.data != nullptr;
+      if (probe.crop_valid) {
+        probe.hash = hash_cpu_cursor_crop(img, probe.x, probe.y, probe.w, probe.h);
+        probe.crop_changed = last_hash != 0 && probe.hash != last_hash;
+        last_hash = probe.hash;
+      }
+
+      if (probe.sample_index <= 40 || probe.crop_changed || (mouse_update && probe.sample_index <= 160)) {
+        BOOST_LOG(info) << "Cursor capture-output proof"
+                        << " runtime=0"
+                        << " backend=WGC-RAM"
+                        << " preferCursorPlane=" << (probe.prefer_cursor_plane ? 1 : 0)
+                        << " finalVideoCursorEnabled=" << (probe.final_video_cursor_enabled ? 1 : 0)
+                        << " captureCursor=" << (probe.capture_cursor ? 1 : 0)
+                        << " sourcePresent=1"
+                        << " mouseUpdate=" << (probe.mouse_update ? 1 : 0)
+                        << " pointerVisible=" << (probe.pointer_visible ? 1 : 0)
+                        << " screenPos=" << pointer_position.x << ',' << pointer_position.y
+                        << " displayOffset=" << display_offset_x << ',' << display_offset_y
+                        << " cursorRect=" << probe.x << ',' << probe.y << ',' << probe.w << ',' << probe.h
+                        << " hash=" << probe.hash
+                        << " cropChanged=" << (probe.crop_changed ? 1 : 0);
+      }
+    }
+  }  // namespace
 
   // UAC bypass for WGC capture mode.
   // WGC cannot capture UAC prompts, so we temporarily set ConsentPromptBehaviorAdmin=0
@@ -671,6 +763,16 @@ namespace platf::dxgi {
       BOOST_LOG(warning) << "Screen capture may be capped to 60fps on this device for this release of Windows: failed to set MinUpdateInterval: [0x"sv << util::hex(e.code()).to_string_view() << ']';
     }
 
+    // Cursor-plane clients require the encoded video surface to be cursor-free.
+    // Set WGC cursor capture before StartCapture so the session is born in the
+    // requested mode; per-frame calls below keep it synchronized if the active
+    // client mix changes later.
+    if (config.preferCursorPlane) {
+      const auto cursor_status = set_cursor_visible(false);
+      BOOST_LOG(info) << "WGC initial cursor capture disabled for cursor-plane session"
+                      << " status=" << cursor_status;
+    }
+
     try {
       capture_session.StartCapture();
     }
@@ -770,12 +872,22 @@ namespace platf::dxgi {
   int
   wgc_capture_t::set_cursor_visible(bool x) {
     try {
+      static bool logged_cursor_state = false;
+      static bool last_logged_cursor_visible = true;
+      if (!logged_cursor_state || last_logged_cursor_visible != x) {
+        BOOST_LOG(info) << "WGC cursor capture " << (x ? "enabled" : "disabled");
+        logged_cursor_state = true;
+        last_logged_cursor_visible = x;
+      }
       if (capture_session.IsCursorCaptureEnabled() != x) {
         capture_session.IsCursorCaptureEnabled(x);
       }
       return 0;
     }
-    catch (winrt::hresult_error &) {
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(warning) << "WGC cursor capture state update failed"
+                         << " requested=" << (x ? 1 : 0)
+                         << " error=0x" << util::hex(e.code()).to_string_view();
       return -1;
     }
   }
@@ -973,6 +1085,19 @@ namespace platf::dxgi {
     // Unmap the staging texture to allow GPU access again
     device_ctx->Unmap(texture.get(), 0);
     img_info.pData = nullptr;
+
+    POINT cursor_point {};
+    bool cursor_visible_on_host = false;
+    const bool cursor_probe_available = query_system_cursor_probe_point(cursor_point, cursor_visible_on_host);
+    update_wgc_ram_cursor_probe(*img,
+                                cursor_visible,
+                                cursor_point,
+                                cursor_visible_on_host,
+                                cursor_probe_available,
+                                offset_x,
+                                offset_y,
+                                cursor_probe_last_hash,
+                                cursor_probe_samples);
 
     if (img) {
       img->frame_timestamp = frame_timestamp;

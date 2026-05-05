@@ -6,8 +6,10 @@
 #include <cmath>
 #include <initguid.h>
 #include <thread>
+#include <typeinfo>
 
 #include <boost/algorithm/string/join.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/process/v1.hpp>
 
 #include <MinHook.h>
@@ -27,6 +29,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 } D3DKMT_GPU_PREFERENCE_QUERY_STATE;
 
 #include "display.h"
+#include "capture_selection.h"
 #include "display_device/windows_utils.h"
 #include "misc.h"
 #include "src/config.h"
@@ -237,6 +240,15 @@ namespace platf::dxgi {
                                      frame_info.PointerPosition.Position.y,
                                      96,
                                      -4);
+      static auto last_cursor_roi_log = std::chrono::steady_clock::time_point {};
+      const auto now = std::chrono::steady_clock::now();
+      if (last_cursor_roi_log.time_since_epoch().count() == 0 || now - last_cursor_roi_log >= 1000ms) {
+        BOOST_LOG(info) << "Frame interest cursor roi intent generated"
+                        << " x=" << frame_info.PointerPosition.Position.x
+                        << " y=" << frame_info.PointerPosition.Position.y
+                        << " radius=96 qpDelta=-4";
+        last_cursor_roi_log = now;
+      }
     }
 
     frame_interest::finalize(map);
@@ -356,6 +368,15 @@ namespace platf::dxgi {
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
+    std::optional<bool> last_backend_cursor_visible;
+    auto log_backend_cursor_gate = [&](bool cursor_visible) {
+      if (!last_backend_cursor_visible || *last_backend_cursor_visible != cursor_visible) {
+        BOOST_LOG(info) << "Backend cursor capture gate effective"
+                        << " backend=" << typeid(*this).name()
+                        << " cursor_visible=" << (cursor_visible ? 1 : 0);
+        last_backend_cursor_visible = cursor_visible;
+      }
+    };
 
     // Keep the display awake during capture. If the display goes to sleep during
     // capture, best case is that capture stops until it powers back on. However,
@@ -427,6 +448,7 @@ namespace platf::dxgi {
           sleep_overshoot_logger.second_point_now_and_log();
 
           // Try with 0ms timeout first (non-blocking check)
+          log_backend_cursor_gate(*cursor);
           status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
 
           // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
@@ -435,6 +457,7 @@ namespace platf::dxgi {
             const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
             // If we're within 2ms of the target time, try one more time with a small timeout
             if (time_since_target < 2ms && time_since_target > -2ms) {
+              log_backend_cursor_gate(*cursor);
               status = snapshot(pull_free_image_cb, img_out, 2ms, *cursor);
             }
           }
@@ -471,6 +494,7 @@ namespace platf::dxgi {
 
         status = capture_e::timeout;
         for (int attempt = 0; attempt < max_attempts && status == capture_e::timeout; ++attempt) {
+          log_backend_cursor_gate(*cursor);
           status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
 
           // If we got a frame or error, break immediately
@@ -1184,28 +1208,19 @@ namespace platf {
       return nullptr;
     };
 
-    // Build list of capture methods to try
-    std::vector<std::string> try_types;
-
     const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
-
-    if (capture_backend.empty()) {
-      if (is_running_as_system_user) {
-        // WGC is not available in service mode
-        try_types = { "ddx" };
-        BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
-      }
-      else {
-        try_types = { "ddx", "wgc" };
-      }
+    const auto try_types = dxgi::windows_capture_try_order(capture_backend,
+                                                           is_running_as_system_user,
+                                                           config.preferCursorPlane);
+    if (capture_backend.empty() && is_running_as_system_user) {
+      BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
     }
     else if (capture_backend == "wgc" && is_running_as_system_user) {
-      // WGC explicitly requested but unavailable in service mode
       BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
-      try_types = { "ddx" };
     }
-    else {
-      try_types = { capture_backend };
+    else if (capture_backend.empty() && config.preferCursorPlane) {
+      BOOST_LOG(info) << "Cursor-plane stream prefers WGC cursor-excluded capture; DDX remains fallback"
+                      << " order=" << boost::algorithm::join(try_types, ",");
     }
 
     for (const auto &type : try_types) {

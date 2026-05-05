@@ -11,6 +11,17 @@ namespace rtsp_stream {
   std::uint64_t
   foundation_streaming_feature_flags2();
 
+  struct pending_launch_session_test_result_t {
+    bool first_claim_ok;
+    bool second_claim_reused;
+    bool touch_extended_ttl;
+    int pending_after_touch;
+    int pending_after_clear;
+  };
+
+  pending_launch_session_test_result_t
+  pending_launch_session_touch_for_tests();
+
   int
   effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags);
 
@@ -114,4 +125,14 @@ TEST(RtspBitrateAdjustmentTests, LegacyClientsReserveFecInsideConfiguredBitrate)
               2,
               0),
             10000);
+}
+
+TEST(RtspLaunchSessionLifecycleTests, RtspAttemptsReusePendingSessionAndTouchKeepsItAliveUntilControlConnect) {
+  auto result = rtsp_stream::pending_launch_session_touch_for_tests();
+
+  EXPECT_TRUE(result.first_claim_ok);
+  EXPECT_TRUE(result.second_claim_reused);
+  EXPECT_TRUE(result.touch_extended_ttl);
+  EXPECT_EQ(result.pending_after_touch, 1);
+  EXPECT_EQ(result.pending_after_clear, 0);
 }
