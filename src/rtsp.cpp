@@ -7,6 +7,7 @@
 extern "C" {
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <moonlight-common-c/src/Rtsp.h>
+#include <libavcodec/avcodec.h>
 }
 
 // standard includes
@@ -1168,6 +1169,13 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
     args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
+    // Audio codec selection (Sunshine extension, opt-in by client).
+    // 0 = Opus (default, backward compatible)
+    // 1 = AC3 passthrough
+    // 2 = E-AC3 passthrough
+    args.try_emplace("x-ml-audio.codec"sv, "opus"sv);
+    args.try_emplace("x-ml-audio.bitrate"sv, "0"sv);
+
     stream::config_t config;
 
     std::int64_t configuredBitrateKbps;
@@ -1181,6 +1189,68 @@ namespace rtsp_stream {
       config.audio.mask = getArg("x-nv-audio.surround.channelMask"sv);
       config.audio.packetDuration = getArg("x-nv-aqos.packetDuration"sv);
       config.audio.flags[audio::config_t::HIGH_QUALITY] = getArg("x-nv-audio.surround.AudioQuality"sv);
+
+      // Parse Moonlight audio codec selection (string -> enum).
+      // Unknown values fall back to Opus to preserve compatibility.
+      {
+        const auto &codecStr = args.at("x-ml-audio.codec"sv);
+        if (codecStr == "ac3"sv) {
+          config.audio.codec = audio::CODEC_AC3;
+        }
+        else if (codecStr == "eac3"sv) {
+          config.audio.codec = audio::CODEC_EAC3;
+        }
+        else if (codecStr == "pcm"sv || codecStr == "pcm_s16"sv || codecStr == "s16"sv) {
+          // Accept several spellings: "pcm" (legacy short form), "pcm_s16"
+          // (matches the codec_e enum name on both client and server) and
+          // "s16" (FFmpeg-style sample format hint). All map to the same
+          // signed-16-bit interleaved LPCM passthrough.
+          config.audio.codec = audio::CODEC_PCM_S16;
+        }
+        else {
+          config.audio.codec = audio::CODEC_OPUS;
+        }
+        config.audio.bitrate = getArg("x-ml-audio.bitrate"sv);
+
+        // AC3/E-AC3 uses a fixed 1536-sample (32 ms) frame at 48 kHz, override
+        // whatever Opus packet duration the client requested for QoS purposes.
+        if (config.audio.codec == audio::CODEC_AC3 || config.audio.codec == audio::CODEC_EAC3) {
+          config.audio.packetDuration = 32;
+
+          // Validate the request can actually be honored. AC3 maxes out at
+          // 5.1 (6 channels), and the linked FFmpeg may have been built
+          // without audio encoders. If we silently fell back to Opus here
+          // the client would still expect AC3 bitstream and play garbage,
+          // so reject the ANNOUNCE explicitly to force the client to retry
+          // with a valid configuration.
+          AVCodecID needed = (config.audio.codec == audio::CODEC_EAC3)
+                                 ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
+          const char *codecName = (config.audio.codec == audio::CODEC_EAC3) ? "E-AC3" : "AC3";
+          if (config.audio.channels > 6) {
+            BOOST_LOG(warning) << codecName << " passthrough rejected: "sv
+                               << config.audio.channels << " channels exceeds 5.1 limit"sv;
+            respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+            return;
+          }
+          if (avcodec_find_encoder(needed) == nullptr) {
+            BOOST_LOG(warning) << codecName << " passthrough rejected: encoder not built into linked FFmpeg "sv
+                               << "(rebuild build-deps with --enable-encoder=ac3,eac3)"sv;
+            respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+            return;
+          }
+        }
+        else if (config.audio.codec == audio::CODEC_PCM_S16) {
+          // Force 5 ms framing: 48k * 5ms = 240 samples, 5.1ch * 16bit = 2880 B
+          // (fits the 4 KB receiver buffer).
+          config.audio.packetDuration = 5;
+          if (config.audio.channels > 6) {
+            BOOST_LOG(warning) << "PCM_S16 passthrough rejected: "sv
+                               << config.audio.channels << " channels exceeds 5.1 limit"sv;
+            respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+            return;
+          }
+        }
+      }
 
       config.controlProtocolType = getArg("x-nv-general.useReliableUdp"sv);
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
