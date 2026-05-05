@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Yakalama için kullanılacak bir ekranı manuel olarak belirleyin. Ayarlanmamışsa, birincil ekran yakalanır. Not: Yukarıda bir GPU belirttiyseniz, bu ekranın o GPU'ya bağlı olması gerekir. Uygun değerler aşağıdaki komut kullanılarak bulunabilir:",
     "output_name_unix": "Ekran numarası",
     "output_name_windows": "Çıktı Adı",
+    "pair_max_attempts": "PIN Eşleştirme Tekrar Limiti",
+    "pair_max_attempts_desc": "60 saniye içinde istemci IP başına maksimum PIN eşleştirme denemesi. Aralık 0-50, 0 limiti devre dışı bırakır. Varsayılan 10.",
     "ping_timeout": "Ping Zaman Aşımı",
     "ping_timeout_desc": "Akışı kapatmadan önce ay ışığından gelen veriler için milisaniye cinsinden ne kadar süre bekleneceği",
     "pkey": "Özel Anahtar",

@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Ručně zadejte id zobrazovacího zařízení pro zachycení. Pokud je odpojen, primární obrazovka je zachycena. Poznámka: Pokud jste zadali GPU výše, musí být tento displej připojen k grafické kartě. Při spouštění přes Sunshine byste měli vidět seznam detekovaných displejů. Níže je příklad; skutečný výstup lze nalézt v záložce Řešení problémů.",
     "output_name_unix": "Zobrazit číslo",
     "output_name_windows": "Zobrazit ID zařízení",
+    "pair_max_attempts": "Limit opakování PIN párování",
+    "pair_max_attempts_desc": "Maximální počet pokusů o PIN párování z jedné IP klienta za 60 sekund. Rozsah 0-50, 0 vypíná omezení. Výchozí 10.",
     "ping_timeout": "Časový limit Ping",
     "ping_timeout_desc": "Jak dlouho čekat v milisekundách na data z Měsíčního světla před vypnutím proudu",
     "pkey": "Soukromý klíč",

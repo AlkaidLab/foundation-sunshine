@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Specifica manualmente un display da usare per la cattura. Se lasciato vuoto, viene catturato il display primario. Nota: Se hai specificato una GPU sopra, questo display deve essere collegato a quella GPU. I valori appropriati possono essere trovati usando il seguente comando:",
     "output_name_unix": "Numero di Display",
     "output_name_windows": "Nome Output",
+    "pair_max_attempts": "Limite tentativi di accoppiamento PIN",
+    "pair_max_attempts_desc": "Numero massimo di tentativi di accoppiamento PIN per IP client in 60 secondi. Intervallo 0-50, 0 disabilita il limite. Predefinito: 10.",
     "ping_timeout": "Timeout Ping",
     "ping_timeout_desc": "Per quanti millisecondi attendere dati da Moonlight prima di chiudere lo streaming",
     "pkey": "Chiave Privata",

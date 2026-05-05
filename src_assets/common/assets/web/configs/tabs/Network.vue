@@ -1,7 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GridNumberPicker from '../../components/common/GridNumberPicker.vue'
 
 const props = defineProps([
   'platform',
@@ -159,16 +158,6 @@ const testWebhook = async () => {
     }
   }
 }
-
-// Pair-attempts grid picker helpers: 0 means disabled, label clarifies special values.
-const formatPairAttempts = (v) => {
-  if (v === 0) return `0 — ${t('config.pair_max_attempts_disabled')}`
-  return String(v)
-}
-const pairAttemptsHints = computed(() => ({
-  0: t('config.pair_max_attempts_disabled'),
-  10: t('config.pair_max_attempts_default'),
-}))
 </script>
 
 <template>
@@ -332,14 +321,15 @@ const pairAttemptsHints = computed(() => ({
     <!-- Pair Max Attempts (per 60s window, per IP) -->
     <div class="mb-3">
       <label for="pair_max_attempts" class="form-label">{{ $t('config.pair_max_attempts') }}</label>
-      <GridNumberPicker
+      <input
+        type="number"
+        class="form-control"
         id="pair_max_attempts"
+        min="0"
+        max="50"
+        step="1"
+        placeholder="10"
         v-model.number="config.pair_max_attempts"
-        :min="0"
-        :max="50"
-        :columns="6"
-        :format-label="formatPairAttempts"
-        :value-hints="pairAttemptsHints"
       />
       <div class="form-text">{{ $t('config.pair_max_attempts_desc') }}</div>
     </div>
