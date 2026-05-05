@@ -43,6 +43,8 @@
 #include "platform/run_command.h"
 #include "process.h"
 #include "rtsp.h"
+#include "security/pair_rate_limiter.h"
+#include "security/verify_log_throttle.h"
 #include "stream.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -114,52 +116,6 @@ namespace nvhttp {
     std::mutex mutex;
   } preset_pin_state;
 
-  // Rate limiting for pairing attempts per IP
-  struct pair_rate_limiter_t {
-    std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> attempts;
-    std::mutex mutex;
-
-    bool
-    check_and_record(const std::string &ip) {
-      const int max_attempts = config::nvhttp.pair_max_attempts;
-      constexpr int window_seconds = 60;
-      // 0 disables rate limiting
-      if (max_attempts <= 0) {
-        return true;
-      }
-      std::lock_guard lock { mutex };
-      auto now = std::chrono::steady_clock::now();
-      auto &entry = attempts[ip];
-
-      // Reset window if expired
-      if (now - entry.second > std::chrono::seconds(window_seconds)) {
-        entry = { 0, now };
-      }
-
-      if (entry.first >= max_attempts) {
-        return false;  // rate limited
-      }
-
-      entry.first++;
-      return true;
-    }
-
-    void
-    cleanup() {
-      constexpr int window_seconds = 60;
-      std::lock_guard lock { mutex };
-      auto now = std::chrono::steady_clock::now();
-      for (auto it = attempts.begin(); it != attempts.end();) {
-        if (now - it->second.second > std::chrono::seconds(window_seconds * 2)) {
-          it = attempts.erase(it);
-        }
-        else {
-          ++it;
-        }
-      }
-    }
-  };
-  static pair_rate_limiter_t pair_rate_limit;
 
   // Map to store certificate UUIDs keyed by request pointer
   // Using weak_ptr to track request lifetime and prevent memory leaks
@@ -840,9 +796,9 @@ namespace nvhttp {
     print_req<T>(request);
 
     // Rate limit pairing attempts per IP
-    auto client_ip = request->remote_endpoint().address().to_string();
-    if (!pair_rate_limit.check_and_record(client_ip)) {
-      BOOST_LOG(warning) << "Pairing rate limited for IP: " << client_ip;
+    auto client_addr = request->remote_endpoint().address();
+    if (!security::pair_rate_limit().check_and_record(client_addr)) {
+      BOOST_LOG(warning) << "Pairing rate limited for IP: " << net::addr_to_normalized_string(client_addr);
       pt::ptree rate_tree;
       rate_tree.put("root.<xmlattr>.status_code", 429);
       rate_tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
@@ -855,7 +811,7 @@ namespace nvhttp {
     }
 
     // Periodically clean up stale rate limit entries
-    pair_rate_limit.cleanup();
+    security::pair_rate_limit().cleanup();
 
     pt::ptree tree;
 
@@ -2384,8 +2340,10 @@ namespace nvhttp {
         }
       }
       if (err_str) {
-        BOOST_LOG(warning) << "SSL Verification error :: "sv << err_str;
-
+        // Verify failures are typically caused by unpaired / revoked clients
+        // reconnecting with stale certificates. Defer logging to
+        // on_verify_failed where we have the request and peer IP, and apply
+        // throttling there. The request is rejected with HTTP 401.
         return verified;
       }
 
@@ -2395,6 +2353,22 @@ namespace nvhttp {
     };
 
     https_server.on_verify_failed = [](resp_https_t resp, req_https_t req) {
+      // Throttled, IP-aware logging for unauthorized clients (e.g. stale
+      // certs after unpair). Logs first occurrence per IP and then every Nth.
+      boost::asio::ip::address peer_addr;
+      std::string peer_str { "unknown" };
+      try {
+        peer_addr = req->remote_endpoint().address();
+        peer_str = net::addr_to_normalized_string(peer_addr);
+      }
+      catch (...) {}
+      if (!peer_addr.is_unspecified()) {
+        if (auto count = security::verify_log_throttle().record(peer_addr)) {
+          BOOST_LOG(verbose) << "SSL client not authorized (likely unpaired / stale cert) :: peer="sv
+                             << peer_str << " count="sv << count << " path="sv << req->path;
+        }
+      }
+
       pt::ptree tree;
       auto g = util::fail_guard([&]() {
         std::ostringstream data;
