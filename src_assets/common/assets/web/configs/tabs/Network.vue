@@ -318,6 +318,22 @@ const testWebhook = async () => {
       <div class="form-text">{{ $t('config.ping_timeout_desc') }}</div>
     </div>
 
+    <!-- Pair Max Attempts (per 60s window, per IP) -->
+    <div class="mb-3">
+      <label for="pair_max_attempts" class="form-label">{{ $t('config.pair_max_attempts') }}</label>
+      <input
+        type="number"
+        class="form-control"
+        id="pair_max_attempts"
+        min="0"
+        max="50"
+        step="1"
+        placeholder="10"
+        v-model.number="config.pair_max_attempts"
+      />
+      <div class="form-text">{{ $t('config.pair_max_attempts_desc') }}</div>
+    </div>
+
     <!-- Webhook Settings -->
     <div class="accordion">
       <div class="accordion-item">

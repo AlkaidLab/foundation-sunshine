@@ -421,6 +421,8 @@
     "output_name_desc_windows": "Ręczne określenie identyfikatora urządzenia wyświetlającego, które ma być używane do przechwytywania. Jeśli nie zostanie ustawione, przechwytywany będzie główny wyświetlacz. Uwaga: Jeśli powyżej określono procesor graficzny, ten wyświetlacz musi być do niego podłączony. Podczas uruchamiania Sunshine powinna zostać wyświetlona lista wykrytych wyświetlaczy. Poniżej znajduje się przykład; rzeczywisty wynik można znaleźć w zakładce Rozwiązywanie problemów.",
     "output_name_unix": "Wyświetlany numer",
     "output_name_windows": "Wyświetl identyfikator urządzenia",
+    "pair_max_attempts": "Limit prób parowania PIN",
+    "pair_max_attempts_desc": "Maksymalna liczba prób parowania PIN z jednego adresu IP w ciągu 60 sekund. Zakres 0-50, 0 wyłącza ograniczenie. Domyślnie 10.",
     "ping_timeout": "Limit czasu ping",
     "ping_timeout_desc": "Jak długo czekać w milisekundach na dane z Moonlight przed zamknięciem strumienia",
     "pkey": "Klucz prywatny",

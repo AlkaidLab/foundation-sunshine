@@ -165,6 +165,8 @@ namespace config {
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
     int sleep_mode;  // Sleep mode: 0=suspend(S3), 1=hibernate(S4), 2=away_mode
+
+    int pair_max_attempts;  // Max PIN pairing attempts per IP within 60s window. 0 disables limiting.
   };
 
   struct webhook_t {

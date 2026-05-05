@@ -425,6 +425,8 @@
     "output_name_desc_windows": "Manually specify a display device id to use for capture. If unset, the primary display is captured.\nNote: If you specified a GPU above, this display must be connected to that GPU.\n\nDuring Sunshine startup, you should see the list of detected display devices and their ids, e.g.:",
     "output_name_unix": "Display number",
     "output_name_windows": "Display Device Specify",
+    "pair_max_attempts": "PIN Pairing Retry Limit",
+    "pair_max_attempts_desc": "Max PIN pairing attempts per client IP within 60 seconds. Range 0-50, 0 disables the limit. Default is 10.",
     "ping_timeout": "Ping Timeout",
     "ping_timeout_desc": "How long to wait in milliseconds for data from moonlight before shutting down the stream",
     "pkey": "Private Key",
