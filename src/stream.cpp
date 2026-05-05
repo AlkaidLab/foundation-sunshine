@@ -4,6 +4,7 @@
  */
 #include "process.h"
 
+#include <algorithm>
 #include <future>
 #include <iomanip>
 #include <queue>
@@ -285,9 +286,41 @@ namespace stream {
   round_to_pkcs7_padded(std::size_t size) {
     return ((size + 15) / 16) * 16;
   }
-  constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 1400;
 
-  using audio_aes_t = std::array<char, round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE)>;
+  // Maximum payload (bytes) of a single audio RTP packet BEFORE AES-CBC
+  // padding. Computed as the worst-case codec frame across all supported
+  // encodings, plus a small headroom. Each value below is the per-frame
+  // payload of the corresponding codec at its highest negotiated setting:
+  //
+  //   AC3 @640 kbps:  640e3 / 8 * (1536 / 48000)         = 2560 B  (32 ms)
+  //   E-AC3 @384k:    384e3 / 8 * (1536 / 48000)         = 1536 B  (32 ms)
+  //   PCM_S16 5ms 8c: 5 * 48 * 8 * sizeof(int16_t)        = 3840 B  (worst PCM)
+  //   Opus (any cfg): bounded well under 1500 B in practice
+  //
+  // The compile-time max() ensures adding a new codec only requires bumping
+  // the corresponding constant (or its formula) — no risk of forgetting a
+  // magic number elsewhere. session::alloc() consumes
+  // round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE) for each shard, so the
+  // shard buffer width auto-tracks this constant.
+  //
+  // Note: large frames will exceed Ethernet MTU 1500 and be IP-fragmented at
+  // the OS level — expected for raw passthrough on a LAN; receivers
+  // reassemble before delivering to the RTP layer.
+  namespace audio_payload {
+    constexpr std::size_t kAc3MaxFrameBytes    = 2560;  // 640 kbps * 32 ms
+    constexpr std::size_t kEac3MaxFrameBytes   = 1536;  // 384 kbps * 32 ms
+    constexpr std::size_t kPcmS16MaxFrameBytes = 5 * 48 * 8 * sizeof(int16_t);  // 5 ms * 48 kHz * 8 ch
+    constexpr std::size_t kOpusMaxFrameBytes   = 1500;  // generous upper bound
+    constexpr std::size_t kHeadroomBytes       = 64;    // future-proofing margin
+  }  // namespace audio_payload
+
+  constexpr std::size_t MAX_AUDIO_PACKET_SIZE =
+      std::max({
+          audio_payload::kAc3MaxFrameBytes,
+          audio_payload::kEac3MaxFrameBytes,
+          audio_payload::kPcmS16MaxFrameBytes,
+          audio_payload::kOpusMaxFrameBytes,
+      }) + audio_payload::kHeadroomBytes;
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
@@ -3162,7 +3195,12 @@ namespace stream {
         session->video.gcm_iv_counter = 0;
       }
 
-      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(2048);
+      // Per-shard capacity must match MAX_AUDIO_PACKET_SIZE (defined near
+      // the top of this file). The previous hardcoded 2048 here would
+      // overflow with AC3 frames (~2560 B encrypted) and corrupt neighbour
+      // shards / RS parity for E-AC3 (~1552 B), causing client-side decode
+      // failures even when the encoder reported success.
+      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE);
 
       util::buffer_t<char> shards { RTPA_TOTAL_SHARDS * max_block_size };
       util::buffer_t<uint8_t *> shards_p { RTPA_TOTAL_SHARDS };

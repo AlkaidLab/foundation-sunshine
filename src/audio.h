@@ -12,6 +12,16 @@
 #include <bitset>
 
 namespace audio {
+  // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
+  // Defaults to OPUS for backward compatibility with all existing Moonlight
+  // clients.
+  enum codec_e : int {
+    CODEC_OPUS = 0,
+    CODEC_AC3 = 1,
+    CODEC_EAC3 = 2,
+    CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
+  };
+
   enum stream_config_e : int {
     STEREO,  ///< Stereo
     HIGH_STEREO,  ///< High stereo
@@ -53,6 +63,17 @@ namespace audio {
     int packetDuration;
     int channels;
     int mask;
+
+    // Audio codec selected for this session (codec_e). Defaults to CODEC_OPUS.
+    // AC3/E-AC3 are intended for HDMI/SPDIF passthrough on the client side and
+    // require the client to advertise support via the "x-ml-audio.codec" RTSP
+    // attribute. When set to a non-OPUS value the encoder emits raw IEC 61937
+    // bytes inside the audio RTP payload instead of Opus packets.
+    int codec;
+
+    // Bitrate (bps) requested by the client for AC3/E-AC3 encoding. 0 means
+    // "use server default" (640 kbps for AC3, 384 kbps for E-AC3).
+    int bitrate;
 
     stream_params_t customStreamParams;
 
