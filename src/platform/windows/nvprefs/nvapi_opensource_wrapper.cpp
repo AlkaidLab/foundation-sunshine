@@ -135,3 +135,23 @@ NVAPI_INTERFACE
 NvAPI_DRS_GetBaseProfile(NvDRSSessionHandle hSession, NvDRSProfileHandle *phProfile) {
   return call_interface<decltype(NvAPI_DRS_GetBaseProfile)>("NvAPI_DRS_GetBaseProfile", hSession, phProfile);
 }
+
+NVAPI_INTERFACE
+NvAPI_DRS_FindApplicationByName(NvDRSSessionHandle hSession, NvAPI_UnicodeString appName, NvDRSProfileHandle *phProfile, NVDRS_APPLICATION *pApplication) {
+  return call_interface<decltype(NvAPI_DRS_FindApplicationByName)>("NvAPI_DRS_FindApplicationByName", hSession, appName, phProfile, pApplication);
+}
+
+NVAPI_INTERFACE
+NvAPI_DRS_GetProfileInfo(NvDRSSessionHandle hSession, NvDRSProfileHandle hProfile, NVDRS_PROFILE *pProfileInfo) {
+  return call_interface<decltype(NvAPI_DRS_GetProfileInfo)>("NvAPI_DRS_GetProfileInfo", hSession, hProfile, pProfileInfo);
+}
+
+NVAPI_INTERFACE
+NvAPI_DRS_DeleteProfile(NvDRSSessionHandle hSession, NvDRSProfileHandle hProfile) {
+  return call_interface<decltype(NvAPI_DRS_DeleteProfile)>("NvAPI_DRS_DeleteProfile", hSession, hProfile);
+}
+
+NVAPI_INTERFACE
+NvAPI_DRS_DeleteApplication(NvDRSSessionHandle hSession, NvDRSProfileHandle hProfile, NvAPI_UnicodeString appName) {
+  return call_interface<decltype(NvAPI_DRS_DeleteApplication)>("NvAPI_DRS_DeleteApplication", hSession, hProfile, appName);
+}

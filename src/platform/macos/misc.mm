@@ -244,6 +244,16 @@ namespace platf {
   }
 
   void
+  apply_stream_optimizations(const std::string &, int) {
+    // Nothing to do on macOS
+  }
+
+  void
+  restore_stream_optimizations() {
+    // Nothing to do
+  }
+
+  void
   enter_away_mode() {
     BOOST_LOG(info) << "Away Mode is not yet implemented on macOS"sv;
   }

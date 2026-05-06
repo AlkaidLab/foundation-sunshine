@@ -38,6 +38,7 @@
 
 #include "misc.h"
 
+#include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -1399,6 +1400,66 @@ namespace platf {
         BOOST_LOG(warning) << "Unable to restore original state of Mouse Keys: "sv << winerr;
       }
     }
+  }
+
+  namespace {
+    // Forward declaration; defined later in this TU.
+    std::wstring from_utf8(const std::string &string);
+
+    /**
+     * @brief Best-effort lower-case wide basename of a launch command line.
+     *        e.g. "\"C:\\Games\\foo\\bar.exe\" --opt" -> L"bar.exe"
+     */
+    std::wstring
+    extract_exe_basename_w(const std::string &cmd) {
+      if (cmd.empty()) return {};
+      std::string token;
+      if (cmd.front() == '"') {
+        auto end = cmd.find('"', 1);
+        token = cmd.substr(1, end == std::string::npos ? std::string::npos : end - 1);
+      }
+      else {
+        auto end = cmd.find_first_of(" \t");
+        token = cmd.substr(0, end);
+      }
+      if (token.empty()) return {};
+      // Convert UTF-8 to UTF-16 first so that std::filesystem::path doesn't
+      // misinterpret the bytes via the legacy ANSI code page on Windows
+      // (breaks profile lookup for non-ASCII paths).
+      auto wide_token = from_utf8(token);
+      if (wide_token.empty()) return {};
+      auto fname = std::filesystem::path(wide_token).filename().wstring();
+      std::transform(fname.begin(), fname.end(), fname.begin(), [](wchar_t c) {
+        return static_cast<wchar_t>(::towlower(c));
+      });
+      return fname;
+    }
+  }  // namespace
+
+  void
+  apply_stream_optimizations(const std::string &game_cmd, int client_fps) {
+    if (!config::video.nv_optimize_game) {
+      return;
+    }
+    auto exe_w = extract_exe_basename_w(game_cmd);
+    if (!nvprefs_instance.load()) {
+      // Either non-NV system or driver init failed -- silently skip.
+      return;
+    }
+    nvprefs_instance.apply_stream_optimizations(exe_w, client_fps);
+    nvprefs_instance.unload();
+  }
+
+  void
+  restore_stream_optimizations() {
+    if (!config::video.nv_optimize_game) {
+      return;
+    }
+    if (!nvprefs_instance.load()) {
+      return;
+    }
+    nvprefs_instance.restore_stream_optimizations();
+    nvprefs_instance.unload();
   }
 
   void

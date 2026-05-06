@@ -13,6 +13,7 @@
 #include <fstream>
 #include <openssl/err.h>
 
+
 #include <boost/atomic.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/endian/arithmetic.hpp>
@@ -1455,7 +1456,24 @@ namespace stream {
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      // Wire layout is packed little-endian native-int values; the payload
+      // buffer is not guaranteed to be 4-byte aligned, so use memcpy to avoid
+      // unaligned reads (UB on ARM/PowerPC, OK on x86 but still UB per spec).
+      auto read_le_u32 = [](const char *src) {
+        std::uint32_t raw = 0;
+        std::memcpy(&raw, src, sizeof(raw));
+        return boost::endian::little_to_native(raw);
+      };
+      auto read_le_f32 = [](const char *src) {
+        std::uint32_t raw = 0;
+        std::memcpy(&raw, src, sizeof(raw));
+        raw = boost::endian::little_to_native(raw);
+        float out;
+        std::memcpy(&out, &raw, sizeof(out));
+        return out;
+      };
+
+      const int param_type = static_cast<int>(read_le_u32(payload.data()));
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1473,8 +1491,9 @@ namespace stream {
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const int width = static_cast<int>(read_le_u32(payload.data() + sizeof(std::uint32_t)));
+        const int height = static_cast<int>(read_le_u32(payload.data() + sizeof(std::uint32_t) * 2));
+        handle_resolution_change(session, width, height);
         return;
       }
 
@@ -1487,7 +1506,7 @@ namespace stream {
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        const float new_fps = read_le_f32(payload.data() + sizeof(std::uint32_t));
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -1514,7 +1533,7 @@ namespace stream {
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const int param_value = static_cast<int>(read_le_u32(payload.data() + sizeof(std::uint32_t)));
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
@@ -3026,6 +3045,7 @@ namespace stream {
             display_device::session_t::get().restore_state();
           }
 
+          platf::restore_stream_optimizations();
           platf::streaming_will_stop();
         }
         else {
@@ -3123,6 +3143,15 @@ namespace stream {
           }
 
           platf::streaming_will_start();
+          // Apply per-stream GPU driver optimizations for the launched game
+          // (NVIDIA application/BASE profile on Windows; no-op elsewhere).
+          {
+            std::string game_cmd;
+            if (auto app_id = proc::proc.running()) {
+              game_cmd = proc::proc.get_app_cmd(app_id);
+            }
+            platf::apply_stream_optimizations(game_cmd, session.config.monitor.framerate);
+          }
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif

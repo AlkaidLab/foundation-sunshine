@@ -192,6 +192,98 @@ const config = ref(props.config)
           </div>
         </div>
       </div>
+
+      <!-- Stream-time NVIDIA Control Panel auto-optimizations -->
+      <div class="accordion-item" v-if="platform === 'windows'">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#panelsStayOpen-collapseNvOptimize">
+            {{ $t('config.nvenc_optimize_game_section') }}
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseNvOptimize" class="accordion-collapse collapse">
+          <div class="accordion-body">
+
+            <!-- Master switch -->
+            <div class="mb-3">
+              <label for="nvenc_optimize_game" class="form-label">{{ $t('config.nvenc_optimize_game') }}</label>
+              <select id="nvenc_optimize_game" class="form-select" v-model="config.nvenc_optimize_game">
+                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.nvenc_optimize_game_desc') }}</div>
+            </div>
+
+            <template v-if="config.nvenc_optimize_game === 'enabled'">
+              <!-- Force VSync ON -->
+              <div class="mb-3">
+                <label for="nvenc_force_vsync" class="form-label">{{ $t('config.nvenc_force_vsync') }}</label>
+                <select id="nvenc_force_vsync" class="form-select" v-model="config.nvenc_force_vsync">
+                  <option value="disabled">{{ $t('_common.disabled') }}</option>
+                  <option value="enabled">{{ $t('_common.enabled_def') }}</option>
+                </select>
+                <div class="form-text">{{ $t('config.nvenc_force_vsync_desc') }}</div>
+              </div>
+
+              <!-- Frame-rate limiter (FRL) -->
+              <div class="mb-3">
+                <label for="nvenc_lock_frame_rate" class="form-label">{{ $t('config.nvenc_lock_frame_rate') }}</label>
+                <select id="nvenc_lock_frame_rate" class="form-select" v-model="config.nvenc_lock_frame_rate">
+                  <option value="disabled">{{ $t('_common.disabled') }}</option>
+                  <option value="enabled">{{ $t('_common.enabled_def') }}</option>
+                </select>
+                <div class="form-text">{{ $t('config.nvenc_lock_frame_rate_desc') }}</div>
+              </div>
+
+              <div class="mb-3" v-if="config.nvenc_lock_frame_rate === 'enabled'">
+                <label for="nvenc_frl_fps_offset" class="form-label">{{ $t('config.nvenc_frl_fps_offset') }}</label>
+                <input type="number" id="nvenc_frl_fps_offset" class="form-control"
+                       v-model.number="config.nvenc_frl_fps_offset" min="-30" max="30">
+                <div class="form-text">{{ $t('config.nvenc_frl_fps_offset_desc') }}</div>
+              </div>
+
+              <div class="mb-3" v-if="config.nvenc_lock_frame_rate === 'enabled'">
+                <label for="nvenc_frl_fps_override" class="form-label">{{ $t('config.nvenc_frl_fps_override') }}</label>
+                <input type="number" id="nvenc_frl_fps_override" class="form-control"
+                       v-model.number="config.nvenc_frl_fps_override" min="0" max="500">
+                <div class="form-text">{{ $t('config.nvenc_frl_fps_override_desc') }}</div>
+              </div>
+
+              <!-- Power state -->
+              <div class="mb-3">
+                <label for="nvenc_prefer_max_performance" class="form-label">{{ $t('config.nvenc_prefer_max_performance') }}</label>
+                <select id="nvenc_prefer_max_performance" class="form-select" v-model="config.nvenc_prefer_max_performance">
+                  <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                  <option value="enabled">{{ $t('_common.enabled') }}</option>
+                </select>
+                <div class="form-text">{{ $t('config.nvenc_prefer_max_performance_desc') }}</div>
+              </div>
+
+              <!-- Low-latency / pre-render limit -->
+              <div class="mb-3">
+                <label for="nvenc_low_latency_mode" class="form-label">{{ $t('config.nvenc_low_latency_mode') }}</label>
+                <select id="nvenc_low_latency_mode" class="form-select" v-model="config.nvenc_low_latency_mode">
+                  <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                  <option value="enabled">{{ $t('_common.enabled') }}</option>
+                </select>
+                <div class="form-text">{{ $t('config.nvenc_low_latency_mode_desc') }}</div>
+              </div>
+
+              <!-- BASE profile (machine-wide) -->
+              <div class="mb-3">
+                <label for="nvenc_apply_to_base_profile" class="form-label">{{ $t('config.nvenc_apply_to_base_profile') }}</label>
+                <select id="nvenc_apply_to_base_profile" class="form-select" v-model="config.nvenc_apply_to_base_profile">
+                  <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                  <option value="enabled">{{ $t('_common.enabled') }}</option>
+                </select>
+                <div class="form-text">{{ $t('config.nvenc_apply_to_base_profile_desc') }}</div>
+              </div>
+            </template>
+
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>

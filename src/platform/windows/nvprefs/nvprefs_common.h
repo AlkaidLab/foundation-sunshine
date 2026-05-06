@@ -52,6 +52,23 @@ namespace nvprefs {
   struct nvprefs_options {
     bool opengl_vulkan_on_dxgi = true;
     bool sunshine_high_power_mode = true;
+
+    // Stream-time game optimizations applied to the game's NVIDIA application
+    // profile. All restored when the stream stops or via the undo file on the
+    // next launch after a crash.
+    bool nv_optimize_game = false;       // master switch for the per-game block
+    bool nv_force_vsync = true;          // VSYNCMODE -> VSYNCMODE_FORCEON
+    bool nv_lock_frame_rate = true;      // FRL_FPS -> client_fps + frl_offset (clamped >= 1)
+    int  nv_frl_fps_offset = -2;         // delta added to client fps to derive FRL target
+    int  nv_frl_fps_override = 0;        // if > 0, use this fps directly instead of client_fps + offset
+    bool nv_prefer_max_performance = false;  // PREFERRED_PSTATE -> PREFERRED_PSTATE_PREFER_MAX
+    bool nv_low_latency_mode = false;    // PRERENDERLIMIT -> 1 (matches NVIDIA "Low Latency Mode = On")
+
+    // When true the same set of optimizations is also written to the BASE
+    // (global) driver profile, so games launched outside Sunshine — or
+    // sub-processes Sunshine cannot detect — also get the treatment until the
+    // stream stops.
+    bool nv_apply_to_base_profile = false;
   };
 
   nvprefs_options

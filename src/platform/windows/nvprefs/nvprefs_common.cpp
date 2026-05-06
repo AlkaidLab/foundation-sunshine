@@ -36,6 +36,14 @@ namespace nvprefs {
     nvprefs_options options;
     options.opengl_vulkan_on_dxgi = config::video.nv_opengl_vulkan_on_dxgi;
     options.sunshine_high_power_mode = config::video.nv_sunshine_high_power_mode;
+    options.nv_optimize_game = config::video.nv_optimize_game;
+    options.nv_force_vsync = config::video.nv_force_vsync;
+    options.nv_lock_frame_rate = config::video.nv_lock_frame_rate;
+    options.nv_frl_fps_offset = config::video.nv_frl_fps_offset;
+    options.nv_frl_fps_override = config::video.nv_frl_fps_override;
+    options.nv_prefer_max_performance = config::video.nv_prefer_max_performance;
+    options.nv_low_latency_mode = config::video.nv_low_latency_mode;
+    options.nv_apply_to_base_profile = config::video.nv_apply_to_base_profile;
     return options;
   }
 
