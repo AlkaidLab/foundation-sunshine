@@ -87,6 +87,32 @@ namespace platf {
 
       return sink;
     }
+
+    bool
+    is_sink_available(const std::string &sink) override {
+      BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
+      return true;
+    }
+
+    int
+    write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+      // Microphone redirect to the host is not implemented on macOS yet.
+      (void) data;
+      (void) size;
+      (void) seq;
+      return -1;
+    }
+
+    int
+    init_mic_redirect_device() override {
+      // No host-side virtual mic on macOS.
+      return -1;
+    }
+
+    void
+    release_mic_redirect_device() override {
+      // Nothing to release.
+    }
   };
 
   std::unique_ptr<audio_control_t>

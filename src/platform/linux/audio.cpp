@@ -540,6 +540,26 @@ namespace platf {
         return 0;
       }
 
+      int
+      write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+        // Microphone redirect to the host is not implemented on Linux yet.
+        (void) data;
+        (void) size;
+        (void) seq;
+        return -1;
+      }
+
+      int
+      init_mic_redirect_device() override {
+        // No host-side virtual mic on Linux.
+        return -1;
+      }
+
+      void
+      release_mic_redirect_device() override {
+        // Nothing to release.
+      }
+
       ~server_t() override {
         unload_null(index.stereo);
         unload_null(index.surround51);
