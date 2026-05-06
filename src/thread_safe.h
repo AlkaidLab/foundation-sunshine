@@ -475,6 +475,23 @@ namespace safe {
       return _count > 0;
     }
 
+    /**
+     * @brief Atomically acquire a reference only if one already exists.
+     *        Unlike ref(), this never invokes the construct callback, which makes
+     *        it safe to use from code paths that must not (re-)start the underlying
+     *        resource (e.g. probing whether a long-running context is still alive).
+     * @return A live ptr_t when there is an existing reference, an empty one otherwise.
+     */
+    [[nodiscard]] ptr_t
+    try_ref() {
+      std::lock_guard lg { _lock };
+      if (!_count) {
+        return ptr_t { nullptr };
+      }
+      ++_count;
+      return ptr_t { this };
+    }
+
   private:
     construct_f _construct;
     destruct_f _destruct;

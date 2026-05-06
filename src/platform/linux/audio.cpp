@@ -485,7 +485,7 @@ namespace platf {
       }
 
       std::unique_ptr<mic_t>
-      microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
+      microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
         // Sink choice priority:
         // 1. Config sink
         // 2. Last sink swapped to (Usually virtual in this case)
@@ -538,6 +538,26 @@ namespace platf {
         requested_sink = sink;
 
         return 0;
+      }
+
+      int
+      write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+        // Microphone redirect to the host is not implemented on Linux yet.
+        (void) data;
+        (void) size;
+        (void) seq;
+        return -1;
+      }
+
+      int
+      init_mic_redirect_device() override {
+        // No host-side virtual mic on Linux.
+        return -1;
+      }
+
+      void
+      release_mic_redirect_device() override {
+        // Nothing to release.
       }
 
       ~server_t() override {

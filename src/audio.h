@@ -57,6 +57,7 @@ namespace audio {
       HIGH_QUALITY,  ///< High quality audio
       HOST_AUDIO,  ///< Host audio
       CUSTOM_SURROUND_PARAMS,  ///< Custom surround parameters
+      CONTINUOUS_AUDIO,  ///< Continuous audio
       MAX_FLAGS  ///< Maximum number of flags
     };
 
@@ -117,6 +118,18 @@ namespace audio {
    */
   bool
   has_audio_ctx_ref();
+
+  /**
+   * @brief Atomically acquire an audio context reference only if one already exists.
+   * @returns A live audio_ctx_ref_t when a context is already alive, an empty one otherwise.
+   * @note Unlike get_audio_ctx_ref() this never (re-)constructs the audio context, which
+   *       makes it safe for fire-and-forget probes such as microphone redirection that
+   *       must not resurrect a context after the audio capture loop has stopped.
+   *       Prefer this over the has_audio_ctx_ref() + get_audio_ctx_ref() pair to avoid
+   *       a TOCTOU race that could otherwise re-trigger start_audio_control().
+   */
+  audio_ctx_ref_t
+  try_get_audio_ctx_ref();
 
   /**
    * @brief Check if the audio sink held by audio context is available.
