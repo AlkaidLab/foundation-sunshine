@@ -61,6 +61,49 @@ namespace nvprefs {
     bool
     check_and_modify_application_profile(bool &modified);
 
+    /**
+     * @brief Apply per-game stream optimizations (force VSync, FRL, max-perf,
+     *        low-latency) to the NVIDIA application profile that owns the given
+     *        executable. If no profile owns it, a SunshineStream-Game profile is
+     *        created on demand.
+     * @param exe_name Lower-cased basename of the running game executable
+     *                 (NvAPI matches applications by basename).
+     * @param client_fps Target frame rate reported by the streaming client; used
+     *                   to derive the FRL value when nv_lock_frame_rate is on.
+     * @param undo_out Out: filled with the data needed to restore the profile.
+     *                 Already-existing data is overwritten — caller must merge
+     *                 with any prior session's data.
+     * @return true on success (including the no-op case).
+     */
+    bool
+    check_and_modify_game_profile(const std::wstring &exe_name, int client_fps, std::optional<undo_data_t::data_t::game_profile_t> &undo_out);
+
+    /**
+     * @brief Reverse a previous check_and_modify_game_profile() using the saved
+     *        undo data: restore each touched setting to its original value (or
+     *        delete it if it didn't exist), remove the application from the
+     *        profile if we added it, and delete the profile if we created it
+     *        and it has no other applications.
+     */
+    bool
+    restore_game_profile_to_undo(const undo_data_t::data_t::game_profile_t &undo_data);
+
+    /**
+     * @brief Apply the same stream optimizations to the BASE (global) driver
+     *        profile, so apps Sunshine cannot detect also benefit. Restored on
+     *        stream stop.
+     * @param client_fps See check_and_modify_game_profile.
+     */
+    bool
+    check_and_modify_base_extras(int client_fps, std::optional<undo_data_t::data_t::base_extras_t> &undo_out);
+
+    /**
+     * @brief Reverse a previous check_and_modify_base_extras() using the saved
+     *        undo data.
+     */
+    bool
+    restore_base_extras_to_undo(const undo_data_t::data_t::base_extras_t &undo_data);
+
   private:
     NvDRSSessionHandle session_handle = 0;
   };
