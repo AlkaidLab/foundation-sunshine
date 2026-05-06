@@ -316,6 +316,16 @@ namespace platf {
   }
 
   void
+  apply_stream_optimizations(const std::string &, int) {
+    // Nothing to do (Linux has no NVAPI driver-profile equivalent here yet)
+  }
+
+  void
+  restore_stream_optimizations() {
+    // Nothing to do
+  }
+
+  void
   enter_away_mode() {
     // TODO: Linux implementation could use DPMS to turn off display
     // and inhibit systemd sleep via org.freedesktop.login1.Manager.Inhibit

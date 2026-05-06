@@ -405,6 +405,14 @@ namespace config {
     true,  // nv_realtime_hags
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
+    false,  // nv_optimize_game (opt-in)
+    true,   // nv_force_vsync
+    true,   // nv_lock_frame_rate
+    -2,     // nv_frl_fps_offset
+    0,      // nv_frl_fps_override (0 = derive from client fps)
+    false,  // nv_prefer_max_performance
+    false,  // nv_low_latency_mode
+    false,  // nv_apply_to_base_profile (opt-in, machine-wide)
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
@@ -1126,6 +1134,26 @@ namespace config {
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
+
+    bool_f(vars, "nvenc_optimize_game", video.nv_optimize_game);
+    bool_f(vars, "nvenc_force_vsync", video.nv_force_vsync);
+    bool_f(vars, "nvenc_lock_frame_rate", video.nv_lock_frame_rate);
+    int_f(vars, "nvenc_frl_fps_offset", video.nv_frl_fps_offset);
+    int_f(vars, "nvenc_frl_fps_override", video.nv_frl_fps_override);
+    // Clamp to the same ranges enforced in the Web UI to defend against
+    // tampered config files (avoids signed overflow when later combined
+    // with the client framerate, and matches what the slider permits).
+    if (video.nv_frl_fps_offset < -30 || video.nv_frl_fps_offset > 30) {
+      BOOST_LOG(warning) << "nvenc_frl_fps_offset out of range [-30, 30]; clamping from " << video.nv_frl_fps_offset;
+      video.nv_frl_fps_offset = std::clamp(video.nv_frl_fps_offset, -30, 30);
+    }
+    if (video.nv_frl_fps_override < 0 || video.nv_frl_fps_override > 500) {
+      BOOST_LOG(warning) << "nvenc_frl_fps_override out of range [0, 500]; clamping from " << video.nv_frl_fps_override;
+      video.nv_frl_fps_override = std::clamp(video.nv_frl_fps_override, 0, 500);
+    }
+    bool_f(vars, "nvenc_prefer_max_performance", video.nv_prefer_max_performance);
+    bool_f(vars, "nvenc_low_latency_mode", video.nv_low_latency_mode);
+    bool_f(vars, "nvenc_apply_to_base_profile", video.nv_apply_to_base_profile);
 
 #if !defined(__ANDROID__) && !defined(__APPLE__)
     video.nv_legacy.preset = video.nv.quality_preset + 11;
