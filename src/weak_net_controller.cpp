@@ -1058,12 +1058,24 @@ namespace weak_net {
       raw_video_deadline_clean &&
       !audio_constrained_for_video &&
       !input_constrained;
+    const bool render_backpressure_only =
+      render_only_deadline &&
+      raw_network_clean &&
+      !observed_packet_loss &&
+      !no_video_delivery_feedback &&
+      !sustained_render_fps_pressure &&
+      displayed_current_fps_ratio >= 0.96 &&
+      displayed_ratio >= 0.96 &&
+      late <= 0.02 &&
+      visual_freshness_pressure <= 0.03 &&
+      feedback.render_queue_depth <= 3 &&
+      feedback.decode_queue_depth <= 1;
     const bool visual_recovery_guard =
       sustainable_limit_active_ ||
       network_rtt_ms >= 120 ||
       pressures.delay_congestion >= 0.24 ||
       ewma_delay_pressure_ >= 0.24 ||
-      pressures.render >= 0.30 ||
+      (pressures.render >= 0.30 && !render_backpressure_only) ||
       ewma_deadline_pressure_ >= 0.45 ||
       audio_crisis_for_video ||
       (audio_transport_evidence && ewma_audio_pressure_ >= 0.68);
@@ -1477,10 +1489,15 @@ namespace weak_net {
         std::max(config_.min_bitrate_kbps, config_.startup_bitrate_kbps));
     }
     else if (render_only_deadline) {
-      state_ = state_e::constrained;
+      state_ = render_backpressure_only ? state_e::recovering : state_e::constrained;
       reason = reason_e::render_deadline;
-      stable_windows_ = 0;
-      if (sustained_render_fps_pressure) {
+      if (render_backpressure_only) {
+        stable_windows_ = std::min(stable_windows_ + 1, 60);
+      }
+      else {
+        stable_windows_ = 0;
+      }
+      if (sustained_render_fps_pressure && !render_backpressure_only) {
         reduce_fps_for_pressure(hard_video_deadline_miss ? 0.93 : 0.96,
                                 hard_video_deadline_miss ? 3 : 6,
                                 1);
@@ -1953,6 +1970,7 @@ namespace weak_net {
       profile_tier_active &&
       !config_.runtime_profile_tier_supported &&
       !fps_budget_overshoot_allowed &&
+      !render_backpressure_only &&
       (video_deadline_constrained ||
        visual_refresh_stalled ||
        sustained_render_fps_pressure ||
@@ -2034,7 +2052,7 @@ namespace weak_net {
         (visual_recovery_guard ||
          network_crisis ||
          network_constrained ||
-         video_deadline_constrained ||
+         (video_deadline_constrained && !render_backpressure_only) ||
          state_ == state_e::constrained ||
          state_ == state_e::crisis);
       if (suppress_upward_bitrate_change) {
