@@ -2917,6 +2917,11 @@ namespace video {
         }
       }
 
+      // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
+      // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
+      // even when no new frame would be encoded.
+      platf::enable_mouse_keys();
+
       // If variable refresh rate is enabled, skip encoding when no new frame is available
       // This allows the stream framerate to match the render framerate for VRR support
       // However, if minimum_fps_target is set, we still encode to maintain minimum FPS

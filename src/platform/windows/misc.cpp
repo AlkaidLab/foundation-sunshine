@@ -1324,13 +1324,29 @@ namespace platf {
       }
     }
 
+    enable_mouse_keys();
+  }
+
+  void
+  enable_mouse_keys() {
     // If there is no mouse connected, enable Mouse Keys to force the cursor to appear
     if (!GetSystemMetrics(SM_MOUSEPRESENT)) {
-      BOOST_LOG(info) << "A mouse was not detected. Sunshine will enable Mouse Keys while streaming to force the mouse cursor to appear.";
+      // This function is invoked periodically (per encoded frame) so we must guard
+      // against re-reading SPI_GETMOUSEKEYS after we've already enabled it; otherwise
+      // the snapshot saved in previous_mouse_keys_state would be overwritten with
+      // our own enabled state and streaming_will_stop() would fail to restore the
+      // user's original Mouse Keys configuration.
+      if (!enabled_mouse_keys) {
+        BOOST_LOG(info) << "A mouse was not detected. Sunshine will enable Mouse Keys while streaming to force the mouse cursor to appear.";
 
-      // Get the current state of Mouse Keys so we can restore it when streaming is over
-      previous_mouse_keys_state.cbSize = sizeof(previous_mouse_keys_state);
-      if (SystemParametersInfoW(SPI_GETMOUSEKEYS, 0, &previous_mouse_keys_state, 0)) {
+        // Get the current state of Mouse Keys so we can restore it when streaming is over
+        previous_mouse_keys_state.cbSize = sizeof(previous_mouse_keys_state);
+        if (!SystemParametersInfoW(SPI_GETMOUSEKEYS, 0, &previous_mouse_keys_state, 0)) {
+          auto winerr = GetLastError();
+          BOOST_LOG(warning) << "Unable to get current state of Mouse Keys: "sv << winerr;
+          return;
+        }
+
         MOUSEKEYS new_mouse_keys_state = {};
 
         // Enable Mouse Keys
@@ -1346,10 +1362,6 @@ namespace platf {
           auto winerr = GetLastError();
           BOOST_LOG(warning) << "Unable to enable Mouse Keys: "sv << winerr;
         }
-      }
-      else {
-        auto winerr = GetLastError();
-        BOOST_LOG(warning) << "Unable to get current state of Mouse Keys: "sv << winerr;
       }
     }
   }
