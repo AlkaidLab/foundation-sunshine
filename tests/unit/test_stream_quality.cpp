@@ -151,8 +151,31 @@ TEST(StreamQualityTests, HighPixelRateEnhancedStreamsRampEvenAtModerateCeiling) 
     .chroma_sampling_type = 0,
   }, startup_bitrate);
 
-  EXPECT_GE(startup_fps, 90);
-  EXPECT_LT(startup_fps, 120);
+  EXPECT_EQ(startup_fps, 96);
+}
+
+TEST(StreamQualityTests, FourKHighRefreshStartupUsesUsableConservativeCadence) {
+  auto startup_bitrate = stream_quality::startup_bitrate_for_ceiling({
+    .width = 3840,
+    .height = 2160,
+    .fps = 150,
+    .video_bitrate_kbps = 126000,
+    .video_format = 1,
+    .chroma_sampling_type = 0,
+  });
+
+  EXPECT_LT(startup_bitrate, 126000);
+
+  auto startup_fps = stream_quality::startup_fps_for_bitrate({
+    .width = 3840,
+    .height = 2160,
+    .fps = 150,
+    .video_bitrate_kbps = 126000,
+    .video_format = 1,
+    .chroma_sampling_type = 0,
+  }, startup_bitrate);
+
+  EXPECT_EQ(startup_fps, 120);
 }
 
 TEST(StreamQualityTests, MotionLowBudgetTradesExcessFpsForClarity) {

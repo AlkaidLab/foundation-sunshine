@@ -193,6 +193,15 @@ namespace weak_net {
     int last_recovery_probe_fps_ = 0;
     int profile_tier_cooldown_windows_ = 0;
     int media_recovery_cooldown_windows_ = 0;
+    int bitrate_probe_hold_windows_ = 0;
+    int no_video_delivery_windows_ = 0;
+    int bitrate_plateau_kbps_ = 0;
+    int last_probe_base_bitrate_kbps_ = 0;
+    int last_probe_target_bitrate_kbps_ = 0;
+    double last_probe_displayed_ratio_ = 0.0;
+    double last_probe_displayed_fps_ratio_ = 0.0;
+    double last_probe_render_pressure_ = 0.0;
+    double last_probe_delay_pressure_ = 0.0;
     int current_bitrate_kbps_ = 0;
     int current_fec_percentage_ = 0;
     int pacing_bitrate_kbps_ = 0;

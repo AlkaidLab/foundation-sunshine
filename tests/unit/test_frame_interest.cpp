@@ -157,7 +157,7 @@ TEST(FrameInterestTests, FullFrameDirtyStillBuildsRoiQpDeltaMapWithoutDirtySavin
   EXPECT_EQ(qp_map.deltas[3], 0);
 }
 
-TEST(FrameInterestTests, QpDeltaMapPolicyHonorsExplicitEnableFlag) {
+TEST(FrameInterestTests, QpDeltaMapPolicyKeepsAdaptiveQuantizationUntilBackendIsRuntimeProven) {
   auto policy = frame_interest::decide_qp_delta_map_policy(
     stream_quality::clarity_intent_roi | stream_quality::clarity_intent_dirty_region,
     false,
@@ -172,9 +172,9 @@ TEST(FrameInterestTests, QpDeltaMapPolicyHonorsExplicitEnableFlag) {
     true,
     true);
 
-  EXPECT_TRUE(policy.enabled);
-  EXPECT_TRUE(policy.disable_adaptive_quantization);
-  EXPECT_FALSE(policy.fallback_to_adaptive_quantization);
+  EXPECT_FALSE(policy.enabled);
+  EXPECT_FALSE(policy.disable_adaptive_quantization);
+  EXPECT_TRUE(policy.fallback_to_adaptive_quantization);
 }
 
 TEST(FrameInterestTests, RuntimeDynamicInterestArmsQpMapBackendForPressureReadySessions) {

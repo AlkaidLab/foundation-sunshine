@@ -53,7 +53,7 @@ namespace rtsp_stream {
   namespace {
     constexpr int safe_max_stream_fec_percentage = 100;
     constexpr int enhanced_feedback_startup_fec_percentage = 10;
-    constexpr int enhanced_feedback_adaptive_fec_percentage = 100;
+    constexpr int enhanced_feedback_adaptive_fec_percentage = 35;
 
     std::string
     rtsp_launch_state(const launch_session_t &session) {
@@ -99,7 +99,8 @@ namespace rtsp_stream {
       return configured_fec_percentage;
     }
 
-    return std::max(configured_fec_percentage, enhanced_feedback_adaptive_fec_percentage);
+    return std::min(std::max(configured_fec_percentage, enhanced_feedback_adaptive_fec_percentage),
+                    enhanced_feedback_adaptive_fec_percentage);
   }
 
   std::int64_t
@@ -1763,12 +1764,18 @@ namespace rtsp_stream {
         if ((startupBitrateKbps > 0 && startupBitrateKbps < qualityCeilingBitrateKbps) ||
             (startupFps > 0 && startupFps < qualityCeilingFramerate)) {
           BOOST_LOG(info) << "Ceiling-aware startup: starting at "
-                          << startupBitrateKbps << " Kbps / " << startupFps
+                          << startupBitrateKbps << " Kbps / "
+                          << startupFps
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
-                          << qualityCeilingFramerate << " fps";
+                          << qualityCeilingFramerate
+                          << " fps; weak-net will restore full cadence after high-availability feedback";
           configuredBitrateKbps = startupBitrateKbps;
-          config.monitor.framerate = startupFps;
+          if (startupFps > 0 && startupFps < config.monitor.framerate) {
+            config.monitor.framerate = startupFps;
+            config.monitor.frameRateNum = startupFps;
+            config.monitor.frameRateDen = 1;
+          }
         }
       }
 

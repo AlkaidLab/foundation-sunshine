@@ -366,8 +366,19 @@ namespace platf::dxgi {
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    BOOST_LOG(info) << "Windows capture pacing initialized"
+                    << " backend=" << typeid(*this).name()
+                    << " requestedFps=" << static_cast<double>(client_frame_rate_rational.Numerator) / client_frame_rate_rational.Denominator
+                    << " adjustedFps=" << static_cast<double>(client_frame_rate_adjusted.Numerator) / client_frame_rate_adjusted.Denominator
+                    << " displayHz=" << static_cast<double>(display_refresh_rate.Numerator) / display_refresh_rate.Denominator;
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
+    std::uint64_t capture_ok_count = 0;
+    std::uint64_t capture_timeout_count = 0;
+    std::uint64_t capture_group_reset_count = 0;
+    std::optional<std::chrono::steady_clock::time_point> last_capture_frame_timestamp;
+    std::chrono::milliseconds max_capture_frame_interval { 0 };
+    auto last_capture_runtime_log = std::chrono::steady_clock::now();
     std::optional<bool> last_backend_cursor_visible;
     auto log_backend_cursor_gate = [&](bool cursor_visible) {
       if (!last_backend_cursor_visible || *last_backend_cursor_visible != cursor_visible) {
@@ -440,6 +451,7 @@ namespace platf::dxgi {
           // We missed next frame time, invalidating current frame pacing group
           frame_pacing_group_start = std::nullopt;
           frame_pacing_group_frames = 0;
+          ++capture_group_reset_count;
           status = capture_e::timeout;
         }
         else {
@@ -447,12 +459,14 @@ namespace platf::dxgi {
           sleep_overshoot_logger.first_point(sleep_target);
           sleep_overshoot_logger.second_point_now_and_log();
 
-          // Try with 0ms timeout first (non-blocking check)
+          // Try with a tiny timeout first. At high refresh rates, a strict
+          // 0ms poll often lands just before DWM publishes the next frame,
+          // causing needless pacing group resets and visible cadence jitter.
           log_backend_cursor_gate(*cursor);
-          status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+          status = snapshot(pull_free_image_cb, img_out, 1ms, *cursor);
 
-          // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
-          // This helps catch frames that arrive slightly early or late due to timing variations
+          // If the short poll missed but we're very close to the target time,
+          // try once more with a small timeout to absorb DWM timing jitter.
           if (status == capture_e::timeout) {
             const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
             // If we're within 2ms of the target time, try one more time with a small timeout
@@ -468,6 +482,7 @@ namespace platf::dxgi {
           else {
             frame_pacing_group_start = std::nullopt;
             frame_pacing_group_frames = 0;
+            ++capture_group_reset_count;
           }
         }
       }
@@ -530,11 +545,22 @@ namespace platf::dxgi {
         case platf::capture_e::interrupted:
           return status;
         case platf::capture_e::timeout:
+          ++capture_timeout_count;
           if (!push_captured_image_cb(std::move(img_out), false)) {
             return capture_e::ok;
           }
           break;
         case platf::capture_e::ok:
+          ++capture_ok_count;
+          if (img_out && img_out->frame_timestamp) {
+            if (last_capture_frame_timestamp) {
+              const auto interval = std::chrono::duration_cast<std::chrono::milliseconds>(*img_out->frame_timestamp - *last_capture_frame_timestamp);
+              if (interval > max_capture_frame_interval) {
+                max_capture_frame_interval = interval;
+              }
+            }
+            last_capture_frame_timestamp = img_out->frame_timestamp;
+          }
           if (!push_captured_image_cb(std::move(img_out), true)) {
             return capture_e::ok;
           }
@@ -547,6 +573,23 @@ namespace platf::dxgi {
       status = release_snapshot();
       if (status != platf::capture_e::ok) {
         return status;
+      }
+
+      {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_capture_runtime_log >= 1000ms) {
+          BOOST_LOG(info) << "Windows capture runtime summary"
+                          << " backend=" << typeid(*this).name()
+                          << " okFrames=" << capture_ok_count
+                          << " timeouts=" << capture_timeout_count
+                          << " groupResets=" << capture_group_reset_count
+                          << " maxFrameIntervalMs=" << max_capture_frame_interval.count();
+          capture_ok_count = 0;
+          capture_timeout_count = 0;
+          capture_group_reset_count = 0;
+          max_capture_frame_interval = 0ms;
+          last_capture_runtime_log = now;
+        }
       }
     }
 

@@ -258,15 +258,17 @@ namespace stream_quality {
                                   static_cast<double>(stream.height);
     const auto startup_target_bpp = target_bpp_for_codec(stream.video_format,
                                                          stream.chroma_sampling_type,
-                                                         stream.content_type) * 1.35;
-    auto fps_from_budget = static_cast<int>(std::floor(
+                                                         stream.content_type) *
+                                    1.35;
+    const auto fps_from_budget = static_cast<int>(std::floor(
       static_cast<double>(startup_bitrate_kbps) * 1000.0 /
       (pixels_per_frame * startup_target_bpp)));
 
-    const auto min_interactive_fps = startup_bitrate_kbps >= 2500 ? 60 :
-                                     startup_bitrate_kbps >= 1500 ? 45 :
-                                     30;
-    return std::clamp(fps_from_budget, std::min(min_interactive_fps, stream.fps), stream.fps);
+    const auto high_refresh_floor = std::clamp(
+      static_cast<int>(std::lround(static_cast<double>(stream.fps) * 0.80)),
+      72,
+      stream.fps);
+    return std::clamp(fps_from_budget, high_refresh_floor, stream.fps);
   }
 
   int

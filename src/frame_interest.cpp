@@ -313,8 +313,13 @@ namespace frame_interest {
       return policy;
     }
 
-    policy.enabled = true;
-    policy.disable_adaptive_quantization = adaptive_quantization_enabled;
+    /*
+     * Keep spatial AQ as the default quality floor. QP-map ROI is only useful
+     * once the runtime backend is proven safe and actually applied; disabling
+     * AQ merely because an intent exists creates the worst failure mode: the
+     * encoder falls back, but the stream already lost AQ and turns blurry.
+     */
+    policy.fallback_to_adaptive_quantization = adaptive_quantization_enabled;
     return policy;
   }
 

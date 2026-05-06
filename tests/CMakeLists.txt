@@ -92,11 +92,26 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
+add_executable(stream_controller_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_quality.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_weak_net_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp
+        ${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp)
+target_include_directories(stream_controller_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(stream_controller_unit_tests
+        gtest_main)
+target_compile_definitions(stream_controller_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(stream_controller_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+target_link_options(stream_controller_unit_tests PRIVATE)
+set_target_properties(stream_controller_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME stream_controller_unit_tests COMMAND stream_controller_unit_tests)
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(stream_controller_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 
 if (WIN32)

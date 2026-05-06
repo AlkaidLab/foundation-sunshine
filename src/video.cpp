@@ -3150,8 +3150,9 @@ namespace video {
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->queue<dynamic_param_t>(mail::dynamic_param_change));
     auto target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / std::max(1, config.framerate) };
-    auto next_encode_time = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> next_encode_sample_time;
     std::uint64_t stale_frame_drop_count = 0;
+    std::uint64_t pacing_frame_drop_count = 0;
     auto last_stale_frame_drop_log = std::chrono::steady_clock::now();
     std::shared_ptr<platf::img_t> last_keepalive_img;
     std::uint64_t new_frame_encode_count = 0;
@@ -3219,6 +3220,7 @@ namespace video {
           if (param->valid && param->type == dynamic_param_type_e::FPS && param->value.float_value >= 1.0f) {
             target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / param->value.float_value };
             config.framerate = std::max(1, static_cast<int>(std::lround(param->value.float_value)));
+            next_encode_sample_time.reset();
             const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
               config.framerate,
               config::video.variable_refresh_rate,
@@ -3300,6 +3302,26 @@ namespace video {
             }
           }
           frame_timestamp = img->frame_timestamp;
+          const auto sample_time = frame_timestamp.value_or(std::chrono::steady_clock::now());
+          if (!requested_idr_frame) {
+            if (!next_encode_sample_time) {
+              next_encode_sample_time = sample_time;
+            }
+
+            // Capture is already paced by the host display and often produces
+            // rates that are close to, but not equal to, the client target
+            // (for example 75 Hz for 60 FPS, or 144 Hz for 120 FPS).  A
+            // simple "wait one target interval after the previous encoded
+            // frame" aliases those sources into half-rate output.  Track a
+            // target sample timeline instead, so only true surplus frames are
+            // skipped over time.
+            constexpr auto source_jitter_slack = 750us;
+            if (sample_time + source_jitter_slack < *next_encode_sample_time) {
+              ++pacing_frame_drop_count;
+              continue;
+            }
+          }
+
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
@@ -3326,14 +3348,6 @@ namespace video {
         }
       }
 
-      if (has_new_frame && !requested_idr_frame) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now < next_encode_time) {
-          continue;
-        }
-        next_encode_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(target_frame_time);
-      }
-
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
@@ -3341,6 +3355,16 @@ namespace video {
       }
       if (has_new_frame) {
         ++new_frame_encode_count;
+        const auto encoded_sample_time = frame_timestamp.value_or(std::chrono::steady_clock::now());
+        const auto target_frame_duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target_frame_time);
+        if (!next_encode_sample_time || requested_idr_frame) {
+          next_encode_sample_time = encoded_sample_time + target_frame_duration;
+        }
+        else {
+          do {
+            *next_encode_sample_time += target_frame_duration;
+          } while (*next_encode_sample_time <= encoded_sample_time);
+        }
       }
       else if (has_keepalive_frame) {
         ++keepalive_encode_count;
@@ -3352,6 +3376,8 @@ namespace video {
                           << new_frame_encode_count
                           << " keepaliveFrames=" << keepalive_encode_count
                           << " keepaliveReconvert=" << keepalive_reconvert_count
+                          << " pacingDrops=" << pacing_frame_drop_count
+                          << " targetFrameMs=" << target_frame_time.count()
                           << " nextFrame=" << frame_nr
                           << " imagesRunning=" << (images->running() ? 1 : 0)
                           << " reinit=" << (reinit_event.peek() ? 1 : 0)
@@ -3359,6 +3385,7 @@ namespace video {
           new_frame_encode_count = 0;
           keepalive_encode_count = 0;
           keepalive_reconvert_count = 0;
+          pacing_frame_drop_count = 0;
           last_encode_loop_log = now;
         }
       }

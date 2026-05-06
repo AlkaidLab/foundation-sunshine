@@ -54,7 +54,7 @@ TEST(RtspFeatureFlags2Tests, AdvertisesOnlyWiredEnhancedRtpCapabilities) {
   EXPECT_NE(flags & qosFeedbackV2, 0U);
   EXPECT_NE(flags & inputPriorityV1, 0U);
   EXPECT_NE(flags & audioContinuityV1, 0U);
-  EXPECT_EQ(flags & cursorPlaneV1, 0U);
+  EXPECT_NE(flags & cursorPlaneV1, 0U);
   EXPECT_EQ(flags & ft2QuicDatagramV1, 0U);
 }
 
@@ -81,8 +81,8 @@ TEST(RtspBitrateAdjustmentTests, AllowsAdaptiveFecHeadroomForFeedbackClients) {
 
   EXPECT_EQ(startup_fec, 10);
   EXPECT_GT(max_fec, startup_fec);
-  EXPECT_GE(max_fec, 100);
-  EXPECT_LE(max_fec, 100);
+  EXPECT_GE(max_fec, 35);
+  EXPECT_LE(max_fec, 35);
 }
 
 TEST(RtspBitrateAdjustmentTests, PreservesExplicitFecDisableForFeedbackClients) {
