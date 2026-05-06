@@ -605,6 +605,11 @@ namespace audio {
     return control_shared.has_ref();
   }
 
+  // 单步原子获取已存在的引用，避免 has_audio_ctx_ref + get_audio_ctx_ref 之间的 TOCTOU
+  audio_ctx_ref_t try_get_audio_ctx_ref() {
+    return control_shared.try_ref();
+  }
+
   bool is_audio_ctx_sink_available(const audio_ctx_t &ctx) {
     if (!ctx.control) {
       return false;
@@ -694,15 +699,13 @@ namespace audio {
   }
 
   int init_mic_redirect_device() {
-    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
-    // 如果没有活动的引用，说明音频上下文没有启动，不应该初始化麦克风设备
-    if (!has_audio_ctx_ref()) {
+    // 单步原子获取：仅当音频上下文已存在时使用，绝不重新触发 start_audio_control。
+    auto ref = try_get_audio_ctx_ref();
+    if (!ref) {
       BOOST_LOG(debug) << "Audio context not active, skipping microphone device initialization";
       return -1;
     }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
+    if (!ref->control) {
       BOOST_LOG(error) << "Audio context not available for microphone data writing";
       return -1;
     }
@@ -710,15 +713,13 @@ namespace audio {
   }
 
   void release_mic_redirect_device() {
-    // 关键修复：先检查是否有活动的引用，避免触发 start_audio_control
-    // 如果没有活动的引用，说明音频上下文没有启动，不需要释放
-    if (!has_audio_ctx_ref()) {
+    // 单步原子获取：仅当音频上下文已存在时释放设备，避免在已停止后再创建上下文。
+    auto ref = try_get_audio_ctx_ref();
+    if (!ref) {
       BOOST_LOG(debug) << "Audio context not active, skipping microphone device release";
       return;
     }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
+    if (!ref->control) {
       BOOST_LOG(warning) << "Audio context not available for microphone device release";
       return;
     }
@@ -726,17 +727,15 @@ namespace audio {
   }
 
   int write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq) {
-    // 先检查是否有活动引用，避免不必要地触发 start_audio_control
-    // 如果音频捕获线程正在运行，它会持有引用，这里会返回 true
-    if (!has_audio_ctx_ref()) {
+    // 单步原子获取：避免对已经释放的音频上下文做 check-then-act。
+    auto ref = try_get_audio_ctx_ref();
+    if (!ref) {
       BOOST_LOG(debug) << "Audio context not active, skipping microphone data write";
       // 注意：这不是错误，而是正常情况
       // 可能音频捕获还没有启动，或者已经停止
       return -1;
     }
-    
-    auto ref = get_audio_ctx_ref();
-    if (!ref || !ref->control) {
+    if (!ref->control) {
       BOOST_LOG(warning) << "Audio context reference invalid for microphone data writing";
       return -1;
     }
