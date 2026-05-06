@@ -14,6 +14,12 @@ on:
         description: 'Run ID to download artifact from (leave empty for latest)'
         required: false
 
+# Opt all Node.js 20 actions onto the Node.js 24 runtime to silence the
+# `actions/checkout@v4` deprecation warning until upstream actions cut new
+# releases.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   test-sign:
     name: Test SignPath
