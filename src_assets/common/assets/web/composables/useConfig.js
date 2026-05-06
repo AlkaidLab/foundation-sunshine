@@ -142,6 +142,15 @@ const DEFAULT_TABS = [
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
           nvenc_h264_cavlc: 'disabled',
+          // Stream-time NVIDIA Control Panel auto-optimizations.
+          nvenc_optimize_game: 'disabled',
+          nvenc_force_vsync: 'enabled',
+          nvenc_lock_frame_rate: 'enabled',
+          nvenc_frl_fps_offset: -2,
+          nvenc_frl_fps_override: 0,
+          nvenc_prefer_max_performance: 'disabled',
+          nvenc_low_latency_mode: 'disabled',
+          nvenc_apply_to_base_profile: 'disabled',
         },
       },
       {
