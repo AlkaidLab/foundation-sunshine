@@ -806,6 +806,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    std::atomic_bool teardown_counted { false };
 
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
@@ -833,7 +834,14 @@ namespace stream {
     std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
     std::chrono::steady_clock::time_point weak_net_recovery_ready_after {};
     std::chrono::steady_clock::time_point weak_net_startup_guard_until {};
+    std::chrono::steady_clock::time_point weak_net_startup_settle_until {};
+    std::chrono::steady_clock::time_point weak_net_resync_guard_until {};
+    std::chrono::steady_clock::time_point video_startup_pacing_until {};
+    std::chrono::steady_clock::time_point last_client_idr_request {};
+    std::chrono::steady_clock::time_point last_client_rfi_request {};
+    std::chrono::steady_clock::time_point last_client_recovery_coalesce_log {};
     std::chrono::steady_clock::time_point last_weak_net_startup_guard_log {};
+    std::uint32_t coalesced_client_recovery_requests { 0 };
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     int last_applied_weak_net_bitrate { 0 };
@@ -1548,21 +1556,38 @@ namespace stream {
     const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 100);
     const auto target_encoding_bitrate = action.target_bitrate_kbps;
     const auto target_fps = action.target_fps;
-    update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
 
     const auto now = std::chrono::steady_clock::now();
+    const bool resync_guard =
+      session->weak_net_resync_guard_until.time_since_epoch().count() != 0 &&
+      now < session->weak_net_resync_guard_until;
+    if (!resync_guard) {
+      update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
+    }
     const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_weak_net_bitrate);
     const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_weak_net_bitrate) / 50);
-    const bool apply_bitrate = target_encoding_bitrate > 0 &&
+    const bool startup_settle =
+      session->weak_net_startup_settle_until.time_since_epoch().count() != 0 &&
+      now < session->weak_net_startup_settle_until;
+    const bool bitrate_probe_up =
+      session->last_applied_weak_net_bitrate > 0 &&
+      target_encoding_bitrate > session->last_applied_weak_net_bitrate;
+    const auto bitrate_apply_cooldown = startup_settle ?
+                                          (bitrate_probe_up ? 1800ms : 650ms) :
+                                          (bitrate_probe_up ? 900ms : 450ms);
+    const auto fec_apply_cooldown = startup_settle ? 1800ms : 900ms;
+    const bool apply_bitrate = !resync_guard &&
+                               target_encoding_bitrate > 0 &&
                                (session->last_applied_weak_net_bitrate <= 0 ||
                                 (bitrate_delta >= bitrate_threshold &&
                                  (session->last_weak_net_bitrate_apply.time_since_epoch().count() == 0 ||
-                                  now - session->last_weak_net_bitrate_apply >= 400ms)));
-    const bool apply_fec = target_fec_percentage >= 0 &&
+                                  now - session->last_weak_net_bitrate_apply >= bitrate_apply_cooldown)));
+    const bool apply_fec = !resync_guard &&
+                           target_fec_percentage >= 0 &&
                            (session->last_applied_weak_net_fec < 0 ||
                             (target_fec_percentage != session->last_applied_weak_net_fec &&
                              (session->last_weak_net_fec_apply.time_since_epoch().count() == 0 ||
-                              now - session->last_weak_net_fec_apply >= 750ms)));
+                              now - session->last_weak_net_fec_apply >= fec_apply_cooldown)));
     const auto last_fps = session->last_applied_weak_net_fps;
     const auto fps_elapsed_ms =
       session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ?
@@ -1573,8 +1598,8 @@ namespace stream {
                                                                    target_fps,
                                                                    fps_elapsed_ms);
     const bool fps_target_changed = fps_decision.target_changed;
-    const bool apply_fps = fps_decision.apply;
-    const bool fps_deferred = fps_decision.deferred;
+    const bool apply_fps = !resync_guard && fps_decision.apply;
+    const bool fps_deferred = !resync_guard && fps_decision.deferred;
     const auto fps_cooldown_suffix = fps_target_changed ?
                                        std::string {" fpsCooldownMs="} + std::to_string(fps_decision.cooldown_ms) :
                                        std::string {};
@@ -1583,7 +1608,8 @@ namespace stream {
       action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type ||
       action.dynamic_range != session->last_applied_weak_net_dynamic_range;
     const bool profile_deferred = action.profile_tier_deferred && profile_target_changed;
-    const bool apply_profile = action.profile_tier_supported &&
+    const bool apply_profile = !resync_guard &&
+                               action.profile_tier_supported &&
                                action.profile_tier_changed &&
                                profile_target_changed &&
                                (session->last_weak_net_profile_apply.time_since_epoch().count() == 0 ||
@@ -1592,9 +1618,11 @@ namespace stream {
     const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
                                                                                 target_fec_percentage);
     const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
-    session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
-    session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
-    session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
+    if (!resync_guard) {
+      session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
+      session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
+      session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
+    }
     session->weak_net_diag.bitrate_applies += apply_bitrate ? 1U : 0U;
     session->weak_net_diag.fps_applies += apply_fps ? 1U : 0U;
     session->weak_net_diag.fec_applies += apply_fec ? 1U : 0U;
@@ -1668,7 +1696,7 @@ namespace stream {
       session->last_weak_net_profile_apply = now;
     }
 
-    if (action.request_idr) {
+    if (action.request_idr && !resync_guard) {
       session->video.idr_events->raise(true);
     }
 
@@ -1706,13 +1734,16 @@ namespace stream {
                     << ",fps=" << (apply_fps ? 1 : 0)
                     << ",fec=" << (apply_fec ? 1 : 0)
                     << ",profile=" << (apply_profile ? 1 : 0) << ")"
+                    << (startup_settle ? " startupSettle=1" : "")
+                    << (resync_guard ? " resyncGuard=1" : "")
                     << (apply_fps ? " fpsApplied=runtime-pacing" : "")
                     << (fps_deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
                     << fps_cooldown_suffix
                     << (profile_deferred ? " profileDeferred=runtime-profile-tier-backend-unavailable" : "")
                     << (action.profile_tier_changed && !profile_deferred && !apply_profile ?
                           " profileStable=runtime-profile-tier-no-change" : "")
-                    << (action.request_idr ? " idr=1" : "")
+                    << (action.request_idr && !resync_guard ? " idr=1" : "")
+                    << (action.request_idr && resync_guard ? " idrSuppressed=resync-guard" : "")
                     << (action.rfi_limited ? " rfiLimited=1" : "");
   }
 
@@ -1765,6 +1796,48 @@ namespace stream {
   }
 
   static bool
+  should_forward_client_recovery_request(session_t *session,
+                                         const char *source,
+                                         std::chrono::steady_clock::time_point &last_request,
+                                         std::chrono::milliseconds minimum_interval) {
+    if (!session) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (last_request.time_since_epoch().count() != 0 &&
+        now >= last_request &&
+        now - last_request < minimum_interval) {
+      session->coalesced_client_recovery_requests++;
+      if (session->last_client_recovery_coalesce_log.time_since_epoch().count() == 0 ||
+          now - session->last_client_recovery_coalesce_log >= 1000ms) {
+        session->last_client_recovery_coalesce_log = now;
+        BOOST_LOG(info) << "Coalescing client recovery request"
+                        << " runtime=" << session->identity.runtime_id
+                        << " source=" << source
+                        << " suppressed=" << session->coalesced_client_recovery_requests;
+      }
+      return false;
+    }
+
+    if (session->coalesced_client_recovery_requests != 0) {
+      BOOST_LOG(info) << "Forwarding client recovery request after coalescing"
+                      << " runtime=" << session->identity.runtime_id
+                      << " source=" << source
+                      << " suppressed=" << session->coalesced_client_recovery_requests;
+      session->coalesced_client_recovery_requests = 0;
+    }
+
+    last_request = now;
+    const auto guard_until = now + 1500ms;
+    if (session->weak_net_resync_guard_until.time_since_epoch().count() == 0 ||
+        session->weak_net_resync_guard_until < guard_until) {
+      session->weak_net_resync_guard_until = guard_until;
+    }
+    return true;
+  }
+
+  static bool
   should_hold_startup_weak_net_feedback(session_t *session,
                                         const weak_net::feedback_t &feedback,
                                         const char *source) {
@@ -1788,7 +1861,20 @@ namespace stream {
       feedback.duplicate_frames > 0 ||
       (feedback.frames_seen >= 6 &&
        feedback.displayed_frames <= std::max(1U, feedback.frames_seen / 12U));
-    if (actual_loss || visual_stale) {
+    const bool startup_no_display =
+      feedback.duration_ms >= 250 &&
+      feedback.displayed_frames == 0 &&
+      (feedback.frames_seen > 0 ||
+       feedback.complete_frames > 0 ||
+       feedback.video_bytes > 0 ||
+       feedback.input_send_latency_us > 0 ||
+       feedback.input_ack_latency_us > 0);
+    const bool severe_client_backpressure =
+      feedback.decode_queue_depth >= 8 ||
+      feedback.render_queue_depth >= 6 ||
+      (feedback.frames_seen >= 12 &&
+       feedback.late_frames >= std::max(6U, feedback.frames_seen / 4U));
+    if (actual_loss || visual_stale || startup_no_display || severe_client_backpressure) {
       return false;
     }
 
@@ -2427,6 +2513,21 @@ namespace stream {
     }
 
     return std::chrono::steady_clock::now() - session->last_control_input_received <= 350ms;
+  }
+
+  static std::chrono::duration<double, std::milli>
+  startup_video_pacing_interval(void *channel_data,
+                                int target_fps,
+                                std::chrono::duration<double, std::milli> target_interval) {
+    auto *session = static_cast<session_t *>(channel_data);
+    if (!session ||
+        session->video_startup_pacing_until.time_since_epoch().count() == 0 ||
+        std::chrono::steady_clock::now() >= session->video_startup_pacing_until) {
+      return target_interval;
+    }
+
+    const auto startup_fps = std::clamp(std::min(target_fps, 90), 30, std::max(target_fps, 30));
+    return std::chrono::duration<double, std::milli> { 1000.0 / static_cast<double>(startup_fps) };
   }
 
   void
@@ -4339,6 +4440,12 @@ namespace stream {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
       session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
+      if (!should_forward_client_recovery_request(session,
+                                                  "idr",
+                                                  session->last_client_idr_request,
+                                                  450ms)) {
+        return;
+      }
       report_weak_net_recovery_request(session, "idr");
       session->video.idr_events->raise(true);
     });
@@ -4565,6 +4672,12 @@ namespace stream {
         << "lastFrame [" << lastFrame << ']';
 
       session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
+      if (!should_forward_client_recovery_request(session,
+                                                  "rfi",
+                                                  session->last_client_rfi_request,
+                                                  250ms)) {
+        return;
+      }
       report_weak_net_recovery_request(session, "rfi");
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
@@ -6126,7 +6239,8 @@ namespace stream {
                    session,
                    session->video.dynamic_param_change_events,
                    record_frame_interest_feedback,
-                   is_control_input_recent);
+                   is_control_input_recent,
+                   startup_video_pacing_interval);
   }
 
   void
@@ -6157,10 +6271,16 @@ namespace stream {
   namespace session {
     std::atomic_uint running_sessions;
     std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
+    std::atomic_uint teardown_sessions;
 
     state_e
     state(session_t &session) {
       return session.state.load(std::memory_order_relaxed);
+    }
+
+    std::uint32_t
+    teardown_count() {
+      return teardown_sessions.load(std::memory_order_relaxed);
     }
 
     void
@@ -6172,6 +6292,10 @@ namespace stream {
         return;
       }
 
+      bool expected_counted = false;
+      if (session.teardown_counted.compare_exchange_strong(expected_counted, true, std::memory_order_acq_rel)) {
+        ++teardown_sessions;
+      }
       session.shutdown_event->raise(true);
     }
 
@@ -6189,6 +6313,11 @@ namespace stream {
       auto fg = util::fail_guard([&force_kill]() {
         // Cancel the kill task if we manage to return from this function
         task_pool.cancel(force_kill);
+      });
+      auto teardown_fg = util::fail_guard([&session]() {
+        if (session.teardown_counted.exchange(false, std::memory_order_acq_rel)) {
+          --teardown_sessions;
+        }
       });
 
       // 仅控制流会话没有视频/音频线程
@@ -6335,7 +6464,10 @@ namespace stream {
       }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
-      session.weak_net_startup_guard_until = std::chrono::steady_clock::now() + 6500ms;
+      const auto weak_net_started_at = std::chrono::steady_clock::now();
+      session.weak_net_startup_guard_until = weak_net_started_at + 6500ms;
+      session.weak_net_startup_settle_until = weak_net_started_at + 10000ms;
+      session.video_startup_pacing_until = weak_net_started_at + 2500ms;
       session.last_weak_net_startup_guard_log = {};
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频

@@ -222,6 +222,7 @@ namespace stream_quality {
     constexpr int high_ceiling_threshold_kbps = 30000;
     constexpr int min_safe_startup_kbps = 6000;
     constexpr int max_safe_startup_kbps = 18000;
+    constexpr int max_high_pixel_startup_kbps = 70000;
     const auto pixels_per_second = static_cast<double>(stream.width) *
                                    static_cast<double>(stream.height) *
                                    static_cast<double>(stream.fps);
@@ -231,14 +232,23 @@ namespace stream_quality {
       return stream.video_bitrate_kbps;
     }
 
-    // High-refresh desktop streams were starting far below the requested FPS
-    // (for example 3024x1900@120Hz -> ~8.3Mbps/64fps at an 18Mbps ceiling),
-    // which made UFOTest look like the controller had immediately "locked" to
-    // ~60fps.  Start closer to the user target, then let weak-net ramp down
-    // linearly if the route cannot hold it.
-    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * 0.015 / 1000.0));
+    /*
+     * High-refresh 4K streams cannot start from the same 18 Mbps cap used for
+     * unknown routes.  At 3840x2160@150, that is below a readable first-screen
+     * budget and creates a blurry/frozen startup before feedback has a chance
+     * to prove whether the route is actually weak.  Seed high-pixel streams at
+     * a conservative but viewable bpp, then let weak-net ramp down if delivery
+     * evidence says the path cannot sustain it.
+     */
+    const auto startup_bpp = high_pixel_rate ?
+                               target_bpp_for_codec(stream.video_format,
+                                                    stream.chroma_sampling_type,
+                                                    stream.content_type) * 2.6 :
+                               0.015;
+    const auto startup_from_pixels = static_cast<int>(std::lround(pixels_per_second * startup_bpp / 1000.0));
+    const auto startup_cap = high_pixel_rate ? max_high_pixel_startup_kbps : max_safe_startup_kbps;
     return std::min(stream.video_bitrate_kbps,
-                    std::clamp(startup_from_pixels, min_safe_startup_kbps, max_safe_startup_kbps));
+                    std::clamp(startup_from_pixels, min_safe_startup_kbps, startup_cap));
   }
 
   int

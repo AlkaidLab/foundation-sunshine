@@ -1663,11 +1663,27 @@ namespace video {
       target_display_name = display_names[display_p];
     }
 
+    const auto display_init_started = std::chrono::steady_clock::now();
+    BOOST_LOG(info) << "[Display] Capture display init begin"
+                    << " target=" << target_display_name
+                    << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                    << " requested=" << config.width << 'x' << config.height
+                    << '@' << config.framerate;
     auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
     if (!disp) {
       return;
     }
+    BOOST_LOG(info) << "[Display] Capture display created"
+                    << " target=" << target_display_name
+                    << " actual=" << disp->width << 'x' << disp->height
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - display_init_started).count();
     display_wp = disp;
+    BOOST_LOG(info) << "[Display] Capture display published"
+                    << " target=" << target_display_name
+                    << " actual=" << disp->width << 'x' << disp->height
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - display_init_started).count();
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
@@ -1943,8 +1959,14 @@ namespace video {
             }
 
             // reset_display() will sleep between retries
+            const auto reinit_started = std::chrono::steady_clock::now();
             reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
+              BOOST_LOG(info) << "[Display] Capture display reinit completed"
+                              << " target=" << target_display_name
+                              << " actual=" << disp->width << 'x' << disp->height
+                              << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now() - reinit_started).count();
               break;
             }
           }
@@ -2123,10 +2145,15 @@ namespace video {
     if (!probe.active && !config.preferCursorPlane && sample > 20) {
       return;
     }
-    if (sample > 160 && !probe.crop_changed) {
+    if (sample > 80 && !probe.crop_changed) {
       return;
     }
-    if (sample > 120 && !probe.crop_changed && !probe.mouse_update) {
+    if (sample > 48 && !probe.crop_changed && !probe.mouse_update) {
+      return;
+    }
+    if (sample > 16 &&
+        !probe.crop_changed &&
+        (!probe.mouse_update || (sample % 16) != 0)) {
       return;
     }
 
@@ -3102,7 +3129,8 @@ namespace video {
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
     frame_interest_feedback_fn_t frame_interest_feedback,
-    input_activity_fn_t input_activity) {
+    input_activity_fn_t input_activity,
+    startup_pacing_fn_t startup_pacing) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
@@ -3150,6 +3178,9 @@ namespace video {
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->queue<dynamic_param_t>(mail::dynamic_param_change));
     auto target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / std::max(1, config.framerate) };
+    auto effective_target_frame_time = target_frame_time;
+    std::optional<std::chrono::steady_clock::time_point> startup_next_emit_time;
+    bool startup_pacing_active = false;
     std::optional<std::chrono::steady_clock::time_point> next_encode_sample_time;
     std::uint64_t stale_frame_drop_count = 0;
     std::uint64_t pacing_frame_drop_count = 0;
@@ -3219,8 +3250,10 @@ namespace video {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
           if (param->valid && param->type == dynamic_param_type_e::FPS && param->value.float_value >= 1.0f) {
             target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / param->value.float_value };
+            effective_target_frame_time = target_frame_time;
             config.framerate = std::max(1, static_cast<int>(std::lround(param->value.float_value)));
             next_encode_sample_time.reset();
+            startup_next_emit_time.reset();
             const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
               config.framerate,
               config::video.variable_refresh_rate,
@@ -3258,6 +3291,13 @@ namespace video {
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       bool has_new_frame = false;
       bool has_keepalive_frame = false;
+      effective_target_frame_time = startup_pacing ?
+                                      startup_pacing(channel_data, config.framerate, target_frame_time) :
+                                      target_frame_time;
+      startup_pacing_active = effective_target_frame_time > target_frame_time + 100us;
+      if (!startup_pacing_active) {
+        startup_next_emit_time.reset();
+      }
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
@@ -3282,6 +3322,12 @@ namespace video {
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(minimum_frame_time)) {
           std::uint32_t dropped_stale_frames = 0;
+          if (startup_pacing_active && startup_next_emit_time) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now < *startup_next_emit_time) {
+              std::this_thread::sleep_until(*startup_next_emit_time);
+            }
+          }
           while (!requested_idr_frame && images->peek()) {
             if (auto newer_img = images->pop(0ms)) {
               img = std::move(newer_img);
@@ -3321,6 +3367,14 @@ namespace video {
               continue;
             }
           }
+          if (startup_pacing_active) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto effective_target_duration =
+              std::chrono::duration_cast<std::chrono::steady_clock::duration>(effective_target_frame_time);
+            startup_next_emit_time = (startup_next_emit_time && *startup_next_emit_time > now) ?
+                                       *startup_next_emit_time + effective_target_duration :
+                                       now + effective_target_duration;
+          }
 
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
@@ -3356,7 +3410,7 @@ namespace video {
       if (has_new_frame) {
         ++new_frame_encode_count;
         const auto encoded_sample_time = frame_timestamp.value_or(std::chrono::steady_clock::now());
-        const auto target_frame_duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target_frame_time);
+        const auto target_frame_duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(effective_target_frame_time);
         if (!next_encode_sample_time || requested_idr_frame) {
           next_encode_sample_time = encoded_sample_time + target_frame_duration;
         }
@@ -3809,7 +3863,8 @@ namespace video {
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
     frame_interest_feedback_fn_t frame_interest_feedback,
-    input_activity_fn_t input_activity) {
+    input_activity_fn_t input_activity,
+    startup_pacing_fn_t startup_pacing) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<img_event_t::element_type>();
@@ -3845,6 +3900,8 @@ namespace video {
     // Track display dimensions for resolution change detection
     int last_display_width = 0;
     int last_display_height = 0;
+    auto display_wait_started = std::chrono::steady_clock::now();
+    auto last_display_wait_log = display_wait_started;
 
     // Track initial scale ratio (encoding resolution / display resolution)
     // Used to maintain consistent scaling when display resolution changes
@@ -3861,15 +3918,30 @@ namespace video {
 
       // Wait for the display to be ready
       std::shared_ptr<platf::display_t> display;
+      bool display_not_ready = false;
       {
         auto lg = ref->display_wp.lock();
         if (ref->display_wp->expired()) {
-          BOOST_LOG(verbose) << "[Display] Display object expired, waiting for reinit...";
-          // std::this_thread::sleep_for(20ms);
-          continue;
+          display_not_ready = true;
         }
-        display = ref->display_wp->lock();
+        else {
+          display = ref->display_wp->lock();
+        }
       }
+      if (display_not_ready) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_display_wait_log >= 500ms) {
+          BOOST_LOG(info) << "[Display] Waiting for capture display before encoder start elapsedMs="
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(now - display_wait_started).count()
+                          << " queueRunning=" << (ref->capture_ctx_queue->running() ? 1 : 0)
+                          << " shutdown=" << (shutdown_event->peek() ? 1 : 0);
+          last_display_wait_log = now;
+        }
+        std::this_thread::sleep_for(2ms);
+        continue;
+      }
+      display_wait_started = std::chrono::steady_clock::now();
+      last_display_wait_log = display_wait_started;
 
       // Detect display resolution changes (e.g., rotation causing width/height swap)
       // For WGC window capture, display->width/height is monitor resolution, not window size
@@ -3978,7 +4050,7 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events, frame_interest_feedback, input_activity);
+        channel_data, dynamic_param_events, frame_interest_feedback, input_activity, startup_pacing);
     }
   }
 
@@ -3989,12 +4061,13 @@ namespace video {
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events,
     frame_interest_feedback_fn_t frame_interest_feedback,
-    input_activity_fn_t input_activity) {
+    input_activity_fn_t input_activity,
+    startup_pacing_fn_t startup_pacing) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback, input_activity);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback, input_activity, startup_pacing);
     }
     else {
       safe::signal_t join_event;

@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 #include "input.h"
@@ -460,6 +461,7 @@ namespace video {
 
   using frame_interest_feedback_fn_t = void (*)(void *, const frame_interest_feedback_t &);
   using input_activity_fn_t = bool (*)(void *);
+  using startup_pacing_fn_t = std::chrono::duration<double, std::milli> (*)(void *, int, std::chrono::duration<double, std::milli>);
 
   extern int active_hevc_mode;
   extern int active_av1_mode;
@@ -473,7 +475,8 @@ namespace video {
     void *channel_data,
     std::optional<dynamic_param_change_event_t> dynamic_param_events = std::nullopt,
     frame_interest_feedback_fn_t frame_interest_feedback = nullptr,
-    input_activity_fn_t input_activity = nullptr);
+    input_activity_fn_t input_activity = nullptr,
+    startup_pacing_fn_t startup_pacing = nullptr);
 
   bool
   validate_encoder(encoder_t &encoder, bool expect_failure);

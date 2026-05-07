@@ -6,6 +6,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -15,6 +16,7 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -101,7 +103,68 @@ namespace nvhttp {
         ++summary.mic_enabled;
       }
     }
+    summary.stopping = std::max(summary.stopping, static_cast<std::size_t>(stream::session::teardown_count()));
     return summary;
+  }
+
+  bool
+  wait_for_runtime_teardown_to_drain(std::string_view reason, std::chrono::milliseconds timeout = 2500ms) {
+    auto summary = runtime_session_summary();
+    if (summary.stopping == 0) {
+      return true;
+    }
+
+    BOOST_LOG(info) << "NVHTTP waiting for previous runtime teardown"
+                    << " reason=" << reason
+                    << " stopping=" << summary.stopping
+                    << " timeoutMs=" << timeout.count();
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(50ms);
+      summary = runtime_session_summary();
+      if (summary.stopping == 0) {
+        BOOST_LOG(info) << "NVHTTP previous runtime teardown drained"
+                        << " reason=" << reason;
+        return true;
+      }
+    }
+
+    summary = runtime_session_summary();
+    BOOST_LOG(warning) << "NVHTTP previous runtime teardown still active"
+                       << " reason=" << reason
+                       << " stopping=" << summary.stopping
+                       << " total=" << summary.total
+                       << " running=" << summary.running
+                       << " starting=" << summary.starting;
+    return false;
+  }
+
+  bool
+  recover_orphan_app_session(std::uint32_t current_appid,
+                             const nvhttp_runtime_session_summary_t &summary,
+                             int rtsp_active_sessions,
+                             int rtsp_pending_sessions,
+                             std::string_view reason) {
+    if (current_appid == 0 ||
+        summary.total != 0 ||
+        summary.running != 0 ||
+        summary.starting != 0 ||
+        summary.stopping != 0 ||
+        rtsp_active_sessions != 0 ||
+        rtsp_pending_sessions != 0) {
+      return false;
+    }
+
+    BOOST_LOG(warning) << "NVHTTP recovering orphan app session"
+                       << " reason=" << reason
+                       << " currentgame=" << current_appid
+                       << " rtspActive=" << rtsp_active_sessions
+                       << " rtspPending=" << rtsp_pending_sessions
+                       << " runtimeTotal=" << summary.total;
+    proc::proc.terminate();
+    display_device::session_t::get().restore_state();
+    return true;
   }
 
   void
@@ -1327,14 +1390,24 @@ namespace nvhttp {
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
     auto current_appid = proc::proc.running();
+    auto runtime_summary = runtime_session_summary();
+    auto rtsp_active_sessions = rtsp_stream::session_count();
+    auto rtsp_pending_sessions = rtsp_stream::pending_launch_session_count();
+    if (recover_orphan_app_session(static_cast<std::uint32_t>(current_appid),
+                                   runtime_summary,
+                                   rtsp_active_sessions,
+                                   rtsp_pending_sessions,
+                                   "serverinfo")) {
+      current_appid = proc::proc.running();
+      runtime_summary = runtime_session_summary();
+      rtsp_active_sessions = rtsp_stream::session_count();
+      rtsp_pending_sessions = rtsp_stream::pending_launch_session_count();
+    }
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
 
-    auto runtime_summary = runtime_session_summary();
-    auto rtsp_active_sessions = rtsp_stream::session_count();
-    auto rtsp_pending_sessions = rtsp_stream::pending_launch_session_count();
     tree.put("root.rtspActiveSessions", rtsp_active_sessions);
     tree.put("root.rtspPendingSessions", rtsp_pending_sessions);
     tree.put("root.runtimeSessions", runtime_summary.total);
@@ -2167,6 +2240,16 @@ namespace nvhttp {
     auto appid = util::from_view(get_arg(args, "appid"));
 
     auto current_appid = proc::proc.running();
+    auto launch_runtime_summary = runtime_session_summary();
+    auto launch_rtsp_active_sessions = rtsp_stream::session_count();
+    auto launch_rtsp_pending_sessions = rtsp_stream::pending_launch_session_count();
+    if (recover_orphan_app_session(static_cast<std::uint32_t>(current_appid),
+                                   launch_runtime_summary,
+                                   launch_rtsp_active_sessions,
+                                   launch_rtsp_pending_sessions,
+                                   "launch")) {
+      current_appid = proc::proc.running();
+    }
     if (current_appid > 0) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 400);
@@ -2205,7 +2288,20 @@ namespace nvhttp {
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
-    if (rtsp_stream::session_count() == 0) {
+    if (!wait_for_runtime_teardown_to_drain("launch")) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Previous streaming session is still stopping");
+      tree.put("root.gamesession", 0);
+      return;
+    }
+
+    const auto runtime_summary = runtime_session_summary();
+    const bool no_active_sessions = rtsp_stream::session_count() == 0 &&
+                                    rtsp_stream::pending_launch_session_count() == 0 &&
+                                    runtime_summary.total == 0 &&
+                                    runtime_summary.stopping == 0;
+    if (no_active_sessions) {
       auto &display_session = display_device::session_t::get();
       const bool display_fast_launch =
         display_session.can_fast_launch_display(config::video, *launch_session);
@@ -2336,10 +2432,21 @@ namespace nvhttp {
       return;
     }
 
+    if (!wait_for_runtime_teardown_to_drain("resume")) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Previous streaming session is still stopping");
+      return;
+    }
+
     // Newer Moonlight clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
-    const bool no_active_sessions { rtsp_stream::session_count() == 0 };
+    const auto runtime_summary = runtime_session_summary();
+    const bool no_active_sessions = rtsp_stream::session_count() == 0 &&
+                                    rtsp_stream::pending_launch_session_count() == 0 &&
+                                    runtime_summary.total == 0 &&
+                                    runtime_summary.stopping == 0;
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }

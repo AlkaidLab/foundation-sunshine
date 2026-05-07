@@ -3942,3 +3942,64 @@ TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCa
   EXPECT_GT(action.target_bitrate_kbps, 60000)
     << "High availability should regain quality after cadence is proven";
 }
+
+TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDowngrade) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 45000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 45,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .ideal_demand_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  const weak_net::feedback_t feedback {
+    .duration_ms = 542,
+    .frames_seen = 80,
+    .complete_frames = 80,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 0,
+    .missing_packets = 0,
+    .total_packets = 2400,
+    .received_packets = 2400,
+    .video_bytes = 1650 * 1024,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 1,
+    .decode_queue_depth = 8,
+    .render_queue_depth = 0,
+    .late_frames = 16,
+    .displayed_frames = 33,
+    .visual_stale_frames = 0,
+    .duplicate_frames = 0,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 0,
+    .full_frame_dirty = false,
+  };
+
+  auto action = controller.on_feedback(feedback);
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.packet_loss, 0.0);
+  EXPECT_LE(action.fec_percentage, 10)
+    << "Display cadence pressure on a clean route must not open FEC";
+  EXPECT_LE(action.target_fps, 72)
+    << "When the client is visibly displaying about 60fps with a full decode queue, do not walk down by 5fps";
+  EXPECT_EQ(action.resolution_scale_percent, 100)
+    << "This is a cadence cap, not a network-quality downgrade";
+
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback(feedback);
+  }
+  EXPECT_LE(action.target_fps, 72)
+    << "The cadence cap should hold instead of immediately probing back upward";
+}

@@ -1820,11 +1820,16 @@ namespace rtsp_stream {
 
     auto stream_session = stream::session::alloc(config, session);
     server->insert(stream_session);
+    auto stream_session_cleanup = util::fail_guard([&]() {
+      if (stream_session) {
+        stream::session::stop(*stream_session);
+        server->remove(stream_session);
+      }
+    });
 
     if (stream::session::start(*stream_session, sock.remote_endpoint().address().to_string())) {
       BOOST_LOG(error) << "Failed to start a streaming session"sv;
 
-      server->remove(stream_session);
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
@@ -1838,6 +1843,7 @@ namespace rtsp_stream {
                     << " mic="sv << (session.enable_mic ? 1 : 0);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
+    stream_session_cleanup.disable();
   }
 
   void

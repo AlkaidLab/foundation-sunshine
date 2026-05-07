@@ -93,7 +93,9 @@ namespace platf::dxgi {
         last_hash = probe.hash;
       }
 
-      if (probe.sample_index <= 40 || probe.crop_changed || (mouse_update && probe.sample_index <= 160)) {
+      if (probe.sample_index <= 12 ||
+          (probe.crop_changed && probe.sample_index <= 80) ||
+          (mouse_update && probe.sample_index <= 40 && (probe.sample_index % 8) == 0)) {
         BOOST_LOG(info) << "Cursor capture-output proof"
                         << " runtime=0"
                         << " backend=" << cursor_probe_backend_name(backend)

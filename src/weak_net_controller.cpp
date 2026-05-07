@@ -1115,6 +1115,7 @@ namespace weak_net {
                                 std::min(video_deadline_windows_ + 1, 16) :
                                 0;
     bool fps_adjusted_this_window = false;
+    bool client_cadence_cap_applied = false;
     auto reduce_fps_for_pressure = [&](double scale,
                                        int cooldown_windows,
                                        int required_pressure_windows) {
@@ -1163,6 +1164,45 @@ namespace weak_net {
       last_recovery_probe_fps_ = 0;
       fps_adjusted_this_window = true;
     };
+    const bool client_display_cadence_limit =
+      render_only_deadline &&
+      raw_network_clean &&
+      !observed_packet_loss &&
+      !no_video_delivery_feedback &&
+      has_video_cadence_feedback &&
+      feedback.displayed_frames > 0 &&
+      feedback.duration_ms >= 250 &&
+      displayed_fps >= 24.0 &&
+      displayed_fps <= 90.0 &&
+      current_fps_ > config_.min_fps &&
+      displayed_current_fps_ratio < 0.82 &&
+      (feedback.decode_queue_depth >= 4 ||
+       feedback.render_queue_depth >= 4 ||
+       late >= 0.08 ||
+       visual_freshness_pressure >= 0.10);
+    const auto client_display_cadence_fps =
+      client_display_cadence_limit ?
+        clamp_fps(static_cast<int>(std::ceil(displayed_fps * 1.10 + 2.0)),
+                  config_.min_fps,
+                  config_.baseline_fps) :
+        current_fps_;
+    auto apply_client_display_cadence_cap = [&]() {
+      if (!client_display_cadence_limit ||
+          client_display_cadence_fps >= current_fps_) {
+        return;
+      }
+
+      current_fps_ = client_display_cadence_fps;
+      fps_adjust_cooldown_windows_ = std::max(fps_adjust_cooldown_windows_, 3);
+      fps_recovery_hold_windows_ = std::max(fps_recovery_hold_windows_, 16);
+      fps_probe_interval_windows_ = std::max(fps_probe_interval_windows_, 8);
+      bitrate_probe_hold_windows_ = std::max(bitrate_probe_hold_windows_, 8);
+      failed_fps_probe_windows_ = std::max(failed_fps_probe_windows_, 1);
+      last_recovery_probe_fps_ = 0;
+      client_cadence_cap_applied = true;
+      fps_adjusted_this_window = true;
+    };
+    apply_client_display_cadence_cap();
     auto bleed_fec_for_delay_only = [&]() {
       if (current_fec_percentage_ > config_.baseline_fec_percentage) {
         current_fec_percentage_ = approach_int(current_fec_percentage_,
@@ -2172,7 +2212,10 @@ namespace weak_net {
     }
 
     if (previous_fps > 0) {
-      const auto max_fps_down = audio_only_pressure ? 2 : 5;
+      const auto max_fps_down = client_cadence_cap_applied ?
+                                  std::max(5, previous_fps - current_fps_) :
+                                audio_only_pressure ? 2 :
+                                  5;
       const bool fast_fps_ramp_allowed =
         current_target_cadence_clean &&
         raw_audio_clean &&

@@ -691,6 +691,7 @@ namespace platf::dxgi {
 
   int
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
+    const auto init_started = std::chrono::steady_clock::now();
     static std::once_flag windows_cpp_once_flag;
 
     std::call_once(windows_cpp_once_flag, []() {
@@ -718,6 +719,7 @@ namespace platf::dxgi {
     }
 
     const auto adapter_name = from_utf8(config::video.adapter_name);
+    const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
@@ -990,6 +992,12 @@ namespace platf::dxgi {
     // Initialize HDR metadata cache for change detection
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
+
+    BOOST_LOG(info) << "[Display Init] Base display initialized"
+                    << " backendHint=" << (capture_backend.empty() ? "auto" : capture_backend)
+                    << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - init_started).count();
 
     return 0;
   }

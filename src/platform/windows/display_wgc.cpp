@@ -150,7 +150,9 @@ namespace platf::dxgi {
         last_hash = probe.hash;
       }
 
-      if (probe.sample_index <= 40 || probe.crop_changed || (mouse_update && probe.sample_index <= 160)) {
+      if (probe.sample_index <= 12 ||
+          (probe.crop_changed && probe.sample_index <= 80) ||
+          (mouse_update && probe.sample_index <= 40 && (probe.sample_index % 8) == 0)) {
         BOOST_LOG(info) << "Cursor capture-output proof"
                         << " runtime=0"
                         << " backend=WGC-RAM"
@@ -536,6 +538,17 @@ namespace platf::dxgi {
    */
   int
   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+    init_start_time = std::chrono::steady_clock::now();
+    first_frame_arrived_logged = false;
+    auto log_stage = [&](const char *stage) {
+      BOOST_LOG(info) << "WGC init stage"
+                      << " stage=" << stage
+                      << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                      << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - init_start_time).count();
+    };
+    log_stage("begin");
+
     // WGC is not supported in service mode (running as SYSTEM user)
     // Fail fast to avoid unnecessary attempts and potential deadlocks
     if (is_running_as_system_user) {
@@ -568,6 +581,7 @@ namespace platf::dxgi {
     }
 
     uwp_device = d3d_comhandle.as<winrt::IDirect3DDevice>();
+    log_stage("direct3d-device");
 
     auto capture_factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     if (capture_factory == nullptr) {
@@ -684,6 +698,7 @@ namespace platf::dxgi {
             BOOST_LOG(error) << "Failed to create capture item for window [0x"sv << util::hex(status).to_string_view() << ']';
             return -1;
           }
+          log_stage("capture-item-window");
 
           captured_window_hwnd = target_hwnd;
 
@@ -722,6 +737,7 @@ namespace platf::dxgi {
         BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to acquire display: [0x"sv << util::hex(status).to_string_view() << ']';
         return -1;
       }
+      log_stage("capture-item");
     }
 
     display->capture_format = config.dynamicRange ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -733,6 +749,7 @@ namespace platf::dxgi {
       frame_pool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(uwp_device, static_cast<winrt::Windows::Graphics::DirectX::DirectXPixelFormat>(display->capture_format), 2, item_size);
       capture_session = frame_pool.CreateCaptureSession(item);
       frame_pool.FrameArrived({ this, &wgc_capture_t::on_frame_arrived });
+      log_stage("frame-pool");
     }
     catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to create capture session: [0x"sv << util::hex(e.code()).to_string_view() << ']';
@@ -775,6 +792,7 @@ namespace platf::dxgi {
 
     try {
       capture_session.StartCapture();
+      log_stage("start-capture");
     }
     catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to start capture: [0x"sv << util::hex(e.code()).to_string_view() << ']';
@@ -790,6 +808,7 @@ namespace platf::dxgi {
                          "Set wgc_disable_secure_desktop=true in config to auto-elevate UAC during WGC capture."sv;
     }
 
+    log_stage("ready");
     return 0;
   }
 
@@ -809,6 +828,14 @@ namespace platf::dxgi {
       return;
     }
     if (frame != nullptr) {
+      if (!first_frame_arrived_logged) {
+        first_frame_arrived_logged = true;
+        BOOST_LOG(info) << "WGC first frame arrived"
+                        << " elapsedMs=" << (init_start_time.time_since_epoch().count() == 0 ?
+                                               0 :
+                                               std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now() - init_start_time).count());
+      }
       AcquireSRWLockExclusive(&frame_lock);
       if (produced_frame) {
         produced_frame.Close();

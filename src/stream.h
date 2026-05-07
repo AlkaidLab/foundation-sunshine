@@ -93,6 +93,8 @@ namespace stream {
     join(session_t &session);
     state_e
     state(session_t &session);
+    std::uint32_t
+    teardown_count();
     
 
 

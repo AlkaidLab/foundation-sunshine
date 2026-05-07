@@ -464,6 +464,8 @@ namespace platf::dxgi {
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame produced_frame { nullptr }, consumed_frame { nullptr };
     SRWLOCK frame_lock = SRWLOCK_INIT;
     CONDITION_VARIABLE frame_present_cv;
+    std::chrono::steady_clock::time_point init_start_time {};
+    bool first_frame_arrived_logged { false };
     void
     on_frame_arrived(winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool const &sender, winrt::Windows::Foundation::IInspectable const &);
 
