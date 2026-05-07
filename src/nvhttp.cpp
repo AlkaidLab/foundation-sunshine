@@ -6,6 +6,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -1777,13 +1778,44 @@ namespace nvhttp {
     }
   }
 
+  static bool
+  has_required_launch_params(const args_t &args, bool require_appid) {
+    return args.find("rikey"s) != std::end(args)
+           && args.find("rikeyid"s) != std::end(args)
+           && args.find("localAudioPlayMode"s) != std::end(args)
+           && (!require_appid || args.find("appid"s) != std::end(args));
+  }
+
+  static bool
+  has_required_resume_params(const args_t &args) {
+    return args.find("rikey"s) != std::end(args)
+           && args.find("rikeyid"s) != std::end(args);
+  }
+
+  static int
+  find_desktop_app_id() {
+    const auto &apps = proc::proc.get_apps();
+    auto desktop = std::find_if(std::begin(apps), std::end(apps), [](const auto &app) {
+      return app.image_path == "desktop" || app.name == "Desktop";
+    });
+
+    if (desktop == std::end(apps)) {
+      desktop = std::find_if(std::begin(apps), std::end(apps), [](const auto &app) {
+        return app.cmd.empty();
+      });
+    }
+
+    if (desktop == std::end(apps)) {
+      return 0;
+    }
+
+    return util::from_view(desktop->id);
+  }
+
   void
-  launch(bool &host_audio, resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    print_request_ip<SunshineHTTPS>(request, "Launch request");
-
+  launch_app(bool &host_audio, resp_https_t response, req_https_t request, const args_t &args, int appid, const char *result_node_name) {
     pt::ptree tree;
+    const auto result_node = "root."s + result_node_name;
     bool need_to_restore_display_state { false };
     auto g = util::fail_guard([&]() {
       std::ostringstream data;
@@ -1801,24 +1833,9 @@ namespace nvhttp {
       }
     });
 
-    auto args = request->parse_query_string();
-    if (
-      args.find("rikey"s) == std::end(args) ||
-      args.find("rikeyid"s) == std::end(args) ||
-      args.find("localAudioPlayMode"s) == std::end(args) ||
-      args.find("appid"s) == std::end(args)) {
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing a required launch parameter");
-
-      return;
-    }
-
-    auto appid = util::from_view(get_arg(args, "appid"));
-
     auto current_appid = proc::proc.running();
     if (current_appid > 0) {
-      tree.put("root.resume", 0);
+      tree.put(result_node, 0);
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "An app is already running on this host");
 
@@ -1828,15 +1845,18 @@ namespace nvhttp {
     // Early validation of AppID to prevent starting VDD or other expensive operations
     // if the requested app does not exist.
     if (proc::proc.get_app_name(appid).empty()) {
-      tree.put("root.resume", 0);
+      tree.put(result_node, 0);
       tree.put("root.<xmlattr>.status_code", 404);
       tree.put("root.<xmlattr>.status_message", "App not found");
       BOOST_LOG(error) << "Launch couldn't find app with ID ["sv << appid << ']';
       return;
     }
 
-    host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
+    if (args.find("localAudioPlayMode"s) != std::end(args)) {
+      host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
+    }
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->appid = appid;
 
     // 获取客户端证书UUID（稳定的客户端标识符）
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
@@ -1860,7 +1880,7 @@ namespace nvhttp {
       if (video::probe_encoders()) {
         tree.put("root.<xmlattr>.status_code", 503);
         tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-        tree.put("root.gamesession", 0);
+        tree.put(result_node, 0);
 
         return;
       }
@@ -1872,27 +1892,25 @@ namespace nvhttp {
 
       tree.put("root.<xmlattr>.status_code", 403);
       tree.put("root.<xmlattr>.status_message", "Encryption is mandatory for this host but unsupported by the client");
-      tree.put("root.gamesession", 0);
+      tree.put(result_node, 0);
 
       return;
     }
 
-    if (appid > 0) {
-      auto err = proc::proc.execute(appid, launch_session);
-      if (err) {
-        tree.put("root.<xmlattr>.status_code", err);
-        tree.put("root.<xmlattr>.status_message", "Failed to start the specified application");
-        tree.put("root.gamesession", 0);
+    auto err = proc::proc.execute(appid, launch_session);
+    if (err) {
+      tree.put("root.<xmlattr>.status_code", err);
+      tree.put("root.<xmlattr>.status_message", "Failed to start the specified application");
+      tree.put(result_node, 0);
 
-        return;
-      }
+      return;
     }
 
     tree.put("root.<xmlattr>.status_code", 200);
     tree.put("root.sessionUrl0", launch_session->rtsp_url_scheme +
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
-    tree.put("root.gamesession", 1);
+    tree.put(result_node, 1);
 
     rtsp_stream::launch_session_raise(launch_session);
 
@@ -1914,6 +1932,35 @@ namespace nvhttp {
 
     // Stream was started successfully, we will restore the state when the app or session terminates
     need_to_restore_display_state = false;
+  }
+
+  void
+  launch(bool &host_audio, resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    print_request_ip<SunshineHTTPS>(request, "Launch request");
+
+    auto args = request->parse_query_string();
+    if (!has_required_launch_params(args, true)) {
+      pt::ptree tree;
+      auto g = util::fail_guard([&]() {
+        std::ostringstream data;
+
+        pt::write_xml(data, tree);
+        response->write(data.str());
+        response->close_connection_after_response = true;
+      });
+
+      tree.put("root.gamesession", 0);
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Missing a required launch parameter");
+
+      return;
+    }
+
+    auto appid = util::from_view(get_arg(args, "appid"));
+
+    launch_app(host_audio, response, request, args, appid, "gamesession");
   }
 
   void
@@ -1941,23 +1988,28 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
-    auto current_appid = proc::proc.running();
-    if (current_appid == 0) {
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 503);
-      tree.put("root.<xmlattr>.status_message", "No running app to resume");
-
-      return;
-    }
-
     auto args = request->parse_query_string();
-    if (
-      args.find("rikey"s) == std::end(args) ||
-      args.find("rikeyid"s) == std::end(args)) {
+    if (!has_required_resume_params(args)) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "Missing a required resume parameter");
 
+      return;
+    }
+
+    auto current_appid = proc::proc.running();
+    if (current_appid == 0) {
+      auto desktop_appid = find_desktop_app_id();
+      if (desktop_appid <= 0) {
+        tree.put("root.resume", 0);
+        tree.put("root.<xmlattr>.status_code", 404);
+        tree.put("root.<xmlattr>.status_message", "No running app to resume and Desktop app not found");
+
+        return;
+      }
+
+      g.disable();
+      launch_app(host_audio, response, request, args, desktop_appid, "resume");
       return;
     }
 
@@ -1969,6 +2021,7 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->appid = current_appid;
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
@@ -2000,7 +2053,7 @@ namespace nvhttp {
 
       tree.put("root.<xmlattr>.status_code", 403);
       tree.put("root.<xmlattr>.status_message", "Encryption is mandatory for this host but unsupported by the client");
-      tree.put("root.gamesession", 0);
+      tree.put("root.resume", 0);
 
       return;
     }
