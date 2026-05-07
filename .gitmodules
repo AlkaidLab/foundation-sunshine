@@ -42,6 +42,17 @@
 	path = third-party/nvenc-headers/1202
 	url = https://github.com/FFmpeg/nv-codec-headers.git
 	branch = master
+[submodule "third-party/AMF"]
+	path = third-party/AMF
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
+	branch = v1.5.2
+	shallow = true
+	# Headers-only consumption (we only need amf/public/include/).
+	# After clone, run:
+	#   git -C third-party/AMF sparse-checkout init --cone
+	#   git -C third-party/AMF sparse-checkout set amf/public/include
+	# To upgrade: edit branch above, then `git submodule update --remote third-party/AMF`.
+	# AMF headers are backward-compatible; single version is sufficient.
 [submodule "third-party/nvapi"]
 	path = third-party/nvapi
 	url = https://github.com/NVIDIA/nvapi.git

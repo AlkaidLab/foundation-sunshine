@@ -50,6 +50,22 @@ file(GLOB_RECURSE NVENC_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/nvenc/*.cpp")
 
 # amf
+# Use the dedicated AMF SDK submodule (third-party/AMF) for the native AMF encoder
+# path under src/amf/. Source code includes via `#include <AMF/core/...>` and
+# `#include <AMF/components/...>`, so we stage the upstream headers (which live
+# under amf/public/include/{core,components}/) into a build-tree directory that
+# carries the required `AMF/` prefix. Listed BEFORE build-deps include dirs so
+# newer headers (e.g. v1.5.2 AudioBuffer.h `static inline` fix, new SetProperty
+# names) take precedence over older AMF headers shipped inside build-deps.
+set(AMF_SDK_SRC "${CMAKE_SOURCE_DIR}/third-party/AMF/amf/public/include")
+set(AMF_SDK_STAGE "${CMAKE_BINARY_DIR}/amf_include")
+if(NOT EXISTS "${AMF_SDK_SRC}/core/Version.h")
+    message(FATAL_ERROR "AMF submodule not initialized. Run: git submodule update --init third-party/AMF")
+endif()
+file(MAKE_DIRECTORY "${AMF_SDK_STAGE}/AMF")
+file(COPY "${AMF_SDK_SRC}/core" "${AMF_SDK_SRC}/components"
+        DESTINATION "${AMF_SDK_STAGE}/AMF")
+include_directories(SYSTEM BEFORE "${AMF_SDK_STAGE}")
 file(GLOB_RECURSE AMF_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/amf/*.h"
         "${CMAKE_SOURCE_DIR}/src/amf/*.cpp")
