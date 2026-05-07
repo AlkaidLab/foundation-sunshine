@@ -21,26 +21,6 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 }
 
-// AMF SDK headers for direct encoder access (Windows only)
-#ifdef _WIN32
-  #include <AMF/components/Component.h>
-  #include <AMF/components/VideoEncoderAV1.h>
-  #include <AMF/components/VideoEncoderHEVC.h>
-  #include <AMF/components/VideoEncoderVCE.h>
-  #include <AMF/core/Interface.h>
-  #include <AMF/core/PropertyStorage.h>
-  #include <cstring>  // for strstr
-
-// Forward declaration of FFmpeg's internal AMFEncoderContext structure
-// This structure layout must match FFmpeg's libavcodec/amfenc.h
-// We only need the first few fields to access the encoder pointer
-struct AMFEncoderContext_Partial {
-  void *avclass;  // AVClass pointer
-  void *device_ctx_ref;  // AVBufferRef pointer
-  amf::AMFComponent *encoder;  // AMF encoder object
-};
-#endif
-
 // lib includes
 #include "cbs.h"
 #include "config.h"
@@ -439,51 +419,13 @@ namespace video {
 
       auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
 
-      // Update AVCodecContext fields (for software encoders and as fallback)
+      // Update AVCodecContext fields (for software encoders and as fallback).
+      // Note: dynamic bitrate changes for the AMF path are handled inside the
+      // native amf_d3d11 encoder via amf_d3d11::set_bitrate(), so the legacy
+      // FFmpeg-AMF reach-into-priv_data hack has been removed.
       avcodec_ctx->bit_rate = bitrate;
       avcodec_ctx->rc_max_rate = bitrate;
       avcodec_ctx->rc_min_rate = bitrate;
-
-#ifdef _WIN32
-      // For AMF encoders, directly call AMF SDK to change bitrate dynamically
-      // AMF_VIDEO_ENCODER_TARGET_BITRATE, AMF_VIDEO_ENCODER_PEAK_BITRATE, and
-      // AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE are documented as "Dynamic properties -
-      // can be set at any time" in AMF SDK
-      const AVCodec *codec = avcodec_ctx->codec;
-      if (codec && codec->name && avcodec_ctx->priv_data && strstr(codec->name, "_amf")) {
-        auto *amf_ctx = reinterpret_cast<AMFEncoderContext_Partial *>(avcodec_ctx->priv_data);
-        if (amf_ctx && amf_ctx->encoder) {
-          // VBV buffer size: 1 second worth of data at the target bitrate
-          int64_t vbv_buffer_size = bitrate;
-          AMF_RESULT res = AMF_OK;
-
-          // Set properties based on codec type
-          if (strstr(codec->name, "h264_amf")) {
-            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_buffer_size);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-          }
-          else if (strstr(codec->name, "hevc_amf")) {
-            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_buffer_size);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-          }
-          else if (strstr(codec->name, "av1_amf")) {
-            res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_buffer_size);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-            if (res == AMF_OK) res = amf_ctx->encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-          }
-
-          if (res == AMF_OK) {
-            BOOST_LOG(info) << "AMF encoder bitrate dynamically changed to: " << adjusted_bitrate_kbps
-                            << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                            << config::stream.fec_percentage << "%)";
-            return;
-          }
-          BOOST_LOG(warning) << "AMF SetProperty for bitrate failed with error: " << res;
-        }
-      }
-#endif
 
       BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
@@ -1055,113 +997,12 @@ namespace video {
     PARALLEL_ENCODING | REF_FRAMES_INVALIDATION
   };
 
-  // Legacy FFmpeg-based AMF encoder (fallback)
-  encoder_t amdvce_legacy {
-    "amdvce_legacy"sv,
-    std::make_unique<encoder_platform_formats_avcodec>(
-      AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_NONE,
-      AV_PIX_FMT_D3D11,
-      AV_PIX_FMT_NV12, AV_PIX_FMT_P010,
-      AV_PIX_FMT_NONE, AV_PIX_FMT_NONE,
-      dxgi_init_avcodec_hardware_input_buffer),
-    {
-      // Common options
-      {
-        { "filler_data"s, false },
-        { "forced_idr"s, 1 },
-        { "latency"s, "lowest_latency"s },
-        { "async_depth"s, 1 },
-        { "skip_frame"s, 0 },
-        { "log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
-         } },
-        { "preencode"s, &config::video.amd.amd_preanalysis },
-        { "quality"s, &config::video.amd.amd_quality_av1 },
-        { "rc"s, &config::video.amd.amd_rc_av1 },
-        { "usage"s, &config::video.amd.amd_usage_av1 },
-        { "enforce_hrd"s, &config::video.amd.amd_enforce_hrd },
-        // AV1 optimization options (no latency impact)
-        { "high_motion_quality_boost_enable"s, true },
-        { "pa_paq_mode"s, "caq"s },
-        { "pa_taq_mode"s, 2 },
-      },
-      {},  // SDR-specific options
-      {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
-      {},  // YUV444 HDR-specific options
-      {},  // Fallback options
-      "av1_amf"s,
-    },
-    {
-      // Common options
-      {
-        { "filler_data"s, false },
-        { "forced_idr"s, 1 },
-        { "latency"s, 1 },
-        { "async_depth"s, 1 },
-        { "skip_frame"s, 0 },
-        { "log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
-         } },
-        { "gops_per_idr"s, 1 },
-        { "header_insertion_mode"s, "idr"s },
-        { "preencode"s, &config::video.amd.amd_preanalysis },
-        { "quality"s, &config::video.amd.amd_quality_hevc },
-        { "rc"s, &config::video.amd.amd_rc_hevc },
-        { "usage"s, &config::video.amd.amd_usage_hevc },
-        { "vbaq"s, &config::video.amd.amd_vbaq },
-        { "enforce_hrd"s, &config::video.amd.amd_enforce_hrd },
-        { "level"s, [](const config_t &cfg) {
-           auto size = cfg.width * cfg.height;
-           // For 4K and below, try to use level 5.1 or 5.2 if possible
-           if (size <= 8912896) {
-             if (size * cfg.framerate <= 534773760) {
-               return "5.1"s;
-             }
-             else if (size * cfg.framerate <= 1069547520) {
-               return "5.2"s;
-             }
-           }
-           return "auto"s;
-         } },
-      },
-      {},  // SDR-specific options
-      {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
-      {},  // YUV444 HDR-specific options
-      {},  // Fallback options
-      "hevc_amf"s,
-    },
-    {
-      // Common options
-      {
-        { "filler_data"s, false },
-        { "forced_idr"s, 1 },
-        { "latency"s, 1 },
-        { "async_depth"s, 1 },
-        { "frame_skipping"s, 0 },
-        { "log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
-         } },
-        { "preencode"s, &config::video.amd.amd_preanalysis },
-        { "quality"s, &config::video.amd.amd_quality_h264 },
-        { "rc"s, &config::video.amd.amd_rc_h264 },
-        { "usage"s, &config::video.amd.amd_usage_h264 },
-        { "vbaq"s, &config::video.amd.amd_vbaq },
-        { "enforce_hrd"s, &config::video.amd.amd_enforce_hrd },
-      },
-      {},  // SDR-specific options
-      {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
-      {},  // YUV444 HDR-specific options
-      {
-        // Fallback options
-        { "usage"s, 2 /* AMF_VIDEO_ENCODER_USAGE_LOW_LATENCY */ },  // Workaround for https://github.com/GPUOpen-LibrariesAndSDKs/AMF/issues/410
-      },
-      "h264_amf"s,
-    },
-    PARALLEL_ENCODING
-  };
+  // NOTE: The legacy FFmpeg-based AMF encoder (encoder_t amdvce_legacy) was
+  // removed. The native AMF path (`amdvce`, src/amf/amf_d3d11.cpp) is strictly
+  // superior (HDR, RFI, dynamic bitrate without reaching into FFmpeg internals)
+  // and was already the preferred entry. Keeping the legacy path required the
+  // fragile AMFEncoderContext_Partial reflection over libavcodec's amfenc.h
+  // private struct, which would silently break on any FFmpeg ABI change.
 #endif
 
   encoder_t software {
@@ -1410,7 +1251,6 @@ namespace video {
 #ifdef _WIN32
     &quicksync,
     &amdvce,
-    &amdvce_legacy,
 #endif
 #ifdef __linux__
     &vaapi,
