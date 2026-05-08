@@ -26,6 +26,21 @@ if not exist "%NEFCON%" (
     exit /b 1
 )
 
+rem ----------------------------------------------------------------------------
+rem  Sanity check: refuse to install an unstamped INF (UmdfLibraryVersion still
+rem  contains the literal "$UMDFVERSION$" placeholder). WUDF coinstaller will
+rem  fail with error 87 (ERROR_INVALID_PARAMETER) at DIF_INSTALLDEVICE in that
+rem  case, leaving an orphan ROOT\HIDCLASS node and a broken DriverStore entry.
+rem ----------------------------------------------------------------------------
+findstr /C:"$UMDFVERSION$" "%DRIVER_DIR%\ZakoVirtualMouse.inf" >nul 2>&1
+if not errorlevel 1 (
+    echo ERROR: Bundled ZakoVirtualMouse.inf is not stamped ^(UmdfLibraryVersion=$UMDFVERSION$^).
+    echo        This package will fail to install with error 87.
+    echo        Rebuild the driver via stampinf or replace with a stamped package.
+    echo        Source: %DRIVER_DIR%\ZakoVirtualMouse.inf
+    exit /b 87
+)
+
 rem Copy driver files to target directory
 if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
@@ -68,7 +83,7 @@ echo Removed !CLEANUP_COUNT! device node(s) via nefcon.
 
 rem Fallback: use pnputil to remove any remaining device instances
 for /f "tokens=*" %%d in ('powershell -NoProfile -Command ^
-    "Get-PnpDevice -InstanceId 'ROOT\ZAKOVIRTUALMOUSE\*' -ErrorAction SilentlyContinue | ForEach-Object { $_.InstanceId }"') do (
+    "Get-PnpDevice -InstanceId 'ROOT\HIDCLASS\*' -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\ZakoVirtualMouse' } | ForEach-Object { $_.InstanceId }"') do (
     echo Removing remaining device: %%d
     pnputil /remove-device "%%d" >nul 2>&1
 )
@@ -86,6 +101,11 @@ if not errorlevel 1 (
 
 timeout /t 3 /nobreak 1>nul
 
+rem Clean up stale driver packages from DriverStore (locale-independent)
+powershell -NoProfile -Command "Get-ChildItem ($env:SystemRoot + '\INF\oem*.inf') -ErrorAction SilentlyContinue | Where-Object { Select-String -Path $_.FullName -Pattern 'ZakoVirtualMouse' -Quiet } | ForEach-Object { Write-Host ('Removing stale driver package: ' + $_.Name); pnputil /delete-driver $_.Name /force | Out-Null }"
+
+timeout /t 1 /nobreak 1>nul
+
 rem ============================================================================
 rem  Install Certificate and Driver
 rem ============================================================================
@@ -100,15 +120,22 @@ if exist "%CERTIFICATE%" (
 
 rem Create device node and install driver
 echo Installing Virtual Mouse driver...
+set "INSTALL_RESULT=0"
 "%NEFCON%" --create-device-node --hardware-id Root\ZakoVirtualMouse --class-name HIDClass --class-guid 745a17a0-74d3-11d0-b6fe-00a0c90f57da
 "%NEFCON%" --install-driver --inf-path "%DIST_DIR%\ZakoVirtualMouse.inf"
+set "INSTALL_RESULT=!ERRORLEVEL!"
 
-if not errorlevel 1 (
+if "!INSTALL_RESULT!"=="0" (
     echo Virtual Mouse driver installation completed successfully!
 ) else (
-    echo Virtual Mouse driver installation failed with error !ERRORLEVEL!
+    echo Virtual Mouse driver installation failed with error !INSTALL_RESULT!
     echo Rolling back: removing device node...
     "%NEFCON%" --remove-device-node --hardware-id Root\ZakoVirtualMouse --class-guid 745a17a0-74d3-11d0-b6fe-00a0c90f57da
+    for /f "tokens=*" %%d in ('powershell -NoProfile -Command ^
+        "Get-PnpDevice -InstanceId 'ROOT\HIDCLASS\*' -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\ZakoVirtualMouse' } | ForEach-Object { $_.InstanceId }"') do (
+        echo Removing rollback device: %%d
+        pnputil /remove-device "%%d" >nul 2>&1
+    )
 )
 
 rem ============================================================================
@@ -124,3 +151,5 @@ if "!SERVICE_WAS_RUNNING!"=="1" (
         echo WARNING: Could not restart Sunshine service.
     )
 )
+
+exit /b !INSTALL_RESULT!

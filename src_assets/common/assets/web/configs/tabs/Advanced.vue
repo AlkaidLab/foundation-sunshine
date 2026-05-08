@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Checkbox from '../../components/Checkbox.vue'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 
 const { t } = useI18n()
@@ -121,6 +122,14 @@ watch(isWGCSelected, (newValue) => {
       <input type="text" class="form-control" id="fec_percentage" placeholder="20" v-model="config.fec_percentage" />
       <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
     </div>
+
+    <Checkbox
+      id="adaptive_streaming_optimization"
+      v-model="config.adaptive_streaming_optimization"
+      true-value="enabled"
+      false-value="disabled"
+      container-class="mb-3"
+    />
 
     <!-- Min Threads -->
     <div class="mb-3">

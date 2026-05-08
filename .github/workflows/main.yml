@@ -19,6 +19,13 @@ concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
+# Opt all Node.js 20 actions onto the Node.js 24 runtime. GitHub will
+# eventually flip this default itself; setting it explicitly silences the
+# `actions/checkout@v4` deprecation warning emitted on every run and keeps
+# us forward-compatible with the September 2026 Node 20 removal.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   github_env:
     name: GitHub Env Debug

@@ -51,23 +51,19 @@ rem This catches ghost devices that nefcon may fail to handle
 echo Checking for remaining Virtual Mouse devices...
 set "PNPUTIL_REMOVED=0"
 for /f "tokens=*" %%d in ('powershell -NoProfile -Command ^
-    "Get-PnpDevice -InstanceId 'ROOT\ZAKOVIRTUALMOUSE\*' -ErrorAction SilentlyContinue | ForEach-Object { $_.InstanceId }"') do (
+    "Get-PnpDevice -InstanceId 'ROOT\HIDCLASS\*' -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\ZakoVirtualMouse' } | ForEach-Object { $_.InstanceId }"') do (
     echo Removing remaining device: %%d
     pnputil /remove-device "%%d" >nul 2>&1
     set /a PNPUTIL_REMOVED+=1
 )
 if !PNPUTIL_REMOVED! GTR 0 (
-    echo Removed !PNPUTIL_REMOVED! remaining device(s) via pnputil.
+    echo Removed !PNPUTIL_REMOVED! remaining device^(s^) via pnputil.
 ) else (
     echo No remaining devices found.
 )
 
 rem Clean up driver package from DriverStore (locale-independent)
-for /f "tokens=*" %%p in ('powershell -NoProfile -Command ^
-    "Get-ChildItem \"$env:SystemRoot\INF\oem*.inf\" -ErrorAction SilentlyContinue | Where-Object { Select-String -Path $_.FullName -Pattern 'ZakoVirtualMouse' -Quiet } | ForEach-Object { $_.Name }"') do (
-    echo Removing driver package: %%p
-    pnputil /delete-driver "%%p" /force >nul 2>&1
-)
+powershell -NoProfile -Command "Get-ChildItem ($env:SystemRoot + '\INF\oem*.inf') -ErrorAction SilentlyContinue | Where-Object { Select-String -Path $_.FullName -Pattern 'ZakoVirtualMouse' -Quiet } | ForEach-Object { Write-Host ('Removing driver package: ' + $_.Name); pnputil /delete-driver $_.Name /force | Out-Null }"
 
 rem Clean up files
 if exist "%DIST_DIR%" (

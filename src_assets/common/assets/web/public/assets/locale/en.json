@@ -229,6 +229,8 @@
     "clipboard_sync_desc": "Enable bidirectional clipboard sync for compatible Moonlight clients. Currently supports text and single-image items.",
     "capture": "Force a Specific Capture Method",
     "capture_desc": "On automatic mode Sunshine will use the first one that works. NvFBC requires patched nvidia drivers.",
+    "adaptive_streaming_optimization": "Automatic Adaptive Streaming Optimization",
+    "adaptive_streaming_optimization_desc": "Dynamically adjusts bitrate, FEC, FPS, and quality from live network/render feedback. Disable to use the client configured static stream profile.",
     "amd_capture_no_virtual_display": "AMD Display Capture does not support virtual display drivers (e.g. IddCx/VDD). If you are using a virtual display, please use WGC or Desktop Duplication API instead.",
     "capture_target": "Capture Target",
     "capture_target_desc": "Select the type of target to capture. When selecting 'Window', you can capture a specific application window (such as AI frame interpolation software) instead of the entire display.",

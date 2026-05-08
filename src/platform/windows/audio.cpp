@@ -470,7 +470,15 @@ namespace platf::audio {
       // Refill the sample buffer if needed
       while (sample_buf_pos - std::begin(sample_buf) < sample_size) {
         auto capture_result = _fill_buffer();
-        if (capture_result != capture_e::ok) {
+        if (capture_result == capture_e::timeout && continuous_audio) {
+          // Pad with silence only up to the requested frame boundary so any
+          // partial samples that _fill_buffer() managed to write before the
+          // timeout are preserved instead of being shifted into the next
+          // frame, which would cause a cumulative timing drift.
+          const auto remaining = sample_size - (sample_buf_pos - std::begin(sample_buf));
+          std::fill_n(sample_buf_pos, remaining, 0.0f);
+          sample_buf_pos += remaining;
+        } else if (capture_result != capture_e::ok) {
           return capture_result;
         }
       }
@@ -486,7 +494,7 @@ namespace platf::audio {
     }
 
     int
-    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out) {
+    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out, bool continuous) {
       audio_event.reset(CreateEventA(nullptr, FALSE, FALSE, nullptr));
       if (!audio_event) {
         BOOST_LOG(error) << "Couldn't create Event handle"sv;
@@ -546,6 +554,7 @@ namespace platf::audio {
       REFERENCE_TIME default_latency;
       audio_client->GetDevicePeriod(&default_latency, nullptr);
       default_latency_ms = default_latency / 1000;
+      continuous_audio = continuous;
 
       std::uint32_t frames;
       status = audio_client->GetBufferSize(&frames);
@@ -716,6 +725,7 @@ namespace platf::audio {
     util::buffer_t<float> sample_buf;
     float *sample_buf_pos;
     int channels;
+    bool continuous_audio;
 
     HANDLE mmcss_task_handle = NULL;
   };
@@ -808,10 +818,10 @@ namespace platf::audio {
     }
 
     std::unique_ptr<mic_t>
-    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
       auto mic = std::make_unique<mic_wasapi_t>();
 
-      if (mic->init(sample_rate, frame_size, channels)) {
+      if (mic->init(sample_rate, frame_size, channels, continuous_audio)) {
         return nullptr;
       }
 

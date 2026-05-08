@@ -84,23 +84,45 @@ namespace rtsp_stream {
   }
 
   int
-  effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags) {
+  effective_stream_fec_percentage_for_client(int configured_fec_percentage,
+                                             int ml_feature_flags,
+                                             bool adaptive_controller_enabled) {
     configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
-    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
+    if (adaptive_controller_enabled && (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
       return std::min(configured_fec_percentage, enhanced_feedback_startup_fec_percentage);
     }
     return configured_fec_percentage;
   }
 
   int
-  adaptive_stream_max_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags) {
+  effective_stream_fec_percentage_for_client(int configured_fec_percentage,
+                                             int ml_feature_flags) {
+    return effective_stream_fec_percentage_for_client(configured_fec_percentage,
+                                                      ml_feature_flags,
+                                                      true);
+  }
+
+  int
+  adaptive_stream_max_fec_percentage_for_client(int configured_fec_percentage,
+                                                int ml_feature_flags,
+                                                bool adaptive_controller_enabled) {
     configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
-    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0 || configured_fec_percentage == 0) {
+    if (!adaptive_controller_enabled ||
+        (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0 ||
+        configured_fec_percentage == 0) {
       return configured_fec_percentage;
     }
 
     return std::min(std::max(configured_fec_percentage, enhanced_feedback_adaptive_fec_percentage),
                     enhanced_feedback_adaptive_fec_percentage);
+  }
+
+  int
+  adaptive_stream_max_fec_percentage_for_client(int configured_fec_percentage,
+                                                int ml_feature_flags) {
+    return adaptive_stream_max_fec_percentage_for_client(configured_fec_percentage,
+                                                        ml_feature_flags,
+                                                        true);
   }
 
   std::int64_t
@@ -1675,6 +1697,10 @@ namespace rtsp_stream {
       std::copy_n(std::begin(platf::speaker::map_surround714), 12, std::begin(config.audio.customStreamParams.mapping));
       config.audio.flags[audio::config_t::CUSTOM_SURROUND_PARAMS] = true;
     }
+    if (session.continuous_audio) {
+      BOOST_LOG(info) << "Client requested continuous audio"sv;
+      config.audio.flags[audio::config_t::CONTINUOUS_AUDIO] = true;
+    }
 
     // If the client sent a configured bitrate, choose the video encoder budget after
     // transport/audio overhead, then use low-bitrate clarity planning to spend that
@@ -1682,71 +1708,83 @@ namespace rtsp_stream {
     if (configuredBitrateKbps) {
       BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
 
+      const bool adaptive_controller_enabled =
+        config::stream.adaptive_streaming_optimization &&
+        (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
       auto effectiveFecPercentage = effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
-                                                                               config.mlFeatureFlags);
+                                                                               config.mlFeatureFlags,
+                                                                               adaptive_controller_enabled);
 
-      configuredBitrateKbps = video_quality_ceiling_bitrate_kbps(
-        configuredBitrateKbps,
-        effectiveFecPercentage,
-        config.audio.flags[audio::config_t::HIGH_QUALITY],
-        config.audio.channels,
-        config.mlFeatureFlags);
+      configuredBitrateKbps = adaptive_controller_enabled ?
+                                video_quality_ceiling_bitrate_kbps(
+                                  configuredBitrateKbps,
+                                  effectiveFecPercentage,
+                                  config.audio.flags[audio::config_t::HIGH_QUALITY],
+                                  config.audio.channels,
+                                  config.mlFeatureFlags) :
+                                adjust_configured_video_bitrate_kbps(
+                                  configuredBitrateKbps,
+                                  effectiveFecPercentage,
+                                  config.audio.flags[audio::config_t::HIGH_QUALITY],
+                                  config.audio.channels);
       const auto qualityCeilingBitrateKbps = configuredBitrateKbps;
       const auto qualityCeilingFramerate = config.monitor.framerate;
 
-      auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
-        .width = config.monitor.width,
-        .height = config.monitor.height,
-        .fps = config.monitor.framerate,
-        .video_bitrate_kbps = static_cast<int>(configuredBitrateKbps),
-        .video_format = config.monitor.videoFormat,
-        .chroma_sampling_type = config.monitor.chromaSamplingType,
-        .content_type = clientContentType == 1 ? stream_quality::content_type_e::text :
-                        clientContentType == 2 ? stream_quality::content_type_e::motion :
-                        clientContentType == 3 ? stream_quality::content_type_e::game :
-                                                 stream_quality::content_type_e::desktop,
-      });
+      if (adaptive_controller_enabled) {
+        auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
+          .width = config.monitor.width,
+          .height = config.monitor.height,
+          .fps = config.monitor.framerate,
+          .video_bitrate_kbps = static_cast<int>(configuredBitrateKbps),
+          .video_format = config.monitor.videoFormat,
+          .chroma_sampling_type = config.monitor.chromaSamplingType,
+          .content_type = clientContentType == 1 ? stream_quality::content_type_e::text :
+                          clientContentType == 2 ? stream_quality::content_type_e::motion :
+                          clientContentType == 3 ? stream_quality::content_type_e::game :
+                                                   stream_quality::content_type_e::desktop,
+        });
 
-      config.monitor.lowBitrateClarityIntentFlags = clarity_plan.intent_flags;
-      config.monitor.lowBitrateTargetQp = clarity_plan.target_qp;
-      config.monitor.lowBitrateSharpenAlpha = clarity_plan.sharpen_alpha;
+        config.monitor.lowBitrateClarityIntentFlags = clarity_plan.intent_flags;
+        config.monitor.lowBitrateTargetQp = clarity_plan.target_qp;
+        config.monitor.lowBitrateSharpenAlpha = clarity_plan.sharpen_alpha;
 
-      if (clarity_plan.enabled) {
-        if (clarity_plan.effective_chroma_sampling_type != config.monitor.chromaSamplingType) {
-          BOOST_LOG(info) << "Low-bitrate clarity mode: using 4:2:0 to preserve luma detail at "
-                          << configuredBitrateKbps << " Kbps";
-          config.monitor.chromaSamplingType = clarity_plan.effective_chroma_sampling_type;
-        }
+        if (clarity_plan.enabled) {
+          if (clarity_plan.effective_chroma_sampling_type != config.monitor.chromaSamplingType) {
+            BOOST_LOG(info) << "Low-bitrate clarity mode: using 4:2:0 to preserve luma detail at "
+                            << configuredBitrateKbps << " Kbps";
+            config.monitor.chromaSamplingType = clarity_plan.effective_chroma_sampling_type;
+          }
 
-        if (clarity_plan.effective_fps > 0 &&
-            clarity_plan.effective_fps < config.monitor.framerate) {
-          BOOST_LOG(info) << "Low-bitrate clarity advisory: preserving requested "
-                          << config.monitor.framerate
-                          << " fps for adaptive pacing; static clarity would prefer "
-                          << clarity_plan.effective_fps << " fps at "
-                          << configuredBitrateKbps << " Kbps"
-                          << " (" << clarity_plan.bits_per_pixel_per_frame
-                          << " bpp/frame)";
-        }
+          if (clarity_plan.effective_fps > 0 &&
+              clarity_plan.effective_fps < config.monitor.framerate) {
+            BOOST_LOG(info) << "Low-bitrate clarity advisory: preserving requested "
+                            << config.monitor.framerate
+                            << " fps for adaptive pacing; static clarity would prefer "
+                            << clarity_plan.effective_fps << " fps at "
+                            << configuredBitrateKbps << " Kbps"
+                            << " (" << clarity_plan.bits_per_pixel_per_frame
+                            << " bpp/frame)";
+          }
 
-        if (clarity_plan.prefer_intra_refresh && config.monitor.enableIntraRefresh == 0) {
-          BOOST_LOG(info) << "Low-bitrate clarity mode: enabling intra-refresh preference for moving content";
-          config.monitor.enableIntraRefresh = 1;
-        }
+          if (clarity_plan.prefer_intra_refresh && config.monitor.enableIntraRefresh == 0) {
+            BOOST_LOG(info) << "Low-bitrate clarity mode: enabling intra-refresh preference for moving content";
+            config.monitor.enableIntraRefresh = 1;
+          }
 
-        if (clarity_plan.roi_enabled || clarity_plan.target_qp > 0 || clarity_plan.sharpen_alpha > 0.0f) {
-          BOOST_LOG(info) << "Frame interest intent generated qp=" << clarity_plan.target_qp
-                          << " roi=" << (clarity_plan.roi_enabled ? 1 : 0)
-                          << " dirtyRegion=" << (clarity_plan.dirty_region_priority ? 1 : 0)
-                          << " temporalLayers=" << (clarity_plan.prefer_temporal_layers ? 1 : 0)
-                          << " discardableEnhancement=" << (clarity_plan.discardable_enhancement_layer ? 1 : 0)
-                          << " ltr=" << (clarity_plan.prefer_long_term_reference ? 1 : 0)
-                          << " flags=0x" << std::hex << clarity_plan.intent_flags << std::dec
-                          << " sharpen=" << clarity_plan.sharpen_alpha;
+          if (clarity_plan.roi_enabled || clarity_plan.target_qp > 0 || clarity_plan.sharpen_alpha > 0.0f) {
+            BOOST_LOG(info) << "Frame interest intent generated qp=" << clarity_plan.target_qp
+                            << " roi=" << (clarity_plan.roi_enabled ? 1 : 0)
+                            << " dirtyRegion=" << (clarity_plan.dirty_region_priority ? 1 : 0)
+                            << " temporalLayers=" << (clarity_plan.prefer_temporal_layers ? 1 : 0)
+                            << " discardableEnhancement=" << (clarity_plan.discardable_enhancement_layer ? 1 : 0)
+                            << " ltr=" << (clarity_plan.prefer_long_term_reference ? 1 : 0)
+                            << " flags=0x" << std::hex << clarity_plan.intent_flags << std::dec
+                            << " sharpen=" << clarity_plan.sharpen_alpha;
+          }
         }
       }
 
-      if (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) {
+      if (adaptive_controller_enabled) {
         stream_quality::stream_description_t startup_stream {
           .width = config.monitor.width,
           .height = config.monitor.height,
@@ -1777,6 +1815,18 @@ namespace rtsp_stream {
             config.monitor.frameRateDen = 1;
           }
         }
+      }
+      else {
+        config.monitor.lowBitrateClarityIntentFlags = 0;
+        config.monitor.lowBitrateTargetQp = 0;
+        config.monitor.lowBitrateSharpenAlpha = 0.0f;
+        BOOST_LOG(info) << "Adaptive streaming controller RTSP setup adaptiveController=off reason="
+                        << (config::stream.adaptive_streaming_optimization ?
+                              "client-feedback-unsupported" :
+                              "config-disabled")
+                        << " bitrate=" << configuredBitrateKbps << " Kbps"
+                        << " fps=" << config.monitor.framerate
+                        << " fec=" << effectiveFecPercentage << "%";
       }
 
       BOOST_LOG(debug) << "Final adjusted video encoding bitrate is "sv << configuredBitrateKbps << " Kbps"sv;

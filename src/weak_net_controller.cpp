@@ -706,10 +706,22 @@ namespace weak_net {
           displayed_fps_ratio < 0.94 ?
         clamp01((0.94 - displayed_fps_ratio) * 3.2) :
         0.0;
+    const bool displayed_cadence_clean_sample =
+      has_video_cadence_feedback &&
+      displayed_fps_ratio >= 0.98 &&
+      displayed_ratio >= 0.98 &&
+      late == 0.0 &&
+      visual_freshness_pressure <= 0.01;
+    const auto decode_queue_pressure = displayed_cadence_clean_sample ?
+                                         decode_queue / 12.0 :
+                                         decode_queue / 4.0;
+    const auto render_queue_pressure = displayed_cadence_clean_sample ?
+                                         render_queue / 8.0 :
+                                         render_queue / 5.0;
     const auto deadline_pressure = std::max({
       late * 3.0,
-      decode_queue / 4.0,
-      render_queue / 5.0,
+      decode_queue_pressure,
+      render_queue_pressure,
       visual_freshness_pressure * 1.35,
       displayed_cadence_pressure,
       deadline_jitter_ms / 90.0,
@@ -810,8 +822,10 @@ namespace weak_net {
                                    network_jitter_ms <= 18.0 &&
                                    !no_video_delivery_feedback;
     const bool raw_video_deadline_clean = late == 0.0 &&
-                                          decode_queue <= 1.0 &&
-                                          render_queue <= 2.0 &&
+                                          (decode_queue <= 1.0 ||
+                                           (displayed_cadence_clean_sample && decode_queue <= 6.0)) &&
+                                          (render_queue <= 2.0 ||
+                                           (displayed_cadence_clean_sample && render_queue <= 3.0)) &&
                                           visual_freshness_pressure <= 0.03 &&
                                           input_pressure <= 0.35 &&
                                           !no_video_delivery_feedback;
@@ -898,11 +912,27 @@ namespace weak_net {
       (feedback.frames_seen >= 6 &&
        feedback.displayed_frames <= std::max(1U, feedback.frames_seen / 12U) &&
        feedback.visual_stale_frames + feedback.duplicate_frames >= feedback.frames_seen / 2U);
+    const bool clean_client_display_transition =
+      raw_network_clean &&
+      !observed_packet_loss &&
+      has_video_cadence_feedback &&
+      feedback.frames_seen >= 30 &&
+      feedback.complete_frames >= feedback.frames_seen * 9U / 10U &&
+      feedback.displayed_frames == 0 &&
+      feedback.missing_packets == 0 &&
+      feedback.unrecoverable_frames == 0 &&
+      feedback.recovered_frames == 0 &&
+      feedback.rfi_requests <= 2 &&
+      feedback.waiting_for_rfi_frames <= std::max(2U, feedback.frames_seen / 32U) &&
+      feedback.visual_stale_frames <= 2 &&
+      feedback.duplicate_frames <= 2 &&
+      network_rtt_ms <= 20 &&
+      network_jitter_ms <= 5.0;
     const bool sustained_render_fps_pressure =
       visual_refresh_stalled ||
       cadence_deadline_miss ||
-      feedback.render_queue_depth >= 5 ||
-      feedback.decode_queue_depth >= 4 ||
+      (feedback.render_queue_depth >= 5 && displayed_fps_ratio < 0.96) ||
+      (feedback.decode_queue_depth >= 4 && displayed_fps_ratio < 0.96) ||
       late >= 0.18 ||
       (video_deadline_windows_ >= 3 &&
        (hard_video_deadline_miss ||
@@ -1008,6 +1038,11 @@ namespace weak_net {
       !visual_refresh_stalled &&
       !audio_constrained_for_video &&
       feedback.waiting_for_rfi_frames == 0;
+    const bool full_target_cadence_clean =
+      current_target_cadence_clean &&
+      current_fps_ >= config_.baseline_fps - 1 &&
+      displayed_fps_ratio >= 0.99 &&
+      displayed_ratio >= 0.99;
     const bool legacy_complete_cadence_clean =
       raw_network_clean &&
       raw_video_deadline_clean &&
@@ -1109,6 +1144,12 @@ namespace weak_net {
     }
     if (legacy_complete_cadence_clean || high_availability_feedback) {
       media_recovery_cooldown_windows_ = 0;
+    }
+    if (full_target_cadence_clean) {
+      fps_recovery_hold_windows_ = 0;
+      failed_fps_probe_windows_ = 0;
+      fps_probe_interval_windows_ = 1;
+      last_recovery_probe_fps_ = 0;
     }
 
     video_deadline_windows_ = video_deadline_constrained ?
@@ -1325,7 +1366,23 @@ namespace weak_net {
       static_cast<int>(std::lround(static_cast<double>(audio_only_floor_basis) *
                                    (audio_crisis_for_video ? 0.92 : 0.96))));
 
-    if (network_crisis) {
+    if (clean_client_display_transition) {
+      state_ = state_e::recovering;
+      reason = reason_e::render_deadline;
+      stable_windows_ = 0;
+      media_recovery_cooldown_windows_ = std::max(media_recovery_cooldown_windows_, 2);
+      bitrate_probe_hold_windows_ = std::max(bitrate_probe_hold_windows_, 4);
+      last_probe_base_bitrate_kbps_ = 0;
+      last_probe_target_bitrate_kbps_ = 0;
+      if (current_fec_percentage_ > config_.baseline_fec_percentage) {
+        current_fec_percentage_ = approach_int(current_fec_percentage_,
+                                               config_.baseline_fec_percentage,
+                                               0.55,
+                                               1,
+                                               8);
+      }
+    }
+    else if (network_crisis) {
       state_ = state_e::crisis;
       reason = delay_only_congestion ? reason_e::delay_congestion :
                motion_constrained ? reason_e::motion_pressure :
@@ -2006,6 +2063,10 @@ namespace weak_net {
       current_resolution_scale_percent_ < 100 ||
       (config_.chroma_sampling_type >= 0 && current_chroma_sampling_type_ != config_.chroma_sampling_type) ||
       (config_.dynamic_range >= 0 && current_dynamic_range_ != config_.dynamic_range);
+    const bool profile_tier_target_changed =
+      previous_resolution_scale != current_resolution_scale_percent_ ||
+      previous_chroma_sampling_type != current_chroma_sampling_type_ ||
+      previous_dynamic_range != current_dynamic_range_;
     const bool profile_fallback_can_reduce_fps =
       profile_tier_active &&
       !config_.runtime_profile_tier_supported &&
@@ -2160,7 +2221,7 @@ namespace weak_net {
     }
 
     if (previous_fec >= 0) {
-      if (transport_low_overhead &&
+      if ((transport_low_overhead || clean_client_display_transition) &&
           !suppress_empty_feedback_network &&
           !no_video_delivery_feedback) {
         const auto target_fec = clean_route_fec_target();
@@ -2217,19 +2278,21 @@ namespace weak_net {
                                 audio_only_pressure ? 2 :
                                   5;
       const bool fast_fps_ramp_allowed =
-        current_target_cadence_clean &&
+        (current_target_cadence_clean || full_target_cadence_clean) &&
         raw_audio_clean &&
         !audio_only_pressure &&
         !audio_decoupled_pressure &&
         !audio_constrained_for_video &&
         !low_availability_feedback &&
-        !recent_media_recovery &&
+        (!recent_media_recovery || full_target_cadence_clean) &&
         !(config_.user_quality_kbps > 0 &&
           config_.fps_needed_kbps > user_quality_budget_kbps(config_) &&
           current_bitrate_kbps_ <= user_quality_budget_kbps(config_) + 500) &&
         (state_ == state_e::recovering || reason == reason_e::motion_pressure);
       const auto max_fps_up = fast_fps_ramp_allowed ?
-                                std::clamp(config_.baseline_fps / 18, 2, 8) :
+                                (full_target_cadence_clean ?
+                                   std::clamp(config_.baseline_fps / 10, 6, 16) :
+                                   std::clamp(config_.baseline_fps / 18, 2, 8)) :
                                 1;
       current_fps_ = clamp_delta_int(previous_fps,
                                      current_fps_,
@@ -2303,8 +2366,9 @@ namespace weak_net {
       .chroma_sampling_type = current_chroma_sampling_type_,
       .dynamic_range = current_dynamic_range_,
       .quality_tier = current_quality_tier_,
-      .profile_tier_changed = profile_tier_active,
-      .profile_tier_deferred = profile_tier_active && !config_.runtime_profile_tier_supported,
+      .profile_tier_changed = profile_tier_active || profile_tier_target_changed,
+      .profile_tier_deferred = (profile_tier_active || profile_tier_target_changed) &&
+                               !config_.runtime_profile_tier_supported,
       .profile_tier_supported = config_.runtime_profile_tier_supported,
       .rfi_limited = rfi_storm && !request_idr,
       .request_idr = request_idr,

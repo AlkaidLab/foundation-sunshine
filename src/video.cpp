@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cmath>
 #include <functional>
+#include <future>
 #include <list>
 #include <thread>
 
@@ -855,13 +856,17 @@ namespace video {
     config_t config;
   };
 
-  struct capture_thread_async_ctx_t {
+  struct capture_thread_async_state_t {
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue;
-    std::thread capture_thread;
 
     safe::signal_t reinit_event;
     const encoder_t *encoder_p;
     sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
+  };
+
+  struct capture_thread_async_ctx_t {
+    std::shared_ptr<capture_thread_async_state_t> state;
+    std::thread capture_thread;
   };
 
   struct capture_thread_sync_ctx_t {
@@ -3121,7 +3126,7 @@ namespace video {
     int &frame_nr,  // Store progress of the frame number
     safe::mail_t mail,
     img_event_t images,
-    config_t config,
+    config_t &config,
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
@@ -3175,6 +3180,7 @@ namespace video {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
+    auto resolution_change_event = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->queue<dynamic_param_t>(mail::dynamic_param_change));
     auto target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / std::max(1, config.framerate) };
@@ -3245,9 +3251,46 @@ namespace video {
       }
 
       // 处理动态参数调整
+      bool restart_for_runtime_resolution = false;
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
+          if (param->valid && param->type == dynamic_param_type_e::RESOLUTION) {
+            constexpr int min_runtime_dimension = 64;
+            constexpr int max_runtime_dimension = 16384;
+            const int target_width = param->value.int_array_value[0];
+            const int target_height = param->value.int_array_value[1];
+            if (target_width < min_runtime_dimension ||
+                target_height < min_runtime_dimension ||
+                target_width > max_runtime_dimension ||
+                target_height > max_runtime_dimension) {
+              BOOST_LOG(warning) << "Ignoring invalid runtime encoder resolution: "
+                                 << target_width << "x" << target_height;
+              continue;
+            }
+
+            if (target_width != config.width || target_height != config.height) {
+              const int previous_width = config.width;
+              const int previous_height = config.height;
+              config.width = target_width;
+              config.height = target_height;
+              refresh_frame_interest_intent();
+              resolution_change_event->raise(std::make_pair(
+                static_cast<std::uint32_t>(target_width),
+                static_cast<std::uint32_t>(target_height)));
+              idr_events->raise(true);
+              restart_for_runtime_resolution = true;
+              BOOST_LOG(info) << "Runtime encoder output scale change queued: "
+                              << previous_width << "x" << previous_height
+                              << " -> " << target_width << "x" << target_height
+                              << " noDisplayReconfig=1 encoderReinit=1";
+            }
+            else {
+              BOOST_LOG(info) << "Runtime encoder output scale unchanged: "
+                              << target_width << "x" << target_height;
+            }
+            continue;
+          }
           if (param->valid && param->type == dynamic_param_type_e::FPS && param->value.float_value >= 1.0f) {
             target_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / param->value.float_value };
             effective_target_frame_time = target_frame_time;
@@ -3282,6 +3325,9 @@ namespace video {
           }
           session->set_dynamic_param(*param);
         }
+      }
+      if (restart_for_runtime_resolution) {
+        break;
       }
 
       if (requested_idr_frame) {
@@ -3399,6 +3445,19 @@ namespace video {
         }
         else {
           has_keepalive_frame = true;
+        }
+      }
+
+      // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
+      // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
+      // even when no new frame would be encoded.
+      platf::enable_mouse_keys();
+
+      // If variable refresh rate is enabled, skip encoding when no new frame is available.
+      // Keepalive frames still encode to avoid stale static streams.
+      if (config::video.variable_refresh_rate && !has_new_frame && !has_keepalive_frame && !requested_idr_frame) {
+        if (config::video.minimum_fps_target == 0) {
+          continue;
         }
       }
 
@@ -3878,9 +3937,14 @@ namespace video {
       return;
     }
 
-    ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
+    auto state = ref->state;
+    if (!state || !state->capture_ctx_queue || !state->encoder_p) {
+      return;
+    }
 
-    if (!ref->capture_ctx_queue->running()) {
+    state->capture_ctx_queue->raise(capture_ctx_t { images, config });
+
+    if (!state->capture_ctx_queue->running()) {
       return;
     }
 
@@ -3902,6 +3966,7 @@ namespace video {
     int last_display_height = 0;
     auto display_wait_started = std::chrono::steady_clock::now();
     auto last_display_wait_log = display_wait_started;
+    constexpr auto capture_display_startup_timeout = 3500ms;
 
     // Track initial scale ratio (encoding resolution / display resolution)
     // Used to maintain consistent scaling when display resolution changes
@@ -3910,7 +3975,7 @@ namespace video {
 
     while (!shutdown_event->peek() && images->running()) {
       // Wait for the main capture event when the display is being reinitialized
-      if (ref->reinit_event.peek()) {
+      if (state->reinit_event.peek()) {
         BOOST_LOG(debug) << "[Display] Reinit event detected, waiting for display ready...";
         std::this_thread::sleep_for(20ms);
         continue;
@@ -3920,23 +3985,39 @@ namespace video {
       std::shared_ptr<platf::display_t> display;
       bool display_not_ready = false;
       {
-        auto lg = ref->display_wp.lock();
-        if (ref->display_wp->expired()) {
+        auto lg = state->display_wp.lock();
+        if (state->display_wp->expired()) {
           display_not_ready = true;
         }
         else {
-          display = ref->display_wp->lock();
+          display = state->display_wp->lock();
         }
       }
       if (display_not_ready) {
         const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = now - display_wait_started;
         if (now - last_display_wait_log >= 500ms) {
           BOOST_LOG(info) << "[Display] Waiting for capture display before encoder start elapsedMs="
-                          << std::chrono::duration_cast<std::chrono::milliseconds>(now - display_wait_started).count()
-                          << " queueRunning=" << (ref->capture_ctx_queue->running() ? 1 : 0)
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+                          << " queueRunning=" << (state->capture_ctx_queue->running() ? 1 : 0)
                           << " shutdown=" << (shutdown_event->peek() ? 1 : 0);
           last_display_wait_log = now;
         }
+
+        if (elapsed >= capture_display_startup_timeout) {
+          BOOST_LOG(error) << "[Display] Capture display startup timeout before encoder start elapsedMs="
+                           << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+                           << " queueRunning=" << (state->capture_ctx_queue->running() ? 1 : 0)
+                           << " shutdown=" << (shutdown_event->peek() ? 1 : 0)
+                           << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                           << " capture=" << config::video.capture
+                           << " displayName=" << (config.display_name.empty() ? "<default>" : config.display_name);
+          images->stop();
+          shutdown_event->raise(true);
+          state->capture_ctx_queue->stop();
+          return;
+        }
+
         std::this_thread::sleep_for(2ms);
         continue;
       }
@@ -3985,8 +4066,8 @@ namespace video {
         config.height = compute_aligned_resolution(current_height, initial_scale_y);
 
         resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
 
         if (orientation_mismatch) {
           idr_events->raise(true);
@@ -4015,8 +4096,8 @@ namespace video {
                         << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")";
 
         resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
 
         idr_events->raise(true);
         std::this_thread::sleep_for(100ms);
@@ -4049,7 +4130,7 @@ namespace video {
         mail, images,
         config, display,
         std::move(encode_device),
-        ref->reinit_event, *ref->encoder_p,
+        state->reinit_event, *state->encoder_p,
         channel_data, dynamic_param_events, frame_interest_feedback, input_activity, startup_pacing);
     }
   }
@@ -4723,26 +4804,55 @@ namespace video {
 
   int
   start_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
-    capture_thread_ctx.encoder_p = chosen_encoder;
-    capture_thread_ctx.reinit_event.reset();
+    capture_thread_ctx.state = std::make_shared<capture_thread_async_state_t>();
+    auto state = capture_thread_ctx.state;
 
-    capture_thread_ctx.capture_ctx_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
+    state->encoder_p = chosen_encoder;
+    state->reinit_event.reset();
+
+    state->capture_ctx_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
 
     capture_thread_ctx.capture_thread = std::thread {
       captureThread,
-      capture_thread_ctx.capture_ctx_queue,
-      std::ref(capture_thread_ctx.display_wp),
-      std::ref(capture_thread_ctx.reinit_event),
-      std::ref(*capture_thread_ctx.encoder_p)
+      state->capture_ctx_queue,
+      std::ref(state->display_wp),
+      std::ref(state->reinit_event),
+      std::ref(*state->encoder_p)
     };
 
     return 0;
   }
   void
   end_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
-    capture_thread_ctx.capture_ctx_queue->stop();
+    auto state = std::move(capture_thread_ctx.state);
+    if (state && state->capture_ctx_queue) {
+      state->capture_ctx_queue->stop();
+    }
 
-    capture_thread_ctx.capture_thread.join();
+    if (!capture_thread_ctx.capture_thread.joinable()) {
+      return;
+    }
+
+    std::promise<void> joined;
+    auto joined_future = joined.get_future();
+    std::thread joiner {
+      [capture_thread = std::move(capture_thread_ctx.capture_thread),
+       state = std::move(state),
+       joined = std::move(joined)]() mutable {
+        if (capture_thread.joinable()) {
+          capture_thread.join();
+        }
+        joined.set_value();
+      }
+    };
+
+    if (joined_future.wait_for(3s) == std::future_status::ready) {
+      joiner.join();
+    }
+    else {
+      BOOST_LOG(error) << "[Display] Capture thread did not stop within 3000ms; detaching join guard to avoid session teardown hang";
+      joiner.detach();
+    }
   }
 
   int

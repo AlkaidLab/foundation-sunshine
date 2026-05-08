@@ -479,6 +479,7 @@ namespace config {
     APPS_JSON_PATH,
 
     20,  // fecPercentage
+    true,  // adaptive_streaming_optimization
 
     ENCRYPTION_MODE_NEVER,  // lan_encryption_mode
     ENCRYPTION_MODE_OPPORTUNISTIC,  // wan_encryption_mode
@@ -1325,6 +1326,7 @@ namespace config {
 #endif
 
     int_between_f(vars, "fec_percentage", stream.fec_percentage, {1, 255});
+    bool_f(vars, "adaptive_streaming_optimization", stream.adaptive_streaming_optimization);
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 

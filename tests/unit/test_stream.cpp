@@ -12,6 +12,17 @@ namespace stream {
   std::vector<uint8_t>
   concat_and_insert(uint64_t insert_size, uint64_t slice_size, const std::string_view &data1, const std::string_view &data2);
 
+  struct runtime_profile_resolution_t {
+    int width;
+    int height;
+  };
+
+  runtime_profile_resolution_t
+  runtime_profile_resolution_for_scale(int source_width, int source_height, int scale_percent);
+
+  bool
+  runtime_profile_resolution_reconfig_enabled();
+
   bool
   clipboard_transfer_length_valid(uint8_t item_type, std::uint32_t total_length);
 
@@ -94,4 +105,18 @@ TEST(WeakNetRecoveryFeedbackTests, UsesNetworkFeedbackInsteadOfPerFrameFecWhenAv
 
   EXPECT_FALSE(stream::should_apply_frame_fec_weak_net_feedback(networkFeedbackFeatureFlag));
   EXPECT_TRUE(stream::should_apply_frame_fec_weak_net_feedback(0));
+}
+
+TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
+  auto scaled = stream::runtime_profile_resolution_for_scale(3840, 2160, 75);
+  EXPECT_EQ(scaled.width, 2880);
+  EXPECT_EQ(scaled.height, 1620);
+
+  auto full = stream::runtime_profile_resolution_for_scale(3840, 2160, 100);
+  EXPECT_EQ(full.width, 3840);
+  EXPECT_EQ(full.height, 2160);
+}
+
+TEST(RuntimeProfileTierTests, DisablesRuntimeEncoderResolutionReconfigurationByDefault) {
+  EXPECT_FALSE(stream::runtime_profile_resolution_reconfig_enabled());
 }

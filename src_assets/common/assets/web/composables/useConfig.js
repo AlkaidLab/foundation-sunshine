@@ -111,6 +111,7 @@ const DEFAULT_TABS = [
     name: 'Advanced',
     options: {
       fec_percentage: 20,
+      adaptive_streaming_optimization: 'enabled',
       qp: 28,
       min_threads: 2,
       hevc_mode: 0,

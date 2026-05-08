@@ -837,6 +837,7 @@ namespace stream {
     std::chrono::steady_clock::time_point weak_net_startup_settle_until {};
     std::chrono::steady_clock::time_point weak_net_resync_guard_until {};
     std::chrono::steady_clock::time_point video_startup_pacing_until {};
+    std::chrono::steady_clock::time_point last_adaptive_controller_off_log {};
     std::chrono::steady_clock::time_point last_client_idr_request {};
     std::chrono::steady_clock::time_point last_client_rfi_request {};
     std::chrono::steady_clock::time_point last_client_recovery_coalesce_log {};
@@ -844,6 +845,8 @@ namespace stream {
     std::uint32_t coalesced_client_recovery_requests { 0 };
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
+    bool adaptive_controller_enabled { false };
+    const char *adaptive_controller_reason { "not-started" };
     int last_applied_weak_net_bitrate { 0 };
     int last_applied_weak_net_fec { -1 };
     int last_applied_weak_net_fps { 0 };
@@ -1304,6 +1307,25 @@ namespace stream {
     return std::max(16, scaled - (scaled % 2));
   }
 
+  struct runtime_profile_resolution_t {
+    int width;
+    int height;
+  };
+
+  runtime_profile_resolution_t
+  runtime_profile_resolution_for_scale(int source_width, int source_height, int scale_percent) {
+    scale_percent = std::clamp(scale_percent, 1, 100);
+    return {
+      .width = scaled_even_dimension(source_width, scale_percent),
+      .height = scaled_even_dimension(source_height, scale_percent),
+    };
+  }
+
+  bool
+  runtime_profile_resolution_reconfig_enabled() {
+    return false;
+  }
+
   static stream_quality::content_type_e
   stream_quality_content_type_from_monitor(int content_type) {
     switch (content_type) {
@@ -1373,6 +1395,37 @@ namespace stream {
   bool
   should_apply_frame_fec_weak_net_feedback(int ml_feature_flags) {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+  }
+
+  const char *
+  adaptive_controller_state_name(const session_t *session) {
+    return session && session->adaptive_controller_enabled ? "auto" : "off";
+  }
+
+  const char *
+  adaptive_controller_reason(const session_t *session) {
+    return session && session->adaptive_controller_reason ? session->adaptive_controller_reason : "unknown";
+  }
+
+  bool
+  adaptive_controller_active(session_t *session, const char *source) {
+    if (session && session->adaptive_controller_enabled) {
+      return true;
+    }
+
+    if (session) {
+      const auto now = std::chrono::steady_clock::now();
+      if (session->last_adaptive_controller_off_log.time_since_epoch().count() == 0 ||
+          now - session->last_adaptive_controller_off_log >= 3000ms) {
+        session->last_adaptive_controller_off_log = now;
+        BOOST_LOG(info) << "Adaptive streaming controller skipped runtime="
+                        << session->identity.runtime_id
+                        << " adaptiveController=off"
+                        << " reason=" << adaptive_controller_reason(session)
+                        << " source=" << (source ? source : "unknown");
+      }
+    }
+    return false;
   }
 
   template<typename T>
@@ -1552,6 +1605,9 @@ namespace stream {
     if (!session || !action.changed) {
       return;
     }
+    if (!adaptive_controller_active(session, source)) {
+      return;
+    }
 
     const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 100);
     const auto target_encoding_bitrate = action.target_bitrate_kbps;
@@ -1572,10 +1628,25 @@ namespace stream {
     const bool bitrate_probe_up =
       session->last_applied_weak_net_bitrate > 0 &&
       target_encoding_bitrate > session->last_applied_weak_net_bitrate;
+    const bool bitrate_drop =
+      session->last_applied_weak_net_bitrate > 0 &&
+      target_encoding_bitrate < session->last_applied_weak_net_bitrate;
+    const bool continuity_pressure =
+      action.state == weak_net::state_e::constrained ||
+      action.state == weak_net::state_e::crisis ||
+      action.pressures.render >= 0.25 ||
+      action.pressures.delay_congestion >= 0.25 ||
+      action.pressures.burst_loss >= 0.25 ||
+      action.pressures.random_loss >= 0.25;
     const auto bitrate_apply_cooldown = startup_settle ?
-                                          (bitrate_probe_up ? 1800ms : 650ms) :
-                                          (bitrate_probe_up ? 900ms : 450ms);
-    const auto fec_apply_cooldown = startup_settle ? 1800ms : 900ms;
+                                          (bitrate_probe_up ? 1800ms : (bitrate_drop && continuity_pressure ? 180ms : 500ms)) :
+                                          (bitrate_probe_up ? 900ms : (bitrate_drop && continuity_pressure ? 180ms : 350ms));
+    const bool fec_increase =
+      session->last_applied_weak_net_fec >= 0 &&
+      target_fec_percentage > session->last_applied_weak_net_fec;
+    const auto fec_apply_cooldown = fec_increase && continuity_pressure ?
+                                      300ms :
+                                      (startup_settle ? 1800ms : 900ms);
     const bool apply_bitrate = !resync_guard &&
                                target_encoding_bitrate > 0 &&
                                (session->last_applied_weak_net_bitrate <= 0 ||
@@ -1598,8 +1669,17 @@ namespace stream {
                                                                    target_fps,
                                                                    fps_elapsed_ms);
     const bool fps_target_changed = fps_decision.target_changed;
-    const bool apply_fps = !resync_guard && fps_decision.apply;
-    const bool fps_deferred = !resync_guard && fps_decision.deferred;
+    const bool startup_fps_down_allowed =
+      action.pressures.random_loss >= 0.90 ||
+      action.pressures.burst_loss >= 0.90 ||
+      action.pressures.delay_congestion >= 0.90 ||
+      action.pressures.render >= 0.95;
+    const bool startup_fps_down_suppressed =
+      startup_settle &&
+      last_fps > 0 &&
+      target_fps < last_fps &&
+      !startup_fps_down_allowed;
+    const bool apply_fps = !resync_guard && fps_decision.apply && !startup_fps_down_suppressed;
     const auto fps_cooldown_suffix = fps_target_changed ?
                                        std::string {" fpsCooldownMs="} + std::to_string(fps_decision.cooldown_ms) :
                                        std::string {};
@@ -1608,13 +1688,43 @@ namespace stream {
       action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type ||
       action.dynamic_range != session->last_applied_weak_net_dynamic_range;
     const bool profile_deferred = action.profile_tier_deferred && profile_target_changed;
+    const bool profile_quality_down =
+      profile_target_changed &&
+      ((action.resolution_scale_percent > 0 &&
+        session->last_applied_weak_net_resolution_scale > 0 &&
+        action.resolution_scale_percent < session->last_applied_weak_net_resolution_scale) ||
+       (action.chroma_sampling_type >= 0 &&
+        session->last_applied_weak_net_chroma_sampling_type > action.chroma_sampling_type) ||
+       (action.dynamic_range >= 0 &&
+        session->last_applied_weak_net_dynamic_range > action.dynamic_range));
+    const bool profile_quality_up =
+      profile_target_changed &&
+      ((action.resolution_scale_percent > session->last_applied_weak_net_resolution_scale &&
+        session->last_applied_weak_net_resolution_scale > 0) ||
+       (action.chroma_sampling_type >= 0 &&
+        session->last_applied_weak_net_chroma_sampling_type >= 0 &&
+        action.chroma_sampling_type > session->last_applied_weak_net_chroma_sampling_type) ||
+       (action.dynamic_range >= 0 &&
+        action.dynamic_range > session->last_applied_weak_net_dynamic_range));
+    const bool profile_fast_recovery =
+      profile_quality_up &&
+      (action.state == weak_net::state_e::healthy ||
+       action.state == weak_net::state_e::recovering) &&
+      action.pressures.render < 0.20 &&
+      action.pressures.delay_congestion < 0.20 &&
+      action.pressures.burst_loss < 0.18 &&
+      action.pressures.random_loss < 0.18;
+    const auto profile_apply_cooldown = profile_quality_down && continuity_pressure ?
+                                          250ms :
+                                        profile_fast_recovery ?
+                                          700ms :
+                                          1500ms;
     const bool apply_profile = !resync_guard &&
                                action.profile_tier_supported &&
                                action.profile_tier_changed &&
                                profile_target_changed &&
                                (session->last_weak_net_profile_apply.time_since_epoch().count() == 0 ||
-                                now - session->last_weak_net_profile_apply >= 1500ms);
-
+                                now - session->last_weak_net_profile_apply >= profile_apply_cooldown);
     const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
                                                                                 target_fec_percentage);
     const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
@@ -1658,18 +1768,45 @@ namespace stream {
       session->last_weak_net_fps_apply = now;
     }
 
+    std::string profile_runtime_scale_suffix;
     if (apply_profile) {
-      if (action.resolution_scale_percent > 0 &&
-          action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale) {
-        video::dynamic_param_t resolution_param;
-        resolution_param.type = video::dynamic_param_type_e::RESOLUTION;
-        resolution_param.value.int_array_value[0] = scaled_even_dimension(session->config.monitor.width,
-                                                                          action.resolution_scale_percent);
-        resolution_param.value.int_array_value[1] = scaled_even_dimension(session->config.monitor.height,
-                                                                          action.resolution_scale_percent);
-        resolution_param.valid = resolution_param.value.int_array_value[0] > 0 &&
-                                 resolution_param.value.int_array_value[1] > 0;
-        session->video.dynamic_param_change_events->raise(resolution_param);
+      const bool resolution_scale_changed =
+        action.resolution_scale_percent > 0 &&
+        action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale;
+      if (resolution_scale_changed) {
+        const auto runtime_resolution = runtime_profile_resolution_for_scale(session->config.monitor.width,
+                                                                             session->config.monitor.height,
+                                                                             action.resolution_scale_percent);
+        const bool resolution_reconfig_enabled = runtime_profile_resolution_reconfig_enabled();
+        if (resolution_reconfig_enabled) {
+          video::dynamic_param_t resolution_param;
+          resolution_param.type = video::dynamic_param_type_e::RESOLUTION;
+          resolution_param.value.int_array_value[0] = runtime_resolution.width;
+          resolution_param.value.int_array_value[1] = runtime_resolution.height;
+          resolution_param.valid = resolution_param.value.int_array_value[0] > 0 &&
+                                   resolution_param.value.int_array_value[1] > 0;
+          session->video.dynamic_param_change_events->raise(resolution_param);
+
+          BOOST_LOG(info) << "Runtime profile tier encoder scale requested"
+                          << " runtime=" << session->identity.runtime_id
+                          << " source=" << session->config.monitor.width << "x" << session->config.monitor.height
+                          << " target=" << runtime_resolution.width << "x" << runtime_resolution.height
+                          << " scale=" << action.resolution_scale_percent << '%'
+                          << " noDisplayReconfig=1";
+        }
+        else {
+          BOOST_LOG(info) << "Runtime profile tier encoder scale deferred"
+                          << " runtime=" << session->identity.runtime_id
+                          << " source=" << session->config.monitor.width << "x" << session->config.monitor.height
+                          << " target=" << runtime_resolution.width << "x" << runtime_resolution.height
+                          << " scale=" << action.resolution_scale_percent << '%'
+                          << " reason=runtime-resolution-reconfig-disabled"
+                          << " softOnly=1";
+        }
+        profile_runtime_scale_suffix =
+          " profileRuntimeScale=" + std::to_string(runtime_resolution.width) +
+          "x" + std::to_string(runtime_resolution.height) +
+          (resolution_reconfig_enabled ? " noDisplayReconfig=1" : " softOnly=1");
       }
 
       if (action.chroma_sampling_type >= 0 &&
@@ -1702,6 +1839,7 @@ namespace stream {
 
     BOOST_LOG(info) << "Weak-net controller [" << source << "] runtime="
                     << session->identity.runtime_id
+                    << " adaptiveController=auto reason=enabled"
                     << " state=" << weak_net_state_name(action.state)
                     << " reason=" << weak_net::reason_name(action.reason)
                     << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
@@ -1737,9 +1875,13 @@ namespace stream {
                     << (startup_settle ? " startupSettle=1" : "")
                     << (resync_guard ? " resyncGuard=1" : "")
                     << (apply_fps ? " fpsApplied=runtime-pacing" : "")
-                    << (fps_deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
+                    << (startup_fps_down_suppressed ? " fpsDeferred=startup-grace" : "")
+                    << (fps_decision.deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
                     << fps_cooldown_suffix
                     << (profile_deferred ? " profileDeferred=runtime-profile-tier-backend-unavailable" : "")
+                    << profile_runtime_scale_suffix
+                    << (apply_profile && profile_quality_down ? " profileFastDown=1" : "")
+                    << (apply_profile && profile_fast_recovery ? " profileFastRecovery=1" : "")
                     << (action.profile_tier_changed && !profile_deferred && !apply_profile ?
                           " profileStable=runtime-profile-tier-no-change" : "")
                     << (action.request_idr && !resync_guard ? " idr=1" : "")
@@ -1750,6 +1892,9 @@ namespace stream {
   static void
   report_weak_net_recovery_request(session_t *session, const char *source) {
     if (!session) {
+      return;
+    }
+    if (!adaptive_controller_active(session, source)) {
       return;
     }
     const auto now = std::chrono::steady_clock::now();
@@ -1853,9 +1998,18 @@ namespace stream {
 
     const auto total_packets = feedback.total_packets;
     const auto missing_packets = feedback.missing_packets;
-    const bool actual_loss =
-      feedback.unrecoverable_frames > 0 ||
-      (total_packets > 0 && missing_packets * 100U >= std::max(1U, total_packets) * 3U);
+    const auto displayed_ratio =
+      feedback.frames_seen > 0 ?
+        static_cast<double>(feedback.displayed_frames) / static_cast<double>(feedback.frames_seen) :
+        1.0;
+    const bool loss_impairs_delivery =
+      feedback.rfi_requests >= 4 ||
+      feedback.waiting_for_rfi_frames >= std::max(4U, feedback.frames_seen / 8U) ||
+      (feedback.unrecoverable_frames >= std::max(3U, feedback.frames_seen / 16U) &&
+       displayed_ratio < 0.88) ||
+      (total_packets >= 120U &&
+       missing_packets * 100U >= total_packets * 12U &&
+       displayed_ratio < 0.88);
     const bool visual_stale =
       feedback.visual_stale_frames > 0 ||
       feedback.duplicate_frames > 0 ||
@@ -1874,7 +2028,7 @@ namespace stream {
       feedback.render_queue_depth >= 6 ||
       (feedback.frames_seen >= 12 &&
        feedback.late_frames >= std::max(6U, feedback.frames_seen / 4U));
-    if (actual_loss || visual_stale || startup_no_display || severe_client_backpressure) {
+    if (loss_impairs_delivery || visual_stale || startup_no_display || severe_client_backpressure) {
       return false;
     }
 
@@ -4115,6 +4269,9 @@ namespace stream {
       if (!should_apply_frame_fec_weak_net_feedback(session->config.mlFeatureFlags)) {
         return;
       }
+      if (!adaptive_controller_active(session, "fec")) {
+        return;
+      }
       if (payload.size() < sizeof(SS_FRAME_FEC_STATUS)) {
         BOOST_LOG(warning) << "Ignoring truncated frame FEC status payload: " << payload.size();
         return;
@@ -4157,6 +4314,9 @@ namespace stream {
     server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
       if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1)) {
         BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
+        return;
+      }
+      if (!adaptive_controller_active(session, "feedback-v1")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V1)) {
@@ -4215,6 +4375,9 @@ namespace stream {
       if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2)) {
         BOOST_LOG(debug) << "Ignoring v2 network feedback from client without negotiated support";
+        return;
+      }
+      if (!adaptive_controller_active(session, "feedback-v2")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V2)) {
@@ -4283,6 +4446,9 @@ namespace stream {
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY_V1)) {
         BOOST_LOG(debug) << "Ignoring v3 network feedback from client without negotiated support";
+        return;
+      }
+      if (!adaptive_controller_active(session, "feedback-v3")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V3)) {
@@ -4360,6 +4526,9 @@ namespace stream {
           !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY_V1) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS_V1)) {
         BOOST_LOG(debug) << "Ignoring v4 network feedback from client without negotiated support";
+        return;
+      }
+      if (!adaptive_controller_active(session, "feedback-v4")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V4)) {
@@ -6283,6 +6452,98 @@ namespace stream {
       return teardown_sessions.load(std::memory_order_relaxed);
     }
 
+    static std::string
+    session_peer_address(const session_t &session) {
+      if (session.control.peer) {
+        try {
+          return platf::from_sockaddr((sockaddr *) &session.control.peer->address.address);
+        }
+        catch (...) {}
+      }
+      return session.control.expected_peer_address;
+    }
+
+    static bool
+    session_matches_client(const session_t &session,
+                           const std::string &client_cert_uuid,
+                           const std::string &client_address) {
+      if (!client_cert_uuid.empty()) {
+        if (!session.identity.client_cert_uuid.empty() &&
+            session.identity.client_cert_uuid == client_cert_uuid) {
+          return true;
+        }
+
+        // Fallback to address matching for older runtimes that have not yet
+        // populated a cert UUID, but are still clearly the same client.
+        return !client_address.empty() &&
+               session_peer_address(session) == client_address;
+      }
+
+      return !client_address.empty() &&
+             session_peer_address(session) == client_address;
+    }
+
+    stop_sessions_result_t
+    stop_sessions_for_client(const std::string &client_cert_uuid,
+                             const std::string &client_address,
+                             std::string_view reason) {
+      stop_sessions_result_t result {};
+
+      if (!broadcast_shared.has_ref()) {
+        return result;
+      }
+
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) {
+        return result;
+      }
+
+      auto sessions_lock = broadcast_ref->control_server._sessions.lock();
+      for (auto *session_p : *broadcast_ref->control_server._sessions) {
+        if (!session_p || !session_matches_client(*session_p, client_cert_uuid, client_address)) {
+          continue;
+        }
+
+        ++result.matched;
+        const auto state = session::state(*session_p);
+        if (state == state_e::RUNNING) {
+          BOOST_LOG(info) << "Stopping same-client active session before new launch"
+                          << " reason=" << reason
+                          << " runtime=" << session_p->identity.runtime_id
+                          << " client=" << session_p->client_name
+                          << " certUuid=" << session_p->identity.client_cert_uuid
+                          << " peer=" << session_peer_address(*session_p);
+          session::stop(*session_p);
+          ++result.stopped;
+        }
+        else if (state == state_e::STARTING) {
+          ++result.starting;
+          BOOST_LOG(warning) << "Same-client session still starting"
+                             << " reason=" << reason
+                             << " runtime=" << session_p->identity.runtime_id
+                             << " client=" << session_p->client_name
+                             << " certUuid=" << session_p->identity.client_cert_uuid
+                             << " peer=" << session_peer_address(*session_p);
+        }
+        else if (state == state_e::STOPPING) {
+          ++result.already_stopping;
+        }
+      }
+
+      if (result.matched > 0) {
+        BOOST_LOG(info) << "Same-client session replacement requested"
+                        << " reason=" << reason
+                        << " clientCertUuid=" << client_cert_uuid
+                        << " clientAddress=" << client_address
+                        << " matched=" << result.matched
+                        << " stopped=" << result.stopped
+                        << " starting=" << result.starting
+                        << " stopping=" << result.already_stopping;
+      }
+
+      return result;
+    }
+
     void
     stop(session_t &session) {
       while_starting_do_nothing(session.state);
@@ -6465,9 +6726,23 @@ namespace stream {
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
       const auto weak_net_started_at = std::chrono::steady_clock::now();
-      session.weak_net_startup_guard_until = weak_net_started_at + 6500ms;
-      session.weak_net_startup_settle_until = weak_net_started_at + 10000ms;
-      session.video_startup_pacing_until = weak_net_started_at + 2500ms;
+      const bool adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
+                                               (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+      session.adaptive_controller_enabled = adaptive_controller_enabled;
+      session.adaptive_controller_reason = adaptive_controller_enabled ?
+                                           "enabled" :
+                                           (config::stream.adaptive_streaming_optimization ?
+                                              "client-feedback-unsupported" :
+                                              "config-disabled");
+      session.weak_net_startup_guard_until = adaptive_controller_enabled ?
+                                               weak_net_started_at + 6500ms :
+                                               std::chrono::steady_clock::time_point {};
+      session.weak_net_startup_settle_until = adaptive_controller_enabled ?
+                                                weak_net_started_at + 10000ms :
+                                                std::chrono::steady_clock::time_point {};
+      session.video_startup_pacing_until = adaptive_controller_enabled ?
+                                             weak_net_started_at + 2500ms :
+                                             std::chrono::steady_clock::time_point {};
       session.last_weak_net_startup_guard_log = {};
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
@@ -6554,6 +6829,13 @@ namespace stream {
 
       session->config = config;
       session->config.monitor.cursorProbeRuntimeId = session->identity.runtime_id;
+      session->adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
+                                             (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+      session->adaptive_controller_reason = session->adaptive_controller_enabled ?
+                                            "enabled" :
+                                            (config::stream.adaptive_streaming_optimization ?
+                                               "client-feedback-unsupported" :
+                                               "config-disabled");
 
       // Initialize encoding and pacing budgets separately. The weak-net
       // controller adjusts encoder bitrate, while pacing reserves one FEC
@@ -6578,11 +6860,17 @@ namespace stream {
         static_cast<int>(std::lround(pixels_per_second * ideal_bpp / 1000.0)));
       int ceiling_encoding_bitrate = std::max(user_quality_bitrate, ideal_demand_bitrate);
       int max_fec_percentage = rtsp_stream::adaptive_stream_max_fec_percentage_for_client(config::stream.fec_percentage,
-                                                                                          config.mlFeatureFlags);
+                                                                                          config.mlFeatureFlags,
+                                                                                          session->adaptive_controller_enabled);
       int fec_percentage = rtsp_stream::effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
-                                                                                   config.mlFeatureFlags);
+                                                                                   config.mlFeatureFlags,
+                                                                                   session->adaptive_controller_enabled);
       fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
-      const bool enhanced_feedback_client = (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+      const bool enhanced_feedback_client = session->adaptive_controller_enabled;
+      if (!enhanced_feedback_client) {
+        ceiling_fps = config.monitor.framerate;
+        ceiling_encoding_bitrate = std::max(encoding_bitrate, 1);
+      }
       const int requested_total_ceiling = total_video_bitrate_from_encoding_bitrate(ceiling_encoding_bitrate,
                                                                                     fec_percentage);
       int ceiling_total_bitrate = std::max(requested_total_ceiling, 1);
@@ -6596,23 +6884,25 @@ namespace stream {
       session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate, fec_percentage);
       session->current_fec_percentage = fec_percentage;
       session->pacing_total_bitrate = session->current_total_bitrate.load(std::memory_order_relaxed);
-      session->weak_net_controller.configure({
-        .baseline_bitrate_kbps = ceiling_encoding_bitrate,
-        .baseline_fec_percentage = fec_percentage,
-        .max_fec_percentage = max_fec_percentage,
-        .startup_bitrate_kbps = encoding_bitrate,
-        .ceiling_total_bitrate_kbps = ceiling_total_bitrate,
-        .baseline_fps = ceiling_fps,
-        .startup_fps = config.monitor.framerate,
-        .frame_width = config.monitor.width,
-        .frame_height = config.monitor.height,
-        .chroma_sampling_type = config.monitor.chromaSamplingType,
-        .dynamic_range = config.monitor.dynamicRange,
-        .runtime_profile_tier_supported = false,
-        .user_quality_kbps = user_quality_bitrate,
-        .ideal_demand_kbps = ideal_demand_bitrate,
-        .fps_needed_kbps = fps_needed_bitrate,
-      });
+      if (enhanced_feedback_client) {
+        session->weak_net_controller.configure({
+          .baseline_bitrate_kbps = ceiling_encoding_bitrate,
+          .baseline_fec_percentage = fec_percentage,
+          .max_fec_percentage = max_fec_percentage,
+          .startup_bitrate_kbps = encoding_bitrate,
+          .ceiling_total_bitrate_kbps = ceiling_total_bitrate,
+          .baseline_fps = ceiling_fps,
+          .startup_fps = config.monitor.framerate,
+          .frame_width = config.monitor.width,
+          .frame_height = config.monitor.height,
+          .chroma_sampling_type = config.monitor.chromaSamplingType,
+          .dynamic_range = config.monitor.dynamicRange,
+          .runtime_profile_tier_supported = runtime_profile_resolution_reconfig_enabled(),
+          .user_quality_kbps = user_quality_bitrate,
+          .ideal_demand_kbps = ideal_demand_bitrate,
+          .fps_needed_kbps = fps_needed_bitrate,
+        });
+      }
       session->last_applied_weak_net_bitrate = encoding_bitrate;
       session->last_applied_weak_net_fec = fec_percentage;
       session->last_applied_weak_net_fps = config.monitor.framerate;
@@ -6622,8 +6912,12 @@ namespace stream {
       session->last_dynamic_clarity_flags = config.monitor.lowBitrateClarityIntentFlags;
       session->last_dynamic_clarity_qp = config.monitor.lowBitrateTargetQp;
       session->last_dynamic_clarity_bitrate = encoding_bitrate;
-      session->weak_net_recovery_ready_after = std::chrono::steady_clock::now() + 1500ms;
+      session->weak_net_recovery_ready_after = enhanced_feedback_client ?
+                                                std::chrono::steady_clock::now() + 1500ms :
+                                                std::chrono::steady_clock::time_point {};
       BOOST_LOG(info) << "Weak-net startup baseline runtime=" << session->identity.runtime_id
+                      << " adaptiveController=" << adaptive_controller_state_name(session.get())
+                      << " reason=" << adaptive_controller_reason(session.get())
                       << " encoding=" << encoding_bitrate << " Kbps"
                       << " total=" << session->current_total_bitrate.load(std::memory_order_relaxed) << " Kbps"
                       << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps"

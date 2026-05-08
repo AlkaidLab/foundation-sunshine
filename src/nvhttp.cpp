@@ -109,6 +109,7 @@ namespace nvhttp {
 
   bool
   wait_for_runtime_teardown_to_drain(std::string_view reason, std::chrono::milliseconds timeout = 2500ms) {
+    (void) rtsp_stream::session_count();
     auto summary = runtime_session_summary();
     if (summary.stopping == 0) {
       return true;
@@ -122,6 +123,7 @@ namespace nvhttp {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
       std::this_thread::sleep_for(50ms);
+      (void) rtsp_stream::session_count();
       summary = runtime_session_summary();
       if (summary.stopping == 0) {
         BOOST_LOG(info) << "NVHTTP previous runtime teardown drained"
@@ -130,6 +132,7 @@ namespace nvhttp {
       }
     }
 
+    (void) rtsp_stream::session_count();
     summary = runtime_session_summary();
     BOOST_LOG(warning) << "NVHTTP previous runtime teardown still active"
                        << " reason=" << reason
@@ -650,6 +653,7 @@ namespace nvhttp {
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
+    launch_session->continuous_audio = util::from_view(get_arg(args, "continuousAudio", "0"));
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
@@ -2202,6 +2206,7 @@ namespace nvhttp {
 
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
+    const auto launch_started = std::chrono::steady_clock::now();
     print_req<SunshineHTTPS>(request);
 
     print_request_ip<SunshineHTTPS>(request, "Launch request");
@@ -2313,10 +2318,16 @@ namespace nvhttp {
                         << " client=" << launch_session->client_name;
       }
       else {
+        const auto display_started = std::chrono::steady_clock::now();
         // We want to prepare display only if there are no active sessions at
         // the moment. This should to be done before probing encoders as it could
         // change display device's state.
         display_session.configure_display(config::video, *launch_session, true);
+        BOOST_LOG(info) << "NVHTTP launch display prepare finished"
+                        << " launchSession=" << launch_session->id
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - display_started)
+                             .count();
 
         // The display should be restored by the fail guard in case something happens.
         need_to_restore_display_state = true;
@@ -2325,13 +2336,24 @@ namespace nvhttp {
         // encoder matches the active GPU (which could have changed
         // due to hotplugging, driver crash, primary monitor change,
         // or any number of other factors).
+        const auto probe_started = std::chrono::steady_clock::now();
         if (video::probe_encoders()) {
+          BOOST_LOG(warning) << "NVHTTP launch encoder probe failed"
+                             << " launchSession=" << launch_session->id
+                             << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - probe_started)
+                                  .count();
           tree.put("root.<xmlattr>.status_code", 503);
           tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
           tree.put("root.gamesession", 0);
 
           return;
         }
+        BOOST_LOG(info) << "NVHTTP launch encoder probe finished"
+                        << " launchSession=" << launch_session->id
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - probe_started)
+                             .count();
       }
     }
 
@@ -2365,7 +2387,10 @@ namespace nvhttp {
     BOOST_LOG(info) << "NVHTTP launch session raised"
                     << " launchSession=" << launch_session->id
                     << " rtspPending=" << rtsp_stream::pending_launch_session_count()
-                    << " rtspActive=" << rtsp_stream::session_count();
+                    << " rtspActive=" << rtsp_stream::session_count()
+                    << " totalElapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - launch_started)
+                         .count();
 
     // Send webhook notification for successful launch
     webhook::send_event_async(webhook::event_t {
@@ -2389,6 +2414,7 @@ namespace nvhttp {
 
   void
   resume(bool &host_audio, resp_https_t response, req_https_t request) {
+    const auto resume_started = std::chrono::steady_clock::now();
     print_req<SunshineHTTPS>(request);
 
     print_request_ip<SunshineHTTPS>(request, "Resume request");
@@ -2432,10 +2458,35 @@ namespace nvhttp {
       return;
     }
 
-    if (!wait_for_runtime_teardown_to_drain("resume")) {
+    const auto resume_rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    const std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
+    const auto same_client_replacement = stream::session::stop_sessions_for_client(
+      client_cert_uuid,
+      resume_rtsp_peer_address,
+      "resume");
+    if (same_client_replacement.matched > 0) {
+      BOOST_LOG(info) << "NVHTTP resume replacing same-client runtime before raising new RTSP launch session"
+                      << " clientCertUuid=" << client_cert_uuid
+                      << " peer=" << resume_rtsp_peer_address
+                      << " matched=" << same_client_replacement.matched
+                      << " stopped=" << same_client_replacement.stopped
+                      << " starting=" << same_client_replacement.starting
+                      << " stopping=" << same_client_replacement.already_stopping;
+    }
+    if (same_client_replacement.starting > 0) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 503);
-      tree.put("root.<xmlattr>.status_message", "Previous streaming session is still stopping");
+      tree.put("root.<xmlattr>.status_message", "Previous same-client streaming session is still starting");
+      return;
+    }
+
+    if (!wait_for_runtime_teardown_to_drain(same_client_replacement.matched > 0 ? "resume-same-client" : "resume")) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message",
+               same_client_replacement.matched > 0 ?
+                 "Previous same-client streaming session is still stopping" :
+                 "Previous streaming session is still stopping");
       return;
     }
 
@@ -2451,7 +2502,7 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
-    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    launch_session->rtsp_peer_address = resume_rtsp_peer_address;
     BOOST_LOG(info) << "NVHTTP resume session prepared"
                     << " launchSession=" << launch_session->id
                     << " client=" << launch_session->client_name
@@ -2464,7 +2515,6 @@ namespace nvhttp {
                     << " noActiveSessions=" << no_active_sessions;
 
     // Get client certificate UUID (stable client identifier) and store it in env
-    std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
       launch_session->identity.set_client_cert_uuid(client_cert_uuid);
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
@@ -2482,22 +2532,39 @@ namespace nvhttp {
                         << " client=" << launch_session->client_name;
       }
       else {
+        const auto display_started = std::chrono::steady_clock::now();
         // We want to prepare display only if there are no active sessions at
         // the moment. This should be done before probing encoders as it could
         // change the active displays.
         display_session.configure_display(config::video, *launch_session, false);
+        BOOST_LOG(info) << "NVHTTP resume display prepare finished"
+                        << " launchSession=" << launch_session->id
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - display_started)
+                             .count();
 
         // Probe encoders again before streaming to ensure our chosen
         // encoder matches the active GPU (which could have changed
         // due to hotplugging, driver crash, primary monitor change,
         // or any number of other factors).
+        const auto probe_started = std::chrono::steady_clock::now();
         if (video::probe_encoders()) {
+          BOOST_LOG(warning) << "NVHTTP resume encoder probe failed"
+                             << " launchSession=" << launch_session->id
+                             << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - probe_started)
+                                  .count();
           tree.put("root.resume", 0);
           tree.put("root.<xmlattr>.status_code", 503);
           tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
 
           return;
         }
+        BOOST_LOG(info) << "NVHTTP resume encoder probe finished"
+                        << " launchSession=" << launch_session->id
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - probe_started)
+                             .count();
       }
     }
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -2514,6 +2581,11 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
     tree.put("root.sessionUrl0", rtsp_session_url_for_request<SunshineHTTPS>(launch_session, request));
     tree.put("root.resume", 1);
+    BOOST_LOG(info) << "NVHTTP resume ready to raise RTSP"
+                    << " launchSession=" << launch_session->id
+                    << " totalElapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - resume_started)
+                         .count();
 
     rtsp_stream::launch_session_raise(launch_session);
     BOOST_LOG(info) << "NVHTTP resume session raised"

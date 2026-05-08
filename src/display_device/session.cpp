@@ -1,4 +1,5 @@
 // standard includes
+#include <cmath>
 #include <boost/optional/optional_io.hpp>
 #include <boost/process/v1.hpp>
 #include <future>
@@ -16,6 +17,43 @@
 #include "vdd_utils.h"
 
 namespace display_device {
+
+  namespace {
+
+    bool
+    refresh_rate_almost_equal(const refresh_rate_t &lhs, const refresh_rate_t &rhs) {
+      if (lhs.denominator == 0 || rhs.denominator == 0) {
+        return false;
+      }
+
+      const auto lhs_value = static_cast<float>(lhs.numerator) / static_cast<float>(lhs.denominator);
+      const auto rhs_value = static_cast<float>(rhs.numerator) / static_cast<float>(rhs.denominator);
+      return std::abs(lhs_value - rhs_value) <= 1.f;
+    }
+
+    bool
+    display_mode_almost_equal(const display_mode_t &lhs, const display_mode_t &rhs) {
+      return lhs.resolution.width == rhs.resolution.width &&
+             lhs.resolution.height == rhs.resolution.height &&
+             refresh_rate_almost_equal(lhs.refresh_rate, rhs.refresh_rate);
+    }
+
+    boost::optional<display_mode_t>
+    get_current_display_mode_for_device(const std::string &device_id) {
+      if (device_id.empty()) {
+        return boost::none;
+      }
+
+      const auto current_modes = display_device::get_current_display_modes({device_id});
+      const auto it = current_modes.find(device_id);
+      if (it == current_modes.end()) {
+        return boost::none;
+      }
+
+      return it->second;
+    }
+
+  }  // namespace
 
   class session_t::StateRetryTimer {
   public:
@@ -290,6 +328,18 @@ namespace display_device {
     const rtsp_stream::launch_session_t &session,
     bool is_reconfigure) {
     std::lock_guard lock { mutex };
+    const auto configure_started = std::chrono::steady_clock::now();
+    const auto log_configure_finished = [&](const char *outcome) {
+      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - configure_started);
+      BOOST_LOG(info) << "Display configure session finished"
+                      << " outcome=" << (outcome ? outcome : "unknown")
+                      << " reconfigure=" << is_reconfigure
+                      << " client=" << session.client_name
+                      << " mode=" << session.width << "x" << session.height << "@"
+                      << session.fps
+                      << " elapsedMs=" << elapsed_ms.count();
+    };
 
     // Clean up VDD state if this is a new session with a different client
     if (!is_reconfigure) {
@@ -366,6 +416,7 @@ namespace display_device {
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
+      log_configure_finished("parse-failed");
       return;
     }
 
@@ -391,14 +442,17 @@ namespace display_device {
       });
 
       BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
+      log_configure_finished("deferred");
       return;
     }
 
     if (settings.apply_config(*parsed_config, session, pre_saved_initial_topology)) {
       timer->setup_timer(nullptr);
+      log_configure_finished("applied");
     }
     else {
       restore_state_impl(revert_reason_e::config_cleanup);
+      log_configure_finished("apply-failed");
     }
   }
 
@@ -518,6 +572,11 @@ namespace display_device {
     last_vdd_setting = new_setting;
     BOOST_LOG(info) << "VDD配置更新完成: " << new_setting;
 
+    const display_mode_t requested_mode {
+      *config.resolution,
+      *config.refresh_rate
+    };
+
     // If no Zako VDD device is present yet, reloading the driver only adds a
     // slow disable/enable cycle before create_vdd_monitor() below.  Do not use
     // is_display_on() here: it can be true because a physical monitor is on,
@@ -534,8 +593,22 @@ namespace display_device {
     // logs.  Adopt the requested setting and let the normal display-mode apply
     // path validate it instead of forcing disable/enable before RTSP exists.
     if (!had_known_vdd_setting) {
-      BOOST_LOG(info) << "VDD已有设备但本进程无历史配置，采用当前请求配置并跳过驱动重载: "
-                      << new_setting << " device=" << existing_vdd_device;
+      const auto current_mode = get_current_display_mode_for_device(existing_vdd_device);
+      if (current_mode && display_mode_almost_equal(*current_mode, requested_mode)) {
+        BOOST_LOG(info) << "VDD已有设备但本进程无历史配置，当前模式已匹配请求，跳过驱动重载: "
+                        << " requested=" << new_setting
+                        << " current=" << to_string(*current_mode)
+                        << " device=" << existing_vdd_device;
+        return;
+      }
+
+      BOOST_LOG(info) << "VDD已有设备但本进程无历史配置，当前模式与请求不匹配，执行驱动重载"
+                      << " requested=" << new_setting
+                      << " current=" << (current_mode ? to_string(*current_mode) : "unknown")
+                      << " device=" << existing_vdd_device;
+      BOOST_LOG(info) << "重新加载VDD驱动...";
+      vdd_utils::reload_driver();
+      std::this_thread::sleep_for(1200ms);
       return;
     }
 

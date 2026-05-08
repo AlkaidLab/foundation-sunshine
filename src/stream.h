@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include <string>
+#include <string_view>
 
 #include <boost/asio.hpp>
 
@@ -95,6 +96,18 @@ namespace stream {
     state(session_t &session);
     std::uint32_t
     teardown_count();
+
+    struct stop_sessions_result_t {
+      std::size_t matched {};
+      std::size_t stopped {};
+      std::size_t starting {};
+      std::size_t already_stopping {};
+    };
+
+    stop_sessions_result_t
+    stop_sessions_for_client(const std::string &client_cert_uuid,
+                             const std::string &client_address,
+                             std::string_view reason);
     
 
 

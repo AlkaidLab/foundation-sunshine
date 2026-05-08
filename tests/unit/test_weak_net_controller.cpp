@@ -4003,3 +4003,89 @@ TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDo
   EXPECT_LE(action.target_fps, 72)
     << "The cadence cap should hold instead of immediately probing back upward";
 }
+
+TEST(WeakNetControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 120000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  auto clean_full_rate = []() {
+    return weak_net::feedback_t {
+      .duration_ms = 1000,
+      .frames_seen = 150,
+      .complete_frames = 150,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 4500,
+      .received_packets = 4500,
+      .video_bytes = 18 * 1024 * 1024,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .displayed_frames = 150,
+      .decode_queue_depth = 0,
+      .render_queue_depth = 1,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+    };
+  };
+
+  auto action = controller.on_feedback(clean_full_rate());
+  ASSERT_EQ(action.target_fps, 150);
+  const auto fec_before_focus_transition = action.fec_percentage;
+
+  for (int i = 0; i < 2; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 150,
+      .complete_frames = 150,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 4500,
+      .received_packets = 4500,
+      .video_bytes = 18 * 1024 * 1024,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 8,
+      .render_queue_depth = 2,
+      .late_frames = 2,
+      .displayed_frames = 0,
+      .visual_stale_frames = 1,
+      .duplicate_frames = 1,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .rfi_requests = 1,
+      .waiting_for_rfi_frames = 2,
+    });
+  }
+
+  EXPECT_GE(action.target_fps, 145)
+    << "A clean focus/display-layer transition should not permanently push LAN cadence down";
+  EXPECT_LE(action.fec_percentage, fec_before_focus_transition)
+    << "Display-layer stalls on a clean route must not open FEC";
+
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback(clean_full_rate());
+  }
+
+  EXPECT_EQ(action.target_fps, 150)
+    << "Once displayed cadence returns on a clean route, FPS hold should clear quickly";
+  EXPECT_NE(action.state, weak_net::state_e::constrained);
+  EXPECT_NE(action.state, weak_net::state_e::crisis);
+}
