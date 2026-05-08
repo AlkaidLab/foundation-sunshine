@@ -55,8 +55,11 @@ namespace amf {
     // Enforce HRD
     std::optional<int> enforce_hrd;
 
-    // Number of LTR frames for RFI
-    int max_ltr_frames = 4;
+    // Number of LTR frames for RFI (0 = disabled, matches FFmpeg amfenc behavior).
+    // When enabled, static screen regions may retain encoder artifacts from the
+    // baseline LTR frame until motion forces a refresh; only opt in when the
+    // network actually needs reference-frame invalidation recovery.
+    int max_ltr_frames = 0;
 
     // --- Pre-Analysis sub-system ---
     // PAQ mode (AMF_PA_PAQ_MODE_ENUM): 0=none, 1=CAQ
