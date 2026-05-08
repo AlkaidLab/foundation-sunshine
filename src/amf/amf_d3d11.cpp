@@ -700,7 +700,10 @@ namespace amf {
         }
         ltr_slots_valid[0] = true;
         ltr_slot_frame_index[0] = frame_index;
-        current_ltr_slot = 1 % effective_ltr_slots;
+        // Slot 0 is reserved as the permanent IDR baseline. Periodic rotation
+        // begins at slot 1 (or stays at 0 when only a single slot exists, in
+        // which case the baseline must be sacrificed for fresher anchors).
+        current_ltr_slot = (effective_ltr_slots > 1) ? 1 : 0;
       }
     }
     else if (rfi_pending && effective_ltr_slots > 0) {
@@ -721,9 +724,10 @@ namespace amf {
       frame_after_ref_frame_invalidation = true;
     }
     else if (effective_ltr_slots > 0 && (frame_index % LTR_MARK_INTERVAL) == 0) {
-      // Periodically mark current frame as LTR for future RFI use
-      // Only mark every LTR_MARK_INTERVAL frames to avoid limiting encoder reference freedom
-      // Only use slots < effective_ltr_slots (clamped to max_ltr_frames)
+      // Periodically mark current frame as LTR for future RFI use.
+      // Rotate through slots 1..N-1 so the IDR baseline in slot 0 stays valid
+      // even if every recent periodic anchor lands inside a loss burst. With a
+      // single slot configured, fall back to overwriting slot 0.
       if (video_format == 0) {
         surface->SetProperty(AMF_VIDEO_ENCODER_MARK_CURRENT_WITH_LTR_INDEX, (amf_int64) current_ltr_slot);
       }
@@ -735,7 +739,13 @@ namespace amf {
       }
       ltr_slots_valid[current_ltr_slot] = true;
       ltr_slot_frame_index[current_ltr_slot] = frame_index;
-      current_ltr_slot = (current_ltr_slot + 1) % effective_ltr_slots;
+      if (effective_ltr_slots > 1) {
+        current_ltr_slot++;
+        if (current_ltr_slot >= effective_ltr_slots) {
+          current_ltr_slot = 1;  // wrap, skipping the reserved slot 0
+        }
+      }
+      // else: stays at 0 (single-slot fallback)
     }
 
     frame_rfi_flags[frame_index] = frame_after_ref_frame_invalidation;

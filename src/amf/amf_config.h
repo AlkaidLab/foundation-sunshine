@@ -56,7 +56,7 @@ namespace amf {
     std::optional<int> enforce_hrd;
 
     // Number of LTR frames for RFI
-    int max_ltr_frames = 1;
+    int max_ltr_frames = 4;
 
     // --- Pre-Analysis sub-system ---
     // PAQ mode (AMF_PA_PAQ_MODE_ENUM): 0=none, 1=CAQ

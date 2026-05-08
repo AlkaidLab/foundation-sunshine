@@ -95,9 +95,13 @@ namespace amf {
     // Whether the driver supports QUERY_TIMEOUT (FFmpeg-style safety check)
     bool query_timeout_supported = false;
 
-    // Current LTR state for RFI
-    static constexpr int MAX_LTR_SLOTS = 2;
-    static constexpr uint64_t LTR_MARK_INTERVAL = 30;  // Mark LTR every N frames
+    // Current LTR state for RFI.
+    // Slot 0 is reserved as the IDR baseline (set on every IDR, never overwritten by
+    // periodic marks) so RFI always has a known-good fallback even when every recent
+    // periodic-marked frame was inside a packet-loss window. Slots 1..N-1 form a
+    // sliding window of more recent anchors.
+    static constexpr int MAX_LTR_SLOTS = 4;
+    static constexpr uint64_t LTR_MARK_INTERVAL = 4;  // Mark LTR every N frames
     int effective_ltr_slots = 0;    // Clamped to min(max_ltr_frames, MAX_LTR_SLOTS)
     int current_ltr_slot = 0;      // Which LTR slot to mark next
     bool ltr_slots_valid[MAX_LTR_SLOTS] = {};
