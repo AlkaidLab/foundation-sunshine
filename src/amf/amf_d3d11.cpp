@@ -152,7 +152,23 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_INPUT_QUEUE_SIZE, (amf_int64) 1);
       encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1);
 
-      // LTR for RFI
+      // LTR for RFI (Reference Frame Invalidation, weak-network recovery).
+      //
+      // Disabled by default (max_ltr_frames == 0) to match FFmpeg amfenc behavior:
+      // FFmpeg's libavcodec/amfenc.c never sets MAX_LTR_FRAMES / LTR_MODE, so static
+      // screen regions are not pinned to a baseline LTR frame and never accumulate
+      // color-block artifacts.
+      //
+      // Trade-off when the user opts in (amd_ltr_frames >= 1):
+      //   + On lossy links, client-side reference invalidation can recover by
+      //     sending a P-frame referencing a known-good LTR slot instead of a full
+      //     IDR. IDRs are 10-20x larger than P-frames and themselves more likely
+      //     to be lost on weak networks, which can cascade into an "IDR storm".
+      //   - Static regions may inherit the IDR-time quantization noise of the
+      //     baseline LTR slot until motion forces a fresh intra block.
+      //
+      // The slot rotation / IDR-baseline preservation logic below (PR #630) only
+      // takes effect when LTR is opted in.
       max_ltr_frames = config.max_ltr_frames;
       if (max_ltr_frames > 0) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
@@ -217,6 +233,8 @@ namespace amf {
         encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PROFILE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN);
       }
 
+      // LTR for RFI - see H.264 block above for detailed trade-off rationale.
+      // Disabled by default; opt-in via amd_ltr_frames config.
       max_ltr_frames = config.max_ltr_frames;
       if (max_ltr_frames > 0) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
@@ -298,6 +316,8 @@ namespace amf {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_AQ_MODE, (amf_int64) *config.pa_paq_mode);
       }
 
+      // LTR for RFI - see H.264 block above for detailed trade-off rationale.
+      // Disabled by default; opt-in via amd_ltr_frames config.
       max_ltr_frames = config.max_ltr_frames;
       if (max_ltr_frames > 0) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
@@ -595,7 +615,11 @@ namespace amf {
 
 
 
-    // Clamp effective LTR slots to what the encoder actually reserves
+    // Clamp effective LTR slots to what the encoder actually reserves.
+    // When max_ltr_frames == 0 (default), the entire LTR/RFI subsystem becomes
+    // a no-op: the IDR baseline marking, slot rotation, and invalidate handling
+    // below all gate on `effective_ltr_slots > 0`. The fallback for client-side
+    // invalidate_ref_frames in this case is force_idr=true (see video.cpp).
     effective_ltr_slots = (max_ltr_frames > 0) ? std::min(max_ltr_frames, MAX_LTR_SLOTS) : 0;
 
     // Reset LTR state
