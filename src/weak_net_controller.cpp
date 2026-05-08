@@ -430,7 +430,7 @@ namespace weak_net {
 
     int
     scale_target_for_pressure(double motion_pressure, double burst_pressure, double bpp_pressure, bool input_active) {
-      const auto combined = std::max({ motion_pressure, burst_pressure, bpp_pressure });
+      const auto combined = std::max(burst_pressure, bpp_pressure);
       if (burst_pressure >= 0.95 || (motion_pressure >= 0.95 && bpp_pressure >= 0.70)) {
         return input_active ? 67 : 60;
       }
@@ -458,6 +458,79 @@ namespace weak_net {
         return 1;
       }
       return 0;
+    }
+
+    weak_net::tier_e
+    tier_from_quality_tier(int quality_tier) {
+      if (quality_tier >= 4) {
+        return weak_net::tier_e::fast;
+      }
+      if (quality_tier >= 2) {
+        return weak_net::tier_e::general;
+      }
+      if (quality_tier >= 1) {
+        return weak_net::tier_e::hd;
+      }
+      return weak_net::tier_e::bluray;
+    }
+
+    weak_net::availability_e
+    availability_from_state(weak_net::state_e state,
+                            bool high_availability_feedback,
+                            bool low_availability_feedback,
+                            bool motion_crisis_guard_active,
+                            bool startup_guard_active,
+                            bool clean_route_low_overhead,
+                            bool stable_windows_ready) {
+      if (state == weak_net::state_e::crisis ||
+          low_availability_feedback ||
+          motion_crisis_guard_active) {
+        return weak_net::availability_e::low;
+      }
+      if (high_availability_feedback || clean_route_low_overhead) {
+        return weak_net::availability_e::high;
+      }
+      if (state == weak_net::state_e::recovering) {
+        return weak_net::availability_e::recovering;
+      }
+      if (startup_guard_active || !stable_windows_ready) {
+        return weak_net::availability_e::probing;
+      }
+      return weak_net::availability_e::probing;
+    }
+
+    weak_net::tier_e
+    tier_from_scale_and_availability(int scale_percent,
+                                     weak_net::availability_e availability,
+                                     bool motion_crisis_guard_active,
+                                     bool video_delivery_unusable,
+                                     bool high_availability_feedback,
+                                     bool full_target_cadence_clean,
+                                     int baseline_fps) {
+      if (availability == weak_net::availability_e::low ||
+          motion_crisis_guard_active ||
+          video_delivery_unusable) {
+        return weak_net::tier_e::fast;
+      }
+
+      if (scale_percent <= 60) {
+        return weak_net::tier_e::fast;
+      }
+      if (scale_percent <= 75) {
+        return weak_net::tier_e::general;
+      }
+      if (scale_percent <= 85) {
+        return weak_net::tier_e::hd;
+      }
+      if (high_availability_feedback &&
+          full_target_cadence_clean &&
+          baseline_fps > 0) {
+        return weak_net::tier_e::bluray;
+      }
+      if (baseline_fps >= 90) {
+        return weak_net::tier_e::hd;
+      }
+      return weak_net::tier_e::bluray;
     }
 
     int
@@ -571,6 +644,11 @@ namespace weak_net {
     current_chroma_sampling_type_ = config_.chroma_sampling_type;
     current_dynamic_range_ = config_.dynamic_range;
     current_quality_tier_ = 0;
+    current_tier_ = tier_e::bluray;
+    current_availability_ = availability_e::probing;
+    motion_crisis_windows_ = 0;
+    motion_crisis_guard_windows_ = 0;
+    motion_crisis_recovery_windows_ = 0;
     requested_ceiling_kbps_ = user_quality_budget_kbps(config_);
     effective_ceiling_kbps_ = configured_encoding_ceiling_kbps(config_, current_fec_percentage_);
     sustainable_estimate_kbps_ = config_.startup_bitrate_kbps;
@@ -628,6 +706,7 @@ namespace weak_net {
     const auto late = clamp01(ratio(feedback.late_frames, frame_samples));
     const auto visual_stale = clamp01(ratio(feedback.visual_stale_frames, frame_samples));
     const auto duplicate_visual = clamp01(ratio(feedback.duplicate_frames, frame_samples));
+    const auto local_display_pressure = clamp01(ratio(feedback.local_display_pressure, 1000U));
     const auto displayed_ratio = feedback.frames_seen > 0 ?
                                    ratio(feedback.displayed_frames, feedback.frames_seen) :
                                    1.0;
@@ -656,6 +735,7 @@ namespace weak_net {
       visual_stale,
       duplicate_visual * 0.95,
       visual_starvation,
+      local_display_pressure * 0.85,
     }));
     const bool has_video_cadence_feedback =
       feedback.frames_seen > 0 ||
@@ -724,6 +804,7 @@ namespace weak_net {
       render_queue_pressure,
       visual_freshness_pressure * 1.35,
       displayed_cadence_pressure,
+      local_display_pressure * 0.70,
       deadline_jitter_ms / 90.0,
     });
     const bool input_backlog_evidence =
@@ -755,16 +836,19 @@ namespace weak_net {
                                                        dirty_ratio >= 0.45 ? 0.80 :
                                                        0.55) :
                                        0.0;
+    const auto large_frame_fec_skip_pressure = clamp01(ratio(feedback.large_frame_fec_skipped, frame_samples));
     const auto recovered_total = recovered + unrecoverable;
     const auto fec_efficiency = recovered_total > 0.0 ? recovered / recovered_total : 0.0;
     const bool observed_packet_loss = loss >= 0.01 ||
                                       unrecoverable > 0.0 ||
                                       recovered >= 0.015 ||
-                                      feedback.missing_packets > 0;
+                                      feedback.missing_packets > 0 ||
+                                      feedback.large_frame_fec_skipped > 0;
     const bool rfi_has_loss_evidence = observed_packet_loss ||
                                        feedback.unrecoverable_frames > 0 ||
                                        feedback.recovered_frames > 0 ||
-                                       feedback.missing_packets > 0;
+                                       feedback.missing_packets > 0 ||
+                                       feedback.large_frame_fec_skipped > 0;
     const auto rfi_pressure = clamp01(std::max(ratio(feedback.rfi_requests,
                                                      frame_samples),
                                                ratio(feedback.waiting_for_rfi_frames,
@@ -780,7 +864,8 @@ namespace weak_net {
                                              input_latency_ms / 180.0 })),
       .motion = clamp01(std::max({ feedback.full_frame_dirty ? 1.0 : dirty_ratio,
                                    dirty_ratio >= 0.85 ? 0.90 : dirty_ratio * 0.85,
-                                   bpp_motion_pressure })),
+                                   bpp_motion_pressure,
+                                   large_frame_fec_skip_pressure })),
       .render = clamp01(deadline_pressure / 1.6),
       .audio = audio_pressure_signal,
       .input = clamp01(input_pressure / 1.25),
@@ -864,6 +949,8 @@ namespace weak_net {
     const auto previous_chroma_sampling_type = current_chroma_sampling_type_;
     const auto previous_dynamic_range = current_dynamic_range_;
     const auto previous_quality_tier = current_quality_tier_;
+    const auto previous_tier = current_tier_;
+    const auto previous_availability = current_availability_;
     reason_e reason = reason_e::healthy;
     const bool cadence_deadline_miss =
       has_video_cadence_feedback &&
@@ -912,10 +999,18 @@ namespace weak_net {
       (feedback.frames_seen >= 6 &&
        feedback.displayed_frames <= std::max(1U, feedback.frames_seen / 12U) &&
        feedback.visual_stale_frames + feedback.duplicate_frames >= feedback.frames_seen / 2U);
+    const bool client_display_transition_evidence =
+      feedback.visual_stale_frames > 0 ||
+      feedback.duplicate_frames > 0 ||
+      feedback.local_display_pressure > 0 ||
+      feedback.late_frames > 0 ||
+      feedback.decode_queue_depth > 0 ||
+      feedback.render_queue_depth > 0;
     const bool clean_client_display_transition =
       raw_network_clean &&
       !observed_packet_loss &&
       has_video_cadence_feedback &&
+      client_display_transition_evidence &&
       feedback.frames_seen >= 30 &&
       feedback.complete_frames >= feedback.frames_seen * 9U / 10U &&
       feedback.displayed_frames == 0 &&
@@ -1121,6 +1216,37 @@ namespace weak_net {
     const bool media_stability_crisis =
       (audio_crisis_for_video && observed_packet_loss) ||
       (rfi_storm && (unrecoverable >= 0.02 || ewma_burst_pressure_ >= 0.70));
+    const bool motion_rfi_wait =
+      feedback.waiting_for_rfi_frames >= std::max(4U, feedback.frames_seen / 10U);
+    const bool displayed_motion_collapse =
+      has_video_cadence_feedback &&
+      displayed_fps_ratio < 0.75 &&
+      (feedback.full_frame_dirty || dirty_ratio >= 0.45) &&
+      (feedback.large_frame_fec_skipped > 0 ||
+       feedback.waiting_for_rfi_frames > 0 ||
+       feedback.rfi_requests > 0 ||
+       feedback.visual_stale_frames > 0 ||
+       feedback.duplicate_frames > 0 ||
+       visual_refresh_stalled);
+    const bool motion_crisis_sample =
+      (motion_active || motion_evidence) &&
+      (large_frame_fec_skip_pressure >= 0.20 ||
+       feedback.large_frame_fec_skipped > 0 ||
+       rfi_storm ||
+       motion_rfi_wait ||
+       ((feedback.full_frame_dirty || dirty_ratio >= 0.45) && visual_refresh_stalled) ||
+       displayed_motion_collapse);
+    if (motion_crisis_sample) {
+      motion_crisis_windows_ = std::min(motion_crisis_windows_ + 1, 8);
+      if (motion_crisis_windows_ >= 2) {
+        motion_crisis_guard_windows_ = std::max(motion_crisis_guard_windows_, 3);
+        motion_crisis_recovery_windows_ = std::max(motion_crisis_recovery_windows_, 12);
+      }
+    }
+    else {
+      motion_crisis_windows_ = std::max(0, motion_crisis_windows_ - 2);
+    }
+    const bool motion_crisis_guard_active = motion_crisis_guard_windows_ > 0;
     const auto observed_video_kbps = observed_video_bitrate_kbps(feedback);
     const auto pre_action_encoding_ceiling = configured_encoding_ceiling_kbps(config_, current_fec_percentage_);
 
@@ -1141,6 +1267,12 @@ namespace weak_net {
     }
     if (bitrate_probe_hold_windows_ > 0) {
       --bitrate_probe_hold_windows_;
+    }
+    if (motion_crisis_guard_windows_ > 0) {
+      --motion_crisis_guard_windows_;
+    }
+    if (motion_crisis_recovery_windows_ > 0) {
+      --motion_crisis_recovery_windows_;
     }
     if (legacy_complete_cadence_clean || high_availability_feedback) {
       media_recovery_cooldown_windows_ = 0;
@@ -1380,6 +1512,31 @@ namespace weak_net {
                                                0.55,
                                                1,
                                                8);
+      }
+    }
+    else if (motion_crisis_guard_active && !network_crisis && !network_constrained) {
+      state_ = state_e::crisis;
+      reason = reason_e::motion_pressure;
+      stable_windows_ = 0;
+      media_recovery_cooldown_windows_ = std::max(media_recovery_cooldown_windows_, 6);
+      bitrate_probe_hold_windows_ = std::max(bitrate_probe_hold_windows_, 10);
+      last_probe_base_bitrate_kbps_ = 0;
+      last_probe_target_bitrate_kbps_ = 0;
+
+      if (current_fec_percentage_ > config_.baseline_fec_percentage &&
+          (feedback.large_frame_fec_skipped > 0 || fec_efficiency < 0.30)) {
+        bleed_ineffective_fec();
+      }
+
+      const auto fast_motion_scale = config_.runtime_profile_tier_supported ? 0.82 : 0.76;
+      current_bitrate_kbps_ = std::max(
+        config_.min_bitrate_kbps,
+        static_cast<int>(std::lround(static_cast<double>(current_bitrate_kbps_) * fast_motion_scale)));
+
+      if (!config_.runtime_profile_tier_supported &&
+          video_deadline_constrained &&
+          delay_only_can_reduce_fps) {
+        reduce_fps_for_pressure(0.92, 0, 1);
       }
     }
     else if (network_crisis) {
@@ -1734,17 +1891,31 @@ namespace weak_net {
         failed_fps_probe_windows_ = backoff.failed_probe_count;
         fps_recovery_hold_windows_ = backoff.recovery_hold_windows;
         fps_probe_interval_windows_ = backoff.recovery_probe_interval_windows;
-      const bool fps_recovery_probe_allowed =
-        current_fps_ < config_.baseline_fps &&
-        fps_recovery_hold_windows_ == 0 &&
-        media_recovery_cooldown_windows_ == 0 &&
-        feedback.waiting_for_rfi_frames == 0 &&
-        !visual_refresh_stalled &&
-        pressures.render < 0.35 &&
-        (fps_probe_interval_windows_ <= 1 ||
-         (stable_windows_ % fps_probe_interval_windows_) == 0);
+        const bool clean_media_recovery_probe =
+          motion_crisis_recovery_windows_ > 0 &&
+          current_target_cadence_clean &&
+          stable_windows_ >= 3 &&
+          raw_network_clean &&
+          raw_video_deadline_clean &&
+          raw_audio_clean &&
+          feedback.waiting_for_rfi_frames == 0 &&
+          !visual_refresh_stalled &&
+          pressures.render < 0.20 &&
+          pressures.delay_congestion < 0.20;
+        const bool fps_recovery_probe_allowed =
+          current_fps_ < config_.baseline_fps &&
+          (fps_recovery_hold_windows_ == 0 || clean_media_recovery_probe) &&
+          (media_recovery_cooldown_windows_ == 0 || clean_media_recovery_probe) &&
+          feedback.waiting_for_rfi_frames == 0 &&
+          !visual_refresh_stalled &&
+          pressures.render < 0.35 &&
+          (clean_media_recovery_probe ||
+           fps_probe_interval_windows_ <= 1 ||
+           (stable_windows_ % fps_probe_interval_windows_) == 0);
         if (fps_recovery_probe_allowed) {
-          const auto max_fps_recovery_step = current_target_cadence_clean ?
+          const auto max_fps_recovery_step = clean_media_recovery_probe ?
+                                               std::clamp(config_.baseline_fps / 12, 6, 14) :
+                                             current_target_cadence_clean ?
                                                std::clamp(config_.baseline_fps / 20, 3, 8) :
                                              legacy_complete_cadence_clean ?
                                                std::clamp(config_.baseline_fps / 20, 3, 8) :
@@ -1754,6 +1925,9 @@ namespace weak_net {
                                       (current_target_cadence_clean || legacy_complete_cadence_clean) ? 0.45 : 0.16,
                                       1,
                                       max_fps_recovery_step);
+          if (clean_media_recovery_probe && config_.baseline_fps - current_fps_ <= 2) {
+            current_fps_ = config_.baseline_fps;
+          }
           last_recovery_probe_fps_ = current_fps_;
         }
         const bool bitrate_probe_has_hold =
@@ -2018,19 +2192,35 @@ namespace weak_net {
                                         raw_motion_clean &&
                                         (!audio_constrained_for_video || audio_only_pressure) &&
                                         stable_windows_ >= 3;
-    const auto target_scale = high_availability_feedback || clean_route_low_overhead ?
-                                100 :
-                              profile_recovery_clean ?
-                                100 :
-                                scale_target_for_pressure(pressures.motion,
-                                                          pressures.burst_loss,
-                                                          profile_bpp_pressure,
-                                                          input_active);
+    const auto target_scale =
+      motion_crisis_guard_active ?
+        (pressures.motion >= 0.80 || profile_bpp_pressure >= 0.35 ? 60 : 75) :
+      high_availability_feedback || clean_route_low_overhead ?
+        100 :
+      profile_recovery_clean ?
+        100 :
+        scale_target_for_pressure(pressures.motion,
+                                  pressures.burst_loss,
+                                  profile_bpp_pressure,
+                                  input_active);
+    const bool fast_profile_recovery =
+      target_scale == 100 &&
+      profile_recovery_clean &&
+      current_target_cadence_clean &&
+      pressures.render < 0.15 &&
+      pressures.delay_congestion < 0.15;
     current_resolution_scale_percent_ = approach_int(current_resolution_scale_percent_,
                                                      target_scale,
-                                                     target_scale < current_resolution_scale_percent_ ? 0.65 : 0.22,
+                                                     target_scale < current_resolution_scale_percent_ ? 0.65 :
+                                                     fast_profile_recovery ? 0.45 :
+                                                     0.22,
                                                      5,
-                                                     target_scale < current_resolution_scale_percent_ ? 15 : 10);
+                                                     target_scale < current_resolution_scale_percent_ ? 15 :
+                                                     fast_profile_recovery ? 20 :
+                                                     10);
+    if (fast_profile_recovery && target_scale == 100 && 100 - current_resolution_scale_percent_ <= 5) {
+      current_resolution_scale_percent_ = 100;
+    }
 
     if (config_.chroma_sampling_type >= 0) {
       const auto target_chroma = (!profile_recovery_clean &&
@@ -2057,6 +2247,32 @@ namespace weak_net {
     }
     current_quality_tier_ = std::max(tier_for_scale(current_resolution_scale_percent_),
                                      current_chroma_sampling_type_ == 0 && config_.chroma_sampling_type == 1 ? 1 : 0);
+    const bool local_display_pressure_only =
+      local_display_pressure >= 0.50 &&
+      raw_network_clean &&
+      !observed_packet_loss &&
+      !rfi_storm &&
+      feedback.waiting_for_rfi_frames == 0 &&
+      feedback.rfi_requests <= 2;
+    current_availability_ = local_display_pressure_only ?
+                              availability_e::recovering :
+                              availability_from_state(state_,
+                                                      high_availability_feedback,
+                                                      low_availability_feedback,
+                                                      motion_crisis_guard_active,
+                                                      false,
+                                                      clean_route_low_overhead,
+                                                      stable_windows_ >= 2);
+    current_tier_ = tier_from_scale_and_availability(current_resolution_scale_percent_,
+                                                     current_availability_,
+                                                     motion_crisis_guard_active,
+                                                     video_delivery_unusable,
+                                                     high_availability_feedback,
+                                                     full_target_cadence_clean,
+                                                     config_.baseline_fps);
+    if (current_quality_tier_ > 0 && current_tier_ == tier_e::bluray) {
+      current_tier_ = tier_from_quality_tier(current_quality_tier_);
+    }
 
     const bool profile_tier_active =
       current_quality_tier_ > 0 ||
@@ -2277,6 +2493,18 @@ namespace weak_net {
                                   std::max(5, previous_fps - current_fps_) :
                                 audio_only_pressure ? 2 :
                                   5;
+      const bool clean_media_recovery_fps_ramp =
+        recent_media_recovery &&
+        current_target_cadence_clean &&
+        stable_windows_ >= 3 &&
+        raw_network_clean &&
+        raw_video_deadline_clean &&
+        raw_audio_clean &&
+        !audio_only_pressure &&
+        !audio_decoupled_pressure &&
+        !audio_constrained_for_video &&
+        !low_availability_feedback &&
+        feedback.waiting_for_rfi_frames == 0;
       const bool fast_fps_ramp_allowed =
         (current_target_cadence_clean || full_target_cadence_clean) &&
         raw_audio_clean &&
@@ -2284,7 +2512,7 @@ namespace weak_net {
         !audio_decoupled_pressure &&
         !audio_constrained_for_video &&
         !low_availability_feedback &&
-        (!recent_media_recovery || full_target_cadence_clean) &&
+        (!recent_media_recovery || full_target_cadence_clean || clean_media_recovery_fps_ramp) &&
         !(config_.user_quality_kbps > 0 &&
           config_.fps_needed_kbps > user_quality_budget_kbps(config_) &&
           current_bitrate_kbps_ <= user_quality_budget_kbps(config_) + 500) &&
@@ -2292,6 +2520,8 @@ namespace weak_net {
       const auto max_fps_up = fast_fps_ramp_allowed ?
                                 (full_target_cadence_clean ?
                                    std::clamp(config_.baseline_fps / 10, 6, 16) :
+                                 clean_media_recovery_fps_ramp ?
+                                   std::clamp(config_.baseline_fps / 12, 6, 14) :
                                    std::clamp(config_.baseline_fps / 18, 2, 8)) :
                                 1;
       current_fps_ = clamp_delta_int(previous_fps,
@@ -2322,6 +2552,21 @@ namespace weak_net {
     }
     const auto total_budget_kbps = total_bitrate_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_);
     const auto fec_budget_kbps = std::max(0, total_budget_kbps - current_bitrate_kbps_);
+    const bool final_full_target_cadence_clean =
+      current_target_cadence_clean &&
+      current_fps_ >= config_.baseline_fps - 1 &&
+      displayed_fps_ratio >= 0.99 &&
+      displayed_ratio >= 0.99;
+    current_tier_ = tier_from_scale_and_availability(current_resolution_scale_percent_,
+                                                     current_availability_,
+                                                     motion_crisis_guard_active,
+                                                     video_delivery_unusable,
+                                                     high_availability_feedback,
+                                                     final_full_target_cadence_clean,
+                                                     config_.baseline_fps);
+    if (current_quality_tier_ > 0 && current_tier_ == tier_e::bluray) {
+      current_tier_ = tier_from_quality_tier(current_quality_tier_);
+    }
 
     const bool network_idr_request = network_crisis &&
                                      !delay_only_congestion &&
@@ -2331,7 +2576,12 @@ namespace weak_net {
     const bool visual_stale_idr_request = visual_refresh_stalled &&
                                           reason == reason_e::render_deadline &&
                                           video_deadline_windows_ >= 3;
-    const bool request_idr = (network_idr_request || visual_stale_idr_request) &&
+    const bool motion_crisis_idr_request = motion_crisis_guard_active &&
+                                           reason == reason_e::motion_pressure &&
+                                           (previous_state != state_e::crisis ||
+                                            feedback.large_frame_fec_skipped > 0 ||
+                                            feedback.waiting_for_rfi_frames > 0);
+    const bool request_idr = (network_idr_request || visual_stale_idr_request || motion_crisis_idr_request) &&
                              idr_cooldown_windows_ == 0;
     if (request_idr) {
       idr_cooldown_windows_ = 8;
@@ -2345,9 +2595,13 @@ namespace weak_net {
                  previous_resolution_scale != current_resolution_scale_percent_ ||
                  previous_chroma_sampling_type != current_chroma_sampling_type_ ||
                  previous_dynamic_range != current_dynamic_range_ ||
-                 previous_quality_tier != current_quality_tier_,
+                 previous_quality_tier != current_quality_tier_ ||
+                 previous_tier != current_tier_ ||
+                 previous_availability != current_availability_,
       .state = state_,
+      .availability = current_availability_,
       .reason = reason,
+      .tier = current_tier_,
       .target_bitrate_kbps = current_bitrate_kbps_,
       .fec_percentage = current_fec_percentage_,
       .pacing_bitrate_kbps = pacing_bitrate_kbps_,
@@ -2363,6 +2617,7 @@ namespace weak_net {
       .fec_efficiency = fec_efficiency,
       .pressures = pressures,
       .resolution_scale_percent = current_resolution_scale_percent_,
+      .actual_scale_percent = config_.runtime_profile_tier_supported ? current_resolution_scale_percent_ : 100,
       .chroma_sampling_type = current_chroma_sampling_type_,
       .dynamic_range = current_dynamic_range_,
       .quality_tier = current_quality_tier_,
@@ -2370,6 +2625,8 @@ namespace weak_net {
       .profile_tier_deferred = (profile_tier_active || profile_tier_target_changed) &&
                                !config_.runtime_profile_tier_supported,
       .profile_tier_supported = config_.runtime_profile_tier_supported,
+      .runtime_scale_applied = config_.runtime_profile_tier_supported &&
+                               current_resolution_scale_percent_ < 100,
       .rfi_limited = rfi_storm && !request_idr,
       .request_idr = request_idr,
     };
@@ -2415,6 +2672,41 @@ namespace weak_net {
     return state_;
   }
 
+  std::uint32_t
+  infer_local_display_pressure(const feedback_t &feedback) {
+    if (feedback.frames_seen < 6 &&
+        feedback.displayed_frames < 3 &&
+        feedback.decode_queue_depth == 0 &&
+        feedback.render_queue_depth == 0 &&
+        feedback.late_frames == 0 &&
+        feedback.visual_stale_frames == 0 &&
+        feedback.duplicate_frames == 0) {
+      return 0;
+    }
+
+    const auto frame_samples = std::max(1U, feedback.frames_seen);
+    const auto decode_pressure = clamp01(ratio(feedback.decode_queue_depth, 4U));
+    const auto render_pressure = clamp01(ratio(feedback.render_queue_depth, 3U));
+    const auto late_pressure = clamp01(ratio(feedback.late_frames, frame_samples));
+    const auto stale_pressure = clamp01(ratio(feedback.visual_stale_frames + feedback.duplicate_frames,
+                                              frame_samples) * 4.0);
+    const auto display_drop_pressure =
+      feedback.frames_seen > 0 ?
+        clamp01(1.0 - ratio(feedback.displayed_frames, feedback.frames_seen)) :
+        0.0;
+
+    auto pressure = std::max({ decode_pressure,
+                               render_pressure,
+                               late_pressure * 1.5,
+                               stale_pressure,
+                               display_drop_pressure });
+    if (feedback.unrecoverable_frames > 0 || feedback.missing_packets > 0) {
+      pressure *= 0.35;
+    }
+
+    return static_cast<std::uint32_t>(std::lround(std::clamp(pressure, 0.0, 1.0) * 1000.0));
+  }
+
   const char *
   reason_name(reason_e reason) {
     switch (reason) {
@@ -2436,6 +2728,38 @@ namespace weak_net {
         return "audio-pressure";
       case reason_e::motion_pressure:
         return "motion-pressure";
+    }
+
+    return "unknown";
+  }
+
+  const char *
+  availability_name(availability_e availability) {
+    switch (availability) {
+      case availability_e::high:
+        return "high";
+      case availability_e::low:
+        return "low";
+      case availability_e::probing:
+        return "probing";
+      case availability_e::recovering:
+        return "recovering";
+    }
+
+    return "unknown";
+  }
+
+  const char *
+  tier_name(tier_e tier) {
+    switch (tier) {
+      case tier_e::fast:
+        return "fast";
+      case tier_e::general:
+        return "general";
+      case tier_e::hd:
+        return "hd";
+      case tier_e::bluray:
+        return "bluray";
     }
 
     return "unknown";

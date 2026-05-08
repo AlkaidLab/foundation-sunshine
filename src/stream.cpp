@@ -829,6 +829,7 @@ namespace stream {
     std::atomic<std::uint64_t> weak_net_dirty_area { 0 };
     std::atomic<bool> weak_net_full_frame_dirty { false };
     std::atomic<std::uint32_t> weak_net_rfi_requests { 0 };
+    std::atomic<std::uint32_t> weak_net_large_frame_fec_skipped { 0 };
     weak_net::controller_t weak_net_controller;
     std::chrono::steady_clock::time_point last_weak_net_fec_feedback {};
     std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
@@ -884,6 +885,7 @@ namespace stream {
       std::uint32_t displayed_frames { 0 };
       std::uint32_t visual_stale_frames { 0 };
       std::uint32_t duplicate_frames { 0 };
+      std::uint32_t local_display_pressure { 0 };
       std::uint32_t max_decode_queue_depth { 0 };
       std::uint32_t max_render_queue_depth { 0 };
       std::uint32_t max_input_queue_depth { 0 };
@@ -892,6 +894,7 @@ namespace stream {
       std::uint64_t max_dirty_area { 0 };
       std::uint32_t full_frame_dirty_windows { 0 };
       std::uint32_t rfi_requests { 0 };
+      std::uint32_t large_frame_fec_skipped { 0 };
       std::uint32_t max_rtt_ms { 0 };
       std::uint32_t max_rtt_variance_ms { 0 };
       std::uint32_t healthy_actions { 0 };
@@ -1263,6 +1266,38 @@ namespace stream {
     }
   }
 
+  static const char *
+  weak_net_decision_reason_name(const weak_net::action_t &action) {
+    switch (action.reason) {
+      case weak_net::reason_e::startup:
+        return "startup";
+      case weak_net::reason_e::recovering:
+        return "recovery";
+      case weak_net::reason_e::random_loss:
+      case weak_net::reason_e::delay_congestion:
+        return "network";
+      case weak_net::reason_e::render_deadline:
+        return "client-render";
+      case weak_net::reason_e::motion_pressure:
+        return "high-motion";
+      case weak_net::reason_e::audio_pressure:
+        return "audio";
+      case weak_net::reason_e::input_pressure:
+        return "input";
+      case weak_net::reason_e::healthy:
+      default:
+        return "healthy";
+    }
+  }
+
+  static const char *
+  runtime_scale_mode_name(const weak_net::action_t &action) {
+    if (action.resolution_scale_percent >= 100) {
+      return "none";
+    }
+    return action.runtime_scale_applied ? "soft" : "none";
+  }
+
   static int
   total_video_bitrate_from_encoding_bitrate(int encoding_bitrate_kbps, int fec_percentage) {
     if (encoding_bitrate_kbps <= 0) {
@@ -1323,7 +1358,7 @@ namespace stream {
 
   bool
   runtime_profile_resolution_reconfig_enabled() {
-    return false;
+    return true;
   }
 
   static stream_quality::content_type_e
@@ -1470,6 +1505,7 @@ namespace stream {
     feedback.dirty_area = session->weak_net_dirty_area.exchange(0, std::memory_order_relaxed);
     feedback.full_frame_dirty = session->weak_net_full_frame_dirty.exchange(false, std::memory_order_relaxed);
     feedback.rfi_requests = session->weak_net_rfi_requests.exchange(0, std::memory_order_relaxed);
+    feedback.large_frame_fec_skipped = session->weak_net_large_frame_fec_skipped.exchange(0, std::memory_order_relaxed);
   }
 
   static void
@@ -1508,6 +1544,7 @@ namespace stream {
     diag.displayed_frames += feedback.displayed_frames;
     diag.visual_stale_frames += feedback.visual_stale_frames;
     diag.duplicate_frames += feedback.duplicate_frames;
+    diag.local_display_pressure = std::max(diag.local_display_pressure, feedback.local_display_pressure);
     diag.max_decode_queue_depth = std::max(diag.max_decode_queue_depth, feedback.decode_queue_depth);
     diag.max_render_queue_depth = std::max(diag.max_render_queue_depth, feedback.render_queue_depth);
     diag.max_input_queue_depth = std::max(diag.max_input_queue_depth, feedback.input_queue_depth);
@@ -1517,6 +1554,7 @@ namespace stream {
     diag.max_dirty_area = std::max(diag.max_dirty_area, feedback.dirty_area);
     diag.full_frame_dirty_windows += feedback.full_frame_dirty ? 1U : 0U;
     diag.rfi_requests += feedback.rfi_requests;
+    diag.large_frame_fec_skipped += feedback.large_frame_fec_skipped;
     diag.max_rtt_ms = std::max(diag.max_rtt_ms, feedback.rtt_ms);
     diag.max_rtt_variance_ms = std::max(diag.max_rtt_variance_ms, feedback.rtt_variance_ms);
     if (action.request_idr) {
@@ -1571,6 +1609,7 @@ namespace stream {
             << " displayed=" << diag.displayed_frames
             << " visualStale=" << diag.visual_stale_frames
             << " duplicate=" << diag.duplicate_frames
+            << " localDisplayPressure=" << diag.local_display_pressure
             << " dqMax=" << diag.max_decode_queue_depth
             << " rqMax=" << diag.max_render_queue_depth
             << " inputQMax=" << diag.max_input_queue_depth
@@ -1579,6 +1618,7 @@ namespace stream {
             << " frameAreaMax=" << diag.max_frame_area
             << " fullFrameDirty=" << diag.full_frame_dirty_windows
             << " rfiRequests=" << diag.rfi_requests
+            << " largeFrameFecSkipped=" << diag.large_frame_fec_skipped
             << " rttMax=" << diag.max_rtt_ms << "ms"
             << " jitterMax=" << diag.max_rtt_variance_ms << "ms"
             << " states(h/c/x/r)=" << diag.healthy_actions << "/"
@@ -1588,6 +1628,12 @@ namespace stream {
             << diag.fps_applies << "/" << diag.fec_applies
             << " profileApplies=" << diag.profile_applies
             << " idr=" << diag.idr_requests
+            << " availability=" << weak_net::availability_name(action.availability)
+            << " tier=" << weak_net::tier_name(action.tier)
+            << " decisionReason=" << weak_net_decision_reason_name(action)
+            << " requestedScale=" << action.resolution_scale_percent << "%"
+            << " actualScale=" << action.actual_scale_percent << "%"
+            << " runtimeScaleMode=" << runtime_scale_mode_name(action)
             << " current(encoding/fps/fec/total/pacing)="
             << session->weak_net_controller.current_bitrate_kbps() << "Kbps/"
             << session->weak_net_controller.current_fps() << "fps/"
@@ -1792,7 +1838,7 @@ namespace stream {
                           << " source=" << session->config.monitor.width << "x" << session->config.monitor.height
                           << " target=" << runtime_resolution.width << "x" << runtime_resolution.height
                           << " scale=" << action.resolution_scale_percent << '%'
-                          << " noDisplayReconfig=1";
+                          << " softOnly=1";
         }
         else {
           BOOST_LOG(info) << "Runtime profile tier encoder scale deferred"
@@ -1806,7 +1852,7 @@ namespace stream {
         profile_runtime_scale_suffix =
           " profileRuntimeScale=" + std::to_string(runtime_resolution.width) +
           "x" + std::to_string(runtime_resolution.height) +
-          (resolution_reconfig_enabled ? " noDisplayReconfig=1" : " softOnly=1");
+          " softOnly=1";
       }
 
       if (action.chroma_sampling_type >= 0 &&
@@ -1841,7 +1887,9 @@ namespace stream {
                     << session->identity.runtime_id
                     << " adaptiveController=auto reason=enabled"
                     << " state=" << weak_net_state_name(action.state)
+                    << " availability=" << weak_net::availability_name(action.availability)
                     << " reason=" << weak_net::reason_name(action.reason)
+                    << " decisionReason=" << weak_net_decision_reason_name(action)
                     << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
                     << " effectiveCeiling=" << action.effective_ceiling_kbps << " Kbps"
                     << " sustainableEstimate=" << action.sustainable_estimate_kbps << " Kbps"
@@ -1859,8 +1907,11 @@ namespace stream {
                     << action.pressures.render << "/"
                     << action.pressures.audio << "/"
                     << action.pressures.input
-                    << " tier=" << action.quality_tier
-                    << " scale=" << action.resolution_scale_percent << "%"
+                    << " tier=" << weak_net::tier_name(action.tier)
+                    << " legacyTier=" << action.quality_tier
+                    << " requestedScale=" << action.resolution_scale_percent << "%"
+                    << " actualScale=" << action.actual_scale_percent << "%"
+                    << " runtimeScaleMode=" << runtime_scale_mode_name(action)
                     << " chroma=" << action.chroma_sampling_type
                     << " dynamicRange=" << action.dynamic_range
                     << " packetLoss=" << action.packet_loss
@@ -4352,6 +4403,7 @@ namespace stream {
         .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
         .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
       };
+      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
       if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
         return;
@@ -4420,6 +4472,7 @@ namespace stream {
         .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
         .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
       };
+      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
       if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v2")) {
         return;
@@ -4497,6 +4550,7 @@ namespace stream {
         .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
         .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
       };
+      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
       if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v3")) {
         return;
@@ -4579,6 +4633,7 @@ namespace stream {
         .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
         .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
       };
+      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
       if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v4")) {
         return;
@@ -5777,6 +5832,7 @@ namespace stream {
       // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
       if (fec_blocks_needed > MAX_FEC_BLOCKS) {
         BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
+        session->weak_net_large_frame_fec_skipped.fetch_add(1, std::memory_order_relaxed);
         fecPercentage = 0;
         fec_blocks_needed = MAX_FEC_BLOCKS;
       }

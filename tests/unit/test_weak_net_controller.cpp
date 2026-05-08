@@ -4089,3 +4089,228 @@ TEST(WeakNetControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps
   EXPECT_NE(action.state, weak_net::state_e::constrained);
   EXPECT_NE(action.state, weak_net::state_e::crisis);
 }
+
+TEST(WeakNetControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdrQuickly) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 120000,
+    .ceiling_total_bitrate_kbps = 230000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .ideal_demand_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 2; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 75,
+      .complete_frames = 75,
+      .missing_packets = 0,
+      .total_packets = 3600,
+      .received_packets = 3600,
+      .video_bytes = 12 * 1024 * 1024,
+      .rtt_ms = 8,
+      .rtt_variance_ms = 2,
+      .decode_queue_depth = 5,
+      .render_queue_depth = 5,
+      .late_frames = 18,
+      .displayed_frames = 18,
+      .visual_stale_frames = 14,
+      .duplicate_frames = 10,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .large_frame_fec_skipped = 1,
+      .waiting_for_rfi_frames = 8,
+    });
+  }
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::motion_pressure);
+  EXPECT_EQ(action.availability, weak_net::availability_e::low);
+  EXPECT_EQ(action.tier, weak_net::tier_e::fast);
+  EXPECT_LT(action.target_bitrate_kbps, 120000);
+  EXPECT_LT(action.actual_scale_percent, 100);
+  EXPECT_TRUE(action.request_idr);
+}
+
+TEST(WeakNetControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBluray) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 90000,
+    .ceiling_total_bitrate_kbps = 230000,
+    .baseline_fps = 150,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .ideal_demand_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  for (int i = 0; i < 2; ++i) {
+    controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 75,
+      .complete_frames = 75,
+      .total_packets = 3600,
+      .received_packets = 3600,
+      .decode_queue_depth = 5,
+      .render_queue_depth = 5,
+      .late_frames = 18,
+      .displayed_frames = 18,
+      .visual_stale_frames = 14,
+      .duplicate_frames = 10,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .large_frame_fec_skipped = 1,
+      .waiting_for_rfi_frames = 8,
+    });
+  }
+
+  weak_net::action_t first_clean {};
+  for (int i = 0; i < 2; ++i) {
+    first_clean = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 150,
+      .complete_frames = 150,
+      .missing_packets = 0,
+      .total_packets = 5000,
+      .received_packets = 5000,
+      .video_bytes = 14 * 1024 * 1024,
+      .rtt_ms = 6,
+      .rtt_variance_ms = 1,
+      .displayed_frames = 150,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+    });
+  }
+
+  EXPECT_NE(first_clean.tier, weak_net::tier_e::bluray)
+    << "The first clean recovery window should prove stability before returning to the top tier";
+
+  weak_net::action_t recovered {};
+  for (int i = 0; i < 8; ++i) {
+    recovered = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 150,
+      .complete_frames = 150,
+      .missing_packets = 0,
+      .total_packets = 5000,
+      .received_packets = 5000,
+      .video_bytes = 20 * 1024 * 1024,
+      .rtt_ms = 4,
+      .rtt_variance_ms = 1,
+      .displayed_frames = 150,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+    });
+  }
+
+  EXPECT_EQ(recovered.availability, weak_net::availability_e::high);
+  EXPECT_EQ(recovered.tier, weak_net::tier_e::bluray);
+  EXPECT_EQ(recovered.target_fps, 150);
+}
+
+TEST(WeakNetControllerTests, LocalDisplayPressureDoesNotLookLikeNetworkLoss) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 120000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 120000,
+    .ceiling_total_bitrate_kbps = 160000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 75,
+    .complete_frames = 75,
+    .missing_packets = 0,
+    .total_packets = 3600,
+    .received_packets = 3600,
+    .rtt_ms = 2,
+    .rtt_variance_ms = 1,
+    .decode_queue_depth = 8,
+    .render_queue_depth = 2,
+    .late_frames = 18,
+    .displayed_frames = 25,
+    .local_display_pressure = 1000,
+    .frame_area = 3840ULL * 2160ULL,
+  });
+
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.packet_loss, 0.0);
+  EXPECT_LE(action.fec_percentage, 10);
+  EXPECT_EQ(action.availability, weak_net::availability_e::recovering);
+}
+
+TEST(WeakNetControllerTests, InfersLocalDisplayPressureFromRenderBackpressure) {
+  const weak_net::feedback_t feedback {
+    .duration_ms = 1000,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .decode_queue_depth = 5,
+    .render_queue_depth = 4,
+    .late_frames = 12,
+    .displayed_frames = 20,
+    .visual_stale_frames = 8,
+    .duplicate_frames = 6,
+  };
+
+  EXPECT_GE(weak_net::infer_local_display_pressure(feedback), 500U);
+}
+
+TEST(WeakNetControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsPresent) {
+  weak_net::feedback_t feedback {
+    .duration_ms = 1000,
+    .frames_seen = 60,
+    .complete_frames = 40,
+    .unrecoverable_frames = 12,
+    .missing_packets = 160,
+    .decode_queue_depth = 5,
+    .render_queue_depth = 4,
+    .late_frames = 12,
+    .displayed_frames = 20,
+    .visual_stale_frames = 8,
+    .duplicate_frames = 6,
+  };
+
+  EXPECT_LT(weak_net::infer_local_display_pressure(feedback), 500U);
+}
+
+TEST(WeakNetControllerTests, TierAndAvailabilityNamesAreStableForLogs) {
+  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::fast), "fast");
+  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::general), "general");
+  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::hd), "hd");
+  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::bluray), "bluray");
+  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::high), "high");
+  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::low), "low");
+  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::probing), "probing");
+  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::recovering), "recovering");
+}

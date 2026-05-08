@@ -10,6 +10,20 @@ namespace weak_net {
     recovering,
   };
 
+  enum class availability_e {
+    high,
+    low,
+    probing,
+    recovering,
+  };
+
+  enum class tier_e {
+    fast,
+    general,
+    hd,
+    bluray,
+  };
+
   enum class reason_e {
     startup,
     healthy,
@@ -127,12 +141,16 @@ namespace weak_net {
     bool full_frame_dirty = false;
     std::uint32_t rfi_requests = 0;
     std::uint32_t waiting_for_rfi_frames = 0;
+    std::uint32_t large_frame_fec_skipped = 0;
+    std::uint32_t local_display_pressure = 0;
   };
 
   struct action_t {
     bool changed = false;
     state_e state = state_e::healthy;
+    availability_e availability = availability_e::probing;
     reason_e reason = reason_e::healthy;
+    tier_e tier = tier_e::bluray;
     int target_bitrate_kbps = 0;
     int fec_percentage = 0;
     int pacing_bitrate_kbps = 0;
@@ -148,12 +166,14 @@ namespace weak_net {
     double fec_efficiency = 0.0;
     pressure_signals_t pressures;
     int resolution_scale_percent = 100;
+    int actual_scale_percent = 100;
     int chroma_sampling_type = -1;
     int dynamic_range = -1;
     int quality_tier = 0;
     bool profile_tier_changed = false;
     bool profile_tier_deferred = false;
     bool profile_tier_supported = false;
+    bool runtime_scale_applied = false;
     bool rfi_limited = false;
     bool request_idr = false;
   };
@@ -210,6 +230,11 @@ namespace weak_net {
     int current_chroma_sampling_type_ = -1;
     int current_dynamic_range_ = -1;
     int current_quality_tier_ = 0;
+    tier_e current_tier_ = tier_e::bluray;
+    availability_e current_availability_ = availability_e::probing;
+    int motion_crisis_windows_ = 0;
+    int motion_crisis_guard_windows_ = 0;
+    int motion_crisis_recovery_windows_ = 0;
     int requested_ceiling_kbps_ = 0;
     int effective_ceiling_kbps_ = 0;
     int sustainable_estimate_kbps_ = 0;
@@ -223,4 +248,13 @@ namespace weak_net {
 
   const char *
   reason_name(reason_e reason);
+
+  std::uint32_t
+  infer_local_display_pressure(const feedback_t &feedback);
+
+  const char *
+  availability_name(availability_e availability);
+
+  const char *
+  tier_name(tier_e tier);
 }  // namespace weak_net
