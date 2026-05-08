@@ -24,6 +24,21 @@
  *         id: <sid>
  *         data: <base64(payload)>
  *
+ *   POST /api/v1/clipboard/blob
+ *     Out-of-band upload for clipboard payloads larger than the encrypted
+ *     control-stream's per-frame limit (`clipboard_bridge::kMaxPayloadBytes`).
+ *     Body: raw bytes. Required header `X-Clipboard-Mime` (e.g. image/png).
+ *     Response: 200 {"id": "<uuid>", "size": N, "expires_in": seconds}.
+ *     The id is then advertised to peers via a small KIND_REF wire frame on
+ *     the existing /api/v1/clipboard/item endpoint; peers fetch the actual
+ *     bytes via GET /api/v1/clipboard/blob/<id>.
+ *
+ *   GET /api/v1/clipboard/blob/<id>
+ *     Fetch a previously-uploaded blob by id. Body: raw bytes with the
+ *     stored MIME echoed in Content-Type. 404 if missing or expired. The
+ *     blob is NOT consumed on read so transient retries work; TTL cleanup
+ *     reclaims memory eventually.
+ *
  * Auth is delegated to the caller via the function passed to register_routes,
  * so we don't duplicate confighttp's basic-auth logic here.
  */
