@@ -1103,6 +1103,7 @@ namespace nvhttp {
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
+    tree.put("root.DesktopSpecialAppSupport", 1);
 
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
@@ -1792,26 +1793,6 @@ namespace nvhttp {
            && args.find("rikeyid"s) != std::end(args);
   }
 
-  static int
-  find_desktop_app_id() {
-    const auto &apps = proc::proc.get_apps();
-    auto desktop = std::find_if(std::begin(apps), std::end(apps), [](const auto &app) {
-      return app.image_path == "desktop" || app.name == "Desktop";
-    });
-
-    if (desktop == std::end(apps)) {
-      desktop = std::find_if(std::begin(apps), std::end(apps), [](const auto &app) {
-        return app.cmd.empty();
-      });
-    }
-
-    if (desktop == std::end(apps)) {
-      return 0;
-    }
-
-    return util::from_view(desktop->id);
-  }
-
   void
   launch_app(bool &host_audio, resp_https_t response, req_https_t request, const args_t &args, int appid, const char *result_node_name) {
     pt::ptree tree;
@@ -1999,17 +1980,8 @@ namespace nvhttp {
 
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
-      auto desktop_appid = find_desktop_app_id();
-      if (desktop_appid <= 0) {
-        tree.put("root.resume", 0);
-        tree.put("root.<xmlattr>.status_code", 404);
-        tree.put("root.<xmlattr>.status_message", "No running app to resume and Desktop app not found");
-
-        return;
-      }
-
       g.disable();
-      launch_app(host_audio, response, request, args, desktop_appid, "resume");
+      launch_app(host_audio, response, request, args, proc::DESKTOP_APP_ID, "resume");
       return;
     }
 
