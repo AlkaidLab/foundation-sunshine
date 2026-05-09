@@ -55,6 +55,10 @@
             <i class="fas fa-copy me-1"></i>
             {{ $t('troubleshooting.copy_config') }}
           </button>
+          <span
+            class="dev-trigger"
+            @click="handleDevTap"
+          ></span>
         </div>
       </div>
     </div>
@@ -71,7 +75,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+
+const DEV_TAP_THRESHOLD = 7
+const DEV_TAP_TIMEOUT = 3000
+const DEV_STORAGE_KEY = 'sunshine_dev_mode'
 
 const props = defineProps({
   logFilter: {
@@ -159,6 +167,25 @@ const downloadLogs = async () => {
     document.body.removeChild(link)
   } catch (e) {
     console.error('Failed to download logs:', e)
+  }
+}
+
+// Dev mode: 7 taps within 3 seconds
+const devMode = ref(localStorage.getItem(DEV_STORAGE_KEY) === '1')
+const devTapCount = ref(0)
+let devTapTimer = null
+
+const handleDevTap = () => {
+  devTapCount.value++
+  clearTimeout(devTapTimer)
+  devTapTimer = setTimeout(() => { devTapCount.value = 0 }, DEV_TAP_TIMEOUT)
+
+  if (devTapCount.value >= DEV_TAP_THRESHOLD) {
+    devTapCount.value = 0
+    devMode.value = !devMode.value
+    localStorage.setItem(DEV_STORAGE_KEY, devMode.value ? '1' : '0')
+    // Dispatch event so other components can react
+    window.dispatchEvent(new CustomEvent('sunshine-background-bypass', { detail: { enabled: devMode.value } }))
   }
 }
 </script>
@@ -313,5 +340,14 @@ const downloadLogs = async () => {
     width: 100% !important;
     margin-top: 0.5rem;
   }
+}
+
+.dev-trigger {
+  display: inline-block;
+  width: 12px;
+  min-height: 24px;
+  cursor: default;
+  user-select: none;
+  opacity: 0;
 }
 </style>
