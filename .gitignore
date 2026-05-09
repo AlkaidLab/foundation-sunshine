@@ -84,6 +84,7 @@ src_assets/windows/misc/vdd/driver/*.exe
 src_assets/windows/misc/vmouse/driver/*.dll
 src_assets/windows/misc/vmouse/driver/*.inf
 src_assets/windows/misc/vmouse/driver/*.cat
+src_assets/windows/misc/vmouse/driver/*.cer
 
 # Generated files
 src_assets/common/assets/web/welcome.html
