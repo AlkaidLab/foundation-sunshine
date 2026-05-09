@@ -1,0 +1,3 @@
+# Core sidecar: only Python stdlib needed for the identity (passthrough) backend.
+# Backend-specific deps live in requirements-<backend>.txt:
+#   pip install -r requirements-rvc.txt   # for the RVC backend

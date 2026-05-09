@@ -2,7 +2,9 @@
 
 Reference implementation of the Sunshine voice-changer IPC backend.
 
-## Quick start
+> 中文版见 [`README_zh.md`](./README_zh.md).
+
+## Quick start (passthrough smoke test)
 
 ```powershell
 python voice_changer_server.py
@@ -15,8 +17,30 @@ Then in Sunshine config (Web UI → Audio/Video → Voice changer):
 - Port: `9876`
 - Timeout: `15` ms
 
-The default `IdentityBackend` echoes input PCM verbatim; useful to verify
+The default `identity` backend echoes input PCM verbatim; useful to verify
 end-to-end wiring before plugging in a real model.
+
+## RVC (real voice conversion)
+
+```powershell
+# 1. install ML deps (~3 GB with torch+CUDA)
+pip install -r requirements-rvc.txt
+
+# 2. download required pretrained weights (~350 MB)
+python download_models.py --pretrained
+
+# 3. download or copy in .pth + .index voice model files
+#    (see download_models.py --list, or use --url <hf-url>)
+
+# 4. run with the rvc backend
+python voice_changer_server.py --backend rvc --warmup `
+    --opt model_path=models/voices/character.pth `
+    --opt index_path=models/voices/character.index `
+    --opt pitch_shift=12 `
+    --opt index_rate=0.75
+```
+
+Full guide (Chinese): [`README_zh.md`](./README_zh.md).
 
 ## Wire protocol v1
 
@@ -39,16 +63,23 @@ for the canonical definition.
 For Sunshine 20 ms mic frames at 48 kHz mono, payload is 1920 bytes per
 packet (1944 bytes including header), well within the IPv4 safe MTU.
 
-## Plugging in a real backend
+## Adding a backend
 
-Subclass `IdentityBackend` and override `process(samples, sample_rate, channels)`.
-Return `bytes` of the same length as the input. The current scaffolding
-ships no ML dependencies; you can drop in any of:
+Drop a module in `backends/<your_name>.py` exposing a `create(**opts)`
+factory that returns an object with `name: str` and
+`process(samples, sample_rate, channels) -> bytes`. Then register it in
+`backends/__init__.py::REGISTRY`. Examples:
 
-- [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (RVC, MMVC, …)
-- [RVC-Boss/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Boss/Retrieval-based-Voice-Conversion-WebUI)
-- so-vits-svc 4.x
-- Any DSP library (sox, librosa) for non-ML effects (pitch shift, reverb).
+- `backends/identity.py` — minimal skeleton
+- `backends/rvc.py` — full streaming wrapper around
+  [fumiama/Retrieval-based-Voice-Conversion](https://github.com/fumiama/Retrieval-based-Voice-Conversion)
+
+Other backends worth wrapping:
+- [IAHispano/Applio](https://github.com/IAHispano/Applio) (modern RVC fork, MIT)
+- [Plachtaa/seed-vc](https://github.com/Plachtaa/seed-vc) (zero-shot, no training)
+- [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (existing GUI)
+- so-vits-svc 4.x / DDSP-SVC
+- Plain DSP via `sox` / `librosa` (pitch shift, reverb, robot voice, …)
 
 ## Latency budget
 

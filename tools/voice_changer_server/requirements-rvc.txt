@@ -1,0 +1,14 @@
+# Optional deps for the RVC backend.
+# Install with: pip install -r requirements-rvc.txt
+#
+# CUDA users: install torch from the matching CUDA index *before* this file:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# CPU-only users can let the line below grab the CPU build automatically.
+torch>=2.0
+numpy>=1.24
+librosa>=0.10
+soundfile>=0.12
+fairseq>=0.12
+faiss-cpu>=1.7
+# fumiama's inference-only RVC fork. Pulls praat-parselmouth, pyworld etc.
+rvc>=0.1.6

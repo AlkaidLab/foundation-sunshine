@@ -1,0 +1,4 @@
+{
+  "_comment": "Curated voice model registry for download_models.py. Edit and PR back, or maintain locally. URLs should point to publicly mirrored, freely redistributable RVC v2 models.",
+  "voices": {}
+}

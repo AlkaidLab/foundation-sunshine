@@ -73,6 +73,7 @@ const DEFAULT_TABS = [
       voice_changer_enabled: 'disabled',
       voice_changer_backend: 0,
       voice_changer_model_path: '',
+      voice_changer_index_path: '',
       voice_changer_pitch_shift: 0,
       voice_changer_index_rate: 75,
       voice_changer_ipc_host: '127.0.0.1',

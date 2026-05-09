@@ -196,14 +196,30 @@ const cancelDownload = () => {
         </div>
         <div class="mb-2">
           <label for="voice_changer_model_path" class="form-label">
-            {{ $tp('config.voice_changer_model_path', 'Model path') }}
+            {{ $tp('config.voice_changer_model_path', 'Model path (.pth)') }}
           </label>
           <input
             type="text"
             id="voice_changer_model_path"
             class="form-control"
             v-model="config.voice_changer_model_path"
-            :placeholder="$tp('config.voice_changer_model_path_placeholder', 'C:\\path\\to\\rvc_model_dir')"
+            :placeholder="$tp('config.voice_changer_model_path_placeholder', 'C:\\path\\to\\character.pth')"
+          />
+          <div class="form-text">
+            {{ $tp('config.voice_changer_model_path_desc',
+              'Hint: this value is informational only — the sidecar process loads the model from its own --opt model_path argument. Future PR will auto-launch the sidecar with this path.') }}
+          </div>
+        </div>
+        <div class="mb-2">
+          <label for="voice_changer_index_path" class="form-label">
+            {{ $tp('config.voice_changer_index_path', 'Index path (.index)') }}
+          </label>
+          <input
+            type="text"
+            id="voice_changer_index_path"
+            class="form-control"
+            v-model="config.voice_changer_index_path"
+            :placeholder="$tp('config.voice_changer_index_path_placeholder', 'C:\\path\\to\\character.index')"
           />
         </div>
         <div class="mb-2">

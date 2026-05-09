@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Minimal voice-changer reference service for Sunshine PR-B.
+"""Voice-changer sidecar service for Sunshine.
 
 Implements the wire protocol v1 documented in
-`src/voice_changer/voice_changer_ipc.h`. This script ships an *identity*
-backend: it echoes the request PCM bytes verbatim. Use it to validate the
-end-to-end IPC integration before plugging in a real RVC / so-vits-svc
-inference engine.
+``src/voice_changer/voice_changer_ipc.h``. Multiple inference backends are
+pluggable via ``--backend``; ship-default is ``identity`` (passthrough) so
+the sidecar always runs without ML deps installed.
 
 Usage::
 
-    python voice_changer_server.py [--host 127.0.0.1] [--port 9876]
+    # smoke test (passthrough)
+    python voice_changer_server.py
 
-Drop-in replacement for the inference backend: subclass `IdentityBackend`,
-override `process(samples_int16, sample_rate, channels)` to return modified
-int16 samples of the same length.
+    # RVC inference
+    python voice_changer_server.py --backend rvc \\
+        --opt model_path=models/voices/character.pth \\
+        --opt index_path=models/voices/character.index \\
+        --opt pitch_shift=12
 
-The protocol is intentionally trivial so any language with UDP sockets and
-struct packing can speak it.
+Each ``--opt key=value`` pair is forwarded to the backend factory. Keys are
+backend-specific; see ``backends/<name>.py``.
+
+Protocol summary (24-byte header + int16 PCM payload):
+    magic=0x56434843 'VCHC', version=1, types: 1 PROCESS_REQ / 2 PROCESS_RSP
+    / 3 PING / 4 PONG.
 """
 
 from __future__ import annotations
@@ -27,6 +33,8 @@ import socket
 import struct
 import sys
 from dataclasses import dataclass
+
+from backends import load as load_backend
 
 LOG = logging.getLogger("voice_changer_server")
 
@@ -81,23 +89,16 @@ def encode(frame: Frame) -> bytes:
     )
 
 
-class IdentityBackend:
-    """Echo input verbatim. Override `process` to plug in real DSP / ML."""
-
-    name = "identity"
-
-    def process(self, samples: bytes, sample_rate: int, channels: int) -> bytes:
-        return samples
-
-
-def serve(host: str, port: int, backend: IdentityBackend) -> None:
+def serve(host: str, port: int, backend) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
-    LOG.info("voice_changer_server listening on udp://%s:%d backend=%s", host, port, backend.name)
+    LOG.info("voice_changer_server listening on udp://%s:%d backend=%s",
+             host, port, backend.name)
 
     frames_processed = 0
     last_log = 0
+    fallbacks = 0
 
     while True:
         try:
@@ -125,12 +126,15 @@ def serve(host: str, port: int, backend: IdentityBackend) -> None:
 
         try:
             out_payload = backend.process(frame.payload, frame.sample_rate, frame.channels)
-        except Exception as e:  # pragma: no cover — defensive
-            LOG.exception("backend.process raised; echoing input: %s", e)
+        except Exception as e:
+            fallbacks += 1
+            if fallbacks % 100 == 1:
+                LOG.exception("backend.process failed (fallback #%d), echoing input: %s",
+                              fallbacks, e)
             out_payload = frame.payload
 
         if len(out_payload) != len(frame.payload):
-            LOG.warning("backend returned %d bytes, expected %d; truncating/padding",
+            LOG.warning("backend returned %d bytes, expected %d; padding/truncating",
                         len(out_payload), len(frame.payload))
             if len(out_payload) > len(frame.payload):
                 out_payload = out_payload[:len(frame.payload)]
@@ -145,14 +149,43 @@ def serve(host: str, port: int, backend: IdentityBackend) -> None:
 
         frames_processed += 1
         if frames_processed - last_log >= 500:
-            LOG.info("processed %d frames", frames_processed)
+            LOG.info("processed %d frames (fallbacks=%d)", frames_processed, fallbacks)
             last_log = frames_processed
 
 
+def parse_opts(opts: list[str]) -> dict[str, object]:
+    """Parse ``--opt key=value`` pairs. Numeric values are auto-converted."""
+    out: dict[str, object] = {}
+    for kv in opts:
+        if "=" not in kv:
+            raise SystemExit(f"--opt must be key=value, got: {kv}")
+        k, _, v = kv.partition("=")
+        try:
+            out[k] = int(v)
+            continue
+        except ValueError:
+            pass
+        try:
+            out[k] = float(v)
+            continue
+        except ValueError:
+            pass
+        out[k] = v
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=9876)
+    p.add_argument("--backend", default="identity",
+                   help="backend name (identity, rvc); see backends/ directory")
+    p.add_argument("--opt", action="append", default=[],
+                   metavar="KEY=VALUE",
+                   help="backend-specific option (repeatable)")
+    p.add_argument("--warmup", action="store_true",
+                   help="invoke backend.warmup() after init (preloads model/CUDA)")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
 
@@ -161,7 +194,21 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    serve(args.host, args.port, IdentityBackend())
+    opts = parse_opts(args.opt)
+    LOG.info("loading backend '%s' opts=%s", args.backend, opts)
+    try:
+        backend = load_backend(args.backend, **opts)
+    except Exception as e:
+        LOG.error("failed to load backend '%s': %s", args.backend, e)
+        return 2
+
+    if args.warmup and hasattr(backend, "warmup"):
+        try:
+            backend.warmup()
+        except Exception as e:
+            LOG.warning("warmup failed: %s", e)
+
+    serve(args.host, args.port, backend)
     return 0
 
 

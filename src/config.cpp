@@ -475,6 +475,7 @@ namespace config {
       false,  // enabled (off by default; opt-in feature)
       VOICE_CHANGER_BACKEND_PASSTHROUGH,  // backend
       {},  // model_path
+      {},  // index_path
       0,  // pitch_shift
       75,  // index_rate (RVC default)
       "127.0.0.1"s,  // ipc_host
@@ -1314,6 +1315,7 @@ namespace config {
     int_between_f(vars, "voice_changer_backend", audio.voice_changer.backend,
                   { VOICE_CHANGER_BACKEND_PASSTHROUGH, VOICE_CHANGER_BACKEND_IPC });
     string_f(vars, "voice_changer_model_path", audio.voice_changer.model_path);
+    string_f(vars, "voice_changer_index_path", audio.voice_changer.index_path);
     int_between_f(vars, "voice_changer_pitch_shift", audio.voice_changer.pitch_shift, { -24, 24 });
     int_between_f(vars, "voice_changer_index_rate", audio.voice_changer.index_rate, { 0, 100 });
     string_f(vars, "voice_changer_ipc_host", audio.voice_changer.ipc_host);

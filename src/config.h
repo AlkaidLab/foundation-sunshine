@@ -127,6 +127,7 @@ namespace config {
     bool enabled;  // Master switch; when false the entire DSP path is bypassed without per-frame cost.
     int backend;  // VOICE_CHANGER_BACKEND_*; selects the implementation behind voice_changer::create()
     std::string model_path;  // Filesystem path to the model bundle (ONNX dir, .pt file, etc.). Backend-specific.
+    std::string index_path;  // Optional companion file for retrieval-based backends (RVC: .index faiss file).
     int pitch_shift;  // Semitone offset applied by the backend; 0 = neutral. Range -24..24.
     int index_rate;  // 0..100 mapped to 0.0..1.0 by the backend; meaning is backend-specific (RVC: feature index blend).
     std::string ipc_host;  // IPC backend: target host (loopback only is recommended).
