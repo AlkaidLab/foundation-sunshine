@@ -259,6 +259,47 @@ namespace clipboard_http {
     // Wire-frame KIND_REF carries metadata only; the actual bytes are pushed
     // / pulled here. See clipboard_blob_store.h for storage policy.
 
+    // Strict RFC 6838-ish MIME validator. Accepts a single "type/subtype"
+    // pair; both halves must be non-empty and use only token characters
+    // [A-Za-z0-9!#$&^_.+-]. Total length capped at 128 chars. Parameters
+    // (e.g. "; charset=utf-8") are intentionally rejected to keep the value
+    // safe to reflect into a response Content-Type header.
+    static bool
+    is_valid_mime(const std::string &s) {
+      if (s.empty() || s.size() > 128) {
+        return false;
+      }
+      auto is_token_char = [](unsigned char c) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+          return true;
+        }
+        switch (c) {
+          case '!': case '#': case '$': case '&': case '^':
+          case '_': case '.': case '+': case '-':
+            return true;
+          default:
+            return false;
+        }
+      };
+      auto slash = s.find('/');
+      if (slash == std::string::npos || slash == 0 || slash + 1 >= s.size()) {
+        return false;
+      }
+      // Exactly one '/'.
+      if (s.find('/', slash + 1) != std::string::npos) {
+        return false;
+      }
+      for (std::size_t i = 0; i < s.size(); ++i) {
+        if (i == slash) {
+          continue;
+        }
+        if (!is_token_char(static_cast<unsigned char>(s[i]))) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     void
     handle_blob_upload(const auth_fn &auth, resp_https_t resp, req_https_t req) {
       if (!auth(resp, req)) {
@@ -276,8 +317,11 @@ namespace clipboard_http {
           R"({"error":"missing_mime"})");
         return;
       }
-      // Sanity: keep MIME short to avoid log/json blowups; real MIMEs fit easily.
-      if (mime_it->second.size() > 128) {
+      // Strict RFC 6838 token shape: type "/" subtype, each non-empty and made
+      // of [A-Za-z0-9!#$&^_.+-]. Length capped to keep logs/json bounded and
+      // to prevent the value being abused as an XSS vector when it is later
+      // echoed verbatim into the Content-Type header on the GET path.
+      if (!is_valid_mime(mime_it->second)) {
         resp->write(SimpleWeb::StatusCode::client_error_bad_request,
           R"({"error":"bad_mime"})");
         return;
@@ -368,7 +412,11 @@ namespace clipboard_http {
       }
 
       SimpleWeb::CaseInsensitiveMultimap headers;
+      // The mime was validated at upload time (is_valid_mime) so reflecting it
+      // here is safe; nosniff defends against any UA that might still try to
+      // override the declared type when displaying the response inline.
       headers.emplace("Content-Type", got.mime.empty() ? std::string { "application/octet-stream" } : got.mime);
+      headers.emplace("X-Content-Type-Options", "nosniff");
       headers.emplace("Cache-Control", "no-store");
       // Bytes-as-string copy: SimpleWebServer's `write(string)` is binary-safe
       // (string isn't NUL-terminated-sensitive).
