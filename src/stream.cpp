@@ -70,6 +70,9 @@ extern "C" {
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
+#define IDX_CURSOR_SHAPE 21  // Cursor shape metadata (Sunshine protocol extension)
+#define IDX_CURSOR_STATE 22  // Cursor state metadata (Sunshine protocol extension)
+#define IDX_CURSOR_MODE 23  // Cursor render mode notification (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -93,6 +96,9 @@ static const short packetTypes[] = {
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
   0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
+  0x5509,  // Cursor shape metadata (Sunshine protocol extension)
+  0x550A,  // Cursor state metadata (Sunshine protocol extension)
+  0x550B,  // Cursor render mode notification (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -396,6 +402,18 @@ namespace stream {
       return 0;
     }
 
+    int
+    send_unreliable(const std::string_view &payload, net::peer_t peer) {
+      auto packet = enet_packet_create(payload.data(), payload.size(), 0);
+      if (enet_peer_send(peer, 0, packet)) {
+        enet_packet_destroy(packet);
+
+        return -1;
+      }
+
+      return 0;
+    }
+
     void
     flush() {
       enet_host_flush(_host.get());
@@ -537,6 +555,12 @@ namespace stream {
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
+      safe::mail_raw_t::queue_t<cursor_render::shape_t> cursor_shape_queue;
+      safe::mail_raw_t::event_t<cursor_render::state_t> cursor_state_event;
+      std::uint32_t cursor_last_shape_id {};
+      bool cursor_mode_sent {};
+      bool cursor_fallback_remote_sent {};
+      std::chrono::steady_clock::time_point cursor_next_state_send {};
     } control;
 
     std::uint32_t launch_session_id;
@@ -1278,6 +1302,129 @@ namespace stream {
     };
   }
 
+  template <class T>
+  void
+  append_le(std::vector<std::uint8_t> &payload, T value) {
+    auto little = util::endian::little(value);
+    auto *bytes = reinterpret_cast<const std::uint8_t *>(&little);
+    payload.insert(payload.end(), bytes, bytes + sizeof(T));
+  }
+
+  void
+  append_u8(std::vector<std::uint8_t> &payload, std::uint8_t value) {
+    payload.push_back(value);
+  }
+
+  int
+  send_control_extension(session_t *session, std::uint16_t type, const std::vector<std::uint8_t> &payload, bool reliable) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
+      return -1;
+    }
+
+    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
+    const std::size_t encrypted_packet_length =
+      crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+      + crypto::cipher::tag_size
+      + sizeof(control_encrypted_t::seq);
+    if (encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(warning) << "Control extension payload too large for type "sv << util::hex(type).to_string_view()
+                         << " ("sv << payload.size() << " bytes)"sv;
+      return -1;
+    }
+
+    std::vector<std::uint8_t> plaintext(plaintext_size);
+    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    hdr->type = type;
+    hdr->payloadLength = (std::uint16_t) payload.size();
+    if (!payload.empty()) {
+      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    }
+
+    std::vector<std::uint8_t> encrypted(
+      sizeof(control_encrypted_t)
+      + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+      + crypto::cipher::tag_size);
+
+    auto view = encode_control_buf(
+      session,
+      std::string_view { (char *) plaintext.data(), plaintext.size() },
+      encrypted.data(),
+      encrypted.size());
+    if (view.empty()) {
+      return -1;
+    }
+
+    if (reliable) {
+      return session->broadcast_ref->control_server.send(view, session->control.peer);
+    }
+    return session->broadcast_ref->control_server.send_unreliable(view, session->control.peer);
+  }
+
+  int
+  send_cursor_mode(session_t *session, cursor_render::effective_mode_e mode, bool fallback_remote) {
+    if (!session->config.cursor_caps.cursor_channel_v1) {
+      return -1;
+    }
+
+    std::vector<std::uint8_t> payload;
+    payload.reserve(8);
+    append_u8(payload, 1);
+    append_u8(payload, mode == cursor_render::effective_mode_e::client ? 1 : 0);
+    append_u8(payload, fallback_remote ? cursor_render::state_flag_fallback_remote : 0);
+    append_u8(payload, 0);
+    append_le<std::uint32_t>(payload, cursor_render::next_state_seq());
+
+    return send_control_extension(session, packetTypes[IDX_CURSOR_MODE], payload, true);
+  }
+
+  int
+  send_cursor_shape(session_t *session, const cursor_render::shape_t &shape) {
+    if (!session->config.cursor_caps.cursor_channel_v1 ||
+        session->config.effective_cursor_render_mode != cursor_render::effective_mode_e::client) {
+      return -1;
+    }
+
+    std::vector<std::uint8_t> payload;
+    payload.reserve(20 + shape.pixels.size());
+    append_u8(payload, shape.version);
+    append_u8(payload, static_cast<std::uint8_t>(shape.format));
+    append_le<std::uint16_t>(payload, shape.width);
+    append_le<std::uint16_t>(payload, shape.height);
+    append_le<std::uint16_t>(payload, shape.pitch);
+    append_le<std::int16_t>(payload, shape.hotspot_x);
+    append_le<std::int16_t>(payload, shape.hotspot_y);
+    append_le<std::uint32_t>(payload, shape.shape_id);
+    append_le<std::uint32_t>(payload, static_cast<std::uint32_t>(shape.pixels.size()));
+    payload.insert(payload.end(), shape.pixels.begin(), shape.pixels.end());
+
+    return send_control_extension(session, packetTypes[IDX_CURSOR_SHAPE], payload, true);
+  }
+
+  int
+  send_cursor_state(session_t *session, const cursor_render::state_t &state) {
+    if (!session->config.cursor_caps.cursor_channel_v1 ||
+        session->config.effective_cursor_render_mode != cursor_render::effective_mode_e::client) {
+      return -1;
+    }
+
+    std::vector<std::uint8_t> payload;
+    payload.reserve(40);
+    append_u8(payload, state.version);
+    append_u8(payload, state.flags);
+    append_le<std::uint16_t>(payload, state.display_id);
+    append_le<std::uint32_t>(payload, state.seq);
+    append_le<std::uint32_t>(payload, state.shape_id);
+    append_le<std::int32_t>(payload, state.shape_left);
+    append_le<std::int32_t>(payload, state.shape_top);
+    append_le<std::int16_t>(payload, state.hotspot_x);
+    append_le<std::int16_t>(payload, state.hotspot_y);
+    append_le<std::uint16_t>(payload, state.dpi_scale_q8);
+    append_le<std::uint16_t>(payload, state.reserved);
+    append_le<std::uint64_t>(payload, state.host_qpc_time);
+
+    return send_control_extension(session, packetTypes[IDX_CURSOR_STATE], payload, !session->config.cursor_caps.cursor_state_unreliable_supported);
+  }
+
   /**
    * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
    * an opaque byte string; this function adds the framing header and encrypts.
@@ -1747,6 +1894,12 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (!session->control.cursor_mode_sent && session->config.cursor_caps.cursor_channel_v1) {
+              if (!send_cursor_mode(session, session->config.effective_cursor_render_mode, false)) {
+                session->control.cursor_mode_sent = true;
+              }
+            }
+
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -1767,6 +1920,42 @@ namespace stream {
               
               if (resolution) {
                 send_resolution_change(session, resolution->first, resolution->second);
+              }
+            }
+
+            auto &cursor_shape_queue = session->control.cursor_shape_queue;
+            while (session->control.peer && cursor_shape_queue->peek()) {
+              auto shape = cursor_shape_queue->pop();
+              if (!shape) {
+                continue;
+              }
+              if (shape->shape_id == session->control.cursor_last_shape_id) {
+                continue;
+              }
+              if (!send_cursor_shape(session, *shape)) {
+                session->control.cursor_last_shape_id = shape->shape_id;
+              }
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            auto &cursor_state_event = session->control.cursor_state_event;
+            if (session->control.peer && cursor_state_event->peek() && now >= session->control.cursor_next_state_send) {
+              auto state = cursor_state_event->pop();
+              if (state) {
+                const bool fallback_remote = (state->flags & cursor_render::state_flag_fallback_remote) != 0;
+                if (fallback_remote && !session->control.cursor_fallback_remote_sent) {
+                  if (!send_cursor_mode(session, cursor_render::effective_mode_e::remote, true)) {
+                    session->control.cursor_fallback_remote_sent = true;
+                  }
+                }
+                else if (!fallback_remote && session->control.cursor_fallback_remote_sent) {
+                  if (!send_cursor_mode(session, cursor_render::effective_mode_e::client, false)) {
+                    session->control.cursor_fallback_remote_sent = false;
+                    session->control.cursor_mode_sent = true;
+                  }
+                }
+                send_cursor_state(session, *state);
+                session->control.cursor_next_state_send = now + 4ms;  // Latest-only 240 Hz cap; TODO: prefer ENet unreliable sequenced when clients support it.
               }
             }
           }
@@ -2939,6 +3128,20 @@ namespace stream {
     audio::capture(session->mail, session->config.audio, session);
   }
 
+  bool
+  cursor_backend_metadata_supported(const video::config_t &monitor_config) {
+#ifdef _WIN32
+    if (config::video.capture_target != "display"sv) {
+      return false;
+    }
+
+    const auto &backend = monitor_config.capture_backend_override.empty() ? config::video.capture : monitor_config.capture_backend_override;
+    return backend.empty() || backend == "ddx"sv;
+#else
+    return false;
+#endif
+  }
+
   namespace session {
     std::atomic_uint running_sessions;
     std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
@@ -3157,6 +3360,25 @@ namespace stream {
       session->min_nits = launch_session.min_nits;
       session->max_full_nits = launch_session.max_full_nits;
 
+      const bool backend_metadata_supported = cursor_backend_metadata_supported(config.monitor);
+      auto cursor_mode = cursor_render::resolve_effective_mode(
+        config.requested_cursor_render_mode,
+        config.app_cursor_render_mode,
+        config.cursor_caps,
+        backend_metadata_supported,
+        false);
+      config.effective_cursor_render_mode = cursor_mode.mode;
+      config.effective_cursor_render_reason = std::move(cursor_mode.reason);
+      config.monitor.cursor_render_mode = config.effective_cursor_render_mode;
+      config.monitor.cursor_metadata_enabled = config.effective_cursor_render_mode == cursor_render::effective_mode_e::client;
+
+      BOOST_LOG(info) << "Cursor render mode: requested="sv << cursor_render::to_string(config.requested_cursor_render_mode)
+                      << ", app_override="sv << cursor_render::to_string(config.app_cursor_render_mode)
+                      << ", client_cursor_channel="sv << (config.cursor_caps.cursor_channel_v1 ? "yes"sv : "no"sv)
+                      << ", backend_metadata="sv << (backend_metadata_supported ? "yes"sv : "no"sv)
+                      << ", effective="sv << cursor_render::to_string(config.effective_cursor_render_mode)
+                      << ", reason="sv << config.effective_cursor_render_reason;
+
       session->config = config;
 
       // Initialize current total bitrate (including FEC) from config
@@ -3177,6 +3399,8 @@ namespace stream {
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
       session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
+      session->control.cursor_shape_queue = mail->queue<cursor_render::shape_t>(mail::cursor_shape);
+      session->control.cursor_state_event = mail->event<cursor_render::state_t>(mail::cursor_state);
       session->control.legacy_input_enc_iv = launch_session.iv;
       session->control.cipher = crypto::cipher::gcm_t {
         launch_session.gcm_key, false

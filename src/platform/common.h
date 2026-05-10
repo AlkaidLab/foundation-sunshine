@@ -298,6 +298,7 @@ namespace platf {
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
     constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync (negotiated only when GUI agent is alive)
     constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
+    constexpr caps_t cursor_channel = 0x10;  // Client-side cursor rendering metadata channel
   };  // namespace platform_caps
 
   struct gamepad_state_t {

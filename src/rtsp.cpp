@@ -26,6 +26,7 @@ extern "C" {
 // local includes
 #include "clipboard_bridge.h"
 #include "config.h"
+#include "cursor_render.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -921,7 +922,9 @@ namespace rtsp_stream {
       if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
       }
+      caps |= platf::platform_caps::cursor_channel;
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
+      ss << "a=x-ss-general.cursorChannel:1" << std::endl;
     }
 
     // Always request new control stream encryption if the client supports it
@@ -1167,6 +1170,10 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
+    args.try_emplace("x-ss-general.cursorChannel"sv, "0"sv);
+    args.try_emplace("x-ss-general.cursorNative"sv, "0"sv);
+    args.try_emplace("x-ss-general.cursorOverlay"sv, "0"sv);
+    args.try_emplace("x-ss-general.cursorStateUnreliable"sv, "0"sv);
     args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
     // Audio codec selection (Sunshine extension, opt-in by client).
@@ -1259,6 +1266,12 @@ namespace rtsp_stream {
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
+      config.cursor_caps.cursor_channel_v1 = getArg("x-ss-general.cursorChannel"sv) != 0;
+      config.cursor_caps.cursor_native_supported = getArg("x-ss-general.cursorNative"sv) != 0;
+      config.cursor_caps.cursor_overlay_supported = getArg("x-ss-general.cursorOverlay"sv) != 0;
+      config.cursor_caps.cursor_state_unreliable_supported = getArg("x-ss-general.cursorStateUnreliable"sv) != 0;
+      config.requested_cursor_render_mode = cursor_render::mode_from_view(config::input.cursor_render_mode);
+      config.app_cursor_render_mode = cursor_render::app_mode_from_view(session.cursor_render_mode);
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (getArg("x-nv-general.featureFlags"sv) & 0x20) {

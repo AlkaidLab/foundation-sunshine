@@ -5,6 +5,7 @@
 #pragma once
 
 #include "input.h"
+#include "cursor_render.h"
 #include "platform/common.h"
 #include "thread_safe.h"
 #include "video_colorspace.h"
@@ -90,6 +91,9 @@ namespace video {
     // This is intentionally scoped to a single platf::display() call so encoder
     // probing can avoid mutating the global config::video.capture string.
     std::string capture_backend_override;
+
+    cursor_render::effective_mode_e cursor_render_mode { cursor_render::effective_mode_e::remote };
+    bool cursor_metadata_enabled {};
 
     // Helper to get effective framerate as double
     double get_effective_framerate() const {

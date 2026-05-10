@@ -682,6 +682,8 @@ namespace video {
     safe::mail_raw_t::event_t<bool> idr_events;
     safe::mail_raw_t::event_t<hdr_info_t> hdr_events;
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_events;
+    safe::mail_raw_t::queue_t<cursor_render::shape_t> cursor_shape_queue;
+    safe::mail_raw_t::event_t<cursor_render::state_t> cursor_state_event;
 
     config_t config;
     int frame_nr;
@@ -698,6 +700,8 @@ namespace video {
 
   struct capture_ctx_t {
     img_event_t images;
+    safe::mail_raw_t::queue_t<cursor_render::shape_t> cursor_shape_queue;
+    safe::mail_raw_t::event_t<cursor_render::state_t> cursor_state_event;
     config_t config;
   };
 
@@ -1516,11 +1520,19 @@ namespace video {
       bool artificial_reinit = false;
 
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        auto cursor_update = cursor_render::take_thread_update();
         KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
           if (!capture_ctx->images->running()) {
             capture_ctx = capture_ctxs.erase(capture_ctx);
 
             continue;
+          }
+
+          if (cursor_update && capture_ctx->config.cursor_render_mode == cursor_render::effective_mode_e::client) {
+            if (cursor_update->shape) {
+              capture_ctx->cursor_shape_queue->raise(*cursor_update->shape);
+            }
+            capture_ctx->cursor_state_event->raise(cursor_update->state);
           }
 
           if (frame_captured) {
@@ -1546,7 +1558,13 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      const bool any_remote_cursor = std::any_of(capture_ctxs.begin(), capture_ctxs.end(), [](const auto &ctx) {
+        return ctx.config.cursor_render_mode == cursor_render::effective_mode_e::remote;
+      });
+      bool hide_cursor_for_client_mode = false;
+      auto cursor_visible = any_remote_cursor ? &display_cursor : &hide_cursor_for_client_mode;
+      cursor_render::clear_thread_update();
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, cursor_visible);
 
       if (artificial_reinit && status != platf::capture_e::error) {
         status = platf::capture_e::reinit;
@@ -2773,6 +2791,10 @@ namespace video {
         // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
       }
 
+      if (config.cursor_render_mode == cursor_render::effective_mode_e::client && !has_new_frame && !requested_idr_frame) {
+        continue;
+      }
+
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
@@ -3006,6 +3028,7 @@ namespace video {
     auto ec = platf::capture_e::ok;
     while (encode_session_ctx_queue.running()) {
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        auto cursor_update = cursor_render::take_thread_update();
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -3046,6 +3069,18 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          if (cursor_update && ctx->config.cursor_render_mode == cursor_render::effective_mode_e::client) {
+            if (cursor_update->shape) {
+              ctx->cursor_shape_queue->raise(*cursor_update->shape);
+            }
+            ctx->cursor_state_event->raise(cursor_update->state);
+          }
+
+          if (!frame_captured && ctx->config.cursor_render_mode == cursor_render::effective_mode_e::client) {
+            ++pos;
+            continue;
+          }
+
           if (frame_captured && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
@@ -3084,7 +3119,13 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      const bool any_remote_cursor = std::any_of(synced_session_ctxs.begin(), synced_session_ctxs.end(), [](const auto &ctx) {
+        return ctx->config.cursor_render_mode == cursor_render::effective_mode_e::remote;
+      });
+      bool hide_cursor_for_client_mode = false;
+      auto cursor_visible = any_remote_cursor ? &display_cursor : &hide_cursor_for_client_mode;
+      cursor_render::clear_thread_update();
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, cursor_visible);
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:
@@ -3146,7 +3187,12 @@ namespace video {
       return;
     }
 
-    ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
+    ref->capture_ctx_queue->raise(capture_ctx_t {
+      images,
+      mail->queue<cursor_render::shape_t>(mail::cursor_shape),
+      mail->event<cursor_render::state_t>(mail::cursor_state),
+      config,
+    });
 
     if (!ref->capture_ctx_queue->running()) {
       return;
@@ -3327,6 +3373,8 @@ namespace video {
         std::move(idr_events),
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
+        mail->queue<cursor_render::shape_t>(mail::cursor_shape),
+        mail->event<cursor_render::state_t>(mail::cursor_state),
         config,
         1,
         channel_data,

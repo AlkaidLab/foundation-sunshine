@@ -16,6 +16,7 @@ extern "C" {
 #include "display.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/cursor_render.h"
 #include "src/logging.h"
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
 #include "src/amf/amf_d3d11.h"
@@ -304,6 +305,75 @@ namespace platf::dxgi {
     }
 
     return cursor_img;
+  }
+
+  std::optional<cursor_render::shape_t>
+  make_bgra_cursor_shape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info, const util::buffer_t<std::uint8_t> &img_data) {
+    if (shape_info.Type != DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR) {
+      BOOST_LOG(warning) << "Unsupported cursor shape type for client cursor mode: "sv << shape_info.Type
+                         << " ("sv << shape_info.Width << 'x' << shape_info.Height << "), falling back to remote cursor until a supported shape is available"sv;
+      return std::nullopt;
+    }
+
+    const auto bytes_len = static_cast<std::size_t>(shape_info.Pitch) * shape_info.Height;
+    if (shape_info.Width == 0 || shape_info.Height == 0 || shape_info.Pitch == 0 || bytes_len > img_data.size()) {
+      BOOST_LOG(warning) << "Invalid cursor shape for client cursor mode: type="sv << shape_info.Type
+                         << ", size="sv << shape_info.Width << 'x' << shape_info.Height
+                         << ", pitch="sv << shape_info.Pitch << ", bytes="sv << img_data.size()
+                         << ", falling back to remote cursor until a supported shape is available"sv;
+      return std::nullopt;
+    }
+
+    cursor_render::shape_t shape;
+    shape.format = cursor_render::shape_format_e::bgra32_straight;
+    shape.width = static_cast<std::uint16_t>(shape_info.Width);
+    shape.height = static_cast<std::uint16_t>(shape_info.Height);
+    shape.pitch = static_cast<std::uint16_t>(shape_info.Pitch);
+    shape.hotspot_x = static_cast<std::int16_t>(shape_info.HotSpot.x);
+    shape.hotspot_y = static_cast<std::int16_t>(shape_info.HotSpot.y);
+    shape.pixels.assign(std::begin(img_data), std::begin(img_data) + bytes_len);
+    shape.shape_id = cursor_render::shape_id(shape.format, shape.width, shape.height, shape.pitch, shape.hotspot_x, shape.hotspot_y, shape.pixels);
+    return shape;
+  }
+
+  void
+  publish_cursor_update(
+    const DXGI_OUTDUPL_FRAME_INFO &frame_info,
+    int offset_x,
+    int offset_y,
+    std::uint16_t display_id,
+    std::uint32_t shape_id,
+    bool visible,
+    int shape_left,
+    int shape_top,
+    std::int16_t hotspot_x,
+    std::int16_t hotspot_y,
+    bool fallback_remote,
+    std::optional<cursor_render::shape_t> shape) {
+    cursor_render::state_t state;
+    state.flags = cursor_render::state_flag_client_overlay_allowed;
+    if (visible) {
+      state.flags |= cursor_render::state_flag_visible;
+    }
+    if (fallback_remote) {
+      state.flags |= cursor_render::state_flag_fallback_remote;
+    }
+    if (shape_id != 0) {
+      state.flags |= cursor_render::state_flag_shape_valid;
+    }
+    state.display_id = display_id;
+    state.seq = cursor_render::next_state_seq();
+    state.shape_id = shape_id;
+    state.shape_left = offset_x + shape_left;
+    state.shape_top = offset_y + shape_top;
+    state.hotspot_x = hotspot_x;
+    state.hotspot_y = hotspot_y;
+    state.host_qpc_time = static_cast<std::uint64_t>(std::max(frame_info.LastPresentTime.QuadPart, frame_info.LastMouseUpdateTime.QuadPart));
+
+    cursor_render::publish_thread_update(cursor_render::update_t {
+      std::move(shape),
+      state,
+    });
   }
 
   util::buffer_t<std::uint8_t>
@@ -2179,7 +2249,7 @@ namespace platf::dxgi {
     }
 
     const bool mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
-    const bool frame_update_flag = frame_info.LastPresentTime.QuadPart != 0;
+    const bool frame_update_flag = frame_info.AccumulatedFrames != 0 || frame_info.LastPresentTime.QuadPart != 0;
     const bool update_flag = mouse_update_flag || frame_update_flag;
 
     if (!update_flag) {
@@ -2192,6 +2262,7 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
+    std::optional<cursor_render::shape_t> cursor_shape;
     if (frame_info.PointerShapeBufferSize > 0) {
       DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
 
@@ -2203,6 +2274,18 @@ namespace platf::dxgi {
         BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv << util::hex(status).to_string_view() << ']';
 
         return capture_e::error;
+      }
+
+      cursor_shape = make_bgra_cursor_shape(shape_info, img_data);
+      if (cursor_shape) {
+        cursor_shape_id = cursor_shape->shape_id;
+        cursor_hotspot_x = cursor_shape->hotspot_x;
+        cursor_hotspot_y = cursor_shape->hotspot_y;
+      }
+      else {
+        cursor_shape_id = 0;
+        cursor_hotspot_x = 0;
+        cursor_hotspot_y = 0;
       }
 
       auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
@@ -2222,7 +2305,31 @@ namespace platf::dxgi {
         width, height, display_rotation, frame_info.PointerPosition.Visible);
     }
 
-    const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;
+    const bool cursor_metadata_visible = frame_info.LastMouseUpdateTime.QuadPart ? frame_info.PointerPosition.Visible : (cursor_alpha.visible || cursor_xor.visible);
+    const int cursor_left = frame_info.LastMouseUpdateTime.QuadPart ? frame_info.PointerPosition.Position.x : cursor_alpha.topleft_x;
+    const int cursor_top = frame_info.LastMouseUpdateTime.QuadPart ? frame_info.PointerPosition.Position.y : cursor_alpha.topleft_y;
+    const bool cursor_remote_fallback = cursor_metadata_enabled && cursor_metadata_visible && cursor_shape_id == 0;
+    if (cursor_metadata_enabled && mouse_update_flag) {
+      publish_cursor_update(
+        frame_info,
+        offset_x,
+        offset_y,
+        static_cast<std::uint16_t>(output_index + 1),
+        cursor_shape_id,
+        cursor_metadata_visible,
+        cursor_left,
+        cursor_top,
+        cursor_hotspot_x,
+        cursor_hotspot_y,
+        cursor_remote_fallback,
+        std::move(cursor_shape));
+    }
+
+    if (cursor_render::should_skip_video_frame(cursor_render::effective_mode_e::client, cursor_metadata_enabled && mouse_update_flag, frame_update_flag, cursor_remote_fallback)) {
+      return capture_e::timeout;
+    }
+
+    const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && (cursor_visible || cursor_remote_fallback);
 
     texture2d_t src {};
     if (frame_update_flag) {

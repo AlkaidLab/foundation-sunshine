@@ -70,6 +70,8 @@ namespace mail {
   MAIL(hdr);
   MAIL(dynamic_param_change);
   MAIL(resolution_change);
+  MAIL(cursor_shape);
+  MAIL(cursor_state);
 #undef MAIL
 
 }  // namespace mail

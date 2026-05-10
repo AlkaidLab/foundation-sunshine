@@ -232,6 +232,23 @@
                   </select>
                 </FormField>
 
+                <FormField
+                  id="cursorRenderMode"
+                  :label="t('apps.cursor_render_mode')"
+                  :hint="t('apps.cursor_render_mode_desc')"
+                >
+                  <select
+                    id="cursorRenderMode"
+                    class="form-select form-control-enhanced"
+                    v-model="formData['cursor-render-mode']"
+                  >
+                    <option value="inherit">{{ t('apps.cursor_render_mode_inherit') }}</option>
+                    <option value="remote">{{ t('apps.cursor_render_mode_remote') }}</option>
+                    <option value="client">{{ t('apps.cursor_render_mode_client') }}</option>
+                    <option value="auto">{{ t('apps.cursor_render_mode_auto') }}</option>
+                  </select>
+                </FormField>
+
                 <CheckboxField
                   id="autoDetach"
                   v-model="formData['auto-detach']"
@@ -320,6 +337,7 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'wait-all': true,
   'exit-timeout': 5,
   'mouse-mode': 0,
+  'cursor-render-mode': 'inherit',
   'prep-cmd': [],
   'menu-cmd': [],
   detached: [],
@@ -433,6 +451,9 @@ const ensureDefaultValues = () => {
   }
   if (isWindows.value && formData.value['mouse-mode'] === undefined) {
     formData.value['mouse-mode'] = 0
+  }
+  if (!formData.value['cursor-render-mode']) {
+    formData.value['cursor-render-mode'] = 'inherit'
   }
 }
 

@@ -172,6 +172,7 @@ namespace proc {
 
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
+    launch_session->cursor_render_mode = _app.cursor_render_mode;
 
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
@@ -802,6 +803,7 @@ namespace proc {
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
+        auto cursor_render_mode = app_node.get_optional<std::string>("cursor-render-mode"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -883,6 +885,7 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        ctx.cursor_render_mode = cursor_render_mode.value_or("inherit"s);
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);

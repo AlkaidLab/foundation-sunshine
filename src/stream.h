@@ -11,6 +11,7 @@
 
 #include "audio.h"
 #include "crypto.h"
+#include "cursor_render.h"
 #include "video.h"
 
 namespace stream {
@@ -34,6 +35,12 @@ namespace stream {
     uint32_t encryptionFlagsEnabled;
 
     std::optional<int> gcmap;
+
+    cursor_render::client_caps_t cursor_caps;
+    cursor_render::mode_e requested_cursor_render_mode { cursor_render::mode_e::remote };
+    cursor_render::app_mode_e app_cursor_render_mode { cursor_render::app_mode_e::inherit };
+    cursor_render::effective_mode_e effective_cursor_render_mode { cursor_render::effective_mode_e::remote };
+    std::string effective_cursor_render_reason;
   };
 
   // Session information structure for API responses

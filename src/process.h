@@ -70,6 +70,7 @@ namespace proc {
     bool auto_detach;
     bool wait_all;
     int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
+    std::string cursor_render_mode;  ///< inherit|remote|client|auto, controls cursor display only
     std::chrono::seconds exit_timeout;
   };
 

@@ -280,6 +280,17 @@ const vmouseStatusLabel = computed(() => {
       <div class="form-text">{{ $t('config.native_pen_touch_desc') }}</div>
     </div>
 
+    <!-- Cursor render mode -->
+    <div class="mb-3" v-if="config.mouse === 'enabled'">
+      <label for="cursor_render_mode" class="form-label">{{ $t('config.cursor_render_mode') }}</label>
+      <select id="cursor_render_mode" class="form-select" v-model="config.cursor_render_mode">
+        <option value="remote">{{ $t('config.cursor_render_mode_remote') }}</option>
+        <option value="client">{{ $t('config.cursor_render_mode_client') }}</option>
+        <option value="auto">{{ $t('config.cursor_render_mode_auto') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.cursor_render_mode_desc') }}</div>
+    </div>
+
     <!-- Virtual mouse driver -->
     <div class="mb-3" v-if="config.mouse === 'enabled' && platform === 'windows'">
       <div class="form-check form-switch">

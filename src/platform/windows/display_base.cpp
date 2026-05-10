@@ -555,6 +555,7 @@ namespace platf::dxgi {
     // Get rectangle of full desktop for absolute mouse coordinates
     env_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     env_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    cursor_metadata_enabled = config.cursor_metadata_enabled;
 
     HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
     if (FAILED(status)) {

@@ -20,6 +20,7 @@
 #include <AMF/core/CurrentTime.h>
 
 #include "src/platform/common.h"
+#include "src/cursor_render.h"
 #include "src/utility.h"
 #include "src/video.h"
 
@@ -89,9 +90,11 @@ namespace platf::dxgi {
   struct cursor_t {
     std::vector<std::uint8_t> img_data;
 
-    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info;
-    int x, y;
-    bool visible;
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    std::uint32_t shape_id {};
+    int x {};
+    int y {};
+    bool visible {};
   };
 
   class gpu_cursor_t {
@@ -153,21 +156,21 @@ namespace platf::dxgi {
     }
 
     texture2d_t texture;
-    LONG texture_width;
-    LONG texture_height;
+    LONG texture_width {};
+    LONG texture_height {};
 
-    LONG topleft_x;
-    LONG topleft_y;
+    LONG topleft_x {};
+    LONG topleft_y {};
 
-    LONG display_width;
-    LONG display_height;
-    DXGI_MODE_ROTATION display_rotation;
+    LONG display_width {};
+    LONG display_height {};
+    DXGI_MODE_ROTATION display_rotation { DXGI_MODE_ROTATION_UNSPECIFIED };
 
     shader_res_t input_res;
 
     D3D11_VIEWPORT cursor_view;
 
-    bool visible;
+    bool visible {};
   };
 
   class display_base_t: public display_t {
@@ -196,6 +199,7 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+    bool cursor_metadata_enabled {};
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.
@@ -411,6 +415,9 @@ namespace platf::dxgi {
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
+    std::uint32_t cursor_shape_id {};
+    std::int16_t cursor_hotspot_x {};
+    std::int16_t cursor_hotspot_y {};
 
     texture2d_t old_surface_delayed_destruction;
     std::chrono::steady_clock::time_point old_surface_timestamp;

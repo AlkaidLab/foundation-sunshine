@@ -53,6 +53,7 @@ INPUT = ../README.md \
         guides.md \
         performance_tuning.md \
         troubleshooting.md \
+        cursor_render_mode_protocol.md \
         building.md \
         contributing.md \
         ../third-party/doxyconfig/docs/source_code.md \

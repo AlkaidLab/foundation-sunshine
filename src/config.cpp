@@ -548,6 +548,7 @@ namespace config {
     true,  // high resolution scrolling
     true,  // native pen/touch support
     true,  // virtual mouse (use driver if available)
+    "remote"s,  // cursor_render_mode (remote, client, auto)
     false, // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
   };
@@ -1376,6 +1377,7 @@ namespace config {
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
+    string_restricted_f(vars, "cursor_render_mode", input.cursor_render_mode, { "remote"sv, "client"sv, "auto"sv });
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
     bool_f(vars, "clipboard_sync", input.clipboard_sync);
 
