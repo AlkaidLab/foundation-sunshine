@@ -4,3 +4,7 @@ Dockerfile text eol=lf
 
 # ensure flatpak lint json files are checked out with LF line endings
 *flatpak-lint-*.json text eol=lf
+
+# ensure Windows batch scripts are checked out with CRLF line endings
+*.bat text eol=crlf
+*.cmd text eol=crlf
