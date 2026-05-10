@@ -72,11 +72,12 @@ async function refreshVigemStatus() {
   vigemLoading.value = false
 }
 
-async function installVigem() {
-  if (!confirm(t('config.vigem_confirm_install'))) return
+async function installVigem(force = false) {
+  const key = force ? 'config.vigem_confirm_reinstall' : 'config.vigem_confirm_install'
+  if (!confirm(t(key))) return
   vigemOperating.value = true
   try {
-    await window.vigemDriver.install()
+    await window.vigemDriver.install(force)
     setTimeout(() => refreshVigemStatus(), 2000)
   } catch (e) {
     alert(String(e))
@@ -183,19 +184,28 @@ const vigemStatusLabel = computed(() => {
         <div class="vmouse-panel-body">
           <button v-if="!vigemStatus.installed || !vigemStatus.version_ok"
                   class="vmouse-action-btn vmouse-install-btn"
-                  @click="installVigem" :disabled="vigemOperating">
+                  @click="installVigem(false)" :disabled="vigemOperating">
             <span v-if="vigemOperating" class="vmouse-spinner"></span>
             <i v-else class="fas fa-download"></i>
             <span>{{ vigemOperating
               ? $t('config.vigem_installing')
               : (vigemStatus.installed ? $t('config.vigem_update') : $t('config.vigem_install')) }}</span>
           </button>
-          <button v-else class="vmouse-action-btn vmouse-uninstall-btn"
-                  @click="uninstallVigem" :disabled="vigemOperating">
-            <span v-if="vigemOperating" class="vmouse-spinner"></span>
-            <i v-else class="fas fa-trash-alt"></i>
-            <span>{{ vigemOperating ? $t('config.vigem_uninstalling') : $t('config.vigem_uninstall') }}</span>
-          </button>
+          <template v-else>
+            <button class="vmouse-action-btn vmouse-install-btn"
+                    @click="installVigem(true)" :disabled="vigemOperating"
+                    :title="$t('config.vigem_reinstall_desc')">
+              <span v-if="vigemOperating" class="vmouse-spinner"></span>
+              <i v-else class="fas fa-sync"></i>
+              <span>{{ vigemOperating ? $t('config.vigem_installing') : $t('config.vigem_reinstall') }}</span>
+            </button>
+            <button class="vmouse-action-btn vmouse-uninstall-btn"
+                    @click="uninstallVigem" :disabled="vigemOperating">
+              <span v-if="vigemOperating" class="vmouse-spinner"></span>
+              <i v-else class="fas fa-trash-alt"></i>
+              <span>{{ vigemOperating ? $t('config.vigem_uninstalling') : $t('config.vigem_uninstall') }}</span>
+            </button>
+          </template>
         </div>
       </div>
     </div>

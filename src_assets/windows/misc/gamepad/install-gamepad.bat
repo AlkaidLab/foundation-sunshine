@@ -1,6 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
 
+rem Optional first argument: "force" to skip the version check and always
+rem download + reinstall the latest ViGEmBus release. Without it the script
+rem keeps the original behaviour (bail out early if a compatible version
+rem is already installed).
+if /I "%~1"=="force" (
+    echo Force mode: skipping version check, will download and reinstall latest.
+    goto continue
+)
+
 rem Check if a compatible version of ViGEmBus is already installed (1.17 or later)
 rem
 rem Note: We use exit code 2 to indicate success because either 0 or 1 may be returned
