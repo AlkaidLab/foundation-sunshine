@@ -13,20 +13,23 @@ const props = defineProps([
 const config = ref(props.config)
 
 // Tauri 环境下的 vmouse 驱动管理
-const isTauri = ref(false)
+const hasVmouseDriver = ref(false)
 const vmouseStatus = ref({ installed: false, running: false, status_text: '' })
 const vmouseLoading = ref(false)
 const vmouseOperating = ref(false)
 
 // Tauri 环境下的 ViGEmBus 虚拟手柄驱动管理
+const hasVigemDriver = ref(false)
 const vigemStatus = ref({ installed: false, running: false, version: '', version_ok: false, status_text: '' })
 const vigemLoading = ref(false)
 const vigemOperating = ref(false)
 
 onMounted(async () => {
-  isTauri.value = !!(window.isTauri && (window.vmouseDriver || window.vigemDriver))
-  if (window.isTauri && window.vmouseDriver) await refreshVmouseStatus()
-  if (window.isTauri && window.vigemDriver) await refreshVigemStatus()
+  if (!window.isTauri) return
+  hasVmouseDriver.value = !!window.vmouseDriver
+  hasVigemDriver.value = !!window.vigemDriver
+  if (hasVmouseDriver.value) await refreshVmouseStatus()
+  if (hasVigemDriver.value) await refreshVigemStatus()
 })
 
 async function refreshVmouseStatus() {
@@ -160,7 +163,7 @@ const vigemStatusLabel = computed(() => {
     </div>
 
     <!-- ViGEmBus virtual gamepad driver management (Windows + Tauri only) -->
-    <div class="mb-3" v-if="config.controller === 'enabled' && platform === 'windows' && isTauri">
+    <div class="mb-3" v-if="config.controller === 'enabled' && platform === 'windows' && hasVigemDriver">
       <label class="form-label">
         {{ $t('config.vigem_label') }}
         <span class="badge bg-info text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">ViGEmBus</span>
@@ -384,7 +387,7 @@ const vigemStatusLabel = computed(() => {
       <div class="form-text">{{ $t('config.virtual_mouse_desc') }}</div>
 
       <!-- Tauri 环境：驱动管理面板 -->
-      <div v-if="isTauri" class="vmouse-panel mt-2">
+      <div v-if="hasVmouseDriver" class="vmouse-panel mt-2">
         <div class="vmouse-panel-header">
           <div class="vmouse-status-indicator">
             <span class="vmouse-dot" :class="vmouseDotClass"></span>
