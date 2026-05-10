@@ -1,4 +1,5 @@
 @echo off
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem"
 setlocal enabledelayedexpansion
 
 rem Get sunshine root directory

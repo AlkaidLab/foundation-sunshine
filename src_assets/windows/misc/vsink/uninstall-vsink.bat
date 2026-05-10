@@ -1,4 +1,5 @@
 @echo off
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem"
 :: Uninstall VB-Cable virtual audio device
 :: Requires administrator privileges
 
