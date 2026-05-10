@@ -18,11 +18,15 @@ const vmouseStatus = ref({ installed: false, running: false, status_text: '' })
 const vmouseLoading = ref(false)
 const vmouseOperating = ref(false)
 
+// Tauri 环境下的 ViGEmBus 虚拟手柄驱动管理
+const vigemStatus = ref({ installed: false, running: false, version: '', version_ok: false, status_text: '' })
+const vigemLoading = ref(false)
+const vigemOperating = ref(false)
+
 onMounted(async () => {
-  if (window.isTauri && window.vmouseDriver) {
-    isTauri.value = true
-    await refreshVmouseStatus()
-  }
+  isTauri.value = !!(window.isTauri && (window.vmouseDriver || window.vigemDriver))
+  if (window.isTauri && window.vmouseDriver) await refreshVmouseStatus()
+  if (window.isTauri && window.vigemDriver) await refreshVigemStatus()
 })
 
 async function refreshVmouseStatus() {
@@ -57,6 +61,38 @@ async function uninstallVmouse() {
   vmouseOperating.value = false
 }
 
+async function refreshVigemStatus() {
+  vigemLoading.value = true
+  try {
+    vigemStatus.value = await window.vigemDriver.getStatus()
+  } catch { /* ignore */ }
+  vigemLoading.value = false
+}
+
+async function installVigem() {
+  if (!confirm(t('config.vigem_confirm_install'))) return
+  vigemOperating.value = true
+  try {
+    await window.vigemDriver.install()
+    setTimeout(() => refreshVigemStatus(), 2000)
+  } catch (e) {
+    alert(String(e))
+  }
+  vigemOperating.value = false
+}
+
+async function uninstallVigem() {
+  if (!confirm(t('config.vigem_confirm_uninstall'))) return
+  vigemOperating.value = true
+  try {
+    await window.vigemDriver.uninstall()
+    setTimeout(() => refreshVigemStatus(), 2000)
+  } catch (e) {
+    alert(String(e))
+  }
+  vigemOperating.value = false
+}
+
 const vmouseDotClass = computed(() => {
   if (vmouseStatus.value.running) return 'dot-active'
   if (vmouseStatus.value.installed) return 'dot-warning'
@@ -67,6 +103,23 @@ const vmouseStatusLabel = computed(() => {
   if (vmouseStatus.value.running) return t('config.vmouse_status_running')
   if (vmouseStatus.value.installed) return t('config.vmouse_status_installed')
   return t('config.vmouse_status_not_installed')
+})
+
+const vigemDotClass = computed(() => {
+  if (vigemStatus.value.running) return 'dot-active'
+  if (vigemStatus.value.installed) return 'dot-warning'
+  return 'dot-inactive'
+})
+
+const vigemStatusLabel = computed(() => {
+  if (!vigemStatus.value.installed) return t('config.vigem_status_not_installed')
+  if (!vigemStatus.value.version_ok) return t('config.vigem_status_outdated')
+  if (vigemStatus.value.running) {
+    return vigemStatus.value.version
+      ? `${t('config.vigem_status_running')} (${vigemStatus.value.version})`
+      : t('config.vigem_status_running')
+  }
+  return t('config.vigem_status_installed')
 })
 </script>
 
@@ -104,6 +157,44 @@ const vmouseStatusLabel = computed(() => {
         </PlatformLayout>
       </select>
       <div class="form-text">{{ $t('config.gamepad_desc') }}</div>
+    </div>
+
+    <!-- ViGEmBus virtual gamepad driver management (Windows + Tauri only) -->
+    <div class="mb-3" v-if="config.controller === 'enabled' && platform === 'windows' && isTauri">
+      <label class="form-label">
+        {{ $t('config.vigem_label') }}
+        <span class="badge bg-info text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">ViGEmBus</span>
+      </label>
+      <div class="form-text mb-2">{{ $t('config.vigem_desc') }}</div>
+      <div class="vmouse-panel">
+        <div class="vmouse-panel-header">
+          <div class="vmouse-status-indicator">
+            <span class="vmouse-dot" :class="vigemDotClass"></span>
+            <span class="vmouse-status-label">{{ vigemStatusLabel }}</span>
+          </div>
+          <button class="vmouse-refresh-btn" @click="refreshVigemStatus"
+                  :disabled="vigemLoading" :title="$t('config.vigem_refresh')">
+            <i class="fas fa-sync-alt" :class="{ 'fa-spin': vigemLoading }"></i>
+          </button>
+        </div>
+        <div class="vmouse-panel-body">
+          <button v-if="!vigemStatus.installed || !vigemStatus.version_ok"
+                  class="vmouse-action-btn vmouse-install-btn"
+                  @click="installVigem" :disabled="vigemOperating">
+            <span v-if="vigemOperating" class="vmouse-spinner"></span>
+            <i v-else class="fas fa-download"></i>
+            <span>{{ vigemOperating
+              ? $t('config.vigem_installing')
+              : (vigemStatus.installed ? $t('config.vigem_update') : $t('config.vigem_install')) }}</span>
+          </button>
+          <button v-else class="vmouse-action-btn vmouse-uninstall-btn"
+                  @click="uninstallVigem" :disabled="vigemOperating">
+            <span v-if="vigemOperating" class="vmouse-spinner"></span>
+            <i v-else class="fas fa-trash-alt"></i>
+            <span>{{ vigemOperating ? $t('config.vigem_uninstalling') : $t('config.vigem_uninstall') }}</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="accordion" v-if="config.gamepad === 'ds4'">
