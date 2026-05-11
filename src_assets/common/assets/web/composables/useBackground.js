@@ -1,6 +1,6 @@
 import ColorThief from 'colorthief'
 
-const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
+const DEFAULT_BACKGROUND = 'https://s1.locimg.com/2025/07/16/b5126c98e73c6.png'
 const STORAGE_KEY = 'customBackground'
 
 const COLOR_CONFIG = {
@@ -196,7 +196,7 @@ export function useBackground(options = {}) {
   const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
 
   const setBackground = async (imageUrl) => {
-    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
+    document.body.style.background = `url(${imageUrl}) center/contain fixed no-repeat`
     if (isLocalImage(imageUrl)) {
       try {
         const colorInfo = await detectImageColorInfo(imageUrl)

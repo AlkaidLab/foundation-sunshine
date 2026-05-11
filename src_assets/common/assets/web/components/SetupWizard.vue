@@ -258,7 +258,8 @@
                     </a>
                     <a class="resource-link resource-link-apple"
                        href="https://github.com/skyhua0224/moonlight-macos-enhanced"
-                       target="_blank">
+                       target="_blank"
+                       rel="noopener noreferrer">
                       <div class="resource-icon"><i class="fab fa-apple"></i></div>
                       <div class="resource-content">
                         <span class="resource-title">{{ $t('resource_card.moonlight_macos_enhanced') }}</span>

@@ -145,6 +145,7 @@
                 class="resource-link resource-link-apple"
                 href="https://github.com/skyhua0224/moonlight-macos-enhanced"
                 target="_blank"
+                rel="noopener noreferrer"
               >
                 <div class="resource-icon">
                   <i class="fab fa-apple"></i>
