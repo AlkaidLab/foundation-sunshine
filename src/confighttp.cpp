@@ -1714,12 +1714,14 @@ namespace confighttp {
         session_obj["runtime_id"] = session_info.runtime_id;
         session_obj["launch_session_id"] = session_info.launch_session_id;
         session_obj["control_generation"] = session_info.control_generation;
+        session_obj["logical_session_key"] = session_info.logical_session_key;
         session_obj["client_cert_uuid"] = session_info.client_cert_uuid;
         session_obj["client_unique_id"] = session_info.client_unique_id;
         session_obj["trusted_client_identity"] = session_info.trusted_client_identity;
         session_obj["client_name"] = session_info.client_name;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
+        session_obj["canonical_state"] = session_info.canonical_state;
         session_obj["session_id"] = session_info.session_id;
         session_obj["width"] = session_info.width;
         session_obj["height"] = session_info.height;
@@ -1742,6 +1744,21 @@ namespace confighttp {
         session_obj["display_allocation_mode"] = session_info.display_allocation_mode;
         session_obj["display_resource_slot"] = session_info.display_resource_slot;
         session_obj["dedicated_display"] = session_info.dedicated_display;
+        session_obj["transport_path_id"] = session_info.transport_path_id;
+        session_obj["transport_kind"] = session_info.transport_kind;
+        session_obj["transport_protocol"] = session_info.transport_protocol;
+        session_obj["transport_flags"] = session_info.transport_flags;
+        session_obj["transport_rtt_us"] = session_info.transport_rtt_us;
+        session_obj["transport_jitter_us"] = session_info.transport_jitter_us;
+        session_obj["transport_packet_loss_ppm"] = session_info.transport_packet_loss_ppm;
+        session_obj["transport_route_id"] = session_info.transport_route_id;
+        session_obj["pointer_mode"] = session_info.pointer_mode;
+        session_obj["cursor_state_flags"] = session_info.cursor_state_flags;
+        session_obj["pointer_release_queue_depth"] = session_info.pointer_release_queue_depth;
+        session_obj["pointer_release_queue_delay_us"] = session_info.pointer_release_queue_delay_us;
+        session_obj["pointer_mode_switch_us"] = session_info.pointer_mode_switch_us;
+        session_obj["pointer_deltas_coalesced"] = session_info.pointer_deltas_coalesced;
+        session_obj["pointer_acceleration_risk_ppm"] = session_info.pointer_acceleration_risk_ppm;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
         

@@ -204,15 +204,15 @@ namespace platf::dxgi {
     output_t output;
     device_t device;
     device_ctx_t device_ctx;
-    DXGI_RATIONAL display_refresh_rate;
-    int display_refresh_rate_rounded;
+    DXGI_RATIONAL display_refresh_rate { 0, 1 };
+    int display_refresh_rate_rounded = 0;
 
     DXGI_MODE_ROTATION display_rotation = DXGI_MODE_ROTATION_UNSPECIFIED;
     int width_before_rotation;
     int height_before_rotation;
 
-    int client_frame_rate;  // Integer framerate for backward compatibility
-    DXGI_RATIONAL client_frame_rate_rational;  // Fractional framerate for NTSC support (e.g., 60000/1001 = 59.94fps)
+    int client_frame_rate = 0;  // Integer framerate for backward compatibility
+    DXGI_RATIONAL client_frame_rate_rational { 0, 1 };  // Fractional framerate for NTSC support (e.g., 60000/1001 = 59.94fps)
     int adapter_index;
     int output_index;
 
@@ -434,10 +434,26 @@ namespace platf::dxgi {
     blend_t blend_disable;
 
     ps_t cursor_ps;
+    ps_t cursor_erase_ps;
     vs_t cursor_vs;
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
+    gpu_cursor_t cursor_erase_alpha;
+    gpu_cursor_t cursor_erase_xor;
+
+    buf_t cursor_erase_info;
+    blend_t blend_cursor_erase;
+    texture2d_t cursor_erase_reference;
+    shader_res_t cursor_erase_reference_res;
+    texture2d_t cursor_erase_scratch;
+    shader_res_t cursor_erase_scratch_res;
+    bool cursor_erase_reference_valid = false;
+    HCURSOR cursor_erase_system_cursor = nullptr;
+    LONG cursor_erase_system_width = 0;
+    LONG cursor_erase_system_height = 0;
+    LONG cursor_erase_system_hotspot_x = 0;
+    LONG cursor_erase_system_hotspot_y = 0;
 
     texture2d_t old_surface_delayed_destruction;
     std::chrono::steady_clock::time_point old_surface_timestamp;

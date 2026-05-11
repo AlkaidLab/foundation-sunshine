@@ -29,11 +29,30 @@ namespace weak_net {
     healthy,
     recovering,
     random_loss,
+    qos_policer,
     delay_congestion,
+    handover,
     render_deadline,
     input_pressure,
     audio_pressure,
     motion_pressure,
+  };
+
+  enum class scenario_e {
+    startup,
+    strong_lan,
+    clean_alr,
+    random_loss,
+    qos_policer,
+    delay_congestion,
+    handover,
+    local_render,
+    motion_pressure,
+    audio_pressure,
+    input_pressure,
+    no_video_delivery,
+    recovering,
+    healthy,
   };
 
   struct pressure_signals_t {
@@ -83,7 +102,7 @@ namespace weak_net {
     int max_fec_percentage = 100;
     int startup_bitrate_kbps = 0;
     int ceiling_total_bitrate_kbps = 0;
-    int min_bitrate_kbps = 1500;
+    int min_bitrate_kbps = 500;
     int baseline_fps = 60;
     int startup_fps = 0;
     int min_fps = 0;
@@ -143,6 +162,14 @@ namespace weak_net {
     std::uint32_t waiting_for_rfi_frames = 0;
     std::uint32_t large_frame_fec_skipped = 0;
     std::uint32_t local_display_pressure = 0;
+    // Phase 3.3: client-reported OWD gradient. Set by V5+ feedback parsers.
+    // Positive = receiver-side queue is growing relative to send pacing
+    // (early-warning of tail-drop congestion). Zero when client did not
+    // negotiate ML_FF2_DELAY_GRADIENT.
+    std::int32_t delay_gradient_us = 0;
+    std::uint32_t interarrival_jitter_us = 0;
+    std::uint32_t delay_samples = 0;
+    bool delay_gradient_valid = false;
   };
 
   struct action_t {
@@ -150,6 +177,7 @@ namespace weak_net {
     state_e state = state_e::healthy;
     availability_e availability = availability_e::probing;
     reason_e reason = reason_e::healthy;
+    scenario_e scenario = scenario_e::healthy;
     tier_e tier = tier_e::bluray;
     int target_bitrate_kbps = 0;
     int fec_percentage = 0;
@@ -176,6 +204,12 @@ namespace weak_net {
     bool runtime_scale_applied = false;
     bool rfi_limited = false;
     bool request_idr = false;
+    // Phase 1.1/1.2/2/3.3 diagnostics — exposed for log/scan visibility.
+    bool congestion_anti_spiral = false;  // Phase 1.1: total-budget aware FEC fired
+    int recovery_hold_remaining = 0;      // Phase 1.2: countdown of probe-up suppression
+    int rtt_gradient_us = 0;              // Phase 2: smoothed RTT delta (μs)
+    int owd_gradient_us = 0;              // Phase 3.3: smoothed OWD pair-wise gradient (μs)
+    double owd_pressure = 0.0;            // Phase 3.3: derived early-warning pressure
   };
 
   class controller_t {
@@ -241,6 +275,18 @@ namespace weak_net {
     bool sustainable_limit_active_ = false;
     int idr_cooldown_windows_ = 0;
     int audio_cooldown_windows_ = 0;
+    // Phase 1.2: forbid bitrate up for N windows after exiting crisis/constrained.
+    int recovery_hold_windows_ = 0;
+    // Phase 2: smoothed RTT-pair gradient for early congestion detection.
+    std::uint32_t prev_rtt_ms_ = 0;
+    int prev_rtt_valid_windows_ = 0;
+    double rtt_gradient_ms_ewma_ = 0.0;
+    // Phase 3.3: smoothed OWD gradient from client feedback (already pair-wise
+    // averaged and EWMA'd on the receiver — we EWMA again across windows).
+    double owd_gradient_us_ewma_ = 0.0;
+    int owd_gradient_valid_windows_ = 0;
+    int startup_protection_remaining_ms_ = 0;
+    int safe_startup_floor_kbps_ = 0;
     config_t config_;
     state_e state_ = state_e::healthy;
     bool configured_ = false;
@@ -248,6 +294,9 @@ namespace weak_net {
 
   const char *
   reason_name(reason_e reason);
+
+  const char *
+  scenario_name(scenario_e scenario);
 
   std::uint32_t
   infer_local_display_pressure(const feedback_t &feedback);

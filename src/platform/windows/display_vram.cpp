@@ -226,6 +226,147 @@ namespace platf::dxgi {
       visible = (info.flags & CURSOR_SHOWING) != 0;
       return true;
     }
+
+    bool
+    query_system_cursor_info(CURSORINFO &info) {
+      info = {};
+      info.cbSize = sizeof(info);
+      return GetCursorInfo(&info) != FALSE;
+    }
+
+    bool
+    render_cursor_to_rgb_buffer(HCURSOR cursor,
+                                int width,
+                                int height,
+                                std::uint32_t background_rgb,
+                                std::vector<std::uint32_t> &pixels) {
+      if (!cursor || width <= 0 || height <= 0) {
+        return false;
+      }
+
+      BITMAPINFO bitmap_info {};
+      bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+      bitmap_info.bmiHeader.biWidth = width;
+      bitmap_info.bmiHeader.biHeight = -height;
+      bitmap_info.bmiHeader.biPlanes = 1;
+      bitmap_info.bmiHeader.biBitCount = 32;
+      bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+      void *bits = nullptr;
+      HDC screen_dc = GetDC(nullptr);
+      if (!screen_dc) {
+        return false;
+      }
+
+      HDC memory_dc = CreateCompatibleDC(screen_dc);
+      HBITMAP dib = memory_dc ?
+                      CreateDIBSection(screen_dc, &bitmap_info, DIB_RGB_COLORS, &bits, nullptr, 0) :
+                      nullptr;
+      ReleaseDC(nullptr, screen_dc);
+
+      if (!memory_dc || !dib || !bits) {
+        if (dib) {
+          DeleteObject(dib);
+        }
+        if (memory_dc) {
+          DeleteDC(memory_dc);
+        }
+        return false;
+      }
+
+      auto *raw_pixels = static_cast<std::uint32_t *>(bits);
+      const auto pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+      std::fill(raw_pixels, raw_pixels + pixel_count, background_rgb & 0x00FFFFFFu);
+
+      HGDIOBJ old_bitmap = SelectObject(memory_dc, dib);
+      const BOOL drawn = DrawIconEx(memory_dc,
+                                    0,
+                                    0,
+                                    cursor,
+                                    width,
+                                    height,
+                                    0,
+                                    nullptr,
+                                    DI_NORMAL);
+      if (old_bitmap) {
+        SelectObject(memory_dc, old_bitmap);
+      }
+
+      if (drawn) {
+        pixels.assign(raw_pixels, raw_pixels + pixel_count);
+      }
+
+      DeleteObject(dib);
+      DeleteDC(memory_dc);
+      return drawn != FALSE;
+    }
+
+    bool
+    make_system_cursor_mask(CURSORINFO &cursor_info,
+                            DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info,
+                            POINT &hotspot,
+                            util::buffer_t<std::uint8_t> &mask_bgra) {
+      if ((cursor_info.flags & CURSOR_SHOWING) == 0 || cursor_info.hCursor == nullptr) {
+        return false;
+      }
+
+      ICONINFO icon_info {};
+      if (!GetIconInfo(cursor_info.hCursor, &icon_info)) {
+        return false;
+      }
+
+      auto cleanup_icon_info = util::fail_guard([&]() {
+        if (icon_info.hbmColor) {
+          DeleteObject(icon_info.hbmColor);
+        }
+        if (icon_info.hbmMask) {
+          DeleteObject(icon_info.hbmMask);
+        }
+      });
+
+      BITMAP bitmap {};
+      int width = 0;
+      int height = 0;
+      if (icon_info.hbmColor &&
+          GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+        width = static_cast<int>(bitmap.bmWidth);
+        height = static_cast<int>(bitmap.bmHeight);
+      }
+      else if (icon_info.hbmMask &&
+               GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+        width = static_cast<int>(bitmap.bmWidth);
+        height = std::max(1, static_cast<int>(bitmap.bmHeight) / 2);
+      }
+
+      width = std::clamp(width, 1, 512);
+      height = std::clamp(height, 1, 512);
+
+      std::vector<std::uint32_t> black_pixels;
+      std::vector<std::uint32_t> white_pixels;
+      if (!render_cursor_to_rgb_buffer(cursor_info.hCursor, width, height, 0x000000u, black_pixels) ||
+          !render_cursor_to_rgb_buffer(cursor_info.hCursor, width, height, 0xFFFFFFu, white_pixels) ||
+          black_pixels.size() != white_pixels.size()) {
+        return false;
+      }
+
+      mask_bgra = util::buffer_t<std::uint8_t> { black_pixels.size() * 4U };
+      auto *mask_pixels = reinterpret_cast<std::uint32_t *>(std::begin(mask_bgra));
+      for (std::size_t i = 0; i < black_pixels.size(); ++i) {
+        const auto black_rgb = black_pixels[i] & 0x00FFFFFFu;
+        const auto white_rgb = white_pixels[i] & 0x00FFFFFFu;
+        const bool cursor_pixel = black_rgb != 0x000000u || white_rgb != 0x00FFFFFFu;
+        mask_pixels[i] = cursor_pixel ? 0xFFFFFFFFu : 0x00000000u;
+      }
+
+      shape_info = {};
+      shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+      shape_info.Width = static_cast<UINT>(width);
+      shape_info.Height = static_cast<UINT>(height);
+      shape_info.Pitch = static_cast<UINT>(width * 4);
+      hotspot.x = static_cast<LONG>(std::clamp<DWORD>(icon_info.xHotspot, 0, 512));
+      hotspot.y = static_cast<LONG>(std::clamp<DWORD>(icon_info.yHotspot, 0, 512));
+      return true;
+    }
   }  // namespace
 
   template <class T>
@@ -289,6 +430,40 @@ namespace platf::dxgi {
     return blend;
   }
 
+  blend_t
+  make_cursor_erase_blend(device_t::pointer device) {
+    D3D11_BLEND_DESC bdesc {};
+    auto &rt = bdesc.RenderTarget[0];
+    rt.BlendEnable = true;
+    rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    rt.BlendOp = D3D11_BLEND_OP_ADD;
+    rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+    rt.DestBlendAlpha = D3D11_BLEND_ONE;
+    rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    rt.RenderTargetWriteMask =
+      D3D11_COLOR_WRITE_ENABLE_RED |
+      D3D11_COLOR_WRITE_ENABLE_GREEN |
+      D3D11_COLOR_WRITE_ENABLE_BLUE;
+
+    blend_t blend;
+    auto status = device->CreateBlendState(&bdesc, &blend);
+    if (status) {
+      BOOST_LOG(error) << "Failed to create cursor erase blend state: [0x"sv << util::hex(status).to_string_view() << ']';
+      return nullptr;
+    }
+
+    return blend;
+  }
+
+  struct cursor_erase_constants_t {
+    float frame_size[4] {};
+    float cursor_rect[4] {};
+    std::int32_t options[4] {};
+  };
+
+  static_assert(sizeof(cursor_erase_constants_t) % 16 == 0, "cursor erase constants must be 16-byte aligned");
+
   blob_t convert_yuv420_packed_uv_type0_ps_hlsl;
   blob_t convert_yuv420_packed_uv_type0_ps_linear_hlsl;
   blob_t convert_yuv420_packed_uv_type0_ps_perceptual_quantizer_hlsl;
@@ -327,6 +502,7 @@ namespace platf::dxgi {
   blob_t convert_yuv444_planar_vs_hlsl;
   blob_t cursor_ps_hlsl;
   blob_t cursor_ps_normalize_white_hlsl;
+  blob_t cursor_erase_ps_hlsl;
   blob_t cursor_vs_hlsl;
   blob_t simple_cursor_vs_hlsl;
   blob_t simple_cursor_ps_hlsl;
@@ -2364,6 +2540,13 @@ namespace platf::dxgi {
       return capture_status;
     }
 
+    CURSORINFO system_cursor_info {};
+    const bool system_cursor_available = query_system_cursor_info(system_cursor_info);
+    const bool system_cursor_visible =
+      system_cursor_available &&
+      (system_cursor_info.flags & CURSOR_SHOWING) != 0 &&
+      system_cursor_info.hCursor != nullptr;
+
     const bool raw_mouse_update_flag = frame_info.LastMouseUpdateTime.QuadPart != 0 || frame_info.PointerShapeBufferSize > 0;
     const bool cursor_disabled_transition = last_cursor_visible && !cursor_visible;
     const bool force_clean_frame_for_cursor_plane = !cursor_visible &&
@@ -2383,6 +2566,16 @@ namespace platf::dxgi {
       BOOST_LOG(info) << "DDX VRAM cursor burn-in disabled; clearing cursor textures and forcing clean frame";
       cursor_alpha.clear();
       cursor_xor.clear();
+      cursor_erase_reference.reset();
+      cursor_erase_reference_res.reset();
+      cursor_erase_scratch.reset();
+      cursor_erase_scratch_res.reset();
+      cursor_erase_reference_valid = false;
+      cursor_erase_system_cursor = nullptr;
+      cursor_erase_system_width = 0;
+      cursor_erase_system_height = 0;
+      cursor_erase_system_hotspot_x = 0;
+      cursor_erase_system_hotspot_y = 0;
       last_frame_variant = {};
       old_surface_delayed_destruction.reset();
     }
@@ -2404,7 +2597,7 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (cursor_visible && frame_info.PointerShapeBufferSize > 0) {
+    if (frame_info.PointerShapeBufferSize > 0) {
       DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
 
       util::buffer_t<std::uint8_t> img_data { frame_info.PointerShapeBufferSize };
@@ -2420,10 +2613,24 @@ namespace platf::dxgi {
       auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
       auto xor_cursor_img = make_cursor_xor_image(img_data, shape_info);
 
-      if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_cursor_img), shape_info) ||
-          !set_cursor_texture(device.get(), cursor_xor, std::move(xor_cursor_img), shape_info)) {
+      if (cursor_visible) {
+        auto alpha_blend_img = alpha_cursor_img;
+        auto xor_blend_img = xor_cursor_img;
+        if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_blend_img), shape_info) ||
+            !set_cursor_texture(device.get(), cursor_xor, std::move(xor_blend_img), shape_info)) {
+          return capture_e::error;
+        }
+      }
+
+      if (!set_cursor_texture(device.get(), cursor_erase_alpha, std::move(alpha_cursor_img), shape_info) ||
+          !set_cursor_texture(device.get(), cursor_erase_xor, std::move(xor_cursor_img), shape_info)) {
         return capture_e::error;
       }
+      cursor_erase_system_cursor = nullptr;
+      cursor_erase_system_width = 0;
+      cursor_erase_system_height = 0;
+      cursor_erase_system_hotspot_x = 0;
+      cursor_erase_system_hotspot_y = 0;
     }
 
     if (cursor_visible && frame_info.LastMouseUpdateTime.QuadPart) {
@@ -2432,15 +2639,96 @@ namespace platf::dxgi {
 
       cursor_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
         width, height, display_rotation, frame_info.PointerPosition.Visible);
+
+      cursor_erase_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
+        width, height, display_rotation, frame_info.PointerPosition.Visible);
+
+      cursor_erase_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
+        width, height, display_rotation, frame_info.PointerPosition.Visible);
+    }
+    else if (!cursor_visible && raw_mouse_update_flag) {
+      cursor_alpha.clear();
+      cursor_xor.clear();
+      cursor_erase_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
+        width, height, display_rotation, frame_info.PointerPosition.Visible);
+
+      cursor_erase_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
+        width, height, display_rotation, frame_info.PointerPosition.Visible);
     }
     else if (!cursor_visible) {
       cursor_alpha.clear();
       cursor_xor.clear();
     }
 
-    const bool cursor_texture_present = cursor_alpha.texture.get() || cursor_xor.texture.get();
-    const bool cursor_state_visible = cursor_alpha.visible || cursor_xor.visible;
-    const bool blend_mouse_cursor_flag = cursor_state_visible && cursor_visible;
+    if (!cursor_visible) {
+      if (system_cursor_visible) {
+        POINT hotspot {};
+        DXGI_OUTDUPL_POINTER_SHAPE_INFO system_shape_info {};
+        const bool rebuild_system_cursor_mask =
+          cursor_erase_alpha.input_res == nullptr ||
+          cursor_erase_system_cursor != system_cursor_info.hCursor;
+        if (rebuild_system_cursor_mask) {
+          util::buffer_t<std::uint8_t> system_mask;
+          if (make_system_cursor_mask(system_cursor_info, system_shape_info, hotspot, system_mask)) {
+            if (!set_cursor_texture(device.get(), cursor_erase_alpha, std::move(system_mask), system_shape_info)) {
+              return capture_e::error;
+            }
+            cursor_erase_xor.clear();
+            cursor_erase_system_cursor = system_cursor_info.hCursor;
+            cursor_erase_system_width = static_cast<LONG>(system_shape_info.Width);
+            cursor_erase_system_height = static_cast<LONG>(system_shape_info.Height);
+            cursor_erase_system_hotspot_x = hotspot.x;
+            cursor_erase_system_hotspot_y = hotspot.y;
+
+            static int system_cursor_mask_logged = 0;
+            if (system_cursor_mask_logged < 20) {
+              ++system_cursor_mask_logged;
+              BOOST_LOG(info) << "DDX VRAM cursor-plane system erase mask"
+                              << " sample=" << system_cursor_mask_logged
+                              << " cursor=" << reinterpret_cast<void *>(system_cursor_info.hCursor)
+                              << " hotspot=" << hotspot.x << ',' << hotspot.y
+                              << " size=" << system_shape_info.Width << 'x' << system_shape_info.Height;
+            }
+          }
+        }
+
+        if (cursor_erase_alpha.input_res) {
+          if (cursor_erase_system_width <= 0 || cursor_erase_system_height <= 0) {
+            cursor_erase_system_width = cursor_erase_alpha.texture_width;
+            cursor_erase_system_height = cursor_erase_alpha.texture_height;
+          }
+
+          const LONG virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+          const LONG virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+          const LONG local_x = system_cursor_info.ptScreenPos.x - virtual_x - offset_x - cursor_erase_system_hotspot_x;
+          const LONG local_y = system_cursor_info.ptScreenPos.y - virtual_y - offset_y - cursor_erase_system_hotspot_y;
+          cursor_erase_alpha.set_pos(local_x, local_y, width, height, display_rotation, true);
+          cursor_erase_xor.set_pos(local_x, local_y, width, height, display_rotation, false);
+        }
+      }
+      else {
+        cursor_erase_alpha.set_pos(cursor_erase_alpha.topleft_x,
+                                   cursor_erase_alpha.topleft_y,
+                                   width,
+                                   height,
+                                   display_rotation,
+                                   false);
+        cursor_erase_xor.set_pos(cursor_erase_xor.topleft_x,
+                                 cursor_erase_xor.topleft_y,
+                                 width,
+                                 height,
+                                 display_rotation,
+                                 false);
+      }
+    }
+
+    const bool cursor_texture_present = cursor_visible ?
+                                          (cursor_alpha.texture.get() || cursor_xor.texture.get()) :
+                                          (cursor_erase_alpha.texture.get() || cursor_erase_xor.texture.get());
+    const bool cursor_state_visible = cursor_visible ?
+                                        (cursor_alpha.visible || cursor_xor.visible) :
+                                        (cursor_erase_alpha.visible || cursor_erase_xor.visible);
+    const bool blend_mouse_cursor_flag = cursor_visible && (cursor_alpha.visible || cursor_xor.visible);
     static int cursor_plane_suppressed_mouse_updates_logged = 0;
     if (!cursor_visible && raw_mouse_update_flag && cursor_plane_suppressed_mouse_updates_logged < 20) {
       ++cursor_plane_suppressed_mouse_updates_logged;
@@ -2600,6 +2888,8 @@ namespace platf::dxgi {
                       << " pointerShapeBytes=" << frame_info.PointerShapeBufferSize
                       << " pointerVisible=" << frame_info.PointerPosition.Visible
                       << " pos=" << frame_info.PointerPosition.Position.x << ',' << frame_info.PointerPosition.Position.y
+                      << " systemVisible=" << (system_cursor_visible ? 1 : 0)
+                      << " systemPos=" << system_cursor_info.ptScreenPos.x << ',' << system_cursor_info.ptScreenPos.y
                       << " srcFrame=" << (src ? 1 : 0)
                       << " frameUpdate=" << frame_update_flag
                       << " update=" << update_flag
@@ -2608,8 +2898,12 @@ namespace platf::dxgi {
                       << " lastVariant=" << last_variant
                       << " alphaVisible=" << cursor_alpha.visible
                       << " xorVisible=" << cursor_xor.visible
+                      << " eraseAlphaVisible=" << cursor_erase_alpha.visible
+                      << " eraseXorVisible=" << cursor_erase_xor.visible
                       << " alphaTex=" << (cursor_alpha.texture.get() ? 1 : 0)
                       << " xorTex=" << (cursor_xor.texture.get() ? 1 : 0)
+                      << " eraseAlphaTex=" << (cursor_erase_alpha.texture.get() ? 1 : 0)
+                      << " eraseXorTex=" << (cursor_erase_xor.texture.get() ? 1 : 0)
                       << " clientMayIncludeCursor=" << client_frame_may_include_cursor;
     }
 
@@ -2658,6 +2952,140 @@ namespace platf::dxgi {
       d3d_img->blank = false;
 
       return { std::move(d3d_img), std::move(lock_helper) };
+    };
+
+    bool cursor_erase_applied_this_frame = false;
+
+    auto ensure_cursor_erase_surfaces = [&]() -> bool {
+      if (cursor_erase_reference && cursor_erase_reference_res && cursor_erase_scratch && cursor_erase_scratch_res) {
+        return true;
+      }
+
+      cursor_erase_reference.reset();
+      cursor_erase_reference_res.reset();
+      cursor_erase_scratch.reset();
+      cursor_erase_scratch_res.reset();
+      cursor_erase_reference_valid = false;
+
+      if (capture_format == DXGI_FORMAT_UNKNOWN) {
+        return false;
+      }
+
+      D3D11_TEXTURE2D_DESC t {};
+      t.Width = width_before_rotation;
+      t.Height = height_before_rotation;
+      t.MipLevels = 1;
+      t.ArraySize = 1;
+      t.SampleDesc.Count = 1;
+      t.Usage = D3D11_USAGE_DEFAULT;
+      t.Format = capture_format;
+      t.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+      auto status = device->CreateTexture2D(&t, nullptr, &cursor_erase_reference);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create cursor erase reference texture [0x"sv << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+      status = device->CreateShaderResourceView(cursor_erase_reference.get(), nullptr, &cursor_erase_reference_res);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create cursor erase reference SRV [0x"sv << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+
+      status = device->CreateTexture2D(&t, nullptr, &cursor_erase_scratch);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create cursor erase scratch texture [0x"sv << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+      status = device->CreateShaderResourceView(cursor_erase_scratch.get(), nullptr, &cursor_erase_scratch_res);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create cursor erase scratch SRV [0x"sv << util::hex(status).to_string_view() << ']';
+        return false;
+      }
+
+      return true;
+    };
+
+    auto erase_cursor_mask = [&](img_d3d_t &d3d_img, gpu_cursor_t &mask, bool use_reference) {
+      if (!mask.visible || !mask.input_res || mask.cursor_view.Width <= 0.0f || mask.cursor_view.Height <= 0.0f) {
+        return;
+      }
+
+      cursor_erase_constants_t constants {};
+      constants.frame_size[0] = static_cast<float>(d3d_img.width);
+      constants.frame_size[1] = static_cast<float>(d3d_img.height);
+      constants.cursor_rect[0] = mask.cursor_view.TopLeftX;
+      constants.cursor_rect[1] = mask.cursor_view.TopLeftY;
+      constants.cursor_rect[2] = mask.cursor_view.Width;
+      constants.cursor_rect[3] = mask.cursor_view.Height;
+      constants.options[0] = use_reference ? 1 : 0;
+      device_ctx->UpdateSubresource(cursor_erase_info.get(), 0, nullptr, &constants, 0, 0);
+
+      ID3D11ShaderResourceView *resources[] {
+        cursor_erase_scratch_res.get(),
+        cursor_erase_reference_res.get(),
+        mask.input_res.get(),
+      };
+      device_ctx->PSSetShaderResources(0, 3, resources);
+      device_ctx->PSSetConstantBuffers(3, 1, &cursor_erase_info);
+      device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
+      device_ctx->PSSetShader(cursor_erase_ps.get(), nullptr, 0);
+      device_ctx->OMSetRenderTargets(1, &d3d_img.capture_rt, nullptr);
+      device_ctx->OMSetBlendState(blend_cursor_erase.get(), nullptr, 0xFFFFFFFFu);
+      device_ctx->RSSetViewports(1, &mask.cursor_view);
+      device_ctx->Draw(3, 0);
+    };
+
+    auto erase_burned_cursor_for_cursor_plane = [&](img_d3d_t &d3d_img) -> bool {
+      if (cursor_visible ||
+          (!cursor_erase_alpha.visible && !cursor_erase_xor.visible) ||
+          (!cursor_erase_alpha.input_res && !cursor_erase_xor.input_res)) {
+        return true;
+      }
+      if (!ensure_cursor_erase_surfaces()) {
+        BOOST_LOG(warning) << "DDX VRAM cursor erase skipped reason=surface-init-failed";
+        return true;
+      }
+
+      device_ctx->CopyResource(cursor_erase_scratch.get(), d3d_img.capture_texture.get());
+      const bool use_reference = cursor_erase_reference_valid;
+      erase_cursor_mask(d3d_img, cursor_erase_alpha, use_reference);
+      erase_cursor_mask(d3d_img, cursor_erase_xor, use_reference);
+
+      ID3D11ShaderResourceView *emptyShaderResourceViews[] { nullptr, nullptr, nullptr };
+      device_ctx->PSSetShaderResources(0, 3, emptyShaderResourceViews);
+      ID3D11Buffer *emptyBuffer = nullptr;
+      device_ctx->PSSetConstantBuffers(3, 1, &emptyBuffer);
+      device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
+      ID3D11RenderTargetView *emptyRenderTarget = nullptr;
+      device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
+      device_ctx->RSSetViewports(0, nullptr);
+
+      device_ctx->CopyResource(cursor_erase_reference.get(), d3d_img.capture_texture.get());
+      cursor_erase_reference_valid = true;
+      cursor_erase_applied_this_frame = true;
+
+      static int cursor_erase_logged = 0;
+      if (cursor_erase_logged < 20) {
+        ++cursor_erase_logged;
+        BOOST_LOG(info) << "DDX VRAM cursor-plane erase pass"
+                        << " sample=" << cursor_erase_logged
+                        << " useReference=" << (use_reference ? 1 : 0)
+                        << " alphaVisible=" << (cursor_erase_alpha.visible ? 1 : 0)
+                        << " xorVisible=" << (cursor_erase_xor.visible ? 1 : 0)
+                        << " alphaTex=" << (cursor_erase_alpha.input_res ? 1 : 0)
+                        << " xorTex=" << (cursor_erase_xor.input_res ? 1 : 0)
+                        << " pointerVisible=" << frame_info.PointerPosition.Visible
+                        << " pos=" << frame_info.PointerPosition.Position.x << ',' << frame_info.PointerPosition.Position.y
+                        << " systemVisible=" << (system_cursor_visible ? 1 : 0)
+                        << " systemPos=" << system_cursor_info.ptScreenPos.x << ',' << system_cursor_info.ptScreenPos.y
+                        << " eraseRect=" << cursor_erase_alpha.cursor_view.TopLeftX << ','
+                        << cursor_erase_alpha.cursor_view.TopLeftY << ','
+                        << cursor_erase_alpha.cursor_view.Width << ','
+                        << cursor_erase_alpha.cursor_view.Height;
+      }
+
+      return true;
     };
 
     switch (last_frame_action) {
@@ -2716,6 +3144,7 @@ namespace platf::dxgi {
         if (!d3d_img) return capture_e::error;
 
         device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
+        if (!erase_burned_cursor_for_cursor_plane(*d3d_img)) return capture_e::error;
         last_frame_variant = img;
         break;
       }
@@ -2867,6 +3296,15 @@ namespace platf::dxgi {
       if (auto d3d_img = std::static_pointer_cast<img_d3d_t>(img_out); d3d_img && d3d_img->capture_texture) {
         texture_lock_helper probe_lock(d3d_img->capture_mutex.get());
         if (probe_lock.lock()) {
+          const bool proof_use_system_cursor = !cursor_visible && system_cursor_available;
+          POINT proof_cursor_point = proof_use_system_cursor ?
+                                       system_cursor_info.ptScreenPos :
+                                       frame_info.PointerPosition.Position;
+          const bool proof_pointer_visible = proof_use_system_cursor ?
+                                               system_cursor_visible :
+                                               frame_info.PointerPosition.Visible;
+          const bool proof_mouse_update = raw_mouse_update_flag ||
+                                          (proof_use_system_cursor && system_cursor_visible);
           update_d3d_cursor_probe(*img_out,
                                   device.get(),
                                   device_ctx.get(),
@@ -2876,9 +3314,9 @@ namespace platf::dxgi {
                                   cursor_visible,
                                   blend_mouse_cursor_flag,
                                   src.get() != nullptr,
-                                  raw_mouse_update_flag,
-                                  frame_info.PointerPosition.Visible,
-                                  frame_info.PointerPosition.Position,
+                                  proof_mouse_update,
+                                  proof_pointer_visible,
+                                  proof_cursor_point,
                                   offset_x,
                                   offset_y,
                                   cursor_probe_last_hash,
@@ -2907,7 +3345,8 @@ namespace platf::dxgi {
       client_frame_may_include_cursor = true;
     }
     else if (!cursor_visible && frame_update_flag) {
-      client_frame_may_include_cursor = false;
+      client_frame_may_include_cursor =
+        (frame_info.PointerPosition.Visible || system_cursor_visible) && !cursor_erase_applied_this_frame;
     }
 
     return capture_e::ok;
@@ -2991,13 +3430,32 @@ namespace platf::dxgi {
       }
     }
 
+    status = device->CreatePixelShader(cursor_erase_ps_hlsl->GetBufferPointer(), cursor_erase_ps_hlsl->GetBufferSize(), nullptr, &cursor_erase_ps);
+    if (status) {
+      BOOST_LOG(error) << "Failed to create cursor erase pixel shader [0x"sv << util::hex(status).to_string_view() << ']';
+      return -1;
+    }
+
     blend_alpha = make_blend(device.get(), true, false);
     blend_invert = make_blend(device.get(), true, true);
     blend_disable = make_blend(device.get(), false, false);
+    blend_cursor_erase = make_cursor_erase_blend(device.get());
 
-    if (!blend_disable || !blend_alpha || !blend_invert) {
+    if (!blend_disable || !blend_alpha || !blend_invert || !blend_cursor_erase) {
       return -1;
     }
+
+    D3D11_BUFFER_DESC cursor_erase_desc {};
+    cursor_erase_desc.ByteWidth = sizeof(cursor_erase_constants_t);
+    cursor_erase_desc.Usage = D3D11_USAGE_DEFAULT;
+    cursor_erase_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    buf_t::pointer cursor_erase_info_p;
+    status = device->CreateBuffer(&cursor_erase_desc, nullptr, &cursor_erase_info_p);
+    if (status) {
+      BOOST_LOG(error) << "Failed to create cursor erase constant buffer [0x"sv << util::hex(status).to_string_view() << ']';
+      return -1;
+    }
+    cursor_erase_info = buf_t { cursor_erase_info_p };
 
     device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
     ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
@@ -3702,6 +4160,7 @@ namespace platf::dxgi {
     compile_vertex_shader_helper(convert_yuv444_planar_vs);
     compile_pixel_shader_helper(cursor_ps);
     compile_pixel_shader_helper(cursor_ps_normalize_white);
+    compile_pixel_shader_helper(cursor_erase_ps);
     compile_vertex_shader_helper(cursor_vs);
     compile_pixel_shader_helper(simple_cursor_ps);
     compile_vertex_shader_helper(simple_cursor_vs);

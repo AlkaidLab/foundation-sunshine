@@ -18,6 +18,11 @@ namespace input {
   test_batch_scroll_delta(std::int16_t first,
                           std::int16_t second,
                           bool &batched);
+
+  std::uint32_t
+  test_estimate_pointer_acceleration_risk_ppm(std::uint32_t queue_depth,
+                                              std::uint32_t queue_delay_us,
+                                              std::uint32_t coalesced_deltas);
 }  // namespace input
 
 #include "../tests_common.h"
@@ -49,4 +54,15 @@ TEST(InputBatchingTests, CoalescesScrollDeltasWhenNoOverflow) {
 
   EXPECT_TRUE(batched);
   EXPECT_EQ(result, 120);
+}
+
+TEST(InputBatchingTests, EstimatesPointerAccelerationRiskFromBacklogAndCoalescing) {
+  EXPECT_EQ(input::test_estimate_pointer_acceleration_risk_ppm(0, 0, 0), 0U);
+
+  auto moderate = input::test_estimate_pointer_acceleration_risk_ppm(2, 4000, 3);
+  auto severe = input::test_estimate_pointer_acceleration_risk_ppm(12, 22000, 40);
+
+  EXPECT_GT(moderate, 0U);
+  EXPECT_GT(severe, moderate);
+  EXPECT_LE(severe, 1000000U);
 }

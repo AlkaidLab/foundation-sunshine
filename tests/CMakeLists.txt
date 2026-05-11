@@ -93,8 +93,10 @@ endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
 add_executable(stream_controller_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_quality.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_weak_net_controller.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Session.c
         ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp
         ${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp)
 target_include_directories(stream_controller_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

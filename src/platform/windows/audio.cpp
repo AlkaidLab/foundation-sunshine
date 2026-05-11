@@ -885,20 +885,39 @@ namespace platf::audio {
 
       auto &device_id = virtual_sink_info->first;
       auto &waveformats = virtual_sink_info->second.get().virtual_sink_waveformats;
-      for (const auto &waveformat : waveformats) {
+      const auto try_waveformat = [&](const WAVEFORMATEXTENSIBLE &waveformat) -> bool {
         // We're using completely undocumented and unlisted API,
         // better not pass objects without copying them first.
         auto device_id_copy = device_id;
         auto waveformat_copy = waveformat;
         auto waveformat_copy_pointer = reinterpret_cast<WAVEFORMATEX *>(&waveformat_copy);
 
+        WAVEFORMATEXTENSIBLE p {};
+        if (SUCCEEDED(policy->SetDeviceFormat(device_id_copy.c_str(), waveformat_copy_pointer, (WAVEFORMATEX *) &p))) {
+          BOOST_LOG(info) << "Changed virtual audio sink format to " << logging::bracket(waveformat_to_pretty_string(waveformat));
+          return true;
+        }
+        return false;
+      };
+
+      for (const auto &waveformat : waveformats) {
         if (wanted_bits_per_sample != waveformat.Samples.wValidBitsPerSample) {
           continue;
         }
 
-        WAVEFORMATEXTENSIBLE p {};
-        if (SUCCEEDED(policy->SetDeviceFormat(device_id_copy.c_str(), waveformat_copy_pointer, (WAVEFORMATEX *) &p))) {
-          BOOST_LOG(info) << "Changed virtual audio sink format to " << logging::bracket(waveformat_to_pretty_string(waveformat));
+        if (try_waveformat(waveformat)) {
+          return device_id;
+        }
+      }
+
+      BOOST_LOG(warning) << "Preferred "sv << wanted_bits_per_sample
+                         << "-bit virtual audio sink format failed; trying fallback formats"sv;
+      for (const auto &waveformat : waveformats) {
+        if (wanted_bits_per_sample == waveformat.Samples.wValidBitsPerSample) {
+          continue;
+        }
+
+        if (try_waveformat(waveformat)) {
           return device_id;
         }
       }

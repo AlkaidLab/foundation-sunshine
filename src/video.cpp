@@ -10,6 +10,7 @@
 #include <functional>
 #include <future>
 #include <list>
+#include <mutex>
 #include <thread>
 
 #include <boost/pointer_cast.hpp>
@@ -1523,6 +1524,7 @@ namespace video {
   };
 
   static encoder_t *chosen_encoder;
+  static std::mutex encoder_probe_mutex;
   int active_hevc_mode;
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
@@ -1610,6 +1612,9 @@ namespace video {
     std::vector<capture_ctx_t> capture_ctxs;
 
     auto fg = util::fail_guard([&]() {
+      BOOST_LOG(info) << "[Display] Capture thread fail-guard running"
+                      << " queueRunning=" << (capture_ctx_queue->running() ? 1 : 0)
+                      << " activeContexts=" << capture_ctxs.size();
       capture_ctx_queue->stop();
 
       // Stop all sessions listening to this thread
@@ -1622,12 +1627,24 @@ namespace video {
     });
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    BOOST_LOG(info) << "[Display] Capture thread started"
+                    << " queueRunning=" << (capture_ctx_queue->running() ? 1 : 0);
 
     // Wait for the initial capture context or a request to stop the queue
+    BOOST_LOG(info) << "[Display] Capture thread waiting for initial context";
     auto initial_capture_ctx = capture_ctx_queue->pop();
     if (!initial_capture_ctx) {
+      BOOST_LOG(warning) << "[Display] Capture thread exited before initial context"
+                         << " queueRunning=" << (capture_ctx_queue->running() ? 1 : 0)
+                         << " reinitPending=" << (reinit_event.peek() ? 1 : 0);
       return;
     }
+    BOOST_LOG(info) << "[Display] Capture thread received initial context"
+                    << " requested=" << initial_capture_ctx->config.width << 'x' << initial_capture_ctx->config.height
+                    << '@' << initial_capture_ctx->config.framerate
+                    << " preferCursorPlane=" << (initial_capture_ctx->config.preferCursorPlane ? 1 : 0)
+                    << " displayName="
+                    << (initial_capture_ctx->config.display_name.empty() ? "<default>" : initial_capture_ctx->config.display_name);
     capture_ctxs.emplace_back(std::move(*initial_capture_ctx));
 
     // Get all the monitor names now, rather than at boot, to
@@ -3934,17 +3951,29 @@ namespace video {
 
     auto ref = capture_thread_async.ref();
     if (!ref) {
+      BOOST_LOG(error) << "[Display] capture_async missing capture-thread ref";
       return;
     }
 
     auto state = ref->state;
     if (!state || !state->capture_ctx_queue || !state->encoder_p) {
+      BOOST_LOG(error) << "[Display] capture_async missing async state"
+                       << " state=" << (state ? 1 : 0)
+                       << " queue=" << ((state && state->capture_ctx_queue) ? 1 : 0)
+                       << " encoder=" << ((state && state->encoder_p) ? 1 : 0);
       return;
     }
 
+    BOOST_LOG(info) << "[Display] capture_async queueing session"
+                    << " requested=" << config.width << 'x' << config.height
+                    << '@' << config.framerate
+                    << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
+                    << " displayName=" << (config.display_name.empty() ? "<default>" : config.display_name)
+                    << " queueRunning=" << (state->capture_ctx_queue->running() ? 1 : 0);
     state->capture_ctx_queue->raise(capture_ctx_t { images, config });
 
     if (!state->capture_ctx_queue->running()) {
+      BOOST_LOG(warning) << "[Display] capture_async queue stopped immediately after raise";
       return;
     }
 
@@ -4135,6 +4164,9 @@ namespace video {
     }
   }
 
+  encoder_t *
+  ensure_encoder_selected_for_capture();
+
   void
   capture(
     safe::mail_t mail,
@@ -4145,9 +4177,15 @@ namespace video {
     input_activity_fn_t input_activity,
     startup_pacing_fn_t startup_pacing) {
     auto idr_events = mail->event<bool>(mail::idr);
+    auto *encoder = ensure_encoder_selected_for_capture();
+    if (!encoder) {
+      BOOST_LOG(error) << "Video capture cannot start because no usable encoder is selected";
+      mail->event<bool>(mail::shutdown)->raise(true);
+      return;
+    }
 
     idr_events->raise(true);
-    if (chosen_encoder->flags & PARALLEL_ENCODING) {
+    if (encoder->flags & PARALLEL_ENCODING) {
       capture_async(std::move(mail), config, channel_data, dynamic_param_events, frame_interest_feedback, input_activity, startup_pacing);
     }
     else {
@@ -4506,7 +4544,7 @@ namespace video {
   }
 
   int
-  probe_encoders() {
+  probe_encoders_locked() {
     if (!allow_encoder_probing()) {
       // Error already logged
       return -1;
@@ -4697,6 +4735,25 @@ namespace video {
     return 0;
   }
 
+  int
+  probe_encoders() {
+    std::lock_guard lock(encoder_probe_mutex);
+    return probe_encoders_locked();
+  }
+
+  encoder_t *
+  ensure_encoder_selected_for_capture() {
+    std::lock_guard lock(encoder_probe_mutex);
+    if (!chosen_encoder) {
+      BOOST_LOG(warning) << "No encoder selected when video capture started; probing encoders on video thread";
+      if (probe_encoders_locked()) {
+        return nullptr;
+      }
+    }
+
+    return chosen_encoder;
+  }
+
   // Linux only declaration
   typedef int (*vaapi_init_avcodec_hardware_input_buffer_fn)(platf::avcodec_encode_device_t *encode_device, AVBufferRef **hw_device_buf);
 
@@ -4807,7 +4864,14 @@ namespace video {
     capture_thread_ctx.state = std::make_shared<capture_thread_async_state_t>();
     auto state = capture_thread_ctx.state;
 
-    state->encoder_p = chosen_encoder;
+    {
+      std::lock_guard lock(encoder_probe_mutex);
+      state->encoder_p = chosen_encoder;
+    }
+    if (!state->encoder_p) {
+      BOOST_LOG(error) << "[Display] Cannot launch async capture thread without a selected encoder";
+      return -1;
+    }
     state->reinit_event.reset();
 
     state->capture_ctx_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
@@ -4820,16 +4884,25 @@ namespace video {
       std::ref(*state->encoder_p)
     };
 
+    BOOST_LOG(info) << "[Display] Async capture thread launched"
+                    << " queueRunning=" << (state->capture_ctx_queue->running() ? 1 : 0)
+                    << " encoderReady=" << (state->encoder_p ? 1 : 0);
+
     return 0;
   }
   void
   end_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
     auto state = std::move(capture_thread_ctx.state);
+    BOOST_LOG(info) << "[Display] Async capture thread shutdown requested"
+                    << " state=" << (state ? 1 : 0)
+                    << " queue=" << ((state && state->capture_ctx_queue) ? 1 : 0)
+                    << " joinable=" << (capture_thread_ctx.capture_thread.joinable() ? 1 : 0);
     if (state && state->capture_ctx_queue) {
       state->capture_ctx_queue->stop();
     }
 
     if (!capture_thread_ctx.capture_thread.joinable()) {
+      BOOST_LOG(info) << "[Display] Async capture thread already not joinable";
       return;
     }
 
@@ -4848,6 +4921,7 @@ namespace video {
 
     if (joined_future.wait_for(3s) == std::future_status::ready) {
       joiner.join();
+      BOOST_LOG(info) << "[Display] Async capture thread joined cleanly";
     }
     else {
       BOOST_LOG(error) << "[Display] Capture thread did not stop within 3000ms; detaching join guard to avoid session teardown hang";

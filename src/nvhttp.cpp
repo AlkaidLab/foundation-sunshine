@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <future>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -73,6 +74,117 @@ namespace nvhttp {
     "/", "/index.html", "/index.htm", "/index",
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
+
+  std::mutex &
+  session_start_mutex() {
+    // /launch and /resume both mutate global display, process, and pending RTSP
+    // state. Keep them serialized so a retry cannot overlap a slow VDD prepare.
+    static auto *mutex = new std::mutex();
+    return *mutex;
+  }
+
+  struct encoder_probe_warm_cache_t {
+    std::mutex mutex;
+    std::future<int> in_flight;
+    std::chrono::steady_clock::time_point last_success {};
+    std::chrono::steady_clock::time_point last_finish {};
+    int last_result = -1;
+  };
+
+  encoder_probe_warm_cache_t &
+  encoder_probe_warm_state() {
+    // std::future returned by std::async can block in its destructor while the
+    // async probe is still running. Keep this state alive until process exit so
+    // a stuck encoder probe cannot reintroduce a shutdown/launch hang.
+    static auto *state = new encoder_probe_warm_cache_t();
+    return *state;
+  }
+
+  void
+  schedule_encoder_probe_warm(std::string_view reason,
+                              std::uint32_t launch_session_id,
+                              std::chrono::milliseconds wait_budget = 0ms) {
+    const auto now = std::chrono::steady_clock::now();
+    auto &probe_state = encoder_probe_warm_state();
+    {
+      std::lock_guard lock(probe_state.mutex);
+      bool probe_already_in_flight = false;
+      if (probe_state.last_result == 0 &&
+          probe_state.last_success.time_since_epoch().count() != 0 &&
+          now - probe_state.last_success < 5min) {
+        BOOST_LOG(debug) << "NVHTTP encoder probe cache warm"
+                         << " reason=" << reason
+                         << " launchSession=" << launch_session_id;
+        return;
+      }
+
+      if (probe_state.in_flight.valid()) {
+        if (probe_state.in_flight.wait_for(0ms) == std::future_status::ready) {
+          probe_state.last_result = probe_state.in_flight.get();
+          probe_state.last_finish = now;
+          if (probe_state.last_result == 0) {
+            probe_state.last_success = now;
+            return;
+          }
+        }
+        else {
+          BOOST_LOG(info) << "NVHTTP encoder probe already warming"
+                          << " reason=" << reason
+                          << " launchSession=" << launch_session_id
+                          << " waitBudgetMs=" << wait_budget.count();
+          if (wait_budget <= 0ms) {
+            return;
+          }
+          probe_already_in_flight = true;
+        }
+      }
+
+      if (!probe_already_in_flight) {
+        BOOST_LOG(info) << "NVHTTP encoder probe warm scheduled"
+                        << " reason=" << reason
+                        << " launchSession=" << launch_session_id
+                        << " waitBudgetMs=" << wait_budget.count();
+        probe_state.in_flight = std::async(std::launch::async, []() {
+          const auto started = std::chrono::steady_clock::now();
+          const int result = video::probe_encoders();
+          const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - started)
+                                    .count();
+          if (result == 0) {
+            BOOST_LOG(info) << "NVHTTP async encoder probe finished"
+                            << " result=" << result
+                            << " elapsedMs=" << elapsed_ms;
+          }
+          else {
+            BOOST_LOG(warning) << "NVHTTP async encoder probe finished"
+                               << " result=" << result
+                               << " elapsedMs=" << elapsed_ms;
+          }
+          return result;
+        });
+      }
+    }
+
+    if (wait_budget <= 0ms) {
+      return;
+    }
+
+    std::future_status status;
+    {
+      std::lock_guard lock(probe_state.mutex);
+      if (!probe_state.in_flight.valid()) {
+        return;
+      }
+      status = probe_state.in_flight.wait_for(wait_budget);
+      if (status == std::future_status::ready) {
+        probe_state.last_result = probe_state.in_flight.get();
+        probe_state.last_finish = std::chrono::steady_clock::now();
+        if (probe_state.last_result == 0) {
+          probe_state.last_success = probe_state.last_finish;
+        }
+      }
+    }
+  }
 
   crypto::cert_chain_t cert_chain;
 
@@ -1817,9 +1929,17 @@ namespace nvhttp {
 
       for (const auto &session_info : sessions_info) {
         json session_obj;
+        session_obj["runtime_id"] = session_info.runtime_id;
+        session_obj["launch_session_id"] = session_info.launch_session_id;
+        session_obj["control_generation"] = session_info.control_generation;
+        session_obj["logical_session_key"] = session_info.logical_session_key;
+        session_obj["client_cert_uuid"] = session_info.client_cert_uuid;
+        session_obj["client_unique_id"] = session_info.client_unique_id;
+        session_obj["trusted_client_identity"] = session_info.trusted_client_identity;
         session_obj["client_name"] = session_info.client_name;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
+        session_obj["canonical_state"] = session_info.canonical_state;
         session_obj["session_id"] = session_info.session_id;
         session_obj["width"] = session_info.width;
         session_obj["height"] = session_info.height;
@@ -1837,6 +1957,25 @@ namespace nvhttp {
         session_obj["display_owner_runtime_id"] = session_info.display_owner_runtime_id;
         session_obj["dynamic_quality_owner"] = session_info.dynamic_quality_owner;
         session_obj["dynamic_quality_owner_runtime_id"] = session_info.dynamic_quality_owner_runtime_id;
+        session_obj["display_resource_scope"] = session_info.display_resource_scope;
+        session_obj["display_allocation_mode"] = session_info.display_allocation_mode;
+        session_obj["display_resource_slot"] = session_info.display_resource_slot;
+        session_obj["dedicated_display"] = session_info.dedicated_display;
+        session_obj["transport_path_id"] = session_info.transport_path_id;
+        session_obj["transport_kind"] = session_info.transport_kind;
+        session_obj["transport_protocol"] = session_info.transport_protocol;
+        session_obj["transport_flags"] = session_info.transport_flags;
+        session_obj["transport_rtt_us"] = session_info.transport_rtt_us;
+        session_obj["transport_jitter_us"] = session_info.transport_jitter_us;
+        session_obj["transport_packet_loss_ppm"] = session_info.transport_packet_loss_ppm;
+        session_obj["transport_route_id"] = session_info.transport_route_id;
+        session_obj["pointer_mode"] = session_info.pointer_mode;
+        session_obj["cursor_state_flags"] = session_info.cursor_state_flags;
+        session_obj["pointer_release_queue_depth"] = session_info.pointer_release_queue_depth;
+        session_obj["pointer_release_queue_delay_us"] = session_info.pointer_release_queue_delay_us;
+        session_obj["pointer_mode_switch_us"] = session_info.pointer_mode_switch_us;
+        session_obj["pointer_deltas_coalesced"] = session_info.pointer_deltas_coalesced;
+        session_obj["pointer_acceleration_risk_ppm"] = session_info.pointer_acceleration_risk_ppm;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
 
@@ -2242,6 +2381,16 @@ namespace nvhttp {
       return;
     }
 
+    std::unique_lock session_start_lock(session_start_mutex(), std::try_to_lock);
+    if (!session_start_lock.owns_lock()) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Another streaming session is already starting");
+      tree.put("root.gamesession", 0);
+      BOOST_LOG(warning) << "Rejecting overlapping launch request while another session is starting";
+      return;
+    }
+
     auto appid = util::from_view(get_arg(args, "appid"));
 
     auto current_appid = proc::proc.running();
@@ -2332,28 +2481,7 @@ namespace nvhttp {
         // The display should be restored by the fail guard in case something happens.
         need_to_restore_display_state = true;
 
-        // Probe encoders again before streaming to ensure our chosen
-        // encoder matches the active GPU (which could have changed
-        // due to hotplugging, driver crash, primary monitor change,
-        // or any number of other factors).
-        const auto probe_started = std::chrono::steady_clock::now();
-        if (video::probe_encoders()) {
-          BOOST_LOG(warning) << "NVHTTP launch encoder probe failed"
-                             << " launchSession=" << launch_session->id
-                             << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - probe_started)
-                                  .count();
-          tree.put("root.<xmlattr>.status_code", 503);
-          tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-          tree.put("root.gamesession", 0);
-
-          return;
-        }
-        BOOST_LOG(info) << "NVHTTP launch encoder probe finished"
-                        << " launchSession=" << launch_session->id
-                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - probe_started)
-                             .count();
+        schedule_encoder_probe_warm("launch-display-prepared", launch_session->id, 1200ms);
       }
     }
 
@@ -2458,6 +2586,15 @@ namespace nvhttp {
       return;
     }
 
+    std::unique_lock session_start_lock(session_start_mutex(), std::try_to_lock);
+    if (!session_start_lock.owns_lock()) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Another streaming session is already starting");
+      BOOST_LOG(warning) << "Rejecting overlapping resume request while another session is starting";
+      return;
+    }
+
     const auto resume_rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
     const std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     const auto same_client_replacement = stream::session::stop_sessions_for_client(
@@ -2543,28 +2680,7 @@ namespace nvhttp {
                              std::chrono::steady_clock::now() - display_started)
                              .count();
 
-        // Probe encoders again before streaming to ensure our chosen
-        // encoder matches the active GPU (which could have changed
-        // due to hotplugging, driver crash, primary monitor change,
-        // or any number of other factors).
-        const auto probe_started = std::chrono::steady_clock::now();
-        if (video::probe_encoders()) {
-          BOOST_LOG(warning) << "NVHTTP resume encoder probe failed"
-                             << " launchSession=" << launch_session->id
-                             << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - probe_started)
-                                  .count();
-          tree.put("root.resume", 0);
-          tree.put("root.<xmlattr>.status_code", 503);
-          tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-
-          return;
-        }
-        BOOST_LOG(info) << "NVHTTP resume encoder probe finished"
-                        << " launchSession=" << launch_session->id
-                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - probe_started)
-                             .count();
+        schedule_encoder_probe_warm("resume-display-prepared", launch_session->id, 1200ms);
       }
     }
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());

@@ -75,12 +75,12 @@ namespace rtsp_stream {
 
   std::uint64_t
   foundation_streaming_feature_flags2() {
-    return static_cast<std::uint64_t>(LI_FF2_QOS_FEEDBACK_V2) |
-           static_cast<std::uint64_t>(LI_FF2_INPUT_PRIORITY_V1) |
-           static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY_V1) |
-           static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE_V1) |
-           static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY_V1) |
-           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS_V1);
+    return static_cast<std::uint64_t>(LI_FF2_QOS_FEEDBACK) |
+           static_cast<std::uint64_t>(LI_FF2_INPUT_PRIORITY) |
+           static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY) |
+           static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE) |
+           static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY) |
+           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS);
   }
 
   int
@@ -88,7 +88,7 @@ namespace rtsp_stream {
                                              int ml_feature_flags,
                                              bool adaptive_controller_enabled) {
     configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
-    if (adaptive_controller_enabled && (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
+    if (adaptive_controller_enabled && (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) != 0) {
       return std::min(configured_fec_percentage, enhanced_feedback_startup_fec_percentage);
     }
     return configured_fec_percentage;
@@ -108,7 +108,7 @@ namespace rtsp_stream {
                                                 bool adaptive_controller_enabled) {
     configured_fec_percentage = std::clamp(configured_fec_percentage, 0, safe_max_stream_fec_percentage);
     if (!adaptive_controller_enabled ||
-        (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0 ||
+        (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0 ||
         configured_fec_percentage == 0) {
       return configured_fec_percentage;
     }
@@ -143,7 +143,7 @@ namespace rtsp_stream {
                                      bool high_quality_audio,
                                      int audio_channels,
                                      int ml_feature_flags) {
-    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) != 0) {
+    if ((ml_feature_flags & ML_FF_NETWORK_FEEDBACK) != 0) {
       return configured_bitrate_kbps;
     }
 
@@ -1224,6 +1224,10 @@ namespace rtsp_stream {
     ss << "a=x-ss-general.featureFlags:" << host_feature_flags << std::endl;
     auto host_feature_flags2 = foundation_streaming_feature_flags2();
     ss << "a=x-ss-general.featureFlags2:" << host_feature_flags2 << std::endl;
+    const auto core_capabilities = session_runtime::default_rtsp_capability_manifest();
+    for (const auto &attribute : session_runtime::rtsp_capability_attributes(core_capabilities)) {
+      ss << "a=" << attribute << std::endl;
+    }
 
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
@@ -1624,10 +1628,10 @@ namespace rtsp_stream {
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
       monitor.preferCursorPlane =
-        (config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_ACTIVE_V1)) != 0;
+        (config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_ACTIVE)) != 0;
       BOOST_LOG(info) << "Client featureFlags2=0x" << std::hex << config.mlFeatureFlags2 << std::dec
                       << " cursorPlaneSupport="
-                      << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_V1)) != 0) ? 1 : 0)
+                      << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE)) != 0) ? 1 : 0)
                       << " preferCursorPlane=" << (monitor.preferCursorPlane ? 1 : 0);
       if (monitor.preferCursorPlane) {
         BOOST_LOG(info) << "Client requested active cursor plane; disabling video cursor burn-in for this stream";
@@ -1710,10 +1714,16 @@ namespace rtsp_stream {
 
       const bool adaptive_controller_enabled =
         config::stream.adaptive_streaming_optimization &&
-        (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+        (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
+      const auto rtspPeerAddress = net::addr_to_normalized_string(sock.remote_endpoint().address());
+      const auto rtspPeerNetwork = net::from_address(rtspPeerAddress);
+      const bool lan_fast_start = rtspPeerNetwork == net::PC || rtspPeerNetwork == net::LAN;
       auto effectiveFecPercentage = effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                config.mlFeatureFlags,
                                                                                adaptive_controller_enabled);
+      if (lan_fast_start && effectiveFecPercentage > 0) {
+        effectiveFecPercentage = std::min(effectiveFecPercentage, 2);
+      }
 
       configuredBitrateKbps = adaptive_controller_enabled ?
                                 video_quality_ceiling_bitrate_kbps(
@@ -1784,7 +1794,7 @@ namespace rtsp_stream {
         }
       }
 
-      if (adaptive_controller_enabled) {
+      if (adaptive_controller_enabled && !lan_fast_start) {
         stream_quality::stream_description_t startup_stream {
           .width = config.monitor.width,
           .height = config.monitor.height,
@@ -1815,6 +1825,12 @@ namespace rtsp_stream {
             config.monitor.frameRateDen = 1;
           }
         }
+      }
+      else if (adaptive_controller_enabled) {
+        BOOST_LOG(info) << "Strong LAN startup: keeping requested quality "
+                        << qualityCeilingBitrateKbps << " Kbps / "
+                        << qualityCeilingFramerate
+                        << " fps for peer=" << rtspPeerAddress;
       }
       else {
         config.monitor.lowBitrateClarityIntentFlags = 0;

@@ -703,6 +703,9 @@ namespace stream {
     boost::asio::ip::address localAddress;
 
     session_runtime::identity_t identity;
+    session_runtime::transport_path_t active_transport_path { session_runtime::make_enet_direct_transport_path() };
+    session_runtime::session_telemetry_t telemetry;
+    LI_SESSION shared_session;
 
     // Legacy display/logging field. Critical routing must use identity/runtime IDs.
     std::string client_name;
@@ -748,8 +751,8 @@ namespace stream {
       crypto::aes_t incoming_iv;
       crypto::aes_t outgoing_iv;
 
-      std::uint32_t connect_data;  // Used for new clients with ML_FF_SESSION_ID_V1
-      std::string expected_peer_address;  // Only used for legacy clients without ML_FF_SESSION_ID_V1
+      std::uint32_t connect_data;  // Used for new clients with ML_FF_SESSION_ID
+      std::string expected_peer_address;  // Only used for legacy clients without ML_FF_SESSION_ID
 
       net::peer_t peer;
       std::uint32_t seq;
@@ -784,7 +787,9 @@ namespace stream {
         std::uint32_t flags { 0 };
         std::uint32_t epoch { 0 };
         std::chrono::steady_clock::time_point last_sent {};
+        std::chrono::steady_clock::time_point last_bitmap_retry {};
         bool host_cursor_suppressed { false };
+        bool bitmap_sent { false };
       } cursor_plane;
       struct {
         bool bound { false };
@@ -912,6 +917,138 @@ namespace stream {
     bool control_only { false };
   };
 
+  static bool
+  is_lan_or_pc_peer(std::string_view address) {
+    if (address.empty()) {
+      return false;
+    }
+
+    try {
+      const auto network = net::from_address(address);
+      return network == net::PC || network == net::LAN;
+    }
+    catch (const std::exception &) {
+      return false;
+    }
+  }
+
+  static session_runtime::feature_caps_t
+  session_client_caps_for_config(const config_t &config) {
+    session_runtime::feature_caps_t caps {};
+    caps.enable(session_runtime::capability_e::native_renderer_metrics)
+      .enable(session_runtime::capability_e::frame_reuse_feedback)
+      .enable(session_runtime::capability_e::nack_rtx);
+
+    if ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0) {
+      caps.enable(session_runtime::capability_e::transport_cc_lite);
+    }
+    if ((config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) != 0) {
+      caps.enable(session_runtime::capability_e::owd_feedback);
+    }
+    if ((config.mlFeatureFlags2 & ML_FF2_CURSOR_PLANE) != 0) {
+      caps.enable(session_runtime::capability_e::metal_renderer_metrics);
+    }
+    if ((config.mlFeatureFlags2 & ML_FF2_PATH_PROBE) != 0) {
+      caps.enable(session_runtime::capability_e::packet_pacer_probe);
+    }
+    return caps;
+  }
+
+  static session_runtime::session_telemetry_report_t
+  session_report_for_li_session(const session_t &session) {
+    auto participant = session_runtime::make_participant(session.identity);
+    const auto rtt_ms = session.active_transport_path.score.rtt_ms;
+    const auto input_diag = input::diagnostics_snapshot(session.input);
+    std::uint32_t cursor_state_flags = LI_SESSION_CURSOR_FLAG_SYSTEM_CURSOR_ACTIVE;
+    std::uint32_t pointer_mode = LI_SESSION_POINTER_MODE_HYBRID;
+    const auto cursor_flags = session.control.cursor_plane.flags;
+    const bool cursor_plane_active =
+      (session.config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_ACTIVE)) != 0;
+    const bool remote_visible = (cursor_flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0;
+    const bool remote_locked = (cursor_flags & SS_CURSOR_PLANE_FLAG_LOCKED) != 0;
+    const bool remote_relative = (cursor_flags & SS_CURSOR_PLANE_FLAG_RELATIVE) != 0;
+
+    if (cursor_plane_active || remote_visible) {
+      cursor_state_flags |= LI_SESSION_CURSOR_FLAG_REMOTE_PLANE;
+    }
+    if (session.control.cursor_plane.host_cursor_suppressed) {
+      cursor_state_flags |= LI_SESSION_CURSOR_FLAG_LOCAL_HIDDEN;
+    }
+    if (remote_visible) {
+      cursor_state_flags |= LI_SESSION_CURSOR_FLAG_VISIBLE;
+    }
+    if (remote_locked || remote_relative) {
+      cursor_state_flags |= LI_SESSION_CURSOR_FLAG_LOCKED |
+                            LI_SESSION_CURSOR_FLAG_RELATIVE_RAW_INPUT;
+      pointer_mode = LI_SESSION_POINTER_MODE_RELATIVE;
+    }
+    else if (cursor_plane_active || remote_visible) {
+      pointer_mode = LI_SESSION_POINTER_MODE_ABSOLUTE;
+    }
+
+    auto report = session_runtime::session_telemetry_report_t {
+      .participant = participant.id,
+      .path_id = session.active_transport_path.path_id,
+      .displayed_fps = static_cast<std::uint32_t>(std::max(session.config.monitor.framerate, 0)),
+      .rtt_ms = rtt_ms,
+      .loss_ppm = session.active_transport_path.score.loss_ppm,
+      .renderer_backpressure = session.weak_net_diag.max_render_queue_depth > 0,
+      .decode_queue_depth = session.weak_net_diag.max_decode_queue_depth,
+      .render_queue_depth = session.weak_net_diag.max_render_queue_depth,
+      .audio_queue_depth_ms = session.weak_net_diag.max_audio_buffer_depth_ms,
+      .input_queue_depth = session.weak_net_diag.max_input_queue_depth,
+      .input_send_latency_us = session.weak_net_diag.max_input_latency_us,
+      .input_ack_latency_us = 0,
+      .mouse_backlog_us = session.weak_net_diag.max_input_latency_us,
+      .pointer_mode = pointer_mode,
+      .cursor_state_flags = cursor_state_flags,
+    };
+    session_runtime::apply_input_smoothing_snapshot(report, {
+      .queue_depth = input_diag.input_queue_depth,
+      .queue_delay_us = input_diag.release_queue_delay_us,
+      .deltas_coalesced = input_diag.coalesced_pointer_deltas,
+      .acceleration_risk_ppm = input_diag.pointer_acceleration_risk_ppm,
+      .release_smoothing_active = input_diag.release_smoothing_active,
+    });
+    return report;
+  }
+
+  static void
+  refresh_li_session(session_t &session,
+                     session::state_e state,
+                     std::string_view app_id = {},
+                     std::string_view app_name = {}) {
+    auto report = session_report_for_li_session(session);
+    const auto resolved_app_id = app_id.empty() ?
+                                   std::string_view { session.shared_session.appId } :
+                                   app_id;
+    const auto resolved_app_name = app_name.empty() ?
+                                     std::string_view { session.shared_session.appName } :
+                                     app_name;
+    auto li_session = session_runtime::make_li_session(session.identity,
+                                                       session.active_transport_path,
+                                                       session_client_caps_for_config(session.config),
+                                                       session_runtime::default_rtsp_capability_manifest().supported_caps,
+                                                       report,
+                                                       resolved_app_id,
+                                                       resolved_app_name);
+    switch (state) {
+      case session::state_e::STOPPED:
+        li_session.state = LI_SESSION_STATE_IDLE;
+        break;
+      case session::state_e::STOPPING:
+        li_session.state = LI_SESSION_STATE_DISCONNECTING;
+        break;
+      case session::state_e::STARTING:
+        li_session.state = LI_SESSION_STATE_CONNECTING;
+        break;
+      case session::state_e::RUNNING:
+        li_session.state = LI_SESSION_STATE_STREAMING;
+        break;
+    }
+    session.shared_session = li_session;
+  }
+
   void
   session_registry_t::register_session(session_t *session) {
     if (!session || session->identity.runtime_id == 0) {
@@ -1029,7 +1166,7 @@ namespace stream {
     auto it = _connect_data_to_session->find(connect_data);
     if (it == _connect_data_to_session->end() ||
         it->second->control.peer ||
-        !(it->second->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
+        !(it->second->config.mlFeatureFlags & ML_FF_SESSION_ID)) {
       return nullptr;
     }
 
@@ -1358,7 +1495,7 @@ namespace stream {
 
   bool
   runtime_profile_resolution_reconfig_enabled() {
-    return true;
+    return false;
   }
 
   static stream_quality::content_type_e
@@ -1424,12 +1561,42 @@ namespace stream {
 
   bool
   should_synthesize_weak_net_recovery_feedback(int ml_feature_flags) {
-    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0;
   }
 
   bool
   should_apply_frame_fec_weak_net_feedback(int ml_feature_flags) {
-    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK_V1) == 0;
+    return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0;
+  }
+
+  bool
+  weak_net_resync_guard_allows_safety_apply(const weak_net::action_t &action,
+                                            int last_applied_bitrate_kbps,
+                                            int last_applied_fec_percentage) {
+    if (!action.changed) {
+      return false;
+    }
+
+    const bool bitrate_downshift =
+      last_applied_bitrate_kbps <= 0 ||
+      (action.target_bitrate_kbps > 0 &&
+       action.target_bitrate_kbps < last_applied_bitrate_kbps);
+    const bool fec_downshift =
+      last_applied_fec_percentage < 0 ||
+      action.fec_percentage < last_applied_fec_percentage;
+    const bool low_availability_safety =
+      action.availability == weak_net::availability_e::low ||
+      action.state == weak_net::state_e::crisis ||
+      action.pressures.burst_loss >= 0.70 ||
+      action.pressures.random_loss >= 0.70 ||
+      action.pressures.render >= 0.70 ||
+      action.unrecoverable_loss >= 0.03 ||
+      action.packet_loss >= 0.12 ||
+      action.rfi_limited ||
+      action.congestion_anti_spiral;
+    return action.state != weak_net::state_e::healthy &&
+           low_availability_safety &&
+           (bitrate_downshift || fec_downshift);
   }
 
   const char *
@@ -1550,6 +1717,15 @@ namespace stream {
     diag.max_input_queue_depth = std::max(diag.max_input_queue_depth, feedback.input_queue_depth);
     diag.max_input_latency_us = std::max(diag.max_input_latency_us,
                                           std::max(feedback.input_send_latency_us, feedback.input_ack_latency_us));
+    session->active_transport_path.score.rtt_ms = feedback.rtt_ms;
+    session->active_transport_path.score.jitter_ms = feedback.rtt_variance_ms;
+    if (feedback.total_packets > 0) {
+      session->active_transport_path.score.loss_ppm = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(1000000ULL,
+                                static_cast<std::uint64_t>(feedback.missing_packets) * 1000000ULL /
+                                  feedback.total_packets));
+    }
+    refresh_li_session(*session, session->state.load(std::memory_order_relaxed));
     diag.max_frame_area = std::max(diag.max_frame_area, feedback.frame_area);
     diag.max_dirty_area = std::max(diag.max_dirty_area, feedback.dirty_area);
     diag.full_frame_dirty_windows += feedback.full_frame_dirty ? 1U : 0U;
@@ -1630,6 +1806,7 @@ namespace stream {
             << " idr=" << diag.idr_requests
             << " availability=" << weak_net::availability_name(action.availability)
             << " tier=" << weak_net::tier_name(action.tier)
+            << " scenario=" << weak_net::scenario_name(action.scenario)
             << " decisionReason=" << weak_net_decision_reason_name(action)
             << " requestedScale=" << action.resolution_scale_percent << "%"
             << " actualScale=" << action.actual_scale_percent << "%"
@@ -1663,9 +1840,12 @@ namespace stream {
     const bool resync_guard =
       session->weak_net_resync_guard_until.time_since_epoch().count() != 0 &&
       now < session->weak_net_resync_guard_until;
-    if (!resync_guard) {
-      update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
-    }
+    const bool resync_guard_safety_apply =
+      resync_guard &&
+      weak_net_resync_guard_allows_safety_apply(action,
+                                                session->last_applied_weak_net_bitrate,
+                                                session->last_applied_weak_net_fec);
+    const bool dynamic_apply_blocked = resync_guard && !resync_guard_safety_apply;
     const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_weak_net_bitrate);
     const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_weak_net_bitrate) / 50);
     const bool startup_settle =
@@ -1684,6 +1864,9 @@ namespace stream {
       action.pressures.delay_congestion >= 0.25 ||
       action.pressures.burst_loss >= 0.25 ||
       action.pressures.random_loss >= 0.25;
+    if (!dynamic_apply_blocked) {
+      update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
+    }
     const auto bitrate_apply_cooldown = startup_settle ?
                                           (bitrate_probe_up ? 1800ms : (bitrate_drop && continuity_pressure ? 180ms : 500ms)) :
                                           (bitrate_probe_up ? 900ms : (bitrate_drop && continuity_pressure ? 180ms : 350ms));
@@ -1693,13 +1876,13 @@ namespace stream {
     const auto fec_apply_cooldown = fec_increase && continuity_pressure ?
                                       300ms :
                                       (startup_settle ? 1800ms : 900ms);
-    const bool apply_bitrate = !resync_guard &&
+    const bool apply_bitrate = !dynamic_apply_blocked &&
                                target_encoding_bitrate > 0 &&
                                (session->last_applied_weak_net_bitrate <= 0 ||
                                 (bitrate_delta >= bitrate_threshold &&
                                  (session->last_weak_net_bitrate_apply.time_since_epoch().count() == 0 ||
                                   now - session->last_weak_net_bitrate_apply >= bitrate_apply_cooldown)));
-    const bool apply_fec = !resync_guard &&
+    const bool apply_fec = !dynamic_apply_blocked &&
                            target_fec_percentage >= 0 &&
                            (session->last_applied_weak_net_fec < 0 ||
                             (target_fec_percentage != session->last_applied_weak_net_fec &&
@@ -1725,7 +1908,7 @@ namespace stream {
       last_fps > 0 &&
       target_fps < last_fps &&
       !startup_fps_down_allowed;
-    const bool apply_fps = !resync_guard && fps_decision.apply && !startup_fps_down_suppressed;
+    const bool apply_fps = !dynamic_apply_blocked && fps_decision.apply && !startup_fps_down_suppressed;
     const auto fps_cooldown_suffix = fps_target_changed ?
                                        std::string {" fpsCooldownMs="} + std::to_string(fps_decision.cooldown_ms) :
                                        std::string {};
@@ -1765,7 +1948,7 @@ namespace stream {
                                         profile_fast_recovery ?
                                           700ms :
                                           1500ms;
-    const bool apply_profile = !resync_guard &&
+    const bool apply_profile = !dynamic_apply_blocked &&
                                action.profile_tier_supported &&
                                action.profile_tier_changed &&
                                profile_target_changed &&
@@ -1774,7 +1957,7 @@ namespace stream {
     const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
                                                                                 target_fec_percentage);
     const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
-    if (!resync_guard) {
+    if (!dynamic_apply_blocked) {
       session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
       session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
       session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
@@ -1889,6 +2072,7 @@ namespace stream {
                     << " state=" << weak_net_state_name(action.state)
                     << " availability=" << weak_net::availability_name(action.availability)
                     << " reason=" << weak_net::reason_name(action.reason)
+                    << " scenario=" << weak_net::scenario_name(action.scenario)
                     << " decisionReason=" << weak_net_decision_reason_name(action)
                     << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
                     << " effectiveCeiling=" << action.effective_ceiling_kbps << " Kbps"
@@ -1925,6 +2109,7 @@ namespace stream {
                     << ",profile=" << (apply_profile ? 1 : 0) << ")"
                     << (startup_settle ? " startupSettle=1" : "")
                     << (resync_guard ? " resyncGuard=1" : "")
+                    << (resync_guard_safety_apply ? " resyncSafetyApply=1" : "")
                     << (apply_fps ? " fpsApplied=runtime-pacing" : "")
                     << (startup_fps_down_suppressed ? " fpsDeferred=startup-grace" : "")
                     << (fps_decision.deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
@@ -1937,7 +2122,12 @@ namespace stream {
                           " profileStable=runtime-profile-tier-no-change" : "")
                     << (action.request_idr && !resync_guard ? " idr=1" : "")
                     << (action.request_idr && resync_guard ? " idrSuppressed=resync-guard" : "")
-                    << (action.rfi_limited ? " rfiLimited=1" : "");
+                    << (action.rfi_limited ? " rfiLimited=1" : "")
+                    << (action.congestion_anti_spiral ? " congestionAntiSpiral=1" : "")
+                    << " recoveryHold=" << action.recovery_hold_remaining
+                    << " rttGradientUs=" << action.rtt_gradient_us
+                    << " owdGradientUs=" << action.owd_gradient_us
+                    << " owdPressure=" << action.owd_pressure;
   }
 
   static void
@@ -2025,7 +2215,11 @@ namespace stream {
     }
 
     last_request = now;
-    const auto guard_until = now + 1500ms;
+    const bool weak_route_recovery =
+      adaptive_controller_active(session, source) &&
+      (session->weak_net_controller.state() == weak_net::state_e::crisis ||
+       session->weak_net_controller.state() == weak_net::state_e::constrained);
+    const auto guard_until = now + (weak_route_recovery ? 700ms : 1500ms);
     if (session->weak_net_resync_guard_until.time_since_epoch().count() == 0 ||
         session->weak_net_resync_guard_until < guard_until) {
       session->weak_net_resync_guard_until = guard_until;
@@ -2564,7 +2758,7 @@ namespace stream {
 
       // Identify the connection by the unique connect data if the client supports it.
       // Only fall back to IP address matching for clients without session ID support.
-      if (session_p->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) {
+      if (session_p->config.mlFeatureFlags & ML_FF_SESSION_ID) {
         if (session_p->control.connect_data != connect_data) {
           continue;
         }
@@ -2728,6 +2922,10 @@ namespace stream {
     if (!session ||
         session->video_startup_pacing_until.time_since_epoch().count() == 0 ||
         std::chrono::steady_clock::now() >= session->video_startup_pacing_until) {
+      return target_interval;
+    }
+
+    if (session->weak_net_controller.state() == weak_net::state_e::healthy) {
       return target_interval;
     }
 
@@ -3203,7 +3401,7 @@ namespace stream {
   bool
   client_supports_cursor_plane(session_t *session) {
     return session != nullptr &&
-           (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_V1)) != 0;
+           (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE)) != 0;
   }
 
   struct cursor_plane_sample_t {
@@ -3578,9 +3776,15 @@ namespace stream {
       return;
     }
 
+    const bool first_bitmap_missing = never_sent || !last.bitmap_sent;
+    const bool bitmap_retry_due =
+      first_bitmap_missing &&
+      last.last_bitmap_retry.time_since_epoch().count() != 0 &&
+      now - last.last_bitmap_retry >= 250ms;
     const bool should_send_bitmap =
       !sample.bitmap_bgra.empty() &&
-      (never_sent ||
+      (first_bitmap_missing ||
+       bitmap_retry_due ||
        last.cursor_shape_id != sample.cursor_shape_id ||
        last.width != sample.width ||
        last.height != sample.height ||
@@ -3610,6 +3814,13 @@ namespace stream {
       last.height = sample.height;
       last.flags = sample.flags;
       last.last_sent = now;
+      if (should_send_bitmap) {
+        last.bitmap_sent = true;
+        last.last_bitmap_retry = now;
+      }
+      else if (!last.bitmap_sent && !sample.bitmap_bgra.empty()) {
+        last.last_bitmap_retry = now;
+      }
 
       if (never_sent || shape_changed || should_send_bitmap) {
         BOOST_LOG(info) << "Cursor plane update sent runtime=" << session->identity.runtime_id
@@ -4363,7 +4574,7 @@ namespace stream {
     });
 
     server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1)) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK)) {
         BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
@@ -4424,8 +4635,8 @@ namespace stream {
     });
 
     server->map(SS_NETWORK_FEEDBACK_V2_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2)) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK)) {
         BOOST_LOG(debug) << "Ignoring v2 network feedback from client without negotiated support";
         return;
       }
@@ -4495,9 +4706,9 @@ namespace stream {
     });
 
     server->map(SS_NETWORK_FEEDBACK_V3_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY_V1)) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY)) {
         BOOST_LOG(debug) << "Ignoring v3 network feedback from client without negotiated support";
         return;
       }
@@ -4575,10 +4786,10 @@ namespace stream {
     });
 
     server->map(SS_NETWORK_FEEDBACK_V4_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK_V2) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY_V1) ||
-          !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS_V1)) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS)) {
         BOOST_LOG(debug) << "Ignoring v4 network feedback from client without negotiated support";
         return;
       }
@@ -4657,6 +4868,101 @@ namespace stream {
                         << " renderQ=" << network_feedback.render_queue_depth
                         << " audioUnd=" << network_feedback.audio_underruns
                         << " audioConceal=" << network_feedback.audio_concealed_ms << "ms";
+      }
+    });
+
+    // Phase 3.3: SS_NETWORK_FEEDBACK_V5 — same payload as V4 plus client-side
+    // OWD gradient telemetry for early congestion detection. The handler is
+    // structured exactly like the V4 path; only the protocol bytes and the
+    // three trailing fields differ.
+    server->map(SS_NETWORK_FEEDBACK_V5_PTYPE, [&](session_t *session, const std::string_view &payload) {
+      if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS) ||
+          !(session->config.mlFeatureFlags2 & ML_FF2_DELAY_GRADIENT)) {
+        BOOST_LOG(debug) << "Ignoring v5 network feedback from client without negotiated support";
+        return;
+      }
+      if (!adaptive_controller_active(session, "feedback-v5")) {
+        return;
+      }
+      if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V5)) {
+        BOOST_LOG(warning) << "Ignoring truncated v5 network feedback payload: " << payload.size();
+        return;
+      }
+
+      const auto *feedback = reinterpret_cast<const SS_NETWORK_FEEDBACK_V5 *>(payload.data());
+      const auto version = read_be16_unaligned(&feedback->version);
+      const auto size = read_be16_unaligned(&feedback->size);
+      if (version != SS_NETWORK_FEEDBACK_V5_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V5)) {
+        BOOST_LOG(warning) << "Ignoring unsupported v5 network feedback version=" << version
+                           << " size=" << size;
+        return;
+      }
+
+      const auto total_data = read_be32_unaligned(&feedback->totalDataPackets);
+      const auto total_parity = read_be32_unaligned(&feedback->totalParityPackets);
+      const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
+      const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
+      const auto delay_samples = read_be32_unaligned(&feedback->delaySamples);
+      const auto delay_gradient_raw = read_be32_unaligned(&feedback->delayGradientUs);
+      const auto interarrival_jitter_us = read_be32_unaligned(&feedback->interarrivalJitterUs);
+
+      weak_net::feedback_t network_feedback {
+        .duration_ms = read_be32_unaligned(&feedback->durationMs),
+        .frames_seen = read_be32_unaligned(&feedback->framesSeen),
+        .complete_frames = read_be32_unaligned(&feedback->completeFrames),
+        .recovered_frames = read_be32_unaligned(&feedback->recoveredFrames),
+        .unrecoverable_frames = read_be32_unaligned(&feedback->unrecoverableFrames),
+        .missing_packets = read_be32_unaligned(&feedback->missingPackets),
+        .total_packets = total_data + total_parity,
+        .received_packets = received_data + received_parity,
+        .video_bytes = read_be32_unaligned(&feedback->videoBytes),
+        .rtt_ms = read_be32_unaligned(&feedback->rttMs),
+        .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
+        .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
+        .decode_queue_depth = read_be32_unaligned(&feedback->decodeQueueDepth),
+        .render_queue_depth = read_be32_unaligned(&feedback->renderQueueDepth),
+        .late_frames = read_be32_unaligned(&feedback->lateFrames),
+        .displayed_frames = read_be32_unaligned(&feedback->displayedFrames),
+        .visual_stale_frames = read_be32_unaligned(&feedback->visualStaleFrames),
+        .duplicate_frames = read_be32_unaligned(&feedback->duplicateFrames),
+        .input_queue_depth = read_be32_unaligned(&feedback->inputQueueDepth),
+        .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
+        .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
+        .audio_concealed_ms = read_be32_unaligned(&feedback->audioConcealedMs),
+        .late_audio_drops = read_be32_unaligned(&feedback->lateAudioDrops),
+        .audio_plc_ms = read_be32_unaligned(&feedback->audioPlcMs),
+        .audio_fade_ms = read_be32_unaligned(&feedback->audioFadeMs),
+        .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
+        .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
+        .delay_gradient_us = static_cast<std::int32_t>(delay_gradient_raw),
+        .interarrival_jitter_us = interarrival_jitter_us,
+        .delay_samples = delay_samples,
+        .delay_gradient_valid = (delay_samples > 0),
+      };
+      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      annotate_feedback_with_host_motion(session, network_feedback);
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v5")) {
+        return;
+      }
+      auto action = session->weak_net_controller.on_feedback(network_feedback);
+      apply_weak_net_action(session, action, "feedback-v5");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v5");
+      const auto now = std::chrono::steady_clock::now();
+      if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
+          now - session->control.last_feedback_diag_log >= 1000ms) {
+        session->control.last_feedback_diag_log = now;
+        BOOST_LOG(info) << "Control feedback v5 received runtime=" << session->identity.runtime_id
+                        << " duration=" << network_feedback.duration_ms << "ms"
+                        << " frames=" << network_feedback.frames_seen
+                        << " displayed=" << network_feedback.displayed_frames
+                        << " videoBytes=" << network_feedback.video_bytes
+                        << " rtt=" << network_feedback.rtt_ms << "ms"
+                        << " owdGradient=" << network_feedback.delay_gradient_us << "us"
+                        << " owdSamples=" << network_feedback.delay_samples
+                        << " interJitter=" << network_feedback.interarrival_jitter_us << "us";
       }
     });
 
@@ -6368,7 +6674,7 @@ namespace stream {
     const auto type_name = socket_name(type);
 
     // Only allow matches on the peer address for legacy clients
-    if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
+    if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID)) {
       ref->message_queue_queue->raise(type, peer.address(), messages);
     }
     ref->message_queue_queue->raise(type, session_id, messages);
@@ -6377,7 +6683,7 @@ namespace stream {
       messages->stop();
 
       // remove message queue from session
-      if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
+      if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID)) {
         ref->message_queue_queue->raise(type, peer.address(), nullptr);
       }
       ref->message_queue_queue->raise(type, session_id, nullptr);
@@ -6402,7 +6708,7 @@ namespace stream {
         // Match the new PING payload format
         BOOST_LOG(debug) << "Received "sv << type_name << " ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
-      else if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) && msg == "PING"sv) {
+      else if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID) && msg == "PING"sv) {
         // Match the legacy fixed PING payload only if the new type is not supported
         BOOST_LOG(debug) << "Received "sv << type_name << " ping [v1] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
@@ -6613,6 +6919,7 @@ namespace stream {
       if (session.teardown_counted.compare_exchange_strong(expected_counted, true, std::memory_order_acq_rel)) {
         ++teardown_sessions;
       }
+      refresh_li_session(session, state_e::STOPPING);
       session.shutdown_event->raise(true);
     }
 
@@ -6722,6 +7029,7 @@ namespace stream {
                 session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::input_focus, *candidate);
                 session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::dynamic_quality, *candidate);
                 session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::transport_qos, *candidate);
+                refresh_li_session(*candidate, state_e::RUNNING);
                 BOOST_LOG(debug) << "Promoted runtime session " << display_resource.owner.runtime_id
                                  << " to shared display/input/dynamic-quality owner after runtime session "
                                  << session.identity.runtime_id << " ended";
@@ -6734,16 +7042,22 @@ namespace stream {
 
       abr::cleanup_for_runtime(session.identity.runtime_id);
       abr::cleanup(session.client_name);
+      session.state.store(state_e::STOPPED, std::memory_order_relaxed);
+      refresh_li_session(session, state_e::STOPPED);
 
       BOOST_LOG(debug) << "Session ended"sv;
     }
 
     int
     start(session_t &session, const std::string &addr_string) {
+      session.state.store(state_e::STARTING, std::memory_order_release);
+      refresh_li_session(session, state_e::STARTING);
       session.input = input::alloc(session.mail);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
+        session.state.store(state_e::STOPPED, std::memory_order_release);
+        refresh_li_session(session, state_e::STOPPED);
         return -1;
       }
 
@@ -6783,23 +7097,29 @@ namespace stream {
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
       const auto weak_net_started_at = std::chrono::steady_clock::now();
       const bool adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
-                                               (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+                                               (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
+      const bool lan_fast_start = adaptive_controller_enabled && is_lan_or_pc_peer(addr_string);
       session.adaptive_controller_enabled = adaptive_controller_enabled;
       session.adaptive_controller_reason = adaptive_controller_enabled ?
                                            "enabled" :
                                            (config::stream.adaptive_streaming_optimization ?
                                               "client-feedback-unsupported" :
                                               "config-disabled");
-      session.weak_net_startup_guard_until = adaptive_controller_enabled ?
+      session.weak_net_startup_guard_until = adaptive_controller_enabled && !lan_fast_start ?
                                                weak_net_started_at + 6500ms :
                                                std::chrono::steady_clock::time_point {};
-      session.weak_net_startup_settle_until = adaptive_controller_enabled ?
+      session.weak_net_startup_settle_until = adaptive_controller_enabled && !lan_fast_start ?
                                                 weak_net_started_at + 10000ms :
                                                 std::chrono::steady_clock::time_point {};
-      session.video_startup_pacing_until = adaptive_controller_enabled ?
+      session.video_startup_pacing_until = adaptive_controller_enabled && !lan_fast_start ?
                                              weak_net_started_at + 2500ms :
                                              std::chrono::steady_clock::time_point {};
       session.last_weak_net_startup_guard_log = {};
+      if (lan_fast_start) {
+        BOOST_LOG(info) << "Weak-net startup guard skipped for LAN peer runtime="
+                        << session.identity.runtime_id
+                        << " peer=" << addr_string;
+      }
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
@@ -6826,6 +7146,10 @@ namespace stream {
         session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::input_focus, session);
         session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::dynamic_quality, session);
         session.broadcast_ref->feature_leases.acquire(session_runtime::feature_e::transport_qos, session);
+        BOOST_LOG(info) << "Runtime session " << session.identity.runtime_id
+                        << " active transport path="
+                        << session_runtime::transport_route_name(session.active_transport_path.route)
+                        << " pathId=" << session.active_transport_path.path_id;
 
         // 非仅控制流会话：增加两个计数器
         ++running_sessions;
@@ -6855,6 +7179,7 @@ namespace stream {
         }
       }
 
+      refresh_li_session(session, state_e::RUNNING);
       return 0;
     }
 
@@ -6886,7 +7211,7 @@ namespace stream {
       session->config = config;
       session->config.monitor.cursorProbeRuntimeId = session->identity.runtime_id;
       session->adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
-                                             (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) != 0;
+                                             (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
       session->adaptive_controller_reason = session->adaptive_controller_enabled ?
                                             "enabled" :
                                             (config::stream.adaptive_streaming_optimization ?
@@ -6923,6 +7248,11 @@ namespace stream {
                                                                                    session->adaptive_controller_enabled);
       fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
       const bool enhanced_feedback_client = session->adaptive_controller_enabled;
+      const bool strong_lan_fast_start = enhanced_feedback_client &&
+                                         is_lan_or_pc_peer(launch_session.rtsp_peer_address);
+      if (strong_lan_fast_start && fec_percentage > 0) {
+        fec_percentage = std::min(fec_percentage, 2);
+      }
       if (!enhanced_feedback_client) {
         ceiling_fps = config.monitor.framerate;
         ceiling_encoding_bitrate = std::max(encoding_bitrate, 1);
@@ -6930,12 +7260,24 @@ namespace stream {
       const int requested_total_ceiling = total_video_bitrate_from_encoding_bitrate(ceiling_encoding_bitrate,
                                                                                     fec_percentage);
       int ceiling_total_bitrate = std::max(requested_total_ceiling, 1);
-      if (enhanced_feedback_client) {
+      const auto startup_quality_stream = stream_quality::stream_description_t {
+        .width = config.monitor.width,
+        .height = config.monitor.height,
+        .fps = ceiling_fps,
+        .video_bitrate_kbps = ceiling_encoding_bitrate,
+        .video_format = config.monitor.videoFormat,
+        .chroma_sampling_type = config.monitor.chromaSamplingType,
+        .content_type = stream_quality_content_type_from_monitor(config.monitor.contentType),
+      };
+      if (enhanced_feedback_client && !strong_lan_fast_start) {
         const int startup_encoding_limit = encoding_bitrate_from_total_video_budget(ceiling_total_bitrate,
                                                                                     fec_percentage);
-        encoding_bitrate = std::clamp(encoding_bitrate,
+        const int startup_encoding_bitrate = stream_quality::startup_bitrate_for_ceiling(startup_quality_stream);
+        encoding_bitrate = std::clamp(startup_encoding_bitrate,
                                       1,
                                       std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
+        config.monitor.framerate = stream_quality::startup_fps_for_bitrate(startup_quality_stream, encoding_bitrate);
+        session->config.monitor.framerate = config.monitor.framerate;
       }
       session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate, fec_percentage);
       session->current_fec_percentage = fec_percentage;
@@ -6980,12 +7322,13 @@ namespace stream {
                       << " userQuality=" << user_quality_bitrate << " Kbps"
                       << " idealDemand=" << ideal_demand_bitrate << " Kbps"
                       << " fpsNeeded=" << fps_needed_bitrate << " Kbps"
-                      << " ceilingTotal=" << ceiling_total_bitrate << " Kbps"
-                      << " fps=" << config.monitor.framerate
-                      << " ceilingFps=" << ceiling_fps
-                      << " fec=" << fec_percentage << "%"
-                      << " maxFec=" << max_fec_percentage << "%"
-                      << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK_V1) ? " feedback=1" : " feedback=0");
+	                      << " ceilingTotal=" << ceiling_total_bitrate << " Kbps"
+	                      << " fps=" << config.monitor.framerate
+	                      << " ceilingFps=" << ceiling_fps
+	                      << " fec=" << fec_percentage << "%"
+	                      << " maxFec=" << max_fec_percentage << "%"
+	                      << (strong_lan_fast_start ? " fastStart=lan" : "")
+	                      << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ? " feedback=1" : " feedback=0");
       if (config.monitor.lowBitrateClarityIntentFlags != 0) {
         BOOST_LOG(info) << "Frame interest intent generated runtime=" << session->identity.runtime_id
                         << " flags=0x" << std::hex << config.monitor.lowBitrateClarityIntentFlags << std::dec
@@ -7057,6 +7400,10 @@ namespace stream {
 
       session->control.peer = nullptr;
       session->state.store(state_e::STOPPED, std::memory_order_relaxed);
+      refresh_li_session(*session,
+                         state_e::STOPPED,
+                         std::to_string(launch_session.appid),
+                         launch_session.client_name);
 
       session->mail = std::move(mail);
 
@@ -7168,14 +7515,20 @@ namespace stream {
 
         try {
           session_info_t info;
+          auto state = session_p->state.load(std::memory_order_relaxed);
+          refresh_li_session(*session_p, state);
+          const auto &li_session = session_p->shared_session;
 
-          info.runtime_id = session_p->identity.runtime_id;
-          info.launch_session_id = session_p->identity.launch_session_id;
-          info.control_generation = session_p->identity.control_generation;
+          info.runtime_id = li_session.runtimeId;
+          info.launch_session_id = li_session.launchSessionId;
+          info.control_generation = li_session.controlGeneration;
+          info.logical_session_key = li_session.logicalSessionKey;
           info.client_cert_uuid = session_p->identity.client_cert_uuid;
           info.client_unique_id = session_p->identity.client_unique_id;
-          info.client_name = session_p->client_name;
-          info.session_id = session_p->launch_session_id;
+          info.client_name = li_session.client.displayName[0] != '\0' ?
+                               std::string { li_session.client.displayName } :
+                               session_p->client_name;
+          info.session_id = li_session.launchSessionId;
           info.trusted_client_identity = session_p->identity.has_trusted_client_identity();
 
           // Get client address
@@ -7192,7 +7545,6 @@ namespace stream {
           }
 
           // Get session state
-          auto state = session_p->state.load(std::memory_order_relaxed);
           switch (state) {
             case state_e::STOPPED:
               info.state = "STOPPED";
@@ -7210,6 +7562,7 @@ namespace stream {
               info.state = "UNKNOWN";
               break;
           }
+          info.canonical_state = li_session.state;
 
           // Get video configuration
           info.width = session_p->config.monitor.width;
@@ -7245,6 +7598,21 @@ namespace stream {
                                            display_allocation_mode_name(session_runtime::display_allocation_mode_e::shared_follower);
           info.display_resource_slot = display_resource.resource_slot;
           info.dedicated_display = info.display_allocation_mode == display_allocation_mode_name(session_runtime::display_allocation_mode_e::dedicated);
+          info.transport_path_id = li_session.transportPath.pathId;
+          info.transport_kind = li_session.transportPath.kind;
+          info.transport_protocol = li_session.transportPath.protocol;
+          info.transport_flags = li_session.transportPath.flags;
+          info.transport_rtt_us = li_session.transportPath.rttUs;
+          info.transport_jitter_us = li_session.transportPath.jitterUs;
+          info.transport_packet_loss_ppm = li_session.transportPath.packetLossPpm;
+          info.transport_route_id = li_session.transportPath.routeId;
+          info.pointer_mode = li_session.telemetry.pointerMode;
+          info.cursor_state_flags = li_session.telemetry.cursorStateFlags;
+          info.pointer_release_queue_depth = li_session.telemetry.pointerReleaseQueueDepth;
+          info.pointer_release_queue_delay_us = li_session.telemetry.pointerReleaseQueueDelayUs;
+          info.pointer_mode_switch_us = li_session.telemetry.pointerModeSwitchUs;
+          info.pointer_deltas_coalesced = li_session.telemetry.pointerDeltasCoalesced;
+          info.pointer_acceleration_risk_ppm = li_session.telemetry.pointerAccelerationRiskPpm;
 
           // Get app information
           try {

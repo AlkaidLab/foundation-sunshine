@@ -64,6 +64,8 @@ namespace input {
     std::atomic<std::uint64_t> os_abs { 0 };
     std::atomic<std::uint64_t> os_motion { 0 };
     std::atomic<std::uint64_t> max_queue_depth { 0 };
+    std::atomic<std::uint64_t> max_queue_delay_us { 0 };
+    std::atomic<std::uint64_t> coalesced_pointer_deltas { 0 };
     std::mutex log_mutex;
     std::chrono::steady_clock::time_point last_log { std::chrono::steady_clock::now() };
   };
@@ -92,6 +94,46 @@ namespace input {
     while (observed > current &&
            !mouse_input_diag.max_queue_depth.compare_exchange_weak(current, observed, std::memory_order_relaxed)) {
     }
+  }
+
+  std::uint32_t
+  clamp_to_u32(std::uint64_t value) {
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(value, UINT32_MAX));
+  }
+
+  void
+  update_mouse_diag_queue_delay(std::chrono::steady_clock::time_point enqueued_at) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < enqueued_at) {
+      return;
+    }
+
+    const auto observed = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(now - enqueued_at).count());
+    auto current = mouse_input_diag.max_queue_delay_us.load(std::memory_order_relaxed);
+    while (observed > current &&
+           !mouse_input_diag.max_queue_delay_us.compare_exchange_weak(current, observed, std::memory_order_relaxed)) {
+    }
+  }
+
+  void
+  record_coalesced_pointer_delta() {
+    mouse_input_diag.coalesced_pointer_deltas.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  std::uint32_t
+  estimate_pointer_acceleration_risk_ppm(std::uint32_t queue_depth,
+                                         std::uint32_t queue_delay_us,
+                                         std::uint32_t coalesced_deltas) {
+    if (queue_depth == 0 && queue_delay_us == 0 && coalesced_deltas == 0) {
+      return 0;
+    }
+
+    const std::uint64_t depth_risk = static_cast<std::uint64_t>(queue_depth) * 20000ULL;
+    const std::uint64_t delay_risk = static_cast<std::uint64_t>(queue_delay_us) * 8ULL;
+    const std::uint64_t coalesced_risk = static_cast<std::uint64_t>(coalesced_deltas) * 3000ULL;
+    return static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(1000000ULL, depth_risk + delay_risk + coalesced_risk));
   }
 
   void
@@ -235,6 +277,11 @@ namespace input {
     button_state_e back_button_state;
   };
 
+  struct queued_input_t {
+    std::vector<std::uint8_t> data;
+    std::chrono::steady_clock::time_point enqueued_at;
+  };
+
   struct input_t {
     enum shortkey_e {
       CTRL = 0x1,  ///< Control key
@@ -266,7 +313,7 @@ namespace input {
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
     platf::feedback_queue_t feedback_queue;
 
-    std::list<std::vector<uint8_t>> input_queue;
+    std::list<queued_input_t> input_queue;
     std::mutex input_queue_lock;
     bool input_worker_scheduled;
 
@@ -1615,7 +1662,7 @@ namespace input {
   }
 
   bool
-  replace_queued_controller_motion(std::list<std::vector<uint8_t>> &queue,
+  replace_queued_controller_motion(std::list<queued_input_t> &queue,
                                    const std::vector<uint8_t> &input_data) {
     if (input_data.size() < sizeof(SS_CONTROLLER_MOTION_PACKET)) {
       return false;
@@ -1624,19 +1671,20 @@ namespace input {
     const auto *incoming = reinterpret_cast<const SS_CONTROLLER_MOTION_PACKET *>(input_data.data());
     std::size_t scanned = 0;
     for (auto it = queue.rbegin(); it != queue.rend() && scanned < 64; ++it, ++scanned) {
-      if (it->size() < sizeof(SS_CONTROLLER_MOTION_PACKET)) {
+      if (it->data.size() < sizeof(SS_CONTROLLER_MOTION_PACKET)) {
         continue;
       }
 
-      auto header = (PNV_INPUT_HEADER) it->data();
+      auto header = (PNV_INPUT_HEADER) it->data.data();
       if (util::endian::little(header->magic) != SS_CONTROLLER_MOTION_MAGIC) {
         continue;
       }
 
-      auto *queued = reinterpret_cast<SS_CONTROLLER_MOTION_PACKET *>(it->data());
+      auto *queued = reinterpret_cast<SS_CONTROLLER_MOTION_PACKET *>(it->data.data());
       if (queued->controllerNumber == incoming->controllerNumber &&
           queued->motionType == incoming->motionType) {
-        *it = input_data;
+        it->data = input_data;
+        it->enqueued_at = std::chrono::steady_clock::now();
         return true;
       }
     }
@@ -1705,15 +1753,16 @@ namespace input {
         }
 
         // Pop off the first entry, which we will send
-        entry = input->input_queue.front();
+        auto queued_entry = std::move(input->input_queue.front());
+        update_mouse_diag_queue_delay(queued_entry.enqueued_at);
+        entry = std::move(queued_entry.data);
         payload = (PNV_INPUT_HEADER) entry.data();
         input->input_queue.pop_front();
 
         // Try to batch with remaining items on the queue
         auto i = input->input_queue.begin();
         while (i != input->input_queue.end()) {
-          auto batchable_entry = *i;
-          auto batchable_payload = (PNV_INPUT_HEADER) batchable_entry.data();
+          auto batchable_payload = (PNV_INPUT_HEADER) i->data.data();
 
           auto batch_result = batch(payload, batchable_payload);
           if (batch_result == batch_result_e::terminate_batch) {
@@ -1724,9 +1773,11 @@ namespace input {
             auto magic = util::endian::little(payload->magic);
             if (is_rel_mouse_magic(magic)) {
               mouse_input_diag.batched_rel.fetch_add(1, std::memory_order_relaxed);
+              record_coalesced_pointer_delta();
             }
             else if (is_abs_mouse_magic(magic)) {
               mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
+              record_coalesced_pointer_delta();
             }
             else if (is_controller_motion_magic(magic)) {
               mouse_input_diag.batched_motion.fetch_add(1, std::memory_order_relaxed);
@@ -1809,6 +1860,7 @@ namespace input {
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
     std::uint32_t magic = 0;
     bool schedule_worker = false;
+    const auto enqueued_at = std::chrono::steady_clock::now();
     if (input_data.size() >= sizeof(NV_INPUT_HEADER)) {
       magic = util::endian::little(((PNV_INPUT_HEADER) input_data.data())->magic);
       if (is_rel_mouse_magic(magic)) {
@@ -1825,7 +1877,7 @@ namespace input {
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       if (!input->input_queue.empty() && input_data.size() >= sizeof(NV_INPUT_HEADER)) {
-        auto tail_payload = (PNV_INPUT_HEADER) input->input_queue.back().data();
+        auto tail_payload = (PNV_INPUT_HEADER) input->input_queue.back().data.data();
         auto incoming_payload = (PNV_INPUT_HEADER) input_data.data();
         auto batch_result = is_controller_motion_magic(magic) &&
                               replace_queued_controller_motion(input->input_queue, input_data) ?
@@ -1834,20 +1886,22 @@ namespace input {
         if (batch_result == batch_result_e::batched) {
           if (is_rel_mouse_magic(magic)) {
             mouse_input_diag.batched_rel.fetch_add(1, std::memory_order_relaxed);
+            record_coalesced_pointer_delta();
           }
           else if (is_abs_mouse_magic(magic)) {
             mouse_input_diag.batched_abs.fetch_add(1, std::memory_order_relaxed);
+            record_coalesced_pointer_delta();
           }
           else if (is_controller_motion_magic(magic)) {
             mouse_input_diag.batched_motion.fetch_add(1, std::memory_order_relaxed);
           }
         }
         else {
-          input->input_queue.push_back(std::move(input_data));
+          input->input_queue.push_back({ std::move(input_data), enqueued_at });
         }
       }
       else {
-        input->input_queue.push_back(std::move(input_data));
+        input->input_queue.push_back({ std::move(input_data), enqueued_at });
       }
       update_mouse_diag_max_queue(input->input_queue.size());
       if (!input->input_worker_scheduled) {
@@ -1863,6 +1917,51 @@ namespace input {
       task_pool.push(passthrough_next_message, input);
     }
   }
+
+  diagnostics_snapshot_t
+  diagnostics_snapshot(const std::shared_ptr<input_t> &input) {
+    diagnostics_snapshot_t snapshot {};
+    const auto now = std::chrono::steady_clock::now();
+
+    if (input) {
+      std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      snapshot.input_queue_depth = clamp_to_u32(input->input_queue.size());
+      if (!input->input_queue.empty()) {
+        const auto enqueued_at = input->input_queue.front().enqueued_at;
+        if (now >= enqueued_at) {
+          snapshot.release_queue_delay_us = clamp_to_u32(
+            static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::microseconds>(now - enqueued_at).count()));
+        }
+      }
+    }
+
+    snapshot.release_queue_delay_us = std::max(
+      snapshot.release_queue_delay_us,
+      clamp_to_u32(mouse_input_diag.max_queue_delay_us.exchange(0, std::memory_order_relaxed)));
+    snapshot.input_queue_depth = std::max(
+      snapshot.input_queue_depth,
+      clamp_to_u32(mouse_input_diag.max_queue_depth.exchange(0, std::memory_order_relaxed)));
+    snapshot.coalesced_pointer_deltas = clamp_to_u32(
+      mouse_input_diag.coalesced_pointer_deltas.exchange(0, std::memory_order_relaxed));
+    snapshot.release_smoothing_active = snapshot.input_queue_depth > 0 ||
+                                        snapshot.release_queue_delay_us > 0 ||
+                                        snapshot.coalesced_pointer_deltas > 0;
+    snapshot.pointer_acceleration_risk_ppm = estimate_pointer_acceleration_risk_ppm(
+      snapshot.input_queue_depth,
+      snapshot.release_queue_delay_us,
+      snapshot.coalesced_pointer_deltas);
+    return snapshot;
+  }
+
+#ifdef SUNSHINE_TESTS
+  std::uint32_t
+  test_estimate_pointer_acceleration_risk_ppm(std::uint32_t queue_depth,
+                                              std::uint32_t queue_delay_us,
+                                              std::uint32_t coalesced_deltas) {
+    return estimate_pointer_acceleration_risk_ppm(queue_depth, queue_delay_us, coalesced_deltas);
+  }
+#endif
 
   void
   reset(std::shared_ptr<input_t> &input) {

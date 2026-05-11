@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 #include "platform/common.h"
@@ -18,6 +19,17 @@ namespace input {
   reset(std::shared_ptr<input_t> &input);
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data);
+
+  struct diagnostics_snapshot_t {
+    std::uint32_t input_queue_depth {};
+    std::uint32_t release_queue_delay_us {};
+    std::uint32_t coalesced_pointer_deltas {};
+    std::uint32_t pointer_acceleration_risk_ppm {};
+    bool release_smoothing_active {};
+  };
+
+  [[nodiscard]] diagnostics_snapshot_t
+  diagnostics_snapshot(const std::shared_ptr<input_t> &input);
 
   [[nodiscard]] std::unique_ptr<platf::deinit_t>
   init();

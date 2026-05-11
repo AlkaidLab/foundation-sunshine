@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "src/weak_net_controller.h"
+
 namespace stream {
   std::vector<uint8_t>
   concat_and_insert(uint64_t insert_size, uint64_t slice_size, const std::string_view &data1, const std::string_view &data2);
@@ -38,6 +40,11 @@ namespace stream {
 
   bool
   should_apply_frame_fec_weak_net_feedback(int ml_feature_flags);
+
+  bool
+  weak_net_resync_guard_allows_safety_apply(const weak_net::action_t &action,
+                                           int last_applied_bitrate_kbps,
+                                           int last_applied_fec_percentage);
 }
 
 #include "../tests_common.h"
@@ -107,6 +114,26 @@ TEST(WeakNetRecoveryFeedbackTests, UsesNetworkFeedbackInsteadOfPerFrameFecWhenAv
   EXPECT_TRUE(stream::should_apply_frame_fec_weak_net_feedback(0));
 }
 
+TEST(WeakNetRecoveryFeedbackTests, ResyncGuardAllowsCongestionAntiSpiralDownshift) {
+  weak_net::action_t action {};
+  action.changed = true;
+  action.state = weak_net::state_e::crisis;
+  action.reason = weak_net::reason_e::random_loss;
+  action.target_bitrate_kbps = 9000;
+  action.fec_percentage = 20;
+  action.congestion_anti_spiral = true;
+
+  EXPECT_TRUE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+
+  action.congestion_anti_spiral = false;
+  EXPECT_FALSE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+
+  action.congestion_anti_spiral = true;
+  action.target_bitrate_kbps = 36000;
+  action.fec_percentage = 40;
+  EXPECT_FALSE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+}
+
 TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
   auto scaled = stream::runtime_profile_resolution_for_scale(3840, 2160, 75);
   EXPECT_EQ(scaled.width, 2880);
@@ -117,6 +144,6 @@ TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
   EXPECT_EQ(full.height, 2160);
 }
 
-TEST(RuntimeProfileTierTests, EnablesRuntimeEncoderResolutionReconfigurationForSoftScale) {
-  EXPECT_TRUE(stream::runtime_profile_resolution_reconfig_enabled());
+TEST(RuntimeProfileTierTests, DisablesRuntimeEncoderResolutionReconfigurationByDefault) {
+  EXPECT_FALSE(stream::runtime_profile_resolution_reconfig_enabled());
 }

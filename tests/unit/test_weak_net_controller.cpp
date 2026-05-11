@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 TEST(WeakNetControllerTests, DropsBitrateAndRaisesFecWhenFramesAreUnrecoverable) {
@@ -226,6 +227,57 @@ TEST(WeakNetControllerTests, TreatsConfiguredBitrateAsCeilingAndStartsFromSafeWo
   EXPECT_LT(action.target_bitrate_kbps, 120000);
   EXPECT_LE(action.target_bitrate_kbps, 35000);
   EXPECT_EQ(action.target_fps, 120);
+}
+
+TEST(WeakNetControllerTests, HighRefresh4kStartupUsesSafeFirstFrameFloor) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 120000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 1000,
+    .ceiling_total_bitrate_kbps = 132000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .frame_width = 3840,
+    .frame_height = 2160,
+  });
+
+  EXPECT_GE(controller.current_bitrate_kbps(), 6000);
+}
+
+TEST(WeakNetControllerTests, FirstIdrProtectionDoesNotCutStartupBitrateOnInitialLoss) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 120000,
+    .baseline_fec_percentage = 10,
+    .startup_bitrate_kbps = 6000,
+    .ceiling_total_bitrate_kbps = 132000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .frame_width = 3840,
+    .frame_height = 2160,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 60,
+    .complete_frames = 0,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 60,
+    .missing_packets = 1200,
+    .total_packets = 2400,
+    .received_packets = 1200,
+    .rtt_ms = 42,
+    .rtt_variance_ms = 18,
+    .rfi_requests = 12,
+    .waiting_for_rfi_frames = 60,
+    .frame_area = 3840U * 2160U,
+  });
+
+  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_GE(action.target_bitrate_kbps, 6000);
 }
 
 TEST(WeakNetControllerTests, ContinuouslyProbesTowardCeilingWhenNetworkAndQueuesStayHealthy) {
@@ -1760,6 +1812,53 @@ TEST(WeakNetControllerTests, BandwidthLimitedLinkCutsTotalBudgetRatherThanAdding
   EXPECT_LT(action.fec_percentage, 30);
   EXPECT_LT(action.target_bitrate_kbps, 50000);
   EXPECT_LE(action.pacing_bitrate_kbps, 60000);
+}
+
+TEST(WeakNetControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCannotFitSustainableBudget) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 54545,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 100,
+    .startup_bitrate_kbps = 50000,
+    .ceiling_total_bitrate_kbps = 60000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+  });
+
+  weak_net::action_t action {};
+  bool anti_spiral_fired = false;
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 75,
+      .complete_frames = 0,
+      .recovered_frames = 2,
+      .unrecoverable_frames = 56,
+      .missing_packets = 700,
+      .total_packets = 1700,
+      .received_packets = 1000,
+      .video_bytes = 360 * 1024,
+      .rtt_ms = 24,
+      .rtt_variance_ms = 5,
+      .displayed_frames = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .rfi_requests = 3,
+      .waiting_for_rfi_frames = 60,
+    });
+    anti_spiral_fired = anti_spiral_fired || action.congestion_anti_spiral;
+  }
+
+  EXPECT_TRUE(anti_spiral_fired)
+    << "When elevated FEC keeps total send far above the measured sustainable point, "
+       "the controller must bleed FEC instead of re-opening parity every window";
+  EXPECT_LE(action.fec_percentage, 25);
+  EXPECT_LE(action.pacing_bitrate_kbps, 16000);
 }
 
 TEST(WeakNetControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenalty) {
@@ -3943,6 +4042,83 @@ TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCa
     << "High availability should regain quality after cadence is proven";
 }
 
+TEST(WeakNetControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 120,
+      .complete_frames = 0,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 110,
+      .missing_packets = 1800,
+      .total_packets = 3600,
+      .received_packets = 1800,
+      .video_bytes = 520 * 1024,
+      .rtt_ms = 42,
+      .rtt_variance_ms = 12,
+      .displayed_frames = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .rfi_requests = 16,
+      .waiting_for_rfi_frames = 110,
+    });
+  }
+  ASSERT_LT(action.target_bitrate_kbps, 18000);
+
+  const auto low_estimate = controller.sustainable_estimate_kbps();
+  for (int i = 0; i < 5; ++i) {
+    const auto frames = static_cast<std::uint32_t>(std::max(60, controller.current_fps()));
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = frames,
+      .complete_frames = frames,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 360 * 1024,
+      .rtt_ms = 24,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 0,
+      .late_frames = 0,
+      .displayed_frames = frames + 12,
+      .visual_stale_frames = 0,
+      .duplicate_frames = frames + 12,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    });
+  }
+
+  EXPECT_GE(controller.sustainable_estimate_kbps(), low_estimate)
+    << "Low byte count during clean ALR/last-frame reuse is app-limited, not measured path capacity";
+  EXPECT_GT(action.target_bitrate_kbps, 24000)
+    << "Clean app-limited windows should actively probe upward instead of staying pinned near the weak-route seed";
+  EXPECT_GT(action.target_fps, 90);
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
 TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDowngrade) {
   weak_net::controller_t controller;
   controller.configure({
@@ -4270,6 +4446,822 @@ TEST(WeakNetControllerTests, LocalDisplayPressureDoesNotLookLikeNetworkLoss) {
   EXPECT_EQ(action.availability, weak_net::availability_e::recovering);
 }
 
+TEST(WeakNetControllerTests, DisplayStarvationWithRecoveredLossDoesNotReopenFec) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 120000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 120000,
+    .ceiling_total_bitrate_kbps = 160000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 550,
+    .frames_seen = 15,
+    .complete_frames = 0,
+    .recovered_frames = 7,
+    .unrecoverable_frames = 0,
+    .missing_packets = 7,
+    .total_packets = 32,
+    .received_packets = 25,
+    .video_bytes = 40 * 1024,
+    .rtt_ms = 24,
+    .rtt_variance_ms = 4,
+    .displayed_frames = 0,
+    .local_display_pressure = 1000,
+    .frame_area = 3840ULL * 2160ULL,
+  });
+
+  EXPECT_NE(action.reason, weak_net::reason_e::random_loss)
+    << "Recovered-only packet loss during a display/capture stall is not a reason to spend more bandwidth on FEC";
+  EXPECT_LE(action.fec_percentage, 10);
+  EXPECT_EQ(action.availability, weak_net::availability_e::recovering);
+}
+
+TEST(WeakNetControllerTests, DuplicateOnlyFrameReuseDoesNotLookLikeStaleVideo) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 120000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 120000,
+    .ceiling_total_bitrate_kbps = 160000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 500,
+    .frames_seen = 0,
+    .complete_frames = 0,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 0,
+    .missing_packets = 0,
+    .total_packets = 0,
+    .received_packets = 0,
+    .rtt_ms = 24,
+    .rtt_variance_ms = 4,
+    .displayed_frames = 30,
+    .visual_stale_frames = 0,
+    .duplicate_frames = 30,
+    .frame_area = 3840ULL * 2160ULL,
+  });
+
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline)
+    << "Intentional last-frame reuse should keep visual stats fresh without looking like a render stall";
+  EXPECT_NE(action.availability, weak_net::availability_e::low);
+  EXPECT_LE(action.fec_percentage, 10);
+}
+
+TEST(WeakNetControllerTests, CleanLastFrameReuseDoesNotHoldLanAtLowFps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 18000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 60,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  auto clean_reuse_feedback = []() {
+    weak_net::feedback_t feedback {
+      .duration_ms = 1000,
+      .frames_seen = 58,
+      .complete_frames = 58,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 2400,
+      .received_packets = 2400,
+      .video_bytes = 2300 * 1024,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 0,
+      .render_queue_depth = 1,
+      .late_frames = 0,
+      .displayed_frames = 83,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 25,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  EXPECT_LT(clean_reuse_feedback().local_display_pressure, 200U)
+    << "Intentional last-frame reuse on a clean LAN path is not client render pressure";
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback(clean_reuse_feedback());
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline)
+    << "Frame reuse should not be reported back to Sunshine as client-render pressure";
+  EXPECT_GT(action.target_fps, 60)
+    << "A clean LAN path that is meeting the current target should probe upward from the conservative seed";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
+TEST(WeakNetControllerTests, SparseDisplaySlipReuseDoesNotPinLanBelowTargetFps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 58227,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  auto clean_slip_reuse_feedback = [](int target_fps) {
+    const auto frames = static_cast<std::uint32_t>(
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(target_fps) * 0.55))));
+    const auto reused = std::max(2U, frames / 10U);
+    weak_net::feedback_t feedback {
+      .duration_ms = 550,
+      .frames_seen = frames,
+      .complete_frames = frames,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1198208,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .late_frames = 1,
+      .displayed_frames = frames + reused,
+      .visual_stale_frames = 1,
+      .duplicate_frames = reused,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  EXPECT_EQ(clean_slip_reuse_feedback(90).local_display_pressure, 0U)
+    << "One stale/late present in a clean reuse window is display smoothing, not client-render pressure";
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback(clean_slip_reuse_feedback(controller.current_fps()));
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_GE(action.target_fps, 120)
+    << "Clean LAN reuse with only sparse display slips should keep probing toward the 150fps target";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
+TEST(WeakNetControllerTests, ModerateDisplayReuseSlipDoesNotTriggerClientRenderOnCleanLan) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 58227,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 104,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  auto lan_reuse_feedback = []() {
+    weak_net::feedback_t feedback {
+      .duration_ms = 1104,
+      .frames_seen = 107,
+      .complete_frames = 107,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1198208,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 2,
+      .render_queue_depth = 2,
+      .late_frames = 6,
+      .displayed_frames = 119,
+      .visual_stale_frames = 6,
+      .duplicate_frames = 20,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  EXPECT_EQ(lan_reuse_feedback().local_display_pressure, 0U)
+    << "Clean LAN last-frame reuse with small stale/late slips is visual smoothing, not client-render pressure";
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 6; ++i) {
+    action = controller.on_feedback(lan_reuse_feedback());
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_GE(action.target_fps, 104)
+    << "The controller should not turn clean reuse feedback into a downward client-render clamp";
+}
+
+TEST(WeakNetControllerTests, DuplicateDominantNativeAppSwitchFeedbackDoesNotClampLanFps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 145567,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 126000,
+    .ceiling_total_bitrate_kbps = 160124,
+    .baseline_fps = 150,
+    .startup_fps = 81,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .fps_needed_kbps = 126000,
+  });
+
+  auto native_app_switch_feedback = []() {
+    weak_net::feedback_t feedback {
+      .duration_ms = 1085,
+      .frames_seen = 80,
+      .complete_frames = 80,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1313664,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .late_frames = 0,
+      .displayed_frames = 71,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 71,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  EXPECT_EQ(native_app_switch_feedback().local_display_pressure, 0U)
+    << "Clean duplicate-dominant Native/app-switch feedback is ALR/display reuse, not render pressure";
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback(native_app_switch_feedback());
+  }
+
+  EXPECT_NE(action.scenario, weak_net::scenario_e::local_render);
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_GE(action.target_fps, 81)
+    << "The LAN controller must not down-clamp clean duplicate-heavy app-switch feedback";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
+TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefreshFps) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 58227,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 104,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+
+  auto clean_alr_reuse_feedback = [](int current_fps) {
+    const auto displayed = static_cast<std::uint32_t>(
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.96))));
+    const auto frames = static_cast<std::uint32_t>(
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.84))));
+    const auto reused = std::max(4U, displayed > frames ? displayed - frames : 4U);
+    const auto sparse_slip = std::max(1U, reused / 4U);
+    weak_net::feedback_t feedback {
+      .duration_ms = 1000,
+      .frames_seen = frames,
+      .complete_frames = frames,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1198208,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 2,
+      .render_queue_depth = 2,
+      .late_frames = sparse_slip,
+      .displayed_frames = displayed,
+      .visual_stale_frames = sparse_slip,
+      .duplicate_frames = reused,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  EXPECT_EQ(clean_alr_reuse_feedback(120).local_display_pressure, 0U)
+    << "Near-cadence last-frame reuse with shallow decode/render queues should be clean ALR, not render pressure";
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 6; ++i) {
+    action = controller.on_feedback(clean_alr_reuse_feedback(controller.current_fps()));
+  }
+
+  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.target_fps, 150)
+    << "UU-like ALR probing should not leave a clean LAN 4K high-refresh session parked around 120-140fps";
+  EXPECT_GT(action.target_bitrate_kbps, 120000)
+    << "Clean app-limited reuse must probe bitrate upward too; low send bytes are not path capacity";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
+TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLossCongestionAndLocalRender) {
+  weak_net::controller_t strong_lan;
+  strong_lan.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 180000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+  auto strong = strong_lan.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 150,
+    .complete_frames = 150,
+    .total_packets = 8000,
+    .received_packets = 8000,
+    .video_bytes = 21 * 1024 * 1024,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 1,
+    .displayed_frames = 150,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 3840ULL * 2160ULL,
+    .full_frame_dirty = true,
+  });
+  EXPECT_EQ(strong.scenario, weak_net::scenario_e::strong_lan);
+  EXPECT_LE(strong.fec_percentage, 2);
+  EXPECT_EQ(strong.target_fps, 150);
+
+  weak_net::controller_t alr;
+  alr.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 58227,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 180000,
+    .fps_needed_kbps = 180000,
+  });
+  auto clean_alr = alr.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .video_bytes = 420 * 1024,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 1,
+    .decode_queue_depth = 1,
+    .render_queue_depth = 1,
+    .displayed_frames = 144,
+    .duplicate_frames = 24,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 0,
+  });
+  EXPECT_EQ(clean_alr.scenario, weak_net::scenario_e::clean_alr);
+  EXPECT_GT(clean_alr.target_bitrate_kbps, 58227);
+  EXPECT_LE(clean_alr.fec_percentage, 2);
+
+  weak_net::controller_t random_loss;
+  random_loss.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 90000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 60,
+  });
+  auto random = random_loss.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 112,
+    .recovered_frames = 8,
+    .missing_packets = 90,
+    .total_packets = 3000,
+    .received_packets = 2910,
+    .video_bytes = 6 * 1024 * 1024,
+    .rtt_ms = 12,
+    .rtt_variance_ms = 2,
+    .displayed_frames = 120,
+  });
+  EXPECT_EQ(random.scenario, weak_net::scenario_e::random_loss);
+  EXPECT_GT(random.fec_percentage, 10);
+  EXPECT_NE(random.reason, weak_net::reason_e::delay_congestion);
+
+  weak_net::controller_t congestion;
+  congestion.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 90000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 60,
+  });
+  auto congested = congestion.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .video_bytes = 6 * 1024 * 1024,
+    .rtt_ms = 260,
+    .rtt_variance_ms = 95,
+    .displayed_frames = 116,
+    .delay_gradient_us = 24000,
+    .interarrival_jitter_us = 9000,
+    .delay_samples = 120,
+    .delay_gradient_valid = true,
+  });
+  EXPECT_EQ(congested.scenario, weak_net::scenario_e::delay_congestion);
+  EXPECT_LE(congested.fec_percentage, 10);
+
+  weak_net::controller_t local_render;
+  local_render.configure({
+    .baseline_bitrate_kbps = 180000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 180000,
+    .ceiling_total_bitrate_kbps = 220000,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+  });
+  auto render = local_render.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 150,
+    .complete_frames = 150,
+    .video_bytes = 20 * 1024 * 1024,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 1,
+    .decode_queue_depth = 1,
+    .render_queue_depth = 2,
+    .late_frames = 18,
+    .displayed_frames = 150,
+    .visual_stale_frames = 18,
+    .local_display_pressure = 700,
+    .frame_area = 3840ULL * 2160ULL,
+  });
+  EXPECT_EQ(render.scenario, weak_net::scenario_e::local_render);
+  EXPECT_EQ(render.sustainable_estimate_kbps, 180000)
+    << "Local render-only pressure must not teach the link estimator that the network capacity dropped";
+}
+
+TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureDoesNotClampStrongPath) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 145567,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 126000,
+    .ceiling_total_bitrate_kbps = 160124,
+    .baseline_fps = 150,
+    .startup_fps = 146,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .fps_needed_kbps = 126000,
+  });
+
+  auto clean_alr_reuse_feedback = [](int current_fps) {
+    const auto displayed = static_cast<std::uint32_t>(
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.96))));
+    const auto frames = static_cast<std::uint32_t>(
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.84))));
+    const auto reused = std::max(4U, displayed > frames ? displayed - frames : 4U);
+    const auto sparse_slip = std::max(1U, reused / 4U);
+    weak_net::feedback_t feedback {
+      .duration_ms = 1000,
+      .frames_seen = frames,
+      .complete_frames = frames,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1198208,
+      .rtt_ms = 1,
+      .rtt_variance_ms = 1,
+      .decode_queue_depth = 2,
+      .render_queue_depth = 2,
+      .late_frames = sparse_slip,
+      .displayed_frames = displayed,
+      .visual_stale_frames = sparse_slip,
+      .duplicate_frames = reused,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    };
+    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    return feedback;
+  };
+
+  for (int i = 0; i < 4; ++i) {
+    (void) controller.on_feedback(clean_alr_reuse_feedback(controller.current_fps()));
+  }
+
+  EXPECT_GE(controller.current_fps(), 140);
+
+  weak_net::feedback_t native_display_backpressure {
+    .duration_ms = 1080,
+    .frames_seen = 130,
+    .complete_frames = 130,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 0,
+    .missing_packets = 0,
+    .total_packets = 0,
+    .received_packets = 0,
+    .video_bytes = 1275648,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 0,
+    .decode_queue_depth = 8,
+    .render_queue_depth = 2,
+    .late_frames = 1,
+    .displayed_frames = 28,
+    .visual_stale_frames = 0,
+    .duplicate_frames = 25,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 0,
+    .full_frame_dirty = false,
+  };
+  native_display_backpressure.local_display_pressure =
+    weak_net::infer_local_display_pressure(native_display_backpressure);
+
+  EXPECT_EQ(native_display_backpressure.local_display_pressure, 1000U)
+    << "This reproduces the native display-layer backpressure window from the clean-LAN trace";
+
+  const auto action = controller.on_feedback(native_display_backpressure);
+
+  EXPECT_EQ(action.scenario, weak_net::scenario_e::local_render);
+  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_NE(action.state, weak_net::state_e::constrained);
+  EXPECT_GE(action.target_fps, 120)
+    << "Clean LAN display backpressure must not collapse the strong path to 60fps";
+  EXPECT_GE(action.target_bitrate_kbps, 100000)
+    << "Transport bitrate should stay in the strong-path band when the network is clean";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
+TEST(WeakNetControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongestionBeforeLoss) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 80000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 80000,
+    .ceiling_total_bitrate_kbps = 120000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 60,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 500,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .video_bytes = 5 * 1024 * 1024,
+      .rtt_ms = 22,
+      .rtt_variance_ms = 3,
+      .displayed_frames = 60,
+      .delay_gradient_us = 36000,
+      .interarrival_jitter_us = 3500,
+      .delay_samples = 60,
+      .delay_gradient_valid = true,
+    });
+  }
+
+  EXPECT_EQ(action.scenario, weak_net::scenario_e::delay_congestion)
+    << "Receiver-side queue growth should trip the weak-net brake before packet loss starts";
+  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_LE(action.fec_percentage, 10)
+    << "Delay-only congestion should shed or hold FEC, not add parity";
+  EXPECT_GT(action.owd_gradient_us, 0);
+  EXPECT_GT(action.owd_pressure, 0.0);
+}
+
+TEST(WeakNetControllerTests, QoSPolicerLossBacksOffInsteadOfOpeningFecOrIdr) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 60000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 60000,
+    .ceiling_total_bitrate_kbps = 90000,
+    .baseline_fps = 120,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .user_quality_kbps = 60000,
+    .fps_needed_kbps = 60000,
+  });
+
+  auto action = controller.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 108,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 12,
+    .missing_packets = 420,
+    .total_packets = 3000,
+    .received_packets = 2580,
+    .video_bytes = 6 * 1024 * 1024,
+    .rtt_ms = 18,
+    .rtt_variance_ms = 3,
+    .displayed_frames = 104,
+    .frame_area = 3024ULL * 1900ULL,
+    .dirty_area = 3024ULL * 1900ULL,
+    .full_frame_dirty = true,
+  });
+
+  EXPECT_EQ(action.scenario, weak_net::scenario_e::qos_policer);
+  EXPECT_EQ(action.reason, weak_net::reason_e::qos_policer);
+  EXPECT_LE(action.fec_percentage, 20)
+    << "Policer-like loss is a send-rate problem; extra parity would inflate the bucket";
+  EXPECT_LT(action.target_bitrate_kbps, 60000);
+  EXPECT_FALSE(action.request_idr)
+    << "Do not add a server-side IDR burst on top of a suspected token-bucket drop";
+  EXPECT_LE(action.pacing_bitrate_kbps, 90000);
+}
+
+TEST(WeakNetControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapacity) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 90000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 18000,
+    .ceiling_total_bitrate_kbps = 120000,
+    .baseline_fps = 120,
+    .startup_fps = 72,
+    .min_fps = 45,
+    .frame_width = 3024,
+    .frame_height = 1900,
+    .user_quality_kbps = 90000,
+    .fps_needed_kbps = 90000,
+  });
+
+  for (int i = 0; i < 4; ++i) {
+    controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 120,
+      .complete_frames = 120,
+      .total_packets = 3200,
+      .received_packets = 3200,
+      .video_bytes = 10 * 1024 * 1024,
+      .rtt_ms = 4,
+      .rtt_variance_ms = 1,
+      .displayed_frames = 120,
+      .frame_area = 3024ULL * 1900ULL,
+      .dirty_area = 3024ULL * 1900ULL,
+      .full_frame_dirty = true,
+    });
+  }
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 2; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 0,
+      .complete_frames = 0,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 0,
+      .rtt_ms = 0,
+      .rtt_variance_ms = 0,
+      .displayed_frames = 0,
+    });
+  }
+
+  EXPECT_EQ(action.scenario, weak_net::scenario_e::handover);
+  EXPECT_EQ(action.reason, weak_net::reason_e::handover);
+  EXPECT_EQ(action.availability, weak_net::availability_e::low);
+  EXPECT_LE(action.target_bitrate_kbps, 18000)
+    << "A path blackhole should reset to a safe seed while the new route is probed";
+  EXPECT_EQ(action.sustainable_estimate_kbps, 18000)
+    << "No-delivery feedback must not be learned as zero physical bandwidth";
+  EXPECT_LE(action.fec_percentage, 10);
+  EXPECT_LE(action.target_fps, 72);
+}
+
+TEST(WeakNetControllerTests, DisplayUnderrunStillReportsRenderPressure) {
+  weak_net::feedback_t feedback {
+    .duration_ms = 1070,
+    .frames_seen = 94,
+    .complete_frames = 94,
+    .recovered_frames = 0,
+    .unrecoverable_frames = 0,
+    .missing_packets = 0,
+    .total_packets = 0,
+    .received_packets = 0,
+    .rtt_ms = 1,
+    .rtt_variance_ms = 3,
+    .decode_queue_depth = 1,
+    .render_queue_depth = 2,
+    .late_frames = 43,
+    .displayed_frames = 64,
+    .visual_stale_frames = 43,
+    .duplicate_frames = 47,
+    .frame_area = 3840ULL * 2160ULL,
+  };
+
+  EXPECT_GT(weak_net::infer_local_display_pressure(feedback), 500U)
+    << "If the display loop is presenting far fewer frames than it receives, keep treating it as local render pressure";
+}
+
 TEST(WeakNetControllerTests, InfersLocalDisplayPressureFromRenderBackpressure) {
   const weak_net::feedback_t feedback {
     .duration_ms = 1000,
@@ -4305,6 +5297,10 @@ TEST(WeakNetControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsPresent
 }
 
 TEST(WeakNetControllerTests, TierAndAvailabilityNamesAreStableForLogs) {
+  EXPECT_STREQ(weak_net::reason_name(weak_net::reason_e::qos_policer), "qos-policer");
+  EXPECT_STREQ(weak_net::reason_name(weak_net::reason_e::handover), "handover");
+  EXPECT_STREQ(weak_net::scenario_name(weak_net::scenario_e::qos_policer), "qos-policer");
+  EXPECT_STREQ(weak_net::scenario_name(weak_net::scenario_e::handover), "handover");
   EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::fast), "fast");
   EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::general), "general");
   EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::hd), "hd");

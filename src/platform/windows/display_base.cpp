@@ -929,15 +929,31 @@ namespace platf::dxgi {
       }
     }
 
-    client_frame_rate = config.framerate;
+    const auto requested_capture_frame_rate =
+      std::max(config.framerate,
+               config.qualityCeilingFramerate > 0 ? config.qualityCeilingFramerate : config.framerate);
+    client_frame_rate = std::max(1, requested_capture_frame_rate);
 
-    if (config.frameRateNum > 0 && config.frameRateDen > 0) {
+    if (config.qualityCeilingFramerate > config.framerate) {
+      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
+      BOOST_LOG(info) << "Capture pacing using quality ceiling framerate: startup="
+                      << config.framerate << "fps ceiling="
+                      << config.qualityCeilingFramerate << "fps";
+    }
+    else if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
       BOOST_LOG(info) << "Fractional framerate: " << config.frameRateNum << "/" << config.frameRateDen
                       << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
-      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
+    }
+
+    if (display_refresh_rate.Numerator == 0 || display_refresh_rate.Denominator == 0) {
+      display_refresh_rate = client_frame_rate_rational;
+      display_refresh_rate_rounded = client_frame_rate;
+      BOOST_LOG(info) << "Display refresh timing unavailable; using capture pacing rate "
+                      << client_frame_rate << "fps for Windows capture timing";
     }
 
     dxgi::output6_t output6 {};
