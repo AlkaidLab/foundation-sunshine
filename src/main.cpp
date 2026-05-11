@@ -137,19 +137,6 @@ main(int argc, char *argv[]) {
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
 
 #ifdef _WIN32
-  // atexit handlers run AFTER stack RAII and INTERLEAVED with static destructors
-  // (LIFO with static dtors). Registering this from inside main() guarantees it
-  // fires very late in the exit sequence — after our own logging::deinit_t,
-  // after every guard in main(), and after most file-scope statics constructed
-  // during static init. By that point all our explicit cleanup (device restore,
-  // CoUninitialize, socket close, log flush, Mouse Keys restore, NVIDIA prefs
-  // undo) has already happened. The remaining DLL_PROCESS_DETACH work for
-  // third-party modules (NVAPI, ViGEm, IDDCx, boost::log core internals,
-  // various GPU runtime DLLs) has a known race window during process unload
-  // that surfaces as 0xC0000005 in ntdll for some launch contexts (e.g. when
-  // started from the --shortcut launcher). Avoid it entirely by terminating
-  // ourselves with the desired exit code before DLL detach can race.
-  //
   // Note: this only fires on a normal `return` from main. If the program
   // crashes mid-run (uncaught exception, AV, abort/terminate), atexit is
   // not invoked, so the service supervisor still observes a non-zero exit
