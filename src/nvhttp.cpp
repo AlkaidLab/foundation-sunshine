@@ -30,6 +30,7 @@
 
 // local includes
 #include "config.h"
+#include "clipboard_http.h"
 #include "confighttp.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
@@ -2425,6 +2426,27 @@ namespace nvhttp {
     https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
     https_server.resource["^/stream/settings$"]["GET"] = changeDynamicParam;
     https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
+
+    // Clipboard blob routes are mirrored onto nvhttp so paired Moonlight
+    // clients can reuse their existing certificate-authenticated GameStream
+    // channel for large clipboard payloads. The local GUI agent continues to
+    // use the confighttp /api/v1/clipboard/* endpoints on loopback.
+    https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = [](resp_https_t response, req_https_t request) {
+      if (auto out = clipboard_http::make_blob_upload_preflight_response(request->header)) {
+        response->write(out->status, out->body, out->headers);
+        return;
+      }
+
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      auto out = clipboard_http::make_blob_upload_response(request->header, ss.str());
+      response->write(out.status, out.body, out.headers);
+    };
+    https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = [](resp_https_t response, req_https_t request) {
+      const std::string id = request->path_match.size() >= 2 ? request->path_match[1].str() : std::string {};
+      auto out = clipboard_http::make_blob_get_response(id);
+      response->write(out.status, out.body, out.headers);
+    };
 
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = getAbrCapabilities;

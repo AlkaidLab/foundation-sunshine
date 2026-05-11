@@ -46,6 +46,8 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 
 #include <Simple-Web-Server/server_https.hpp>
 
@@ -54,6 +56,30 @@ namespace clipboard_http {
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
   using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
   using auth_fn = std::function<bool(resp_https_t, req_https_t)>;
+
+  struct blob_response_t {
+    SimpleWeb::StatusCode status;
+    std::string body;
+    SimpleWeb::CaseInsensitiveMultimap headers;
+  };
+
+  /// Build the HTTP response for POST /api/v1/clipboard/blob.
+  ///
+  /// The caller provides request headers and the raw body bytes. This helper is
+  /// transport-agnostic so Sunshine can expose the same blob store on multiple
+  /// HTTPS servers (e.g. confighttp for the local GUI agent and nvhttp for
+  /// paired Moonlight clients) without duplicating validation or storage logic.
+  blob_response_t make_blob_upload_response(
+    const SimpleWeb::CaseInsensitiveMultimap &request_headers,
+    const std::string &body);
+
+  /// Validate upload headers that must be checked before reading the request
+  /// body. Returns a response to send immediately when the request is rejected.
+  std::optional<blob_response_t> make_blob_upload_preflight_response(
+    const SimpleWeb::CaseInsensitiveMultimap &request_headers);
+
+  /// Build the HTTP response for GET /api/v1/clipboard/blob/<id>.
+  blob_response_t make_blob_get_response(const std::string &id);
 
   /// Register the /api/v1/clipboard/* routes on `server`. `auth` is invoked
   /// at the start of every handler; it must return true for authorised
