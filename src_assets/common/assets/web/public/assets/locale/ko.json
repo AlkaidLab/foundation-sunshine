@@ -648,6 +648,7 @@
   },
   "resource_card": {
     "android_recommended": "Android 추천",
+    "android_vplus_title": "Android Moonlight V+",
     "client_downloads": "클라이언트 다운로드",
     "crown_edition": "Crown Edition",
     "github_discussions": "GitHub 토론",
@@ -660,6 +661,9 @@
     "legal_desc": "이 소프트웨어를 계속 사용함으로써 귀하는 다음 문서의 이용 약관에 동의하게 됩니다.",
     "license": "라이선스",
     "lizardbyte_website": "LizardByte 웹사이트",
+    "moonlight_macos_enhanced": "macOS Moonlight 향상판",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · macOS 네이티브 향상 클라이언트",
+    "moonlight_pc_title": "Moonlight PC",
     "official_website": "공식 웹사이트",
     "official_website_title": "AlkaidLab - 공식 웹사이트",
     "open_source": "오픈 소스",

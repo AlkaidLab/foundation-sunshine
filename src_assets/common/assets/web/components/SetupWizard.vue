@@ -231,7 +231,7 @@
                        target="_blank">
                       <div class="resource-icon"><i class="fab fa-android"></i></div>
                       <div class="resource-content">
-                        <span class="resource-title">安卓 Moonlight V+</span>
+                        <span class="resource-title">{{ $t('resource_card.android_vplus_title') }}</span>
                         <span class="resource-desc">Android / Android TV</span>
                       </div>
                       <i class="fas fa-external-link-alt resource-arrow"></i>
@@ -241,7 +241,7 @@
                        @click.prevent="openHarmonyModal">
                       <div class="resource-icon"><i class="fas fa-mobile-alt"></i></div>
                       <div class="resource-content">
-                        <span class="resource-title">鸿蒙 Moonlight V+</span>
+                        <span class="resource-title">{{ $t('resource_card.harmony_client') }}</span>
                         <span class="resource-desc">HarmonyOS NEXT</span>
                       </div>
                       <i class="fas fa-external-link-alt resource-arrow"></i>
@@ -251,8 +251,18 @@
                        target="_blank">
                       <div class="resource-icon"><i class="fab fa-apple"></i></div>
                       <div class="resource-content">
-                        <span class="resource-title">虚空终端 (VoidLink)</span>
+                        <span class="resource-title">{{ $t('resource_card.voidlink_title') }}</span>
                         <span class="resource-desc">iOS / iPadOS</span>
+                      </div>
+                      <i class="fas fa-external-link-alt resource-arrow"></i>
+                    </a>
+                    <a class="resource-link resource-link-apple"
+                       href="https://github.com/skyhua0224/moonlight-macos-enhanced"
+                       target="_blank">
+                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
+                      <div class="resource-content">
+                        <span class="resource-title">{{ $t('resource_card.moonlight_macos_enhanced') }}</span>
+                        <span class="resource-desc">{{ $t('resource_card.moonlight_macos_enhanced_desc') }}</span>
                       </div>
                       <i class="fas fa-external-link-alt resource-arrow"></i>
                     </a>
@@ -261,7 +271,7 @@
                        target="_blank">
                       <div class="resource-icon"><i class="fas fa-desktop"></i></div>
                       <div class="resource-content">
-                        <span class="resource-title">Moonlight PC</span>
+                        <span class="resource-title">{{ $t('resource_card.moonlight_pc_title') }}</span>
                         <span class="resource-desc">Windows / macOS / Linux</span>
                       </div>
                       <i class="fas fa-external-link-alt resource-arrow"></i>

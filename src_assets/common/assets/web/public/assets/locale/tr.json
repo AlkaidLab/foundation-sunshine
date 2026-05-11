@@ -648,6 +648,7 @@
   },
   "resource_card": {
     "android_recommended": "Android önerilir",
+    "android_vplus_title": "Android Moonlight V+",
     "client_downloads": "İstemci İndirmeleri",
     "crown_edition": "Crown Edition",
     "github_discussions": "GitHub Tartışmaları",
@@ -660,6 +661,9 @@
     "legal_desc": "Bu yazılımı kullanmaya devam ederek aşağıdaki belgelerde yer alan hüküm ve koşulları kabul etmiş olursunuz.",
     "license": "Lisans",
     "lizardbyte_website": "LizardByte Web Sitesi",
+    "moonlight_macos_enhanced": "macOS Moonlight Enhanced",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · macOS yerel geliştirilmiş istemci",
+    "moonlight_pc_title": "Moonlight PC",
     "official_website": "Resmi web sitesi",
     "official_website_title": "AlkaidLab - Resmi web sitesi",
     "open_source": "Açık Kaynak",

@@ -648,6 +648,7 @@
   },
   "resource_card": {
     "android_recommended": "Android rekommenderas",
+    "android_vplus_title": "Android Moonlight V+",
     "client_downloads": "Klientnedladdningar",
     "crown_edition": "Crown Edition",
     "github_discussions": "GitHub Discussions",
@@ -660,6 +661,9 @@
     "legal_desc": "Genom att fortsätta använda denna programvara godkänner du villkoren i följande dokument.",
     "license": "Licens",
     "lizardbyte_website": "Webbplats LizardByte",
+    "moonlight_macos_enhanced": "macOS Moonlight Enhanced",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · macOS-inhemsk förbättrad klient",
+    "moonlight_pc_title": "Moonlight PC",
     "official_website": "Officiell webbplats",
     "official_website_title": "AlkaidLab - Officiell webbplats",
     "open_source": "Öppen källkod",

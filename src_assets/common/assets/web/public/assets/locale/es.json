@@ -648,6 +648,7 @@
   },
   "resource_card": {
     "android_recommended": "Android recomendado",
+    "android_vplus_title": "Android Moonlight V+",
     "client_downloads": "Descargas de clientes",
     "crown_edition": "Crown Edition",
     "github_discussions": "Discusiones GitHub",
@@ -660,6 +661,9 @@
     "legal_desc": "Al continuar utilizando este software usted acepta los términos y condiciones de los siguientes documentos.",
     "license": "Licencia",
     "lizardbyte_website": "Sitio web de LizardByte",
+    "moonlight_macos_enhanced": "macOS Moonlight Enhanced",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · Cliente nativo mejorado de macOS",
+    "moonlight_pc_title": "Moonlight PC",
     "official_website": "Sitio web oficial",
     "official_website_title": "AlkaidLab - Sitio web oficial",
     "open_source": "Código abierto",

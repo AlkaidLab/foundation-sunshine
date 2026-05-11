@@ -648,6 +648,7 @@
   },
   "resource_card": {
     "android_recommended": "Android doporučeno",
+    "android_vplus_title": "Android Moonlight V+",
     "client_downloads": "Stažení klientů",
     "crown_edition": "Crown Edition",
     "github_discussions": "GitHub Discussions",
@@ -660,6 +661,9 @@
     "legal_desc": "Pokračováním v používání tohoto softwaru souhlasíte s podmínkami v následujících dokumentech.",
     "license": "Licence",
     "lizardbyte_website": "Webové stránky LizardByte",
+    "moonlight_macos_enhanced": "macOS Moonlight Enhanced",
+    "moonlight_macos_enhanced_desc": "by skyhua0224 · Nativní vylepšený klient pro macOS",
+    "moonlight_pc_title": "Moonlight PC",
     "official_website": "Official Website",
     "official_website_title": "AlkaidLab - Oficiální stránky",
     "open_source": "Otevřený zdrojový kód",
