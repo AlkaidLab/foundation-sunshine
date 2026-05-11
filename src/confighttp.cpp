@@ -1233,7 +1233,7 @@ namespace confighttp {
       lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
       return;
     }
-    lifetime::exit_sunshine(0, false);
+    lifetime::exit_sunshine(0, true);
   }
 
   void

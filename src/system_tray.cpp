@@ -431,7 +431,7 @@ namespace system_tray {
         lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
       }
       else {
-        lifetime::exit_sunshine(0, false);
+        lifetime::exit_sunshine(0, true);
       }
       return;
     }
