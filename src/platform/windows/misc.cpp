@@ -35,6 +35,7 @@
 #undef NTDDI_VERSION
 #define NTDDI_VERSION NTDDI_WIN10
 #include <Shlwapi.h>
+#include <shellapi.h>
 
 #include "misc.h"
 
@@ -1171,11 +1172,77 @@ namespace platf {
    */
   void
   open_url(const std::string &url) {
+    const std::string cmd_path = "assets/gui/sunshine-gui.exe";
+    const std::string cmd_args = "--url=" + url;
+
+    // Inspect current process: is it a service (session 0) or already elevated?
+    bool is_service = false;
+    bool already_elevated = false;
+    HANDLE hSelfToken = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hSelfToken)) {
+      DWORD session_id = 0, ret_len = 0;
+      if (GetTokenInformation(hSelfToken, TokenSessionId, &session_id, sizeof(session_id), &ret_len)) {
+        is_service = (session_id == 0);
+      }
+      TOKEN_ELEVATION elev {};
+      if (GetTokenInformation(hSelfToken, TokenElevation, &elev, sizeof(elev), &ret_len)) {
+        already_elevated = (elev.TokenIsElevated != 0);
+      }
+      CloseHandle(hSelfToken);
+    }
+
+    BOOST_LOG(debug) << "open_url: is_service=" << is_service << ", already_elevated=" << already_elevated;
+
+    if (!is_service && !already_elevated) {
+      // User-mode, non-elevated: use ShellExecuteEx(runas) to trigger UAC.
+      // ShellExecuteExW does not resolve relative paths the way CreateProcess does
+      // (it uses Win32 PATH semantics, not Sunshine's working directory), so we
+      // must build an absolute path from this module's location.
+      std::wstring file_w;
+      wchar_t self_path[MAX_PATH] = {};
+      if (GetModuleFileNameW(nullptr, self_path, MAX_PATH) > 0) {
+        std::wstring base = self_path;
+        auto slash = base.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) {
+          base.resize(slash + 1);
+        }
+        file_w = base + L"assets\\gui\\sunshine-gui.exe";
+      }
+      else {
+        file_w = from_utf8(cmd_path);
+      }
+      std::wstring args_w = from_utf8(cmd_args);
+      SHELLEXECUTEINFOW sei {};
+      sei.cbSize = sizeof(sei);
+      sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+      sei.lpVerb = L"runas";
+      sei.lpFile = file_w.c_str();
+      sei.lpParameters = args_w.c_str();
+      sei.nShow = SW_SHOWNORMAL;
+      if (ShellExecuteExW(&sei)) {
+        BOOST_LOG(debug) << "Opened url ["sv << url << "] via UAC elevation"sv;
+        if (sei.hProcess) {
+          CloseHandle(sei.hProcess);
+        }
+      }
+      else {
+        DWORD err = GetLastError();
+        if (err == ERROR_CANCELLED) {
+          BOOST_LOG(info) << "User declined UAC elevation when opening Sunshine UI"sv;
+        }
+        else {
+          BOOST_LOG(warning) << "ShellExecuteEx(runas) failed: " << err;
+        }
+      }
+      return;
+    }
+
+    // Service mode or already-elevated user process: use the token-based path.
     boost::process::v1::environment _env = boost::this_process::environment();
     auto working_dir = boost::filesystem::path();
     std::error_code ec;
 
-    auto child = run_command(false, true, "assets/gui/sunshine-gui.exe --url=" + url, working_dir, _env, nullptr, ec, nullptr);
+    auto child = run_command(true, true, cmd_path + " " + cmd_args, working_dir, _env, nullptr, ec, nullptr);
     if (ec) {
       BOOST_LOG(warning) << "Couldn't open url ["sv << url << "]: System: "sv << ec.message();
     }
