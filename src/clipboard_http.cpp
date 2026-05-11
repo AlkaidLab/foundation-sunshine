@@ -332,15 +332,7 @@ namespace clipboard_http {
       if (!auth(resp, req)) {
         return;
       }
-
-      if (auto out = make_blob_upload_preflight_response(req->header)) {
-        resp->write(out->status, out->body, out->headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << req->content.rdbuf();
-      auto out = make_blob_upload_response(req->header, ss.str());
+      auto out = process_blob_upload(req);
       resp->write(out.status, out.body, out.headers);
     }
 
@@ -349,9 +341,7 @@ namespace clipboard_http {
       if (!auth(resp, req)) {
         return;
       }
-
-      const std::string id = req->path_match.size() >= 2 ? req->path_match[1].str() : std::string {};
-      auto out = make_blob_get_response(id);
+      auto out = process_blob_get(req);
       resp->write(out.status, out.body, out.headers);
     }
   }  // namespace

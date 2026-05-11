@@ -5,12 +5,14 @@
 #include "clipboard_blob_store.h"
 
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <mutex>
-#include <random>
-#include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
+
+#include <openssl/rand.h>
 
 namespace clipboard_blob_store {
   namespace {
@@ -28,38 +30,34 @@ namespace clipboard_blob_store {
     std::deque<blob_id> g_fifo;
     std::size_t g_total_bytes = 0;
 
-    /// Generate a UUID-v4-shaped 36-char hex id without pulling in boost::uuid
-    /// here. Cryptographic strength is not required — these ids are scoped to
-    /// a live HTTPS-authenticated session and expire in 60 s.
+    /// Generate a UUID-v4-shaped 36-char hex id using OpenSSL's CSPRNG.
+    ///
+    /// The id functions as a bearer capability: any HTTPS-authenticated client
+    /// that learns it (via a KIND_REF wire frame) can fetch the blob bytes
+    /// without further per-blob authorisation. To keep that property safe we
+    /// must use a cryptographically-strong random source, not std::mt19937 —
+    /// 122 bits of CSPRNG entropy + the 60 s TTL make guessing infeasible.
     std::string
     make_id() {
-      thread_local std::mt19937_64 rng { std::random_device {}() };
-      std::uniform_int_distribution<std::uint64_t> dist;
+      std::uint8_t raw[16];
+      if (RAND_bytes(raw, sizeof(raw)) != 1) {
+        // RAND_bytes only fails when the OpenSSL RNG is uninitialised, which
+        // would make the whole TLS stack unusable too — surface as a hard
+        // error rather than silently degrading entropy.
+        throw std::runtime_error("clipboard_blob_store: RAND_bytes failed");
+      }
 
-      std::uint64_t hi = dist(rng);
-      std::uint64_t lo = dist(rng);
-
-      // Force version=4 nibble and variant bits per RFC 4122.
-      hi = (hi & 0xFFFFFFFFFFFF0FFFULL) | 0x0000000000004000ULL;
-      lo = (lo & 0x3FFFFFFFFFFFFFFFULL) | 0x8000000000000000ULL;
+      // Force version=4 nibble and RFC 4122 variant bits.
+      raw[6] = static_cast<std::uint8_t>((raw[6] & 0x0F) | 0x40);
+      raw[8] = static_cast<std::uint8_t>((raw[8] & 0x3F) | 0x80);
 
       static constexpr char kHex[] = "0123456789abcdef";
       std::string s(36, '-');
-      auto write_byte = [&](std::size_t pos, std::uint8_t b) {
-        s[pos] = kHex[b >> 4];
-        s[pos + 1] = kHex[b & 0xF];
-      };
-
-      // 8-4-4-4-12 layout. Bytes 0..7 = hi, bytes 8..15 = lo.
-      auto byte_at = [&](int i) -> std::uint8_t {
-        std::uint64_t v = (i < 8) ? hi : lo;
-        int shift = (7 - (i & 7)) * 8;
-        return static_cast<std::uint8_t>((v >> shift) & 0xFF);
-      };
-
       static constexpr int kSlots[] = { 0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34 };
       for (int i = 0; i < 16; ++i) {
-        write_byte(static_cast<std::size_t>(kSlots[i]), byte_at(i));
+        const std::size_t pos = static_cast<std::size_t>(kSlots[i]);
+        s[pos] = kHex[raw[i] >> 4];
+        s[pos + 1] = kHex[raw[i] & 0xF];
       }
       return s;
     }

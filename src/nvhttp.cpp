@@ -2432,19 +2432,11 @@ namespace nvhttp {
     // channel for large clipboard payloads. The local GUI agent continues to
     // use the confighttp /api/v1/clipboard/* endpoints on loopback.
     https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = [](resp_https_t response, req_https_t request) {
-      if (auto out = clipboard_http::make_blob_upload_preflight_response(request->header)) {
-        response->write(out->status, out->body, out->headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto out = clipboard_http::make_blob_upload_response(request->header, ss.str());
+      auto out = clipboard_http::process_blob_upload(request);
       response->write(out.status, out.body, out.headers);
     };
     https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = [](resp_https_t response, req_https_t request) {
-      const std::string id = request->path_match.size() >= 2 ? request->path_match[1].str() : std::string {};
-      auto out = clipboard_http::make_blob_get_response(id);
+      auto out = clipboard_http::process_blob_get(request);
       response->write(out.status, out.body, out.headers);
     };
 
