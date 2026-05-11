@@ -1234,6 +1234,15 @@ namespace system_tray {
 
     tray_initialized = false;
     tray_exit();
+
+    if (tray_thread.joinable()) {
+      try {
+        tray_thread.join();
+      }
+      catch (const std::system_error &e) {
+        BOOST_LOG(warning) << "Failed to join tray thread: " << e.what();
+      }
+    }
     return 0;
   }
 
@@ -1395,12 +1404,12 @@ namespace system_tray {
     // Reset the end_tray flag for new tray instance
     end_tray_called = false;
 
-    try {
-      auto tray_thread = std::thread(tray_thread_worker);
+    if (tray_thread.joinable()) {
+      tray_thread.join();
+    }
 
-      // The tray thread doesn't require strong lifetime management.
-      // It will exit asynchronously when tray_exit() is called.
-      tray_thread.detach();
+    try {
+      tray_thread = std::thread(tray_thread_worker);
 
       BOOST_LOG(info) << "System tray thread initialized successfully"sv;
       return 0;
