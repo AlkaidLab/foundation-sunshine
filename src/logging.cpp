@@ -56,16 +56,29 @@ namespace logging {
   void
   deinit() {
     log_flush();
+
+    // Order matters for async sinks:
+    //   1) remove_sink: detach the sink from the boost::log core so no new records are delivered
+    //   2) stop:        signal the worker thread to exit and wait for it to finish
+    //   3) flush:       drain any remaining records
+    //   4) reset:       drop our shared_ptr; sink destructor runs once the last ref is gone
+    auto core = bl::core::get();
+
     if (console_sink) {
-      bl::core::get()->remove_sink(console_sink);
+      core->remove_sink(console_sink);
+      console_sink->stop();
+      console_sink->flush();
       console_sink.reset();
     }
     if (file_sink_ptr) {
-      bl::core::get()->remove_sink(file_sink_ptr);
+      core->remove_sink(file_sink_ptr);
+      file_sink_ptr->flush();
       file_sink_ptr.reset();
     }
     if (file_ostream_sink) {
-      bl::core::get()->remove_sink(file_ostream_sink);
+      core->remove_sink(file_ostream_sink);
+      file_ostream_sink->stop();
+      file_ostream_sink->flush();
       file_ostream_sink.reset();
     }
   }
