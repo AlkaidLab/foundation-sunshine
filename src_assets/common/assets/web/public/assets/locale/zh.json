@@ -228,7 +228,7 @@
     "codec_strategy_h264": "仅 H.264（最大兼容）",
     "codec_strategy_custom": "自定义（在下方分别设置）",
     "codec_strategy_custom_locked": "自定义（点“显示高级选项”后可编辑）",
-    "codec_strategy_desc": "控制 Sunshine 向 Moonlight 客户端通告哪些视频编码格式。默认跳动【自动】按编码器能力选择，99% 的用户不需要修改。如果客户端出现黑屏 / 花屏 / HDR 偏色，可以切到【仅 H.264】或默认【自动】。",
+    "codec_strategy_desc": "控制 Sunshine 向 Moonlight 客户端通告哪些视频编码格式。默认【自动】按编码器能力选择，99% 的用户不需要修改。如果客户端出现黑屏 / 花屏 / HDR 偏色，可以切到【仅 H.264】或默认【自动】。",
     "codec_strategy_non_default_warning": "已切换到非默认策略，某些客户端可能无法连接或画质下降。如遇问题请先恢复为【自动（推荐）】。",
     "codec_enable_hdr": "同时启用 HDR / 10-bit 高色深",
     "codec_enable_hdr_disabled_hint": "HDR 选项仅在【优先现代编码器】策略下可用。默认【自动】会根据编码器能力自行决定。",

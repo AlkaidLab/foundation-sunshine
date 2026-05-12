@@ -221,13 +221,15 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
         <button
           type="button"
           class="btn btn-sm btn-outline-secondary"
+          :aria-expanded="showCodecAdvanced"
+          aria-controls="codec-advanced-panel"
           @click="showCodecAdvanced = !showCodecAdvanced"
         >
           {{ showCodecAdvanced ? $t('config.codec_advanced_hide') : $t('config.codec_advanced_show') }}
         </button>
       </div>
 
-      <div v-if="showCodecAdvanced" class="mt-3 ps-3 border-start">
+      <div v-if="showCodecAdvanced" id="codec-advanced-panel" class="mt-3 ps-3 border-start">
         <div class="mb-3">
           <label for="hevc_mode" class="form-label">{{ $t('config.hevc_mode') }}</label>
           <select id="hevc_mode" class="form-select" v-model="config.hevc_mode">
