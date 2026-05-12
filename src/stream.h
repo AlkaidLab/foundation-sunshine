@@ -27,6 +27,7 @@ namespace stream {
     int packetsize;
     int minRequiredFecPackets;
     int mlFeatureFlags;
+    uint64_t mlFeatureFlags2;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;

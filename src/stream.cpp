@@ -50,6 +50,20 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "platform/common.h"
 
+#ifdef _WIN32
+  // Required for HCURSOR/CURSORINFO/ICONINFO/GetCursorInfo/GetIconInfo/GetDIBits
+  // used by sample_host_cursor_plane(). Sunshine doesn't otherwise need windows.h
+  // in stream.cpp, so keep the include narrow and behind WIN32_LEAN_AND_MEAN to
+  // avoid pulling in winsock conflicts with boost::asio above.
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+#endif
+
 #define IDX_START_A 0
 #define IDX_START_B 1
 #define IDX_INVALIDATE_REF_FRAMES 2
@@ -70,6 +84,7 @@ extern "C" {
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
+#define IDX_CURSOR_PLANE 21  // Cursor plane metadata (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -93,6 +108,7 @@ static const short packetTypes[] = {
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
   0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
+  SS_CURSOR_PLANE_PTYPE,  // Cursor plane metadata (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -246,6 +262,22 @@ namespace stream {
 
     std::uint32_t width;
     std::uint32_t height;
+  };
+
+  struct control_cursor_plane_t {
+    control_header_v2 header;
+
+    std::uint16_t version;
+    std::uint16_t size;
+    std::uint32_t cursorShapeId;
+    std::uint32_t x;
+    std::uint32_t y;
+    std::uint16_t hotspotX;
+    std::uint16_t hotspotY;
+    std::uint16_t width;
+    std::uint16_t height;
+    std::uint32_t flags;
+    std::uint32_t epoch;
   };
 
   typedef struct control_encrypted_t {
@@ -537,6 +569,22 @@ namespace stream {
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
+
+      // Cached state for the most recent cursor plane update we sent to this
+      // client. Used by maybe_send_cursor_plane_update() to throttle / debounce
+      // and to assign a monotonically increasing epoch.
+      struct {
+        std::uint32_t cursor_shape_id { 0 };
+        std::uint32_t x { 0 };
+        std::uint32_t y { 0 };
+        std::uint16_t hotspot_x { 0 };
+        std::uint16_t hotspot_y { 0 };
+        std::uint16_t width { 0 };
+        std::uint16_t height { 0 };
+        std::uint32_t flags { 0 };
+        std::uint32_t epoch { 0 };
+        std::chrono::steady_clock::time_point last_sent {};
+      } cursor_plane;
     } control;
 
     std::uint32_t launch_session_id;
@@ -1289,6 +1337,386 @@ namespace stream {
     };
   }
 
+  // -----------------------------------------------------------------------
+  // Remote cursor plane (Sunshine private extension SS_CURSOR_PLANE_PTYPE).
+  //
+  // Sampled here every control iteration (~150 ms) and sent on the encrypted
+  // control channel only when the client advertised LI_FF2_CURSOR_PLANE in its
+  // SDP. We keep this self-contained: no display-side suppression of the burned
+  // cursor yet (so legacy clients still see the cursor inside the video), and
+  // no multi-client coordination — each session tracks its own throttle state.
+  // -----------------------------------------------------------------------
+  static bool
+  client_supports_cursor_plane(session_t *session) {
+    return session != nullptr &&
+           (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE_V1)) != 0;
+  }
+
+  struct cursor_plane_sample_t {
+    bool available { false };
+    std::uint32_t cursor_shape_id { SS_CURSOR_PLANE_SHAPE_UNKNOWN };
+    std::uint32_t x { 0 };
+    std::uint32_t y { 0 };
+    std::uint16_t hotspot_x { 0 };
+    std::uint16_t hotspot_y { 0 };
+    std::uint16_t width { 16 };
+    std::uint16_t height { 16 };
+    std::uint32_t flags { 0 };
+    std::uint16_t bitmap_format { 0 };
+    std::uint16_t bitmap_stride { 0 };
+    std::vector<std::uint8_t> bitmap_bgra;
+  };
+
+#ifdef _WIN32
+  // Map a Windows HCURSOR to a stable shape id from Video.h. Standard system
+  // cursors get the well-known SS_CURSOR_PLANE_SHAPE_* constants so the client
+  // can substitute its own native cursor; everything else gets the
+  // SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG bit plus a hash of the handle so clients
+  // can cache the matching bitmap.
+  static std::uint32_t
+  semantic_cursor_shape_id_win(HCURSOR cursor) {
+    if (cursor == nullptr) {
+      return SS_CURSOR_PLANE_SHAPE_UNKNOWN;
+    }
+    struct known_cursor_t {
+      LPCSTR name;
+      std::uint32_t shape_id;
+    };
+    static const known_cursor_t known[] {
+      { IDC_ARROW, SS_CURSOR_PLANE_SHAPE_ARROW },
+      { IDC_HAND, SS_CURSOR_PLANE_SHAPE_HAND },
+      { IDC_IBEAM, SS_CURSOR_PLANE_SHAPE_IBEAM },
+      { IDC_WAIT, SS_CURSOR_PLANE_SHAPE_WAIT },
+      { IDC_APPSTARTING, SS_CURSOR_PLANE_SHAPE_WAIT },
+      { IDC_CROSS, SS_CURSOR_PLANE_SHAPE_CROSS },
+      { IDC_SIZEWE, SS_CURSOR_PLANE_SHAPE_SIZE_WE },
+      { IDC_SIZENS, SS_CURSOR_PLANE_SHAPE_SIZE_NS },
+      { IDC_SIZENWSE, SS_CURSOR_PLANE_SHAPE_SIZE_NWSE },
+      { IDC_SIZENESW, SS_CURSOR_PLANE_SHAPE_SIZE_NESW },
+      { IDC_SIZEALL, SS_CURSOR_PLANE_SHAPE_SIZE_ALL },
+      { IDC_NO, SS_CURSOR_PLANE_SHAPE_NO },
+    };
+    for (const auto &candidate : known) {
+      if (cursor == LoadCursorA(nullptr, candidate.name)) {
+        return candidate.shape_id;
+      }
+    }
+    const auto cursor_handle = reinterpret_cast<std::uintptr_t>(cursor);
+    auto hashed = static_cast<std::uint32_t>((cursor_handle >> 4U) ^ (cursor_handle >> 32U) ^ cursor_handle);
+    if ((hashed & ~SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG) == 0) {
+      hashed = 1;
+    }
+    return SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG | (hashed & ~SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG);
+  }
+#endif
+
+  static cursor_plane_sample_t
+  sample_host_cursor_plane(session_t *session) {
+    cursor_plane_sample_t sample {};
+
+#ifdef _WIN32
+    CURSORINFO cursor_info {};
+    cursor_info.cbSize = sizeof(cursor_info);
+    if (!GetCursorInfo(&cursor_info)) {
+      return sample;
+    }
+
+    POINT point = cursor_info.ptScreenPos;
+    if (point.x == 0 && point.y == 0) {
+      GetCursorPos(&point);
+    }
+
+    const int origin_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int origin_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int fallback_width = std::max(1, GetSystemMetrics(SM_CXCURSOR));
+    const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
+    const int stream_width = session ? std::max(1, session->config.monitor.width) : std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    const int stream_height = session ? std::max(1, session->config.monitor.height) : std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+
+    sample.available = true;
+    sample.flags = (cursor_info.flags & CURSOR_SHOWING) ? SS_CURSOR_PLANE_FLAG_VISIBLE : 0;
+    const int stream_x = static_cast<int>(point.x - origin_x);
+    const int stream_y = static_cast<int>(point.y - origin_y);
+    sample.x = static_cast<std::uint32_t>(std::clamp(stream_x, 0, stream_width - 1));
+    sample.y = static_cast<std::uint32_t>(std::clamp(stream_y, 0, stream_height - 1));
+    sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
+    sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
+    sample.cursor_shape_id = semantic_cursor_shape_id_win(cursor_info.hCursor);
+
+    ICONINFO icon_info {};
+    if (cursor_info.hCursor != nullptr && GetIconInfo(cursor_info.hCursor, &icon_info)) {
+      sample.hotspot_x = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.xHotspot, 0, 512));
+      sample.hotspot_y = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.yHotspot, 0, 512));
+
+      BITMAP bitmap {};
+      if (icon_info.hbmColor != nullptr &&
+          GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+        const int bitmap_width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
+        const int bitmap_height = std::clamp<LONG>(bitmap.bmHeight, 1, 512);
+        sample.width = static_cast<std::uint16_t>(bitmap_width);
+        sample.height = static_cast<std::uint16_t>(bitmap_height);
+
+        // Always prefer the host-provided cursor bitmap when Windows exposes
+        // one. Standard Windows cursors are not visually identical to client
+        // fallbacks, and game/special cursors must preserve their real
+        // appearance. Semantic shape ids are only a fallback/cache key.
+        const int stride = bitmap_width * 4;
+        std::vector<std::uint8_t> bgra(static_cast<std::size_t>(stride) *
+                                       static_cast<std::size_t>(bitmap_height));
+
+        BITMAPINFO bitmap_info {};
+        bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bitmap_info.bmiHeader.biWidth = bitmap_width;
+        bitmap_info.bmiHeader.biHeight = -bitmap_height;  // top-down DIB
+        bitmap_info.bmiHeader.biPlanes = 1;
+        bitmap_info.bmiHeader.biBitCount = 32;
+        bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+        HDC hdc = GetDC(nullptr);
+        const int copied_rows = hdc != nullptr ?
+                                  GetDIBits(hdc,
+                                            icon_info.hbmColor,
+                                            0,
+                                            bitmap_height,
+                                            bgra.data(),
+                                            &bitmap_info,
+                                            DIB_RGB_COLORS) :
+                                  0;
+        if (hdc != nullptr) {
+          ReleaseDC(nullptr, hdc);
+        }
+
+        if (copied_rows == bitmap_height) {
+          // Some Windows cursor bitmaps use an all-zero alpha channel and rely
+          // on the mask bitmap. Preserve transparency for fully black pixels
+          // but force colored pixels opaque so custom/game cursors don't
+          // disappear on the client.
+          bool has_alpha = false;
+          for (std::size_t i = 3; i < bgra.size(); i += 4) {
+            if (bgra[i] != 0) {
+              has_alpha = true;
+              break;
+            }
+          }
+          if (!has_alpha) {
+            for (std::size_t i = 0; i + 3 < bgra.size(); i += 4) {
+              const bool has_color = bgra[i] != 0 || bgra[i + 1] != 0 || bgra[i + 2] != 0;
+              bgra[i + 3] = has_color ? 0xFF : 0x00;
+            }
+          }
+          sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
+          sample.bitmap_stride = static_cast<std::uint16_t>(stride);
+          sample.bitmap_bgra = std::move(bgra);
+          sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
+        }
+      }
+      else if (icon_info.hbmMask != nullptr &&
+               GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+        sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
+        sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512));
+      }
+      if (icon_info.hbmColor != nullptr) {
+        DeleteObject(icon_info.hbmColor);
+      }
+      if (icon_info.hbmMask != nullptr) {
+        DeleteObject(icon_info.hbmMask);
+      }
+    }
+#else
+    (void) session;
+    // Non-Windows hosts have no cursor plane sampling implementation yet.
+    // Returning sample.available=false silently disables the feature.
+#endif
+    return sample;
+  }
+
+  // Forward decl for the recursive fallback path (drop bitmap on oversize).
+  static int send_cursor_plane_update(session_t *session,
+                                      std::uint32_t cursor_shape_id,
+                                      std::uint32_t x,
+                                      std::uint32_t y,
+                                      std::uint16_t hotspot_x,
+                                      std::uint16_t hotspot_y,
+                                      std::uint16_t width,
+                                      std::uint16_t height,
+                                      std::uint32_t flags,
+                                      std::uint16_t bitmap_format = 0,
+                                      std::uint16_t bitmap_stride = 0,
+                                      const std::vector<std::uint8_t> *bitmap_bgra = nullptr);
+
+  static int
+  send_cursor_plane_update(session_t *session,
+                           std::uint32_t cursor_shape_id,
+                           std::uint32_t x,
+                           std::uint32_t y,
+                           std::uint16_t hotspot_x,
+                           std::uint16_t hotspot_y,
+                           std::uint16_t width,
+                           std::uint16_t height,
+                           std::uint32_t flags,
+                           std::uint16_t bitmap_format,
+                           std::uint16_t bitmap_stride,
+                           const std::vector<std::uint8_t> *bitmap_bgra) {
+    if (!session || !client_supports_cursor_plane(session)) {
+      return -1;
+    }
+    if (!session->control.peer) {
+      return -1;
+    }
+
+    constexpr std::size_t max_cursor_bitmap_bytes = 512U * 512U * 4U;
+    const bool include_bitmap = bitmap_bgra != nullptr &&
+                                !bitmap_bgra->empty() &&
+                                bitmap_bgra->size() <= max_cursor_bitmap_bytes &&
+                                bitmap_format == SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA &&
+                                bitmap_stride > 0;
+    const std::size_t cursor_payload_size =
+      sizeof(SS_CURSOR_PLANE_V1) +
+      (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0);
+    if (cursor_payload_size > 0xFFFFu) {
+      BOOST_LOG(warning) << "Skipping cursor bitmap payload: too large bytes="sv << cursor_payload_size;
+      return send_cursor_plane_update(session,
+                                      cursor_shape_id,
+                                      x,
+                                      y,
+                                      hotspot_x,
+                                      hotspot_y,
+                                      width,
+                                      height,
+                                      flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP);
+    }
+
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + cursor_payload_size);
+    auto *header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    header->type = packetTypes[IDX_CURSOR_PLANE];
+    header->payloadLength = static_cast<std::uint16_t>(cursor_payload_size);
+
+    auto *cursor = reinterpret_cast<SS_CURSOR_PLANE_V1 *>(plaintext.data() + sizeof(control_header_v2));
+    cursor->version = util::endian::little<std::uint16_t>(SS_CURSOR_PLANE_VERSION);
+    cursor->size = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(cursor_payload_size));
+    cursor->cursorShapeId = util::endian::little<std::uint32_t>(cursor_shape_id);
+    cursor->x = util::endian::little<std::uint32_t>(x);
+    cursor->y = util::endian::little<std::uint32_t>(y);
+    cursor->hotspotX = util::endian::little<std::uint16_t>(hotspot_x);
+    cursor->hotspotY = util::endian::little<std::uint16_t>(hotspot_y);
+    cursor->width = util::endian::little<std::uint16_t>(width);
+    cursor->height = util::endian::little<std::uint16_t>(height);
+    cursor->flags = util::endian::little<std::uint32_t>(
+      include_bitmap ? (flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
+                       (flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP));
+    cursor->epoch = util::endian::little<std::uint32_t>(++session->control.cursor_plane.epoch);
+
+    if (include_bitmap) {
+      auto *bitmap_header = reinterpret_cast<SS_CURSOR_PLANE_BITMAP_V1 *>(
+        plaintext.data() + sizeof(control_header_v2) + sizeof(SS_CURSOR_PLANE_V1));
+      bitmap_header->format = util::endian::little<std::uint16_t>(bitmap_format);
+      bitmap_header->stride = util::endian::little<std::uint16_t>(bitmap_stride);
+      bitmap_header->bitmapBytes = util::endian::little<std::uint32_t>(
+        static_cast<std::uint32_t>(bitmap_bgra->size()));
+      std::memcpy(plaintext.data() + sizeof(control_header_v2) +
+                    sizeof(SS_CURSOR_PLANE_V1) + sizeof(SS_CURSOR_PLANE_BITMAP_V1),
+                  bitmap_bgra->data(),
+                  bitmap_bgra->size());
+    }
+
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
+
+    auto payload = encode_control(session,
+                                  std::string_view {
+                                    reinterpret_cast<const char *>(plaintext.data()),
+                                    plaintext.size(),
+                                  },
+                                  encrypted_payload);
+    if (payload.empty()) {
+      BOOST_LOG(error) << "Couldn't encode cursor plane control payload"sv;
+      return -1;
+    }
+    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send cursor plane update to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+    return 0;
+  }
+
+  // Sample the host cursor and, if it changed (or 250 ms have elapsed since
+  // the last keepalive), emit an SS_CURSOR_PLANE_PTYPE update on the session's
+  // encrypted control channel. Hard-throttled to ~60 Hz (16 ms).
+  static void
+  maybe_send_cursor_plane_update(session_t *session, std::chrono::steady_clock::time_point now) {
+    if (!session || !session->control.peer || !client_supports_cursor_plane(session)) {
+      return;
+    }
+
+    auto sample = sample_host_cursor_plane(session);
+    if (!sample.available) {
+      return;
+    }
+
+    auto &last = session->control.cursor_plane;
+    const bool changed = last.cursor_shape_id != sample.cursor_shape_id ||
+                         last.x != sample.x ||
+                         last.y != sample.y ||
+                         last.hotspot_x != sample.hotspot_x ||
+                         last.hotspot_y != sample.hotspot_y ||
+                         last.width != sample.width ||
+                         last.height != sample.height ||
+                         last.flags != sample.flags;
+    const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
+    if (!never_sent && now - last.last_sent < std::chrono::milliseconds(16)) {
+      return;
+    }
+    if (!changed && !never_sent && now - last.last_sent < std::chrono::milliseconds(250)) {
+      return;
+    }
+
+    const bool should_send_bitmap =
+      !sample.bitmap_bgra.empty() &&
+      (never_sent ||
+       last.cursor_shape_id != sample.cursor_shape_id ||
+       last.width != sample.width ||
+       last.height != sample.height ||
+       last.hotspot_x != sample.hotspot_x ||
+       last.hotspot_y != sample.hotspot_y);
+    const bool shape_changed = last.cursor_shape_id != sample.cursor_shape_id;
+
+    if (send_cursor_plane_update(session,
+                                 sample.cursor_shape_id,
+                                 sample.x,
+                                 sample.y,
+                                 sample.hotspot_x,
+                                 sample.hotspot_y,
+                                 sample.width,
+                                 sample.height,
+                                 should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
+                                                      (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
+                                 should_send_bitmap ? sample.bitmap_format : 0,
+                                 should_send_bitmap ? sample.bitmap_stride : 0,
+                                 should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0) {
+      last.cursor_shape_id = sample.cursor_shape_id;
+      last.x = sample.x;
+      last.y = sample.y;
+      last.hotspot_x = sample.hotspot_x;
+      last.hotspot_y = sample.hotspot_y;
+      last.width = sample.width;
+      last.height = sample.height;
+      last.flags = sample.flags;
+      last.last_sent = now;
+
+      if (never_sent || shape_changed || should_send_bitmap) {
+        BOOST_LOG(info) << "Cursor plane update sent shape="sv << sample.cursor_shape_id
+                        << " flags=0x"sv << std::hex << sample.flags << std::dec
+                        << " pos="sv << sample.x << ","sv << sample.y
+                        << " hotspot="sv << sample.hotspot_x << ","sv << sample.hotspot_y
+                        << " size="sv << sample.width << "x"sv << sample.height
+                        << " bitmap="sv << (should_send_bitmap ? sample.bitmap_bgra.size() : 0);
+      }
+    }
+  }
+
   /**
    * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
    * an opaque byte string; this function adds the framing header and encrypts.
@@ -1783,6 +2211,12 @@ namespace stream {
                 send_resolution_change(session, resolution->first, resolution->second);
               }
             }
+
+            // Drive the remote cursor plane (Sunshine extension). Throttling
+            // and change detection live inside the helper; we just need to
+            // hit it on every control iteration so position updates flow at
+            // ~60 Hz while the cursor moves.
+            maybe_send_cursor_plane_update(session, std::chrono::steady_clock::now());
           }
 
           ++pos;
