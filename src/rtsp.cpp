@@ -1256,16 +1256,12 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
-      // Extended 64-bit client capabilities. Pre-FF2 clients omit this attribute,
-      // in which case it stays 0. `from_view` parses as int64 but we treat the
-      // bit pattern as unsigned; values up to INT64_MAX cover the foreseeable
-      // 64-bit flag space.
-      config.mlFeatureFlags2 = 0;
-      {
-        auto it = args.find("x-ml-general.featureFlags2"sv);
-        if (it != args.end()) {
-          config.mlFeatureFlags2 = static_cast<std::uint64_t>(util::from_view(it->second));
-        }
+      // Extended 64-bit client capabilities. Pre-FF2 clients omit this
+      // attribute, in which case the in-class default (0) stays in effect.
+      // `from_view` parses as int64; we treat the bit pattern as unsigned,
+      // which covers the foreseeable 64-bit flag space up to INT64_MAX.
+      if (auto it = args.find("x-ml-general.featureFlags2"sv); it != args.end()) {
+        config.mlFeatureFlags2 = static_cast<std::uint64_t>(util::from_view(it->second));
       }
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
