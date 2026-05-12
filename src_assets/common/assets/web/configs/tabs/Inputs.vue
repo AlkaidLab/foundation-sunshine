@@ -12,118 +12,85 @@ const props = defineProps([
 
 const config = ref(props.config)
 
-// Tauri 环境下的 vmouse 驱动管理
-const hasVmouseDriver = ref(false)
-const vmouseStatus = ref({ installed: false, running: false, status_text: '' })
-const vmouseLoading = ref(false)
-const vmouseOperating = ref(false)
+/**
+ * 创建一个驱动管理器，统一封装状态/加载/操作逻辑，避免 vmouse / vigem 的重复代码。
+ * @param {string} driverKey - window 上挂载的驱动对象属性名（如 'vmouseDriver'）
+ * @param {object} initialStatus - 初始状态对象
+ */
+function createDriverManager(driverKey, initialStatus) {
+  const available = ref(false)
+  const status = ref({ ...initialStatus })
+  const loading = ref(false)
+  const operating = ref(false)
 
-// Tauri 环境下的 ViGEmBus 虚拟手柄驱动管理
-const hasVigemDriver = ref(false)
-const vigemStatus = ref({ installed: false, running: false, version: '', version_ok: false, status_text: '' })
-const vigemLoading = ref(false)
-const vigemOperating = ref(false)
+  const driver = () => window[driverKey]
 
-onMounted(async () => {
-  if (!window.isTauri) return
-  hasVmouseDriver.value = !!window.vmouseDriver
-  hasVigemDriver.value = !!window.vigemDriver
-  if (hasVmouseDriver.value) await refreshVmouseStatus()
-  if (hasVigemDriver.value) await refreshVigemStatus()
-})
-
-async function refreshVmouseStatus() {
-  vmouseLoading.value = true
-  try {
-    vmouseStatus.value = await window.vmouseDriver.getStatus()
-  } catch { /* ignore */ }
-  vmouseLoading.value = false
-}
-
-async function installVmouse() {
-  if (!confirm(t('config.vmouse_confirm_install'))) return
-  vmouseOperating.value = true
-  try {
-    await window.vmouseDriver.install()
-    setTimeout(() => refreshVmouseStatus(), 2000)
-  } catch (e) {
-    alert(String(e))
+  async function refresh() {
+    loading.value = true
+    try {
+      status.value = await driver().getStatus()
+    } catch { /* ignore */ }
+    loading.value = false
   }
-  vmouseOperating.value = false
-}
 
-async function uninstallVmouse() {
-  if (!confirm(t('config.vmouse_confirm_uninstall'))) return
-  vmouseOperating.value = true
-  try {
-    await window.vmouseDriver.uninstall()
-    setTimeout(() => refreshVmouseStatus(), 2000)
-  } catch (e) {
-    alert(String(e))
+  async function runOp(confirmKey, op) {
+    if (!confirm(t(confirmKey))) return
+    operating.value = true
+    try {
+      await op(driver())
+      setTimeout(refresh, 2000)
+    } catch (e) {
+      alert(String(e))
+    }
+    operating.value = false
   }
-  vmouseOperating.value = false
+
+  const dotClass = computed(() => {
+    if (status.value.running) return 'dot-active'
+    if (status.value.installed) return 'dot-warning'
+    return 'dot-inactive'
+  })
+
+  return { available, status, loading, operating, refresh, runOp, dotClass }
 }
 
-async function refreshVigemStatus() {
-  vigemLoading.value = true
-  try {
-    vigemStatus.value = await window.vigemDriver.getStatus()
-  } catch { /* ignore */ }
-  vigemLoading.value = false
-}
-
-async function installVigem(force = false) {
-  const key = force ? 'config.vigem_confirm_reinstall' : 'config.vigem_confirm_install'
-  if (!confirm(t(key))) return
-  vigemOperating.value = true
-  try {
-    await window.vigemDriver.install(force)
-    setTimeout(() => refreshVigemStatus(), 2000)
-  } catch (e) {
-    alert(String(e))
-  }
-  vigemOperating.value = false
-}
-
-async function uninstallVigem() {
-  if (!confirm(t('config.vigem_confirm_uninstall'))) return
-  vigemOperating.value = true
-  try {
-    await window.vigemDriver.uninstall()
-    setTimeout(() => refreshVigemStatus(), 2000)
-  } catch (e) {
-    alert(String(e))
-  }
-  vigemOperating.value = false
-}
-
-const vmouseDotClass = computed(() => {
-  if (vmouseStatus.value.running) return 'dot-active'
-  if (vmouseStatus.value.installed) return 'dot-warning'
-  return 'dot-inactive'
-})
+// vmouse 驱动管理
+const vmouse = createDriverManager('vmouseDriver', { installed: false, running: false, status_text: '' })
+const installVmouse = () => vmouse.runOp('config.vmouse_confirm_install', d => d.install())
+const uninstallVmouse = () => vmouse.runOp('config.vmouse_confirm_uninstall', d => d.uninstall())
 
 const vmouseStatusLabel = computed(() => {
-  if (vmouseStatus.value.running) return t('config.vmouse_status_running')
-  if (vmouseStatus.value.installed) return t('config.vmouse_status_installed')
+  if (vmouse.status.value.running) return t('config.vmouse_status_running')
+  if (vmouse.status.value.installed) return t('config.vmouse_status_installed')
   return t('config.vmouse_status_not_installed')
 })
 
-const vigemDotClass = computed(() => {
-  if (vigemStatus.value.running) return 'dot-active'
-  if (vigemStatus.value.installed) return 'dot-warning'
-  return 'dot-inactive'
-})
+// ViGEmBus 虚拟手柄驱动管理
+const vigem = createDriverManager('vigemDriver',
+  { installed: false, running: false, version: '', version_ok: false, status_text: '' })
+const installVigem = (force = false) => vigem.runOp(
+  force ? 'config.vigem_confirm_reinstall' : 'config.vigem_confirm_install',
+  d => d.install(force)
+)
+const uninstallVigem = () => vigem.runOp('config.vigem_confirm_uninstall', d => d.uninstall())
 
 const vigemStatusLabel = computed(() => {
-  if (!vigemStatus.value.installed) return t('config.vigem_status_not_installed')
-  if (!vigemStatus.value.version_ok) return t('config.vigem_status_outdated')
-  if (vigemStatus.value.running) {
-    return vigemStatus.value.version
-      ? `${t('config.vigem_status_running')} (${vigemStatus.value.version})`
-      : t('config.vigem_status_running')
+  const s = vigem.status.value
+  if (!s.installed) return t('config.vigem_status_not_installed')
+  if (!s.version_ok) return t('config.vigem_status_outdated')
+  if (s.running) {
+    const running = t('config.vigem_status_running')
+    return s.version ? `${running} (${s.version})` : running
   }
   return t('config.vigem_status_installed')
+})
+
+onMounted(async () => {
+  if (!window.isTauri) return
+  vmouse.available.value = !!window.vmouseDriver
+  vigem.available.value = !!window.vigemDriver
+  if (vmouse.available.value) await vmouse.refresh()
+  if (vigem.available.value) await vigem.refresh()
 })
 </script>
 
@@ -565,6 +532,9 @@ const vigemStatusLabel = computed(() => {
 
 /* 面板操作区 */
 .vmouse-panel-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   padding: 0.6rem 0.85rem;
 }
 
