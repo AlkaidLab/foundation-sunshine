@@ -1349,6 +1349,7 @@ namespace stream {
   static bool
   client_supports_cursor_plane(session_t *session) {
     return session != nullptr &&
+           config::input.enable_cursor_plane &&
            (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE_V1)) != 0;
   }
 

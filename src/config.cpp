@@ -552,6 +552,7 @@ namespace config {
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
+    true,  // enable_cursor_plane (default on; host shares its system cursor via the control channel)
   };
 
   sunshine_t sunshine {
@@ -1437,6 +1438,7 @@ namespace config {
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
     bool_f(vars, "clipboard_sync", input.clipboard_sync);
+    bool_f(vars, "enable_cursor_plane", input.enable_cursor_plane);
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 

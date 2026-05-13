@@ -460,6 +460,18 @@ onBeforeUnmount(() => {
       <div class="form-text">{{ $t('config.amf_draw_mouse_cursor_desc') }}</div>
     </div>
 
+    <!-- Cursor plane (host cursor sharing via control channel) -->
+    <div class="mb-3">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="enable_cursor_plane"
+               v-model="config.enable_cursor_plane">
+        <label class="form-check-label" for="enable_cursor_plane">
+          {{ $t('config.enable_cursor_plane') }}
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.enable_cursor_plane_desc') }}</div>
+    </div>
+
   </div>
 </template>
 

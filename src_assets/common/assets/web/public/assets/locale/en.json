@@ -232,6 +232,8 @@
     "amd_vbaq_desc": "The human visual system is typically less sensitive to artifacts in highly textured areas. In VBAQ mode, pixel variance is used to indicate the complexity of spatial textures, allowing the encoder to allocate more bits to smoother areas. Enabling this feature leads to improvements in subjective visual quality with some content.",
     "amf_draw_mouse_cursor": "Draw a simple cursor when using AMF capture method",
     "amf_draw_mouse_cursor_desc": "In some cases, using AMF capture will not display the mouse pointer. Enabling this option will draw a simple mouse pointer on the screen. Note: The position of the mouse pointer will only be updated when there is an update to the content screen, so in non-game scenarios such as on the desktop, you may observe sluggish mouse pointer movement.",
+    "enable_cursor_plane": "Share host mouse cursor",
+    "enable_cursor_plane_desc": "Send the host's current mouse cursor (shape, position, custom bitmap) to the client over the control channel so the client renders a real OS cursor with proper hotspot and animations. When disabled, the cursor is only visible if it is baked into the video frames by the capture backend.",
     "apply_note": "Click 'Apply' to restart Sunshine and apply changes. This will terminate any running sessions.",
     "audio_sink": "Audio Sink",
     "audio_sink_desc_linux": "The name of the audio sink used for Audio Loopback. If you do not specify this variable, pulseaudio will select the default monitor device. You can find the name of the audio sink using either command:",
