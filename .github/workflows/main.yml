@@ -106,6 +106,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           submodules: recursive
+          token: ${{ secrets.GH_BOT_TOKEN }}
 
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
