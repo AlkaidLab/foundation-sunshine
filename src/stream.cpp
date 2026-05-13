@@ -264,6 +264,12 @@ namespace stream {
     std::uint32_t height;
   };
 
+  // Wire-format reference for SS_CURSOR_PLANE control packets (control header
+  // v2 + SS_CURSOR_PLANE_V1 payload from Video.h). NOT used by the encoder at
+  // runtime — `send_cursor_plane_update` builds the on-wire bytes field by
+  // field via `BE_*` writers. Kept here as documentation of the layout that
+  // the host emits, so reviewers can cross-check Video.h without leaving
+  // this file. Update in lockstep with SS_CURSOR_PLANE_V1.
   struct control_cursor_plane_t {
     control_header_v2 header;
 
@@ -279,6 +285,8 @@ namespace stream {
     std::uint32_t flags;
     std::uint32_t epoch;
   };
+  static_assert(sizeof(control_cursor_plane_t) == sizeof(control_header_v2) + sizeof(SS_CURSOR_PLANE_V1),
+                "control_cursor_plane_t drifted from SS_CURSOR_PLANE_V1; update both together");
 
   typedef struct control_encrypted_t {
     std::uint16_t encryptedHeaderType;  // Always LE 0x0001
@@ -2232,10 +2240,14 @@ namespace stream {
               }
             }
 
-            // Drive the remote cursor plane (Sunshine extension). Throttling
-            // and change detection live inside the helper; we just need to
-            // hit it on every control iteration so position updates flow at
-            // ~60 Hz while the cursor moves.
+            // Drive the remote cursor plane (Sunshine extension). The 16 ms
+            // throttle and change-detection live inside the helper, so this
+            // is the upper bound on cadence — actual delivery rate is
+            // bounded by how often the surrounding `controlBroadcastThread`
+            // wakes up. Without incoming control traffic that is roughly
+            // every `server->iterate(150ms)` (~6-7 Hz). When the client is
+            // actively sending input (cursor moves, button events, etc.)
+            // the iterate() returns sooner and updates flow more frequently.
             maybe_send_cursor_plane_update(session, std::chrono::steady_clock::now());
           }
 

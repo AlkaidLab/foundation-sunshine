@@ -1258,8 +1258,15 @@ namespace rtsp_stream {
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
       // Extended 64-bit client capabilities. Pre-FF2 clients omit this
       // attribute, in which case the in-class default (0) stays in effect.
-      // `from_view` parses as int64; we treat the bit pattern as unsigned,
-      // which covers the foreseeable 64-bit flag space up to INT64_MAX.
+      //
+      // NOTE: `util::from_view` parses as signed int64_t. Reinterpreting the
+      // bit pattern as uint64_t below is safe as long as every defined
+      // LI_FF2_* bit lives in [0, 62] (i.e. the wire string fits in
+      // INT64_MAX). All currently defined FF2 flags satisfy that.
+      // If a future LI_FF2_* uses bit 63 (decimal value >= 2^63), the
+      // signed parse will overflow and the flag will be silently lost —
+      // at that point switch this call site to `std::from_chars` parsing
+      // into uint64_t with errno/ec checking.
       if (auto it = args.find("x-ml-general.featureFlags2"sv); it != args.end()) {
         config.mlFeatureFlags2 = static_cast<std::uint64_t>(util::from_view(it->second));
       }
