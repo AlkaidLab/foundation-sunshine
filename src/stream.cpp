@@ -1625,12 +1625,13 @@ namespace stream {
       crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
       crypto::cipher::tag_size);
 
-    auto payload = encode_control(session,
-                                  std::string_view {
-                                    reinterpret_cast<const char *>(plaintext.data()),
-                                    plaintext.size(),
-                                  },
-                                  encrypted_payload);
+    auto payload = encode_control_buf(session,
+                                      std::string_view {
+                                        reinterpret_cast<const char *>(plaintext.data()),
+                                        plaintext.size(),
+                                      },
+                                      encrypted_payload.data(),
+                                      encrypted_payload.size());
     if (payload.empty()) {
       BOOST_LOG(error) << "Couldn't encode cursor plane control payload"sv;
       return -1;
