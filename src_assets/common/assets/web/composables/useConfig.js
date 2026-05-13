@@ -48,6 +48,7 @@ const DEFAULT_TABS = [
       enable_dsu_server: 'disabled',
       dsu_server_port: 26760,
       keybindings: '[0x10,0xA0,0x11,0xA2,0x12,0xA4]',
+      enable_cursor_plane: true,
     },
   },
   {
