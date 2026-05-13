@@ -24,8 +24,8 @@
 	branch = stable
 [submodule "third-party/moonlight-common-c"]
 	path = third-party/moonlight-common-c
-	url = https://github.com/moonlight-stream/moonlight-common-c.git
-	branch = master
+	url = https://github.com/qiin2333/moonlight-common-c.git
+	branch = mic
 [submodule "third-party/nanors"]
 	path = third-party/nanors
 	url = https://github.com/sleepybishop/nanors.git
@@ -59,7 +59,7 @@
 	branch = main
 [submodule "third-party/Simple-Web-Server"]
 	path = third-party/Simple-Web-Server
-	url = https://github.com/LizardByte-infrastructure/Simple-Web-Server.git
+	url = https://gitlab.com/eidheim/Simple-Web-Server.git
 	branch = master
 [submodule "third-party/TPCircularBuffer"]
 	path = third-party/TPCircularBuffer
@@ -79,9 +79,9 @@
 	branch = main
 [submodule "third-party/wlr-protocols"]
 	path = third-party/wlr-protocols
-	url = https://github.com/LizardByte-infrastructure/wlr-protocols.git
+	url = https://gitlab.freedesktop.org/wlroots/wlr-protocols.git
 	branch = master
 [submodule "src_assets/common/sunshine-control-panel"]
 	path = src_assets/common/sunshine-control-panel
 	url = https://github.com/qiin2333/sunshine-control-panel.git
-	branch = master
+	branch = tauri
