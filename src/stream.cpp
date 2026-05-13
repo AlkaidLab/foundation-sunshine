@@ -658,7 +658,16 @@ namespace stream {
       return {};
     }
 
-    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    // The on-wire length field is uint16_t; bail out instead of silently
+    // truncating when seq + GCM tag + ciphertext would exceed 0xFFFF.
+    const std::size_t encrypted_packet_length =
+      static_cast<std::size_t>(bytes) + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    if (encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(error) << "encode_control: encrypted frame too large ("sv << encrypted_packet_length
+                       << " bytes; plaintext was "sv << plaintext.size() << " bytes)"sv;
+      return {};
+    }
+    std::uint16_t packet_length = static_cast<std::uint16_t>(encrypted_packet_length);
 
     packet->encryptedHeaderType = util::endian::little(0x0001);
     packet->length = util::endian::little(packet_length);
@@ -1326,7 +1335,16 @@ namespace stream {
       return {};
     }
 
-    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    // The on-wire length field is uint16_t; bail out instead of silently
+    // truncating when seq + GCM tag + ciphertext would exceed 0xFFFF.
+    const std::size_t encrypted_packet_length =
+      static_cast<std::size_t>(bytes) + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    if (encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(error) << "encode_control_buf: encrypted frame too large ("sv << encrypted_packet_length
+                       << " bytes; plaintext was "sv << plaintext.size() << " bytes)"sv;
+      return {};
+    }
+    std::uint16_t packet_length = static_cast<std::uint16_t>(encrypted_packet_length);
     packet->encryptedHeaderType = util::endian::little(0x0001);
     packet->length = util::endian::little(packet_length);
     packet->seq = util::endian::little(seq);
