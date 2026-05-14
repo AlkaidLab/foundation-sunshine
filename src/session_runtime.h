@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <optional>
@@ -67,6 +68,12 @@ namespace session_runtime {
     std::uint32_t launch_session_id {};
     std::uint32_t control_generation {};
     std::uint32_t control_connect_data {};
+    std::uint64_t logical_session_key {};
+    std::uint64_t participant_key {};
+    std::uint64_t client_key {};
+    std::uint64_t device_key {};
+    std::string logical_session_id;
+    std::string participant_id;
     std::string client_cert_uuid;
     std::string client_unique_id;
     std::string client_name;
@@ -84,6 +91,47 @@ namespace session_runtime {
     }
   };
 
+  inline bool
+  is_legacy_client_identity_placeholder(std::string_view value) {
+    return value.empty() ||
+           value == "unknown" ||
+           value == "0123456789ABCDEF";
+  }
+
+  inline void
+  promote_trusted_client_identity(identity_t &identity,
+                                  std::string *launch_unique_id,
+                                  std::string *launch_client_name,
+                                  std::string_view client_cert_uuid,
+                                  std::string_view paired_client_name) {
+    if (client_cert_uuid.empty()) {
+      return;
+    }
+
+    identity.set_client_cert_uuid(std::string { client_cert_uuid });
+
+    if (is_legacy_client_identity_placeholder(identity.client_unique_id)) {
+      identity.client_unique_id = identity.client_cert_uuid;
+    }
+
+    const auto display_name = paired_client_name.empty() ?
+                                std::string_view { client_cert_uuid } :
+                                paired_client_name;
+    if (is_legacy_client_identity_placeholder(identity.client_name)) {
+      identity.client_name = std::string { display_name };
+    }
+
+    if (launch_unique_id != nullptr &&
+        is_legacy_client_identity_placeholder(*launch_unique_id)) {
+      *launch_unique_id = identity.client_unique_id;
+    }
+
+    if (launch_client_name != nullptr &&
+        is_legacy_client_identity_placeholder(*launch_client_name)) {
+      *launch_client_name = identity.client_name;
+    }
+  }
+
   struct session_id_t {
     std::uint64_t logical_key {};
     std::uint64_t runtime_id {};
@@ -94,6 +142,16 @@ namespace session_runtime {
 
   inline session_id_t
   make_session_id(const identity_t &identity) {
+    if (identity.logical_session_key != 0) {
+      return {
+        .logical_key = identity.logical_session_key,
+        .runtime_id = identity.runtime_id,
+        .launch_session_id = identity.launch_session_id,
+        .control_generation = identity.control_generation,
+        .trusted_client = identity.has_trusted_client_identity(),
+      };
+    }
+
     const auto trusted_key = identity.client_cert_key != 0 ?
                                identity.client_cert_key :
                                stable_key(identity.client_unique_id.empty() ?
@@ -134,11 +192,17 @@ namespace session_runtime {
     const auto device_id = !identity.client_unique_id.empty() ?
                              identity.client_unique_id :
                              (!identity.av_ping_payload.empty() ? identity.av_ping_payload : identity.client_name);
-    const auto client_key = identity.client_cert_key != 0 ?
-                              identity.client_cert_key :
-                              stable_key(identity.client_name);
-    const auto device_key = stable_key(device_id.empty() ? identity.client_name : device_id);
-    const auto participant_key = client_key ^ (device_key << 1U);
+    const auto client_key = identity.client_key != 0 ?
+                              identity.client_key :
+                              (identity.client_cert_key != 0 ?
+                                 identity.client_cert_key :
+                                 stable_key(identity.client_name));
+    const auto device_key = identity.device_key != 0 ?
+                              identity.device_key :
+                              stable_key(device_id.empty() ? identity.client_name : device_id);
+    const auto participant_key = identity.participant_key != 0 ?
+                                   identity.participant_key :
+                                   (client_key ^ (device_key << 1U));
 
     return {
       .id = {
@@ -174,6 +238,8 @@ namespace session_runtime {
     relay_tcp_tls,
     upnp_public_mapping,
     manual_public_port_forward,
+    session_telemetry,
+    lease_control,
     count,
   };
 
@@ -214,6 +280,10 @@ namespace session_runtime {
         return "upnp-public-mapping";
       case capability_e::manual_public_port_forward:
         return "manual-public-port-forward";
+      case capability_e::session_telemetry:
+        return "session-telemetry";
+      case capability_e::lease_control:
+        return "lease-control";
       case capability_e::count:
         break;
     }
@@ -264,6 +334,52 @@ namespace session_runtime {
     }
   };
 
+  inline std::string_view
+  trim_capability_token(std::string_view value) {
+    while (!value.empty() && (value.front() == ' ' ||
+                              value.front() == '\t' ||
+                              value.front() == '\r' ||
+                              value.front() == '\n')) {
+      value.remove_prefix(1);
+    }
+    while (!value.empty() && (value.back() == ' ' ||
+                              value.back() == '\t' ||
+                              value.back() == '\r' ||
+                              value.back() == '\n')) {
+      value.remove_suffix(1);
+    }
+    return value;
+  }
+
+  inline std::optional<capability_e>
+  capability_from_name(std::string_view name) {
+    name = trim_capability_token(name);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(capability_e::count); ++i) {
+      const auto capability = static_cast<capability_e>(i);
+      if (capability_name(capability) == name) {
+        return capability;
+      }
+    }
+    return std::nullopt;
+  }
+
+  inline feature_caps_t
+  parse_capability_names(std::string_view names) {
+    feature_caps_t caps;
+    while (!names.empty()) {
+      const auto comma = names.find(',');
+      const auto token = names.substr(0, comma);
+      if (const auto capability = capability_from_name(token)) {
+        caps.enable(*capability);
+      }
+      if (comma == std::string_view::npos) {
+        break;
+      }
+      names.remove_prefix(comma + 1);
+    }
+    return caps;
+  }
+
   inline std::uint64_t
   li_features_for_caps(const feature_caps_t &caps) {
     std::uint64_t features {};
@@ -303,12 +419,19 @@ namespace session_runtime {
         caps.has(capability_e::flexfec)) {
       features |= LI_SESSION_FEATURE_VIDEO_TELEMETRY;
     }
+    if (caps.has(capability_e::session_telemetry)) {
+      features |= LI_SESSION_FEATURE_SESSION_TELEMETRY;
+    }
+    if (caps.has(capability_e::lease_control)) {
+      features |= LI_SESSION_FEATURE_LEASE_CONTROL;
+    }
     return features;
   }
 
   inline std::uint64_t
   li_client_baseline_features() {
     return LI_SESSION_FEATURE_CURSOR_PLANE |
+           LI_SESSION_FEATURE_CURSOR_PLANE_V2 |
            LI_SESSION_FEATURE_ABSOLUTE_POINTER |
            LI_SESSION_FEATURE_RELATIVE_POINTER |
            LI_SESSION_FEATURE_POINTER_LOCK |
@@ -319,12 +442,15 @@ namespace session_runtime {
            LI_SESSION_FEATURE_SYSTEM_CURSOR_STATE |
            LI_SESSION_FEATURE_POINTER_MODE_SWITCH |
            LI_SESSION_FEATURE_INPUT_RELEASE_SMOOTHING |
+           LI_SESSION_FEATURE_SESSION_TELEMETRY |
+           LI_SESSION_FEATURE_LEASE_CONTROL |
            LI_SESSION_FEATURE_DYNAMIC_QUALITY;
   }
 
   inline std::uint64_t
   li_host_baseline_features() {
     return LI_SESSION_FEATURE_CURSOR_PLANE |
+           LI_SESSION_FEATURE_CURSOR_PLANE_V2 |
            LI_SESSION_FEATURE_ABSOLUTE_POINTER |
            LI_SESSION_FEATURE_RELATIVE_POINTER |
            LI_SESSION_FEATURE_POINTER_LOCK |
@@ -336,6 +462,8 @@ namespace session_runtime {
            LI_SESSION_FEATURE_SYSTEM_CURSOR_STATE |
            LI_SESSION_FEATURE_POINTER_MODE_SWITCH |
            LI_SESSION_FEATURE_INPUT_RELEASE_SMOOTHING |
+           LI_SESSION_FEATURE_SESSION_TELEMETRY |
+           LI_SESSION_FEATURE_LEASE_CONTROL |
            LI_SESSION_FEATURE_DYNAMIC_QUALITY;
   }
 
@@ -423,6 +551,35 @@ namespace session_runtime {
     transport_path_state_e state { transport_path_state_e::candidate };
     transport_path_score_t score;
     feature_caps_t required_caps;
+    std::uint32_t observed_egress_kind { LI_SESSION_PATH_EGRESS_UNKNOWN };
+    std::uint32_t observed_encapsulation { LI_SESSION_PATH_ENCAPSULATION_UNKNOWN };
+    std::uint32_t extra_evidence_flags {};
+    std::uint32_t identity_confidence_ppm {};
+  };
+
+  struct startup_path_evidence_t {
+    bool peer_is_lan_or_pc {};
+    bool remote_streaming_hint {};
+    bool rtsp_route_remote_hint {};
+    bool client_route_remote_hint {};
+    bool client_route_tunnel {};
+    bool client_vpn_active {};
+    std::string startup_profile;
+    std::string client_egress_kind;
+    std::string client_route_host;
+    std::string rtsp_route_host;
+    std::vector<std::string> client_target_address_candidates;
+    std::vector<std::string> host_public_candidates;
+  };
+
+  struct startup_path_decision_t {
+    transport_route_e route { transport_route_e::lan_direct };
+    bool allow_lan_fast_start { true };
+    std::uint32_t egress_kind { LI_SESSION_PATH_EGRESS_UNKNOWN };
+    std::uint32_t encapsulation { LI_SESSION_PATH_ENCAPSULATION_UNKNOWN };
+    std::uint32_t evidence_flags {};
+    std::uint32_t identity_confidence_ppm { 500000U };
+    const char *reason { "peer-lan-confirmed" };
   };
 
   inline std::string_view
@@ -503,6 +660,402 @@ namespace session_runtime {
     return make_transport_path(transport_route_e::lan_direct);
   }
 
+  inline bool
+  path_profile_requests_remote_safe_startup(std::string_view profile) {
+    return profile == "remote" ||
+           profile == "public" ||
+           profile == "wan" ||
+           profile == "tunnel" ||
+           profile == "vpn" ||
+           profile == "relay";
+  }
+
+  inline std::uint32_t
+  li_path_egress_kind_for_client_hint(std::string_view egress_kind) {
+    if (egress_kind == "physical" || egress_kind == "direct") {
+      return LI_SESSION_PATH_EGRESS_PHYSICAL;
+    }
+    if (egress_kind == "tunnel" || egress_kind == "vpn") {
+      return LI_SESSION_PATH_EGRESS_TUNNEL;
+    }
+    if (egress_kind == "virtual") {
+      return LI_SESSION_PATH_EGRESS_VIRTUAL;
+    }
+    if (egress_kind == "loopback") {
+      return LI_SESSION_PATH_EGRESS_LOOPBACK;
+    }
+    if (egress_kind == "proxy") {
+      return LI_SESSION_PATH_EGRESS_PROXY;
+    }
+    if (egress_kind == "relay") {
+      return LI_SESSION_PATH_EGRESS_RELAY;
+    }
+    return LI_SESSION_PATH_EGRESS_UNKNOWN;
+  }
+
+  inline bool
+  ascii_is_digit(char ch) {
+    return ch >= '0' && ch <= '9';
+  }
+
+  inline std::string
+  trim_ascii(std::string_view value) {
+    std::size_t first = 0;
+    while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first])) != 0) {
+      first++;
+    }
+    std::size_t last = value.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1])) != 0) {
+      last--;
+    }
+    return std::string { value.substr(first, last - first) };
+  }
+
+  inline std::string
+  canonical_endpoint_host(std::string_view raw_value) {
+    auto value = trim_ascii(raw_value);
+    if (value.empty()) {
+      return {};
+    }
+
+    const auto scheme_pos = value.find("://");
+    if (scheme_pos != std::string::npos) {
+      value.erase(0, scheme_pos + 3);
+    }
+
+    const auto slash_pos = value.find_first_of("/?#");
+    if (slash_pos != std::string::npos) {
+      value.erase(slash_pos);
+    }
+
+    const auto at_pos = value.rfind('@');
+    if (at_pos != std::string::npos) {
+      value.erase(0, at_pos + 1);
+    }
+
+    if (!value.empty() && value.front() == '[') {
+      const auto close = value.find(']');
+      if (close != std::string::npos) {
+        value = value.substr(1, close - 1);
+      }
+    }
+    else {
+      const auto colon_count = static_cast<std::size_t>(std::count(value.begin(), value.end(), ':'));
+      if (colon_count == 1) {
+        const auto colon = value.rfind(':');
+        const auto port = std::string_view { value }.substr(colon + 1);
+        if (!port.empty() && std::ranges::all_of(port, ascii_is_digit)) {
+          value.erase(colon);
+        }
+      }
+    }
+
+    while (!value.empty() && value.back() == '.') {
+      value.pop_back();
+    }
+    std::ranges::transform(value, value.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+  }
+
+  inline bool
+  canonical_endpoint_matches(std::string_view lhs, std::string_view rhs) {
+    const auto left = canonical_endpoint_host(lhs);
+    const auto right = canonical_endpoint_host(rhs);
+    return !left.empty() && left == right;
+  }
+
+  inline bool
+  parse_ipv4_literal(std::string_view raw_value, std::uint8_t octets[4]) {
+    const auto value = canonical_endpoint_host(raw_value);
+    if (value.empty()) {
+      return false;
+    }
+
+    std::size_t start = 0;
+    for (std::size_t index = 0; index < 4; ++index) {
+      const auto dot = value.find('.', start);
+      const auto end = dot == std::string::npos ? value.size() : dot;
+      if (end == start || (index < 3 && dot == std::string::npos)) {
+        return false;
+      }
+
+      unsigned int parsed = 0;
+      for (std::size_t pos = start; pos < end; ++pos) {
+        const char ch = value[pos];
+        if (!ascii_is_digit(ch)) {
+          return false;
+        }
+        parsed = parsed * 10U + static_cast<unsigned int>(ch - '0');
+        if (parsed > 255U) {
+          return false;
+        }
+      }
+      octets[index] = static_cast<std::uint8_t>(parsed);
+      start = end + 1;
+    }
+
+    return start == value.size() + 1;
+  }
+
+  inline bool
+  is_public_ipv4_literal(std::string_view raw_value) {
+    std::uint8_t ip[4] {};
+    if (!parse_ipv4_literal(raw_value, ip)) {
+      return false;
+    }
+
+    if (ip[0] == 0 || ip[0] == 10 || ip[0] == 127 || ip[0] >= 224) {
+      return false;
+    }
+    if (ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127) {
+      return false;
+    }
+    if (ip[0] == 169 && ip[1] == 254) {
+      return false;
+    }
+    if (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) {
+      return false;
+    }
+    if (ip[0] == 192 && ip[1] == 168) {
+      return false;
+    }
+    if (ip[0] == 198 && (ip[1] == 18 || ip[1] == 19)) {
+      return false;
+    }
+    if ((ip[0] == 192 && ip[1] == 0 && ip[2] == 2) ||
+        (ip[0] == 198 && ip[1] == 51 && ip[2] == 100) ||
+        (ip[0] == 203 && ip[1] == 0 && ip[2] == 113)) {
+      return false;
+    }
+    return true;
+  }
+
+  inline bool
+  has_public_target_address_candidate(const startup_path_evidence_t &evidence) {
+    if (is_public_ipv4_literal(evidence.client_route_host) ||
+        is_public_ipv4_literal(evidence.rtsp_route_host)) {
+      return true;
+    }
+    return std::ranges::any_of(evidence.client_target_address_candidates, [](const auto &candidate) {
+      return is_public_ipv4_literal(candidate);
+    });
+  }
+
+  inline bool
+  target_matches_host_public_identity(const startup_path_evidence_t &evidence) {
+    if (evidence.host_public_candidates.empty()) {
+      return false;
+    }
+
+    std::vector<std::string_view> target_candidates;
+    if (!evidence.client_route_host.empty()) {
+      target_candidates.push_back(evidence.client_route_host);
+    }
+    if (!evidence.rtsp_route_host.empty()) {
+      target_candidates.push_back(evidence.rtsp_route_host);
+    }
+    for (const auto &candidate : evidence.client_target_address_candidates) {
+      if (!candidate.empty()) {
+        target_candidates.push_back(candidate);
+      }
+    }
+
+    for (const auto target : target_candidates) {
+      for (const auto &host_public : evidence.host_public_candidates) {
+        if (canonical_endpoint_matches(target, host_public)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  inline bool
+  has_public_identity_comparison(const startup_path_evidence_t &evidence) {
+    return !evidence.host_public_candidates.empty() &&
+           (!evidence.client_route_host.empty() ||
+            !evidence.rtsp_route_host.empty() ||
+            !evidence.client_target_address_candidates.empty());
+  }
+
+  inline startup_path_decision_t
+  classify_startup_path(const startup_path_evidence_t &evidence) {
+    const bool tunnel_route =
+      evidence.client_route_tunnel ||
+      evidence.client_egress_kind == "tunnel" ||
+      evidence.client_egress_kind == "vpn";
+    const bool client_remote_hint =
+      evidence.remote_streaming_hint ||
+      evidence.client_route_remote_hint ||
+      path_profile_requests_remote_safe_startup(evidence.startup_profile);
+
+    std::uint32_t egress_kind = li_path_egress_kind_for_client_hint(evidence.client_egress_kind);
+    if (egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN && tunnel_route) {
+      egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL;
+    }
+
+    std::uint32_t evidence_flags = LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED;
+    if (client_remote_hint) {
+      evidence_flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED |
+                        LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED;
+    }
+    if (evidence.rtsp_route_remote_hint || evidence.peer_is_lan_or_pc) {
+      evidence_flags |= LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED;
+    }
+    if (tunnel_route) {
+      evidence_flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED;
+      egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL;
+    }
+    if (!evidence.host_public_candidates.empty()) {
+      evidence_flags |= LI_SESSION_PATH_EVIDENCE_STUN_OBSERVED;
+    }
+
+    const bool public_identity_match = target_matches_host_public_identity(evidence);
+    const bool public_identity_compared = has_public_identity_comparison(evidence);
+
+    if (tunnel_route && public_identity_match) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 870000U,
+        .reason = "client-tunnel-to-host-public",
+      };
+    }
+
+    if (tunnel_route && public_identity_compared) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 680000U,
+        .reason = "client-tunnel-to-external-forwarder",
+      };
+    }
+
+    if (tunnel_route) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 800000U,
+        .reason = "client-tunnel-route",
+      };
+    }
+
+    if (public_identity_match) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 880000U,
+        .reason = "host-public-port-forward",
+      };
+    }
+
+    if (public_identity_compared && has_public_target_address_candidate(evidence)) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 650000U,
+        .reason = "external-forwarder",
+      };
+    }
+
+    if (client_remote_hint && public_identity_compared) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 650000U,
+        .reason = "external-forwarder",
+      };
+    }
+
+    if (client_remote_hint) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 750000U,
+        .reason = "client-remote-hint",
+      };
+    }
+
+    if (evidence.rtsp_route_remote_hint) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 650000U,
+        .reason = "rtsp-route-remote",
+      };
+    }
+
+    if (!evidence.peer_is_lan_or_pc) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags,
+        .identity_confidence_ppm = 650000U,
+        .reason = "peer-not-lan",
+      };
+    }
+
+    return {
+      .route = transport_route_e::lan_direct,
+      .allow_lan_fast_start = true,
+      .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                       LI_SESSION_PATH_EGRESS_PHYSICAL :
+                       egress_kind,
+      .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+      .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+      .identity_confidence_ppm = 850000U,
+      .reason = "peer-lan-confirmed",
+    };
+  }
+
+  inline transport_path_t
+  make_transport_path(const startup_path_decision_t &decision) {
+    auto path = make_transport_path(decision.route);
+    path.observed_egress_kind = decision.egress_kind;
+    path.observed_encapsulation = decision.encapsulation;
+    path.extra_evidence_flags = decision.evidence_flags;
+    path.identity_confidence_ppm = decision.identity_confidence_ppm;
+    return path;
+  }
+
   inline std::uint32_t
   li_transport_kind(transport_route_e route) {
     switch (route) {
@@ -557,6 +1110,129 @@ namespace session_runtime {
     }
     if (path.protocol == transport_protocol_e::quic) {
       flags |= LI_SESSION_TRANSPORT_FLAG_MIGRATABLE;
+    }
+    return flags;
+  }
+
+  inline std::uint32_t
+  li_transport_stack_flags(const transport_path_t &path) {
+    std::uint32_t flags = 0;
+
+    switch (path.protocol) {
+      case transport_protocol_e::enet_udp:
+        flags |= LI_SESSION_TRANSPORT_STACK_ENET |
+                 LI_SESSION_TRANSPORT_STACK_UDP |
+                 LI_SESSION_TRANSPORT_STACK_RTP |
+                 LI_SESSION_TRANSPORT_STACK_RTCP |
+                 LI_SESSION_TRANSPORT_STACK_RTSP;
+        break;
+      case transport_protocol_e::udp:
+        flags |= LI_SESSION_TRANSPORT_STACK_UDP |
+                 LI_SESSION_TRANSPORT_STACK_RTP |
+                 LI_SESSION_TRANSPORT_STACK_RTCP |
+                 LI_SESSION_TRANSPORT_STACK_RTSP;
+        break;
+      case transport_protocol_e::quic:
+        flags |= LI_SESSION_TRANSPORT_STACK_QUIC;
+        break;
+      case transport_protocol_e::tcp_tls:
+        flags |= LI_SESSION_TRANSPORT_STACK_TCP |
+                 LI_SESSION_TRANSPORT_STACK_TLS;
+        break;
+    }
+
+    if (path.route == transport_route_e::ice_stun_p2p) {
+      flags |= LI_SESSION_TRANSPORT_STACK_STUN |
+               LI_SESSION_TRANSPORT_STACK_ICE |
+               LI_SESSION_TRANSPORT_STACK_P2P;
+    }
+    if (path.route == transport_route_e::relay_quic ||
+        path.route == transport_route_e::relay_tcp_tls) {
+      flags |= LI_SESSION_TRANSPORT_STACK_RELAY;
+    }
+
+    return flags;
+  }
+
+  inline std::uint32_t
+  li_path_candidate_type(transport_route_e route) {
+    switch (route) {
+      case transport_route_e::relay_quic:
+      case transport_route_e::relay_tcp_tls:
+        return LI_SESSION_PATH_CANDIDATE_RELAY;
+      case transport_route_e::lan_direct:
+      case transport_route_e::manual_public_port_forward:
+      case transport_route_e::upnp_public_mapping:
+        return LI_SESSION_PATH_CANDIDATE_HOST;
+      case transport_route_e::ice_stun_p2p:
+        return LI_SESSION_PATH_CANDIDATE_UNKNOWN;
+    }
+    return LI_SESSION_PATH_CANDIDATE_UNKNOWN;
+  }
+
+  inline std::uint32_t
+  li_path_discovery_source(transport_route_e route) {
+    switch (route) {
+      case transport_route_e::lan_direct:
+        return LI_SESSION_PATH_DISCOVERY_LAN_DISCOVERY;
+      case transport_route_e::manual_public_port_forward:
+        return LI_SESSION_PATH_DISCOVERY_USER_CONFIG;
+      case transport_route_e::upnp_public_mapping:
+        return LI_SESSION_PATH_DISCOVERY_HOST_ADVERTISEMENT;
+      case transport_route_e::ice_stun_p2p:
+        return LI_SESSION_PATH_DISCOVERY_ICE;
+      case transport_route_e::relay_quic:
+      case transport_route_e::relay_tcp_tls:
+        return LI_SESSION_PATH_DISCOVERY_RELAY_DIRECTORY;
+    }
+    return LI_SESSION_PATH_DISCOVERY_UNKNOWN;
+  }
+
+  inline std::uint32_t
+  li_path_egress_kind(transport_route_e route) {
+    switch (route) {
+      case transport_route_e::relay_quic:
+      case transport_route_e::relay_tcp_tls:
+        return LI_SESSION_PATH_EGRESS_RELAY;
+      default:
+        return LI_SESSION_PATH_EGRESS_UNKNOWN;
+    }
+  }
+
+  inline std::uint32_t
+  li_path_encapsulation(transport_route_e route) {
+    switch (route) {
+      case transport_route_e::relay_quic:
+      case transport_route_e::relay_tcp_tls:
+        return LI_SESSION_PATH_ENCAPSULATION_RELAY;
+      case transport_route_e::ice_stun_p2p:
+        return LI_SESSION_PATH_ENCAPSULATION_ICE;
+      default:
+        return LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP;
+    }
+  }
+
+  inline std::uint32_t
+  li_path_evidence_flags(const transport_path_t &path) {
+    std::uint32_t flags = LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED;
+    switch (path.route) {
+      case transport_route_e::lan_direct:
+        flags |= LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED;
+        break;
+      case transport_route_e::manual_public_port_forward:
+        flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED;
+        break;
+      case transport_route_e::upnp_public_mapping:
+        flags |= LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED;
+        break;
+      case transport_route_e::ice_stun_p2p:
+        flags |= LI_SESSION_PATH_EVIDENCE_STUN_OBSERVED |
+                 LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED;
+        break;
+      case transport_route_e::relay_quic:
+      case transport_route_e::relay_tcp_tls:
+        flags |= LI_SESSION_PATH_EVIDENCE_RELAY_ALLOCATED;
+        break;
     }
     return flags;
   }
@@ -709,9 +1385,364 @@ namespace session_runtime {
     return {
       "x-ss-core.sessionVersion:1",
       "x-ss-core.feedbackVersion:1",
+      "x-ss-core.featureBits:" + std::to_string(li_host_baseline_features() |
+                                                li_features_for_caps(manifest.supported_caps)),
       "x-ss-core.supportedCaps:" + join_names(manifest.supported_caps.names()),
       "x-ss-core.plannedCaps:" + join_names(manifest.planned_caps.names()),
       "x-ss-core.transportPaths:" + join_names(path_names),
+    };
+  }
+
+  inline std::string
+  to_string(std::uint64_t value) {
+    return std::to_string(value);
+  }
+
+  inline std::string
+  to_hex_string(std::uint64_t value) {
+    char buffer[32] {};
+    std::snprintf(buffer, sizeof(buffer), "0x%llx", static_cast<unsigned long long>(value));
+    return buffer;
+  }
+
+  inline std::string_view
+  lease_feature_name(std::uint32_t feature) {
+    switch (feature) {
+      case LI_SESSION_RESOURCE_INPUT_FOCUS:
+        return "input-focus";
+      case LI_SESSION_RESOURCE_MICROPHONE:
+        return "microphone";
+      case LI_SESSION_RESOURCE_CLIPBOARD:
+        return "clipboard";
+      case LI_SESSION_RESOURCE_DISPLAY:
+        return "display";
+      case LI_SESSION_RESOURCE_DYNAMIC_QUALITY:
+        return "dynamic-quality";
+      case LI_SESSION_RESOURCE_TRANSPORT_QOS:
+        return "transport-qos";
+      case LI_SESSION_RESOURCE_CURSOR_PLANE:
+        return "cursor-plane";
+      case LI_SESSION_RESOURCE_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  lease_mode_name(std::uint32_t mode) {
+    switch (mode) {
+      case LI_SESSION_LEASE_MODE_EXCLUSIVE_OWNER:
+        return "exclusive-owner";
+      case LI_SESSION_LEASE_MODE_OBSERVER:
+        return "observer";
+      case LI_SESSION_LEASE_MODE_SHARED:
+        return "shared";
+      case LI_SESSION_LEASE_MODE_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_state_name(std::uint32_t state) {
+    switch (state) {
+      case LI_SESSION_STATE_IDLE:
+        return "idle";
+      case LI_SESSION_STATE_CONNECTING:
+        return "connecting";
+      case LI_SESSION_STATE_NEGOTIATING:
+        return "negotiating";
+      case LI_SESSION_STATE_PROBING:
+        return "probing";
+      case LI_SESSION_STATE_STREAMING:
+        return "streaming";
+      case LI_SESSION_STATE_RECOVERING:
+        return "recovering";
+      case LI_SESSION_STATE_MIGRATING:
+        return "migrating";
+      case LI_SESSION_STATE_DISCONNECTING:
+        return "disconnecting";
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_pointer_mode_name(std::uint32_t mode) {
+    switch (mode) {
+      case LI_SESSION_POINTER_MODE_ABSOLUTE:
+        return "absolute";
+      case LI_SESSION_POINTER_MODE_RELATIVE:
+        return "relative";
+      case LI_SESSION_POINTER_MODE_HYBRID:
+        return "hybrid";
+      case LI_SESSION_POINTER_MODE_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_transport_kind_name(std::uint32_t kind) {
+    switch (kind) {
+      case LI_SESSION_TRANSPORT_DIRECT_ENET:
+        return "direct-enet";
+      case LI_SESSION_TRANSPORT_DIRECT_QUIC:
+        return "direct-quic";
+      case LI_SESSION_TRANSPORT_RELAY_QUIC:
+        return "relay-quic";
+      case LI_SESSION_TRANSPORT_RELAY_TCP:
+        return "relay-tcp";
+      case LI_SESSION_TRANSPORT_LOCAL:
+        return "local";
+      case LI_SESSION_TRANSPORT_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_transport_protocol_name(std::uint32_t protocol) {
+    switch (protocol) {
+      case LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP:
+        return "enet-udp";
+      case LI_SESSION_TRANSPORT_PROTOCOL_UDP:
+        return "udp";
+      case LI_SESSION_TRANSPORT_PROTOCOL_QUIC:
+        return "quic";
+      case LI_SESSION_TRANSPORT_PROTOCOL_TCP_TLS:
+        return "tcp-tls";
+      case LI_SESSION_TRANSPORT_PROTOCOL_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_candidate_type_name(std::uint32_t candidate_type) {
+    switch (candidate_type) {
+      case LI_SESSION_PATH_CANDIDATE_HOST:
+        return "host";
+      case LI_SESSION_PATH_CANDIDATE_SERVER_REFLEXIVE:
+        return "server-reflexive";
+      case LI_SESSION_PATH_CANDIDATE_PEER_REFLEXIVE:
+        return "peer-reflexive";
+      case LI_SESSION_PATH_CANDIDATE_RELAY:
+        return "relay";
+      case LI_SESSION_PATH_CANDIDATE_OPAQUE:
+        return "opaque";
+      case LI_SESSION_PATH_CANDIDATE_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_discovery_source_name(std::uint32_t discovery_source) {
+    switch (discovery_source) {
+      case LI_SESSION_PATH_DISCOVERY_USER_CONFIG:
+        return "user-config";
+      case LI_SESSION_PATH_DISCOVERY_LAN_DISCOVERY:
+        return "lan-discovery";
+      case LI_SESSION_PATH_DISCOVERY_HOST_ADVERTISEMENT:
+        return "host-advertisement";
+      case LI_SESSION_PATH_DISCOVERY_DNS:
+        return "dns";
+      case LI_SESSION_PATH_DISCOVERY_STUN:
+        return "stun";
+      case LI_SESSION_PATH_DISCOVERY_ICE:
+        return "ice";
+      case LI_SESSION_PATH_DISCOVERY_RELAY_DIRECTORY:
+        return "relay-directory";
+      case LI_SESSION_PATH_DISCOVERY_OS_ROUTE:
+        return "os-route";
+      case LI_SESSION_PATH_DISCOVERY_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_address_family_name(std::uint32_t address_family) {
+    switch (address_family) {
+      case LI_SESSION_PATH_ADDRESS_FAMILY_IPV4:
+        return "ipv4";
+      case LI_SESSION_PATH_ADDRESS_FAMILY_IPV6:
+        return "ipv6";
+      case LI_SESSION_PATH_ADDRESS_FAMILY_DUAL_STACK:
+        return "dual-stack";
+      case LI_SESSION_PATH_ADDRESS_FAMILY_DOMAIN:
+        return "domain";
+      case LI_SESSION_PATH_ADDRESS_FAMILY_OPAQUE:
+        return "opaque";
+      case LI_SESSION_PATH_ADDRESS_FAMILY_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_address_scope_name(std::uint32_t address_scope) {
+    switch (address_scope) {
+      case LI_SESSION_PATH_ADDRESS_SCOPE_LOOPBACK:
+        return "loopback";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_LINK_LOCAL:
+        return "link-local";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_PRIVATE:
+        return "private";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_CGNAT:
+        return "cgnat";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_PUBLIC:
+        return "public";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_RESERVED:
+        return "reserved";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_FAKE:
+        return "fake";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_OPAQUE:
+        return "opaque";
+      case LI_SESSION_PATH_ADDRESS_SCOPE_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_egress_kind_name(std::uint32_t egress_kind) {
+    switch (egress_kind) {
+      case LI_SESSION_PATH_EGRESS_PHYSICAL:
+        return "physical";
+      case LI_SESSION_PATH_EGRESS_TUNNEL:
+        return "tunnel";
+      case LI_SESSION_PATH_EGRESS_VIRTUAL:
+        return "virtual";
+      case LI_SESSION_PATH_EGRESS_LOOPBACK:
+        return "loopback";
+      case LI_SESSION_PATH_EGRESS_PROXY:
+        return "proxy";
+      case LI_SESSION_PATH_EGRESS_RELAY:
+        return "relay";
+      case LI_SESSION_PATH_EGRESS_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_underlay_kind_name(std::uint32_t underlay_kind) {
+    switch (underlay_kind) {
+      case LI_SESSION_PATH_UNDERLAY_WIRED:
+        return "wired";
+      case LI_SESSION_PATH_UNDERLAY_WIFI:
+        return "wifi";
+      case LI_SESSION_PATH_UNDERLAY_CELLULAR:
+        return "cellular";
+      case LI_SESSION_PATH_UNDERLAY_VIRTUAL:
+        return "virtual";
+      case LI_SESSION_PATH_UNDERLAY_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_path_encapsulation_name(std::uint32_t encapsulation) {
+    switch (encapsulation) {
+      case LI_SESSION_PATH_ENCAPSULATION_NONE:
+        return "none";
+      case LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP:
+        return "native-ip";
+      case LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL:
+        return "vpn-tunnel";
+      case LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL:
+        return "udp-tunnel";
+      case LI_SESSION_PATH_ENCAPSULATION_TCP_PROXY:
+        return "tcp-proxy";
+      case LI_SESSION_PATH_ENCAPSULATION_TLS_PROXY:
+        return "tls-proxy";
+      case LI_SESSION_PATH_ENCAPSULATION_RELAY:
+        return "relay";
+      case LI_SESSION_PATH_ENCAPSULATION_ICE:
+        return "ice";
+      case LI_SESSION_PATH_ENCAPSULATION_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::vector<std::string>
+  session_snapshot_attributes(const LI_SESSION &session) {
+    return {
+      "x-ss-core.sessionVersion:" + std::to_string(LI_SESSION_VERSION),
+      "x-ss-core.sessionId:" + std::string { session.sessionId.value },
+      "x-ss-core.logicalSessionKey:" + to_hex_string(session.logicalSessionKey),
+      "x-ss-core.runtimeId:" + to_string(session.runtimeId),
+      "x-ss-core.launchSessionId:" + std::to_string(session.launchSessionId),
+      "x-ss-core.controlGeneration:" + std::to_string(session.controlGeneration),
+      "x-ss-core.state:" + std::string { li_state_name(session.state) },
+      "x-ss-core.appId:" + std::string { session.appId },
+      "x-ss-core.appName:" + std::string { session.appName },
+      "x-ss-core.client.participantId:" + std::string { session.client.participantId.value },
+      "x-ss-core.client.participantKey:" + to_hex_string(session.client.participantKey),
+      "x-ss-core.client.clientKey:" + to_hex_string(session.client.clientKey),
+      "x-ss-core.client.deviceKey:" + to_hex_string(session.client.deviceKey),
+      "x-ss-core.client.displayName:" + std::string { session.client.displayName },
+      "x-ss-core.client.deviceName:" + std::string { session.client.deviceName },
+      "x-ss-core.host.participantId:" + std::string { session.host.participantId.value },
+      "x-ss-core.host.participantKey:" + to_hex_string(session.host.participantKey),
+      "x-ss-core.host.clientKey:" + to_hex_string(session.host.clientKey),
+      "x-ss-core.host.deviceKey:" + to_hex_string(session.host.deviceKey),
+      "x-ss-core.host.displayName:" + std::string { session.host.displayName },
+      "x-ss-core.host.deviceName:" + std::string { session.host.deviceName },
+      "x-ss-core.lease.feature:" + std::string { lease_feature_name(session.lease.feature) },
+      "x-ss-core.lease.mode:" + std::string { lease_mode_name(session.lease.mode) },
+      "x-ss-core.lease.ownerRuntimeId:" + to_string(session.lease.ownerRuntimeId),
+      "x-ss-core.lease.ownerParticipantKey:" + to_hex_string(session.lease.ownerParticipantKey),
+      "x-ss-core.lease.ttlMs:" + std::to_string(session.lease.ttlMs),
+      "x-ss-core.lease.graceMs:" + std::to_string(session.lease.graceMs),
+      "x-ss-core.lease.valid:" + std::to_string(session.lease.valid ? 1 : 0),
+      "x-ss-core.transportPath.pathId:" + to_hex_string(session.transportPath.pathId),
+      "x-ss-core.transportPath.kind:" + std::string { li_transport_kind_name(session.transportPath.kind) },
+      "x-ss-core.transportPath.protocol:" + std::string { li_transport_protocol_name(session.transportPath.protocol) },
+      "x-ss-core.transportPath.flags:" + to_hex_string(session.transportPath.flags),
+      "x-ss-core.transportPath.stackFlags:" + to_hex_string(session.transportPath.stackFlags),
+      "x-ss-core.transportPath.candidateType:" + std::string { li_path_candidate_type_name(session.transportPath.candidateType) },
+      "x-ss-core.transportPath.discoverySource:" + std::string { li_path_discovery_source_name(session.transportPath.discoverySource) },
+      "x-ss-core.transportPath.addressFamily:" + std::string { li_path_address_family_name(session.transportPath.addressFamily) },
+      "x-ss-core.transportPath.addressScope:" + std::string { li_path_address_scope_name(session.transportPath.addressScope) },
+      "x-ss-core.transportPath.egressKind:" + std::string { li_path_egress_kind_name(session.transportPath.egressKind) },
+      "x-ss-core.transportPath.underlayKind:" + std::string { li_path_underlay_kind_name(session.transportPath.underlayKind) },
+      "x-ss-core.transportPath.encapsulation:" + std::string { li_path_encapsulation_name(session.transportPath.encapsulation) },
+      "x-ss-core.transportPath.evidenceFlags:" + to_hex_string(session.transportPath.evidenceFlags),
+      "x-ss-core.transportPath.identityConfidencePpm:" + std::to_string(session.transportPath.identityConfidencePpm),
+      "x-ss-core.transportPath.qualityConfidencePpm:" + std::to_string(session.transportPath.qualityConfidencePpm),
+      "x-ss-core.transportPath.routeId:" + std::string { session.transportPath.routeId },
+      "x-ss-core.transportPath.localEndpoint:" + std::string { session.transportPath.localEndpoint },
+      "x-ss-core.transportPath.remoteEndpoint:" + std::string { session.transportPath.remoteEndpoint },
+      "x-ss-core.transportPath.observedEndpoint:" + std::string { session.transportPath.observedEndpoint },
+      "x-ss-core.transportPath.providerId:" + std::string { session.transportPath.providerId },
+      "x-ss-core.transportPath.relayName:" + std::string { session.transportPath.relayName },
+      "x-ss-core.transportPath.rttUs:" + std::to_string(session.transportPath.rttUs),
+      "x-ss-core.transportPath.jitterUs:" + std::to_string(session.transportPath.jitterUs),
+      "x-ss-core.transportPath.lossPpm:" + std::to_string(session.transportPath.packetLossPpm),
+      "x-ss-core.telemetry.framerate:" + std::to_string(session.telemetry.currentFramerate),
+      "x-ss-core.telemetry.resolution:" + std::string { session.telemetry.currentResolution },
+      "x-ss-core.telemetry.rttUs:" + std::to_string(session.telemetry.rttUs),
+      "x-ss-core.telemetry.jitterUs:" + std::to_string(session.telemetry.jitterUs),
+      "x-ss-core.telemetry.lossPpm:" + std::to_string(session.telemetry.packetLossPpm),
+      "x-ss-core.telemetry.decodeQueue:" + std::to_string(session.telemetry.videoDecodeQueueDepth),
+      "x-ss-core.telemetry.renderQueue:" + std::to_string(session.telemetry.videoRenderQueueDepth),
+      "x-ss-core.telemetry.audioQueueMs:" + std::to_string(session.telemetry.audioQueueDepthMs),
+      "x-ss-core.telemetry.inputQueue:" + std::to_string(session.telemetry.inputQueueDepth),
+      "x-ss-core.telemetry.inputLatencyUs:" + std::to_string(session.telemetry.inputSendLatencyUs),
+      "x-ss-core.telemetry.inputAckLatencyUs:" + std::to_string(session.telemetry.inputAckLatencyUs),
+      "x-ss-core.telemetry.mouseBacklogUs:" + std::to_string(session.telemetry.mouseBacklogUs),
+      "x-ss-core.telemetry.pointerMode:" + std::string { li_pointer_mode_name(session.telemetry.pointerMode) },
+      "x-ss-core.telemetry.cursorFlags:" + to_hex_string(session.telemetry.cursorStateFlags),
+      "x-ss-core.telemetry.pointerReleaseQueueDepth:" + std::to_string(session.telemetry.pointerReleaseQueueDepth),
+      "x-ss-core.telemetry.pointerReleaseQueueDelayUs:" + std::to_string(session.telemetry.pointerReleaseQueueDelayUs),
+      "x-ss-core.telemetry.pointerModeSwitchUs:" + std::to_string(session.telemetry.pointerModeSwitchUs),
+      "x-ss-core.telemetry.pointerDeltasCoalesced:" + std::to_string(session.telemetry.pointerDeltasCoalesced),
+      "x-ss-core.telemetry.pointerAccelerationRiskPpm:" + std::to_string(session.telemetry.pointerAccelerationRiskPpm),
     };
   }
 
@@ -1043,6 +2074,265 @@ namespace session_runtime {
     destination[length] = '\0';
   }
 
+  inline void
+  initialize_session_control_header(LI_SESSION_CONTROL_HEADER &header,
+                                    std::uint16_t message_type,
+                                    std::uint32_t message_length) {
+    header.magic = LI_SESSION_CONTROL_MAGIC;
+    header.version = LI_SESSION_CONTROL_VERSION;
+    header.messageType = message_type;
+    header.messageLength = message_length;
+    header.flags = LI_SESSION_CONTROL_FLAG_NONE;
+  }
+
+  inline LI_SESSION_CONTROL_HELLO
+  make_session_control_hello(const LI_SESSION &session) {
+    LI_SESSION_CONTROL_HELLO hello {};
+    initialize_session_control_header(hello.header,
+                                      LI_SESSION_CONTROL_MSG_HELLO,
+                                      static_cast<std::uint32_t>(sizeof(hello)));
+    hello.clientFeatureBits = session.featureCaps.client;
+    hello.hostFeatureBits = session.featureCaps.host;
+    hello.negotiatedFeatureBits = session.featureCaps.negotiated;
+    hello.logicalSessionKey = session.logicalSessionKey;
+    hello.runtimeId = session.runtimeId;
+    hello.participantKey = session.client.participantKey;
+    hello.clientKey = session.client.clientKey;
+    hello.deviceKey = session.client.deviceKey;
+    hello.launchSessionId = session.launchSessionId;
+    hello.controlGeneration = session.controlGeneration;
+    hello.state = session.state;
+    copy_li_string(hello.sessionId, sizeof(hello.sessionId), session.sessionId.value);
+    copy_li_string(hello.participantId, sizeof(hello.participantId), session.client.participantId.value);
+    copy_li_string(hello.deviceName, sizeof(hello.deviceName), session.client.deviceName);
+    copy_li_string(hello.displayName, sizeof(hello.displayName), session.client.displayName);
+    return hello;
+  }
+
+  inline LI_SESSION_CONTROL_WELCOME
+  make_session_control_welcome(const LI_SESSION &session) {
+    LI_SESSION_CONTROL_WELCOME welcome {};
+    initialize_session_control_header(welcome.header,
+                                      LI_SESSION_CONTROL_MSG_WELCOME,
+                                      static_cast<std::uint32_t>(sizeof(welcome)));
+    welcome.clientFeatureBits = session.featureCaps.client;
+    welcome.hostFeatureBits = session.featureCaps.host;
+    welcome.negotiatedFeatureBits = session.featureCaps.negotiated;
+    welcome.logicalSessionKey = session.logicalSessionKey;
+    welcome.runtimeId = session.runtimeId;
+    welcome.participantKey = session.host.participantKey;
+    welcome.clientKey = session.host.clientKey;
+    welcome.deviceKey = session.host.deviceKey;
+    welcome.launchSessionId = session.launchSessionId;
+    welcome.controlGeneration = session.controlGeneration;
+    welcome.state = session.state;
+    copy_li_string(welcome.sessionId, sizeof(welcome.sessionId), session.sessionId.value);
+    copy_li_string(welcome.participantId, sizeof(welcome.participantId), session.host.participantId.value);
+    copy_li_string(welcome.deviceName, sizeof(welcome.deviceName), session.host.deviceName);
+    copy_li_string(welcome.displayName, sizeof(welcome.displayName), session.host.displayName);
+    return welcome;
+  }
+
+  inline bool
+  is_session_control_header_valid(const LI_SESSION_CONTROL_HEADER &header,
+                                  std::uint16_t expected_type,
+                                  std::size_t payload_size) {
+    return header.magic == LI_SESSION_CONTROL_MAGIC &&
+           header.version == LI_SESSION_CONTROL_VERSION &&
+           header.messageType == expected_type &&
+           header.messageLength == payload_size &&
+           payload_size <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE;
+  }
+
+  inline std::optional<LI_SESSION_CONTROL_HELLO>
+  parse_session_control_hello(std::string_view payload) {
+    if (payload.size() != sizeof(LI_SESSION_CONTROL_HELLO)) {
+      return std::nullopt;
+    }
+
+    LI_SESSION_CONTROL_HELLO hello {};
+    std::memcpy(&hello, payload.data(), sizeof(hello));
+    if (!is_session_control_header_valid(hello.header,
+                                         LI_SESSION_CONTROL_MSG_HELLO,
+                                         payload.size())) {
+      return std::nullopt;
+    }
+
+    hello.sessionId[sizeof(hello.sessionId) - 1] = '\0';
+    hello.participantId[sizeof(hello.participantId) - 1] = '\0';
+    hello.deviceName[sizeof(hello.deviceName) - 1] = '\0';
+    hello.displayName[sizeof(hello.displayName) - 1] = '\0';
+    return hello;
+  }
+
+  inline std::optional<LI_SESSION_CONTROL_WELCOME>
+  parse_session_control_welcome(std::string_view payload) {
+    if (payload.size() != sizeof(LI_SESSION_CONTROL_WELCOME)) {
+      return std::nullopt;
+    }
+
+    LI_SESSION_CONTROL_WELCOME welcome {};
+    std::memcpy(&welcome, payload.data(), sizeof(welcome));
+    if (!is_session_control_header_valid(welcome.header,
+                                         LI_SESSION_CONTROL_MSG_WELCOME,
+                                         payload.size())) {
+      return std::nullopt;
+    }
+
+    welcome.sessionId[sizeof(welcome.sessionId) - 1] = '\0';
+    welcome.participantId[sizeof(welcome.participantId) - 1] = '\0';
+    welcome.deviceName[sizeof(welcome.deviceName) - 1] = '\0';
+    welcome.displayName[sizeof(welcome.displayName) - 1] = '\0';
+    return welcome;
+  }
+
+  inline LI_SESSION_CONTROL_TELEMETRY
+  make_session_control_telemetry(const LI_SESSION &session,
+                                 std::uint32_t sequence,
+                                 std::uint64_t sent_at_ms = 0) {
+    LI_SESSION_CONTROL_TELEMETRY telemetry {};
+    initialize_session_control_header(telemetry.header,
+                                      LI_SESSION_CONTROL_MSG_TELEMETRY,
+                                      static_cast<std::uint32_t>(sizeof(telemetry)));
+    telemetry.logicalSessionKey = session.logicalSessionKey;
+    telemetry.runtimeId = session.runtimeId;
+    telemetry.participantKey = session.client.participantKey;
+    telemetry.pathId = session.transportPath.pathId;
+    telemetry.state = session.state;
+    telemetry.sequence = sequence;
+    telemetry.sentAtMs = sent_at_ms;
+    telemetry.telemetry = session.telemetry;
+    telemetry.transportPath = session.transportPath;
+    return telemetry;
+  }
+
+  inline std::optional<LI_SESSION_CONTROL_TELEMETRY>
+  parse_session_control_telemetry(std::string_view payload) {
+    if (payload.size() != sizeof(LI_SESSION_CONTROL_TELEMETRY)) {
+      return std::nullopt;
+    }
+
+    LI_SESSION_CONTROL_TELEMETRY telemetry {};
+    std::memcpy(&telemetry, payload.data(), sizeof(telemetry));
+    if (!is_session_control_header_valid(telemetry.header,
+                                         LI_SESSION_CONTROL_MSG_TELEMETRY,
+                                         payload.size())) {
+      return std::nullopt;
+    }
+
+    telemetry.telemetry.currentResolution[sizeof(telemetry.telemetry.currentResolution) - 1] = '\0';
+    telemetry.transportPath.routeId[sizeof(telemetry.transportPath.routeId) - 1] = '\0';
+    telemetry.transportPath.localEndpoint[sizeof(telemetry.transportPath.localEndpoint) - 1] = '\0';
+    telemetry.transportPath.remoteEndpoint[sizeof(telemetry.transportPath.remoteEndpoint) - 1] = '\0';
+    telemetry.transportPath.observedEndpoint[sizeof(telemetry.transportPath.observedEndpoint) - 1] = '\0';
+    telemetry.transportPath.providerId[sizeof(telemetry.transportPath.providerId) - 1] = '\0';
+    telemetry.transportPath.relayName[sizeof(telemetry.transportPath.relayName) - 1] = '\0';
+    return telemetry;
+  }
+
+  inline LI_SESSION_CONTROL_LEASE
+  make_session_control_lease_request(const LI_SESSION &session,
+                                     std::uint32_t resource,
+                                     std::uint32_t mode,
+                                     std::uint32_t ttl_ms) {
+    LI_SESSION_CONTROL_LEASE lease {};
+    initialize_session_control_header(lease.header,
+                                      LI_SESSION_CONTROL_MSG_LEASE,
+                                      static_cast<std::uint32_t>(sizeof(lease)));
+    lease.logicalSessionKey = session.logicalSessionKey;
+    lease.runtimeId = session.runtimeId;
+    lease.participantKey = session.client.participantKey;
+    lease.resource = resource;
+    lease.mode = mode;
+    lease.operation = LI_SESSION_CONTROL_LEASE_OP_REQUEST;
+    lease.status = LI_SESSION_CONTROL_LEASE_STATUS_PENDING;
+    lease.generation = session.controlGeneration;
+    lease.lease.version = LI_SESSION_LEASE_VERSION;
+    lease.lease.feature = resource;
+    lease.lease.mode = mode;
+    lease.lease.ownerRuntimeId = session.runtimeId;
+    lease.lease.ownerParticipantKey = session.client.participantKey;
+    lease.lease.ttlMs = ttl_ms;
+    lease.lease.renewable = true;
+    lease.lease.valid = false;
+    return lease;
+  }
+
+  inline LI_SESSION_CONTROL_LEASE
+  make_session_control_lease_ack(const LI_SESSION &session,
+                                 const LI_SESSION_LEASE &granted_lease,
+                                 std::uint32_t operation,
+                                 std::uint32_t status) {
+    LI_SESSION_CONTROL_LEASE lease {};
+    initialize_session_control_header(lease.header,
+                                      LI_SESSION_CONTROL_MSG_LEASE,
+                                      static_cast<std::uint32_t>(sizeof(lease)));
+    lease.logicalSessionKey = session.logicalSessionKey;
+    lease.runtimeId = session.runtimeId;
+    lease.participantKey = granted_lease.ownerParticipantKey;
+    lease.resource = granted_lease.feature;
+    lease.mode = granted_lease.mode;
+    lease.operation = operation;
+    lease.status = status;
+    lease.generation = session.controlGeneration;
+    lease.lease = granted_lease;
+    return lease;
+  }
+
+  inline std::optional<LI_SESSION_CONTROL_LEASE>
+  parse_session_control_lease(std::string_view payload) {
+    if (payload.size() != sizeof(LI_SESSION_CONTROL_LEASE)) {
+      return std::nullopt;
+    }
+
+    LI_SESSION_CONTROL_LEASE lease {};
+    std::memcpy(&lease, payload.data(), sizeof(lease));
+    if (!is_session_control_header_valid(lease.header,
+                                         LI_SESSION_CONTROL_MSG_LEASE,
+                                         payload.size())) {
+      return std::nullopt;
+    }
+
+    return lease;
+  }
+
+  inline LI_SESSION_CONTROL_CURSOR_PLANE
+  make_session_control_cursor_plane(const LI_SESSION &session,
+                                    std::uint32_t sequence,
+                                    std::uint64_t sent_at_ms = 0) {
+    LI_SESSION_CONTROL_CURSOR_PLANE cursor_plane {};
+    initialize_session_control_header(cursor_plane.header,
+                                      LI_SESSION_CONTROL_MSG_CURSOR_PLANE,
+                                      static_cast<std::uint32_t>(sizeof(cursor_plane)));
+    cursor_plane.logicalSessionKey = session.logicalSessionKey;
+    cursor_plane.runtimeId = session.runtimeId;
+    cursor_plane.participantKey = session.host.participantKey != 0 ?
+                                    session.host.participantKey :
+                                    session.client.participantKey;
+    cursor_plane.sequence = sequence;
+    cursor_plane.sentAtMs = sent_at_ms;
+    cursor_plane.cursorPlane = session.cursorPlane;
+    return cursor_plane;
+  }
+
+  inline std::optional<LI_SESSION_CONTROL_CURSOR_PLANE>
+  parse_session_control_cursor_plane(std::string_view payload) {
+    if (payload.size() != sizeof(LI_SESSION_CONTROL_CURSOR_PLANE)) {
+      return std::nullopt;
+    }
+
+    LI_SESSION_CONTROL_CURSOR_PLANE cursor_plane {};
+    std::memcpy(&cursor_plane, payload.data(), sizeof(cursor_plane));
+    if (!is_session_control_header_valid(cursor_plane.header,
+                                         LI_SESSION_CONTROL_MSG_CURSOR_PLANE,
+                                         payload.size()) ||
+        cursor_plane.cursorPlane.version != LI_SESSION_CURSOR_PLANE_VERSION) {
+      return std::nullopt;
+    }
+
+    return cursor_plane;
+  }
+
   inline LI_SESSION
   make_li_session(const identity_t &identity,
                   const transport_path_t &active_path,
@@ -1062,31 +2352,54 @@ namespace session_runtime {
     session.runtimeId = identity.runtime_id;
     session.launchSessionId = identity.launch_session_id;
     session.controlGeneration = identity.control_generation;
-    std::snprintf(session.sessionId.value,
-                  sizeof(session.sessionId.value),
-                  "%llx:%u",
-                  static_cast<unsigned long long>(session.logicalSessionKey),
-                  identity.launch_session_id);
+    if (!identity.logical_session_id.empty()) {
+      copy_li_string(session.sessionId.value, sizeof(session.sessionId.value), identity.logical_session_id);
+    }
+    else {
+      std::snprintf(session.sessionId.value,
+                    sizeof(session.sessionId.value),
+                    "%llx:%u",
+                    static_cast<unsigned long long>(session.logicalSessionKey),
+                    identity.launch_session_id);
+    }
     copy_li_string(session.appId, sizeof(session.appId), app_id);
     copy_li_string(session.appName, sizeof(session.appName), app_name);
 
     session.client.role = LI_SESSION_ROLE_CLIENT;
+    session.client.index = 0;
     session.client.flags = LI_SESSION_PARTICIPANT_FLAG_PRIMARY | LI_SESSION_PARTICIPANT_FLAG_REMOTE;
     session.client.participantKey = participant.participant_key;
     session.client.clientKey = participant.client_cert_key;
     session.client.deviceKey = participant.device_key;
-    std::snprintf(session.client.participantId.value,
-                  sizeof(session.client.participantId.value),
-                  "%llx",
-                  static_cast<unsigned long long>(participant.participant_key));
+    if (!identity.participant_id.empty()) {
+      copy_li_string(session.client.participantId.value,
+                     sizeof(session.client.participantId.value),
+                     identity.participant_id);
+    }
+    else {
+      std::snprintf(session.client.participantId.value,
+                    sizeof(session.client.participantId.value),
+                    "%llx",
+                    static_cast<unsigned long long>(participant.participant_key));
+    }
     copy_li_string(session.client.displayName, sizeof(session.client.displayName), participant.display_name);
     copy_li_string(session.client.deviceName, sizeof(session.client.deviceName), participant.device_id);
 
     session.host.role = LI_SESSION_ROLE_HOST;
+    session.host.index = 1;
     session.host.flags = LI_SESSION_PARTICIPANT_FLAG_LOCAL;
-    copy_li_string(session.host.participantId.value, sizeof(session.host.participantId.value), "sunshine-host");
-    copy_li_string(session.host.displayName, sizeof(session.host.displayName), "Sunshine Host");
-    copy_li_string(session.host.deviceName, sizeof(session.host.deviceName), "host");
+    constexpr std::string_view host_participant_id = "sunshine-host";
+    constexpr std::string_view host_display_name = "Sunshine Host";
+    constexpr std::string_view host_device_name = "host";
+    const auto host_client_key = stable_key(host_display_name);
+    const auto host_device_key = stable_key(host_device_name);
+    const auto host_participant_key = host_client_key ^ (host_device_key << 1U);
+    session.host.participantKey = host_participant_key;
+    session.host.clientKey = host_client_key;
+    session.host.deviceKey = host_device_key;
+    copy_li_string(session.host.participantId.value, sizeof(session.host.participantId.value), host_participant_id);
+    copy_li_string(session.host.displayName, sizeof(session.host.displayName), host_display_name);
+    copy_li_string(session.host.deviceName, sizeof(session.host.deviceName), host_device_name);
 
     session.featureCaps.client = li_client_baseline_features() | li_features_for_caps(client_caps);
     session.featureCaps.host = li_host_baseline_features() | li_features_for_caps(host_caps);
@@ -1103,6 +2416,23 @@ namespace session_runtime {
     session.transportPath.kind = li_transport_kind(active_path.route);
     session.transportPath.protocol = li_transport_protocol(active_path.protocol);
     session.transportPath.flags = li_transport_flags(active_path);
+    session.transportPath.stackFlags = li_transport_stack_flags(active_path);
+    session.transportPath.candidateType = li_path_candidate_type(active_path.route);
+    session.transportPath.discoverySource = li_path_discovery_source(active_path.route);
+    session.transportPath.egressKind =
+      active_path.observed_egress_kind != LI_SESSION_PATH_EGRESS_UNKNOWN ?
+        active_path.observed_egress_kind :
+        li_path_egress_kind(active_path.route);
+    session.transportPath.encapsulation =
+      active_path.observed_encapsulation != LI_SESSION_PATH_ENCAPSULATION_UNKNOWN ?
+        active_path.observed_encapsulation :
+        li_path_encapsulation(active_path.route);
+    session.transportPath.evidenceFlags =
+      li_path_evidence_flags(active_path) | active_path.extra_evidence_flags;
+    session.transportPath.identityConfidencePpm =
+      active_path.identity_confidence_ppm != 0 ? active_path.identity_confidence_ppm : 500000U;
+    session.transportPath.qualityConfidencePpm =
+      active_path.score.rtt_ms != 0 || active_path.score.loss_ppm != 0 ? 800000U : 0U;
     session.transportPath.rttUs = active_path.score.rtt_ms * 1000U;
     session.transportPath.jitterUs = active_path.score.jitter_ms * 1000U;
     session.transportPath.packetLossPpm = active_path.score.loss_ppm;

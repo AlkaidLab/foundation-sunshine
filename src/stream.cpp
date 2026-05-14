@@ -12,6 +12,7 @@
 #include <cmath>
 #include <future>
 #include <iomanip>
+#include <limits>
 #include <queue>
 #include <sstream>
 #include <set>
@@ -91,6 +92,7 @@ extern "C" {
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension)
 #define IDX_CURSOR_PLANE 21  // Cursor plane metadata (Sunshine protocol extension)
+#define IDX_SESSION 22  // Session control (Foundation protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -115,6 +117,7 @@ static const short packetTypes[] = {
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
   SS_CLIPBOARD_PTYPE,  // Clipboard sync (Sunshine protocol extension)
   SS_CURSOR_PLANE_PTYPE,  // Cursor plane metadata (Sunshine protocol extension)
+  SS_SESSION_PTYPE,  // Session control (Foundation protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -592,9 +595,14 @@ namespace stream {
     }
 
     int
-    send(const std::string_view &payload, net::peer_t peer) {
+    send(const std::string_view &payload,
+         net::peer_t peer,
+         std::uint8_t channel = CTRL_CHANNEL_GENERIC) {
       auto packet = enet_packet_create(payload.data(), payload.size(), ENET_PACKET_FLAG_RELIABLE);
-      if (enet_peer_send(peer, 0, packet)) {
+      if (channel >= peer->channelCount) {
+        channel = CTRL_CHANNEL_GENERIC;
+      }
+      if (enet_peer_send(peer, channel, packet)) {
         enet_packet_destroy(packet);
 
         return -1;
@@ -704,6 +712,8 @@ namespace stream {
 
     session_runtime::identity_t identity;
     session_runtime::transport_path_t active_transport_path { session_runtime::make_enet_direct_transport_path() };
+    session_runtime::startup_path_evidence_t startup_path_evidence;
+    session_runtime::startup_path_decision_t startup_path_decision;
     session_runtime::session_telemetry_t telemetry;
     LI_SESSION shared_session;
 
@@ -768,6 +778,16 @@ namespace stream {
       std::uint64_t decrypt_failures { 0 };
       std::uint64_t unencrypted_drops { 0 };
       std::uint64_t unknown_packets { 0 };
+      std::uint64_t session_control_rx { 0 };
+      std::uint64_t session_control_tx { 0 };
+      std::uint64_t session_telemetry_rx { 0 };
+      std::uint64_t session_telemetry_tx { 0 };
+      std::uint64_t session_lease_rx { 0 };
+      std::uint64_t session_lease_tx { 0 };
+      bool session_control_negotiated { false };
+      bool session_control_welcome_sent { false };
+      std::uint64_t session_control_feature_bits { 0 };
+      std::chrono::steady_clock::time_point last_session_telemetry_tx {};
       std::uint16_t last_wire_type { 0 };
       std::uint16_t last_decrypted_type { 0 };
       std::uint32_t last_encrypted_seq { 0 };
@@ -784,8 +804,15 @@ namespace stream {
         std::uint16_t hotspot_y { 0 };
         std::uint16_t width { 0 };
         std::uint16_t height { 0 };
+        std::uint16_t display_width { 0 };
+        std::uint16_t display_height { 0 };
+        std::uint16_t display_hotspot_x { 0 };
+        std::uint16_t display_hotspot_y { 0 };
+        std::uint16_t bitmap_width { 0 };
+        std::uint16_t bitmap_height { 0 };
         std::uint32_t flags { 0 };
         std::uint32_t epoch { 0 };
+        std::uint32_t session_cursor_plane_tx { 0 };
         std::chrono::steady_clock::time_point last_sent {};
         std::chrono::steady_clock::time_point last_bitmap_retry {};
         bool host_cursor_suppressed { false };
@@ -932,9 +959,70 @@ namespace stream {
     }
   }
 
+  static session_runtime::startup_path_evidence_t
+  startup_path_evidence_for_launch_session(const rtsp_stream::launch_session_t &launch_session) {
+    return {
+      .peer_is_lan_or_pc = is_lan_or_pc_peer(launch_session.rtsp_peer_address),
+      .remote_streaming_hint = launch_session.remote_streaming_hint,
+      .rtsp_route_remote_hint = launch_session.rtsp_route_remote_hint,
+      .client_route_remote_hint = launch_session.client_route_remote_hint,
+      .client_route_tunnel = launch_session.client_route_tunnel_hint,
+      .client_vpn_active = launch_session.client_vpn_hint,
+      .startup_profile = launch_session.startup_profile,
+      .client_egress_kind = launch_session.client_route_egress_kind,
+      .client_route_host = launch_session.client_route_host,
+      .rtsp_route_host = launch_session.rtsp_route_host,
+      .client_target_address_candidates = launch_session.client_target_address_candidates,
+      .host_public_candidates = launch_session.host_public_candidates,
+    };
+  }
+
+  static session_runtime::transport_path_t
+  session_transport_path_for_decision(const session_runtime::startup_path_decision_t &decision) {
+    auto path = session_runtime::make_transport_path(decision);
+    path.state = session_runtime::transport_path_state_e::active;
+    return path;
+  }
+
+  static session_runtime::feature_caps_t
+  session_caps_from_li_feature_bits(std::uint64_t feature_bits) {
+    session_runtime::feature_caps_t caps {};
+
+    if ((feature_bits & LI_SESSION_FEATURE_VIDEO_TELEMETRY) != 0) {
+      caps.enable(session_runtime::capability_e::native_renderer_metrics)
+        .enable(session_runtime::capability_e::frame_reuse_feedback);
+    }
+    if ((feature_bits & LI_SESSION_FEATURE_TRANSPORT_CC) != 0) {
+      caps.enable(session_runtime::capability_e::transport_cc_lite)
+        .enable(session_runtime::capability_e::packet_pacer_probe);
+    }
+    if ((feature_bits & LI_SESSION_FEATURE_NACK_RTX) != 0) {
+      caps.enable(session_runtime::capability_e::nack_rtx);
+    }
+    if ((feature_bits & LI_SESSION_FEATURE_QUIC) != 0) {
+      caps.enable((feature_bits & LI_SESSION_FEATURE_RELAY) != 0 ?
+                    session_runtime::capability_e::relay_quic :
+                    session_runtime::capability_e::quic_direct);
+    }
+    if ((feature_bits & LI_SESSION_FEATURE_TCP) != 0) {
+      caps.enable(session_runtime::capability_e::relay_tcp_tls);
+    }
+
+    return caps;
+  }
+
   static session_runtime::feature_caps_t
   session_client_caps_for_config(const config_t &config) {
     session_runtime::feature_caps_t caps {};
+
+    if (config.mlCoreSessionVersion > 0 && config.mlCoreFeatureBits != 0) {
+      return session_caps_from_li_feature_bits(config.mlCoreFeatureBits);
+    }
+
+    if (config.mlCoreSessionVersion > 0 && !config.mlCoreSupportedCaps.empty()) {
+      return session_runtime::parse_capability_names(config.mlCoreSupportedCaps);
+    }
+
     caps.enable(session_runtime::capability_e::native_renderer_metrics)
       .enable(session_runtime::capability_e::frame_reuse_feedback)
       .enable(session_runtime::capability_e::nack_rtx);
@@ -1003,6 +1091,34 @@ namespace stream {
       .pointer_mode = pointer_mode,
       .cursor_state_flags = cursor_state_flags,
     };
+    const auto telemetry_snapshot = session.telemetry.snapshot();
+    if (const auto *client_report = telemetry_snapshot.report_for(participant.id)) {
+      report.displayed_fps = std::max(report.displayed_fps, client_report->displayed_fps);
+      report.rtt_ms = client_report->rtt_ms != 0 ? client_report->rtt_ms : report.rtt_ms;
+      report.loss_ppm = client_report->loss_ppm != 0 ? client_report->loss_ppm : report.loss_ppm;
+      report.renderer_backpressure = report.renderer_backpressure || client_report->renderer_backpressure;
+      report.decode_queue_depth = std::max(report.decode_queue_depth, client_report->decode_queue_depth);
+      report.render_queue_depth = std::max(report.render_queue_depth, client_report->render_queue_depth);
+      report.audio_queue_depth_ms = std::max(report.audio_queue_depth_ms, client_report->audio_queue_depth_ms);
+      report.input_queue_depth = std::max(report.input_queue_depth, client_report->input_queue_depth);
+      report.input_send_latency_us = std::max(report.input_send_latency_us, client_report->input_send_latency_us);
+      report.input_ack_latency_us = std::max(report.input_ack_latency_us, client_report->input_ack_latency_us);
+      report.mouse_backlog_us = std::max(report.mouse_backlog_us, client_report->mouse_backlog_us);
+      if (client_report->pointer_mode != LI_SESSION_POINTER_MODE_UNKNOWN) {
+        report.pointer_mode = client_report->pointer_mode;
+      }
+      report.cursor_state_flags |= client_report->cursor_state_flags;
+      report.pointer_release_queue_depth = std::max(report.pointer_release_queue_depth,
+                                                    client_report->pointer_release_queue_depth);
+      report.pointer_release_queue_delay_us = std::max(report.pointer_release_queue_delay_us,
+                                                       client_report->pointer_release_queue_delay_us);
+      report.pointer_mode_switch_us = std::max(report.pointer_mode_switch_us,
+                                               client_report->pointer_mode_switch_us);
+      report.pointer_deltas_coalesced = std::max(report.pointer_deltas_coalesced,
+                                                 client_report->pointer_deltas_coalesced);
+      report.pointer_acceleration_risk_ppm = std::max(report.pointer_acceleration_risk_ppm,
+                                                      client_report->pointer_acceleration_risk_ppm);
+    }
     session_runtime::apply_input_smoothing_snapshot(report, {
       .queue_depth = input_diag.input_queue_depth,
       .queue_delay_us = input_diag.release_queue_delay_us,
@@ -1032,6 +1148,10 @@ namespace stream {
                                                        report,
                                                        resolved_app_id,
                                                        resolved_app_name);
+    if (session.shared_session.cursorPlane.version == LI_SESSION_CURSOR_PLANE_VERSION &&
+        session.shared_session.cursorPlane.epoch != 0) {
+      li_session.cursorPlane = session.shared_session.cursorPlane;
+    }
     switch (state) {
       case session::state_e::STOPPED:
         li_session.state = LI_SESSION_STATE_IDLE;
@@ -1040,10 +1160,12 @@ namespace stream {
         li_session.state = LI_SESSION_STATE_DISCONNECTING;
         break;
       case session::state_e::STARTING:
-        li_session.state = LI_SESSION_STATE_CONNECTING;
+        li_session.state = LI_SESSION_STATE_PROBING;
         break;
       case session::state_e::RUNNING:
-        li_session.state = LI_SESSION_STATE_STREAMING;
+        li_session.state = session.weak_net_controller.state() == weak_net::state_e::recovering ?
+                             LI_SESSION_STATE_RECOVERING :
+                             LI_SESSION_STATE_STREAMING;
         break;
     }
     session.shared_session = li_session;
@@ -3413,7 +3535,16 @@ namespace stream {
     std::uint16_t hotspot_y { 0 };
     std::uint16_t width { 16 };
     std::uint16_t height { 16 };
+    std::uint16_t display_width { 16 };
+    std::uint16_t display_height { 16 };
+    std::uint16_t display_hotspot_x { 0 };
+    std::uint16_t display_hotspot_y { 0 };
+    std::uint16_t bitmap_width { 0 };
+    std::uint16_t bitmap_height { 0 };
     std::uint32_t flags { 0 };
+    std::uint32_t host_dpi_scale_ppm { 1000000 };
+    std::uint32_t size_source { LI_SESSION_CURSOR_SIZE_SOURCE_UNKNOWN };
+    std::uint32_t confidence_ppm { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
     std::vector<std::uint8_t> bitmap_bgra;
@@ -3478,6 +3609,22 @@ namespace stream {
     const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
     const int stream_width = session ? std::max(1, session->config.monitor.width) : std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
     const int stream_height = session ? std::max(1, session->config.monitor.height) : std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    int dpi_x = 96;
+    int dpi_y = 96;
+    HDC dpi_dc = GetDC(nullptr);
+    if (dpi_dc != nullptr) {
+      dpi_x = std::max(1, GetDeviceCaps(dpi_dc, LOGPIXELSX));
+      dpi_y = std::max(1, GetDeviceCaps(dpi_dc, LOGPIXELSY));
+      ReleaseDC(nullptr, dpi_dc);
+    }
+    const int dpi_scaled_width =
+      (dpi_x > 110 && fallback_width <= 40) ?
+        std::max(1, (fallback_width * dpi_x + 48) / 96) :
+        fallback_width;
+    const int dpi_scaled_height =
+      (dpi_y > 110 && fallback_height <= 40) ?
+        std::max(1, (fallback_height * dpi_y + 48) / 96) :
+        fallback_height;
 
     const bool cursor_visible =
       (cursor_info.flags & CURSOR_SHOWING) != 0 &&
@@ -3521,6 +3668,16 @@ namespace stream {
     sample.y = static_cast<std::uint32_t>(std::clamp(stream_y, 0, stream_height - 1));
     sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
     sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
+    sample.display_width = static_cast<std::uint16_t>(std::clamp(std::max(fallback_width, dpi_scaled_width), 1, 512));
+    sample.display_height = static_cast<std::uint16_t>(std::clamp(std::max(fallback_height, dpi_scaled_height), 1, 512));
+    sample.bitmap_width = sample.width;
+    sample.bitmap_height = sample.height;
+    sample.host_dpi_scale_ppm = static_cast<std::uint32_t>(
+      std::clamp<long long>((static_cast<long long>(std::max(dpi_x, dpi_y)) * 1000000LL + 48LL) / 96LL,
+                            250000LL,
+                            8000000LL));
+    sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_SYSTEM_METRIC;
+    sample.confidence_ppm = 750000;
     sample.cursor_shape_id = cursor_visible ?
                                semantic_cursor_shape_id(cursor_info.hCursor) :
                                SS_CURSOR_PLANE_SHAPE_UNKNOWN;
@@ -3535,6 +3692,8 @@ namespace stream {
           GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
         sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
         sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmHeight, 1, 512));
+        sample.bitmap_width = sample.width;
+        sample.bitmap_height = sample.height;
 
         // Always prefer the host-provided cursor bitmap when Windows exposes
         // one. Standard Windows cursors are not visually identical to macOS
@@ -3593,6 +3752,8 @@ namespace stream {
             sample.bitmap_stride = static_cast<std::uint16_t>(stride);
             sample.bitmap_bgra = std::move(bgra);
             sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
+            sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP;
+            sample.confidence_ppm = 900000;
           }
         }
       }
@@ -3600,6 +3761,10 @@ namespace stream {
                GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
         sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
         sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512));
+        sample.bitmap_width = sample.width;
+        sample.bitmap_height = sample.height;
+        sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP;
+        sample.confidence_ppm = 800000;
       }
 
       if (icon_info.hbmColor != nullptr) {
@@ -3609,12 +3774,45 @@ namespace stream {
         DeleteObject(icon_info.hbmMask);
       }
     }
+    sample.display_width = static_cast<std::uint16_t>(
+      std::clamp<int>(std::max({ static_cast<int>(sample.display_width),
+                                 static_cast<int>(sample.bitmap_width),
+                                 dpi_scaled_width }),
+                      1,
+                      512));
+    sample.display_height = static_cast<std::uint16_t>(
+      std::clamp<int>(std::max({ static_cast<int>(sample.display_height),
+                                 static_cast<int>(sample.bitmap_height),
+                                 dpi_scaled_height }),
+                      1,
+                      512));
+    sample.display_hotspot_x = sample.hotspot_x;
+    sample.display_hotspot_y = sample.hotspot_y;
+    if (sample.bitmap_width > 0 && sample.bitmap_height > 0 &&
+        (sample.display_width != sample.bitmap_width ||
+         sample.display_height != sample.bitmap_height)) {
+      sample.display_hotspot_x = static_cast<std::uint16_t>(
+        std::clamp<std::uint32_t>(
+          (static_cast<std::uint32_t>(sample.hotspot_x) * sample.display_width + sample.bitmap_width / 2U) /
+            std::max<std::uint16_t>(1, sample.bitmap_width),
+          0,
+          sample.display_width));
+      sample.display_hotspot_y = static_cast<std::uint16_t>(
+        std::clamp<std::uint32_t>(
+          (static_cast<std::uint32_t>(sample.hotspot_y) * sample.display_height + sample.bitmap_height / 2U) /
+            std::max<std::uint16_t>(1, sample.bitmap_height),
+          0,
+          sample.display_height));
+    }
 #else
     (void) session;
 #endif
 
     return sample;
   }
+
+  int
+  send_session_control_cursor_plane(session_t *session, const cursor_plane_sample_t &sample);
 
   int
   send_cursor_plane_update(session_t *session,
@@ -3767,6 +3965,12 @@ namespace stream {
                          last.hotspot_y != sample.hotspot_y ||
                          last.width != sample.width ||
                          last.height != sample.height ||
+                         last.display_width != sample.display_width ||
+                         last.display_height != sample.display_height ||
+                         last.display_hotspot_x != sample.display_hotspot_x ||
+                         last.display_hotspot_y != sample.display_hotspot_y ||
+                         last.bitmap_width != sample.bitmap_width ||
+                         last.bitmap_height != sample.bitmap_height ||
                          last.flags != sample.flags;
     const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
     if (!never_sent && now - last.last_sent < 16ms) {
@@ -3792,14 +3996,15 @@ namespace stream {
        last.hotspot_y != sample.hotspot_y);
 
     const bool shape_changed = last.cursor_shape_id != sample.cursor_shape_id;
+    (void) send_session_control_cursor_plane(session, sample);
     if (send_cursor_plane_update(session,
                                  sample.cursor_shape_id,
                                  sample.x,
                                  sample.y,
-                                 sample.hotspot_x,
-                                 sample.hotspot_y,
-                                 sample.width,
-                                 sample.height,
+                                 sample.display_hotspot_x,
+                                 sample.display_hotspot_y,
+                                 sample.display_width,
+                                 sample.display_height,
                                  should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
                                                       (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
                                  should_send_bitmap ? sample.bitmap_format : 0,
@@ -3812,6 +4017,12 @@ namespace stream {
       last.hotspot_y = sample.hotspot_y;
       last.width = sample.width;
       last.height = sample.height;
+      last.display_width = sample.display_width;
+      last.display_height = sample.display_height;
+      last.display_hotspot_x = sample.display_hotspot_x;
+      last.display_hotspot_y = sample.display_hotspot_y;
+      last.bitmap_width = sample.bitmap_width;
+      last.bitmap_height = sample.bitmap_height;
       last.flags = sample.flags;
       last.last_sent = now;
       if (should_send_bitmap) {
@@ -3827,8 +4038,12 @@ namespace stream {
                         << " shape=" << sample.cursor_shape_id
                         << " flags=0x" << util::hex(sample.flags).to_string_view()
                         << " pos=" << sample.x << "," << sample.y
-                        << " hotspot=" << sample.hotspot_x << "," << sample.hotspot_y
-                        << " size=" << sample.width << "x" << sample.height
+                        << " hotspot=" << sample.display_hotspot_x << "," << sample.display_hotspot_y
+                        << " display=" << sample.display_width << "x" << sample.display_height
+                        << " bitmapSize=" << sample.bitmap_width << "x" << sample.bitmap_height
+                        << " legacySize=" << sample.width << "x" << sample.height
+                        << " dpiPpm=" << sample.host_dpi_scale_ppm
+                        << " source=" << sample.size_source
                         << " bitmap=" << (should_send_bitmap ? sample.bitmap_bgra.size() : 0);
       }
     }
@@ -3878,6 +4093,278 @@ namespace stream {
     }
 
     return 0;
+  }
+
+  int
+  send_session_control_payload(session_t *session,
+                               const void *session_payload,
+                               std::size_t session_payload_size,
+                               std::string_view label) {
+    if (!session || !session->control.peer || !session_payload || session_payload_size == 0) {
+      BOOST_LOG(warning) << "Couldn't send Session control " << label
+                         << ", control peer is unavailable";
+      return -1;
+    }
+    if (session_payload_size > LI_SESSION_CONTROL_MAX_MESSAGE_SIZE ||
+        session_payload_size > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(error) << "Session control " << label
+                       << " payload is too large: " << session_payload_size;
+      return -1;
+    }
+
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + session_payload_size);
+    auto *header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    header->type = packetTypes[IDX_SESSION];
+    header->payloadLength = static_cast<std::uint16_t>(session_payload_size);
+    std::memcpy(header->payload(), session_payload, session_payload_size);
+
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
+
+    auto payload = encode_control(session,
+                                  std::string_view {
+                                    reinterpret_cast<char *>(plaintext.data()),
+                                    plaintext.size(),
+                                  },
+                                  encrypted_payload);
+    if (payload.empty()) {
+      BOOST_LOG(error) << "Couldn't encode Session control " << label;
+      return -1;
+    }
+
+    if (session->broadcast_ref->control_server.send(payload,
+                                                    session->control.peer,
+                                                    CTRL_CHANNEL_SESSION)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send Session control " << label
+                         << " to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+
+    session->control.session_control_tx++;
+    return 0;
+  }
+
+  static std::uint32_t
+  session_cursor_flags_from_sample(std::uint32_t ss_flags) {
+    std::uint32_t flags = LI_SESSION_CURSOR_FLAG_REMOTE_PLANE;
+    if ((ss_flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0) {
+      flags |= LI_SESSION_CURSOR_FLAG_VISIBLE;
+    }
+    if ((ss_flags & SS_CURSOR_PLANE_FLAG_LOCKED) != 0) {
+      flags |= LI_SESSION_CURSOR_FLAG_LOCKED;
+    }
+    if ((ss_flags & SS_CURSOR_PLANE_FLAG_RELATIVE) != 0) {
+      flags |= LI_SESSION_CURSOR_FLAG_RELATIVE_RAW_INPUT;
+    }
+    return flags;
+  }
+
+  int
+  send_session_control_cursor_plane(session_t *session, const cursor_plane_sample_t &sample) {
+    if (!session || !session->control.peer) {
+      return -1;
+    }
+    if ((session->control.session_control_feature_bits & LI_SESSION_FEATURE_CURSOR_PLANE_V2) == 0) {
+      return 0;
+    }
+
+    refresh_li_session(*session, session::state(*session));
+    LI_SESSION_CURSOR_PLANE cursor_plane {};
+    LiInitializeSessionCursorPlane(&cursor_plane);
+    cursor_plane.flags = session_cursor_flags_from_sample(sample.flags);
+    cursor_plane.cursorShapeId = sample.cursor_shape_id;
+    cursor_plane.renderPolicy = LI_SESSION_CURSOR_RENDER_POLICY_CONTENT_SCALED;
+    cursor_plane.sizeSource = sample.size_source != LI_SESSION_CURSOR_SIZE_SOURCE_UNKNOWN ?
+                                sample.size_source :
+                                LI_SESSION_CURSOR_SIZE_SOURCE_FALLBACK;
+    cursor_plane.confidencePpm = sample.confidence_ppm != 0 ? sample.confidence_ppm : 500000;
+    cursor_plane.streamWidth = static_cast<std::uint32_t>(std::max(1, session->config.monitor.width));
+    cursor_plane.streamHeight = static_cast<std::uint32_t>(std::max(1, session->config.monitor.height));
+    cursor_plane.positionX = sample.x;
+    cursor_plane.positionY = sample.y;
+    cursor_plane.displayWidth = sample.display_width;
+    cursor_plane.displayHeight = sample.display_height;
+    cursor_plane.hotspotX = sample.display_hotspot_x;
+    cursor_plane.hotspotY = sample.display_hotspot_y;
+    cursor_plane.bitmapWidth = sample.bitmap_width != 0 ? sample.bitmap_width : sample.width;
+    cursor_plane.bitmapHeight = sample.bitmap_height != 0 ? sample.bitmap_height : sample.height;
+    cursor_plane.bitmapStride = sample.bitmap_stride;
+    cursor_plane.bitmapFormat = sample.bitmap_format == SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA ?
+                                  LI_SESSION_CURSOR_BITMAP_FORMAT_BGRA :
+                                  LI_SESSION_CURSOR_BITMAP_FORMAT_NONE;
+    cursor_plane.hostDpiScalePpm = sample.host_dpi_scale_ppm;
+    cursor_plane.userScalePpm = 1000000;
+    cursor_plane.minClientPointSize = 8;
+    cursor_plane.maxClientPointSize = 128;
+    cursor_plane.epoch = session->control.cursor_plane.epoch + 1U;
+
+    session->shared_session.cursorPlane = cursor_plane;
+    const auto packet = session_runtime::make_session_control_cursor_plane(
+      session->shared_session,
+      ++session->control.cursor_plane.session_cursor_plane_tx);
+    static_assert(sizeof(packet) <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE);
+
+    const auto result = send_session_control_payload(session,
+                                                     &packet,
+                                                     sizeof(packet),
+                                                     "cursor-plane"sv);
+    if (result == 0) {
+      BOOST_LOG(debug) << "Session cursor plane sent runtime="sv
+                       << session->identity.runtime_id
+                       << " shape="sv << cursor_plane.cursorShapeId
+                       << " display="sv << cursor_plane.displayWidth << 'x' << cursor_plane.displayHeight
+                       << " bitmap="sv << cursor_plane.bitmapWidth << 'x' << cursor_plane.bitmapHeight
+                       << " hotspot="sv << cursor_plane.hotspotX << ',' << cursor_plane.hotspotY
+                       << " dpiPpm="sv << cursor_plane.hostDpiScalePpm
+                       << " source="sv << cursor_plane.sizeSource
+                       << " epoch="sv << cursor_plane.epoch;
+    }
+    return result;
+  }
+
+  int
+  send_session_control_welcome(session_t *session) {
+    if (!session || !session->control.peer) {
+      BOOST_LOG(warning) << "Couldn't send Session control welcome, control peer is unavailable"sv;
+      return -1;
+    }
+
+    refresh_li_session(*session, session::state(*session));
+    const auto welcome = session_runtime::make_session_control_welcome(session->shared_session);
+    static_assert(sizeof(welcome) <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE);
+
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + sizeof(welcome));
+    auto *header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    header->type = packetTypes[IDX_SESSION];
+    header->payloadLength = static_cast<std::uint16_t>(sizeof(welcome));
+    std::memcpy(header->payload(), &welcome, sizeof(welcome));
+
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
+
+    auto payload = encode_control(session,
+                                  std::string_view {
+                                    reinterpret_cast<char *>(plaintext.data()),
+                                    plaintext.size(),
+                                  },
+                                  encrypted_payload);
+    if (payload.empty()) {
+      BOOST_LOG(error) << "Couldn't encode Session control welcome";
+      return -1;
+    }
+
+    if (session->broadcast_ref->control_server.send(payload,
+                                                    session->control.peer,
+                                                    CTRL_CHANNEL_SESSION)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send Session control welcome to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+
+    session->control.session_control_tx++;
+    session->control.session_control_welcome_sent = true;
+    BOOST_LOG(info) << "Session control welcome sent runtime="sv
+                    << session->identity.runtime_id
+                    << " logical=0x"sv << util::hex(welcome.logicalSessionKey).to_string_view()
+                    << " features=0x"sv << util::hex(welcome.negotiatedFeatureBits).to_string_view()
+                    << " channel="sv << static_cast<int>(CTRL_CHANNEL_SESSION);
+    return 0;
+  }
+
+  int
+  send_session_control_telemetry(session_t *session) {
+    if (!session) {
+      return -1;
+    }
+    if ((session->control.session_control_feature_bits & LI_SESSION_FEATURE_SESSION_TELEMETRY) == 0) {
+      return 0;
+    }
+
+    refresh_li_session(*session, session::state(*session));
+    const auto telemetry = session_runtime::make_session_control_telemetry(
+      session->shared_session,
+      static_cast<std::uint32_t>(++session->control.session_telemetry_tx));
+    static_assert(sizeof(telemetry) <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE);
+
+    const auto result = send_session_control_payload(session,
+                                                     &telemetry,
+                                                     sizeof(telemetry),
+                                                     "telemetry"sv);
+    if (result == 0) {
+      BOOST_LOG(debug) << "Session telemetry sent runtime="sv
+                       << session->identity.runtime_id
+                       << " path=0x"sv << util::hex(telemetry.pathId).to_string_view()
+                       << " rttUs="sv << telemetry.telemetry.rttUs
+                       << " lossPpm="sv << telemetry.telemetry.packetLossPpm;
+    }
+    return result;
+  }
+
+  static session_runtime::feature_e
+  session_feature_from_li_resource(std::uint32_t resource) {
+    switch (resource) {
+      case LI_SESSION_RESOURCE_INPUT_FOCUS:
+        return session_runtime::feature_e::input_focus;
+      case LI_SESSION_RESOURCE_MICROPHONE:
+        return session_runtime::feature_e::microphone;
+      case LI_SESSION_RESOURCE_CLIPBOARD:
+        return session_runtime::feature_e::clipboard;
+      case LI_SESSION_RESOURCE_DISPLAY:
+        return session_runtime::feature_e::display;
+      case LI_SESSION_RESOURCE_DYNAMIC_QUALITY:
+        return session_runtime::feature_e::dynamic_quality;
+      case LI_SESSION_RESOURCE_TRANSPORT_QOS:
+        return session_runtime::feature_e::transport_qos;
+      case LI_SESSION_RESOURCE_CURSOR_PLANE:
+        return session_runtime::feature_e::cursor_plane;
+      default:
+        return session_runtime::feature_e::dynamic_params;
+    }
+  }
+
+  static bool
+  session_resource_is_known(std::uint32_t resource) {
+    return resource >= LI_SESSION_RESOURCE_INPUT_FOCUS &&
+           resource <= LI_SESSION_RESOURCE_CURSOR_PLANE;
+  }
+
+  int
+  send_session_control_lease(session_t *session,
+                             const LI_SESSION_LEASE &granted_lease,
+                             std::uint32_t operation,
+                             std::uint32_t status) {
+    if (!session) {
+      return -1;
+    }
+    if ((session->control.session_control_feature_bits & LI_SESSION_FEATURE_LEASE_CONTROL) == 0) {
+      return 0;
+    }
+
+    refresh_li_session(*session, session::state(*session));
+    const auto lease = session_runtime::make_session_control_lease_ack(session->shared_session,
+                                                                       granted_lease,
+                                                                       operation,
+                                                                       status);
+    static_assert(sizeof(lease) <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE);
+    const auto result = send_session_control_payload(session,
+                                                     &lease,
+                                                     sizeof(lease),
+                                                     "lease"sv);
+    if (result == 0) {
+      session->control.session_lease_tx++;
+      BOOST_LOG(info) << "Session lease sent runtime="sv
+                      << session->identity.runtime_id
+                      << " resource="sv << session_runtime::lease_feature_name(lease.resource)
+                      << " op="sv << lease.operation
+                      << " status="sv << lease.status
+                      << " ownerRuntime="sv << lease.lease.ownerRuntimeId;
+    }
+    return result;
   }
 
   int
@@ -4239,6 +4726,216 @@ namespace stream {
       else {
         stats.write_failed++;
         log_control_mic_stats(session, stats, "control-write-failed");
+      }
+    });
+
+    server->map(packetTypes[IDX_SESSION], [&](session_t *session_p, const std::string_view &payload) {
+      if (!session_p || !session_p->broadcast_ref) {
+        return;
+      }
+
+      if (session_p->config.mlCoreSessionVersion <= 0 ||
+          session_p->config.mlCoreFeatureBits == 0) {
+        BOOST_LOG(debug) << "Ignoring Session control packet from client without RTSP Session feature gate"
+                         << " runtime=" << session_p->identity.runtime_id
+                         << " payloadBytes=" << payload.size();
+        return;
+      }
+
+      if (payload.size() < sizeof(LI_SESSION_CONTROL_HEADER)) {
+        BOOST_LOG(warning) << "Invalid Session control packet"
+                           << " runtime=" << session_p->identity.runtime_id
+                           << " payloadBytes=" << payload.size();
+        return;
+      }
+
+      const auto *session_header = reinterpret_cast<const LI_SESSION_CONTROL_HEADER *>(payload.data());
+      switch (session_header->messageType) {
+        case LI_SESSION_CONTROL_MSG_HELLO: {
+          const auto hello = session_runtime::parse_session_control_hello(payload);
+          if (!hello.has_value()) {
+            BOOST_LOG(warning) << "Invalid Session control hello"
+                               << " runtime=" << session_p->identity.runtime_id
+                               << " payloadBytes=" << payload.size();
+            return;
+          }
+
+          session_p->control.session_control_rx++;
+          session_p->control.session_control_negotiated = true;
+          session_p->config.mlCoreSessionVersion = LI_SESSION_VERSION;
+          if (hello->clientFeatureBits != 0) {
+            session_p->config.mlCoreFeatureBits = hello->clientFeatureBits;
+          }
+          if (hello->logicalSessionKey != 0) {
+            session_p->identity.logical_session_key = hello->logicalSessionKey;
+          }
+          if (hello->participantKey != 0) {
+            session_p->identity.participant_key = hello->participantKey;
+          }
+          if (hello->clientKey != 0) {
+            session_p->identity.client_key = hello->clientKey;
+          }
+          if (hello->deviceKey != 0) {
+            session_p->identity.device_key = hello->deviceKey;
+          }
+          if (hello->controlGeneration != 0) {
+            session_p->identity.control_generation = hello->controlGeneration;
+          }
+          if (hello->sessionId[0] != '\0') {
+            session_p->identity.logical_session_id = hello->sessionId;
+          }
+          if (hello->participantId[0] != '\0') {
+            session_p->identity.participant_id = hello->participantId;
+          }
+          if (hello->deviceName[0] != '\0') {
+            session_p->identity.client_unique_id = hello->deviceName;
+          }
+          if (hello->displayName[0] != '\0') {
+            session_p->identity.client_name = hello->displayName;
+            session_p->client_name = hello->displayName;
+          }
+
+          refresh_li_session(*session_p, session::state(*session_p));
+          session_p->control.session_control_feature_bits =
+            session_p->shared_session.featureCaps.negotiated;
+
+          BOOST_LOG(info) << "Session control hello received runtime="sv
+                          << session_p->identity.runtime_id
+                          << " logical=0x"sv << util::hex(hello->logicalSessionKey).to_string_view()
+                          << " participant=0x"sv << util::hex(hello->participantKey).to_string_view()
+                          << " features=0x"sv << util::hex(session_p->control.session_control_feature_bits).to_string_view()
+                          << " client="sv << session_p->client_name;
+
+          if (send_session_control_welcome(session_p) != 0) {
+            BOOST_LOG(warning) << "Failed to send Session control welcome"
+                               << " runtime=" << session_p->identity.runtime_id;
+          }
+          break;
+        }
+
+        case LI_SESSION_CONTROL_MSG_TELEMETRY: {
+          const auto telemetry = session_runtime::parse_session_control_telemetry(payload);
+          if (!telemetry.has_value()) {
+            BOOST_LOG(warning) << "Invalid Session telemetry"
+                               << " runtime=" << session_p->identity.runtime_id
+                               << " payloadBytes=" << payload.size();
+            return;
+          }
+
+          session_p->control.session_telemetry_rx++;
+          const session_runtime::session_telemetry_report_t report {
+            .participant = {
+              .participant_key = telemetry->participantKey,
+              .runtime_id = telemetry->runtimeId,
+              .device_key = session_p->identity.device_key,
+            },
+            .path_id = telemetry->pathId,
+            .displayed_fps = telemetry->telemetry.currentFramerate,
+            .rtt_ms = telemetry->telemetry.rttUs / 1000U,
+            .loss_ppm = telemetry->telemetry.packetLossPpm,
+            .renderer_backpressure = telemetry->telemetry.videoRenderQueueDepth > 0,
+            .decode_queue_depth = telemetry->telemetry.videoDecodeQueueDepth,
+            .render_queue_depth = telemetry->telemetry.videoRenderQueueDepth,
+            .audio_queue_depth_ms = telemetry->telemetry.audioQueueDepthMs,
+            .input_queue_depth = telemetry->telemetry.inputQueueDepth,
+            .input_send_latency_us = telemetry->telemetry.inputSendLatencyUs,
+            .input_ack_latency_us = telemetry->telemetry.inputAckLatencyUs,
+            .mouse_backlog_us = telemetry->telemetry.mouseBacklogUs,
+            .pointer_mode = telemetry->telemetry.pointerMode,
+            .cursor_state_flags = telemetry->telemetry.cursorStateFlags,
+            .pointer_release_queue_depth = telemetry->telemetry.pointerReleaseQueueDepth,
+            .pointer_release_queue_delay_us = telemetry->telemetry.pointerReleaseQueueDelayUs,
+            .pointer_mode_switch_us = telemetry->telemetry.pointerModeSwitchUs,
+            .pointer_deltas_coalesced = telemetry->telemetry.pointerDeltasCoalesced,
+            .pointer_acceleration_risk_ppm = telemetry->telemetry.pointerAccelerationRiskPpm,
+          };
+          session_p->telemetry.submit(report);
+          session_p->active_transport_path.score.rtt_ms = report.rtt_ms;
+          session_p->active_transport_path.score.loss_ppm = report.loss_ppm;
+          session_p->active_transport_path.score.jitter_ms = telemetry->telemetry.jitterUs / 1000U;
+          refresh_li_session(*session_p, session::state(*session_p));
+
+          const auto now = std::chrono::steady_clock::now();
+          if (session_p->control.last_session_telemetry_tx.time_since_epoch().count() == 0 ||
+              now - session_p->control.last_session_telemetry_tx >= 1000ms) {
+            session_p->control.last_session_telemetry_tx = now;
+            (void) send_session_control_telemetry(session_p);
+          }
+          BOOST_LOG(debug) << "Session telemetry received runtime="sv
+                           << session_p->identity.runtime_id
+                           << " path=0x"sv << util::hex(telemetry->pathId).to_string_view()
+                           << " rttUs="sv << telemetry->telemetry.rttUs
+                           << " lossPpm="sv << telemetry->telemetry.packetLossPpm
+                           << " inputQ="sv << telemetry->telemetry.inputQueueDepth;
+          break;
+        }
+
+        case LI_SESSION_CONTROL_MSG_LEASE: {
+          const auto lease = session_runtime::parse_session_control_lease(payload);
+          if (!lease.has_value()) {
+            BOOST_LOG(warning) << "Invalid Session lease"
+                               << " runtime=" << session_p->identity.runtime_id
+                               << " payloadBytes=" << payload.size();
+            return;
+          }
+
+          session_p->control.session_lease_rx++;
+          LI_SESSION_LEASE response_lease = lease->lease;
+          response_lease.version = LI_SESSION_LEASE_VERSION;
+          response_lease.feature = lease->resource;
+          response_lease.mode = lease->mode;
+          response_lease.ownerRuntimeId = session_p->identity.runtime_id;
+          response_lease.ownerParticipantKey = session_p->identity.participant_key;
+          response_lease.renewable = true;
+
+          std::uint32_t status = LI_SESSION_CONTROL_LEASE_STATUS_DENIED;
+          std::uint32_t response_op = LI_SESSION_CONTROL_LEASE_OP_ACK;
+          if (session_resource_is_known(lease->resource)) {
+            const auto feature = session_feature_from_li_resource(lease->resource);
+            if (lease->operation == LI_SESSION_CONTROL_LEASE_OP_RELEASE) {
+              session_p->broadcast_ref->feature_leases.release(feature, *session_p);
+              response_lease.valid = false;
+              status = LI_SESSION_CONTROL_LEASE_STATUS_RELEASED;
+            }
+            else if (lease->operation == LI_SESSION_CONTROL_LEASE_OP_REQUEST ||
+                     lease->operation == LI_SESSION_CONTROL_LEASE_OP_RENEW) {
+              const auto current_owner = session_p->broadcast_ref->feature_leases.owner(feature);
+              if (current_owner &&
+                  current_owner.runtime_id != session_p->identity.runtime_id &&
+                  lease->mode == LI_SESSION_LEASE_MODE_EXCLUSIVE_OWNER) {
+                response_lease.ownerRuntimeId = current_owner.runtime_id;
+                response_lease.ownerParticipantKey = 0;
+                response_lease.valid = true;
+                status = LI_SESSION_CONTROL_LEASE_STATUS_CONFLICT;
+              }
+              else {
+                session_p->broadcast_ref->feature_leases.acquire(feature, *session_p);
+                response_lease.valid = true;
+                response_lease.ttlMs = lease->lease.ttlMs != 0 ? lease->lease.ttlMs : 3000;
+                status = LI_SESSION_CONTROL_LEASE_STATUS_GRANTED;
+              }
+            }
+          }
+          else {
+            response_op = LI_SESSION_CONTROL_LEASE_OP_REJECT;
+          }
+
+          session_p->shared_session.lease = response_lease;
+          (void) send_session_control_lease(session_p, response_lease, response_op, status);
+          BOOST_LOG(info) << "Session lease received runtime="sv
+                          << session_p->identity.runtime_id
+                          << " resource="sv << session_runtime::lease_feature_name(lease->resource)
+                          << " op="sv << lease->operation
+                          << " status="sv << status;
+          break;
+        }
+
+        default:
+          BOOST_LOG(debug) << "Ignoring unsupported Session control packet"
+                           << " runtime=" << session_p->identity.runtime_id
+                           << " type=" << session_header->messageType
+                           << " payloadBytes=" << payload.size();
+          break;
       }
     });
 
@@ -6691,16 +7388,26 @@ namespace stream {
 
     auto start_time = std::chrono::steady_clock::now();
     auto current_time = start_time;
+    auto deadline = start_time + timeout;
     std::size_t non_ping_count = 0;
     std::size_t last_non_ping_size = 0;
     udp::endpoint last_non_ping_peer;
 
-    while (current_time - start_time < timeout) {
-      auto delta_time = current_time - start_time;
+    while (current_time < deadline) {
+      if (session->shutdown_event->peek()) {
+        BOOST_LOG(info) << "Initial "sv << type_name << " ping wait aborted by session shutdown runtime="sv
+                        << session->identity.runtime_id
+                        << " waitedMs="sv << std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count()
+                        << " nonPing="sv << non_ping_count;
+        return -1;
+      }
 
-      auto msg_opt = messages->pop(timeout - delta_time);
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - current_time);
+      const auto wait_time = std::min(remaining, 100ms);
+      auto msg_opt = messages->pop(wait_time);
       if (!msg_opt) {
-        break;
+        current_time = std::chrono::steady_clock::now();
+        continue;
       }
 
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
@@ -6946,16 +7653,19 @@ namespace stream {
 
       // 仅控制流会话没有视频/音频线程
       if (!session.control_only) {
-        BOOST_LOG(debug) << "Waiting for video to end..."sv;
+        BOOST_LOG(info) << "Session teardown waiting for video runtime="sv << session.identity.runtime_id;
         session.videoThread.join();
-        BOOST_LOG(debug) << "Waiting for audio to end..."sv;
+        BOOST_LOG(info) << "Session teardown video joined runtime="sv << session.identity.runtime_id;
+        BOOST_LOG(info) << "Session teardown waiting for audio runtime="sv << session.identity.runtime_id;
         session.audioThread.join();
+        BOOST_LOG(info) << "Session teardown audio joined runtime="sv << session.identity.runtime_id;
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
       }
-      BOOST_LOG(debug) << "Waiting for control to end..."sv;
+      BOOST_LOG(info) << "Session teardown waiting for control runtime="sv << session.identity.runtime_id;
       session.controlEnd.view();
+      BOOST_LOG(info) << "Session teardown control ended runtime="sv << session.identity.runtime_id;
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
@@ -7050,6 +7760,9 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
+      session.startup_path_evidence.peer_is_lan_or_pc = is_lan_or_pc_peer(addr_string);
+      session.startup_path_decision = session_runtime::classify_startup_path(session.startup_path_evidence);
+      session.active_transport_path = session_transport_path_for_decision(session.startup_path_decision);
       session.state.store(state_e::STARTING, std::memory_order_release);
       refresh_li_session(session, state_e::STARTING);
       session.input = input::alloc(session.mail);
@@ -7098,7 +7811,8 @@ namespace stream {
       const auto weak_net_started_at = std::chrono::steady_clock::now();
       const bool adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
                                                (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
-      const bool lan_fast_start = adaptive_controller_enabled && is_lan_or_pc_peer(addr_string);
+      const bool lan_fast_start = adaptive_controller_enabled &&
+                                  session.startup_path_decision.allow_lan_fast_start;
       session.adaptive_controller_enabled = adaptive_controller_enabled;
       session.adaptive_controller_reason = adaptive_controller_enabled ?
                                            "enabled" :
@@ -7118,7 +7832,17 @@ namespace stream {
       if (lan_fast_start) {
         BOOST_LOG(info) << "Weak-net startup guard skipped for LAN peer runtime="
                         << session.identity.runtime_id
-                        << " peer=" << addr_string;
+                        << " peer=" << addr_string
+                        << " pathReason=" << session.startup_path_decision.reason;
+      }
+      else if (adaptive_controller_enabled) {
+        BOOST_LOG(info) << "Weak-net startup guard enabled runtime="
+                        << session.identity.runtime_id
+                        << " peer=" << addr_string
+                        << " pathReason=" << session.startup_path_decision.reason
+                        << " route=" << session_runtime::transport_route_name(session.startup_path_decision.route)
+                        << " egressKind=" << session_runtime::li_path_egress_kind_name(session.startup_path_decision.egress_kind)
+                        << " encapsulation=" << session_runtime::li_path_encapsulation_name(session.startup_path_decision.encapsulation);
       }
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
@@ -7193,13 +7917,19 @@ namespace stream {
       session->launch_session_id = launch_session.id;
       session->identity = launch_session.identity;
       session->identity.runtime_id = next_runtime_id.fetch_add(1, std::memory_order_relaxed);
-      session->identity.launch_session_id = launch_session.id;
-      session->identity.control_generation = 0;
+      if (session->identity.launch_session_id == 0) {
+        session->identity.launch_session_id = launch_session.id;
+      }
       session->identity.control_connect_data = launch_session.control_connect_data;
       session->identity.av_ping_payload = launch_session.av_ping_payload;
+      session->startup_path_evidence = startup_path_evidence_for_launch_session(launch_session);
+      session->startup_path_decision = session_runtime::classify_startup_path(session->startup_path_evidence);
+      session->active_transport_path = session_transport_path_for_decision(session->startup_path_decision);
 
       // 设置客户端名称
-      session->client_name = launch_session.client_name;
+      session->client_name = session->identity.client_name.empty() ?
+                               launch_session.client_name :
+                               session->identity.client_name;
 
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
@@ -7209,6 +7939,21 @@ namespace stream {
       session->max_full_nits = launch_session.max_full_nits;
 
       session->config = config;
+      LiInitializeSession(&session->shared_session);
+      const auto app_id = launch_session.appid == 0 ? std::string {} : std::to_string(launch_session.appid);
+      std::string app_name;
+      try {
+        app_name = launch_session.appid > 0 ? proc::proc.get_app_name(launch_session.appid) : std::string {};
+      }
+      catch (...) {
+        app_name.clear();
+      }
+      session_runtime::copy_li_string(session->shared_session.appId,
+                                      sizeof(session->shared_session.appId),
+                                      app_id);
+      session_runtime::copy_li_string(session->shared_session.appName,
+                                      sizeof(session->shared_session.appName),
+                                      app_name);
       session->config.monitor.cursorProbeRuntimeId = session->identity.runtime_id;
       session->adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
                                              (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
@@ -7249,7 +7994,7 @@ namespace stream {
       fec_percentage = std::clamp(fec_percentage, 0, max_fec_percentage);
       const bool enhanced_feedback_client = session->adaptive_controller_enabled;
       const bool strong_lan_fast_start = enhanced_feedback_client &&
-                                         is_lan_or_pc_peer(launch_session.rtsp_peer_address);
+                                         session->startup_path_decision.allow_lan_fast_start;
       if (strong_lan_fast_start && fec_percentage > 0) {
         fec_percentage = std::min(fec_percentage, 2);
       }
@@ -7327,7 +8072,11 @@ namespace stream {
 	                      << " ceilingFps=" << ceiling_fps
 	                      << " fec=" << fec_percentage << "%"
 	                      << " maxFec=" << max_fec_percentage << "%"
-	                      << (strong_lan_fast_start ? " fastStart=lan" : "")
+	                      << " pathReason=" << session->startup_path_decision.reason
+	                      << " route=" << session_runtime::transport_route_name(session->startup_path_decision.route)
+	                      << " egressKind=" << session_runtime::li_path_egress_kind_name(session->startup_path_decision.egress_kind)
+	                      << " encapsulation=" << session_runtime::li_path_encapsulation_name(session->startup_path_decision.encapsulation)
+	                      << (strong_lan_fast_start ? " fastStart=lan" : " fastStart=remote-safe")
 	                      << ((config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ? " feedback=1" : " feedback=0");
       if (config.monitor.lowBitrateClarityIntentFlags != 0) {
         BOOST_LOG(info) << "Frame interest intent generated runtime=" << session->identity.runtime_id

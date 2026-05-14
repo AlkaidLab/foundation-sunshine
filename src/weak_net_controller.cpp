@@ -1271,6 +1271,10 @@ namespace weak_net {
        effective_visual_stale_frames > 0 ||
        effective_duplicate_frames > 0 ||
        late > 0.0);
+    const bool local_render_pacing_pressure =
+      clean_path_local_display_pressure &&
+      (feedback.local_display_pressure >= 750 ||
+       feedback.decode_queue_depth >= 12);
     const bool severe_random_loss = observed_packet_loss &&
                                     !display_starved_recovered_loss &&
                                     !fec_recoverable_loss &&
@@ -2137,7 +2141,10 @@ namespace weak_net {
       else {
         stable_windows_ = 0;
       }
-      if (sustained_render_fps_pressure && !clean_render_backpressure_only) {
+      if (local_render_pacing_pressure) {
+        reduce_fps_for_pressure(0.93, 1, 1);
+      }
+      else if (sustained_render_fps_pressure && !clean_render_backpressure_only) {
         reduce_fps_for_pressure(hard_video_deadline_miss ? 0.93 : 0.96,
                                 hard_video_deadline_miss ? 3 : 6,
                                 1);

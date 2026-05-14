@@ -4994,7 +4994,7 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     << "Local render-only pressure must not teach the link estimator that the network capacity dropped";
 }
 
-TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureDoesNotClampStrongPath) {
+TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPacingBrake) {
   weak_net::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 145567,
@@ -5051,6 +5051,9 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureDoesNotClampStrong
   }
 
   EXPECT_GE(controller.current_fps(), 140);
+  const auto fps_before_pressure = controller.current_fps();
+  const auto bitrate_before_pressure = controller.current_bitrate_kbps();
+  const auto fec_before_pressure = controller.current_fec_percentage();
 
   weak_net::feedback_t native_display_backpressure {
     .duration_ms = 1080,
@@ -5064,7 +5067,7 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureDoesNotClampStrong
     .video_bytes = 1275648,
     .rtt_ms = 1,
     .rtt_variance_ms = 0,
-    .decode_queue_depth = 8,
+    .decode_queue_depth = 28,
     .render_queue_depth = 2,
     .late_frames = 1,
     .displayed_frames = 28,
@@ -5085,11 +5088,16 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureDoesNotClampStrong
   EXPECT_EQ(action.scenario, weak_net::scenario_e::local_render);
   EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
   EXPECT_NE(action.state, weak_net::state_e::constrained);
+  EXPECT_LT(action.target_fps, fps_before_pressure)
+    << "Clean LAN local-render pressure should shed host pacing FPS before the client decode queue overflows";
   EXPECT_GE(action.target_fps, 120)
     << "Clean LAN display backpressure must not collapse the strong path to 60fps";
-  EXPECT_GE(action.target_bitrate_kbps, 100000)
-    << "Transport bitrate should stay in the strong-path band when the network is clean";
-  EXPECT_LE(action.fec_percentage, 2);
+  EXPECT_GE(action.target_bitrate_kbps, bitrate_before_pressure)
+    << "Local-render pressure is not network congestion, so video bitrate should not be cut";
+  EXPECT_LE(action.fec_percentage, fec_before_pressure)
+    << "Local-render pressure must not be treated as packet loss that needs extra FEC";
+  EXPECT_FALSE(action.request_idr)
+    << "The local-render brake should avoid IDR snowballs rather than request another one";
 }
 
 TEST(WeakNetControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongestionBeforeLoss) {

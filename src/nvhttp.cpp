@@ -7,12 +7,14 @@
 
 // standard includes
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <shared_mutex>
 #include <sstream>
 #include <string>
@@ -25,6 +27,7 @@
 
 // lib includes
 #include <Simple-Web-Server/server_http.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -74,6 +77,9 @@ namespace nvhttp {
     "/", "/index.html", "/index.htm", "/index",
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
+
+  static std::vector<std::string>
+  split_candidate_list(std::string_view raw);
 
   std::mutex &
   session_start_mutex() {
@@ -591,6 +597,47 @@ namespace nvhttp {
     return "";
   }
 
+  std::string
+  get_client_name_for_cert_uuid(const std::string &client_cert_uuid) {
+    if (client_cert_uuid.empty()) {
+      return {};
+    }
+
+    std::shared_lock<std::shared_mutex> cl(client_state_mutex);
+    for (const auto &named_cert : client_root.named_devices) {
+      if (named_cert.uuid == client_cert_uuid) {
+        return named_cert.name;
+      }
+    }
+    return {};
+  }
+
+  void
+  promote_launch_session_identity_from_request(const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+                                               const req_https_t &request,
+                                               const std::string &known_client_cert_uuid = {}) {
+    if (!launch_session || (!request && known_client_cert_uuid.empty())) {
+      return;
+    }
+
+    const auto client_cert_uuid = known_client_cert_uuid.empty() ?
+                                    get_client_cert_uuid_from_request(request) :
+                                    known_client_cert_uuid;
+    if (client_cert_uuid.empty()) {
+      return;
+    }
+
+    const auto client_name = get_client_name_for_cert_uuid(client_cert_uuid);
+    session_runtime::promote_trusted_client_identity(launch_session->identity,
+                                                     &launch_session->unique_id,
+                                                     &launch_session->client_name,
+                                                     client_cert_uuid,
+                                                     client_name);
+    launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    launch_session->env["SUNSHINE_CLIENT_UNIQUE_ID"] = launch_session->unique_id;
+    launch_session->env["SUNSHINE_CLIENT_NAME"] = launch_session->client_name;
+  }
+
   enum class op_e {
     ADD,  ///< Add certificate
     REMOVE  ///< Remove certificate
@@ -774,6 +821,16 @@ namespace nvhttp {
     launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
     launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
     launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
+    launch_session->remote_streaming_hint = util::from_view(get_arg(args, "mlRemote", "0")) != 0;
+    launch_session->startup_profile = get_arg(args, "mlStartupProfile", "");
+    launch_session->client_route_remote_hint = util::from_view(get_arg(args, "mlRouteRemote", "0")) != 0;
+    launch_session->client_route_tunnel_hint = util::from_view(get_arg(args, "mlRouteTunnel", "0")) != 0;
+    launch_session->client_vpn_hint = util::from_view(get_arg(args, "mlRouteVpn", "0")) != 0;
+    launch_session->client_route_egress_kind = get_arg(args, "mlRouteEgressKind", "");
+    launch_session->client_route_egress_if = get_arg(args, "mlRouteEgressIf", "");
+    launch_session->client_route_source = get_arg(args, "mlRouteSource", "");
+    launch_session->client_route_host = get_arg(args, "mlRouteHost", "");
+    launch_session->client_target_address_candidates = split_candidate_list(get_arg(args, "mlRouteResolved", ""));
 
     // Get display_name from query parameter if provided
     std::string display_name = get_arg(args, "display_name", "");
@@ -821,6 +878,14 @@ namespace nvhttp {
     launch_session->env["SUNSHINE_CLIENT_ENABLE_MIC"] = launch_session->enable_mic ? "true" : "false";
     launch_session->env["SUNSHINE_CLIENT_USE_VDD"] = launch_session->use_vdd ? "true" : "false";
     launch_session->env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session->custom_screen_mode);
+    launch_session->env["SUNSHINE_CLIENT_REMOTE_HINT"] = launch_session->remote_streaming_hint ? "true" : "false";
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_REMOTE_HINT"] = launch_session->client_route_remote_hint ? "true" : "false";
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_TUNNEL_HINT"] = launch_session->client_route_tunnel_hint ? "true" : "false";
+    launch_session->env["SUNSHINE_CLIENT_VPN_HINT"] = launch_session->client_vpn_hint ? "true" : "false";
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_EGRESS_KIND"] = launch_session->client_route_egress_kind;
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_EGRESS_IF"] = launch_session->client_route_egress_if;
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_SOURCE"] = launch_session->client_route_source;
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_HOST"] = launch_session->client_route_host;
     int channelCount = launch_session->surround_info & (65535);
     switch (channelCount) {
       case 2:
@@ -1154,6 +1219,225 @@ namespace nvhttp {
     return host;
   }
 
+  static void
+  append_unique(std::vector<std::string> &values, std::string value) {
+    value = session_runtime::canonical_endpoint_host(value);
+    if (value.empty()) {
+      return;
+    }
+    if (std::ranges::find(values, value) == values.end()) {
+      values.push_back(std::move(value));
+    }
+  }
+
+  static std::string
+  join_values(const std::vector<std::string> &values) {
+    std::ostringstream joined;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i != 0) {
+        joined << ',';
+      }
+      joined << values[i];
+    }
+    return joined.str();
+  }
+
+  static std::vector<std::string>
+  split_candidate_list(std::string_view raw) {
+    std::vector<std::string> values;
+    std::string current;
+    for (const char ch : raw) {
+      if (ch == ',' || ch == ';') {
+        append_unique(values, current);
+        current.clear();
+      }
+      else {
+        current.push_back(ch);
+      }
+    }
+    append_unique(values, current);
+    return values;
+  }
+
+  static std::vector<std::string>
+  resolve_host_address_candidates(std::string host) {
+    std::vector<std::string> candidates;
+    host = session_runtime::canonical_endpoint_host(host);
+    if (host.empty()) {
+      return candidates;
+    }
+
+    boost::system::error_code ec;
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::resolver resolver { io_context };
+    const auto results = resolver.resolve(host, "0", ec);
+    if (ec) {
+      return candidates;
+    }
+
+    for (const auto &entry : results) {
+      append_unique(candidates, entry.endpoint().address().to_string());
+    }
+    return candidates;
+  }
+
+  static std::uint16_t
+  read_be16(const std::uint8_t *data) {
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[0]) << 8) |
+                                      static_cast<std::uint16_t>(data[1]));
+  }
+
+  static std::uint32_t
+  read_be32(const std::uint8_t *data) {
+    return (static_cast<std::uint32_t>(data[0]) << 24) |
+           (static_cast<std::uint32_t>(data[1]) << 16) |
+           (static_cast<std::uint32_t>(data[2]) << 8) |
+           static_cast<std::uint32_t>(data[3]);
+  }
+
+  static std::optional<std::string>
+  probe_stun_public_ipv4() {
+    static constexpr std::uint32_t stun_cookie = 0x2112A442U;
+    static constexpr std::chrono::milliseconds receive_budget { 800 };
+
+    try {
+      boost::asio::io_context io_context;
+      boost::asio::ip::udp::resolver resolver { io_context };
+      boost::system::error_code ec;
+      const auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), "stun.moonlight-stream.org", "3478", ec);
+      if (ec || endpoints.empty()) {
+        return std::nullopt;
+      }
+
+      boost::asio::ip::udp::socket socket { io_context };
+      socket.open(boost::asio::ip::udp::v4(), ec);
+      if (ec) {
+        return std::nullopt;
+      }
+      socket.bind(boost::asio::ip::udp::endpoint { boost::asio::ip::udp::v4(), 0 }, ec);
+      if (ec) {
+        return std::nullopt;
+      }
+      socket.non_blocking(true, ec);
+
+      std::array<std::uint8_t, 20> request {};
+      request[1] = 0x01;
+      request[4] = 0x21;
+      request[5] = 0x12;
+      request[6] = 0xA4;
+      request[7] = 0x42;
+
+      std::random_device random;
+      for (std::size_t i = 8; i < request.size(); ++i) {
+        request[i] = static_cast<std::uint8_t>(random());
+      }
+
+      for (const auto &endpoint : endpoints) {
+        socket.send_to(boost::asio::buffer(request), endpoint.endpoint(), 0, ec);
+      }
+
+      const auto deadline = std::chrono::steady_clock::now() + receive_budget;
+      std::array<std::uint8_t, 1024> response {};
+      while (std::chrono::steady_clock::now() < deadline) {
+        boost::asio::ip::udp::endpoint sender;
+        const auto length = socket.receive_from(boost::asio::buffer(response), sender, 0, ec);
+        if (ec == boost::asio::error::would_block || ec == boost::asio::error::try_again) {
+          std::this_thread::sleep_for(10ms);
+          continue;
+        }
+        if (ec || length < 20) {
+          return std::nullopt;
+        }
+        if (read_be16(response.data()) != 0x0101 ||
+            read_be32(response.data() + 4) != stun_cookie ||
+            !std::equal(request.begin() + 8, request.end(), response.begin() + 8)) {
+          continue;
+        }
+
+        const std::size_t message_length = read_be16(response.data() + 2);
+        std::size_t offset = 20;
+        const auto end = std::min<std::size_t>(response.size(), 20 + message_length);
+        while (offset + 4 <= end) {
+          const auto type = read_be16(response.data() + offset);
+          const auto attr_length = read_be16(response.data() + offset + 2);
+          const auto value_offset = offset + 4;
+          if (value_offset + attr_length > end) {
+            break;
+          }
+          if (type == 0x0020 && attr_length >= 8 && response[value_offset + 1] == 0x01) {
+            std::array<unsigned char, 4> address_bytes {
+              static_cast<unsigned char>(response[value_offset + 4] ^ response[4]),
+              static_cast<unsigned char>(response[value_offset + 5] ^ response[5]),
+              static_cast<unsigned char>(response[value_offset + 6] ^ response[6]),
+              static_cast<unsigned char>(response[value_offset + 7] ^ response[7]),
+            };
+            const auto address = boost::asio::ip::make_address_v4(address_bytes);
+            return address.to_string();
+          }
+          offset = value_offset + ((attr_length + 3U) & ~3U);
+        }
+      }
+    }
+    catch (const std::exception &) {
+      return std::nullopt;
+    }
+    return std::nullopt;
+  }
+
+  static std::vector<std::string>
+  host_public_identity_candidates() {
+    struct cache_t {
+      std::mutex mutex;
+      std::chrono::steady_clock::time_point last_probe {};
+      std::vector<std::string> candidates;
+    };
+    static cache_t cache;
+
+    std::lock_guard lock(cache.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (cache.last_probe.time_since_epoch().count() != 0 &&
+        now - cache.last_probe < 60s) {
+      return cache.candidates;
+    }
+
+    std::vector<std::string> candidates;
+    if (!config::nvhttp.external_ip.empty()) {
+      append_unique(candidates, config::nvhttp.external_ip);
+      for (const auto &resolved : resolve_host_address_candidates(config::nvhttp.external_ip)) {
+        append_unique(candidates, resolved);
+      }
+    }
+
+    if (const auto stun_address = probe_stun_public_ipv4()) {
+      append_unique(candidates, *stun_address);
+    }
+
+    cache.last_probe = now;
+    cache.candidates = candidates;
+    return cache.candidates;
+  }
+
+  static void
+  refresh_launch_path_identity_evidence(const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session) {
+    if (!launch_session) {
+      return;
+    }
+
+    launch_session->host_public_candidates = host_public_identity_candidates();
+    for (const auto &candidate : split_candidate_list(launch_session->client_route_host)) {
+      append_unique(launch_session->client_target_address_candidates, candidate);
+      for (const auto &resolved : resolve_host_address_candidates(candidate)) {
+        append_unique(launch_session->client_target_address_candidates, resolved);
+      }
+    }
+    for (const auto &candidate : split_candidate_list(launch_session->rtsp_route_host)) {
+      append_unique(launch_session->client_target_address_candidates, candidate);
+      for (const auto &resolved : resolve_host_address_candidates(candidate)) {
+        append_unique(launch_session->client_target_address_candidates, resolved);
+      }
+    }
+  }
+
   template <class T>
   std::string
   request_host_header(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
@@ -1203,6 +1487,17 @@ namespace nvhttp {
       host_source = "local-endpoint";
     }
 
+    launch_session->rtsp_route_source = host_source;
+    launch_session->rtsp_route_host = authority_host;
+    launch_session->rtsp_route_local_endpoint = fallback_host;
+    launch_session->rtsp_route_remote_hint =
+      launch_session->remote_streaming_hint ||
+      launch_session->client_route_remote_hint ||
+      launch_session->client_route_tunnel_hint ||
+      launch_session->client_vpn_hint ||
+      host_source == "forwarded";
+    refresh_launch_path_identity_evidence(launch_session);
+
     const auto session_url = launch_session->rtsp_url_scheme +
                              authority_host + ':' +
                              std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
@@ -1211,6 +1506,15 @@ namespace nvhttp {
                     << " host=" << authority_host
                     << " localEndpoint=" << fallback_host
                     << " remote=" << request->remote_endpoint().address().to_string()
+                    << " routeRemoteHint=" << (launch_session->rtsp_route_remote_hint ? 1 : 0)
+                    << " targetCandidates=" << join_values(launch_session->client_target_address_candidates)
+                    << " hostPublicCandidates=" << join_values(launch_session->host_public_candidates)
+                    << " publicIdentityMatch=" << (session_runtime::target_matches_host_public_identity({
+                         .client_route_host = launch_session->client_route_host,
+                         .rtsp_route_host = launch_session->rtsp_route_host,
+                         .client_target_address_candidates = launch_session->client_target_address_candidates,
+                         .host_public_candidates = launch_session->host_public_candidates,
+                       }) ? 1 : 0)
                     << " url=" << session_url;
 
     return session_url;
@@ -1298,7 +1602,7 @@ namespace nvhttp {
       if (it->second == "getservercert"sv) {
         pair_session_t sess;
 
-        sess.client.uniqueID = std::move(uniqID);
+        sess.client.uniqueID = uniqID;
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
         last_pair_name = get_arg(args, "clientname", "Named Zako");
 
@@ -2425,6 +2729,7 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    promote_launch_session_identity_from_request(launch_session, request);
     BOOST_LOG(info) << "NVHTTP launch session prepared"
                     << " launchSession=" << launch_session->id
                     << " client=" << launch_session->client_name
@@ -2433,14 +2738,17 @@ namespace nvhttp {
                     << " mode=" << launch_session->width << "x" << launch_session->height << "@" << launch_session->fps
                     << " mic=" << launch_session->enable_mic
                     << " hostAudio=" << launch_session->host_audio
-                    << " peer=" << launch_session->rtsp_peer_address;
-
-    // 获取客户端证书UUID（稳定的客户端标识符）
-    std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
-    if (!client_cert_uuid.empty()) {
-      launch_session->identity.set_client_cert_uuid(client_cert_uuid);
-      launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
-    }
+                    << " peer=" << launch_session->rtsp_peer_address
+                    << " remoteHint=" << (launch_session->remote_streaming_hint ? 1 : 0)
+                    << " startupProfile=" << launch_session->startup_profile
+                    << " routeRemote=" << (launch_session->client_route_remote_hint ? 1 : 0)
+                    << " routeTunnel=" << (launch_session->client_route_tunnel_hint ? 1 : 0)
+                    << " vpn=" << (launch_session->client_vpn_hint ? 1 : 0)
+                    << " egressKind=" << launch_session->client_route_egress_kind
+                    << " egressIf=" << launch_session->client_route_egress_if
+                    << " routeSource=" << launch_session->client_route_source
+                    << " routeHost=" << launch_session->client_route_host
+                    << " routeResolved=" << join_values(launch_session->client_target_address_candidates);
 
     if (!wait_for_runtime_teardown_to_drain("launch")) {
       tree.put("root.resume", 0);
@@ -2640,6 +2948,7 @@ namespace nvhttp {
     }
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = resume_rtsp_peer_address;
+    promote_launch_session_identity_from_request(launch_session, request, client_cert_uuid);
     BOOST_LOG(info) << "NVHTTP resume session prepared"
                     << " launchSession=" << launch_session->id
                     << " client=" << launch_session->client_name
@@ -2649,13 +2958,17 @@ namespace nvhttp {
                     << " mic=" << launch_session->enable_mic
                     << " hostAudio=" << launch_session->host_audio
                     << " peer=" << launch_session->rtsp_peer_address
+                    << " remoteHint=" << (launch_session->remote_streaming_hint ? 1 : 0)
+                    << " startupProfile=" << launch_session->startup_profile
+                    << " routeRemote=" << (launch_session->client_route_remote_hint ? 1 : 0)
+                    << " routeTunnel=" << (launch_session->client_route_tunnel_hint ? 1 : 0)
+                    << " vpn=" << (launch_session->client_vpn_hint ? 1 : 0)
+                    << " egressKind=" << launch_session->client_route_egress_kind
+                    << " egressIf=" << launch_session->client_route_egress_if
+                    << " routeSource=" << launch_session->client_route_source
+                    << " routeHost=" << launch_session->client_route_host
+                    << " routeResolved=" << join_values(launch_session->client_target_address_candidates)
                     << " noActiveSessions=" << no_active_sessions;
-
-    // Get client certificate UUID (stable client identifier) and store it in env
-    if (!client_cert_uuid.empty()) {
-      launch_session->identity.set_client_cert_uuid(client_cert_uuid);
-      launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
-    }
 
     if (no_active_sessions) {
       auto &display_session = display_device::session_t::get();

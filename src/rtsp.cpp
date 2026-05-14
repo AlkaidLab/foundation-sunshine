@@ -1228,7 +1228,6 @@ namespace rtsp_stream {
     for (const auto &attribute : session_runtime::rtsp_capability_attributes(core_capabilities)) {
       ss << "a=" << attribute << std::endl;
     }
-
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
     uint32_t encryption_flags_requested = SS_ENC_CONTROL_V2;
@@ -1497,6 +1496,33 @@ namespace rtsp_stream {
     args.try_emplace("x-nv-general.featureFlags"sv, "135"sv);
     args.try_emplace("x-ml-general.featureFlags"sv, "0"sv);
     args.try_emplace("x-ml-general.featureFlags2"sv, "0"sv);
+    args.try_emplace("x-ml-core.sessionVersion"sv, "0"sv);
+    args.try_emplace("x-ml-core.sessionId"sv, ""sv);
+    args.try_emplace("x-ml-core.logicalSessionKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.launchSessionId"sv, "0"sv);
+    args.try_emplace("x-ml-core.controlGeneration"sv, "0"sv);
+    args.try_emplace("x-ml-core.state"sv, "idle"sv);
+    args.try_emplace("x-ml-core.appId"sv, ""sv);
+    args.try_emplace("x-ml-core.appName"sv, ""sv);
+    args.try_emplace("x-ml-core.client.participantId"sv, ""sv);
+    args.try_emplace("x-ml-core.client.participantKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.client.clientKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.client.deviceKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.client.displayName"sv, ""sv);
+    args.try_emplace("x-ml-core.client.deviceName"sv, ""sv);
+    args.try_emplace("x-ml-core.host.participantId"sv, ""sv);
+    args.try_emplace("x-ml-core.host.participantKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.host.clientKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.host.deviceKey"sv, "0"sv);
+    args.try_emplace("x-ml-core.host.displayName"sv, ""sv);
+    args.try_emplace("x-ml-core.host.deviceName"sv, ""sv);
+    args.try_emplace("x-ml-core.supportedCaps"sv, ""sv);
+    args.try_emplace("x-ml-core.transportPaths"sv, ""sv);
+    args.try_emplace("x-ml-core.leaseIntent"sv, ""sv);
+    args.try_emplace("x-ml-core.featureBits"sv, "0"sv);
+    args.try_emplace("x-ml-core.transportPath.routeId"sv, ""sv);
+    args.try_emplace("x-ml-core.transportPath.kind"sv, ""sv);
+    args.try_emplace("x-ml-core.transportPath.protocol"sv, ""sv);
     args.try_emplace("x-nv-vqos[0].qosTrafficType"sv, "5"sv);
     args.try_emplace("x-nv-aqos.qosTrafficType"sv, "4"sv);
     args.try_emplace("x-ml-video.configuredBitrateKbps"sv, "0"sv);
@@ -1602,6 +1628,64 @@ namespace rtsp_stream {
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
       config.mlFeatureFlags2 = getArgU64("x-ml-general.featureFlags2"sv);
+      config.mlCoreSessionVersion = getArg("x-ml-core.sessionVersion"sv);
+      config.mlCoreFeatureBits = getArgU64("x-ml-core.featureBits"sv);
+      config.mlCoreSupportedCaps = std::string(args.at("x-ml-core.supportedCaps"sv));
+      config.mlCoreTransportPaths = std::string(args.at("x-ml-core.transportPaths"sv));
+      if (config.mlCoreSessionVersion > 0) {
+        auto logicalSessionId = std::string(args.at("x-ml-core.sessionId"sv));
+        if (!logicalSessionId.empty()) {
+          session.identity.logical_session_id = std::move(logicalSessionId);
+        }
+        auto logicalSessionKey = getArgU64("x-ml-core.logicalSessionKey"sv);
+        if (logicalSessionKey != 0) {
+          session.identity.logical_session_key = logicalSessionKey;
+        }
+        auto mlLaunchSessionId = getArgU64("x-ml-core.launchSessionId"sv);
+        if (mlLaunchSessionId != 0) {
+          session.identity.launch_session_id = static_cast<std::uint32_t>(mlLaunchSessionId);
+        }
+        auto controlGeneration = getArgU64("x-ml-core.controlGeneration"sv);
+        if (controlGeneration != 0) {
+          session.identity.control_generation = static_cast<std::uint32_t>(controlGeneration);
+        }
+        auto participantId = std::string(args.at("x-ml-core.client.participantId"sv));
+        if (!participantId.empty()) {
+          session.identity.participant_id = std::move(participantId);
+        }
+        auto participantKey = getArgU64("x-ml-core.client.participantKey"sv);
+        if (participantKey != 0) {
+          session.identity.participant_key = participantKey;
+        }
+        auto clientKey = getArgU64("x-ml-core.client.clientKey"sv);
+        if (clientKey != 0) {
+          session.identity.client_key = clientKey;
+        }
+        auto deviceKey = getArgU64("x-ml-core.client.deviceKey"sv);
+        if (deviceKey != 0) {
+          session.identity.device_key = deviceKey;
+        }
+        auto clientDeviceName = std::string(args.at("x-ml-core.client.deviceName"sv));
+        if (!clientDeviceName.empty()) {
+          session.identity.client_unique_id = std::move(clientDeviceName);
+        }
+        if (session.identity.client_unique_id.empty() && !session.identity.participant_id.empty()) {
+          session.identity.client_unique_id = session.identity.participant_id;
+        }
+        if (session.identity.participant_id.empty() && !session.identity.client_unique_id.empty()) {
+          session.identity.participant_id = session.identity.client_unique_id;
+        }
+        auto clientDisplayName = std::string(args.at("x-ml-core.client.displayName"sv));
+        if (!clientDisplayName.empty()) {
+          session.identity.client_name = std::move(clientDisplayName);
+        }
+        if (session.identity.client_name.empty()) {
+          session.identity.client_name = std::string(client);
+        }
+        if (!session.identity.client_name.empty()) {
+          session.client_name = session.identity.client_name;
+        }
+      }
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
@@ -1717,7 +1801,21 @@ namespace rtsp_stream {
         (config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
       const auto rtspPeerAddress = net::addr_to_normalized_string(sock.remote_endpoint().address());
       const auto rtspPeerNetwork = net::from_address(rtspPeerAddress);
-      const bool lan_fast_start = rtspPeerNetwork == net::PC || rtspPeerNetwork == net::LAN;
+      const auto startupPathDecision = session_runtime::classify_startup_path({
+        .peer_is_lan_or_pc = rtspPeerNetwork == net::PC || rtspPeerNetwork == net::LAN,
+        .remote_streaming_hint = session.remote_streaming_hint,
+        .rtsp_route_remote_hint = session.rtsp_route_remote_hint,
+        .client_route_remote_hint = session.client_route_remote_hint,
+        .client_route_tunnel = session.client_route_tunnel_hint,
+        .client_vpn_active = session.client_vpn_hint,
+        .startup_profile = session.startup_profile,
+        .client_egress_kind = session.client_route_egress_kind,
+        .client_route_host = session.client_route_host,
+        .rtsp_route_host = session.rtsp_route_host,
+        .client_target_address_candidates = session.client_target_address_candidates,
+        .host_public_candidates = session.host_public_candidates,
+      });
+      const bool lan_fast_start = startupPathDecision.allow_lan_fast_start;
       auto effectiveFecPercentage = effective_stream_fec_percentage_for_client(config::stream.fec_percentage,
                                                                                config.mlFeatureFlags,
                                                                                adaptive_controller_enabled);
@@ -1817,7 +1915,11 @@ namespace rtsp_stream {
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
                           << qualityCeilingFramerate
-                          << " fps; weak-net will restore full cadence after high-availability feedback";
+                          << " fps; weak-net will restore full cadence after high-availability feedback"
+                          << " pathReason=" << startupPathDecision.reason
+                          << " route=" << session_runtime::transport_route_name(startupPathDecision.route)
+                          << " egressKind=" << session_runtime::li_path_egress_kind_name(startupPathDecision.egress_kind)
+                          << " encapsulation=" << session_runtime::li_path_encapsulation_name(startupPathDecision.encapsulation);
           configuredBitrateKbps = startupBitrateKbps;
           if (startupFps > 0 && startupFps < config.monitor.framerate) {
             config.monitor.framerate = startupFps;
@@ -1830,7 +1932,8 @@ namespace rtsp_stream {
         BOOST_LOG(info) << "Strong LAN startup: keeping requested quality "
                         << qualityCeilingBitrateKbps << " Kbps / "
                         << qualityCeilingFramerate
-                        << " fps for peer=" << rtspPeerAddress;
+                        << " fps for peer=" << rtspPeerAddress
+                        << " pathReason=" << startupPathDecision.reason;
       }
       else {
         config.monitor.lowBitrateClarityIntentFlags = 0;

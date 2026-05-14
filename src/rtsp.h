@@ -31,6 +31,12 @@ namespace rtsp_stream {
     std::string rtsp_route_host;
     std::string rtsp_route_local_endpoint;
     std::string startup_profile;
+    std::string client_route_egress_kind;
+    std::string client_route_egress_if;
+    std::string client_route_source;
+    std::string client_route_host;
+    std::vector<std::string> client_target_address_candidates;
+    std::vector<std::string> host_public_candidates;
     std::chrono::steady_clock::time_point pending_since;
 
     boost::process::v1::environment env;
@@ -56,6 +62,9 @@ namespace rtsp_stream {
     float max_full_nits;
     bool remote_streaming_hint { false };
     bool rtsp_route_remote_hint { false };
+    bool client_route_remote_hint { false };
+    bool client_route_tunnel_hint { false };
+    bool client_vpn_hint { false };
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;

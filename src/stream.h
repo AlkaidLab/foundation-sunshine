@@ -30,6 +30,10 @@ namespace stream {
     int minRequiredFecPackets;
     int mlFeatureFlags;
     std::uint64_t mlFeatureFlags2;
+    int mlCoreSessionVersion;
+    std::uint64_t mlCoreFeatureBits;
+    std::string mlCoreSupportedCaps;
+    std::string mlCoreTransportPaths;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;
