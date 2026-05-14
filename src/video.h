@@ -91,6 +91,10 @@ namespace video {
     // probing can avoid mutating the global config::video.capture string.
     std::string capture_backend_override;
 
+    // When true, the client requested active cursor-plane rendering and the
+    // capture path should avoid burning the host cursor into video frames.
+    bool preferCursorPlane = false;
+
     // Helper to get effective framerate as double
     double get_effective_framerate() const {
       if (frameRateNum > 0 && frameRateDen > 0) {

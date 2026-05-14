@@ -924,6 +924,20 @@ namespace rtsp_stream {
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
     }
 
+    // Extended 64-bit host feature flags (Sunshine extension). Mirrors what
+    // moonlight-common-c parses via LiGetHostFeatureFlags2(). Without this
+    // attribute, clients see featureFlags2=0 and cannot opt-in to features
+    // like smart cursor (cursor plane) based on host advertisement.
+    {
+      std::uint64_t host_feature_flags2 = 0;
+      if (config::input.enable_cursor_plane) {
+        host_feature_flags2 |= static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE);
+      }
+      ss << "a=x-ss-general.featureFlags2:" << host_feature_flags2 << std::endl;
+      BOOST_LOG(info) << "RTSP DESCRIBE host featureFlags2=0x" << std::hex << host_feature_flags2 << std::dec
+                      << " (cursor_plane=" << (config::input.enable_cursor_plane ? "1" : "0") << ")";
+    }
+
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
     uint32_t encryption_flags_requested = SS_ENC_CONTROL_V2;
@@ -1285,6 +1299,15 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Client requested stream resolution (clientViewport): " << monitor.width << "x" << monitor.height;
       monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
       monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
+      monitor.preferCursorPlane =
+        (config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE_ACTIVE)) != 0;
+      BOOST_LOG(info) << "Client featureFlags2=0x" << std::hex << config.mlFeatureFlags2 << std::dec
+                      << " cursorPlaneSupport="
+                      << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE)) != 0) ? 1 : 0)
+                      << " preferCursorPlane=" << (monitor.preferCursorPlane ? 1 : 0);
+      if (monitor.preferCursorPlane) {
+        BOOST_LOG(info) << "Client requested active cursor plane; disabling video cursor burn-in for this stream";
+      }
       monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);

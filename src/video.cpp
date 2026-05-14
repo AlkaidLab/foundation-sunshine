@@ -1464,6 +1464,42 @@ namespace video {
       }
     };
 
+    auto drain_pending_capture_contexts = [&]() {
+      while (capture_ctx_queue->peek()) {
+        capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+      }
+    };
+
+    std::optional<bool> last_capture_cursor;
+    auto should_capture_cursor = [&]() {
+      const bool any_cursor_plane_session = std::any_of(
+        std::begin(capture_ctxs),
+        std::end(capture_ctxs),
+        [](const auto &capture_ctx) {
+          return capture_ctx.config.preferCursorPlane;
+        });
+      return display_cursor && !any_cursor_plane_session;
+    };
+    auto refresh_capture_cursor = [&](bool &capture_cursor) {
+      const bool next_capture_cursor = should_capture_cursor();
+      if (!last_capture_cursor || *last_capture_cursor != next_capture_cursor) {
+        const auto cursor_plane_sessions = std::count_if(
+          std::begin(capture_ctxs),
+          std::end(capture_ctxs),
+          [](const auto &capture_ctx) {
+            return capture_ctx.config.preferCursorPlane;
+          });
+        const auto legacy_video_cursor_sessions = capture_ctxs.size() - cursor_plane_sessions;
+        BOOST_LOG(info) << "Capture cursor burn-in " << (next_capture_cursor ? "enabled" : "disabled")
+                        << " displayCursor=" << display_cursor
+                        << " cursorPlaneSessions=" << cursor_plane_sessions
+                        << " legacyVideoCursorSessions=" << legacy_video_cursor_sessions
+                        << " activeCaptureContexts=" << capture_ctxs.size();
+        last_capture_cursor = next_capture_cursor;
+      }
+      capture_cursor = next_capture_cursor;
+    };
+
     auto pull_free_image_callback = [&](std::shared_ptr<platf::img_t> &img_out) -> bool {
       img_out.reset();
       while (capture_ctx_queue->running()) {
@@ -1514,8 +1550,17 @@ namespace video {
 
     while (capture_ctx_queue->running()) {
       bool artificial_reinit = false;
+      bool capture_cursor = false;
+      refresh_capture_cursor(capture_cursor);
 
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        const bool frame_captured_with_cursor = capture_cursor;
+        drain_pending_capture_contexts();
+        refresh_capture_cursor(capture_cursor);
+        const bool drop_burned_cursor_frame_for_cursor_plane =
+          frame_captured && frame_captured_with_cursor && !capture_cursor;
+        static bool logged_cursor_plane_burn_drop = false;
+
         KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
           if (!capture_ctx->images->running()) {
             capture_ctx = capture_ctxs.erase(capture_ctx);
@@ -1524,6 +1569,14 @@ namespace video {
           }
 
           if (frame_captured) {
+            if (drop_burned_cursor_frame_for_cursor_plane && capture_ctx->config.preferCursorPlane) {
+              if (!logged_cursor_plane_burn_drop) {
+                logged_cursor_plane_burn_drop = true;
+                BOOST_LOG(info) << "Dropping cursor-burned frame for cursor-plane client";
+              }
+              ++capture_ctx;
+              continue;
+            }
             capture_ctx->images->raise(img);
           }
 
@@ -1534,10 +1587,6 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
-        }
-
         if (switch_display_event->peek()) {
           artificial_reinit = true;
           return false;
@@ -1546,7 +1595,7 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &capture_cursor);
 
       if (artificial_reinit && status != platf::capture_e::error) {
         status = platf::capture_e::reinit;
@@ -3008,9 +3057,43 @@ namespace video {
       synced_sessions.emplace_back(std::move(*synced_session));
     }
 
+    std::optional<bool> last_capture_cursor;
+    auto should_capture_cursor = [&]() {
+      const bool any_cursor_plane_session = std::any_of(
+        std::begin(synced_session_ctxs),
+        std::end(synced_session_ctxs),
+        [](const auto &ctx) {
+          return ctx->config.preferCursorPlane;
+        });
+      return display_cursor && !any_cursor_plane_session;
+    };
+    auto refresh_capture_cursor = [&](bool &capture_cursor) {
+      const bool next_capture_cursor = should_capture_cursor();
+      if (!last_capture_cursor || *last_capture_cursor != next_capture_cursor) {
+        const auto cursor_plane_sessions = std::count_if(
+          std::begin(synced_session_ctxs),
+          std::end(synced_session_ctxs),
+          [](const auto &ctx) {
+            return ctx->config.preferCursorPlane;
+          });
+        const auto legacy_video_cursor_sessions = synced_session_ctxs.size() - cursor_plane_sessions;
+        BOOST_LOG(info) << "Capture cursor burn-in " << (next_capture_cursor ? "enabled" : "disabled")
+                        << " displayCursor=" << display_cursor
+                        << " cursorPlaneSessions=" << cursor_plane_sessions
+                        << " legacyVideoCursorSessions=" << legacy_video_cursor_sessions
+                        << " activeCaptureContexts=" << synced_session_ctxs.size();
+        last_capture_cursor = next_capture_cursor;
+      }
+      capture_cursor = next_capture_cursor;
+    };
+
     auto ec = platf::capture_e::ok;
     while (encode_session_ctx_queue.running()) {
+      bool capture_cursor = false;
+      refresh_capture_cursor(capture_cursor);
+
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        const bool frame_captured_with_cursor = capture_cursor;
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -3027,6 +3110,10 @@ namespace video {
 
           synced_sessions.emplace_back(std::move(*encode_session));
         }
+        refresh_capture_cursor(capture_cursor);
+        const bool drop_burned_cursor_frame_for_cursor_plane =
+          frame_captured && frame_captured_with_cursor && !capture_cursor;
+        static bool logged_cursor_plane_burn_drop = false;
 
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
           auto ctx = pos->ctx;
@@ -3049,6 +3136,15 @@ namespace video {
           if (ctx->idr_events->peek()) {
             pos->session->request_idr_frame();
             ctx->idr_events->pop();
+          }
+
+          if (drop_burned_cursor_frame_for_cursor_plane && ctx->config.preferCursorPlane) {
+            if (!logged_cursor_plane_burn_drop) {
+              logged_cursor_plane_burn_drop = true;
+              BOOST_LOG(info) << "Dropping cursor-burned frame for cursor-plane client";
+            }
+            ++pos;
+            continue;
           }
 
           if (frame_captured && pos->session->convert(*img)) {
@@ -3089,7 +3185,7 @@ namespace video {
         return true;
       };
 
-      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &capture_cursor);
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:

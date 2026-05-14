@@ -1459,19 +1459,51 @@ namespace stream {
     const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
     const int stream_width = session ? std::max(1, session->config.monitor.width) : std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
     const int stream_height = session ? std::max(1, session->config.monitor.height) : std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    const bool cursor_visible =
+      (cursor_info.flags & CURSOR_SHOWING) != 0 &&
+#ifdef CURSOR_SUPPRESSED
+      (cursor_info.flags & CURSOR_SUPPRESSED) == 0 &&
+#endif
+      cursor_info.hCursor != nullptr;
+    RECT virtual_rect {
+      origin_x,
+      origin_y,
+      origin_x + std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN)),
+      origin_y + std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN)),
+    };
+    RECT clip_rect {};
+    const bool clip_available = GetClipCursor(&clip_rect) != FALSE;
+    const bool cursor_clipped =
+      clip_available &&
+      (clip_rect.left > virtual_rect.left + 1 ||
+       clip_rect.top > virtual_rect.top + 1 ||
+       clip_rect.right < virtual_rect.right - 1 ||
+       clip_rect.bottom < virtual_rect.bottom - 1);
+    const bool cursor_center_locked =
+      cursor_clipped &&
+      (clip_rect.right - clip_rect.left <= 4 ||
+       clip_rect.bottom - clip_rect.top <= 4);
 
     sample.available = true;
-    sample.flags = (cursor_info.flags & CURSOR_SHOWING) ? SS_CURSOR_PLANE_FLAG_VISIBLE : 0;
+    sample.flags = cursor_visible ? SS_CURSOR_PLANE_FLAG_VISIBLE : 0;
+    if (!cursor_visible) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_RELATIVE;
+    }
+    if (!cursor_visible || cursor_center_locked) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_LOCKED;
+    }
     const int stream_x = static_cast<int>(point.x - origin_x);
     const int stream_y = static_cast<int>(point.y - origin_y);
     sample.x = static_cast<std::uint32_t>(std::clamp(stream_x, 0, stream_width - 1));
     sample.y = static_cast<std::uint32_t>(std::clamp(stream_y, 0, stream_height - 1));
     sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
     sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
-    sample.cursor_shape_id = semantic_cursor_shape_id_win(cursor_info.hCursor);
+    sample.cursor_shape_id = cursor_visible ?
+                               semantic_cursor_shape_id_win(cursor_info.hCursor) :
+                               SS_CURSOR_PLANE_SHAPE_UNKNOWN;
 
     ICONINFO icon_info {};
-    if (cursor_info.hCursor != nullptr && GetIconInfo(cursor_info.hCursor, &icon_info)) {
+    if (cursor_visible && GetIconInfo(cursor_info.hCursor, &icon_info)) {
       sample.hotspot_x = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.xHotspot, 0, 512));
       sample.hotspot_y = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.yHotspot, 0, 512));
 
