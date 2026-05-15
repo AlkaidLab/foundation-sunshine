@@ -8017,12 +8017,29 @@ namespace stream {
       if (enhanced_feedback_client && !strong_lan_fast_start) {
         const int startup_encoding_limit = encoding_bitrate_from_total_video_budget(ceiling_total_bitrate,
                                                                                     fec_percentage);
-        const int startup_encoding_bitrate = stream_quality::startup_bitrate_for_ceiling(startup_quality_stream);
+        const int rtsp_seeded_bitrate = encoding_bitrate;
+        const int computed_startup_bitrate = stream_quality::startup_bitrate_for_ceiling(startup_quality_stream);
+        const int startup_encoding_bitrate =
+          stream_quality::startup_bitrate_preserving_seed(startup_quality_stream, rtsp_seeded_bitrate);
         encoding_bitrate = std::clamp(startup_encoding_bitrate,
                                       1,
                                       std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
-        config.monitor.framerate = stream_quality::startup_fps_for_bitrate(startup_quality_stream, encoding_bitrate);
+        const int startup_fps = stream_quality::startup_fps_for_bitrate(startup_quality_stream, encoding_bitrate);
+        if (startup_fps > 0 && startup_fps < config.monitor.framerate) {
+          config.monitor.framerate = startup_fps;
+          config.monitor.frameRateNum = startup_fps;
+          config.monitor.frameRateDen = 1;
+        }
         session->config.monitor.framerate = config.monitor.framerate;
+        session->config.monitor.frameRateNum = config.monitor.frameRateNum;
+        session->config.monitor.frameRateDen = config.monitor.frameRateDen;
+        if (rtsp_seeded_bitrate > 0 && startup_encoding_bitrate < computed_startup_bitrate) {
+          BOOST_LOG(info) << "Remote-safe startup seed preserved runtime=" << session->identity.runtime_id
+                          << " rtspSeed=" << rtsp_seeded_bitrate << " Kbps"
+                          << " startup=" << encoding_bitrate << " Kbps"
+                          << " fps=" << config.monitor.framerate
+                          << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps";
+        }
       }
       session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate, fec_percentage);
       session->current_fec_percentage = fec_percentage;

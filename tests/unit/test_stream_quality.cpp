@@ -153,6 +153,21 @@ TEST(StreamQualityTests, HighPixelRateEnhancedStreamsRampEvenAtModerateCeiling) 
   EXPECT_EQ(startup_fps, 120);
 }
 
+TEST(StreamQualityTests, RuntimeStartupNeverRaisesRtspRemoteSafeSeed) {
+  stream_quality::stream_description_t stream {
+    .width = 3024,
+    .height = 1900,
+    .fps = 120,
+    .video_bitrate_kbps = 80668,
+    .video_format = 1,
+    .chroma_sampling_type = 0,
+  };
+
+  EXPECT_GT(stream_quality::startup_bitrate_for_ceiling(stream), 12000);
+  EXPECT_EQ(stream_quality::startup_bitrate_preserving_seed(stream, 12000), 12000);
+  EXPECT_EQ(stream_quality::startup_fps_for_bitrate(stream, 12000), 110);
+}
+
 TEST(StreamQualityTests, FourKHighRefreshStartupUsesReadableFullCadenceWhenBudgetAllows) {
   auto startup_bitrate = stream_quality::startup_bitrate_for_ceiling({
     .width = 3840,

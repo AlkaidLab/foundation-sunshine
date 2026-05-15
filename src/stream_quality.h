@@ -66,6 +66,9 @@ namespace stream_quality {
   startup_bitrate_for_ceiling(const stream_description_t &stream);
 
   int
+  startup_bitrate_preserving_seed(const stream_description_t &stream, int seeded_bitrate_kbps);
+
+  int
   startup_fps_for_bitrate(const stream_description_t &stream, int startup_bitrate_kbps);
 
   int

@@ -252,6 +252,19 @@ namespace stream_quality {
   }
 
   int
+  startup_bitrate_preserving_seed(const stream_description_t &stream, int seeded_bitrate_kbps) {
+    const auto computed_startup = startup_bitrate_for_ceiling(stream);
+    if (seeded_bitrate_kbps <= 0) {
+      return computed_startup;
+    }
+
+    // RTSP may already have chosen a lower remote-safe startup point from the
+    // user's quality ceiling. The stream runtime may reduce that further, but
+    // must never raise it using the high-pixel "ideal demand" estimate.
+    return std::min(seeded_bitrate_kbps, computed_startup);
+  }
+
+  int
   startup_fps_for_bitrate(const stream_description_t &stream, int startup_bitrate_kbps) {
     if (startup_bitrate_kbps <= 0 ||
         stream.width <= 0 ||
