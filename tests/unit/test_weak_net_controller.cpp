@@ -3214,6 +3214,61 @@ TEST(WeakNetControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
   EXPECT_LE(action.target_fps, 82);
 }
 
+TEST(WeakNetControllerTests, RandomLossCountsFecInsideUserQualityBudget) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 80668,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 12000,
+    .ceiling_total_bitrate_kbps = 88735,
+    .min_bitrate_kbps = 1500,
+    .baseline_fps = 120,
+    .startup_fps = 110,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = false,
+    .user_quality_kbps = 12000,
+    .ideal_demand_kbps = 80668,
+    .fps_needed_kbps = 24000,
+  });
+
+  weak_net::action_t action {};
+  for (int i = 0; i < 3; i++) {
+    action = controller.on_feedback({
+      .duration_ms = 544,
+      .frames_seen = 61,
+      .complete_frames = 17,
+      .recovered_frames = 18,
+      .unrecoverable_frames = 15,
+      .missing_packets = 150,
+      .total_packets = 446,
+      .received_packets = 296,
+      .video_bytes = 253536,
+      .rtt_ms = 36,
+      .rtt_variance_ms = 11,
+      .displayed_frames = 54,
+      .duplicate_frames = 54,
+      .render_queue_depth = 2,
+      .input_queue_depth = 1,
+      .frame_area = 3840U * 2160U,
+      .dirty_area = 3840U * 2160U,
+      .full_frame_dirty = true,
+      .rfi_requests = 1,
+    });
+  }
+
+  EXPECT_GE(action.fec_percentage, 25);
+  EXPECT_LE(action.encoding_budget_kbps + action.fec_budget_kbps, 12000)
+    << "FEC overhead must be paid from the user's remote-safe send budget";
+  EXPECT_LE(action.pacing_bitrate_kbps, 12000)
+    << "Pacing must not add a second headroom layer on a lossy user-quality path";
+  EXPECT_LE(action.target_bitrate_kbps, 9600)
+    << "When FEC rises, encoding must drop instead of pushing total send rate over budget";
+}
+
 TEST(WeakNetControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
   weak_net::controller_t controller;
   controller.configure({

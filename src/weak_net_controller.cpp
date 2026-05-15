@@ -3061,9 +3061,44 @@ namespace weak_net {
       }
     }
 
+    const bool user_total_budget_pressure =
+      config_.user_quality_kbps > 0 &&
+      !transport_low_overhead &&
+      !clean_route_low_overhead &&
+      (observed_packet_loss ||
+       rfi_storm ||
+       low_availability_delivery ||
+       network_crisis ||
+       network_constrained ||
+       current_fec_percentage_ > config_.baseline_fec_percentage + 8);
+    const auto user_total_budget_cap_kbps =
+      user_total_budget_pressure ?
+        std::max(config_.min_bitrate_kbps, user_quality_budget_kbps(config_)) :
+        0;
+    if (user_total_budget_pressure && user_total_budget_cap_kbps > 0) {
+      const auto current_total_kbps =
+        total_bitrate_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_);
+      if (current_total_kbps > user_total_budget_cap_kbps) {
+        const auto capped_encoding_kbps = std::max(
+          config_.min_bitrate_kbps,
+          encoding_bitrate_for_total_budget(user_total_budget_cap_kbps,
+                                            current_fec_percentage_));
+        if (capped_encoding_kbps < current_bitrate_kbps_) {
+          current_bitrate_kbps_ = capped_encoding_kbps;
+          effective_ceiling_kbps_ = std::min(effective_ceiling_kbps_, capped_encoding_kbps);
+          recovery_hold_windows_ = std::max(recovery_hold_windows_, 4);
+          congestion_anti_spiral_fired = true;
+        }
+      }
+    }
+
+    const auto pacing_total_cap_kbps =
+      user_total_budget_pressure && user_total_budget_cap_kbps > 0 ?
+        std::min(config_.ceiling_total_bitrate_kbps, user_total_budget_cap_kbps) :
+        config_.ceiling_total_bitrate_kbps;
     pacing_bitrate_kbps_ = clamp_pacing_budget(
       pacing_budget_for_encoding_bitrate(current_bitrate_kbps_, current_fec_percentage_),
-      config_.ceiling_total_bitrate_kbps,
+      pacing_total_cap_kbps,
       config_.min_bitrate_kbps);
     if (delay_only_congestion && config_.user_quality_kbps > 0) {
       const auto delay_total_cap = delay_congestion_total_cap_kbps(config_,
