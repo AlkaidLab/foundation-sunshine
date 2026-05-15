@@ -14,13 +14,16 @@
 #include <hidpi.h>
 #include <setupapi.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 
 #include "virtual_mouse.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 
 // From vmouse_shared.h - duplicated here to avoid driver header dependency
 static constexpr uint16_t VMOUSE_VID = 0x1ACE;
@@ -119,23 +122,38 @@ namespace platf {
     // Implementation Detail
     // ========================================================================
 
-    // Flush interval for accumulated mouse movement (4ms ≈ 250Hz).
-    // HidD_SetFeature takes ~3ms, so this is the practical minimum.
-    static constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(4);
+    // Flush interval for accumulated mouse movement.
+    // Combined with deadline-based scheduling, 2ms is enough to push toward
+    // the current UMDF/HID path limit without adding an extra sleep after each
+    // HidD_SetFeature() call.
+    static constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(2);
+
+    namespace {
+      int16_t
+      clamp_relative_delta(int32_t delta) {
+        return static_cast<int16_t>(std::clamp(delta, -32767, 32767));
+      }
+    }  // namespace
 
     struct device_t::impl_t {
       HANDLE hDevice = INVALID_HANDLE_VALUE;
-      uint8_t buttonState = 0;  // Current button state (accumulated)
 
-      // Accumulated mouse deltas (written by callers, read by flush thread)
-      std::mutex accum_mutex;
+      // Shared state for accumulated mouse deltas and current button state.
+      std::mutex state_mutex;
+      std::condition_variable wake_cv;
+      uint8_t buttonState = 0;
       int32_t accum_dx = 0;
       int32_t accum_dy = 0;
       bool accum_dirty = false;
+      std::atomic<bool> stop_requested { false };
 
-      // Flush thread
+      // Serialize writes to the HID handle so the flush thread and synchronous
+      // button/scroll paths don't race each other.
+      std::mutex send_mutex;
+
+      // Flush thread and timer.
       std::thread flush_thread;
-      std::atomic<bool> flush_running { false };
+      std::unique_ptr<high_precision_timer> flush_timer = create_high_precision_timer();
 
       ~impl_t() {
         stop_flush_thread();
@@ -144,7 +162,8 @@ namespace platf {
 
       void
       stop_flush_thread() {
-        flush_running.store(false, std::memory_order_release);
+        stop_requested.store(true, std::memory_order_release);
+        wake_cv.notify_one();
         if (flush_thread.joinable()) {
           flush_thread.join();
         }
@@ -152,30 +171,81 @@ namespace platf {
 
       void
       start_flush_thread() {
-        flush_running.store(true, std::memory_order_release);
+        stop_requested.store(false, std::memory_order_release);
         flush_thread = std::thread([this]() {
-          while (flush_running.load(std::memory_order_acquire)) {
+          adjust_thread_priority(thread_priority_e::high);
+
+          bool active = false;
+          auto next_deadline = std::chrono::steady_clock::time_point {};
+
+          while (!stop_requested.load(std::memory_order_acquire)) {
+            if (!active) {
+              std::unique_lock<std::mutex> lk(state_mutex);
+              wake_cv.wait(lk, [this]() {
+                return stop_requested.load(std::memory_order_acquire) || accum_dirty;
+              });
+
+              if (stop_requested.load(std::memory_order_acquire)) {
+                break;
+              }
+
+              active = true;
+              next_deadline = std::chrono::steady_clock::now() + FLUSH_INTERVAL;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (next_deadline > now) {
+              const auto sleep_period = next_deadline - now;
+              if (flush_timer && static_cast<bool>(*flush_timer)) {
+                flush_timer->sleep_for(sleep_period);
+              }
+              else {
+                std::this_thread::sleep_for(sleep_period);
+              }
+            }
+
+            if (stop_requested.load(std::memory_order_acquire)) {
+              break;
+            }
+
             flush_accumulated();
-            std::this_thread::sleep_for(FLUSH_INTERVAL);
+            next_deadline += FLUSH_INTERVAL;
+
+            std::lock_guard<std::mutex> lk(state_mutex);
+            active = accum_dirty;
           }
         });
       }
 
-      void
-      flush_accumulated() {
-        int16_t dx, dy;
-        uint8_t buttons;
-        {
-          std::lock_guard<std::mutex> lk(accum_mutex);
-          if (!accum_dirty) return;
-          dx = static_cast<int16_t>(std::clamp(accum_dx, -32767, 32767));
-          dy = static_cast<int16_t>(std::clamp(accum_dy, -32767, 32767));
-          buttons = buttonState;
-          accum_dx = 0;
-          accum_dy = 0;
-          accum_dirty = false;
+      bool
+      take_accumulated_report(
+          uint8_t &buttons,
+          int16_t &dx,
+          int16_t &dy) {
+        std::lock_guard<std::mutex> lk(state_mutex);
+        if (!accum_dirty) {
+          return false;
         }
-        sendReportDirect(buttons, dx, dy, 0, 0);
+
+        buttons = buttonState;
+        dx = clamp_relative_delta(accum_dx);
+        dy = clamp_relative_delta(accum_dy);
+        accum_dx = 0;
+        accum_dy = 0;
+        accum_dirty = false;
+        return true;
+      }
+
+      bool
+      flush_accumulated() {
+        uint8_t buttons;
+        int16_t dx;
+        int16_t dy;
+        if (!take_accumulated_report(buttons, dx, dy)) {
+          return false;
+        }
+
+        return sendReportDirect(buttons, dx, dy, 0, 0);
       }
 
       void
@@ -280,6 +350,7 @@ namespace platf {
        */
       bool
       sendReportDirect(uint8_t buttons, int16_t dx, int16_t dy, int8_t sv, int8_t sh) {
+        std::lock_guard<std::mutex> send_lk(send_mutex);
         if (hDevice == INVALID_HANDLE_VALUE) return false;
 
         auto report = detail::build_output_report(buttons, dx, dy, sv, sh);
@@ -290,8 +361,9 @@ namespace platf {
           DWORD err = GetLastError();
           if (detail::should_close_on_write_error(err)) {
             VMOUSE_LOG(warning) << "vmouse: Device disconnected, closing handle"sv;
-            flush_running.store(false, std::memory_order_release);
+            stop_requested.store(true, std::memory_order_release);
             close();
+            wake_cv.notify_one();
           }
           return false;
         }
@@ -316,36 +388,82 @@ namespace platf {
 
     bool
     device_t::move(int16_t delta_x, int16_t delta_y) {
-      // Accumulate deltas; the flush thread will send them periodically
-      std::lock_guard<std::mutex> lk(impl->accum_mutex);
-      impl->accum_dx += delta_x;
-      impl->accum_dy += delta_y;
-      impl->accum_dirty = true;
+      if (!impl || impl->hDevice == INVALID_HANDLE_VALUE) {
+        return false;
+      }
+
+      bool should_notify = false;
+      {
+        std::lock_guard<std::mutex> lk(impl->state_mutex);
+        should_notify = !impl->accum_dirty;
+        impl->accum_dx += delta_x;
+        impl->accum_dy += delta_y;
+        impl->accum_dirty = true;
+      }
+
+      if (should_notify) {
+        impl->wake_cv.notify_one();
+      }
+
       return true;
     }
 
     bool
     device_t::button(uint8_t button_mask, bool release) {
-      impl->buttonState = detail::apply_button_transition(impl->buttonState, button_mask, release);
-      // Flush any pending movement with the new button state
-      impl->flush_accumulated();
-      return impl->sendReportDirect(impl->buttonState, 0, 0, 0, 0);
+      uint8_t buttons;
+      int16_t dx = 0;
+      int16_t dy = 0;
+      bool had_pending_movement = false;
+
+      {
+        std::lock_guard<std::mutex> lk(impl->state_mutex);
+        impl->buttonState = detail::apply_button_transition(impl->buttonState, button_mask, release);
+        buttons = impl->buttonState;
+
+        if (impl->accum_dirty) {
+          dx = clamp_relative_delta(impl->accum_dx);
+          dy = clamp_relative_delta(impl->accum_dy);
+          impl->accum_dx = 0;
+          impl->accum_dy = 0;
+          impl->accum_dirty = false;
+          had_pending_movement = true;
+        }
+      }
+
+      if (had_pending_movement) {
+        impl->sendReportDirect(buttons, dx, dy, 0, 0);
+      }
+
+      return impl->sendReportDirect(buttons, 0, 0, 0, 0);
     }
 
     bool
     device_t::scroll(int8_t distance) {
-      return impl->sendReportDirect(impl->buttonState, 0, 0, distance, 0);
+      uint8_t buttons;
+      {
+        std::lock_guard<std::mutex> lk(impl->state_mutex);
+        buttons = impl->buttonState;
+      }
+      return impl->sendReportDirect(buttons, 0, 0, distance, 0);
     }
 
     bool
     device_t::hscroll(int8_t distance) {
-      return impl->sendReportDirect(impl->buttonState, 0, 0, 0, distance);
+      uint8_t buttons;
+      {
+        std::lock_guard<std::mutex> lk(impl->state_mutex);
+        buttons = impl->buttonState;
+      }
+      return impl->sendReportDirect(buttons, 0, 0, 0, distance);
     }
 
     bool
     device_t::send_report(uint8_t buttons, int16_t delta_x, int16_t delta_y,
                           int8_t scroll_v, int8_t scroll_h) {
-      impl->buttonState = buttons;
+      {
+        std::lock_guard<std::mutex> lk(impl->state_mutex);
+        impl->buttonState = buttons;
+      }
       return impl->sendReportDirect(buttons, delta_x, delta_y, scroll_v, scroll_h);
     }
 
