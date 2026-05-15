@@ -268,6 +268,18 @@ namespace platf {
             flush_accumulated();
             next_deadline += FLUSH_INTERVAL;
 
+            // Catch-up clamp: if HidD_SetFeature stalled (it can take >2ms,
+            // and the send_mutex may also block on a synchronous button() /
+            // scroll() call), next_deadline can fall arbitrarily far behind
+            // wall clock, which would otherwise cause an unbounded burst of
+            // back-to-back reports once the stall clears. Clamp the deadline
+            // to one interval ahead of now so we resync with the wall clock
+            // and pace at FLUSH_INTERVAL again.
+            const auto after_send = std::chrono::steady_clock::now();
+            if (next_deadline + FLUSH_INTERVAL < after_send) {
+              next_deadline = after_send + FLUSH_INTERVAL;
+            }
+
             std::lock_guard<std::mutex> lk(state_mutex);
             active = accum_dirty;
           }
