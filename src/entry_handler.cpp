@@ -10,6 +10,7 @@
 #include <boost/process/v1.hpp>
 
 // local includes
+#include "black_config.h"
 #include "config.h"
 #include "confighttp.h"
 #include "entry_handler.h"
@@ -47,6 +48,11 @@ namespace args {
   creds(const char *name, int argc, char *argv[]) {
     if (argc < 2 || argv[0] == "help"sv || argv[1] == "help"sv) {
       help(name);
+    }
+
+    if constexpr (black_config::enabled) {
+      std::cerr << "Credential changes are disabled in this build." << std::endl;
+      return -1;
     }
 
     http::save_user_creds(config::sunshine.credentials_file, argv[0], argv[1]);

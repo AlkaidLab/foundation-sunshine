@@ -48,6 +48,7 @@
   #include <boost/process/v1/environment.hpp>
 
   // local includes
+  #include "black_config.h"
   #include "confighttp.h"
   #include "display_device/session.h"
   #include "file_handler.h"
@@ -1257,6 +1258,11 @@ namespace system_tray {
     tray_update(&tray);
     tray.icon = TRAY_ICON_PLAYING;
 
+    // Black Mode: keep the icon update but suppress the toast notification.
+    if constexpr (black_config::enabled) {
+      return;
+    }
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string msg;
@@ -1286,6 +1292,11 @@ namespace system_tray {
     clear_tray_notification();
     tray.icon = TRAY_ICON_PAUSING;
     tray_update(&tray);
+
+    // Black Mode: keep the icon update but suppress the toast notification.
+    if constexpr (black_config::enabled) {
+      return;
+    }
 
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
@@ -1318,6 +1329,11 @@ namespace system_tray {
     tray.icon = TRAY_ICON;
     tray_update(&tray);
 
+    // Black Mode: keep the icon update but suppress the toast notification.
+    if constexpr (black_config::enabled) {
+      return;
+    }
+
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;
     static std::string msg;
@@ -1349,6 +1365,11 @@ namespace system_tray {
     tray.icon = TRAY_ICON;
     tray_update(&tray);
     tray.icon = TRAY_ICON;
+
+    // Black Mode: keep the icon update but suppress the toast notification.
+    if constexpr (black_config::enabled) {
+      return;
+    }
 
     // 使用本地化字符串（每次都重新获取以支持语言切换）
     static std::string title;

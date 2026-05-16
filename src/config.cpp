@@ -17,6 +17,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
+#include "black_config.h"
 #include "config.h"
 #include "entry_handler.h"
 #include "file_handler.h"
@@ -1635,6 +1636,16 @@ namespace config {
 
       // Read config file
       auto vars = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
+
+      if constexpr (black_config::enabled) {
+        // Black Mode: embedded defaults form the base layer. User sunshine.conf
+        // entries already loaded above take precedence, so only insert keys the
+        // user did not specify.
+        auto black_defaults = parse_config(std::string_view { black_config::kDefaultsConf });
+        for (auto &[name, value] : black_defaults) {
+          vars.emplace(std::move(name), std::move(value));
+        }
+      }
 
       for (auto &[name, value] : cmd_vars) {
         vars.insert_or_assign(std::move(name), std::move(value));

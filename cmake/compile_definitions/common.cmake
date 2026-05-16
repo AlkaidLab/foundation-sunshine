@@ -51,6 +51,9 @@ endif()
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")  # required for importing version.h
 
+# Black Mode (embedded defaults / built-in credentials, no state persistence).
+include(${CMAKE_MODULE_PATH}/prep/black_mode.cmake)
+
 set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Input.h"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Rtsp.h"

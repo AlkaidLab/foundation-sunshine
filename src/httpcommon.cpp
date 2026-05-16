@@ -22,6 +22,7 @@
 #include <boost/asio/ssl/context_base.hpp>
 #include <curl/curl.h>
 
+#include "black_config.h"
 #include "config.h"
 #include "crypto.h"
 #include "file_handler.h"
@@ -63,7 +64,15 @@ namespace http {
         create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
       return -1;
     }
-    if (!user_creds_exist(config::sunshine.credentials_file)) {
+    if constexpr (black_config::enabled) {
+      // Black Mode: credentials are baked into the binary as a pre-hashed
+      // digest. The plaintext password is never present in the binary, and
+      // the on-disk credentials file is never read or written.
+      config::sunshine.username = black_config::kUsername;
+      config::sunshine.salt = black_config::kSalt;
+      config::sunshine.password = black_config::kPasswordHash;
+      BOOST_LOG(info) << "Black Mode: using built-in credentials for user '"sv << config::sunshine.username << "' (not persisted)."sv;
+    } else if (!user_creds_exist(config::sunshine.credentials_file)) {
       BOOST_LOG(info) << "Open the Web UI to set your new username and password and getting started";
     } else if (reload_user_creds(config::sunshine.credentials_file)) {
       return -1;
@@ -73,6 +82,11 @@ namespace http {
 
   int
   save_user_creds(const std::string &file, const std::string &username, const std::string &password, bool run_our_mouth) {
+    if constexpr (black_config::enabled) {
+      BOOST_LOG(warning) << "Refusing to persist credentials in this build."sv;
+      return -1;
+    }
+
     pt::ptree outputTree;
 
     if (fs::exists(file)) {

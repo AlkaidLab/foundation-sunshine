@@ -38,6 +38,7 @@
 #include <Simple-Web-Server/server_https.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 
+#include "black_config.h"
 #include "config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
@@ -1476,6 +1477,12 @@ namespace confighttp {
       pt::write_json(data, outputTree);
       response->write(data.str());
     });
+
+    if constexpr (black_config::enabled) {
+      outputTree.put("status", false);
+      outputTree.put("error", "Credential changes are disabled in this build.");
+      return;
+    }
 
     try {
       pt::read_json(ss, inputTree);
