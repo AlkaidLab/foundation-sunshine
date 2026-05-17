@@ -590,6 +590,9 @@ namespace stream {
         std::uint16_t width { 0 };
         std::uint16_t height { 0 };
         std::uint32_t flags { 0 };
+        std::uint32_t source_width { 0 };
+        std::uint32_t source_height { 0 };
+        std::uint32_t bitmap_hash { 0 };
         std::uint32_t epoch { 0 };
         std::chrono::steady_clock::time_point last_sent {};
       } cursor_plane;
@@ -1389,10 +1392,96 @@ namespace stream {
     std::uint16_t width { 16 };
     std::uint16_t height { 16 };
     std::uint32_t flags { 0 };
+    std::uint32_t source_width { 0 };
+    std::uint32_t source_height { 0 };
+    std::uint32_t bitmap_hash { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
     std::vector<std::uint8_t> bitmap_bgra;
   };
+
+  constexpr std::uint32_t CURSOR_PLANE_SOURCE_MAGIC = 0x43525353U;
+  constexpr std::uint16_t CURSOR_PLANE_SOURCE_VERSION = 1;
+  constexpr std::uint16_t CURSOR_PLANE_SOURCE_SIZE = 20;
+
+  static std::uint32_t
+  hash_cursor_bitmap(const std::vector<std::uint8_t> &bgra) {
+    std::uint32_t hash = 2166136261u;
+    for (auto byte : bgra) {
+      hash ^= byte;
+      hash *= 16777619u;
+    }
+    return hash ? hash : 1u;
+  }
+
+#ifdef _WIN32
+  static std::vector<std::uint8_t>
+  read_cursor_mask_bits(HBITMAP mask, int width, int height) {
+    if (mask == nullptr || width <= 0 || height <= 0) {
+      return {};
+    }
+
+    const int stride = ((width + 31) / 32) * 4;
+    std::vector<std::uint8_t> bits(static_cast<std::size_t>(stride) *
+                                   static_cast<std::size_t>(height));
+    BITMAPINFO bitmap_info {};
+    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmap_info.bmiHeader.biWidth = width;
+    bitmap_info.bmiHeader.biHeight = -height;
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = 1;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+    HDC hdc = GetDC(nullptr);
+    const int copied_rows = hdc != nullptr ?
+                              GetDIBits(hdc,
+                                        mask,
+                                        0,
+                                        height,
+                                        bits.data(),
+                                        &bitmap_info,
+                                        DIB_RGB_COLORS) :
+                              0;
+    if (hdc != nullptr) {
+      ReleaseDC(nullptr, hdc);
+    }
+    if (copied_rows != height) {
+      return {};
+    }
+    return bits;
+  }
+
+  static bool
+  cursor_mask_bit(const std::vector<std::uint8_t> &bits, int width, int x, int y) {
+    const int stride = ((width + 31) / 32) * 4;
+    const std::size_t offset = static_cast<std::size_t>(y) * stride +
+                               static_cast<std::size_t>(x / 8);
+    if (offset >= bits.size()) {
+      return false;
+    }
+    return (bits[offset] & (0x80 >> (x % 8))) != 0;
+  }
+
+  static void
+  apply_cursor_alpha_from_mask(std::vector<std::uint8_t> &bgra,
+                               int width,
+                               int height,
+                               HBITMAP mask) {
+    auto bits = read_cursor_mask_bits(mask, width, height);
+    if (bits.empty()) {
+      return;
+    }
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        const bool transparent = cursor_mask_bit(bits, width, x, y);
+        const std::size_t alpha = (static_cast<std::size_t>(y) * width + x) * 4 + 3;
+        if (alpha < bgra.size()) {
+          bgra[alpha] = transparent ? 0x00 : 0xFF;
+        }
+      }
+    }
+  }
+#endif
 
 #ifdef _WIN32
   // Map a Windows HCURSOR to a stable shape id from Video.h. Standard system
@@ -1440,6 +1529,7 @@ namespace stream {
   static cursor_plane_sample_t
   sample_host_cursor_plane(session_t *session) {
     cursor_plane_sample_t sample {};
+    (void) session;
 
 #ifdef _WIN32
     CURSORINFO cursor_info {};
@@ -1455,10 +1545,10 @@ namespace stream {
 
     const int origin_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const int origin_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int source_width = std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    const int source_height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
     const int fallback_width = std::max(1, GetSystemMetrics(SM_CXCURSOR));
     const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
-    const int stream_width = session ? std::max(1, session->config.monitor.width) : std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
-    const int stream_height = session ? std::max(1, session->config.monitor.height) : std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
     const bool cursor_visible =
       (cursor_info.flags & CURSOR_SHOWING) != 0 &&
 #ifdef CURSOR_SUPPRESSED
@@ -1468,8 +1558,8 @@ namespace stream {
     RECT virtual_rect {
       origin_x,
       origin_y,
-      origin_x + std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN)),
-      origin_y + std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN)),
+      origin_x + source_width,
+      origin_y + source_height,
     };
     RECT clip_rect {};
     const bool clip_available = GetClipCursor(&clip_rect) != FALSE;
@@ -1492,10 +1582,12 @@ namespace stream {
     if (!cursor_visible || cursor_center_locked) {
       sample.flags |= SS_CURSOR_PLANE_FLAG_LOCKED;
     }
-    const int stream_x = static_cast<int>(point.x - origin_x);
-    const int stream_y = static_cast<int>(point.y - origin_y);
-    sample.x = static_cast<std::uint32_t>(std::clamp(stream_x, 0, stream_width - 1));
-    sample.y = static_cast<std::uint32_t>(std::clamp(stream_y, 0, stream_height - 1));
+    sample.source_width = static_cast<std::uint32_t>(source_width);
+    sample.source_height = static_cast<std::uint32_t>(source_height);
+    const int source_x = static_cast<int>(point.x - origin_x);
+    const int source_y = static_cast<int>(point.y - origin_y);
+    sample.x = static_cast<std::uint32_t>(std::clamp(source_x, 0, source_width - 1));
+    sample.y = static_cast<std::uint32_t>(std::clamp(source_y, 0, source_height - 1));
     sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
     sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
     sample.cursor_shape_id = cursor_visible ?
@@ -1547,9 +1639,8 @@ namespace stream {
 
         if (copied_rows == bitmap_height) {
           // Some Windows cursor bitmaps use an all-zero alpha channel and rely
-          // on the mask bitmap. Preserve transparency for fully black pixels
-          // but force colored pixels opaque so custom/game cursors don't
-          // disappear on the client.
+          // on hbmMask for transparency. Use the host mask when available
+          // instead of guessing that black pixels are transparent.
           bool has_alpha = false;
           for (std::size_t i = 3; i < bgra.size(); i += 4) {
             if (bgra[i] != 0) {
@@ -1558,21 +1649,61 @@ namespace stream {
             }
           }
           if (!has_alpha) {
-            for (std::size_t i = 0; i + 3 < bgra.size(); i += 4) {
-              const bool has_color = bgra[i] != 0 || bgra[i + 1] != 0 || bgra[i + 2] != 0;
-              bgra[i + 3] = has_color ? 0xFF : 0x00;
+            apply_cursor_alpha_from_mask(bgra, bitmap_width, bitmap_height, icon_info.hbmMask);
+            for (std::size_t i = 3; i < bgra.size(); i += 4) {
+              if (bgra[i] != 0) {
+                has_alpha = true;
+                break;
+              }
+            }
+            if (!has_alpha) {
+              for (std::size_t i = 3; i < bgra.size(); i += 4) {
+                bgra[i] = 0xFF;
+              }
             }
           }
           sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
           sample.bitmap_stride = static_cast<std::uint16_t>(stride);
+          sample.bitmap_hash = hash_cursor_bitmap(bgra);
           sample.bitmap_bgra = std::move(bgra);
           sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
         }
       }
       else if (icon_info.hbmMask != nullptr &&
                GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-        sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
-        sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512));
+        const int mask_width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
+        const int mask_height = std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512);
+        sample.width = static_cast<std::uint16_t>(mask_width);
+        sample.height = static_cast<std::uint16_t>(mask_height);
+
+        auto mask_bits = read_cursor_mask_bits(icon_info.hbmMask, mask_width, mask_height * 2);
+        if (!mask_bits.empty()) {
+          const int stride = mask_width * 4;
+          std::vector<std::uint8_t> bgra(static_cast<std::size_t>(stride) *
+                                         static_cast<std::size_t>(mask_height));
+          for (int y = 0; y < mask_height; ++y) {
+            for (int x = 0; x < mask_width; ++x) {
+              const bool and_bit = cursor_mask_bit(mask_bits, mask_width, x, y);
+              const bool xor_bit = cursor_mask_bit(mask_bits, mask_width, x, y + mask_height);
+              const std::size_t offset = (static_cast<std::size_t>(y) * mask_width + x) * 4;
+              if (and_bit && !xor_bit) {
+                bgra[offset + 3] = 0x00;
+              }
+              else {
+                const std::uint8_t color = xor_bit ? 0xFF : 0x00;
+                bgra[offset + 0] = color;
+                bgra[offset + 1] = color;
+                bgra[offset + 2] = color;
+                bgra[offset + 3] = 0xFF;
+              }
+            }
+          }
+          sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
+          sample.bitmap_stride = static_cast<std::uint16_t>(stride);
+          sample.bitmap_hash = hash_cursor_bitmap(bgra);
+          sample.bitmap_bgra = std::move(bgra);
+          sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
+        }
       }
       if (icon_info.hbmColor != nullptr) {
         DeleteObject(icon_info.hbmColor);
@@ -1599,6 +1730,9 @@ namespace stream {
                                       std::uint16_t width,
                                       std::uint16_t height,
                                       std::uint32_t flags,
+                                      std::uint32_t source_width = 0,
+                                      std::uint32_t source_height = 0,
+                                      std::uint32_t bitmap_hash = 0,
                                       std::uint16_t bitmap_format = 0,
                                       std::uint16_t bitmap_stride = 0,
                                       const std::vector<std::uint8_t> *bitmap_bgra = nullptr);
@@ -1613,6 +1747,9 @@ namespace stream {
                            std::uint16_t width,
                            std::uint16_t height,
                            std::uint32_t flags,
+                           std::uint32_t source_width,
+                           std::uint32_t source_height,
+                           std::uint32_t bitmap_hash,
                            std::uint16_t bitmap_format,
                            std::uint16_t bitmap_stride,
                            const std::vector<std::uint8_t> *bitmap_bgra) {
@@ -1629,9 +1766,11 @@ namespace stream {
                                 bitmap_bgra->size() <= max_cursor_bitmap_bytes &&
                                 bitmap_format == SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA &&
                                 bitmap_stride > 0;
+    const bool include_source = include_bitmap && source_width > 0 && source_height > 0;
     const std::size_t cursor_payload_size =
       sizeof(SS_CURSOR_PLANE_V1) +
-      (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0);
+      (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0) +
+      (include_source ? CURSOR_PLANE_SOURCE_SIZE : 0);
     if (cursor_payload_size > 0xFFFFu) {
       BOOST_LOG(warning) << "Skipping cursor bitmap payload: too large bytes="sv << cursor_payload_size;
       return send_cursor_plane_update(session,
@@ -1676,6 +1815,25 @@ namespace stream {
                     sizeof(SS_CURSOR_PLANE_V1) + sizeof(SS_CURSOR_PLANE_BITMAP_V1),
                   bitmap_bgra->data(),
                   bitmap_bgra->size());
+      if (include_source) {
+        auto *tail = plaintext.data() + sizeof(control_header_v2) +
+                     sizeof(SS_CURSOR_PLANE_V1) + sizeof(SS_CURSOR_PLANE_BITMAP_V1) +
+                     bitmap_bgra->size();
+        auto write_le16 = [](std::uint8_t *dst, std::uint16_t value) {
+          auto le = util::endian::little<std::uint16_t>(value);
+          std::memcpy(dst, &le, sizeof(le));
+        };
+        auto write_le32 = [](std::uint8_t *dst, std::uint32_t value) {
+          auto le = util::endian::little<std::uint32_t>(value);
+          std::memcpy(dst, &le, sizeof(le));
+        };
+        write_le32(tail + 0, CURSOR_PLANE_SOURCE_MAGIC);
+        write_le16(tail + 4, CURSOR_PLANE_SOURCE_VERSION);
+        write_le16(tail + 6, CURSOR_PLANE_SOURCE_SIZE);
+        write_le32(tail + 8, source_width);
+        write_le32(tail + 12, source_height);
+        write_le32(tail + 16, bitmap_hash);
+      }
     }
 
     std::vector<std::uint8_t> encrypted_payload(
@@ -1724,7 +1882,10 @@ namespace stream {
                          last.hotspot_y != sample.hotspot_y ||
                          last.width != sample.width ||
                          last.height != sample.height ||
-                         last.flags != sample.flags;
+                         last.flags != sample.flags ||
+                         last.source_width != sample.source_width ||
+                         last.source_height != sample.source_height ||
+                         last.bitmap_hash != sample.bitmap_hash;
     const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
     if (!never_sent && now - last.last_sent < std::chrono::milliseconds(16)) {
       return;
@@ -1737,10 +1898,13 @@ namespace stream {
       !sample.bitmap_bgra.empty() &&
       (never_sent ||
        last.cursor_shape_id != sample.cursor_shape_id ||
-       last.width != sample.width ||
-       last.height != sample.height ||
-       last.hotspot_x != sample.hotspot_x ||
-       last.hotspot_y != sample.hotspot_y);
+        last.width != sample.width ||
+        last.height != sample.height ||
+        last.hotspot_x != sample.hotspot_x ||
+        last.hotspot_y != sample.hotspot_y ||
+        last.source_width != sample.source_width ||
+        last.source_height != sample.source_height ||
+        last.bitmap_hash != sample.bitmap_hash);
     const bool shape_changed = last.cursor_shape_id != sample.cursor_shape_id;
 
     if (send_cursor_plane_update(session,
@@ -1750,12 +1914,15 @@ namespace stream {
                                  sample.hotspot_x,
                                  sample.hotspot_y,
                                  sample.width,
-                                 sample.height,
-                                 should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
-                                                      (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
-                                 should_send_bitmap ? sample.bitmap_format : 0,
-                                 should_send_bitmap ? sample.bitmap_stride : 0,
-                                 should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0) {
+                                  sample.height,
+                                  should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
+                                                       (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
+                                  should_send_bitmap ? sample.source_width : 0,
+                                  should_send_bitmap ? sample.source_height : 0,
+                                  should_send_bitmap ? sample.bitmap_hash : 0,
+                                  should_send_bitmap ? sample.bitmap_format : 0,
+                                  should_send_bitmap ? sample.bitmap_stride : 0,
+                                  should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0) {
       last.cursor_shape_id = sample.cursor_shape_id;
       last.x = sample.x;
       last.y = sample.y;
@@ -1764,6 +1931,9 @@ namespace stream {
       last.width = sample.width;
       last.height = sample.height;
       last.flags = sample.flags;
+      last.source_width = sample.source_width;
+      last.source_height = sample.source_height;
+      last.bitmap_hash = sample.bitmap_hash;
       last.last_sent = now;
 
       if (never_sent || shape_changed || should_send_bitmap) {
