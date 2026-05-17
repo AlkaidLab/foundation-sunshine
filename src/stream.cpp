@@ -1400,10 +1400,6 @@ namespace stream {
     std::vector<std::uint8_t> bitmap_bgra;
   };
 
-  constexpr std::uint32_t CURSOR_PLANE_SOURCE_MAGIC = 0x43525353U;
-  constexpr std::uint16_t CURSOR_PLANE_SOURCE_VERSION = 1;
-  constexpr std::uint16_t CURSOR_PLANE_SOURCE_SIZE = 20;
-
   static std::uint32_t
   hash_cursor_bitmap(const std::vector<std::uint8_t> &bgra) {
     std::uint32_t hash = 2166136261u;
@@ -1770,7 +1766,7 @@ namespace stream {
     const std::size_t cursor_payload_size =
       sizeof(SS_CURSOR_PLANE_V1) +
       (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0) +
-      (include_source ? CURSOR_PLANE_SOURCE_SIZE : 0);
+      (include_source ? sizeof(SS_CURSOR_PLANE_SOURCE_V1) : 0);
     if (cursor_payload_size > 0xFFFFu) {
       BOOST_LOG(warning) << "Skipping cursor bitmap payload: too large bytes="sv << cursor_payload_size;
       return send_cursor_plane_update(session,
@@ -1827,9 +1823,9 @@ namespace stream {
           auto le = util::endian::little<std::uint32_t>(value);
           std::memcpy(dst, &le, sizeof(le));
         };
-        write_le32(tail + 0, CURSOR_PLANE_SOURCE_MAGIC);
-        write_le16(tail + 4, CURSOR_PLANE_SOURCE_VERSION);
-        write_le16(tail + 6, CURSOR_PLANE_SOURCE_SIZE);
+        write_le32(tail + 0, SS_CURSOR_PLANE_SOURCE_MAGIC);
+        write_le16(tail + 4, SS_CURSOR_PLANE_SOURCE_VERSION);
+        write_le16(tail + 6, sizeof(SS_CURSOR_PLANE_SOURCE_V1));
         write_le32(tail + 8, source_width);
         write_le32(tail + 12, source_height);
         write_le32(tail + 16, bitmap_hash);
