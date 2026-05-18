@@ -627,6 +627,9 @@ namespace amf {
     for (auto &fi : ltr_slot_frame_index) fi = 0;
     current_ltr_slot = 0;
     rfi_pending = false;
+    hwsurfaces_in_queue = 0;
+    consecutive_submit_failures = 0;
+    consecutive_empty_outputs = 0;
 
     auto codec_name = (video_format == 0) ? "H.264" :
                       (video_format == 1) ? "HEVC" :
@@ -642,6 +645,7 @@ namespace amf {
   amf_d3d11::destroy_encoder() {
     pending_outputs.clear();
     frame_rfi_flags.clear();
+    hwsurfaces_in_queue = 0;
     if (encoder) {
       encoder->Terminate();
       encoder = nullptr;
@@ -774,7 +778,22 @@ namespace amf {
 
     frame_rfi_flags[frame_index] = frame_after_ref_frame_invalidation;
 
-    // Submit input — retry with output draining if input queue is full (like FFmpeg)
+    // FFmpeg-style proactive backpressure: if we already have many surfaces
+    // in flight, drain one output BEFORE SubmitInput to avoid AMF_INPUT_FULL
+    // entirely. This eliminates the tight retry spin in the common overrun
+    // path (4K144 HDR, transient VCN stall, DXGI scheduling jitter) which on
+    // some AMD GPUs has been observed to wedge the pipeline until the client
+    // disconnects (frame frozen, audio still flowing).
+    if (hwsurfaces_in_queue >= HWSURFACES_IN_QUEUE_MAX) {
+      ::amf::AMFDataPtr drain_data;
+      encoder->QueryOutput(&drain_data);
+      if (drain_data) {
+        pending_outputs.push_back(drain_data);
+        --hwsurfaces_in_queue;
+      }
+    }
+
+    // Submit input — retry with output draining if input queue is still full (like FFmpeg)
     res = encoder->SubmitInput(surface);
     if (res == AMF_INPUT_FULL) {
       // Drain output to free up space in the encoder queue, then retry
@@ -784,6 +803,7 @@ namespace amf {
         if (drain_data) {
           // Stash the output for later retrieval
           pending_outputs.push_back(drain_data);
+          --hwsurfaces_in_queue;
         }
         if (drain_res != AMF_OK && !drain_data) {
           if (!query_timeout_supported) {
@@ -793,8 +813,17 @@ namespace amf {
         res = encoder->SubmitInput(surface);
       }
       if (res == AMF_INPUT_FULL) {
-        BOOST_LOG(warning) << "AMF: SubmitInput still AMF_INPUT_FULL after retries, dropping frame " << frame_index;
+        BOOST_LOG(warning) << "AMF: SubmitInput still AMF_INPUT_FULL after retries, dropping frame " << frame_index
+                           << " (in_flight=" << hwsurfaces_in_queue << ")";
         frame_rfi_flags.erase(frame_index);
+        // Treat sustained INPUT_FULL exhaustion as a submit failure for the
+        // watchdog: if the pipeline stays jammed for ~1s of frames the upper
+        // layer will reinit instead of silently producing no output forever.
+        if (++consecutive_submit_failures >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_submit_failures
+                           << " consecutive frames with INPUT_FULL exhaustion, signaling reinit";
+          result.fatal = true;
+        }
         return result;
       }
     }
@@ -817,12 +846,14 @@ namespace amf {
       return result;
     }
     consecutive_submit_failures = 0;
+    ++hwsurfaces_in_queue;
 
     // Query output — if we already drained output during SubmitInput retry, use that
     ::amf::AMFDataPtr output_data;
     if (!pending_outputs.empty()) {
       output_data = pending_outputs.front();
       pending_outputs.pop_front();
+      // hwsurfaces_in_queue was already decremented when this output was drained
     }
     else {
       // Poll with retry: encoder may need a moment after SubmitInput
@@ -846,6 +877,7 @@ namespace amf {
         }
         return result;
       }
+      --hwsurfaces_in_queue;
     }
     consecutive_empty_outputs = 0;
 

@@ -107,9 +107,17 @@ namespace amf {
     bool ltr_slots_valid[MAX_LTR_SLOTS] = {};
     uint64_t ltr_slot_frame_index[MAX_LTR_SLOTS] = {};  // Frame index when each LTR slot was marked
 
-    // Pending outputs stashed during SubmitInput retry
+    // Pending outputs stashed during SubmitInput retry or proactive backpressure drain
     std::deque<::amf::AMFDataPtr> pending_outputs;
     std::unordered_map<uint64_t, bool> frame_rfi_flags;
+
+    // FFmpeg-style proactive backpressure: track in-flight surfaces (submitted
+    // but not yet retrieved via QueryOutput) so we can drain output BEFORE
+    // SubmitInput would hit AMF_INPUT_FULL. The native AMF queue is roughly
+    // 21 frames deep per FFmpeg's amfenc.c notes; we keep our soft cap well
+    // below that to leave headroom for VCN stalls and DXGI scheduling jitter.
+    int hwsurfaces_in_queue = 0;
+    static constexpr int HWSURFACES_IN_QUEUE_MAX = 16;
 
     // Statistics feedback state
     bool statistics_enabled = false;
