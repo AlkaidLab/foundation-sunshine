@@ -135,6 +135,19 @@ namespace weak_net {
     }
 
     int
+    cautious_startup_probe_step(int current_bitrate_kbps, int ceiling_bitrate_kbps) {
+      const auto remaining = std::max(0, ceiling_bitrate_kbps - current_bitrate_kbps);
+      if (remaining == 0) {
+        return 0;
+      }
+
+      const auto proportional = static_cast<int>(std::lround(
+        static_cast<double>(std::max(1, current_bitrate_kbps)) * 0.18));
+      const auto gap_probe = static_cast<int>(std::lround(static_cast<double>(remaining) * 0.025));
+      return std::clamp(std::max(proportional, gap_probe), 1000, 3000);
+    }
+
+    int
     alr_probe_step(int current_bitrate_kbps, int ceiling_bitrate_kbps) {
       const auto remaining = std::max(0, ceiling_bitrate_kbps - current_bitrate_kbps);
       if (remaining == 0) {
@@ -145,6 +158,18 @@ namespace weak_net {
       const auto gap_probe = static_cast<int>(std::lround(static_cast<double>(remaining) * 0.42));
       const auto target = std::max(exponential, current_bitrate_kbps + gap_probe);
       return std::clamp(target - current_bitrate_kbps, 3000, 28000);
+    }
+
+    bool
+    conservative_low_seed_high_ceiling_startup(const config_t &config,
+                                               int configured_encoding_ceiling_kbps) {
+      if (config.startup_bitrate_kbps <= 0 || configured_encoding_ceiling_kbps <= 0) {
+        return false;
+      }
+
+      return config.startup_bitrate_kbps <= 20000 &&
+             configured_encoding_ceiling_kbps >= 80000 &&
+             configured_encoding_ceiling_kbps >= config.startup_bitrate_kbps * 6;
     }
 
     int
@@ -1556,6 +1581,28 @@ namespace weak_net {
       bitrate_plateau_kbps_ = 0;
     }
 
+    const bool low_seed_high_ceiling_startup =
+      conservative_low_seed_high_ceiling_startup(config_, pre_action_encoding_ceiling);
+    const bool startup_capacity_proven =
+      raw_network_clean &&
+      raw_video_deadline_clean &&
+      has_video_cadence_feedback &&
+      displayed_current_fps_ratio >= 0.985 &&
+      displayed_ratio >= 0.98 &&
+      !app_limited_send_rate &&
+      observed_video_kbps >= std::max(30000, config_.startup_bitrate_kbps * 3);
+    auto clean_alr_probe_step = [&](int current_bitrate_kbps, int ceiling_bitrate_kbps) {
+      const bool startup_probe_guard =
+        low_seed_high_ceiling_startup &&
+        !startup_capacity_proven &&
+        (startup_protection_remaining_ms_ > 0 ||
+         stable_windows_ < 8 ||
+         (app_limited_send_rate && stable_windows_ < 12));
+      return startup_probe_guard ?
+               cautious_startup_probe_step(current_bitrate_kbps, ceiling_bitrate_kbps) :
+               alr_probe_step(current_bitrate_kbps, ceiling_bitrate_kbps);
+    };
+
     video_deadline_windows_ = video_deadline_constrained ?
                                 std::min(video_deadline_windows_ + 1, 16) :
                                 0;
@@ -2350,7 +2397,8 @@ namespace weak_net {
           current_bitrate_kbps_ = std::min(bitrate_recovery_ceiling,
                                            current_bitrate_kbps_ +
                                              (clean_alr_feedback ?
-                                                alr_probe_step(current_bitrate_kbps_, bitrate_recovery_ceiling) :
+                                                clean_alr_probe_step(current_bitrate_kbps_,
+                                                                     bitrate_recovery_ceiling) :
                                                 gentle_probe_step(current_bitrate_kbps_, bitrate_recovery_ceiling)));
           note_bitrate_probe(probe_base, current_bitrate_kbps_);
         }
@@ -2844,9 +2892,9 @@ namespace weak_net {
         raw_motion_clean;
       const auto max_bitrate_up =
         (clean_alr_feedback && !network_crisis && !network_constrained) ?
-          alr_probe_step(previous_bitrate,
-                         std::min(effective_ceiling_kbps_,
-                                  configured_encoding_ceiling_kbps(config_, current_fec_percentage_))) :
+          clean_alr_probe_step(previous_bitrate,
+                               std::min(effective_ceiling_kbps_,
+                                        configured_encoding_ceiling_kbps(config_, current_fec_percentage_))) :
           proportional_step(previous_bitrate,
                             clean_audio_only_visual_recovery ? 0.05 :
                             low_availability_readable_floor_lift ? 0.80 :

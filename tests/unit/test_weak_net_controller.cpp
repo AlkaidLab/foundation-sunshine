@@ -4050,6 +4050,62 @@ TEST(WeakNetControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadO
   EXPECT_LE(action.fec_percentage, 35);
 }
 
+TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProof) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 145567,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 10000,
+    .ceiling_total_bitrate_kbps = 160124,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 145567,
+    .fps_needed_kbps = 126000,
+  });
+
+  int peak_bitrate = controller.current_bitrate_kbps();
+  weak_net::action_t action {};
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 540,
+      .frames_seen = 0,
+      .complete_frames = 81,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 744192,
+      .rtt_ms = 22,
+      .rtt_variance_ms = 2,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .late_frames = 0,
+      .displayed_frames = 81,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 1,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+    });
+    peak_bitrate = std::max(peak_bitrate, action.target_bitrate_kbps);
+  }
+
+  EXPECT_EQ(action.scenario, weak_net::scenario_e::clean_alr);
+  EXPECT_LE(peak_bitrate, 24000)
+    << "A remote-safe low startup seed must not jump 10->38->66Mbps from clean ALR/last-frame reuse alone";
+  EXPECT_EQ(action.target_fps, 150)
+    << "This guard should limit only bitrate probing, not high-FPS cadence when delivery is clean";
+  EXPECT_LE(action.fec_percentage, 2);
+}
+
 TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCadenceQuickly) {
   weak_net::controller_t controller;
   controller.configure({
