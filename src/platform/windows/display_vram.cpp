@@ -1220,6 +1220,8 @@ namespace platf::dxgi {
     buf_t cs_layout_cbuf;                  // Layout cbuffer (b1) for CS
     int  cs_dispatch_groups_x = 0;         // Dispatch dims over the active rect (saves work in letterbox case)
     int  cs_dispatch_groups_y = 0;
+    int  cs_copy_w = 0;                    // Logical copy width (Intel QSV may back output_texture with a larger padded surface)
+    int  cs_copy_h = 0;                    // Logical copy height (ditto)
     bool cs_path_active = false;           // True when CS conversion path is initialized for this output
     bool cs_use_pq = false;                // Selected transfer function (PQ or HLG) for HDR variant
     bool cs_for_p010 = false;              // True for HDR P010 path, false for SDR NV12 path
@@ -1813,6 +1815,14 @@ namespace platf::dxgi {
       cs_dispatch_groups_x = (active_w + 15) / 16;
       cs_dispatch_groups_y = (active_h + 15) / 16;
 
+      // Logical output extent the encoder consumes. Intel QSV input surfaces are
+      // commonly aligned up internally (e.g. 1080 -> 1088 rows), so the underlying
+      // ID3D11Texture2D backing output_texture can be larger than out_width/out_height.
+      // We use CopySubresourceRegion with this explicit box on the scratch path so
+      // dst/src dimensions never have to match the resource desc exactly.
+      cs_copy_w = out_width;
+      cs_copy_h = out_height;
+
       cs_path_active = true;
       cs_use_pq = use_pq;
       cs_for_p010 = is_p010;
@@ -1880,8 +1890,13 @@ namespace platf::dxgi {
       device_ctx->CSSetShader(nullptr, nullptr, 0);
 
       // Only copy when we couldn't bind the UAV directly to output_texture.
+      // Use CopySubresourceRegion with an explicit box so a padded dst (e.g. Intel
+      // QSV's internally row-aligned NV12/P010 surface) still receives the correct
+      // active region. Plain CopyResource silently fails when src/dst desc differ.
       if (!cs_writes_output_directly) {
-        device_ctx->CopyResource(output_texture.get(), cs_scratch_tex.get());
+        D3D11_BOX src_box = { 0, 0, 0, (UINT) cs_copy_w, (UINT) cs_copy_h, 1 };
+        device_ctx->CopySubresourceRegion(output_texture.get(), 0, 0, 0, 0,
+                                          cs_scratch_tex.get(), 0, &src_box);
       }
       return true;
     }
