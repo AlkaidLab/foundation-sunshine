@@ -5,7 +5,15 @@
 #
 # Configuration (CMake cache variables):
 #   FETCH_DRIVER_DEPS       — Enable/disable downloads (default: ON)
+#   DRIVER_DEPS_REQUIRED    — If ON (default), missing driver files are a
+#                             FATAL_ERROR. If OFF (typical for fork-PR CI),
+#                             missing files become a WARNING and the affected
+#                             driver is excluded from packaging.
 #   VMOUSE_DRIVER_VERSION   — ZakoVirtualMouse release tag (e.g. v1.1.0)
+#   VMOUSE_PUBLIC_REPO      — Public mirror repo for vmouse release assets
+#                             (default: AlkaidLab/zako-vmouse-release). Tried
+#                             first; falls back to private repo via API if
+#                             GITHUB_TOKEN is available.
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
@@ -24,6 +32,7 @@ if(NOT WIN32)
 endif()
 
 option(FETCH_DRIVER_DEPS "Download driver dependencies from GitHub Releases" ON)
+option(DRIVER_DEPS_REQUIRED "Treat missing driver dependencies as a fatal error" ON)
 
 # Version pins
 set(VMOUSE_DRIVER_VERSION "v1.2.0" CACHE STRING "ZakoVirtualMouse driver version tag")
@@ -35,6 +44,8 @@ set(NEFCON_VERSION "v1.10.0" CACHE STRING "nefcon version tag")
 
 # Repositories
 set(_VMOUSE_REPO "AlkaidLab/ZakoVirtualMouse")
+set(VMOUSE_PUBLIC_REPO "AlkaidLab/zako-vmouse-release" CACHE STRING
+    "Public mirror repo (owner/name) hosting ZakoVirtualMouse release assets")
 set(_VDD_REPO "qiin2333/zako-vdd")
 set(_NEFCON_REPO "nefarius/nefcon")
 
@@ -133,13 +144,43 @@ function(_fetch_vmouse)
     return()
   endif()
 
+  file(MAKE_DIRECTORY "${VMOUSE_DRIVER_DIR}")
+
+  # ---- Attempt 1: public mirror repo (no auth needed) ----
+  if(VMOUSE_PUBLIC_REPO)
+    message(STATUS "  Trying public mirror ${VMOUSE_PUBLIC_REPO} ...")
+    foreach(_f ${_files})
+      if(EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
+        continue()
+      endif()
+      set(_url "https://github.com/${VMOUSE_PUBLIC_REPO}/releases/download/${VMOUSE_DRIVER_VERSION}/${_f}")
+      _driver_download("${_url}" "${VMOUSE_DRIVER_DIR}/${_f}")
+    endforeach()
+
+    # If all files now present, we're done.
+    set(_all_ok TRUE)
+    foreach(_f ${_files})
+      if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
+        set(_all_ok FALSE)
+        break()
+      endif()
+    endforeach()
+    if(_all_ok)
+      message(STATUS "  vmouse fetched from public mirror")
+      return()
+    endif()
+  endif()
+
+  # ---- Attempt 2: private repo via GitHub API (requires token) ----
   if(NOT GITHUB_TOKEN)
-    message(WARNING "  GITHUB_TOKEN required for private repo ${_VMOUSE_REPO}")
+    message(WARNING
+      "  vmouse not available from public mirror '${VMOUSE_PUBLIC_REPO}' "
+      "at tag ${VMOUSE_DRIVER_VERSION}, and GITHUB_TOKEN is not set to fall "
+      "back on private repo ${_VMOUSE_REPO}.")
     return()
   endif()
 
   find_program(_CURL curl REQUIRED)
-  file(MAKE_DIRECTORY "${VMOUSE_DRIVER_DIR}")
 
   # Query release assets via GitHub API
   set(_api_url "https://api.github.com/repos/${_VMOUSE_REPO}/releases/tags/${VMOUSE_DRIVER_VERSION}")
@@ -254,23 +295,48 @@ _fetch_vdd()
 _fetch_nefcon()
 
 # ---------------------------------------------------------------------------
-# Verify critical files
+# Verify critical files (per-driver, so optional drivers can be skipped
+# individually when DRIVER_DEPS_REQUIRED=OFF, e.g. fork-PR CI).
 # ---------------------------------------------------------------------------
-set(_missing)
-foreach(_f
-    "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
-    "${VDD_DRIVER_DIR}/ZakoVDD.dll"
-    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll"
-    "${NEFCON_DRIVER_DIR}/nefconw.exe")
-  if(NOT EXISTS "${_f}")
-    list(APPEND _missing "${_f}")
+function(_check_driver name available_var)
+  set(_missing)
+  foreach(_f ${ARGN})
+    if(NOT EXISTS "${_f}")
+      list(APPEND _missing "${_f}")
+    endif()
+  endforeach()
+  if(_missing)
+    string(REPLACE ";" "\n  " _list "${_missing}")
+    if(DRIVER_DEPS_REQUIRED)
+      message(FATAL_ERROR
+        "Missing ${name} driver dependencies:\n  ${_list}\n"
+        "For private repos, set -DGITHUB_TOKEN=<token> or env GITHUB_TOKEN.\n"
+        "To skip downloads: -DFETCH_DRIVER_DEPS=OFF (provide files manually in ${DRIVER_DEPS_CACHE}).\n"
+        "To make missing drivers non-fatal (e.g. for fork-PR CI): -DDRIVER_DEPS_REQUIRED=OFF.")
+    else()
+      message(WARNING
+        "Missing ${name} driver dependencies (packaging will skip this driver):\n  ${_list}")
+    endif()
+    set(${available_var} FALSE CACHE INTERNAL "" FORCE)
+  else()
+    set(${available_var} TRUE CACHE INTERNAL "" FORCE)
   endif()
-endforeach()
+endfunction()
 
-if(_missing)
-  string(REPLACE ";" "\n  " _list "${_missing}")
-  message(FATAL_ERROR
-    "Missing driver dependencies:\n  ${_list}\n"
-    "For private repos, set -DGITHUB_TOKEN=<token> or env GITHUB_TOKEN.\n"
-    "To skip downloads: -DFETCH_DRIVER_DEPS=OFF (provide files manually in ${DRIVER_DEPS_CACHE}).")
-endif()
+_check_driver("vmouse" VMOUSE_DRIVER_AVAILABLE
+    "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
+    "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.inf"
+    "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
+    "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cer")
+_check_driver("vdd (latest)" VDD_DRIVER_AVAILABLE
+    "${VDD_DRIVER_DIR}/ZakoVDD.dll"
+    "${VDD_DRIVER_DIR}/ZakoVDD.inf"
+    "${VDD_DRIVER_DIR}/ZakoVDD.cat"
+    "${VDD_DRIVER_DIR}/ZakoVDD.cer")
+_check_driver("vdd (win10)" VDD_WIN10_DRIVER_AVAILABLE
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.inf"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cat"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer")
+_check_driver("nefcon" NEFCON_DRIVER_AVAILABLE
+    "${NEFCON_DRIVER_DIR}/nefconw.exe")
