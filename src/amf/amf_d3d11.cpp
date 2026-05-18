@@ -793,11 +793,21 @@ namespace amf {
       }
     }
 
-    // Submit input — retry with output draining if input queue is still full (like FFmpeg)
+    // Submit input — retry with output draining if input queue is still full (like FFmpeg).
+    //
+    // AMF SubmitInput return values we explicitly handle (per AMF SimpleEncoder sample):
+    //   AMF_OK                          — submitted, count it.
+    //   AMF_INPUT_FULL                  — encoder queue full, drain output + retry.
+    //   AMF_DECODER_NO_FREE_SURFACES    — surface pool exhausted, semantically equivalent
+    //                                     to INPUT_FULL on the input side; treat the same.
+    //   AMF_NEED_MORE_INPUT             — frame was absorbed but no output yet (e.g. PA
+    //                                     lookahead warming up). Treat as success (count
+    //                                     it as in-flight) but skip the output poll loop.
+    //   anything else                   — real error.
     res = encoder->SubmitInput(surface);
-    if (res == AMF_INPUT_FULL) {
+    if (res == AMF_INPUT_FULL || res == AMF_DECODER_NO_FREE_SURFACES) {
       // Drain output to free up space in the encoder queue, then retry
-      for (int retry = 0; retry < 20 && res == AMF_INPUT_FULL; ++retry) {
+      for (int retry = 0; retry < 20 && (res == AMF_INPUT_FULL || res == AMF_DECODER_NO_FREE_SURFACES); ++retry) {
         ::amf::AMFDataPtr drain_data;
         auto drain_res = encoder->QueryOutput(&drain_data);
         if (drain_data) {
@@ -812,8 +822,9 @@ namespace amf {
         }
         res = encoder->SubmitInput(surface);
       }
-      if (res == AMF_INPUT_FULL) {
-        BOOST_LOG(warning) << "AMF: SubmitInput still AMF_INPUT_FULL after retries, dropping frame " << frame_index
+      if (res == AMF_INPUT_FULL || res == AMF_DECODER_NO_FREE_SURFACES) {
+        BOOST_LOG(warning) << "AMF: SubmitInput still " << (res == AMF_INPUT_FULL ? "AMF_INPUT_FULL" : "AMF_DECODER_NO_FREE_SURFACES")
+                           << " after retries, dropping frame " << frame_index
                            << " (in_flight=" << hwsurfaces_in_queue << ")";
         frame_rfi_flags.erase(frame_index);
         // Treat sustained INPUT_FULL exhaustion as a submit failure for the
@@ -826,6 +837,15 @@ namespace amf {
         }
         return result;
       }
+    }
+    if (res == AMF_NEED_MORE_INPUT) {
+      // Frame consumed but encoder isn't producing output yet (typical during
+      // pre-analysis / lookahead warm-up). Per AMF SimpleEncoder sample this
+      // is a normal "do nothing" case — NOT an error. Count the surface as
+      // in-flight so backpressure stays accurate, but skip output polling.
+      consecutive_submit_failures = 0;
+      ++hwsurfaces_in_queue;
+      return result;
     }
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: SubmitInput failed, error: " << res;
