@@ -584,37 +584,29 @@ end;
 
 procedure VerifyServiceInstalled();
 var
-  ResultCode: Integer;
-  TmpFile, ExpectedPath, Line, Lower: String;
-  Lines: TArrayOfString;
-  i: Integer;
-  Matched: Boolean;
+  ExpectedPath, ImagePath, Lower: String;
 begin
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
-  TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice.txt');
-  // Redirect to a temp file and parse in Pascal so we don't depend on cmd.exe
-  // performing %VAR% expansion on the captured path or on `find` substring
-  // matching (which would mis-handle e.g. "sunshinesvc.exe.bak").
-  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Matched := False;
-  if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
+
+  // Read the service binary path directly from the registry instead of
+  // parsing `sc qc` output. `sc.exe` localizes its column labels
+  // (e.g. on Spanish Windows BINARY_PATH_NAME becomes NOMBRE_RUTA_BINARIO),
+  // so the previous string-prefix match falsely failed on non-English
+  // locales even though install-service.bat had already verified the
+  // binPath via locale-safe `find /I <abs_path>` and exited 0.
+  //
+  // ImagePath is REG_EXPAND_SZ and may be wrapped in quotes when the path
+  // contains spaces (it always does under "Program Files"); substring match
+  // tolerates both forms, plus any future appended arguments.
+  if RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
+                         'ImagePath', ImagePath) then
   begin
     Lower := Lowercase(ExpectedPath);
-    for i := 0 to GetArrayLength(Lines) - 1 do
-    begin
-      Line := Trim(Lines[i]);
-      if (Pos('BINARY_PATH_NAME', Uppercase(Line)) = 1) and
-         (Pos(Lower, Lowercase(Line)) > 0) then
-      begin
-        Matched := True;
-        Break;
-      end;
-    end;
+    if Pos(Lower, Lowercase(ImagePath)) > 0 then
+      Exit;  // happy path
   end;
-  DeleteFile(TmpFile);
-  if not Matched then
-    RaiseException(CustomMessage('MsgServiceInstallFailed'));
+
+  RaiseException(CustomMessage('MsgServiceInstallFailed'));
 end;
 
 // Initialization: handle old NSIS upgrade
