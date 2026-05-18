@@ -38,6 +38,7 @@
 
 # build directories
 build/
+build-codex/
 cmake-*/
 docs/doxyconfig*
 
