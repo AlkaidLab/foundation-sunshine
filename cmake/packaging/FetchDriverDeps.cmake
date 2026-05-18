@@ -329,8 +329,14 @@ _check_driver("vmouse" VMOUSE_DRIVER_AVAILABLE
     "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
     "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cer")
 _check_driver("vdd (latest)" VDD_DRIVER_AVAILABLE
-    "${VDD_DRIVER_DIR}/ZakoVDD.dll")
+    "${VDD_DRIVER_DIR}/ZakoVDD.dll"
+    "${VDD_DRIVER_DIR}/ZakoVDD.inf"
+    "${VDD_DRIVER_DIR}/ZakoVDD.cat"
+    "${VDD_DRIVER_DIR}/ZakoVDD.cer")
 _check_driver("vdd (win10)" VDD_WIN10_DRIVER_AVAILABLE
-    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll")
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.inf"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cat"
+    "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer")
 _check_driver("nefcon" NEFCON_DRIVER_AVAILABLE
     "${NEFCON_DRIVER_DIR}/nefconw.exe")
