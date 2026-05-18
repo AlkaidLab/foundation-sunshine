@@ -228,7 +228,7 @@ Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"
 ; Virtual Mouse Driver scripts & files
 Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
-Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs
+Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 ; Virtual audio sink (microphone / VB-Cable) scripts
 ; Always shipped — there is no install-time component for this; the user can

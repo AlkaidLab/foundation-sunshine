@@ -194,6 +194,11 @@ jobs:
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
           GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
+          # Fork PRs cannot access org-scoped secrets, so private-repo driver
+          # downloads (vmouse) may fail. Downgrade missing drivers from
+          # FATAL_ERROR to WARNING so the build/configure still succeeds; the
+          # affected drivers are simply excluded from the installer.
+          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
           cmake \
@@ -203,6 +208,7 @@ jobs:
             -DBUILD_DOCS=OFF \
             -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
+            -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'

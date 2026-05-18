@@ -65,30 +65,36 @@ install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/install-vdd.bat"
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/driver/vdd_settings.xml"
         DESTINATION "scripts/driver"
         COMPONENT vdd)
-install(FILES "${VDD_DRIVER_DIR}/ZakoVDD.dll"
-              "${VDD_DRIVER_DIR}/ZakoVDD.inf"
-              "${VDD_DRIVER_DIR}/zakovdd.cat"
-              "${VDD_DRIVER_DIR}/ZakoVDD.cer"
-        DESTINATION "scripts/driver/latest"
-        COMPONENT vdd)
-install(FILES "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll"
-              "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.inf"
-              "${VDD_WIN10_DRIVER_DIR}/zakovdd.cat"
-              "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer"
-        DESTINATION "scripts/driver/win10"
-        COMPONENT vdd)
+if(VDD_DRIVER_AVAILABLE)
+  install(FILES "${VDD_DRIVER_DIR}/ZakoVDD.dll"
+                "${VDD_DRIVER_DIR}/ZakoVDD.inf"
+                "${VDD_DRIVER_DIR}/zakovdd.cat"
+                "${VDD_DRIVER_DIR}/ZakoVDD.cer"
+          DESTINATION "scripts/driver/latest"
+          COMPONENT vdd)
+endif()
+if(VDD_WIN10_DRIVER_AVAILABLE)
+  install(FILES "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.dll"
+                "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.inf"
+                "${VDD_WIN10_DRIVER_DIR}/zakovdd.cat"
+                "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer"
+          DESTINATION "scripts/driver/win10"
+          COMPONENT vdd)
+endif()
 
 # vmouse: scripts from source tree, driver binaries + cert from download cache
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/install-vmouse.bat"
               "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/uninstall-vmouse.bat"
         DESTINATION "scripts/vmouse"
         COMPONENT assets)
-install(FILES "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
-              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.inf"
-              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
-              "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cer"
-        DESTINATION "scripts/vmouse/driver"
-        COMPONENT assets)
+if(VMOUSE_DRIVER_AVAILABLE)
+  install(FILES "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.dll"
+                "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.inf"
+                "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cat"
+                "${VMOUSE_DRIVER_DIR}/ZakoVirtualMouse.cer"
+          DESTINATION "scripts/vmouse/driver"
+          COMPONENT assets)
+endif()
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
         DESTINATION "tools"
