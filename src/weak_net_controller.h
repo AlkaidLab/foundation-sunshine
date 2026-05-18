@@ -277,6 +277,10 @@ namespace weak_net {
     int audio_cooldown_windows_ = 0;
     // Phase 1.2: forbid bitrate up for N windows after exiting crisis/constrained.
     int recovery_hold_windows_ = 0;
+    // Keep a measured weak-route sustainable cap alive after a loss cliff.
+    // Clean ALR/last-frame reuse can prove decoder/display continuity, but it
+    // is not capacity proof for public/tunnel routes that just dropped packets.
+    int sustainable_release_guard_windows_ = 0;
     // Phase 2: smoothed RTT-pair gradient for early congestion detection.
     std::uint32_t prev_rtt_ms_ = 0;
     int prev_rtt_valid_windows_ = 0;

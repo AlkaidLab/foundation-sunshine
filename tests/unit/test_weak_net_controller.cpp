@@ -4106,6 +4106,102 @@ TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProo
   EXPECT_LE(action.fec_percentage, 2);
 }
 
+TEST(WeakNetControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCleanAlr) {
+  weak_net::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 145567,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 10000,
+    .ceiling_total_bitrate_kbps = 160124,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 145567,
+    .fps_needed_kbps = 126000,
+  });
+
+  for (int i = 0; i < 4; ++i) {
+    controller.on_feedback({
+      .duration_ms = 540,
+      .frames_seen = 0,
+      .complete_frames = 81,
+      .video_bytes = 744192,
+      .rtt_ms = 22,
+      .rtt_variance_ms = 2,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .displayed_frames = 81,
+      .duplicate_frames = 1,
+      .frame_area = 3840ULL * 2160ULL,
+    });
+  }
+
+  auto action = controller.on_feedback({
+    .duration_ms = 541,
+    .frames_seen = 145,
+    .complete_frames = 20,
+    .recovered_frames = 15,
+    .unrecoverable_frames = 111,
+    .missing_packets = 591,
+    .total_packets = 1820,
+    .received_packets = 1177,
+    .video_bytes = 620160,
+    .rtt_ms = 22,
+    .rtt_variance_ms = 2,
+    .decode_queue_depth = 4,
+    .render_queue_depth = 2,
+    .displayed_frames = 111,
+    .duplicate_frames = 90,
+    .local_display_pressure = 350,
+    .frame_area = 3840ULL * 2160ULL,
+  });
+  ASSERT_EQ(action.state, weak_net::state_e::crisis);
+  ASSERT_LT(action.sustainable_estimate_kbps, 16000);
+
+  int peak_bitrate = action.target_bitrate_kbps;
+  int peak_effective_ceiling = action.effective_ceiling_kbps;
+  int peak_scale = action.resolution_scale_percent;
+  for (int i = 0; i < 7; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 540,
+      .frames_seen = 72,
+      .complete_frames = 72,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 560 * 1024,
+      .rtt_ms = 23,
+      .rtt_variance_ms = 2,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .late_frames = 0,
+      .displayed_frames = 72,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 2,
+      .frame_area = 3840ULL * 2160ULL,
+    });
+    peak_bitrate = std::max(peak_bitrate, action.target_bitrate_kbps);
+    peak_effective_ceiling = std::max(peak_effective_ceiling, action.effective_ceiling_kbps);
+    peak_scale = std::max(peak_scale, action.resolution_scale_percent);
+  }
+
+  EXPECT_LE(peak_bitrate, 17000)
+    << "A weak public route that just proved 20Mbps unsafe should not re-probe to the same cliff from clean ALR alone";
+  EXPECT_LT(peak_effective_ceiling, 30000)
+    << "Clean ALR after a loss cliff is not capacity proof, so the sustainable cap should remain active";
+  EXPECT_LE(peak_scale, 75)
+    << "Weak-route recovery should stay in a low/mid visual tier instead of reconfiguring straight back to clear tiers";
+  EXPECT_NE(action.state, weak_net::state_e::healthy);
+}
+
 TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCadenceQuickly) {
   weak_net::controller_t controller;
   controller.configure({

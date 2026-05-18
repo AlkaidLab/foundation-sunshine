@@ -796,6 +796,7 @@ namespace weak_net {
     idr_cooldown_windows_ = 0;
     audio_cooldown_windows_ = 0;
     recovery_hold_windows_ = 0;
+    sustainable_release_guard_windows_ = 0;
     prev_rtt_ms_ = 0;
     prev_rtt_valid_windows_ = 0;
     rtt_gradient_ms_ewma_ = 0.0;
@@ -1560,6 +1561,9 @@ namespace weak_net {
     }
     if (recovery_hold_windows_ > 0) {
       --recovery_hold_windows_;
+    }
+    if (sustainable_release_guard_windows_ > 0) {
+      --sustainable_release_guard_windows_;
     }
     if (legacy_complete_cadence_clean || high_availability_feedback) {
       media_recovery_cooldown_windows_ = 0;
@@ -2569,6 +2573,15 @@ namespace weak_net {
                                                   500,
                                                   20000) :
                                      congestion_sample;
+      if (low_seed_high_ceiling_startup &&
+          (network_crisis ||
+           severe_random_loss ||
+           qos_policer_loss ||
+           rfi_storm ||
+           unrecoverable >= 0.03 ||
+           loss >= 0.12)) {
+        sustainable_release_guard_windows_ = std::max(sustainable_release_guard_windows_, 24);
+      }
     }
     else if (raw_network_clean &&
              (raw_deadline_clean || (audio_only_pressure && raw_video_deadline_clean)) &&
@@ -2594,7 +2607,9 @@ namespace weak_net {
                                                   250,
                                                   8000) :
                                      clean_sample;
-      if (app_limited_clean_sample && stable_windows_ >= 2) {
+      if (app_limited_clean_sample &&
+          stable_windows_ >= 2 &&
+          sustainable_release_guard_windows_ == 0) {
         sustainable_limit_active_ = false;
       }
     }
@@ -2617,7 +2632,8 @@ namespace weak_net {
       !rfi_storm &&
       feedback.waiting_for_rfi_frames == 0 &&
       observed_video_kbps > std::max(current_bitrate_kbps_ * 2, current_bitrate_kbps_ + 4000) &&
-      stable_windows_ >= 3;
+      stable_windows_ >= 3 &&
+      sustainable_release_guard_windows_ == 0;
     if (clean_recovery_sample_exceeds_working_point) {
       sustainable_limit_active_ = false;
     }
@@ -2669,6 +2685,18 @@ namespace weak_net {
                                   pressures.burst_loss,
                                   profile_bpp_pressure,
                                   input_active);
+    const bool weak_route_sustainable_guard_active =
+      low_seed_high_ceiling_startup &&
+      sustainable_release_guard_windows_ > 0 &&
+      !clean_route_low_overhead &&
+      !startup_capacity_proven;
+    if (weak_route_sustainable_guard_active) {
+      // A clean ALR / last-frame-reuse window after a public/tunnel route loss
+      // cliff proves continuity, not capacity.  Keep visual recovery in the
+      // low/mid tier while the sustainable cap is still being validated so we
+      // don't reconfigure straight back to the same high-scale cliff.
+      target_scale = std::min(target_scale, 75);
+    }
     const bool fast_profile_recovery =
       target_scale == 100 &&
       profile_recovery_clean &&
@@ -2686,6 +2714,9 @@ namespace weak_net {
                                                      10);
     if (fast_profile_recovery && target_scale == 100 && 100 - current_resolution_scale_percent_ <= 5) {
       current_resolution_scale_percent_ = 100;
+    }
+    if (weak_route_sustainable_guard_active) {
+      current_resolution_scale_percent_ = std::min(current_resolution_scale_percent_, 75);
     }
 
     if (config_.chroma_sampling_type >= 0) {
