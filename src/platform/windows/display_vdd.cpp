@@ -358,16 +358,56 @@ namespace platf::dxgi {
       return false;  // torn read; try again next time
     }
 
+    // Snapshot geometry headers and validate them before publishing. A torn
+    // read of the header could leave Width/Height/Pitch/ShapeType inconsistent
+    // with ShapeBufferSize; downstream make_cursor_alpha_image() /
+    // make_cursor_xor_image() do pointer arithmetic against
+    // Pitch * Height into out.shape_buffer, so any mismatch must be rejected
+    // here to avoid out-of-bounds reads.
+    UINT32 shape_type = meta->ShapeType;
+    UINT32 width = meta->Width;
+    UINT32 height = meta->Height;
+    UINT32 pitch = meta->Pitch;
+    if (shape_type > 2) {
+      return false;  // unknown shape type
+    }
+    // Hardware cursor sizes are capped at 256x256 (512 tall for monochrome
+    // which stores AND+XOR masks back-to-back). Reject anything bigger so a
+    // bogus header can't get past the size budget check below via overflow.
+    constexpr UINT32 kMaxCursorDim = 512;
+    if (width == 0 || width > kMaxCursorDim || height == 0 || height > kMaxCursorDim) {
+      return false;
+    }
+    // Per-type minimum pitch sanity. For color/masked-color each row is RGBA
+    // (>= 4*width). For monochrome each row is one packed-bit AND/XOR mask
+    // (>= ceil(width/8)). Height for monochrome encodes AND+XOR stacked, so
+    // it must be even.
+    UINT64 required_bytes = 0;
+    if (shape_type == 0 /* MONOCHROME */) {
+      if ((height & 1u) != 0u || pitch < (width + 7u) / 8u) {
+        return false;
+      }
+      required_bytes = static_cast<UINT64>(pitch) * height;  // AND+XOR stacked
+    } else {
+      if (pitch < static_cast<UINT64>(width) * 4u) {
+        return false;
+      }
+      required_bytes = static_cast<UINT64>(pitch) * height;
+    }
+    if (required_bytes > VDD_CURSOR_MAX_BYTES || shape_buffer_size < required_bytes) {
+      return false;  // header/payload mismatch — likely torn read
+    }
+
     out.valid = true;
     out.visible = (meta->IsVisible != 0);
     out.x = meta->PositionX;
     out.y = meta->PositionY;
     out.position_id = position_id;
     out.shape_id = shape_id;
-    out.shape_type = meta->ShapeType;
-    out.width = meta->Width;
-    out.height = meta->Height;
-    out.pitch = meta->Pitch;
+    out.shape_type = shape_type;
+    out.width = width;
+    out.height = height;
+    out.pitch = pitch;
     out.xhot = meta->XHot;
     out.yhot = meta->YHot;
     out.position_updated = (position_id != m_lastSeenCursorPositionId);

@@ -3525,8 +3525,16 @@ namespace platf::dxgi {
 
         auto alpha_img = make_cursor_alpha_image(img_data, shape_info);
         auto xor_img = make_cursor_xor_image(img_data, shape_info);
-        set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_img), shape_info);
-        set_cursor_texture(device.get(), cursor_xor, std::move(xor_img), shape_info);
+        // If either upload fails, clear both cursor textures and skip blend
+        // this frame — leaving the previous textures in place would render a
+        // stale cursor at the new position; an empty SRV would otherwise be
+        // sampled by blend_cursor() below.
+        if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_img), shape_info) ||
+            !set_cursor_texture(device.get(), cursor_xor, std::move(xor_img), shape_info)) {
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO empty_info{};
+          set_cursor_texture(device.get(), cursor_alpha, {}, empty_info);
+          set_cursor_texture(device.get(), cursor_xor, {}, empty_info);
+        }
       }
 
       // CursorExporter publishes top-left coordinates that already include the
