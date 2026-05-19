@@ -253,7 +253,7 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityMatchClassifiesHomePortForwar
   EXPECT_GE(decision.identity_confidence_ppm, 850000U);
 }
 
-TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityKeepsRouteButAllowsLanFastStart) {
+TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemoteSafeStartup) {
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,
     .remote_streaming_hint = true,
@@ -269,14 +269,19 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityKeepsRouteButAllows
 
   const auto decision = session_runtime::classify_startup_path(evidence);
 
-  EXPECT_TRUE(decision.allow_lan_fast_start);
+  EXPECT_FALSE(decision.allow_lan_fast_start);
   EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
   EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD);
-  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
   EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
   EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
   EXPECT_STREQ(decision.reason, "host-public-port-forward-lan-hairpin");
   EXPECT_GE(decision.identity_confidence_ppm, 850000U);
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
+  EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
+  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_STREQ(policy.reason, "hairpin-fast");
 }
 
 TEST(SessionRuntimeTests, StartupPathPublicIdentityOnHostPublicInterfaceClassifiesHostDirect) {
@@ -490,7 +495,7 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
                                                         "Desktop");
 
   EXPECT_EQ(session.transportPath.pathIdentityKind, LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD);
-  EXPECT_EQ(session.transportPath.startupClass, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+  EXPECT_EQ(session.transportPath.startupClass, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
   EXPECT_NE(session.transportPath.reasonFlags & LI_SESSION_PATH_REASON_HOST_PUBLIC_MATCH, 0U);
   EXPECT_STREQ(session.transportPath.explanationCode, "host-public-port-forward-lan-hairpin");
   EXPECT_STREQ(session.transportPath.localEndpoint, "192.168.100.20:53123");
@@ -505,7 +510,7 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
     return acc;
   });
   EXPECT_NE(joined.find("x-ss-core.transportPath.pathIdentityKind:router-port-forward"), std::string::npos);
-  EXPECT_NE(joined.find("x-ss-core.transportPath.startupClass:lan-fast"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.startupClass:remote-safe"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.explanationCode:host-public-port-forward-lan-hairpin"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.hostLocalEndpoint:192.168.100.133:57989"), std::string::npos);
 }

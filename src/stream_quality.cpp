@@ -308,13 +308,13 @@ namespace stream_quality {
     }
 
     if (variable_refresh_rate) {
-      const auto divisor = mode == static_frame_mode_e::interactive_input ? 1.0 : 4.0;
-      const auto max_keepalive = mode == static_frame_mode_e::interactive_input ? requested_fps : 30;
-      const auto keepalive = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / divisor));
-      return std::clamp(keepalive, 5, std::min(max_keepalive, requested_fps));
+      if (mode == static_frame_mode_e::interactive_input) {
+        return requested_fps;
+      }
+      return 1;
     }
 
-    const auto legacy_minimum = static_cast<int>(std::ceil(static_cast<double>(requested_fps) / 2.0));
-    return std::clamp(legacy_minimum, 1, requested_fps);
+    const auto non_vrr_idle_keepalive = std::min(5, requested_fps);
+    return std::clamp(non_vrr_idle_keepalive, 1, requested_fps);
   }
 }  // namespace stream_quality

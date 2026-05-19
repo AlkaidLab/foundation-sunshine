@@ -324,10 +324,10 @@ TEST(StreamQualityTests, AllContentTypesCanGenerateInterestIntentUnderPressure) 
 }
 
 TEST(StreamQualityTests, StaticKeepalivePreventsVrrFromStarvingTheClient) {
-  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, true, 0), 30);
-  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(96, true, 0), 24);
-  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(60, true, 0), 15);
-  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 0), 8);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120, true, 0), 1);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(96, true, 0), 1);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(60, true, 0), 1);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 0), 1);
 }
 
 TEST(StreamQualityTests, StaticKeepaliveHonorsExplicitMinimumFpsTarget) {
@@ -359,10 +359,10 @@ TEST(StreamQualityTests, StaticKeepaliveDefaultsRemainBandwidthFriendly) {
                                                        true,
                                                        0,
                                                        stream_quality::static_frame_mode_e::idle),
-            30);
+            1);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30,
                                                        true,
                                                        0,
                                                        stream_quality::static_frame_mode_e::idle),
-            8);
+            1);
 }

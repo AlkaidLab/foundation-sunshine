@@ -5303,6 +5303,12 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
     << "Local-render pressure is not network congestion, so video bitrate should not be cut";
   EXPECT_LE(action.fec_percentage, fec_before_pressure)
     << "Local-render pressure must not be treated as packet loss that needs extra FEC";
+  EXPECT_EQ(action.resolution_scale_percent, 100)
+    << "Local-render pressure must not trigger encoder resolution/profile downgrade";
+  EXPECT_FALSE(action.profile_tier_changed)
+    << "Local-render pressure should stay a pacing brake, not a profile churn signal";
+  EXPECT_FALSE(action.runtime_scale_applied)
+    << "Local-render pressure should not ask the encoder to reconfigure resolution";
   EXPECT_FALSE(action.request_idr)
     << "The local-render brake should avoid IDR snowballs rather than request another one";
 }

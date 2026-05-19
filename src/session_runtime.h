@@ -1105,7 +1105,7 @@ namespace session_runtime {
           client_egress_allows_lan_fast_start(egress_kind)) {
         return {
           .route = transport_route_e::manual_public_port_forward,
-          .allow_lan_fast_start = true,
+          .allow_lan_fast_start = false,
           .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
                            LI_SESSION_PATH_EGRESS_PHYSICAL :
                            egress_kind,
@@ -1113,7 +1113,7 @@ namespace session_runtime {
           .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
           .identity_confidence_ppm = 900000U,
           .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
-          .startup_class = LI_SESSION_STARTUP_CLASS_LAN_FAST,
+          .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
           .reason_flags = reason_flags | LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED,
           .risk_flags = 0,
           .reason = "host-public-port-forward-lan-hairpin",
@@ -2116,6 +2116,15 @@ namespace session_runtime {
     (void) requested_fps;
     if (decision.startup_class == LI_SESSION_STARTUP_CLASS_LAN_FAST) {
       return {};
+    }
+
+    if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD &&
+        std::string_view { decision.reason ? decision.reason : "" } == "host-public-port-forward-lan-hairpin") {
+      return {
+        .bitrate_seed_kbps = 12000,
+        .fps_cap = 0,
+        .reason = "hairpin-fast",
+      };
     }
 
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
