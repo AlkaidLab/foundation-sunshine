@@ -5037,7 +5037,7 @@ TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefre
 
   EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
   EXPECT_EQ(action.target_fps, 150)
-    << "UU-like ALR probing should not leave a clean LAN 4K high-refresh session parked around 120-140fps";
+    << "Reference-client-style ALR probing should not leave a clean LAN 4K high-refresh session parked around 120-140fps";
   EXPECT_GT(action.target_bitrate_kbps, 120000)
     << "Clean app-limited reuse must probe bitrate upward too; low send bytes are not path capacity";
   EXPECT_LE(action.fec_percentage, 2);

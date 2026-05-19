@@ -10,7 +10,7 @@ Foundation Sunshine should keep a stream usable under hostile networks without s
 - WebRTC-style congestion control uses deterministic estimators over packet loss, RTT/jitter, receiver feedback, and probing; the useful lesson is the closed loop, not a requirement to copy WebRTC transport.
 - Remote desktop adaptive graphics systems preserve the desktop/session shape while changing codec quality and bandwidth usage; this matches the product requirement that resolution, FPS, chroma, audio topology, and microphone mode remain user-selected.
 - Parsec/Steam Remote Play-style product behavior also points toward fast automatic quality/bitrate recovery instead of asking the user to manually lower display settings.
-- UU Remote's public product material emphasizes smooth low-latency control, high frame-rate/4K/HDR, multi-device use, and file transfer. Its transport and congestion-control internals are proprietary, so we should learn the product-level behavior rather than copy unknown protocol details.
+- Public reference remote-client material emphasizes smooth low-latency control, high frame-rate/4K/HDR, multi-device use, and file transfer. Its transport and congestion-control internals are proprietary, so we should learn the product-level behavior rather than copy unknown protocol details.
 
 ## Product Behavior Target
 
@@ -23,7 +23,7 @@ Foundation Sunshine should keep a stream usable under hostile networks without s
 
 - WebRTC's useful pattern is receiver feedback plus sender-side deterministic control: estimate current delivery quality, change encoder budget, and probe back up after stable windows.
 - RDP/AVD's useful pattern is preserving the desktop contract while adapting graphics quality; the remote desktop does not need to resize itself just because bandwidth falls temporarily.
-- Game/remote desktop products such as Parsec, Steam Remote Play, and UU Remote all optimize for "usable under bad links" rather than "maximum quality only on good links". Public material does not expose their congestion algorithms, so Foundation Sunshine should implement our own transparent controller from measurable signals.
+- Game and remote desktop products generally optimize for "usable under bad links" rather than "maximum quality only on good links". Public material does not expose their congestion algorithms, so Foundation Sunshine should implement our own transparent controller from measurable signals.
 - For Moonlight/Foundation Sunshine, the highest-value gap is not a new tunnel protocol. It is the missing closed loop between receiver loss/FEC evidence and host-side encoder/FEC/pacing decisions.
 
 ## Architecture
