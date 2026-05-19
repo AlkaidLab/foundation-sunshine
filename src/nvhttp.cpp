@@ -53,6 +53,7 @@
 #include "rtsp.h"
 #include "stream.h"
 #include "system_tray.h"
+#include "upnp.h"
 #include "utility.h"
 #include "uuid.h"
 #include "abr.h"
@@ -1296,15 +1297,16 @@ namespace nvhttp {
   }
 
   static std::optional<std::string>
-  probe_stun_public_ipv4() {
+  probe_stun_public_ipv4(std::string_view host = "stun.moonlight-stream.org"sv,
+                         std::string_view service = "3478"sv) {
     static constexpr std::uint32_t stun_cookie = 0x2112A442U;
-    static constexpr std::chrono::milliseconds receive_budget { 800 };
+    static constexpr std::chrono::milliseconds receive_budget { 500 };
 
     try {
       boost::asio::io_context io_context;
       boost::asio::ip::udp::resolver resolver { io_context };
       boost::system::error_code ec;
-      const auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), "stun.moonlight-stream.org", "3478", ec);
+      const auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), std::string { host }, std::string { service }, ec);
       if (ec || endpoints.empty()) {
         return std::nullopt;
       }
@@ -1384,6 +1386,16 @@ namespace nvhttp {
     return std::nullopt;
   }
 
+  static void
+  append_public_identity_probe_candidate(std::vector<std::string> &candidates,
+                                         std::string_view candidate,
+                                         std::string_view source) {
+    if (session_runtime::append_public_ipv4_identity_candidate(candidates, candidate)) {
+      BOOST_LOG(info) << "Host public identity candidate source=" << source
+                      << " address=" << session_runtime::canonical_endpoint_host(candidate);
+    }
+  }
+
   static std::vector<std::string>
   host_public_identity_candidates() {
     struct cache_t {
@@ -1395,8 +1407,9 @@ namespace nvhttp {
 
     std::lock_guard lock(cache.mutex);
     const auto now = std::chrono::steady_clock::now();
+    const auto ttl = cache.candidates.empty() ? 10s : 60s;
     if (cache.last_probe.time_since_epoch().count() != 0 &&
-        now - cache.last_probe < 60s) {
+        now - cache.last_probe < ttl) {
       return cache.candidates;
     }
 
@@ -1408,8 +1421,22 @@ namespace nvhttp {
       }
     }
 
-    if (const auto stun_address = probe_stun_public_ipv4()) {
-      append_unique(candidates, *stun_address);
+    if (const auto igd_address = upnp::external_ipv4_address()) {
+      append_public_identity_probe_candidate(candidates, *igd_address, "upnp-igd");
+    }
+
+    static constexpr std::array stun_servers {
+      std::pair { "stun.moonlight-stream.org"sv, "3478"sv },
+      std::pair { "stun.l.google.com"sv, "19302"sv },
+    };
+    for (const auto &[host, service] : stun_servers) {
+      if (const auto stun_address = probe_stun_public_ipv4(host, service)) {
+        append_public_identity_probe_candidate(candidates, *stun_address, host);
+        break;
+      }
+    }
+    if (candidates.empty()) {
+      BOOST_LOG(info) << "Host public identity candidates empty after config, UPnP IGD, and STUN probes";
     }
 
     cache.last_probe = now;

@@ -253,6 +253,55 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityMatchClassifiesHomePortForwar
   EXPECT_GE(decision.identity_confidence_ppm, 850000U);
 }
 
+TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityKeepsRouteButAllowsLanFastStart) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .remote_streaming_hint = true,
+    .client_route_remote_hint = true,
+    .startup_profile = "remote",
+    .client_egress_kind = "physical",
+    .client_route_host = "home.sky-hua.xyz:57989",
+    .host_observed_peer_endpoint = "192.168.100.1:53000",
+    .host_observed_local_endpoint = "192.168.100.133:57989",
+    .client_target_address_candidates = { "180.173.123.199:57998" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_TRUE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+  EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
+  EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
+  EXPECT_STREQ(decision.reason, "host-public-port-forward-lan-hairpin");
+  EXPECT_GE(decision.identity_confidence_ppm, 850000U);
+}
+
+TEST(SessionRuntimeTests, StartupPathPublicIdentityOnHostPublicInterfaceClassifiesHostDirect) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = false,
+    .remote_streaming_hint = true,
+    .client_route_remote_hint = true,
+    .startup_profile = "remote",
+    .client_egress_kind = "physical",
+    .client_route_host = "public-host.example:57989",
+    .host_observed_local_endpoint = "180.173.123.199:47989",
+    .client_target_address_candidates = { "180.173.123.199:57989" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_FALSE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_HOST_DIRECT_PUBLIC);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
+  EXPECT_STREQ(decision.reason, "host-direct-public");
+  EXPECT_GE(decision.identity_confidence_ppm, 850000U);
+}
+
 TEST(SessionRuntimeTests, StartupPathPublicIdentityMismatchClassifiesExternalForwarder) {
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,
@@ -359,6 +408,106 @@ TEST(SessionRuntimeTests, StartupPathActiveVpnWithoutTunnelRouteDoesNotDefeatLan
   EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
   EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
   EXPECT_STREQ(decision.reason, "peer-lan-confirmed");
+}
+
+TEST(SessionRuntimeTests, StartupPathVirtualProxyEgressDoesNotBecomeTrueLan) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .client_egress_kind = "virtual",
+    .client_route_host = "192.168.100.133:57989",
+    .client_source_endpoint = "198.18.0.1",
+    .host_observed_peer_endpoint = "192.168.150.3:56496",
+    .host_observed_local_endpoint = "192.168.100.133:57989",
+    .client_target_address_candidates = { "192.168.100.133" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_FALSE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_VIRTUAL);
+  EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_UNKNOWN);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
+  EXPECT_NE(decision.evidence_flags & LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED, 0U);
+  EXPECT_NE(decision.risk_flags & LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY, 0U);
+  EXPECT_STREQ(decision.reason, "client-virtual-overlay");
+}
+
+TEST(SessionRuntimeTests, HostPublicIdentityCandidatesAcceptOnlyUniquePublicIpv4) {
+  std::vector<std::string> candidates { "180.173.123.199" };
+
+  EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "192.168.100.1"));
+  EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "198.18.0.1"));
+  EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "180.173.123.199:57989"));
+  EXPECT_TRUE(session_runtime::append_public_ipv4_identity_candidate(candidates, "https://203.0.114.20:47989/path"));
+
+  ASSERT_EQ(candidates.size(), 2U);
+  EXPECT_EQ(candidates[0], "180.173.123.199");
+  EXPECT_EQ(candidates[1], "203.0.114.20");
+}
+
+TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
+  session_runtime::identity_t identity {};
+  identity.runtime_id = 101;
+  identity.launch_session_id = 55;
+  identity.control_generation = 7;
+  identity.client_unique_id = "macbook-pro";
+  identity.client_name = "Sky MacBook";
+
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .remote_streaming_hint = true,
+    .client_route_remote_hint = true,
+    .startup_profile = "remote",
+    .client_egress_kind = "physical",
+    .client_route_host = "home.sky-hua.xyz:57989",
+    .rtsp_route_host = "home.sky-hua.xyz",
+    .client_source_endpoint = "192.168.100.20:53123",
+    .host_observed_peer_endpoint = "192.168.100.1:53123",
+    .host_observed_local_endpoint = "192.168.100.133:57989",
+    .client_target_address_candidates = { "180.173.123.199:57989" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+  auto path = session_runtime::make_transport_path(decision, evidence);
+  path.state = session_runtime::transport_path_state_e::active;
+
+  const session_runtime::session_telemetry_report_t report {
+    .participant = session_runtime::make_participant(identity).id,
+    .path_id = path.path_id,
+    .displayed_fps = 60,
+  };
+
+  const auto session = session_runtime::make_li_session(identity,
+                                                        path,
+                                                        session_runtime::default_rtsp_capability_manifest().supported_caps,
+                                                        session_runtime::default_rtsp_capability_manifest().supported_caps,
+                                                        report,
+                                                        "desktop",
+                                                        "Desktop");
+
+  EXPECT_EQ(session.transportPath.pathIdentityKind, LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD);
+  EXPECT_EQ(session.transportPath.startupClass, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+  EXPECT_NE(session.transportPath.reasonFlags & LI_SESSION_PATH_REASON_HOST_PUBLIC_MATCH, 0U);
+  EXPECT_STREQ(session.transportPath.explanationCode, "host-public-port-forward-lan-hairpin");
+  EXPECT_STREQ(session.transportPath.localEndpoint, "192.168.100.20:53123");
+  EXPECT_STREQ(session.transportPath.remoteEndpoint, "home.sky-hua.xyz:57989");
+  EXPECT_STREQ(session.transportPath.observedEndpoint, "192.168.100.1:53123");
+  EXPECT_STREQ(session.transportPath.hostLocalEndpoint, "192.168.100.133:57989");
+
+  const auto attributes = session_runtime::session_snapshot_attributes(session);
+  const auto joined = std::accumulate(attributes.begin(), attributes.end(), std::string {}, [](std::string acc, const std::string &line) {
+    acc += line;
+    acc += '\n';
+    return acc;
+  });
+  EXPECT_NE(joined.find("x-ss-core.transportPath.pathIdentityKind:router-port-forward"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.startupClass:lan-fast"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.explanationCode:host-public-port-forward-lan-hairpin"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.hostLocalEndpoint:192.168.100.133:57989"), std::string::npos);
 }
 
 TEST(SessionRuntimeTests, TelemetryKeepsReportsForMultipleParticipantsAndPaths) {
@@ -826,6 +975,26 @@ TEST(SessionRuntimeTests, PacerProbePlansUseExponentialStartupAndAlrGain) {
   EXPECT_GE(plan.target_bitrate_kbps, 32000);
   EXPECT_LE(plan.target_bitrate_kbps, 50000);
   EXPECT_GT(plan.probe_budget_bytes, 0U);
+}
+
+TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateWithoutCappingCadence) {
+  session_runtime::startup_path_decision_t decision {
+    .route = session_runtime::transport_route_e::manual_public_port_forward,
+    .allow_lan_fast_start = false,
+    .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+    .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+    .reason = "client-remote-hint",
+  };
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 100);
+
+  EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
+  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_STREQ(policy.reason, "router-port-forward-safe");
+}
+
+TEST(SessionRuntimeTests, RuntimeProfileResolutionReconfigEnabledForWeakNetRecovery) {
+  EXPECT_TRUE(session_runtime::runtime_profile_resolution_reconfig_enabled());
 }
 
 TEST(SessionRuntimeTests, NackRtxHistorySelectsOnlyUsefulMissingPackets) {

@@ -4,7 +4,11 @@
  */
 #pragma once
 
+#include <array>
+#include <chrono>
 #include <miniupnpc/miniupnpc.h>
+#include <optional>
+#include <string>
 
 #include "platform/common.h"
 
@@ -38,6 +42,9 @@ namespace upnp {
    */
   int
   UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr);
+
+  [[nodiscard]] std::optional<std::string>
+  external_ipv4_address(std::chrono::milliseconds discovery_timeout = std::chrono::milliseconds { 500 });
 
   [[nodiscard]] std::unique_ptr<platf::deinit_t>
   start();

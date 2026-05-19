@@ -1812,6 +1812,8 @@ namespace rtsp_stream {
         .client_egress_kind = session.client_route_egress_kind,
         .client_route_host = session.client_route_host,
         .rtsp_route_host = session.rtsp_route_host,
+        .host_observed_peer_endpoint = rtspPeerAddress,
+        .host_observed_local_endpoint = session.rtsp_route_local_endpoint,
         .client_target_address_candidates = session.client_target_address_candidates,
         .host_public_candidates = session.host_public_candidates,
       });
@@ -1905,8 +1907,19 @@ namespace rtsp_stream {
                           clientContentType == 3 ? stream_quality::content_type_e::game :
                                                    stream_quality::content_type_e::desktop,
         };
+        const auto startupPolicy =
+          session_runtime::startup_ceiling_policy_for_path(startupPathDecision,
+                                                           qualityCeilingFramerate);
         auto startupBitrateKbps = stream_quality::startup_bitrate_for_ceiling(startup_stream);
+        if (startupPolicy.bitrate_seed_kbps > 0) {
+          startupBitrateKbps =
+            stream_quality::startup_bitrate_preserving_seed(startup_stream,
+                                                            startupPolicy.bitrate_seed_kbps);
+        }
         auto startupFps = stream_quality::startup_fps_for_bitrate(startup_stream, startupBitrateKbps);
+        if (startupPolicy.fps_cap > 0) {
+          startupFps = std::min(startupFps, startupPolicy.fps_cap);
+        }
         if ((startupBitrateKbps > 0 && startupBitrateKbps < qualityCeilingBitrateKbps) ||
             (startupFps > 0 && startupFps < qualityCeilingFramerate)) {
           BOOST_LOG(info) << "Ceiling-aware startup: starting at "
@@ -1915,17 +1928,13 @@ namespace rtsp_stream {
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
                           << qualityCeilingFramerate
-                          << " fps; weak-net will restore full cadence after high-availability feedback"
+                          << " fps; weak-net keeps display/capture cadence at the quality ceiling"
                           << " pathReason=" << startupPathDecision.reason
+                          << " startupPolicy=" << startupPolicy.reason
                           << " route=" << session_runtime::transport_route_name(startupPathDecision.route)
                           << " egressKind=" << session_runtime::li_path_egress_kind_name(startupPathDecision.egress_kind)
                           << " encapsulation=" << session_runtime::li_path_encapsulation_name(startupPathDecision.encapsulation);
           configuredBitrateKbps = startupBitrateKbps;
-          if (startupFps > 0 && startupFps < config.monitor.framerate) {
-            config.monitor.framerate = startupFps;
-            config.monitor.frameRateNum = startupFps;
-            config.monitor.frameRateDen = 1;
-          }
         }
       }
       else if (adaptive_controller_enabled) {

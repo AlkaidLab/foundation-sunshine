@@ -555,6 +555,16 @@ namespace session_runtime {
     std::uint32_t observed_encapsulation { LI_SESSION_PATH_ENCAPSULATION_UNKNOWN };
     std::uint32_t extra_evidence_flags {};
     std::uint32_t identity_confidence_ppm {};
+    std::uint32_t path_identity_kind { LI_SESSION_PATH_IDENTITY_UNKNOWN };
+    std::uint32_t startup_class { LI_SESSION_STARTUP_CLASS_UNKNOWN };
+    std::uint32_t reason_flags {};
+    std::uint32_t risk_flags {};
+    std::string explanation_code;
+    std::string local_endpoint;
+    std::string remote_endpoint;
+    std::string observed_endpoint;
+    std::string host_local_endpoint;
+    std::string provider_id;
   };
 
   struct startup_path_evidence_t {
@@ -568,6 +578,9 @@ namespace session_runtime {
     std::string client_egress_kind;
     std::string client_route_host;
     std::string rtsp_route_host;
+    std::string client_source_endpoint;
+    std::string host_observed_peer_endpoint;
+    std::string host_observed_local_endpoint;
     std::vector<std::string> client_target_address_candidates;
     std::vector<std::string> host_public_candidates;
   };
@@ -579,6 +592,10 @@ namespace session_runtime {
     std::uint32_t encapsulation { LI_SESSION_PATH_ENCAPSULATION_UNKNOWN };
     std::uint32_t evidence_flags {};
     std::uint32_t identity_confidence_ppm { 500000U };
+    std::uint32_t path_identity_kind { LI_SESSION_PATH_IDENTITY_TRUE_LAN };
+    std::uint32_t startup_class { LI_SESSION_STARTUP_CLASS_LAN_FAST };
+    std::uint32_t reason_flags { LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED };
+    std::uint32_t risk_flags {};
     const char *reason { "peer-lan-confirmed" };
   };
 
@@ -833,6 +850,45 @@ namespace session_runtime {
   }
 
   inline bool
+  is_lan_or_pc_ipv4_literal(std::string_view raw_value) {
+    std::uint8_t ip[4] {};
+    if (!parse_ipv4_literal(raw_value, ip)) {
+      return false;
+    }
+
+    if (ip[0] == 10 || ip[0] == 127) {
+      return true;
+    }
+    if (ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127) {
+      return true;
+    }
+    if (ip[0] == 169 && ip[1] == 254) {
+      return true;
+    }
+    if (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) {
+      return true;
+    }
+    if (ip[0] == 192 && ip[1] == 168) {
+      return true;
+    }
+    return false;
+  }
+
+  inline bool
+  append_public_ipv4_identity_candidate(std::vector<std::string> &candidates,
+                                        std::string_view raw_value) {
+    const auto candidate = canonical_endpoint_host(raw_value);
+    if (!is_public_ipv4_literal(candidate)) {
+      return false;
+    }
+    if (std::ranges::find(candidates, candidate) != candidates.end()) {
+      return false;
+    }
+    candidates.push_back(candidate);
+    return true;
+  }
+
+  inline bool
   has_public_target_address_candidate(const startup_path_evidence_t &evidence) {
     if (is_public_ipv4_literal(evidence.client_route_host) ||
         is_public_ipv4_literal(evidence.rtsp_route_host)) {
@@ -873,6 +929,42 @@ namespace session_runtime {
   }
 
   inline bool
+  host_local_endpoint_matches_public_identity(const startup_path_evidence_t &evidence) {
+    if (!is_public_ipv4_literal(evidence.host_observed_local_endpoint)) {
+      return false;
+    }
+    return std::ranges::any_of(evidence.host_public_candidates, [&](const auto &host_public) {
+      return canonical_endpoint_matches(evidence.host_observed_local_endpoint, host_public);
+    });
+  }
+
+  inline bool
+  host_peer_observed_as_lan_or_pc(const startup_path_evidence_t &evidence) {
+    return !evidence.host_observed_peer_endpoint.empty() &&
+           is_lan_or_pc_ipv4_literal(evidence.host_observed_peer_endpoint);
+  }
+
+  inline bool
+  client_egress_allows_lan_fast_start(std::uint32_t egress_kind) {
+    return egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ||
+           egress_kind == LI_SESSION_PATH_EGRESS_PHYSICAL;
+  }
+
+  inline bool
+  client_egress_is_virtual_overlay(std::uint32_t egress_kind) {
+    return egress_kind == LI_SESSION_PATH_EGRESS_VIRTUAL ||
+           egress_kind == LI_SESSION_PATH_EGRESS_PROXY;
+  }
+
+  inline std::uint32_t
+  virtual_overlay_encapsulation_for_egress(std::uint32_t egress_kind) {
+    if (egress_kind == LI_SESSION_PATH_EGRESS_PROXY) {
+      return LI_SESSION_PATH_ENCAPSULATION_TCP_PROXY;
+    }
+    return LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL;
+  }
+
+  inline bool
   has_public_identity_comparison(const startup_path_evidence_t &evidence) {
     return !evidence.host_public_candidates.empty() &&
            (!evidence.client_route_host.empty() ||
@@ -908,12 +1000,40 @@ namespace session_runtime {
       evidence_flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED;
       egress_kind = LI_SESSION_PATH_EGRESS_TUNNEL;
     }
+    if (client_egress_is_virtual_overlay(egress_kind)) {
+      evidence_flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED;
+    }
     if (!evidence.host_public_candidates.empty()) {
       evidence_flags |= LI_SESSION_PATH_EVIDENCE_STUN_OBSERVED;
     }
 
     const bool public_identity_match = target_matches_host_public_identity(evidence);
     const bool public_identity_compared = has_public_identity_comparison(evidence);
+    std::uint32_t reason_flags {};
+    if (client_remote_hint) {
+      reason_flags |= LI_SESSION_PATH_REASON_CLIENT_CONFIGURED |
+                      LI_SESSION_PATH_REASON_REMOTE_HINT;
+    }
+    if (evidence.client_route_remote_hint ||
+        !evidence.client_egress_kind.empty() ||
+        !evidence.client_route_host.empty() ||
+        !evidence.client_source_endpoint.empty()) {
+      reason_flags |= LI_SESSION_PATH_REASON_CLIENT_ROUTE_OBSERVED;
+    }
+    if (evidence.peer_is_lan_or_pc ||
+        evidence.rtsp_route_remote_hint ||
+        !evidence.host_observed_peer_endpoint.empty()) {
+      reason_flags |= LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED;
+    }
+    if (tunnel_route) {
+      reason_flags |= LI_SESSION_PATH_REASON_TUNNEL;
+    }
+    if (public_identity_match) {
+      reason_flags |= LI_SESSION_PATH_REASON_HOST_PUBLIC_MATCH;
+    }
+    else if (public_identity_compared) {
+      reason_flags |= LI_SESSION_PATH_REASON_HOST_PUBLIC_MISMATCH;
+    }
 
     if (tunnel_route && public_identity_match) {
       return {
@@ -923,6 +1043,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 870000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_VPN_OVERLAY,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_TUNNEL,
         .reason = "client-tunnel-to-host-public",
       };
     }
@@ -935,6 +1059,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 680000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_VPN_OVERLAY,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_TUNNEL | LI_SESSION_PATH_RISK_EXTERNAL_FORWARDER,
         .reason = "client-tunnel-to-external-forwarder",
       };
     }
@@ -947,11 +1075,50 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 800000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_VPN_OVERLAY,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_TUNNEL,
         .reason = "client-tunnel-route",
       };
     }
 
     if (public_identity_match) {
+      if (host_local_endpoint_matches_public_identity(evidence)) {
+        return {
+          .route = transport_route_e::manual_public_port_forward,
+          .allow_lan_fast_start = false,
+          .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                           LI_SESSION_PATH_EGRESS_PHYSICAL :
+                           egress_kind,
+          .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+          .evidence_flags = evidence_flags,
+          .identity_confidence_ppm = 900000U,
+          .path_identity_kind = LI_SESSION_PATH_IDENTITY_HOST_DIRECT_PUBLIC,
+          .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+          .reason_flags = reason_flags,
+          .risk_flags = 0,
+          .reason = "host-direct-public",
+        };
+      }
+      if (host_peer_observed_as_lan_or_pc(evidence) &&
+          client_egress_allows_lan_fast_start(egress_kind)) {
+        return {
+          .route = transport_route_e::manual_public_port_forward,
+          .allow_lan_fast_start = true,
+          .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                           LI_SESSION_PATH_EGRESS_PHYSICAL :
+                           egress_kind,
+          .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+          .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+          .identity_confidence_ppm = 900000U,
+          .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+          .startup_class = LI_SESSION_STARTUP_CLASS_LAN_FAST,
+          .reason_flags = reason_flags | LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED,
+          .risk_flags = 0,
+          .reason = "host-public-port-forward-lan-hairpin",
+        };
+      }
       return {
         .route = transport_route_e::manual_public_port_forward,
         .allow_lan_fast_start = false,
@@ -961,6 +1128,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 880000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = 0,
         .reason = "host-public-port-forward",
       };
     }
@@ -975,6 +1146,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 650000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_EXTERNAL_FORWARDER,
         .reason = "external-forwarder",
       };
     }
@@ -989,6 +1164,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 650000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_EXTERNAL_FORWARDER,
         .reason = "external-forwarder",
       };
     }
@@ -1003,6 +1182,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 750000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY,
         .reason = "client-remote-hint",
       };
     }
@@ -1017,6 +1200,10 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 650000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY,
         .reason = "rtsp-route-remote",
       };
     }
@@ -1029,7 +1216,28 @@ namespace session_runtime {
         .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
         .evidence_flags = evidence_flags,
         .identity_confidence_ppm = 650000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_UNKNOWN,
+        .startup_class = LI_SESSION_STARTUP_CLASS_PROBE_FIRST,
+        .reason_flags = reason_flags,
+        .risk_flags = LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY,
         .reason = "peer-not-lan",
+      };
+    }
+
+    if (client_egress_is_virtual_overlay(egress_kind)) {
+      return {
+        .route = transport_route_e::manual_public_port_forward,
+        .allow_lan_fast_start = false,
+        .egress_kind = egress_kind,
+        .encapsulation = virtual_overlay_encapsulation_for_egress(egress_kind),
+        .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+        .identity_confidence_ppm = 550000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_UNKNOWN,
+        .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+        .reason_flags = reason_flags | LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED,
+        .risk_flags = LI_SESSION_PATH_RISK_PRIVATE_PEER_ONLY |
+                      LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY,
+        .reason = "client-virtual-overlay",
       };
     }
 
@@ -1042,17 +1250,34 @@ namespace session_runtime {
       .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
       .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
       .identity_confidence_ppm = 850000U,
+      .path_identity_kind = LI_SESSION_PATH_IDENTITY_TRUE_LAN,
+      .startup_class = LI_SESSION_STARTUP_CLASS_LAN_FAST,
+      .reason_flags = reason_flags | LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED,
+      .risk_flags = public_identity_compared ? 0U : LI_SESSION_PATH_RISK_PRIVATE_PEER_ONLY,
       .reason = "peer-lan-confirmed",
     };
   }
 
   inline transport_path_t
-  make_transport_path(const startup_path_decision_t &decision) {
+  make_transport_path(const startup_path_decision_t &decision,
+                      const startup_path_evidence_t &evidence = {}) {
     auto path = make_transport_path(decision.route);
     path.observed_egress_kind = decision.egress_kind;
     path.observed_encapsulation = decision.encapsulation;
     path.extra_evidence_flags = decision.evidence_flags;
     path.identity_confidence_ppm = decision.identity_confidence_ppm;
+    path.path_identity_kind = decision.path_identity_kind;
+    path.startup_class = decision.startup_class;
+    path.reason_flags = decision.reason_flags;
+    path.risk_flags = decision.risk_flags;
+    path.explanation_code = decision.reason;
+    path.local_endpoint = evidence.client_source_endpoint;
+    path.remote_endpoint = !evidence.client_route_host.empty() ?
+      evidence.client_route_host :
+      evidence.rtsp_route_host;
+    path.observed_endpoint = evidence.host_observed_peer_endpoint;
+    path.host_local_endpoint = evidence.host_observed_local_endpoint;
+    path.provider_id = "enet-primary";
     return path;
   }
 
@@ -1669,6 +1894,46 @@ namespace session_runtime {
     }
   }
 
+  inline std::string_view
+  li_path_identity_kind_name(std::uint32_t kind) {
+    switch (kind) {
+      case LI_SESSION_PATH_IDENTITY_TRUE_LAN:
+        return "true-lan";
+      case LI_SESSION_PATH_IDENTITY_HOST_DIRECT_PUBLIC:
+        return "host-direct-public";
+      case LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD:
+        return "router-port-forward";
+      case LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD:
+        return "external-forward";
+      case LI_SESSION_PATH_IDENTITY_VPN_OVERLAY:
+        return "vpn-overlay";
+      case LI_SESSION_PATH_IDENTITY_RELAY:
+        return "relay";
+      case LI_SESSION_PATH_IDENTITY_ICE_P2P:
+        return "ice-p2p";
+      case LI_SESSION_PATH_IDENTITY_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  inline std::string_view
+  li_startup_class_name(std::uint32_t startup_class) {
+    switch (startup_class) {
+      case LI_SESSION_STARTUP_CLASS_LAN_FAST:
+        return "lan-fast";
+      case LI_SESSION_STARTUP_CLASS_REMOTE_SAFE:
+        return "remote-safe";
+      case LI_SESSION_STARTUP_CLASS_RELAY_SAFE:
+        return "relay-safe";
+      case LI_SESSION_STARTUP_CLASS_PROBE_FIRST:
+        return "probe-first";
+      case LI_SESSION_STARTUP_CLASS_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
   inline std::vector<std::string>
   session_snapshot_attributes(const LI_SESSION &session) {
     return {
@@ -1715,10 +1980,16 @@ namespace session_runtime {
       "x-ss-core.transportPath.evidenceFlags:" + to_hex_string(session.transportPath.evidenceFlags),
       "x-ss-core.transportPath.identityConfidencePpm:" + std::to_string(session.transportPath.identityConfidencePpm),
       "x-ss-core.transportPath.qualityConfidencePpm:" + std::to_string(session.transportPath.qualityConfidencePpm),
+      "x-ss-core.transportPath.pathIdentityKind:" + std::string { li_path_identity_kind_name(session.transportPath.pathIdentityKind) },
+      "x-ss-core.transportPath.startupClass:" + std::string { li_startup_class_name(session.transportPath.startupClass) },
+      "x-ss-core.transportPath.reasonFlags:" + to_hex_string(session.transportPath.reasonFlags),
+      "x-ss-core.transportPath.riskFlags:" + to_hex_string(session.transportPath.riskFlags),
       "x-ss-core.transportPath.routeId:" + std::string { session.transportPath.routeId },
+      "x-ss-core.transportPath.explanationCode:" + std::string { session.transportPath.explanationCode },
       "x-ss-core.transportPath.localEndpoint:" + std::string { session.transportPath.localEndpoint },
       "x-ss-core.transportPath.remoteEndpoint:" + std::string { session.transportPath.remoteEndpoint },
       "x-ss-core.transportPath.observedEndpoint:" + std::string { session.transportPath.observedEndpoint },
+      "x-ss-core.transportPath.hostLocalEndpoint:" + std::string { session.transportPath.hostLocalEndpoint },
       "x-ss-core.transportPath.providerId:" + std::string { session.transportPath.providerId },
       "x-ss-core.transportPath.relayName:" + std::string { session.transportPath.relayName },
       "x-ss-core.transportPath.rttUs:" + std::to_string(session.transportPath.rttUs),
@@ -1832,6 +2103,48 @@ namespace session_runtime {
     int ceiling_bitrate_kbps {};
     std::uint32_t duration_ms { 120 };
   };
+
+  struct startup_ceiling_policy_t {
+    int bitrate_seed_kbps {};
+    int fps_cap {};
+    const char *reason { "default" };
+  };
+
+  inline startup_ceiling_policy_t
+  startup_ceiling_policy_for_path(const startup_path_decision_t &decision,
+                                  int requested_fps) {
+    (void) requested_fps;
+    if (decision.startup_class == LI_SESSION_STARTUP_CLASS_LAN_FAST) {
+      return {};
+    }
+
+    if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
+      return {
+        .bitrate_seed_kbps = 12000,
+        .fps_cap = 0,
+        .reason = "router-port-forward-safe",
+      };
+    }
+
+    if ((decision.risk_flags & (LI_SESSION_PATH_RISK_TUNNEL |
+                                LI_SESSION_PATH_RISK_EXTERNAL_FORWARDER |
+                                LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY)) != 0 ||
+        decision.startup_class == LI_SESSION_STARTUP_CLASS_PROBE_FIRST ||
+        decision.startup_class == LI_SESSION_STARTUP_CLASS_RELAY_SAFE) {
+      return {
+        .bitrate_seed_kbps = 10000,
+        .fps_cap = 0,
+        .reason = "remote-risk-safe",
+      };
+    }
+
+    return {};
+  }
+
+  inline bool
+  runtime_profile_resolution_reconfig_enabled() {
+    return true;
+  }
 
   struct pacer_probe_plan_t {
     std::uint64_t path_id {};
@@ -2433,12 +2746,34 @@ namespace session_runtime {
       active_path.identity_confidence_ppm != 0 ? active_path.identity_confidence_ppm : 500000U;
     session.transportPath.qualityConfidencePpm =
       active_path.score.rtt_ms != 0 || active_path.score.loss_ppm != 0 ? 800000U : 0U;
+    session.transportPath.pathIdentityKind = active_path.path_identity_kind;
+    session.transportPath.startupClass = active_path.startup_class;
+    session.transportPath.reasonFlags = active_path.reason_flags;
+    session.transportPath.riskFlags = active_path.risk_flags;
     session.transportPath.rttUs = active_path.score.rtt_ms * 1000U;
     session.transportPath.jitterUs = active_path.score.jitter_ms * 1000U;
     session.transportPath.packetLossPpm = active_path.score.loss_ppm;
     copy_li_string(session.transportPath.routeId,
                    sizeof(session.transportPath.routeId),
                    transport_route_name(active_path.route));
+    copy_li_string(session.transportPath.explanationCode,
+                   sizeof(session.transportPath.explanationCode),
+                   active_path.explanation_code);
+    copy_li_string(session.transportPath.localEndpoint,
+                   sizeof(session.transportPath.localEndpoint),
+                   active_path.local_endpoint);
+    copy_li_string(session.transportPath.remoteEndpoint,
+                   sizeof(session.transportPath.remoteEndpoint),
+                   active_path.remote_endpoint);
+    copy_li_string(session.transportPath.observedEndpoint,
+                   sizeof(session.transportPath.observedEndpoint),
+                   active_path.observed_endpoint);
+    copy_li_string(session.transportPath.hostLocalEndpoint,
+                   sizeof(session.transportPath.hostLocalEndpoint),
+                   active_path.host_local_endpoint);
+    copy_li_string(session.transportPath.providerId,
+                   sizeof(session.transportPath.providerId),
+                   active_path.provider_id);
     if ((session.transportPath.flags & LI_SESSION_TRANSPORT_FLAG_RELAY) != 0) {
       copy_li_string(session.transportPath.relayName,
                      sizeof(session.transportPath.relayName),

@@ -972,16 +972,64 @@ namespace stream {
       .client_egress_kind = launch_session.client_route_egress_kind,
       .client_route_host = launch_session.client_route_host,
       .rtsp_route_host = launch_session.rtsp_route_host,
+      .client_source_endpoint = launch_session.client_route_source,
+      .host_observed_peer_endpoint = launch_session.rtsp_peer_address,
+      .host_observed_local_endpoint = launch_session.rtsp_route_local_endpoint,
       .client_target_address_candidates = launch_session.client_target_address_candidates,
       .host_public_candidates = launch_session.host_public_candidates,
     };
   }
 
-  static session_runtime::transport_path_t
-  session_transport_path_for_decision(const session_runtime::startup_path_decision_t &decision) {
-    auto path = session_runtime::make_transport_path(decision);
-    path.state = session_runtime::transport_path_state_e::active;
-    return path;
+  static std::string
+  join_path_values(const std::vector<std::string> &values) {
+    std::ostringstream stream;
+    bool first = true;
+    for (const auto &value : values) {
+      if (value.empty()) {
+        continue;
+      }
+      if (!first) {
+        stream << ',';
+      }
+      stream << value;
+      first = false;
+    }
+    return stream.str();
+  }
+
+  static void
+  log_startup_path_decision(std::uint64_t runtime_id,
+                            std::string_view stage,
+                            const session_runtime::startup_path_evidence_t &evidence,
+                            const session_runtime::startup_path_decision_t &decision) {
+    BOOST_LOG(info) << "[session:path] evidence runtime=" << runtime_id
+                    << " stage=" << stage
+                    << " clientHost=" << evidence.client_route_host
+                    << " rtspHost=" << evidence.rtsp_route_host
+                    << " clientSource=" << evidence.client_source_endpoint
+                    << " hostPeer=" << evidence.host_observed_peer_endpoint
+                    << " hostLocal=" << evidence.host_observed_local_endpoint
+                    << " clientEgress=" << evidence.client_egress_kind
+                    << " remoteHint=" << (evidence.remote_streaming_hint ? 1 : 0)
+                    << " clientRouteRemote=" << (evidence.client_route_remote_hint ? 1 : 0)
+                    << " rtspRouteRemote=" << (evidence.rtsp_route_remote_hint ? 1 : 0)
+                    << " tunnel=" << (evidence.client_route_tunnel ? 1 : 0)
+                    << " vpn=" << (evidence.client_vpn_active ? 1 : 0)
+                    << " peerLan=" << (evidence.peer_is_lan_or_pc ? 1 : 0)
+                    << " targets=" << join_path_values(evidence.client_target_address_candidates)
+                    << " hostPublic=" << join_path_values(evidence.host_public_candidates);
+    BOOST_LOG(info) << "[session:path] classify runtime=" << runtime_id
+                    << " stage=" << stage
+                    << " kind=" << session_runtime::li_path_identity_kind_name(decision.path_identity_kind)
+                    << " startup=" << session_runtime::li_startup_class_name(decision.startup_class)
+                    << " route=" << session_runtime::transport_route_name(decision.route)
+                    << " egressKind=" << session_runtime::li_path_egress_kind_name(decision.egress_kind)
+                    << " encapsulation=" << session_runtime::li_path_encapsulation_name(decision.encapsulation)
+                    << " identityConfidence=" << decision.identity_confidence_ppm
+                    << " reasonFlags=0x" << std::hex << decision.reason_flags
+                    << " riskFlags=0x" << decision.risk_flags << std::dec
+                    << " explanation=" << decision.reason
+                    << " lanFast=" << (decision.allow_lan_fast_start ? 1 : 0);
   }
 
   static session_runtime::feature_caps_t
@@ -1617,7 +1665,7 @@ namespace stream {
 
   bool
   runtime_profile_resolution_reconfig_enabled() {
-    return false;
+    return session_runtime::runtime_profile_resolution_reconfig_enabled();
   }
 
   static stream_quality::content_type_e
@@ -7761,8 +7809,15 @@ namespace stream {
     int
     start(session_t &session, const std::string &addr_string) {
       session.startup_path_evidence.peer_is_lan_or_pc = is_lan_or_pc_peer(addr_string);
+      session.startup_path_evidence.host_observed_peer_endpoint = addr_string;
       session.startup_path_decision = session_runtime::classify_startup_path(session.startup_path_evidence);
-      session.active_transport_path = session_transport_path_for_decision(session.startup_path_decision);
+      session.active_transport_path = session_runtime::make_transport_path(session.startup_path_decision,
+                                                                           session.startup_path_evidence);
+      session.active_transport_path.state = session_runtime::transport_path_state_e::active;
+      log_startup_path_decision(session.identity.runtime_id,
+                                "control-start",
+                                session.startup_path_evidence,
+                                session.startup_path_decision);
       session.state.store(state_e::STARTING, std::memory_order_release);
       refresh_li_session(session, state_e::STARTING);
       session.input = input::alloc(session.mail);
@@ -7830,15 +7885,19 @@ namespace stream {
                                              std::chrono::steady_clock::time_point {};
       session.last_weak_net_startup_guard_log = {};
       if (lan_fast_start) {
-        BOOST_LOG(info) << "Weak-net startup guard skipped for LAN peer runtime="
+        BOOST_LOG(info) << "Weak-net startup guard skipped runtime="
                         << session.identity.runtime_id
                         << " peer=" << addr_string
+                        << " kind=" << session_runtime::li_path_identity_kind_name(session.startup_path_decision.path_identity_kind)
+                        << " startup=" << session_runtime::li_startup_class_name(session.startup_path_decision.startup_class)
                         << " pathReason=" << session.startup_path_decision.reason;
       }
       else if (adaptive_controller_enabled) {
         BOOST_LOG(info) << "Weak-net startup guard enabled runtime="
                         << session.identity.runtime_id
                         << " peer=" << addr_string
+                        << " kind=" << session_runtime::li_path_identity_kind_name(session.startup_path_decision.path_identity_kind)
+                        << " startup=" << session_runtime::li_startup_class_name(session.startup_path_decision.startup_class)
                         << " pathReason=" << session.startup_path_decision.reason
                         << " route=" << session_runtime::transport_route_name(session.startup_path_decision.route)
                         << " egressKind=" << session_runtime::li_path_egress_kind_name(session.startup_path_decision.egress_kind)
@@ -7924,7 +7983,13 @@ namespace stream {
       session->identity.av_ping_payload = launch_session.av_ping_payload;
       session->startup_path_evidence = startup_path_evidence_for_launch_session(launch_session);
       session->startup_path_decision = session_runtime::classify_startup_path(session->startup_path_evidence);
-      session->active_transport_path = session_transport_path_for_decision(session->startup_path_decision);
+      session->active_transport_path = session_runtime::make_transport_path(session->startup_path_decision,
+                                                                            session->startup_path_evidence);
+      session->active_transport_path.state = session_runtime::transport_path_state_e::active;
+      log_startup_path_decision(session->identity.runtime_id,
+                                "launch",
+                                session->startup_path_evidence,
+                                session->startup_path_decision);
 
       // 设置客户端名称
       session->client_name = session->identity.client_name.empty() ?
@@ -8024,12 +8089,6 @@ namespace stream {
         encoding_bitrate = std::clamp(startup_encoding_bitrate,
                                       1,
                                       std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
-        const int startup_fps = stream_quality::startup_fps_for_bitrate(startup_quality_stream, encoding_bitrate);
-        if (startup_fps > 0 && startup_fps < config.monitor.framerate) {
-          config.monitor.framerate = startup_fps;
-          config.monitor.frameRateNum = startup_fps;
-          config.monitor.frameRateDen = 1;
-        }
         session->config.monitor.framerate = config.monitor.framerate;
         session->config.monitor.frameRateNum = config.monitor.frameRateNum;
         session->config.monitor.frameRateDen = config.monitor.frameRateDen;
@@ -8089,6 +8148,8 @@ namespace stream {
 	                      << " ceilingFps=" << ceiling_fps
 	                      << " fec=" << fec_percentage << "%"
 	                      << " maxFec=" << max_fec_percentage << "%"
+	                      << " kind=" << session_runtime::li_path_identity_kind_name(session->startup_path_decision.path_identity_kind)
+	                      << " startup=" << session_runtime::li_startup_class_name(session->startup_path_decision.startup_class)
 	                      << " pathReason=" << session->startup_path_decision.reason
 	                      << " route=" << session_runtime::transport_route_name(session->startup_path_decision.route)
 	                      << " egressKind=" << session_runtime::li_path_egress_kind_name(session->startup_path_decision.egress_kind)

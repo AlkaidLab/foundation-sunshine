@@ -60,6 +60,34 @@ namespace upnp {
 #endif
   }
 
+  std::optional<std::string>
+  external_ipv4_address(std::chrono::milliseconds discovery_timeout) {
+    int err = 0;
+    device_t device { upnpDiscover(static_cast<int>(discovery_timeout.count()), nullptr, nullptr, 0, IPv4, 2, &err) };
+    if (!device || err) {
+      BOOST_LOG(debug) << "Couldn't discover any IPv4 UPNP devices while probing external address"sv;
+      return std::nullopt;
+    }
+
+    IGDdatas data {};
+    urls_t urls;
+    std::array<char, INET6_ADDRESS_STRLEN> lan_addr {};
+    const auto status = UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr);
+    if (status != 1 && status != 2) {
+      BOOST_LOG(debug) << "No valid IPv4 IGD while probing external address: "sv << status_string(status);
+      return std::nullopt;
+    }
+
+    char external_address[64] {};
+    err = UPNP_GetExternalIPAddress(urls->controlURL, data.first.servicetype, external_address);
+    if (err != UPNPCOMMAND_SUCCESS || external_address[0] == '\0') {
+      BOOST_LOG(debug) << "Failed to query UPnP external address: "sv << err;
+      return std::nullopt;
+    }
+
+    return std::string { external_address };
+  }
+
   class deinit_t: public platf::deinit_t {
   public:
     deinit_t() {
