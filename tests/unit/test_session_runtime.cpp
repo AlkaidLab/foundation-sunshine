@@ -238,9 +238,9 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityMatchClassifiesHomePortForwar
     .client_route_remote_hint = true,
     .startup_profile = "remote",
     .client_egress_kind = "physical",
-    .client_route_host = "home.sky-hua.xyz:57989",
-    .client_target_address_candidates = { "180.173.123.199:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_route_host = "home.example.net:57989",
+    .client_target_address_candidates = { "93.184.216.34:57998" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -260,11 +260,11 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemo
     .client_route_remote_hint = true,
     .startup_profile = "remote",
     .client_egress_kind = "physical",
-    .client_route_host = "home.sky-hua.xyz:57989",
+    .client_route_host = "home.example.net:57989",
     .host_observed_peer_endpoint = "192.168.100.1:53000",
     .host_observed_local_endpoint = "192.168.100.133:57989",
-    .client_target_address_candidates = { "180.173.123.199:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_target_address_candidates = { "93.184.216.34:57998" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -292,9 +292,9 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityOnHostPublicInterfaceClassifi
     .startup_profile = "remote",
     .client_egress_kind = "physical",
     .client_route_host = "public-host.example:57989",
-    .host_observed_local_endpoint = "180.173.123.199:47989",
-    .client_target_address_candidates = { "180.173.123.199:57989" },
-    .host_public_candidates = { "180.173.123.199" },
+    .host_observed_local_endpoint = "93.184.216.34:47989",
+    .client_target_address_candidates = { "93.184.216.34:57989" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -314,9 +314,9 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityMismatchClassifiesExternalFor
     .client_route_remote_hint = true,
     .startup_profile = "remote",
     .client_egress_kind = "physical",
-    .client_route_host = "cn.sky-hua.xyz:57989",
-    .client_target_address_candidates = { "47.103.131.32:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_route_host = "edge.example.net:57989",
+    .client_target_address_candidates = { "34.117.59.81:57998" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -333,9 +333,9 @@ TEST(SessionRuntimeTests, StartupPathPublicIdentityOverridesPrivatePeerWithoutCl
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,
     .client_egress_kind = "physical",
-    .client_route_host = "home.sky-hua.xyz:57989",
-    .client_target_address_candidates = { "180.173.123.199:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_route_host = "home.example.net:57989",
+    .client_target_address_candidates = { "93.184.216.34:57998" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -351,9 +351,9 @@ TEST(SessionRuntimeTests, StartupPathExternalForwarderOverridesPrivatePeerWithou
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,
     .client_egress_kind = "physical",
-    .client_route_host = "cn.sky-hua.xyz:57989",
-    .client_target_address_candidates = { "47.103.131.32:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_route_host = "edge.example.net:57989",
+    .client_target_address_candidates = { "34.117.59.81:57998" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -371,7 +371,7 @@ TEST(SessionRuntimeTests, StartupPathPrivateTargetWithoutRemoteHintKeepsLanFastS
     .client_egress_kind = "physical",
     .client_route_host = "192.168.100.133:57989",
     .client_target_address_candidates = { "192.168.100.133:57998" },
-    .host_public_candidates = { "180.173.123.199" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -424,7 +424,7 @@ TEST(SessionRuntimeTests, StartupPathVirtualProxyEgressDoesNotBecomeTrueLan) {
     .host_observed_peer_endpoint = "192.168.150.3:56496",
     .host_observed_local_endpoint = "192.168.100.133:57989",
     .client_target_address_candidates = { "192.168.100.133" },
-    .host_public_candidates = { "180.173.123.199" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -441,15 +441,15 @@ TEST(SessionRuntimeTests, StartupPathVirtualProxyEgressDoesNotBecomeTrueLan) {
 }
 
 TEST(SessionRuntimeTests, HostPublicIdentityCandidatesAcceptOnlyUniquePublicIpv4) {
-  std::vector<std::string> candidates { "180.173.123.199" };
+  std::vector<std::string> candidates { "93.184.216.34" };
 
   EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "192.168.100.1"));
   EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "198.18.0.1"));
-  EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "180.173.123.199:57989"));
+  EXPECT_FALSE(session_runtime::append_public_ipv4_identity_candidate(candidates, "93.184.216.34:57989"));
   EXPECT_TRUE(session_runtime::append_public_ipv4_identity_candidate(candidates, "https://203.0.114.20:47989/path"));
 
   ASSERT_EQ(candidates.size(), 2U);
-  EXPECT_EQ(candidates[0], "180.173.123.199");
+  EXPECT_EQ(candidates[0], "93.184.216.34");
   EXPECT_EQ(candidates[1], "203.0.114.20");
 }
 
@@ -467,13 +467,13 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
     .client_route_remote_hint = true,
     .startup_profile = "remote",
     .client_egress_kind = "physical",
-    .client_route_host = "home.sky-hua.xyz:57989",
-    .rtsp_route_host = "home.sky-hua.xyz",
+    .client_route_host = "home.example.net:57989",
+    .rtsp_route_host = "home.example.net",
     .client_source_endpoint = "192.168.100.20:53123",
     .host_observed_peer_endpoint = "192.168.100.1:53123",
     .host_observed_local_endpoint = "192.168.100.133:57989",
-    .client_target_address_candidates = { "180.173.123.199:57989" },
-    .host_public_candidates = { "180.173.123.199" },
+    .client_target_address_candidates = { "93.184.216.34:57989" },
+    .host_public_candidates = { "93.184.216.34" },
   };
 
   const auto decision = session_runtime::classify_startup_path(evidence);
@@ -499,7 +499,7 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
   EXPECT_NE(session.transportPath.reasonFlags & LI_SESSION_PATH_REASON_HOST_PUBLIC_MATCH, 0U);
   EXPECT_STREQ(session.transportPath.explanationCode, "host-public-port-forward-lan-hairpin");
   EXPECT_STREQ(session.transportPath.localEndpoint, "192.168.100.20:53123");
-  EXPECT_STREQ(session.transportPath.remoteEndpoint, "home.sky-hua.xyz:57989");
+  EXPECT_STREQ(session.transportPath.remoteEndpoint, "home.example.net:57989");
   EXPECT_STREQ(session.transportPath.observedEndpoint, "192.168.100.1:53123");
   EXPECT_STREQ(session.transportPath.hostLocalEndpoint, "192.168.100.133:57989");
 

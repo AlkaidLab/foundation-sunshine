@@ -135,7 +135,7 @@ else()
     add_definitions(-DNDEBUG)
 endif()
 
-# MinGW GCC 15 on the Skyindows Windows build host can silently exit with code 1
+# MinGW GCC 15 on the Windows test build host can silently exit with code 1
 # while optimizing these two large, feedback-heavy translation units at -O3.
 # Keep release semantics, but compile only these controller/control-plane units
 # at -O2 so the Windows validation build remains reliable.

@@ -95,4 +95,4 @@ Foundation-specific controller, pacing, encoder policy, and macOS diagnostics mu
 - Bad network: packet loss and jitter should move the controller into `constrained` or `crisis`.
 - Recovery: stable feedback windows should return toward the original bitrate and FEC baseline.
 - Compatibility: official/old clients should keep streaming without negotiation failures.
-- Real target: test `47.103.131.32:57989` for at least 60 seconds, requiring continuing video progress and usable input.
+- External-forward target: test a configured public forwarding endpoint for at least 60 seconds, requiring continuing video progress and usable input.
