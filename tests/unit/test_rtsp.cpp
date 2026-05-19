@@ -19,8 +19,20 @@ namespace rtsp_stream {
     int pending_after_clear;
   };
 
+  struct pending_launch_session_route_change_test_result_t {
+    bool first_claim_ok;
+    bool replaced_stale_same_client;
+    bool mismatched_peer_claim_ok;
+    bool mismatched_peer_claimed_new_session;
+    bool different_client_mismatch_rejected;
+    int pending_after_replace;
+  };
+
   pending_launch_session_test_result_t
   pending_launch_session_touch_for_tests();
+
+  pending_launch_session_route_change_test_result_t
+  pending_launch_session_route_change_for_tests();
 
   int
   effective_stream_fec_percentage_for_client(int configured_fec_percentage, int ml_feature_flags);
@@ -135,4 +147,15 @@ TEST(RtspLaunchSessionLifecycleTests, RtspAttemptsReusePendingSessionAndTouchKee
   EXPECT_TRUE(result.touch_extended_ttl);
   EXPECT_EQ(result.pending_after_touch, 1);
   EXPECT_EQ(result.pending_after_clear, 0);
+}
+
+TEST(RtspLaunchSessionLifecycleTests, RtspRouteChangeReplacesStaleSameClientPendingLaunch) {
+  auto result = rtsp_stream::pending_launch_session_route_change_for_tests();
+
+  EXPECT_TRUE(result.first_claim_ok);
+  EXPECT_TRUE(result.replaced_stale_same_client);
+  EXPECT_EQ(result.pending_after_replace, 1);
+  EXPECT_TRUE(result.mismatched_peer_claim_ok);
+  EXPECT_TRUE(result.mismatched_peer_claimed_new_session);
+  EXPECT_TRUE(result.different_client_mismatch_rejected);
 }

@@ -71,6 +71,20 @@ namespace rtsp_stream {
          << (session.setup_mic ? 1 : 0);
       return ss.str();
     }
+
+    bool
+    same_known_launch_client(const launch_session_t &left, const launch_session_t &right) {
+      return !left.identity.client_cert_uuid.empty() &&
+             left.identity.client_cert_uuid == right.identity.client_cert_uuid;
+    }
+
+    bool
+    pending_launch_has_rtsp_progress(const launch_session_t &session) {
+      return session.setup_video ||
+             session.setup_audio ||
+             session.setup_control ||
+             session.setup_mic;
+    }
   }
 
   std::uint64_t
@@ -703,6 +717,18 @@ namespace rtsp_stream {
 
       auto launch_session { claim_launch_session(remote_ec ? std::string {} : remote_address) };
       if (launch_session) {
+        if (!remote_ec &&
+            !launch_session->rtsp_peer_address.empty() &&
+            launch_session->rtsp_peer_address != remote_address) {
+          BOOST_LOG(info) << "RTSP pending claim accepted with peer route change"
+                          << " launchSession="sv << launch_session->unique_id
+                          << " id="sv << launch_session->id
+                          << " expectedPeer="sv << launch_session->rtsp_peer_address
+                          << " observedPeer="sv << remote_address
+                          << " pendingCount="sv << pending_session_count();
+          launch_session->rtsp_peer_address = remote_address;
+          launch_session->rtsp_route_remote_hint = true;
+        }
         BOOST_LOG(info) << "RTSP pending claim accepted launchSession="sv << launch_session->unique_id
                         << " id="sv << launch_session->id
                         << " peer="sv << (remote_ec ? "unknown" : remote_address)
@@ -753,6 +779,22 @@ namespace rtsp_stream {
       {
         auto lg = _pending_launch_sessions.lock();
         prune_launch_sessions_locked(*_pending_launch_sessions);
+
+        auto same_client = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [&launch_session](const auto &pending_session) {
+          return pending_session &&
+                 !pending_launch_has_rtsp_progress(*pending_session) &&
+                 same_known_launch_client(*pending_session, *launch_session);
+        });
+        if (same_client != _pending_launch_sessions->end()) {
+          BOOST_LOG(info) << "RTSP pending launch session replace same client"
+                          << " oldLaunchSession="sv << ((*same_client) ? (*same_client)->unique_id : std::string {})
+                          << " newLaunchSession="sv << launch_session->unique_id
+                          << " oldPeer="sv << ((*same_client) ? (*same_client)->rtsp_peer_address : std::string {})
+                          << " newPeer="sv << launch_session->rtsp_peer_address
+                          << " pendingCount="sv << _pending_launch_sessions->size();
+          *same_client = std::move(launch_session);
+          return;
+        }
 
         if (!launch_session->rtsp_peer_address.empty()) {
           auto existing = std::find_if(_pending_launch_sessions->begin(), _pending_launch_sessions->end(), [&launch_session](const auto &pending_session) {
@@ -849,6 +891,13 @@ namespace rtsp_stream {
       }
 
       if (pos == _pending_launch_sessions->end() && _pending_launch_sessions->size() == 1) {
+        if (!_pending_launch_sessions->empty() && _pending_launch_sessions->front()) {
+          BOOST_LOG(info) << "RTSP pending claim accepted singleton peer mismatch"
+                          << " expectedPeer="sv << _pending_launch_sessions->front()->rtsp_peer_address
+                          << " observedPeer="sv << remote_address
+                          << " launchSession="sv << _pending_launch_sessions->front()->unique_id
+                          << " id="sv << _pending_launch_sessions->front()->id;
+        }
         pos = _pending_launch_sessions->begin();
       }
 
@@ -1072,6 +1121,66 @@ namespace rtsp_stream {
       .touch_extended_ttl = touched && after_touch > before_touch,
       .pending_after_touch = pending_after_touch,
       .pending_after_clear = local_server.pending_session_count(),
+    };
+  }
+
+  pending_launch_session_route_change_test_result_t
+  pending_launch_session_route_change_for_tests() {
+    rtsp_server_t exact_server {};
+
+    auto exact = std::make_shared<launch_session_t>();
+    exact->id = 0xA001;
+    exact->unique_id = "rtsp-route-change-client";
+    exact->identity.set_client_cert_uuid("route-change-cert");
+    exact->rtsp_peer_address = "203.0.113.10";
+    exact_server.session_raise(exact);
+
+    const auto first = exact_server.claim_launch_session("203.0.113.10");
+
+    rtsp_server_t route_change_server {};
+
+    auto stale = std::make_shared<launch_session_t>();
+    stale->id = 0xA101;
+    stale->unique_id = "rtsp-route-change-client";
+    stale->identity.set_client_cert_uuid("route-change-cert");
+    stale->rtsp_peer_address = "203.0.113.10";
+    route_change_server.session_raise(stale);
+
+    auto fresh = std::make_shared<launch_session_t>();
+    fresh->id = 0xA102;
+    fresh->unique_id = "rtsp-route-change-client";
+    fresh->identity.set_client_cert_uuid("route-change-cert");
+    fresh->rtsp_peer_address = "198.51.100.20";
+    route_change_server.session_raise(fresh);
+
+    const auto pending_after_replace = route_change_server.pending_session_count();
+    const auto mismatched_peer_claim = route_change_server.claim_launch_session("192.0.2.77");
+
+    rtsp_server_t different_client_server {};
+
+    auto first_client = std::make_shared<launch_session_t>();
+    first_client->id = 0xB101;
+    first_client->unique_id = "rtsp-route-client-a";
+    first_client->identity.set_client_cert_uuid("route-change-cert-a");
+    first_client->rtsp_peer_address = "203.0.113.10";
+    different_client_server.session_raise(first_client);
+
+    auto second_client = std::make_shared<launch_session_t>();
+    second_client->id = 0xB102;
+    second_client->unique_id = "rtsp-route-client-b";
+    second_client->identity.set_client_cert_uuid("route-change-cert-b");
+    second_client->rtsp_peer_address = "198.51.100.20";
+    different_client_server.session_raise(second_client);
+
+    const auto different_client_claim = different_client_server.claim_launch_session("192.0.2.77");
+
+    return {
+      .first_claim_ok = first != nullptr,
+      .replaced_stale_same_client = pending_after_replace == 1,
+      .mismatched_peer_claim_ok = mismatched_peer_claim != nullptr,
+      .mismatched_peer_claimed_new_session = mismatched_peer_claim != nullptr && mismatched_peer_claim->id == 0xA102,
+      .different_client_mismatch_rejected = different_client_claim == nullptr,
+      .pending_after_replace = pending_after_replace,
     };
   }
 #endif

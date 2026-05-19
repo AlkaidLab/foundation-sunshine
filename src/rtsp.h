@@ -107,8 +107,20 @@ namespace rtsp_stream {
     int pending_after_clear = 0;
   };
 
+  struct pending_launch_session_route_change_test_result_t {
+    bool first_claim_ok = false;
+    bool replaced_stale_same_client = false;
+    bool mismatched_peer_claim_ok = false;
+    bool mismatched_peer_claimed_new_session = false;
+    bool different_client_mismatch_rejected = false;
+    int pending_after_replace = 0;
+  };
+
   pending_launch_session_test_result_t
   pending_launch_session_touch_for_tests();
+
+  pending_launch_session_route_change_test_result_t
+  pending_launch_session_route_change_for_tests();
 #endif
 
   std::uint64_t
