@@ -529,7 +529,14 @@ namespace audio {
       ref->restore_sink = ref->sink.host != *sink;
       if (ref->restore_sink) {
         if (control->set_sink(*sink)) {
-          return;
+          if (sink != &ref->sink.host && !ref->sink.host.empty()) {
+            BOOST_LOG(warning) << "Selected audio sink failed; falling back to current host audio sink for this stream";
+            sink = &ref->sink.host;
+            ref->restore_sink = false;
+          }
+          else {
+            return;
+          }
         }
       }
     }
