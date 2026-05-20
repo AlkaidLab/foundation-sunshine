@@ -7,7 +7,7 @@ Foundation Streaming keeps the legacy Moonlight/Sunshine RTSP, RTP, and ENet pat
 ## Compatibility Matrix
 
 - Foundation Sunshine + Enhanced common-c: uses Enhanced RTP feedback, input priority, and low-bitrate quality hints.
-- Foundation Sunshine + legacy common-c: gets server-side weak-network control, FEC caps, IDR cooldown, pacing, and low-bitrate defaults.
+- Foundation Sunshine + current common-c: gets server-side stream-quality control, FEC caps, IDR cooldown, pacing, and low-bitrate defaults.
 - Standard Sunshine + Enhanced common-c: gets client-side decode/render queue discipline and input coalescing, but host-only feedback is ignored.
 - Standard Sunshine + legacy common-c: stays on the legacy path.
 
@@ -33,7 +33,7 @@ These remain design targets until both sides contain real implementations.
 ## Implemented Enhanced RTP Loop
 
 - Client feedback reports packet/FEC health plus decode queue depth, render queue depth, late frames, displayed frames, input queue depth, and input send latency.
-- Sunshine's weak-network controller prioritizes deadline pressure and input pressure before cutting bitrate hard.
+- Sunshine's stream-quality controller prioritizes deadline pressure and input pressure before cutting bitrate hard.
 - FEC is capped to a safe maximum and IDR requests have cooldown to avoid recovery storms.
 - Recovery probes upward after stable windows instead of staying degraded.
 - Sender pacing uses per-session controller output to avoid video bursts drowning control/input.

@@ -19,7 +19,7 @@
 
 extern "C" {
 #include <moonlight-common-c/src/Session.h>
-#include <alkaidlab/session_control_codec/session_control_codec.h>
+#include <alkaidlab/sunshine_adapter/session_control_wire_codec.h>
 #include <alkaidlab/route_control/route_control.h>
 }
 
@@ -1032,7 +1032,7 @@ namespace session_runtime {
     if (reason == "client-remote-hint") {
       return "client-remote-hint";
     }
-    if (reason == "rtsp-route-remote") {
+    if (reason == "rtsp-route-remote" || reason == "advertised-route-remote") {
       return "rtsp-route-remote";
     }
     if (reason == "peer-not-lan") {
@@ -1062,14 +1062,14 @@ namespace session_runtime {
     alk_route_control_evidence_init(&route_evidence);
     route_evidence.peer_is_lan_or_pc = evidence.peer_is_lan_or_pc;
     route_evidence.remote_streaming_hint = evidence.remote_streaming_hint;
-    route_evidence.rtsp_route_remote_hint = evidence.rtsp_route_remote_hint;
+    route_evidence.advertised_route_remote_hint = evidence.rtsp_route_remote_hint;
     route_evidence.client_route_remote_hint = evidence.client_route_remote_hint;
     route_evidence.client_route_tunnel = evidence.client_route_tunnel;
     route_evidence.client_vpn_active = evidence.client_vpn_active;
     copy_alk_route_string(route_evidence.startup_profile, sizeof(route_evidence.startup_profile), evidence.startup_profile);
     copy_alk_route_string(route_evidence.client_egress_kind, sizeof(route_evidence.client_egress_kind), evidence.client_egress_kind);
     copy_alk_route_string(route_evidence.client_route_host, sizeof(route_evidence.client_route_host), evidence.client_route_host);
-    copy_alk_route_string(route_evidence.rtsp_route_host, sizeof(route_evidence.rtsp_route_host), evidence.rtsp_route_host);
+    copy_alk_route_string(route_evidence.advertised_route_host, sizeof(route_evidence.advertised_route_host), evidence.rtsp_route_host);
     copy_alk_route_string(route_evidence.client_source_endpoint, sizeof(route_evidence.client_source_endpoint), evidence.client_source_endpoint);
     copy_alk_route_string(route_evidence.host_observed_peer_endpoint, sizeof(route_evidence.host_observed_peer_endpoint), evidence.host_observed_peer_endpoint);
     copy_alk_route_string(route_evidence.host_observed_local_endpoint, sizeof(route_evidence.host_observed_local_endpoint), evidence.host_observed_local_endpoint);
