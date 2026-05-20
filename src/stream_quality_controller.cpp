@@ -1,5 +1,7 @@
 #include "stream_quality_controller.h"
 
+#include "logging.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -290,6 +292,16 @@ namespace stream_quality {
     const auto alk_config = to_alk_config(config);
     if (alk_stream_quality_controller_init(controller_, &alk_config)) {
       alk_stream_quality_controller_get_decision(controller_, &last_decision_);
+      BOOST_LOG(info)
+        << "Alkaid runtime marker: using Alkaid SDK stream-quality controller "
+        << "contractVersion=" << ALK_STREAM_QUALITY_CONTROL_VERSION
+        << " baseline=" << config.baseline_bitrate_kbps << "Kbps/"
+        << config.baseline_fps << "fps/"
+        << config.baseline_fec_percentage << "% "
+        << "min=" << config.min_bitrate_kbps << "Kbps/"
+        << config.min_fps << "fps "
+        << "maxFec=" << config.max_fec_percentage << "% "
+        << "adapter=Sunshine-stream-quality coreSession=0";
     }
   }
 
