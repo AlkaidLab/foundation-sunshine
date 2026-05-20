@@ -599,8 +599,9 @@ namespace stream {
     int
     send(const std::string_view &payload,
          net::peer_t peer,
-         std::uint8_t channel = CTRL_CHANNEL_GENERIC) {
-      auto packet = enet_packet_create(payload.data(), payload.size(), ENET_PACKET_FLAG_RELIABLE);
+         std::uint8_t channel = CTRL_CHANNEL_GENERIC,
+         enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
+      auto packet = enet_packet_create(payload.data(), payload.size(), flags);
       if (channel >= peer->channelCount) {
         channel = CTRL_CHANNEL_GENERIC;
       }
@@ -3966,7 +3967,11 @@ namespace stream {
       return -1;
     }
 
-    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+    const auto packet_flags = include_bitmap ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED;
+    if (session->broadcast_ref->control_server.send(payload,
+                                                    session->control.peer,
+                                                    CTRL_CHANNEL_GENERIC,
+                                                    packet_flags)) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
       BOOST_LOG(warning) << "Couldn't send cursor plane update to ["sv << addr << ':' << port << ']';
       return -1;
@@ -4166,7 +4171,8 @@ namespace stream {
   send_session_control_payload(session_t *session,
                                const void *session_payload,
                                std::size_t session_payload_size,
-                               std::string_view label) {
+                               std::string_view label,
+                               enet_uint32 packet_flags = ENET_PACKET_FLAG_RELIABLE) {
     if (!session || !session->control.peer || !session_payload || session_payload_size == 0) {
       BOOST_LOG(warning) << "Couldn't send Session control " << label
                          << ", control peer is unavailable";
@@ -4203,7 +4209,8 @@ namespace stream {
 
     if (session->broadcast_ref->control_server.send(payload,
                                                     session->control.peer,
-                                                    CTRL_CHANNEL_SESSION)) {
+                                                    CTRL_CHANNEL_SESSION,
+                                                    packet_flags)) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
       BOOST_LOG(warning) << "Couldn't send Session control " << label
                          << " to ["sv << addr << ':' << port << ']';
@@ -4280,7 +4287,8 @@ namespace stream {
     const auto result = send_session_control_payload(session,
                                                      &packet,
                                                      sizeof(packet),
-                                                     "cursor-plane"sv);
+                                                     "cursor-plane"sv,
+                                                     ENET_PACKET_FLAG_UNSEQUENCED);
     if (result == 0) {
       BOOST_LOG(debug) << "Session cursor plane sent runtime="sv
                        << session->identity.runtime_id
@@ -4364,7 +4372,8 @@ namespace stream {
     const auto result = send_session_control_payload(session,
                                                      &telemetry,
                                                      sizeof(telemetry),
-                                                     "telemetry"sv);
+                                                     "telemetry"sv,
+                                                     ENET_PACKET_FLAG_UNSEQUENCED);
     if (result == 0) {
       BOOST_LOG(debug) << "Session telemetry sent runtime="sv
                        << session->identity.runtime_id
@@ -5351,7 +5360,7 @@ namespace stream {
         BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
-      if (!adaptive_controller_active(session, "feedback-v1")) {
+      if (!adaptive_controller_active(session, "feedback")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V1)) {
@@ -5399,7 +5408,7 @@ namespace stream {
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
         session->control.last_feedback_diag_log = now;
-        BOOST_LOG(info) << "Control feedback v1 received runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Control feedback received runtime=" << session->identity.runtime_id
                         << " duration=" << network_feedback.duration_ms << "ms"
                         << " frames=" << network_feedback.frames_seen
                         << " videoBytes=" << network_feedback.video_bytes
@@ -5410,14 +5419,14 @@ namespace stream {
     server->map(SS_NETWORK_FEEDBACK_V2_PTYPE, [&](session_t *session, const std::string_view &payload) {
       if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK)) {
-        BOOST_LOG(debug) << "Ignoring v2 network feedback from client without negotiated support";
+        BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
-      if (!adaptive_controller_active(session, "feedback-v2")) {
+      if (!adaptive_controller_active(session, "feedback")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V2)) {
-        BOOST_LOG(warning) << "Ignoring truncated v2 network feedback payload: " << payload.size();
+        BOOST_LOG(warning) << "Ignoring truncated network feedback payload: " << payload.size();
         return;
       }
 
@@ -5425,7 +5434,7 @@ namespace stream {
       const auto version = read_be16_unaligned(&feedback->version);
       const auto size = read_be16_unaligned(&feedback->size);
       if (version != SS_NETWORK_FEEDBACK_V2_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V2)) {
-        BOOST_LOG(warning) << "Ignoring unsupported v2 network feedback version=" << version
+        BOOST_LOG(warning) << "Ignoring unsupported network feedback version=" << version
                            << " size=" << size;
         return;
       }
@@ -5458,17 +5467,17 @@ namespace stream {
       };
       network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v2")) {
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
         return;
       }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback-v2");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v2");
+      apply_weak_net_action(session, action, "feedback");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
         session->control.last_feedback_diag_log = now;
-        BOOST_LOG(info) << "Control feedback v2 received runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Control feedback received runtime=" << session->identity.runtime_id
                         << " duration=" << network_feedback.duration_ms << "ms"
                         << " frames=" << network_feedback.frames_seen
                         << " videoBytes=" << network_feedback.video_bytes
@@ -5482,14 +5491,14 @@ namespace stream {
       if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY)) {
-        BOOST_LOG(debug) << "Ignoring v3 network feedback from client without negotiated support";
+        BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
-      if (!adaptive_controller_active(session, "feedback-v3")) {
+      if (!adaptive_controller_active(session, "feedback")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V3)) {
-        BOOST_LOG(warning) << "Ignoring truncated v3 network feedback payload: " << payload.size();
+        BOOST_LOG(warning) << "Ignoring truncated network feedback payload: " << payload.size();
         return;
       }
 
@@ -5497,7 +5506,7 @@ namespace stream {
       const auto version = read_be16_unaligned(&feedback->version);
       const auto size = read_be16_unaligned(&feedback->size);
       if (version != SS_NETWORK_FEEDBACK_V3_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V3)) {
-        BOOST_LOG(warning) << "Ignoring unsupported v3 network feedback version=" << version
+        BOOST_LOG(warning) << "Ignoring unsupported network feedback version=" << version
                            << " size=" << size;
         return;
       }
@@ -5536,17 +5545,17 @@ namespace stream {
       };
       network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v3")) {
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
         return;
       }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback-v3");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v3");
+      apply_weak_net_action(session, action, "feedback");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
         session->control.last_feedback_diag_log = now;
-        BOOST_LOG(info) << "Control feedback v3 received runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Control feedback received runtime=" << session->identity.runtime_id
                         << " duration=" << network_feedback.duration_ms << "ms"
                         << " frames=" << network_feedback.frames_seen
                         << " videoBytes=" << network_feedback.video_bytes
@@ -5563,14 +5572,14 @@ namespace stream {
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS)) {
-        BOOST_LOG(debug) << "Ignoring v4 network feedback from client without negotiated support";
+        BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
-      if (!adaptive_controller_active(session, "feedback-v4")) {
+      if (!adaptive_controller_active(session, "feedback")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V4)) {
-        BOOST_LOG(warning) << "Ignoring truncated v4 network feedback payload: " << payload.size();
+        BOOST_LOG(warning) << "Ignoring truncated network feedback payload: " << payload.size();
         return;
       }
 
@@ -5578,7 +5587,7 @@ namespace stream {
       const auto version = read_be16_unaligned(&feedback->version);
       const auto size = read_be16_unaligned(&feedback->size);
       if (version != SS_NETWORK_FEEDBACK_V4_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V4)) {
-        BOOST_LOG(warning) << "Ignoring unsupported v4 network feedback version=" << version
+        BOOST_LOG(warning) << "Ignoring unsupported network feedback version=" << version
                            << " size=" << size;
         return;
       }
@@ -5619,17 +5628,17 @@ namespace stream {
       };
       network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v4")) {
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
         return;
       }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback-v4");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v4");
+      apply_weak_net_action(session, action, "feedback");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
         session->control.last_feedback_diag_log = now;
-        BOOST_LOG(info) << "Control feedback v4 received runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Control feedback received runtime=" << session->identity.runtime_id
                         << " duration=" << network_feedback.duration_ms << "ms"
                         << " frames=" << network_feedback.frames_seen
                         << " displayed=" << network_feedback.displayed_frames
@@ -5644,24 +5653,24 @@ namespace stream {
       }
     });
 
-    // Phase 3.3: SS_NETWORK_FEEDBACK_V5 — same payload as V4 plus client-side
-    // OWD gradient telemetry for early congestion detection. The handler is
-    // structured exactly like the V4 path; only the protocol bytes and the
-    // three trailing fields differ.
+    // Extended network feedback — same base payload plus client-side OWD
+    // gradient telemetry for early congestion detection. The wire type and
+    // payload version remain explicit contract fields; runtime policy source
+    // labels intentionally stay versionless.
     server->map(SS_NETWORK_FEEDBACK_V5_PTYPE, [&](session_t *session, const std::string_view &payload) {
       if (!(session->config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_QOS_FEEDBACK) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_AUDIO_CONTINUITY) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_VISUAL_FRESHNESS) ||
           !(session->config.mlFeatureFlags2 & ML_FF2_DELAY_GRADIENT)) {
-        BOOST_LOG(debug) << "Ignoring v5 network feedback from client without negotiated support";
+        BOOST_LOG(debug) << "Ignoring network feedback from client without negotiated support";
         return;
       }
-      if (!adaptive_controller_active(session, "feedback-v5")) {
+      if (!adaptive_controller_active(session, "feedback")) {
         return;
       }
       if (payload.size() < sizeof(SS_NETWORK_FEEDBACK_V5)) {
-        BOOST_LOG(warning) << "Ignoring truncated v5 network feedback payload: " << payload.size();
+        BOOST_LOG(warning) << "Ignoring truncated network feedback payload: " << payload.size();
         return;
       }
 
@@ -5669,7 +5678,7 @@ namespace stream {
       const auto version = read_be16_unaligned(&feedback->version);
       const auto size = read_be16_unaligned(&feedback->size);
       if (version != SS_NETWORK_FEEDBACK_V5_VERSION || size < sizeof(SS_NETWORK_FEEDBACK_V5)) {
-        BOOST_LOG(warning) << "Ignoring unsupported v5 network feedback version=" << version
+        BOOST_LOG(warning) << "Ignoring unsupported network feedback version=" << version
                            << " size=" << size;
         return;
       }
@@ -5717,17 +5726,17 @@ namespace stream {
       };
       network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback-v5")) {
+      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
         return;
       }
       auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback-v5");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback-v5");
+      apply_weak_net_action(session, action, "feedback");
+      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
         session->control.last_feedback_diag_log = now;
-        BOOST_LOG(info) << "Control feedback v5 received runtime=" << session->identity.runtime_id
+        BOOST_LOG(info) << "Control feedback received runtime=" << session->identity.runtime_id
                         << " duration=" << network_feedback.duration_ms << "ms"
                         << " frames=" << network_feedback.frames_seen
                         << " displayed=" << network_feedback.displayed_frames

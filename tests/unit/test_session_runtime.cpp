@@ -212,6 +212,42 @@ TEST(SessionRuntimeTests, StartupPathRemoteHintOverridesPrivateObservedPeer) {
   EXPECT_STREQ(decision.reason, "client-remote-hint");
 }
 
+TEST(SessionRuntimeTests, StartupPathRtspPeerRouteHintDoesNotDefeatPhysicalPrivatePeer) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .rtsp_route_remote_hint = true,
+    .client_egress_kind = "physical",
+    .client_route_host = "192.168.100.133:57989",
+    .rtsp_route_host = "192.168.100.133",
+    .client_source_endpoint = "192.168.100.182",
+    .host_observed_peer_endpoint = "192.168.100.182",
+    .host_observed_local_endpoint = "192.168.100.133",
+    .client_target_address_candidates = { "192.168.100.133" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_TRUE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::lan_direct);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_TRUE_LAN);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+  EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
+  EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
+  EXPECT_STREQ(decision.reason, "peer-lan-confirmed");
+}
+
+TEST(SessionRuntimeTests, RtspPrivatePeerChangeDoesNotRequireRemoteHint) {
+  EXPECT_FALSE(session_runtime::rtsp_peer_route_change_requires_remote_hint("192.168.100.158",
+                                                                            "192.168.100.182"));
+  EXPECT_FALSE(session_runtime::rtsp_peer_route_change_requires_remote_hint("10.10.0.2:5000",
+                                                                            "172.16.0.9:6000"));
+  EXPECT_TRUE(session_runtime::rtsp_peer_route_change_requires_remote_hint("192.168.100.158",
+                                                                           "93.184.216.34"));
+  EXPECT_TRUE(session_runtime::rtsp_peer_route_change_requires_remote_hint("93.184.216.34",
+                                                                           "192.168.100.182"));
+}
+
 TEST(SessionRuntimeTests, StartupPathTunnelEvidenceDisablesLanFastStart) {
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,

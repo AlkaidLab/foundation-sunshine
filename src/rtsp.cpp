@@ -726,8 +726,13 @@ namespace rtsp_stream {
                           << " expectedPeer="sv << launch_session->rtsp_peer_address
                           << " observedPeer="sv << remote_address
                           << " pendingCount="sv << pending_session_count();
+          const bool route_change_requires_remote_hint =
+            session_runtime::rtsp_peer_route_change_requires_remote_hint(launch_session->rtsp_peer_address,
+                                                                         remote_address);
           launch_session->rtsp_peer_address = remote_address;
-          launch_session->rtsp_route_remote_hint = true;
+          if (route_change_requires_remote_hint) {
+            launch_session->rtsp_route_remote_hint = true;
+          }
         }
         BOOST_LOG(info) << "RTSP pending claim accepted launchSession="sv << launch_session->unique_id
                         << " id="sv << launch_session->id

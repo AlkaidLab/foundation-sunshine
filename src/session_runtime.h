@@ -19,6 +19,7 @@
 
 extern "C" {
 #include <moonlight-common-c/src/Session.h>
+#include <alkaidlab/session_control_codec/session_control_codec.h>
 }
 
 namespace session_runtime {
@@ -945,6 +946,16 @@ namespace session_runtime {
   }
 
   inline bool
+  rtsp_peer_route_change_requires_remote_hint(std::string_view expected_peer,
+                                              std::string_view observed_peer) {
+    if (expected_peer.empty() || observed_peer.empty()) {
+      return true;
+    }
+    return !(is_lan_or_pc_ipv4_literal(expected_peer) &&
+             is_lan_or_pc_ipv4_literal(observed_peer));
+  }
+
+  inline bool
   client_egress_allows_lan_fast_start(std::uint32_t egress_kind) {
     return egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ||
            egress_kind == LI_SESSION_PATH_EGRESS_PHYSICAL;
@@ -1033,6 +1044,29 @@ namespace session_runtime {
     }
     else if (public_identity_compared) {
       reason_flags |= LI_SESSION_PATH_REASON_HOST_PUBLIC_MISMATCH;
+    }
+
+    const bool has_public_target = has_public_target_address_candidate(evidence);
+    if (evidence.peer_is_lan_or_pc &&
+        !client_remote_hint &&
+        !tunnel_route &&
+        client_egress_allows_lan_fast_start(egress_kind) &&
+        !has_public_target) {
+      return {
+        .route = transport_route_e::lan_direct,
+        .allow_lan_fast_start = true,
+        .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                         LI_SESSION_PATH_EGRESS_PHYSICAL :
+                         egress_kind,
+        .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+        .evidence_flags = evidence_flags | LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+        .identity_confidence_ppm = 850000U,
+        .path_identity_kind = LI_SESSION_PATH_IDENTITY_TRUE_LAN,
+        .startup_class = LI_SESSION_STARTUP_CLASS_LAN_FAST,
+        .reason_flags = reason_flags | LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED,
+        .risk_flags = public_identity_compared ? 0U : LI_SESSION_PATH_RISK_PRIVATE_PEER_ONLY,
+        .reason = "peer-lan-confirmed",
+      };
     }
 
     if (tunnel_route && public_identity_match) {
@@ -2399,115 +2433,35 @@ namespace session_runtime {
     destination[length] = '\0';
   }
 
-  inline void
-  initialize_session_control_header(LI_SESSION_CONTROL_HEADER &header,
-                                    std::uint16_t message_type,
-                                    std::uint32_t message_length) {
-    header.magic = LI_SESSION_CONTROL_MAGIC;
-    header.version = LI_SESSION_CONTROL_VERSION;
-    header.messageType = message_type;
-    header.messageLength = message_length;
-    header.flags = LI_SESSION_CONTROL_FLAG_NONE;
-  }
-
   inline LI_SESSION_CONTROL_HELLO
   make_session_control_hello(const LI_SESSION &session) {
     LI_SESSION_CONTROL_HELLO hello {};
-    initialize_session_control_header(hello.header,
-                                      LI_SESSION_CONTROL_MSG_HELLO,
-                                      static_cast<std::uint32_t>(sizeof(hello)));
-    hello.clientFeatureBits = session.featureCaps.client;
-    hello.hostFeatureBits = session.featureCaps.host;
-    hello.negotiatedFeatureBits = session.featureCaps.negotiated;
-    hello.logicalSessionKey = session.logicalSessionKey;
-    hello.runtimeId = session.runtimeId;
-    hello.participantKey = session.client.participantKey;
-    hello.clientKey = session.client.clientKey;
-    hello.deviceKey = session.client.deviceKey;
-    hello.launchSessionId = session.launchSessionId;
-    hello.controlGeneration = session.controlGeneration;
-    hello.state = session.state;
-    copy_li_string(hello.sessionId, sizeof(hello.sessionId), session.sessionId.value);
-    copy_li_string(hello.participantId, sizeof(hello.participantId), session.client.participantId.value);
-    copy_li_string(hello.deviceName, sizeof(hello.deviceName), session.client.deviceName);
-    copy_li_string(hello.displayName, sizeof(hello.displayName), session.client.displayName);
+    (void) alk_session_control_build_hello(&session, &hello);
     return hello;
   }
 
   inline LI_SESSION_CONTROL_WELCOME
   make_session_control_welcome(const LI_SESSION &session) {
     LI_SESSION_CONTROL_WELCOME welcome {};
-    initialize_session_control_header(welcome.header,
-                                      LI_SESSION_CONTROL_MSG_WELCOME,
-                                      static_cast<std::uint32_t>(sizeof(welcome)));
-    welcome.clientFeatureBits = session.featureCaps.client;
-    welcome.hostFeatureBits = session.featureCaps.host;
-    welcome.negotiatedFeatureBits = session.featureCaps.negotiated;
-    welcome.logicalSessionKey = session.logicalSessionKey;
-    welcome.runtimeId = session.runtimeId;
-    welcome.participantKey = session.host.participantKey;
-    welcome.clientKey = session.host.clientKey;
-    welcome.deviceKey = session.host.deviceKey;
-    welcome.launchSessionId = session.launchSessionId;
-    welcome.controlGeneration = session.controlGeneration;
-    welcome.state = session.state;
-    copy_li_string(welcome.sessionId, sizeof(welcome.sessionId), session.sessionId.value);
-    copy_li_string(welcome.participantId, sizeof(welcome.participantId), session.host.participantId.value);
-    copy_li_string(welcome.deviceName, sizeof(welcome.deviceName), session.host.deviceName);
-    copy_li_string(welcome.displayName, sizeof(welcome.displayName), session.host.displayName);
+    (void) alk_session_control_build_welcome(&session, &welcome);
     return welcome;
-  }
-
-  inline bool
-  is_session_control_header_valid(const LI_SESSION_CONTROL_HEADER &header,
-                                  std::uint16_t expected_type,
-                                  std::size_t payload_size) {
-    return header.magic == LI_SESSION_CONTROL_MAGIC &&
-           header.version == LI_SESSION_CONTROL_VERSION &&
-           header.messageType == expected_type &&
-           header.messageLength == payload_size &&
-           payload_size <= LI_SESSION_CONTROL_MAX_MESSAGE_SIZE;
   }
 
   inline std::optional<LI_SESSION_CONTROL_HELLO>
   parse_session_control_hello(std::string_view payload) {
-    if (payload.size() != sizeof(LI_SESSION_CONTROL_HELLO)) {
-      return std::nullopt;
-    }
-
     LI_SESSION_CONTROL_HELLO hello {};
-    std::memcpy(&hello, payload.data(), sizeof(hello));
-    if (!is_session_control_header_valid(hello.header,
-                                         LI_SESSION_CONTROL_MSG_HELLO,
-                                         payload.size())) {
+    if (!alk_session_control_parse_hello(payload.data(), payload.size(), &hello)) {
       return std::nullopt;
     }
-
-    hello.sessionId[sizeof(hello.sessionId) - 1] = '\0';
-    hello.participantId[sizeof(hello.participantId) - 1] = '\0';
-    hello.deviceName[sizeof(hello.deviceName) - 1] = '\0';
-    hello.displayName[sizeof(hello.displayName) - 1] = '\0';
     return hello;
   }
 
   inline std::optional<LI_SESSION_CONTROL_WELCOME>
   parse_session_control_welcome(std::string_view payload) {
-    if (payload.size() != sizeof(LI_SESSION_CONTROL_WELCOME)) {
-      return std::nullopt;
-    }
-
     LI_SESSION_CONTROL_WELCOME welcome {};
-    std::memcpy(&welcome, payload.data(), sizeof(welcome));
-    if (!is_session_control_header_valid(welcome.header,
-                                         LI_SESSION_CONTROL_MSG_WELCOME,
-                                         payload.size())) {
+    if (!alk_session_control_parse_welcome(payload.data(), payload.size(), &welcome)) {
       return std::nullopt;
     }
-
-    welcome.sessionId[sizeof(welcome.sessionId) - 1] = '\0';
-    welcome.participantId[sizeof(welcome.participantId) - 1] = '\0';
-    welcome.deviceName[sizeof(welcome.deviceName) - 1] = '\0';
-    welcome.displayName[sizeof(welcome.displayName) - 1] = '\0';
     return welcome;
   }
 
@@ -2516,42 +2470,16 @@ namespace session_runtime {
                                  std::uint32_t sequence,
                                  std::uint64_t sent_at_ms = 0) {
     LI_SESSION_CONTROL_TELEMETRY telemetry {};
-    initialize_session_control_header(telemetry.header,
-                                      LI_SESSION_CONTROL_MSG_TELEMETRY,
-                                      static_cast<std::uint32_t>(sizeof(telemetry)));
-    telemetry.logicalSessionKey = session.logicalSessionKey;
-    telemetry.runtimeId = session.runtimeId;
-    telemetry.participantKey = session.client.participantKey;
-    telemetry.pathId = session.transportPath.pathId;
-    telemetry.state = session.state;
-    telemetry.sequence = sequence;
-    telemetry.sentAtMs = sent_at_ms;
-    telemetry.telemetry = session.telemetry;
-    telemetry.transportPath = session.transportPath;
+    (void) alk_session_control_build_telemetry(&session, sequence, sent_at_ms, &telemetry);
     return telemetry;
   }
 
   inline std::optional<LI_SESSION_CONTROL_TELEMETRY>
   parse_session_control_telemetry(std::string_view payload) {
-    if (payload.size() != sizeof(LI_SESSION_CONTROL_TELEMETRY)) {
-      return std::nullopt;
-    }
-
     LI_SESSION_CONTROL_TELEMETRY telemetry {};
-    std::memcpy(&telemetry, payload.data(), sizeof(telemetry));
-    if (!is_session_control_header_valid(telemetry.header,
-                                         LI_SESSION_CONTROL_MSG_TELEMETRY,
-                                         payload.size())) {
+    if (!alk_session_control_parse_telemetry(payload.data(), payload.size(), &telemetry)) {
       return std::nullopt;
     }
-
-    telemetry.telemetry.currentResolution[sizeof(telemetry.telemetry.currentResolution) - 1] = '\0';
-    telemetry.transportPath.routeId[sizeof(telemetry.transportPath.routeId) - 1] = '\0';
-    telemetry.transportPath.localEndpoint[sizeof(telemetry.transportPath.localEndpoint) - 1] = '\0';
-    telemetry.transportPath.remoteEndpoint[sizeof(telemetry.transportPath.remoteEndpoint) - 1] = '\0';
-    telemetry.transportPath.observedEndpoint[sizeof(telemetry.transportPath.observedEndpoint) - 1] = '\0';
-    telemetry.transportPath.providerId[sizeof(telemetry.transportPath.providerId) - 1] = '\0';
-    telemetry.transportPath.relayName[sizeof(telemetry.transportPath.relayName) - 1] = '\0';
     return telemetry;
   }
 
@@ -2561,25 +2489,7 @@ namespace session_runtime {
                                      std::uint32_t mode,
                                      std::uint32_t ttl_ms) {
     LI_SESSION_CONTROL_LEASE lease {};
-    initialize_session_control_header(lease.header,
-                                      LI_SESSION_CONTROL_MSG_LEASE,
-                                      static_cast<std::uint32_t>(sizeof(lease)));
-    lease.logicalSessionKey = session.logicalSessionKey;
-    lease.runtimeId = session.runtimeId;
-    lease.participantKey = session.client.participantKey;
-    lease.resource = resource;
-    lease.mode = mode;
-    lease.operation = LI_SESSION_CONTROL_LEASE_OP_REQUEST;
-    lease.status = LI_SESSION_CONTROL_LEASE_STATUS_PENDING;
-    lease.generation = session.controlGeneration;
-    lease.lease.version = LI_SESSION_LEASE_VERSION;
-    lease.lease.feature = resource;
-    lease.lease.mode = mode;
-    lease.lease.ownerRuntimeId = session.runtimeId;
-    lease.lease.ownerParticipantKey = session.client.participantKey;
-    lease.lease.ttlMs = ttl_ms;
-    lease.lease.renewable = true;
-    lease.lease.valid = false;
+    (void) alk_session_control_build_lease_request(&session, resource, mode, ttl_ms, &lease);
     return lease;
   }
 
@@ -2589,35 +2499,16 @@ namespace session_runtime {
                                  std::uint32_t operation,
                                  std::uint32_t status) {
     LI_SESSION_CONTROL_LEASE lease {};
-    initialize_session_control_header(lease.header,
-                                      LI_SESSION_CONTROL_MSG_LEASE,
-                                      static_cast<std::uint32_t>(sizeof(lease)));
-    lease.logicalSessionKey = session.logicalSessionKey;
-    lease.runtimeId = session.runtimeId;
-    lease.participantKey = granted_lease.ownerParticipantKey;
-    lease.resource = granted_lease.feature;
-    lease.mode = granted_lease.mode;
-    lease.operation = operation;
-    lease.status = status;
-    lease.generation = session.controlGeneration;
-    lease.lease = granted_lease;
+    (void) alk_session_control_build_lease_ack(&session, &granted_lease, operation, status, &lease);
     return lease;
   }
 
   inline std::optional<LI_SESSION_CONTROL_LEASE>
   parse_session_control_lease(std::string_view payload) {
-    if (payload.size() != sizeof(LI_SESSION_CONTROL_LEASE)) {
-      return std::nullopt;
-    }
-
     LI_SESSION_CONTROL_LEASE lease {};
-    std::memcpy(&lease, payload.data(), sizeof(lease));
-    if (!is_session_control_header_valid(lease.header,
-                                         LI_SESSION_CONTROL_MSG_LEASE,
-                                         payload.size())) {
+    if (!alk_session_control_parse_lease(payload.data(), payload.size(), &lease)) {
       return std::nullopt;
     }
-
     return lease;
   }
 
@@ -2626,35 +2517,16 @@ namespace session_runtime {
                                     std::uint32_t sequence,
                                     std::uint64_t sent_at_ms = 0) {
     LI_SESSION_CONTROL_CURSOR_PLANE cursor_plane {};
-    initialize_session_control_header(cursor_plane.header,
-                                      LI_SESSION_CONTROL_MSG_CURSOR_PLANE,
-                                      static_cast<std::uint32_t>(sizeof(cursor_plane)));
-    cursor_plane.logicalSessionKey = session.logicalSessionKey;
-    cursor_plane.runtimeId = session.runtimeId;
-    cursor_plane.participantKey = session.host.participantKey != 0 ?
-                                    session.host.participantKey :
-                                    session.client.participantKey;
-    cursor_plane.sequence = sequence;
-    cursor_plane.sentAtMs = sent_at_ms;
-    cursor_plane.cursorPlane = session.cursorPlane;
+    (void) alk_session_control_build_cursor_plane(&session, sequence, sent_at_ms, &cursor_plane);
     return cursor_plane;
   }
 
   inline std::optional<LI_SESSION_CONTROL_CURSOR_PLANE>
   parse_session_control_cursor_plane(std::string_view payload) {
-    if (payload.size() != sizeof(LI_SESSION_CONTROL_CURSOR_PLANE)) {
-      return std::nullopt;
-    }
-
     LI_SESSION_CONTROL_CURSOR_PLANE cursor_plane {};
-    std::memcpy(&cursor_plane, payload.data(), sizeof(cursor_plane));
-    if (!is_session_control_header_valid(cursor_plane.header,
-                                         LI_SESSION_CONTROL_MSG_CURSOR_PLANE,
-                                         payload.size()) ||
-        cursor_plane.cursorPlane.version != LI_SESSION_CURSOR_PLANE_VERSION) {
+    if (!alk_session_control_parse_cursor_plane(payload.data(), payload.size(), &cursor_plane)) {
       return std::nullopt;
     }
-
     return cursor_plane;
   }
 
