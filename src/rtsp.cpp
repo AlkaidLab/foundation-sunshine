@@ -2042,7 +2042,7 @@ namespace rtsp_stream {
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
                           << qualityCeilingFramerate
-                          << " fps; weak-net keeps display/capture cadence at the quality ceiling"
+                          << " fps; stream-quality keeps display/capture cadence at the quality ceiling"
                           << " pathReason=" << startupPathDecision.reason
                           << " startupPolicy=" << startupPolicy.reason
                           << " route=" << session_runtime::transport_route_name(startupPathDecision.route)

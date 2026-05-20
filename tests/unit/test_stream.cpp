@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "src/weak_net_controller.h"
+#include "src/stream_quality_controller.h"
 
 namespace stream {
   std::vector<uint8_t>
@@ -36,13 +36,13 @@ namespace stream {
                                        std::uint32_t &next_received_length);
 
   bool
-  should_synthesize_weak_net_recovery_feedback(int ml_feature_flags);
+  should_synthesize_stream_quality_recovery_feedback(int ml_feature_flags);
 
   bool
-  should_apply_frame_fec_weak_net_feedback(int ml_feature_flags);
+  should_apply_frame_fec_stream_quality_feedback(int ml_feature_flags);
 
   bool
-  weak_net_resync_guard_allows_safety_apply(const weak_net::action_t &action,
+  stream_quality_resync_guard_allows_safety_apply(const stream_quality::action_t &action,
                                            int last_applied_bitrate_kbps,
                                            int last_applied_fec_percentage);
 }
@@ -100,38 +100,38 @@ TEST(ClipboardTransferValidationTests, AcceptsSequentialChunksOnly) {
   EXPECT_FALSE(stream::clipboard_transfer_chunk_next_length(8, 10, 8, 3, next_received_length));
 }
 
-TEST(WeakNetRecoveryFeedbackTests, DisablesSyntheticLossWhenNetworkFeedbackIsAvailable) {
+TEST(StreamQualityRecoveryFeedbackTests, DisablesSyntheticLossWhenNetworkFeedbackIsAvailable) {
   constexpr int networkFeedbackFeatureFlag = 0x20;
 
-  EXPECT_FALSE(stream::should_synthesize_weak_net_recovery_feedback(networkFeedbackFeatureFlag));
-  EXPECT_TRUE(stream::should_synthesize_weak_net_recovery_feedback(0));
+  EXPECT_FALSE(stream::should_synthesize_stream_quality_recovery_feedback(networkFeedbackFeatureFlag));
+  EXPECT_TRUE(stream::should_synthesize_stream_quality_recovery_feedback(0));
 }
 
-TEST(WeakNetRecoveryFeedbackTests, UsesNetworkFeedbackInsteadOfPerFrameFecWhenAvailable) {
+TEST(StreamQualityRecoveryFeedbackTests, UsesNetworkFeedbackInsteadOfPerFrameFecWhenAvailable) {
   constexpr int networkFeedbackFeatureFlag = 0x20;
 
-  EXPECT_FALSE(stream::should_apply_frame_fec_weak_net_feedback(networkFeedbackFeatureFlag));
-  EXPECT_TRUE(stream::should_apply_frame_fec_weak_net_feedback(0));
+  EXPECT_FALSE(stream::should_apply_frame_fec_stream_quality_feedback(networkFeedbackFeatureFlag));
+  EXPECT_TRUE(stream::should_apply_frame_fec_stream_quality_feedback(0));
 }
 
-TEST(WeakNetRecoveryFeedbackTests, ResyncGuardAllowsCongestionAntiSpiralDownshift) {
-  weak_net::action_t action {};
+TEST(StreamQualityRecoveryFeedbackTests, ResyncGuardAllowsCongestionAntiSpiralDownshift) {
+  stream_quality::action_t action {};
   action.changed = true;
-  action.state = weak_net::state_e::crisis;
-  action.reason = weak_net::reason_e::random_loss;
+  action.state = stream_quality::state_e::crisis;
+  action.reason = stream_quality::reason_e::random_loss;
   action.target_bitrate_kbps = 9000;
   action.fec_percentage = 20;
   action.congestion_anti_spiral = true;
 
-  EXPECT_TRUE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+  EXPECT_TRUE(stream::stream_quality_resync_guard_allows_safety_apply(action, 30000, 35));
 
   action.congestion_anti_spiral = false;
-  EXPECT_FALSE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+  EXPECT_FALSE(stream::stream_quality_resync_guard_allows_safety_apply(action, 30000, 35));
 
   action.congestion_anti_spiral = true;
   action.target_bitrate_kbps = 36000;
   action.fec_percentage = 40;
-  EXPECT_FALSE(stream::weak_net_resync_guard_allows_safety_apply(action, 30000, 35));
+  EXPECT_FALSE(stream::stream_quality_resync_guard_allows_safety_apply(action, 30000, 35));
 }
 
 TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {

@@ -95,11 +95,16 @@ add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 add_executable(stream_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_quality.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_weak_net_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_quality_controller.cpp
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Session.c
         ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp
-        ${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp)
-target_include_directories(stream_controller_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+        ${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control_internal.cpp)
+target_include_directories(stream_controller_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/c/include")
 target_link_libraries(stream_controller_unit_tests
         gtest_main)
 target_compile_definitions(stream_controller_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})

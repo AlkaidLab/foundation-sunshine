@@ -117,8 +117,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/frame_interest.h"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.cpp"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.h"
-        "${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp"
-        "${CMAKE_SOURCE_DIR}/src/weak_net_controller.h"
+        "${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp"
+        "${CMAKE_SOURCE_DIR}/src/stream_quality_controller.h"
         "${CMAKE_SOURCE_DIR}/src/video.cpp"
         "${CMAKE_SOURCE_DIR}/src/video.h"
         "${CMAKE_SOURCE_DIR}/src/video_colorspace.cpp"
@@ -179,6 +179,8 @@ if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp"
             "${ALKAIDLAB_SESSION_CORE_PATH}/src/session_core.c"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control.cpp"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control_internal.cpp"
             "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)

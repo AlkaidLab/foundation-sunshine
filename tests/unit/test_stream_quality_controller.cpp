@@ -1,4 +1,4 @@
-#include "src/weak_net_controller.h"
+#include "src/stream_quality_controller.h"
 
 #include <gtest/gtest.h>
 
@@ -6,8 +6,8 @@
 #include <cmath>
 #include <cstdlib>
 
-TEST(WeakNetControllerTests, DropsBitrateAndRaisesFecWhenFramesAreUnrecoverable) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DropsBitrateAndRaisesFecWhenFramesAreUnrecoverable) {
+  stream_quality::controller_t controller;
   controller.configure({ .baseline_bitrate_kbps = 50000, .baseline_fec_percentage = 20 });
 
   auto action = controller.on_feedback({
@@ -24,15 +24,15 @@ TEST(WeakNetControllerTests, DropsBitrateAndRaisesFecWhenFramesAreUnrecoverable)
     .rtt_variance_ms = 30,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_TRUE(action.changed);
   EXPECT_LT(action.target_bitrate_kbps, 50000);
   EXPECT_GT(action.fec_percentage, 20);
   EXPECT_TRUE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, RecoversTowardBaselineWithoutExceedingUserSpec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RecoversTowardBaselineWithoutExceedingUserSpec) {
+  stream_quality::controller_t controller;
   controller.configure({ .baseline_bitrate_kbps = 50000, .baseline_fec_percentage = 20 });
 
   controller.on_feedback({
@@ -49,7 +49,7 @@ TEST(WeakNetControllerTests, RecoversTowardBaselineWithoutExceedingUserSpec) {
     .rtt_variance_ms = 40,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -66,22 +66,22 @@ TEST(WeakNetControllerTests, RecoversTowardBaselineWithoutExceedingUserSpec) {
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::recovering);
+  EXPECT_EQ(action.state, stream_quality::state_e::recovering);
   EXPECT_TRUE(action.changed);
   EXPECT_LE(action.target_bitrate_kbps, 50000);
-  EXPECT_LE(action.fec_percentage, weak_net::controller_t::max_fec_percentage);
+  EXPECT_LE(action.fec_percentage, stream_quality::controller_t::max_fec_percentage);
 }
 
-TEST(WeakNetControllerTests, CapsHighConfiguredFecToSafeBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CapsHighConfiguredFecToSafeBudget) {
+  stream_quality::controller_t controller;
   controller.configure({ .baseline_bitrate_kbps = 10000, .baseline_fec_percentage = 100 });
 
-  EXPECT_LE(controller.current_fec_percentage(), weak_net::controller_t::max_fec_percentage);
+  EXPECT_LE(controller.current_fec_percentage(), stream_quality::controller_t::max_fec_percentage);
   EXPECT_LE(controller.current_fec_percentage(), 100);
 }
 
-TEST(WeakNetControllerTests, RaisesFecTowardConfiguredMaximumOnlyWhenNeeded) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RaisesFecTowardConfiguredMaximumOnlyWhenNeeded) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 10000,
     .baseline_fec_percentage = 20,
@@ -99,12 +99,12 @@ TEST(WeakNetControllerTests, RaisesFecTowardConfiguredMaximumOnlyWhenNeeded) {
   });
 
   EXPECT_GT(action.fec_percentage, 20);
-  EXPECT_LE(action.fec_percentage, weak_net::controller_t::max_fec_percentage);
+  EXPECT_LE(action.fec_percentage, stream_quality::controller_t::max_fec_percentage);
   EXPECT_LE(action.fec_percentage, 80);
 }
 
-TEST(WeakNetControllerTests, AppliesFecOverheadOnceToPacingBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AppliesFecOverheadOnceToPacingBudget) {
+  stream_quality::controller_t controller;
   controller.configure({ .baseline_bitrate_kbps = 10000, .baseline_fec_percentage = 80 });
 
   auto action = controller.on_feedback({
@@ -123,8 +123,8 @@ TEST(WeakNetControllerTests, AppliesFecOverheadOnceToPacingBudget) {
   EXPECT_LE(action.pacing_bitrate_kbps, 18800);
 }
 
-TEST(WeakNetControllerTests, ReducesFpsBeforeCrushingBitrateWhenQueuesMissDeadline) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ReducesFpsBeforeCrushingBitrateWhenQueuesMissDeadline) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 12,
@@ -146,15 +146,15 @@ TEST(WeakNetControllerTests, ReducesFpsBeforeCrushingBitrateWhenQueuesMissDeadli
     .late_frames = 12,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_LT(action.target_fps, 60);
   EXPECT_GE(action.target_fps, 24);
   EXPECT_GE(action.target_bitrate_kbps, 16000);
-  EXPECT_LE(action.fec_percentage, weak_net::controller_t::max_fec_percentage);
+  EXPECT_LE(action.fec_percentage, stream_quality::controller_t::max_fec_percentage);
 }
 
-TEST(WeakNetControllerTests, RecoversFpsAndBitrateAfterStableWindows) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RecoversFpsAndBitrateAfterStableWindows) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 12,
@@ -177,7 +177,7 @@ TEST(WeakNetControllerTests, RecoversFpsAndBitrateAfterStableWindows) {
     .late_frames = 18,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 10; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -192,14 +192,14 @@ TEST(WeakNetControllerTests, RecoversFpsAndBitrateAfterStableWindows) {
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::recovering);
+  EXPECT_EQ(action.state, stream_quality::state_e::recovering);
   EXPECT_LE(action.target_bitrate_kbps, 20000);
   EXPECT_LE(action.target_fps, 60);
   EXPECT_GT(action.target_fps, 24);
 }
 
-TEST(WeakNetControllerTests, TreatsConfiguredBitrateAsCeilingAndStartsFromSafeWorkingPoint) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, TreatsConfiguredBitrateAsCeilingAndStartsFromSafeWorkingPoint) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -222,15 +222,15 @@ TEST(WeakNetControllerTests, TreatsConfiguredBitrateAsCeilingAndStartsFromSafeWo
     .render_queue_depth = 0,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::recovering);
+  EXPECT_EQ(action.state, stream_quality::state_e::recovering);
   EXPECT_GT(action.target_bitrate_kbps, 20000);
   EXPECT_LT(action.target_bitrate_kbps, 120000);
   EXPECT_LE(action.target_bitrate_kbps, 35000);
   EXPECT_EQ(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, HighRefresh4kStartupUsesSafeFirstFrameFloor) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighRefresh4kStartupUsesSafeFirstFrameFloor) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -246,8 +246,8 @@ TEST(WeakNetControllerTests, HighRefresh4kStartupUsesSafeFirstFrameFloor) {
   EXPECT_GE(controller.current_bitrate_kbps(), 6000);
 }
 
-TEST(WeakNetControllerTests, FirstIdrProtectionDoesNotCutStartupBitrateOnInitialLoss) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, FirstIdrProtectionDoesNotCutStartupBitrateOnInitialLoss) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -276,12 +276,12 @@ TEST(WeakNetControllerTests, FirstIdrProtectionDoesNotCutStartupBitrateOnInitial
     .frame_area = 3840U * 2160U,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_GE(action.target_bitrate_kbps, 6000);
 }
 
-TEST(WeakNetControllerTests, ContinuouslyProbesTowardCeilingWhenNetworkAndQueuesStayHealthy) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ContinuouslyProbesTowardCeilingWhenNetworkAndQueuesStayHealthy) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -290,7 +290,7 @@ TEST(WeakNetControllerTests, ContinuouslyProbesTowardCeilingWhenNetworkAndQueues
     .min_fps = 24,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 16; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -305,15 +305,15 @@ TEST(WeakNetControllerTests, ContinuouslyProbesTowardCeilingWhenNetworkAndQueues
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::recovering);
+  EXPECT_EQ(action.state, stream_quality::state_e::recovering);
   EXPECT_GT(action.target_bitrate_kbps, 70000);
   EXPECT_LT(action.target_bitrate_kbps, 90000);
   EXPECT_LE(action.target_bitrate_kbps, 120000);
   EXPECT_EQ(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, LowBitrateCeilingDoesNotLockHighRefreshFpsWhenFeedbackIsHealthy) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LowBitrateCeilingDoesNotLockHighRefreshFpsWhenFeedbackIsHealthy) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 3250,
     .baseline_fec_percentage = 10,
@@ -334,13 +334,13 @@ TEST(WeakNetControllerTests, LowBitrateCeilingDoesNotLockHighRefreshFpsWhenFeedb
     .late_frames = 0,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::healthy);
+  EXPECT_EQ(action.state, stream_quality::state_e::healthy);
   EXPECT_EQ(action.target_bitrate_kbps, 3250);
   EXPECT_EQ(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, HighRefreshCrisisKeepsEmergencyInteractiveFloorAndRecoversGradually) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighRefreshCrisisKeepsEmergencyInteractiveFloorAndRecoversGradually) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -348,7 +348,7 @@ TEST(WeakNetControllerTests, HighRefreshCrisisKeepsEmergencyInteractiveFloorAndR
     .baseline_fps = 120,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -388,13 +388,13 @@ TEST(WeakNetControllerTests, HighRefreshCrisisKeepsEmergencyInteractiveFloorAndR
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::recovering);
+  EXPECT_EQ(action.state, stream_quality::state_e::recovering);
   EXPECT_GT(action.target_fps, crisis_fps);
   EXPECT_LT(action.target_fps, crisis_fps + 20);
 }
 
-TEST(WeakNetControllerTests, KeepsFpsStableForTransientNetworkLossWithoutRenderPressure) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, KeepsFpsStableForTransientNetworkLossWithoutRenderPressure) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -419,14 +419,14 @@ TEST(WeakNetControllerTests, KeepsFpsStableForTransientNetworkLossWithoutRenderP
     .late_frames = 0,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_LT(action.target_bitrate_kbps, 60000);
   EXPECT_EQ(action.target_fps, 120);
-  EXPECT_LE(action.fec_percentage, weak_net::controller_t::max_fec_percentage);
+  EXPECT_LE(action.fec_percentage, stream_quality::controller_t::max_fec_percentage);
 }
 
-TEST(WeakNetControllerTests, PreservesBitrateForRenderPressureWithoutNetworkLoss) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, PreservesBitrateForRenderPressureWithoutNetworkLoss) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -435,7 +435,7 @@ TEST(WeakNetControllerTests, PreservesBitrateForRenderPressureWithoutNetworkLoss
     .min_fps = 45,
   });
 
-  const weak_net::feedback_t feedback {
+  const stream_quality::feedback_t feedback {
     .duration_ms = 500,
     .frames_seen = 60,
     .complete_frames = 60,
@@ -451,15 +451,15 @@ TEST(WeakNetControllerTests, PreservesBitrateForRenderPressureWithoutNetworkLoss
   controller.on_feedback(feedback);
   auto action = controller.on_feedback(feedback);
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_EQ(action.target_bitrate_kbps, 20000);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_LT(action.target_fps, 120);
   EXPECT_GE(action.target_fps, 110);
 }
 
-TEST(WeakNetControllerTests, InputOnlyPressureDoesNotReconfigureVideoTransport) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, InputOnlyPressureDoesNotReconfigureVideoTransport) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -486,15 +486,15 @@ TEST(WeakNetControllerTests, InputOnlyPressureDoesNotReconfigureVideoTransport) 
     .input_ack_latency_us = 160000,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_EQ(action.target_bitrate_kbps, 20000);
   EXPECT_EQ(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_FALSE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, DoesNotRaiseFecForDelayOnlyCongestion) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DoesNotRaiseFecForDelayOnlyCongestion) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -517,13 +517,13 @@ TEST(WeakNetControllerTests, DoesNotRaiseFecForDelayOnlyCongestion) {
     .late_frames = 2,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_LT(action.target_bitrate_kbps, 20000);
 }
 
-TEST(WeakNetControllerTests, DoesNotRequestIdrForDelayOnlyQueueingCrisis) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DoesNotRequestIdrForDelayOnlyQueueingCrisis) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -546,13 +546,13 @@ TEST(WeakNetControllerTests, DoesNotRequestIdrForDelayOnlyQueueingCrisis) {
     .late_frames = 1,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_FALSE(action.request_idr);
   EXPECT_LE(action.fec_percentage, 10);
 }
 
-TEST(WeakNetControllerTests, ScalesFecLinearlyWithObservedRandomLoss) {
-  weak_net::controller_t mild_controller;
+TEST(StreamQualityControllerTests, ScalesFecLinearlyWithObservedRandomLoss) {
+  stream_quality::controller_t mild_controller;
   mild_controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -573,7 +573,7 @@ TEST(WeakNetControllerTests, ScalesFecLinearlyWithObservedRandomLoss) {
     .rtt_variance_ms = 14,
   });
 
-  weak_net::controller_t severe_controller;
+  stream_quality::controller_t severe_controller;
   severe_controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -602,8 +602,8 @@ TEST(WeakNetControllerTests, ScalesFecLinearlyWithObservedRandomLoss) {
   EXPECT_GT(severe_action.fec_percentage, mild_action.fec_percentage);
 }
 
-TEST(WeakNetControllerTests, AudioUnderrunsConstrainVideoWithoutRaisingFecOrIdr) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioUnderrunsConstrainVideoWithoutRaisingFecOrIdr) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -624,15 +624,15 @@ TEST(WeakNetControllerTests, AudioUnderrunsConstrainVideoWithoutRaisingFecOrIdr)
     .audio_underruns = 8,
   });
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_EQ(action.target_bitrate_kbps, 20000);
   EXPECT_EQ(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_FALSE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, AudioContinuityPressureConstrainVideoWithoutUnderruns) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioContinuityPressureConstrainVideoWithoutUnderruns) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -657,15 +657,15 @@ TEST(WeakNetControllerTests, AudioContinuityPressureConstrainVideoWithoutUnderru
     .audio_buffer_depth_ms = 0,
   });
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_EQ(action.target_bitrate_kbps, 20000);
   EXPECT_EQ(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_FALSE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, SustainedAudioUnderrunsApplyGentleLinearBitratePressure) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, SustainedAudioUnderrunsApplyGentleLinearBitratePressure) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -675,7 +675,7 @@ TEST(WeakNetControllerTests, SustainedAudioUnderrunsApplyGentleLinearBitratePres
     .min_fps = 45,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 10; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -689,15 +689,15 @@ TEST(WeakNetControllerTests, SustainedAudioUnderrunsApplyGentleLinearBitratePres
     });
   }
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_EQ(action.target_bitrate_kbps, 20000);
   EXPECT_EQ(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_FALSE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, AudioOnlyPressureCannotCollapseVideoWhenNetworkIsClean) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioOnlyPressureCannotCollapseVideoWhenNetworkIsClean) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18000,
     .baseline_fec_percentage = 10,
@@ -709,7 +709,7 @@ TEST(WeakNetControllerTests, AudioOnlyPressureCannotCollapseVideoWhenNetworkIsCl
     .min_fps = 45,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 45; i++) {
     action = controller.on_feedback({
       .duration_ms = 1080,
@@ -731,8 +731,8 @@ TEST(WeakNetControllerTests, AudioOnlyPressureCannotCollapseVideoWhenNetworkIsCl
   EXPECT_GE(action.target_bitrate_kbps, 15300);
 }
 
-TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAfterLoss) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAfterLoss) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -747,7 +747,7 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAfterLos
     .dynamic_range = 0,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -768,7 +768,7 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAfterLos
       .rfi_requests = 12,
     });
   }
-  ASSERT_EQ(action.state, weak_net::state_e::crisis);
+  ASSERT_EQ(action.state, stream_quality::state_e::crisis);
   ASSERT_LT(action.target_bitrate_kbps, 10000);
   ASSERT_LT(action.resolution_scale_percent, 100);
 
@@ -791,14 +791,14 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAfterLos
     });
   }
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_GE(action.target_bitrate_kbps, 5000);
   EXPECT_GE(action.target_fps, 78);
   EXPECT_GE(action.resolution_scale_percent, 90);
 }
 
-TEST(WeakNetControllerTests, RaisesFecForRandomLossWithAdaptiveHeadroom) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RaisesFecForRandomLossWithAdaptiveHeadroom) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -821,14 +821,14 @@ TEST(WeakNetControllerTests, RaisesFecForRandomLossWithAdaptiveHeadroom) {
     .rtt_variance_ms = 18,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_GT(action.fec_percentage, 10);
   EXPECT_LE(action.fec_percentage, 30);
   EXPECT_EQ(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, HighRefreshDefaultUsesSixtyFpsEmergencyFloorAndRecovers) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighRefreshDefaultUsesSixtyFpsEmergencyFloorAndRecovers) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 5000,
     .baseline_fec_percentage = 10,
@@ -836,7 +836,7 @@ TEST(WeakNetControllerTests, HighRefreshDefaultUsesSixtyFpsEmergencyFloorAndReco
     .baseline_fps = 120,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -877,8 +877,8 @@ TEST(WeakNetControllerTests, HighRefreshDefaultUsesSixtyFpsEmergencyFloorAndReco
   EXPECT_LE(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, RecoveredOnlyRandomLossRaisesFecWithoutCrushingInteractiveVideo) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RecoveredOnlyRandomLossRaisesFecWithoutCrushingInteractiveVideo) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18000,
     .baseline_fec_percentage = 10,
@@ -889,7 +889,7 @@ TEST(WeakNetControllerTests, RecoveredOnlyRandomLossRaisesFecWithoutCrushingInte
     .startup_fps = 120,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -912,7 +912,7 @@ TEST(WeakNetControllerTests, RecoveredOnlyRandomLossRaisesFecWithoutCrushingInte
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.state, stream_quality::state_e::constrained);
   EXPECT_GE(action.fec_percentage, 35);
   EXPECT_GE(action.target_bitrate_kbps, 12000);
   EXPECT_GE(action.target_fps, 90);
@@ -922,8 +922,8 @@ TEST(WeakNetControllerTests, RecoveredOnlyRandomLossRaisesFecWithoutCrushingInte
   EXPECT_EQ(action.unrecoverable_loss, 0.0);
 }
 
-TEST(WeakNetControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardFullParity) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardFullParity) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 50000,
     .baseline_fec_percentage = 10,
@@ -934,7 +934,7 @@ TEST(WeakNetControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardFullPar
     .startup_fps = 120,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -954,8 +954,8 @@ TEST(WeakNetControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardFullPar
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_GE(action.fec_percentage, 80);
   EXPECT_LE(action.fec_percentage, 100);
   EXPECT_GE(action.target_fps, 90);
@@ -963,8 +963,8 @@ TEST(WeakNetControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardFullPar
   EXPECT_GT(action.fec_efficiency, 0.0);
 }
 
-TEST(WeakNetControllerTests, RecoveryDoesNotExceedTotalCeilingWhileFecIsElevated) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RecoveryDoesNotExceedTotalCeilingWhileFecIsElevated) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18000,
     .baseline_fec_percentage = 10,
@@ -976,7 +976,7 @@ TEST(WeakNetControllerTests, RecoveryDoesNotExceedTotalCeilingWhileFecIsElevated
     .min_fps = 24,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1018,8 +1018,8 @@ TEST(WeakNetControllerTests, RecoveryDoesNotExceedTotalCeilingWhileFecIsElevated
   EXPECT_LE(action.target_bitrate_kbps, 18000);
 }
 
-TEST(WeakNetControllerTests, ManualHighCeilingRecoversTowardSustainableEstimateAfterCongestion) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ManualHighCeilingRecoversTowardSustainableEstimateAfterCongestion) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 1000000,
     .baseline_fec_percentage = 10,
@@ -1030,7 +1030,7 @@ TEST(WeakNetControllerTests, ManualHighCeilingRecoversTowardSustainableEstimateA
     .min_fps = 45,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1061,8 +1061,8 @@ TEST(WeakNetControllerTests, ManualHighCeilingRecoversTowardSustainableEstimateA
     .rtt_variance_ms = 150,
   });
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
 
   for (int i = 0; i < 18; i++) {
     action = controller.on_feedback({
@@ -1083,11 +1083,11 @@ TEST(WeakNetControllerTests, ManualHighCeilingRecoversTowardSustainableEstimateA
   EXPECT_GT(action.sustainable_estimate_kbps, 40000);
   EXPECT_LT(action.effective_ceiling_kbps, 1000000);
   EXPECT_LE(action.target_bitrate_kbps, 85000);
-  EXPECT_EQ(action.reason, weak_net::reason_e::recovering);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::recovering);
 }
 
-TEST(WeakNetControllerTests, FullFrameMotionPressurePrefersScaleBeforePptFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, FullFrameMotionPressurePrefersScaleBeforePptFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18000,
     .baseline_fec_percentage = 10,
@@ -1102,7 +1102,7 @@ TEST(WeakNetControllerTests, FullFrameMotionPressurePrefersScaleBeforePptFps) {
     .dynamic_range = 0,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1127,7 +1127,7 @@ TEST(WeakNetControllerTests, FullFrameMotionPressurePrefersScaleBeforePptFps) {
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::motion_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
   EXPECT_GE(action.pressures.motion, 0.85);
   EXPECT_GE(action.target_fps, 90);
   EXPECT_LE(action.resolution_scale_percent, 85);
@@ -1137,8 +1137,8 @@ TEST(WeakNetControllerTests, FullFrameMotionPressurePrefersScaleBeforePptFps) {
   EXPECT_FALSE(action.profile_tier_supported);
 }
 
-TEST(WeakNetControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScaleCannotApply) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScaleCannotApply) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -1154,7 +1154,7 @@ TEST(WeakNetControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScal
     .runtime_profile_tier_supported = false,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 5; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1175,7 +1175,7 @@ TEST(WeakNetControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScal
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::motion_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
   EXPECT_TRUE(action.profile_tier_changed);
   EXPECT_TRUE(action.profile_tier_deferred);
   EXPECT_FALSE(action.profile_tier_supported);
@@ -1184,8 +1184,8 @@ TEST(WeakNetControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScal
   EXPECT_LE(action.fec_percentage, 10);
 }
 
-TEST(WeakNetControllerTests, DelayOnlyCongestionReducesPacingWithoutOpeningFullFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DelayOnlyCongestionReducesPacingWithoutOpeningFullFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -1211,7 +1211,7 @@ TEST(WeakNetControllerTests, DelayOnlyCongestionReducesPacingWithoutOpeningFullF
     .displayed_frames = 59,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_GE(action.pressures.delay_congestion, 0.80);
   EXPECT_EQ(action.fec_percentage, 10);
   EXPECT_LT(action.pacing_bitrate_kbps, 25000);
@@ -1219,8 +1219,8 @@ TEST(WeakNetControllerTests, DelayOnlyCongestionReducesPacingWithoutOpeningFullF
 }
 
 
-TEST(WeakNetControllerTests, QueueBackpressureWithJitterCapsTotalAndDoesNotRaiseFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, QueueBackpressureWithJitterCapsTotalAndDoesNotRaiseFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 116000,
     .baseline_fec_percentage = 10,
@@ -1239,7 +1239,7 @@ TEST(WeakNetControllerTests, QueueBackpressureWithJitterCapsTotalAndDoesNotRaise
     .fps_needed_kbps = 30000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1267,15 +1267,15 @@ TEST(WeakNetControllerTests, QueueBackpressureWithJitterCapsTotalAndDoesNotRaise
   }
 
   const int total_kbps = action.target_bitrate_kbps * (100 + action.fec_percentage) / 100;
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_EQ(action.fec_percentage, 10);
   EXPECT_LE(total_kbps, 13500);
   EXPECT_LE(action.pacing_bitrate_kbps, 14000);
   EXPECT_LT(action.target_bitrate_kbps, 18000);
 }
 
-TEST(WeakNetControllerTests, RenderOnlyBackpressureDoesNotMasqueradeAsNetworkDelayCongestion) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RenderOnlyBackpressureDoesNotMasqueradeAsNetworkDelayCongestion) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 116000,
     .baseline_fec_percentage = 10,
@@ -1294,7 +1294,7 @@ TEST(WeakNetControllerTests, RenderOnlyBackpressureDoesNotMasqueradeAsNetworkDel
     .fps_needed_kbps = 30000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1320,14 +1320,14 @@ TEST(WeakNetControllerTests, RenderOnlyBackpressureDoesNotMasqueradeAsNetworkDel
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
-  EXPECT_NE(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
+  EXPECT_NE(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_GE(action.pacing_bitrate_kbps, 15000);
 }
 
-TEST(WeakNetControllerTests, RfiStormIsCooledDownAndForcesCrisisTier) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RfiStormIsCooledDownAndForcesCrisisTier) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 50000,
     .baseline_fec_percentage = 10,
@@ -1370,16 +1370,16 @@ TEST(WeakNetControllerTests, RfiStormIsCooledDownAndForcesCrisisTier) {
     .waiting_for_rfi_frames = 60,
   });
 
-  EXPECT_EQ(first.state, weak_net::state_e::crisis);
+  EXPECT_EQ(first.state, stream_quality::state_e::crisis);
   EXPECT_TRUE(first.request_idr);
-  EXPECT_EQ(second.state, weak_net::state_e::crisis);
+  EXPECT_EQ(second.state, stream_quality::state_e::crisis);
   EXPECT_FALSE(second.request_idr);
   EXPECT_GE(second.pressures.burst_loss, 0.95);
   EXPECT_LE(second.resolution_scale_percent, 75);
 }
 
-TEST(WeakNetControllerTests, IsolatedRfiWithoutLossDoesNotTriggerRandomLossCrisis) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, IsolatedRfiWithoutLossDoesNotTriggerRandomLossCrisis) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1416,16 +1416,16 @@ TEST(WeakNetControllerTests, IsolatedRfiWithoutLossDoesNotTriggerRandomLossCrisi
     .waiting_for_rfi_frames = 0,
   });
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
-  EXPECT_NE(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_FALSE(action.request_idr);
   EXPECT_LT(action.pressures.burst_loss, 0.50);
   EXPECT_GE(action.target_bitrate_kbps, 7500);
   EXPECT_EQ(action.target_fps, 120);
 }
 
-TEST(WeakNetControllerTests, StaticIdleWithoutVideoSamplesDoesNotReduceForRttJitter) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StaticIdleWithoutVideoSamplesDoesNotReduceForRttJitter) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1441,7 +1441,7 @@ TEST(WeakNetControllerTests, StaticIdleWithoutVideoSamplesDoesNotReduceForRttJit
     .dynamic_range = 0,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 1080,
@@ -1470,8 +1470,8 @@ TEST(WeakNetControllerTests, StaticIdleWithoutVideoSamplesDoesNotReduceForRttJit
     });
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::random_loss);
-  EXPECT_NE(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_NE(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_FALSE(action.request_idr);
   EXPECT_EQ(action.target_bitrate_kbps, 18182);
   EXPECT_LE(action.fec_percentage, 10);
@@ -1482,8 +1482,8 @@ TEST(WeakNetControllerTests, StaticIdleWithoutVideoSamplesDoesNotReduceForRttJit
   EXPECT_EQ(action.pressures.render, 0.0);
 }
 
-TEST(WeakNetControllerTests, RecoveredOnlyLossDoesNotConsumeHalfOfManualCeilingWithFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RecoveredOnlyLossDoesNotConsumeHalfOfManualCeilingWithFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1513,15 +1513,15 @@ TEST(WeakNetControllerTests, RecoveredOnlyLossDoesNotConsumeHalfOfManualCeilingW
     .dirty_area = 1375920,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_EQ(action.unrecoverable_loss, 0.0);
   EXPECT_LE(action.fec_percentage, 60);
   EXPECT_GE(action.target_bitrate_kbps, 11500);
   EXPECT_LE(action.pacing_bitrate_kbps, 20000);
 }
 
-TEST(WeakNetControllerTests, ManualHighCeilingTreatsRecoveredLossAsFecSignalNotProbePermission) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ManualHighCeilingTreatsRecoveredLossAsFecSignalNotProbePermission) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 136364,
     .baseline_fec_percentage = 10,
@@ -1551,15 +1551,15 @@ TEST(WeakNetControllerTests, ManualHighCeilingTreatsRecoveredLossAsFecSignalNotP
     .dirty_area = 1375920,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_EQ(action.unrecoverable_loss, 0.0);
   EXPECT_LE(action.fec_percentage, 60);
   EXPECT_LE(action.target_bitrate_kbps, 20000);
   EXPECT_LE(action.pacing_bitrate_kbps, 32000);
 }
 
-TEST(WeakNetControllerTests, FullFrameMotionDoesNotCollapseToUnreadableBitrateWhenProfileFallbackIsDeferred) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, FullFrameMotionDoesNotCollapseToUnreadableBitrateWhenProfileFallbackIsDeferred) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1574,7 +1574,7 @@ TEST(WeakNetControllerTests, FullFrameMotionDoesNotCollapseToUnreadableBitrateWh
     .dynamic_range = 0,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 16; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1606,8 +1606,8 @@ TEST(WeakNetControllerTests, FullFrameMotionDoesNotCollapseToUnreadableBitrateWh
   EXPECT_LE(action.pacing_bitrate_kbps, 20000);
 }
 
-TEST(WeakNetControllerTests, DelayOnlyCongestionBleedsOffElevatedFecBeforeCrushingEncodingBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DelayOnlyCongestionBleedsOffElevatedFecBeforeCrushingEncodingBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1663,17 +1663,17 @@ TEST(WeakNetControllerTests, DelayOnlyCongestionBleedsOffElevatedFecBeforeCrushi
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LT(action.fec_percentage, 35);
   EXPECT_GE(action.target_bitrate_kbps, 7200);
   EXPECT_LE(action.pacing_bitrate_kbps, 20000);
 }
 
-TEST(WeakNetControllerTests, TotalCeilingBoundsEncodingAndFecForAnyConfiguredBitrate) {
+TEST(StreamQualityControllerTests, TotalCeilingBoundsEncodingAndFecForAnyConfiguredBitrate) {
   const int ceilings[] = { 1000, 5000, 20000, 100000, 1000000 };
 
   for (const auto ceiling_kbps : ceilings) {
-    weak_net::controller_t controller;
+    stream_quality::controller_t controller;
     controller.configure({
       .baseline_bitrate_kbps = ceiling_kbps,
       .baseline_fec_percentage = 10,
@@ -1687,7 +1687,7 @@ TEST(WeakNetControllerTests, TotalCeilingBoundsEncodingAndFecForAnyConfiguredBit
       .frame_height = 2160,
     });
 
-    weak_net::action_t action {};
+    stream_quality::action_t action {};
     for (int i = 0; i < 6; i++) {
       action = controller.on_feedback({
         .duration_ms = 500,
@@ -1715,8 +1715,8 @@ TEST(WeakNetControllerTests, TotalCeilingBoundsEncodingAndFecForAnyConfiguredBit
   }
 }
 
-TEST(WeakNetControllerTests, IneffectiveLossRecoveryReducesFecInsteadOfBlindlyOpeningParity) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, IneffectiveLossRecoveryReducesFecInsteadOfBlindlyOpeningParity) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -1730,7 +1730,7 @@ TEST(WeakNetControllerTests, IneffectiveLossRecoveryReducesFecInsteadOfBlindlyOp
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1749,16 +1749,16 @@ TEST(WeakNetControllerTests, IneffectiveLossRecoveryReducesFecInsteadOfBlindlyOp
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_EQ(action.fec_efficiency, 0.0);
   EXPECT_LE(action.fec_percentage, 25);
   EXPECT_LT(action.target_bitrate_kbps, 12000);
   EXPECT_LE(action.pacing_bitrate_kbps, 20000);
 }
 
-TEST(WeakNetControllerTests, BandwidthLimitedLinkCutsTotalBudgetRatherThanAddingFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, BandwidthLimitedLinkCutsTotalBudgetRatherThanAddingFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 54545,
     .baseline_fec_percentage = 10,
@@ -1808,14 +1808,14 @@ TEST(WeakNetControllerTests, BandwidthLimitedLinkCutsTotalBudgetRatherThanAdding
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LT(action.fec_percentage, 30);
   EXPECT_LT(action.target_bitrate_kbps, 50000);
   EXPECT_LE(action.pacing_bitrate_kbps, 60000);
 }
 
-TEST(WeakNetControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCannotFitSustainableBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCannotFitSustainableBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 54545,
     .baseline_fec_percentage = 10,
@@ -1829,7 +1829,7 @@ TEST(WeakNetControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCannotFitSu
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   bool anti_spiral_fired = false;
   for (int i = 0; i < 8; ++i) {
     action = controller.on_feedback({
@@ -1861,8 +1861,8 @@ TEST(WeakNetControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCannotFitSu
   EXPECT_LE(action.pacing_bitrate_kbps, 16000);
 }
 
-TEST(WeakNetControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenalty) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenalty) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 181818,
     .baseline_fec_percentage = 10,
@@ -1878,7 +1878,7 @@ TEST(WeakNetControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenal
     .dynamic_range = 0,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 18; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1908,8 +1908,8 @@ TEST(WeakNetControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenal
   EXPECT_LE(action.pacing_bitrate_kbps, 200000);
 }
 
-TEST(WeakNetControllerTests, MotionReadableFloorCannotOverrideWeakRouteSustainableLimit) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, MotionReadableFloorCannotOverrideWeakRouteSustainableLimit) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -1923,7 +1923,7 @@ TEST(WeakNetControllerTests, MotionReadableFloorCannotOverrideWeakRouteSustainab
     .frame_height = 1900,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -1948,7 +1948,7 @@ TEST(WeakNetControllerTests, MotionReadableFloorCannotOverrideWeakRouteSustainab
       .waiting_for_rfi_frames = 40,
     });
   }
-  ASSERT_EQ(action.state, weak_net::state_e::crisis);
+  ASSERT_EQ(action.state, stream_quality::state_e::crisis);
   ASSERT_TRUE(action.sustainable_estimate_kbps > 0);
 
   action = controller.on_feedback({
@@ -1979,8 +1979,8 @@ TEST(WeakNetControllerTests, MotionReadableFloorCannotOverrideWeakRouteSustainab
   EXPECT_LT(action.pacing_bitrate_kbps, 60000);
 }
 
-TEST(WeakNetControllerTests, SustainedRfiAudioCrisisUsesTightSustainableBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, SustainedRfiAudioCrisisUsesTightSustainableBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -1994,7 +1994,7 @@ TEST(WeakNetControllerTests, SustainedRfiAudioCrisisUsesTightSustainableBudget) 
     .frame_height = 1900,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 10; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2017,7 +2017,7 @@ TEST(WeakNetControllerTests, SustainedRfiAudioCrisisUsesTightSustainableBudget) 
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_TRUE(action.rfi_limited);
   EXPECT_GE(action.pressures.audio, 0.75);
   EXPECT_LE(action.fec_percentage, 70);
@@ -2026,8 +2026,8 @@ TEST(WeakNetControllerTests, SustainedRfiAudioCrisisUsesTightSustainableBudget) 
   EXPECT_GE(action.target_fps, 60);
 }
 
-TEST(WeakNetControllerTests, StartupAudioUnderrunsWithoutVideoSamplesDoNotProbeToCeiling) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StartupAudioUnderrunsWithoutVideoSamplesDoNotProbeToCeiling) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -2041,7 +2041,7 @@ TEST(WeakNetControllerTests, StartupAudioUnderrunsWithoutVideoSamplesDoNotProbeT
     .frame_height = 1900,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; i++) {
     action = controller.on_feedback({
       .duration_ms = 1070,
@@ -2062,15 +2062,15 @@ TEST(WeakNetControllerTests, StartupAudioUnderrunsWithoutVideoSamplesDoNotProbeT
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::audio_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::audio_pressure);
   EXPECT_EQ(action.packet_loss, 0.0);
   EXPECT_LE(action.target_bitrate_kbps, 15000);
   EXPECT_LE(action.pacing_bitrate_kbps, 18000);
   EXPECT_LT(action.target_bitrate_kbps, action.requested_ceiling_kbps / 2);
 }
 
-TEST(WeakNetControllerTests, StrongCleanNetworkCanExceedUserQualityBudgetToProtectHighRefreshFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StrongCleanNetworkCanExceedUserQualityBudgetToProtectHighRefreshFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 5000,
     .baseline_fec_percentage = 10,
@@ -2088,7 +2088,7 @@ TEST(WeakNetControllerTests, StrongCleanNetworkCanExceedUserQualityBudgetToProte
     .fps_needed_kbps = 20000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2117,8 +2117,8 @@ TEST(WeakNetControllerTests, StrongCleanNetworkCanExceedUserQualityBudgetToProte
   EXPECT_LE(action.fec_percentage, 10);
 }
 
-TEST(WeakNetControllerTests, CongestionImmediatelyReturnsOvershootTowardUserQualityBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CongestionImmediatelyReturnsOvershootTowardUserQualityBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 5000,
     .baseline_fec_percentage = 10,
@@ -2135,7 +2135,7 @@ TEST(WeakNetControllerTests, CongestionImmediatelyReturnsOvershootTowardUserQual
     .fps_needed_kbps = 20000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2171,13 +2171,13 @@ TEST(WeakNetControllerTests, CongestionImmediatelyReturnsOvershootTowardUserQual
     .full_frame_dirty = true,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LE(action.target_bitrate_kbps, 6500);
   EXPECT_LE(action.fec_percentage, 10);
 }
 
-TEST(WeakNetControllerTests, RfiRecoveryRampsMediaParametersWithoutSawtoothJumps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RfiRecoveryRampsMediaParametersWithoutSawtoothJumps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -2283,9 +2283,9 @@ TEST(WeakNetControllerTests, RfiRecoveryRampsMediaParametersWithoutSawtoothJumps
     .full_frame_dirty = true,
   });
 
-  EXPECT_EQ(first_crisis.state, weak_net::state_e::crisis);
+  EXPECT_EQ(first_crisis.state, stream_quality::state_e::crisis);
   EXPECT_GE(first_crisis.unrecoverable_loss, 0.5);
-  EXPECT_EQ(second_crisis.state, weak_net::state_e::crisis);
+  EXPECT_EQ(second_crisis.state, stream_quality::state_e::crisis);
   EXPECT_LE(recovery_probe.target_bitrate_kbps,
             second_crisis.target_bitrate_kbps + std::max(1200, second_crisis.target_bitrate_kbps / 5));
   EXPECT_LE(std::abs(recovery_probe.fec_percentage - second_crisis.fec_percentage), 8);
@@ -2295,8 +2295,8 @@ TEST(WeakNetControllerTests, RfiRecoveryRampsMediaParametersWithoutSawtoothJumps
   EXPECT_GT(clean_probe.target_bitrate_kbps, first_crisis.target_bitrate_kbps);
 }
 
-TEST(WeakNetControllerTests, DelayOnlyCongestionCapsTotalNearUserBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DelayOnlyCongestionCapsTotalNearUserBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -2316,7 +2316,7 @@ TEST(WeakNetControllerTests, DelayOnlyCongestionCapsTotalNearUserBudget) {
     .fps_needed_kbps = 24000,
   });
 
-  weak_net::action_t action;
+  stream_quality::action_t action;
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -2334,13 +2334,13 @@ TEST(WeakNetControllerTests, DelayOnlyCongestionCapsTotalNearUserBudget) {
   }
 
   const int total_kbps = action.target_bitrate_kbps * (100 + action.fec_percentage) / 100;
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LE(total_kbps, 13000);
   EXPECT_LE(action.pacing_bitrate_kbps, 13500);
 }
 
-TEST(WeakNetControllerTests, RandomRecoveredLossCanRaiseFecWithoutDelayOvershoot) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RandomRecoveredLossCanRaiseFecWithoutDelayOvershoot) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -2375,13 +2375,13 @@ TEST(WeakNetControllerTests, RandomRecoveredLossCanRaiseFecWithoutDelayOvershoot
     .frame_area = 3024ULL * 1900ULL,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_GT(action.fec_percentage, 10);
   EXPECT_GE(action.target_fps, 72);
 }
 
-TEST(WeakNetControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhenNetworkIsClean) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhenNetworkIsClean) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -2401,7 +2401,7 @@ TEST(WeakNetControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhenNetwor
     .fps_needed_kbps = 24000,
   });
 
-  weak_net::action_t action;
+  stream_quality::action_t action;
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -2423,8 +2423,8 @@ TEST(WeakNetControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhenNetwor
   EXPECT_TRUE(action.profile_tier_deferred);
 }
 
-TEST(WeakNetControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByInteractivePressure) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByInteractivePressure) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 8000,
     .baseline_fec_percentage = 10,
@@ -2436,7 +2436,7 @@ TEST(WeakNetControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByI
     .frame_height = 1080,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 5; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2461,8 +2461,8 @@ TEST(WeakNetControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByI
   EXPECT_NE(action.target_fps, 72);
 }
 
-TEST(WeakNetControllerTests, HighRefreshDelayPressureStepsDownByAboutFiveFpsNotToStickySeventyTwo) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighRefreshDelayPressureStepsDownByAboutFiveFpsNotToStickySeventyTwo) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -2499,8 +2499,8 @@ TEST(WeakNetControllerTests, HighRefreshDelayPressureStepsDownByAboutFiveFpsNotT
   EXPECT_NE(first.target_fps, 72);
 }
 
-TEST(WeakNetControllerTests, CleanRecoveryRaisesFpsOneStepTowardTarget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanRecoveryRaisesFpsOneStepTowardTarget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -2512,7 +2512,7 @@ TEST(WeakNetControllerTests, CleanRecoveryRaisesFpsOneStepTowardTarget) {
     .frame_height = 1900,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2554,8 +2554,8 @@ TEST(WeakNetControllerTests, CleanRecoveryRaisesFpsOneStepTowardTarget) {
   EXPECT_LE(action.target_fps, std::min(120, pressured_fps + 1));
 }
 
-TEST(WeakNetControllerTests, AudioOnlyRecoveryStillRaisesFpsOneStepToAvoidVisibleJumps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioOnlyRecoveryStillRaisesFpsOneStepToAvoidVisibleJumps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -2581,13 +2581,13 @@ TEST(WeakNetControllerTests, AudioOnlyRecoveryStillRaisesFpsOneStepToAvoidVisibl
     .dirty_area = 0,
   });
 
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_LE(action.target_fps, 81);
 }
 
 
-TEST(WeakNetControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockCleanVideoRecovery) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockCleanVideoRecovery) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 24000,
     .baseline_fec_percentage = 10,
@@ -2601,7 +2601,7 @@ TEST(WeakNetControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockC
     .fps_needed_kbps = 26000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2620,7 +2620,7 @@ TEST(WeakNetControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockC
     });
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::audio_pressure)
+  EXPECT_NE(action.reason, stream_quality::reason_e::audio_pressure)
     << "minor PLC/fade should not make video transport visibly oscillate";
   EXPECT_GE(action.target_fps, 97)
     << "clean video should still recover FPS one step at a time";
@@ -2628,8 +2628,8 @@ TEST(WeakNetControllerTests, MildAudioContinuityPressureDoesNotJitterFpsOrBlockC
   EXPECT_FALSE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToAvoidSawtooth) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToAvoidSawtooth) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 90000,
     .baseline_fec_percentage = 10,
@@ -2643,7 +2643,7 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToA
     .frame_height = 1964,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2679,7 +2679,7 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToA
     .dirty_area = 3024U * 1964U,
     .full_frame_dirty = true,
   });
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_LE(action.target_fps, probed_fps - 5);
   const auto held_fps = action.target_fps;
 
@@ -2703,8 +2703,8 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterRecoveryProbeUsesLongHoldToA
   }
 }
 
-TEST(WeakNetControllerTests, VisualFreshnessPressureTreatsDuplicateOnlyFramesAsRenderPressure) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, VisualFreshnessPressureTreatsDuplicateOnlyFramesAsRenderPressure) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -2716,7 +2716,7 @@ TEST(WeakNetControllerTests, VisualFreshnessPressureTreatsDuplicateOnlyFramesAsR
     .frame_height = 1900,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -2736,13 +2736,13 @@ TEST(WeakNetControllerTests, VisualFreshnessPressureTreatsDuplicateOnlyFramesAsR
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_GE(action.pressures.render, 0.40);
   EXPECT_TRUE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsSmallDropAfterShortCooldown) {
-  const auto decision = weak_net::runtime_fps_apply_decision(120, 115, 500);
+TEST(StreamQualityControllerTests, RuntimeFpsApplyAllowsSmallDropAfterShortCooldown) {
+  const auto decision = stream_quality::runtime_fps_apply_decision(120, 115, 500);
 
   EXPECT_TRUE(decision.target_changed);
   EXPECT_TRUE(decision.apply);
@@ -2750,8 +2750,8 @@ TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsSmallDropAfterShortCooldown) {
   EXPECT_EQ(decision.cooldown_ms, 500);
 }
 
-TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsOneFpsRecoveryStep) {
-  const auto decision = weak_net::runtime_fps_apply_decision(83, 84, 1000);
+TEST(StreamQualityControllerTests, RuntimeFpsApplyAllowsOneFpsRecoveryStep) {
+  const auto decision = stream_quality::runtime_fps_apply_decision(83, 84, 1000);
 
   EXPECT_TRUE(decision.target_changed);
   EXPECT_TRUE(decision.apply);
@@ -2759,8 +2759,8 @@ TEST(WeakNetControllerTests, RuntimeFpsApplyAllowsOneFpsRecoveryStep) {
   EXPECT_EQ(decision.cooldown_ms, 1000);
 }
 
-TEST(WeakNetControllerTests, RuntimeFpsApplyDefersOnlyDuringCooldown) {
-  const auto decision = weak_net::runtime_fps_apply_decision(120, 119, 100);
+TEST(StreamQualityControllerTests, RuntimeFpsApplyDefersOnlyDuringCooldown) {
+  const auto decision = stream_quality::runtime_fps_apply_decision(120, 119, 100);
 
   EXPECT_TRUE(decision.target_changed);
   EXPECT_FALSE(decision.apply);
@@ -2768,8 +2768,8 @@ TEST(WeakNetControllerTests, RuntimeFpsApplyDefersOnlyDuringCooldown) {
   EXPECT_EQ(decision.cooldown_ms, 500);
 }
 
-TEST(WeakNetControllerTests, FailedFpsProbeAddsRecoveryHoldAndBackoff) {
-  const auto first = weak_net::fps_probe_backoff_after_failed_recovery(96,
+TEST(StreamQualityControllerTests, FailedFpsProbeAddsRecoveryHoldAndBackoff) {
+  const auto first = stream_quality::fps_probe_backoff_after_failed_recovery(96,
                                                                        97,
                                                                        92,
                                                                        true,
@@ -2779,7 +2779,7 @@ TEST(WeakNetControllerTests, FailedFpsProbeAddsRecoveryHoldAndBackoff) {
   EXPECT_GE(first.recovery_hold_windows, 8);
   EXPECT_GE(first.recovery_probe_interval_windows, 2);
 
-  const auto repeated = weak_net::fps_probe_backoff_after_failed_recovery(92,
+  const auto repeated = stream_quality::fps_probe_backoff_after_failed_recovery(92,
                                                                           93,
                                                                           88,
                                                                           true,
@@ -2790,8 +2790,8 @@ TEST(WeakNetControllerTests, FailedFpsProbeAddsRecoveryHoldAndBackoff) {
   EXPECT_GT(repeated.recovery_hold_windows, first.recovery_hold_windows);
 }
 
-TEST(WeakNetControllerTests, CleanStableWindowsDecayFailedFpsProbeBackoff) {
-  const auto stable = weak_net::fps_probe_backoff_after_failed_recovery(96,
+TEST(StreamQualityControllerTests, CleanStableWindowsDecayFailedFpsProbeBackoff) {
+  const auto stable = stream_quality::fps_probe_backoff_after_failed_recovery(96,
                                                                         0,
                                                                         97,
                                                                         false,
@@ -2802,8 +2802,8 @@ TEST(WeakNetControllerTests, CleanStableWindowsDecayFailedFpsProbeBackoff) {
   EXPECT_GE(stable.recovery_probe_interval_windows, 2);
 }
 
-TEST(WeakNetControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextProbe) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextProbe) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -2817,7 +2817,7 @@ TEST(WeakNetControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextPr
     .frame_height = 1964,
   });
 
-  weak_net::action_t action;
+  stream_quality::action_t action;
   for (int i = 0; i < 3; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2852,7 +2852,7 @@ TEST(WeakNetControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextPr
     .dirty_area = 3024U * 1964U,
     .full_frame_dirty = true,
   });
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_LE(action.target_fps, probed_fps - 5);
 
   const auto post_failure_fps = action.target_fps;
@@ -2876,8 +2876,8 @@ TEST(WeakNetControllerTests, FailedRecoveryProbeDropsFiveFpsAndHoldsBeforeNextPr
   }
 }
 
-TEST(WeakNetControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhileAllowingVisualRecovery) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhileAllowingVisualRecovery) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 30000,
     .baseline_fec_percentage = 10,
@@ -2894,7 +2894,7 @@ TEST(WeakNetControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhileAllow
     .fps_needed_kbps = 30000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2920,15 +2920,15 @@ TEST(WeakNetControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhileAllow
     EXPECT_GE(action.target_fps, 90);
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::audio_pressure);
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.reason, stream_quality::reason_e::audio_pressure);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
   EXPECT_EQ(action.target_fps, 96);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_GT(action.target_bitrate_kbps, 18000);
 }
 
-TEST(WeakNetControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawtooth) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawtooth) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -2942,7 +2942,7 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawto
     .frame_height = 1964,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; i++) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -2979,7 +2979,7 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawto
     .dirty_area = 3024U * 1964U,
     .full_frame_dirty = true,
   });
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_LE(action.target_fps, probed_fps - 5);
 
   const auto held_fps = action.target_fps;
@@ -3003,8 +3003,8 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterProbeExtendsHoldToAvoidSawto
   }
 }
 
-TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -3019,7 +3019,7 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
     .fps_needed_kbps = 18182,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 1080,
@@ -3037,7 +3037,7 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::audio_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::audio_pressure);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_LE(action.target_bitrate_kbps, 10000)
     << "audio-only continuity pressure should not rapidly probe video bitrate upward";
@@ -3045,8 +3045,8 @@ TEST(WeakNetControllerTests, AudioOnlyPressureDoesNotRapidlyProbeVideoBudget) {
     << "audio-only continuity pressure should not ramp FPS upward";
 }
 
-TEST(WeakNetControllerTests, StartupDelayRenderAudioPressureDoesNotBypassLinearBitrateClamp) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StartupDelayRenderAudioPressureDoesNotBypassLinearBitrateClamp) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -3100,7 +3100,7 @@ TEST(WeakNetControllerTests, StartupDelayRenderAudioPressureDoesNotBypassLinearB
     .dirty_area = 3591,
   });
   const int second_bitrate = action.target_bitrate_kbps;
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_GE(second_bitrate, first_bitrate - 1200);
 
   action = controller.on_feedback({
@@ -3119,14 +3119,14 @@ TEST(WeakNetControllerTests, StartupDelayRenderAudioPressureDoesNotBypassLinearB
     .frame_area = 3024ULL * 1900ULL,
     .dirty_area = 0,
   });
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_GE(action.target_bitrate_kbps, second_bitrate - 1200);
   EXPECT_GT(action.target_bitrate_kbps, 5000);
   EXPECT_GT(action.effective_ceiling_kbps, 5000);
 }
 
-TEST(WeakNetControllerTests, ZeroFrameFeedbackDoesNotProbeBitrateOrBleedFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ZeroFrameFeedbackDoesNotProbeBitrateOrBleedFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 20000,
     .baseline_fec_percentage = 10,
@@ -3141,7 +3141,7 @@ TEST(WeakNetControllerTests, ZeroFrameFeedbackDoesNotProbeBitrateOrBleedFec) {
     .fps_needed_kbps = 20000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   int peak_bitrate = 0;
   int min_fec = 100;
   for (int i = 0; i < 10; i++) {
@@ -3164,7 +3164,7 @@ TEST(WeakNetControllerTests, ZeroFrameFeedbackDoesNotProbeBitrateOrBleedFec) {
     min_fec = std::min(min_fec, action.fec_percentage);
   }
 
-  EXPECT_NE(action.state, weak_net::state_e::healthy);
+  EXPECT_NE(action.state, stream_quality::state_e::healthy);
   EXPECT_LE(peak_bitrate, 10342)
     << "no-delivery feedback must not be treated as clean recovery/probe evidence";
   EXPECT_GE(min_fec, 10)
@@ -3172,8 +3172,8 @@ TEST(WeakNetControllerTests, ZeroFrameFeedbackDoesNotProbeBitrateOrBleedFec) {
   EXPECT_GE(action.target_bitrate_kbps, 1500);
 }
 
-TEST(WeakNetControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 18182,
     .baseline_fec_percentage = 10,
@@ -3188,7 +3188,7 @@ TEST(WeakNetControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
     .fps_needed_kbps = 13789,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 18; i++) {
     action = controller.on_feedback({
       .duration_ms = 550,
@@ -3214,8 +3214,8 @@ TEST(WeakNetControllerTests, UserQualityCapsFpsProtectionOvershootOnWeakRoute) {
   EXPECT_LE(action.target_fps, 82);
 }
 
-TEST(WeakNetControllerTests, RandomLossCountsFecInsideUserQualityBudget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RandomLossCountsFecInsideUserQualityBudget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 80668,
     .baseline_fec_percentage = 10,
@@ -3235,7 +3235,7 @@ TEST(WeakNetControllerTests, RandomLossCountsFecInsideUserQualityBudget) {
     .fps_needed_kbps = 24000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; i++) {
     action = controller.on_feedback({
       .duration_ms = 544,
@@ -3269,8 +3269,8 @@ TEST(WeakNetControllerTests, RandomLossCountsFecInsideUserQualityBudget) {
     << "When FEC rises, encoding must drop instead of pushing total send rate over budget";
 }
 
-TEST(WeakNetControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
     .baseline_fec_percentage = 10,
@@ -3300,7 +3300,7 @@ TEST(WeakNetControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
     .full_frame_dirty = true,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_EQ(action.target_fps, 115);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_LE(action.target_bitrate_kbps, 12000);
@@ -3323,8 +3323,8 @@ TEST(WeakNetControllerTests, RenderBackpressureDropsFpsLinearlyAndHoldsProbe) {
   EXPECT_LE(action.target_fps, 115);
 }
 
-TEST(WeakNetControllerTests, CleanRouteStopsBitrateProbeAfterNoCadenceGain) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanRouteStopsBitrateProbeAfterNoCadenceGain) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 250000,
     .baseline_fec_percentage = 10,
@@ -3338,7 +3338,7 @@ TEST(WeakNetControllerTests, CleanRouteStopsBitrateProbeAfterNoCadenceGain) {
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   int peak_bitrate = 0;
   for (int i = 0; i < 16; i++) {
     action = controller.on_feedback({
@@ -3366,8 +3366,8 @@ TEST(WeakNetControllerTests, CleanRouteStopsBitrateProbeAfterNoCadenceGain) {
   EXPECT_EQ(action.target_fps, 150);
 }
 
-TEST(WeakNetControllerTests, RenderBackpressureAfterBitrateProbeLocksPlateau) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RenderBackpressureAfterBitrateProbeLocksPlateau) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 250000,
     .baseline_fec_percentage = 10,
@@ -3381,7 +3381,7 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterBitrateProbeLocksPlateau) {
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3439,8 +3439,8 @@ TEST(WeakNetControllerTests, RenderBackpressureAfterBitrateProbeLocksPlateau) {
   }
 }
 
-TEST(WeakNetControllerTests, IsolatedNativeRenderQueueDoesNotDropHighRefreshFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, IsolatedNativeRenderQueueDoesNotDropHighRefreshFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 250000,
     .baseline_fec_percentage = 10,
@@ -3454,7 +3454,7 @@ TEST(WeakNetControllerTests, IsolatedNativeRenderQueueDoesNotDropHighRefreshFps)
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3478,8 +3478,8 @@ TEST(WeakNetControllerTests, IsolatedNativeRenderQueueDoesNotDropHighRefreshFps)
     << "Light Native renderer queue on a clean route should not cut FPS";
 }
 
-TEST(WeakNetControllerTests, LightInputActivityDoesNotConstrainCleanHighRefreshRoute) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LightInputActivityDoesNotConstrainCleanHighRefreshRoute) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 250000,
     .baseline_fec_percentage = 10,
@@ -3493,7 +3493,7 @@ TEST(WeakNetControllerTests, LightInputActivityDoesNotConstrainCleanHighRefreshR
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3515,13 +3515,13 @@ TEST(WeakNetControllerTests, LightInputActivityDoesNotConstrainCleanHighRefreshR
     });
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::input_pressure)
+  EXPECT_NE(action.reason, stream_quality::reason_e::input_pressure)
     << "A one-packet input queue with ~1ms latency is activity, not congestion";
   EXPECT_EQ(action.target_fps, 150);
 }
 
-TEST(WeakNetControllerTests, SustainedNativeRenderStallCanReduceFpsLinearly) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, SustainedNativeRenderStallCanReduceFpsLinearly) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 250000,
     .baseline_fec_percentage = 10,
@@ -3535,7 +3535,7 @@ TEST(WeakNetControllerTests, SustainedNativeRenderStallCanReduceFpsLinearly) {
     .frame_height = 2160,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 5; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3561,8 +3561,8 @@ TEST(WeakNetControllerTests, SustainedNativeRenderStallCanReduceFpsLinearly) {
   EXPECT_LT(action.target_fps, 150);
 }
 
-TEST(WeakNetControllerTests, WeakRouteSweetSpotDoesNotProbeAboveSustainableEstimateWithoutGain) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, WeakRouteSweetSpotDoesNotProbeAboveSustainableEstimateWithoutGain) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 40000,
     .baseline_fec_percentage = 10,
@@ -3594,7 +3594,7 @@ TEST(WeakNetControllerTests, WeakRouteSweetSpotDoesNotProbeAboveSustainableEstim
     .dirty_area = 3024U * 1900U,
     .full_frame_dirty = true,
   });
-  ASSERT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  ASSERT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
 
   int peak_bitrate = action.target_bitrate_kbps;
   for (int i = 0; i < 18; i++) {
@@ -3623,8 +3623,8 @@ TEST(WeakNetControllerTests, WeakRouteSweetSpotDoesNotProbeAboveSustainableEstim
     << "Weak-route recovery should preserve FPS before chasing bitrate";
 }
 
-TEST(WeakNetControllerTests, StableUsefulRouteIsHighAvailabilityEvenWithoutLanRttOrAutoBitrate) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StableUsefulRouteIsHighAvailabilityEvenWithoutLanRttOrAutoBitrate) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -3639,7 +3639,7 @@ TEST(WeakNetControllerTests, StableUsefulRouteIsHighAvailabilityEvenWithoutLanRt
     .user_quality_kbps = 90000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 12; i++) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3665,8 +3665,8 @@ TEST(WeakNetControllerTests, StableUsefulRouteIsHighAvailabilityEvenWithoutLanRt
     << "High availability is measured by stable displayed cadence, not by LAN RTT or auto bitrate";
 }
 
-TEST(WeakNetControllerTests, AutoCeilingDoesNotProbeWhenActualMotionCadenceIsNotHighAvailability) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, AutoCeilingDoesNotProbeWhenActualMotionCadenceIsNotHighAvailability) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 1000000,
     .baseline_fec_percentage = 10,
@@ -3682,7 +3682,7 @@ TEST(WeakNetControllerTests, AutoCeilingDoesNotProbeWhenActualMotionCadenceIsNot
     .fps_needed_kbps = 240000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   int peak_bitrate = 0;
   for (int i = 0; i < 10; i++) {
     action = controller.on_feedback({
@@ -3711,8 +3711,8 @@ TEST(WeakNetControllerTests, AutoCeilingDoesNotProbeWhenActualMotionCadenceIsNot
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, StartupRfiBurstEntersGuardWithoutCrushingMediaParameters) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, StartupRfiBurstEntersGuardWithoutCrushingMediaParameters) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -3780,8 +3780,8 @@ TEST(WeakNetControllerTests, StartupRfiBurstEntersGuardWithoutCrushingMediaParam
   EXPECT_EQ(second.target_fps, 150);
 }
 
-TEST(WeakNetControllerTests, LowAvailabilityVideoLossDoesNotHoldHighFpsAtMosaicBitrate) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LowAvailabilityVideoLossDoesNotHoldHighFpsAtMosaicBitrate) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -3800,7 +3800,7 @@ TEST(WeakNetControllerTests, LowAvailabilityVideoLossDoesNotHoldHighFpsAtMosaicB
     .fps_needed_kbps = 20000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3826,7 +3826,7 @@ TEST(WeakNetControllerTests, LowAvailabilityVideoLossDoesNotHoldHighFpsAtMosaicB
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_LT(action.target_fps, 120)
     << "Low availability must reduce cadence instead of preserving high FPS at unreadable bitrate";
   EXPECT_GE(action.target_bitrate_kbps, 7000)
@@ -3834,8 +3834,8 @@ TEST(WeakNetControllerTests, LowAvailabilityVideoLossDoesNotHoldHighFpsAtMosaicB
   EXPECT_LE(action.fec_percentage, 35);
 }
 
-TEST(WeakNetControllerTests, LowAvailabilityRecoveryRequiresDeliveredCadenceBeforeHighAvailabilityProbe) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LowAvailabilityRecoveryRequiresDeliveredCadenceBeforeHighAvailabilityProbe) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -3874,7 +3874,7 @@ TEST(WeakNetControllerTests, LowAvailabilityRecoveryRequiresDeliveredCadenceBefo
     .waiting_for_rfi_frames = 30,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   int peak_bitrate = 0;
   for (int i = 0; i < 10; ++i) {
     action = controller.on_feedback({
@@ -3903,8 +3903,8 @@ TEST(WeakNetControllerTests, LowAvailabilityRecoveryRequiresDeliveredCadenceBefo
     << "FPS recovery should wait for high-availability evidence, not merely clean packet counters";
 }
 
-TEST(WeakNetControllerTests, CleanStartupCadenceRampsFpsFasterThanWeakRouteRecovery) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanStartupCadenceRampsFpsFasterThanWeakRouteRecovery) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -3921,7 +3921,7 @@ TEST(WeakNetControllerTests, CleanStartupCadenceRampsFpsFasterThanWeakRouteRecov
     .fps_needed_kbps = 180000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     const auto delivered_fps = std::max(120, controller.current_fps());
     action = controller.on_feedback({
@@ -3948,8 +3948,8 @@ TEST(WeakNetControllerTests, CleanStartupCadenceRampsFpsFasterThanWeakRouteRecov
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, CleanPingWithoutDeliveredCadenceDoesNotFastRampFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanPingWithoutDeliveredCadenceDoesNotFastRampFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -3966,7 +3966,7 @@ TEST(WeakNetControllerTests, CleanPingWithoutDeliveredCadenceDoesNotFastRampFps)
     .fps_needed_kbps = 180000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -3988,15 +3988,15 @@ TEST(WeakNetControllerTests, CleanPingWithoutDeliveredCadenceDoesNotFastRampFps)
     });
   }
 
-  EXPECT_NE(action.state, weak_net::state_e::healthy);
+  EXPECT_NE(action.state, stream_quality::state_e::healthy);
   EXPECT_LE(action.target_fps, 120)
     << "Low RTT/bandwidth is not high availability when the client cannot actually display the current target";
   EXPECT_LE(action.fec_percentage, 10)
     << "Render/cadence pressure without loss should not open FEC";
 }
 
-TEST(WeakNetControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadOfHoldingManualTarget) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadOfHoldingManualTarget) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 113000,
     .baseline_fec_percentage = 10,
@@ -4015,7 +4015,7 @@ TEST(WeakNetControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadO
     .fps_needed_kbps = 80000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -4040,7 +4040,7 @@ TEST(WeakNetControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadO
     });
   }
 
-  EXPECT_EQ(action.state, weak_net::state_e::crisis);
+  EXPECT_EQ(action.state, stream_quality::state_e::crisis);
   EXPECT_LT(action.target_fps, 110)
     << "A low-availability startup cannot keep trying the manual high-FPS target";
   EXPECT_LE(action.target_bitrate_kbps, 16000)
@@ -4050,8 +4050,8 @@ TEST(WeakNetControllerTests, RemoteStartupWithVideoLossFallsToUsableSeedInsteadO
   EXPECT_LE(action.fec_percentage, 35);
 }
 
-TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProof) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProof) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 145567,
     .baseline_fec_percentage = 10,
@@ -4071,7 +4071,7 @@ TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProo
   });
 
   int peak_bitrate = controller.current_bitrate_kbps();
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback({
       .duration_ms = 540,
@@ -4098,7 +4098,7 @@ TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProo
     peak_bitrate = std::max(peak_bitrate, action.target_bitrate_kbps);
   }
 
-  EXPECT_EQ(action.scenario, weak_net::scenario_e::clean_alr);
+  EXPECT_EQ(action.scenario, stream_quality::scenario_e::clean_alr);
   EXPECT_LE(peak_bitrate, 24000)
     << "A remote-safe low startup seed must not jump 10->38->66Mbps from clean ALR/last-frame reuse alone";
   EXPECT_EQ(action.target_fps, 150)
@@ -4106,8 +4106,8 @@ TEST(WeakNetControllerTests, RemoteSafeStartupDoesNotTreatCleanAlrAsCapacityProo
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCleanAlr) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCleanAlr) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 145567,
     .baseline_fec_percentage = 10,
@@ -4161,7 +4161,7 @@ TEST(WeakNetControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCleanAlr
     .local_display_pressure = 350,
     .frame_area = 3840ULL * 2160ULL,
   });
-  ASSERT_EQ(action.state, weak_net::state_e::crisis);
+  ASSERT_EQ(action.state, stream_quality::state_e::crisis);
   ASSERT_LT(action.sustainable_estimate_kbps, 16000);
 
   int peak_bitrate = action.target_bitrate_kbps;
@@ -4199,11 +4199,11 @@ TEST(WeakNetControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCleanAlr
     << "Clean ALR after a loss cliff is not capacity proof, so the sustainable cap should remain active";
   EXPECT_LE(peak_scale, 75)
     << "Weak-route recovery should stay in a low/mid visual tier instead of reconfiguring straight back to clear tiers";
-  EXPECT_NE(action.state, weak_net::state_e::healthy);
+  EXPECT_NE(action.state, stream_quality::state_e::healthy);
 }
 
-TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCadenceQuickly) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighAvailabilityAfterConservativeStartReachesFullCadenceQuickly) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4220,7 +4220,7 @@ TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCa
     .fps_needed_kbps = 180000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; ++i) {
     const auto delivered_fps = std::max(120, controller.current_fps());
     action = controller.on_feedback({
@@ -4249,8 +4249,8 @@ TEST(WeakNetControllerTests, HighAvailabilityAfterConservativeStartReachesFullCa
     << "High availability should regain quality after cadence is proven";
 }
 
-TEST(WeakNetControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4267,7 +4267,7 @@ TEST(WeakNetControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity)
     .fps_needed_kbps = 180000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -4326,8 +4326,8 @@ TEST(WeakNetControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity)
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDowngrade) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDowngrade) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4346,7 +4346,7 @@ TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDo
     .fps_needed_kbps = 180000,
   });
 
-  const weak_net::feedback_t feedback {
+  const stream_quality::feedback_t feedback {
     .duration_ms = 542,
     .frames_seen = 80,
     .complete_frames = 80,
@@ -4371,7 +4371,7 @@ TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDo
 
   auto action = controller.on_feedback(feedback);
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_EQ(action.packet_loss, 0.0);
   EXPECT_LE(action.fec_percentage, 10)
     << "Display cadence pressure on a clean route must not open FEC";
@@ -4387,8 +4387,8 @@ TEST(WeakNetControllerTests, CleanClientCadenceLimitDropsQuicklyWithoutNetworkDo
     << "The cadence cap should hold instead of immediately probing back upward";
 }
 
-TEST(WeakNetControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4406,7 +4406,7 @@ TEST(WeakNetControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps
   });
 
   auto clean_full_rate = []() {
-    return weak_net::feedback_t {
+    return stream_quality::feedback_t {
       .duration_ms = 1000,
       .frames_seen = 150,
       .complete_frames = 150,
@@ -4469,12 +4469,12 @@ TEST(WeakNetControllerTests, CleanFocusDisplayTransitionDoesNotStickBelowFullFps
 
   EXPECT_EQ(action.target_fps, 150)
     << "Once displayed cadence returns on a clean route, FPS hold should clear quickly";
-  EXPECT_NE(action.state, weak_net::state_e::constrained);
-  EXPECT_NE(action.state, weak_net::state_e::crisis);
+  EXPECT_NE(action.state, stream_quality::state_e::constrained);
+  EXPECT_NE(action.state, stream_quality::state_e::crisis);
 }
 
-TEST(WeakNetControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdrQuickly) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdrQuickly) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4493,7 +4493,7 @@ TEST(WeakNetControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdrQuickl
     .fps_needed_kbps = 180000,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 2; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -4519,16 +4519,16 @@ TEST(WeakNetControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdrQuickl
     });
   }
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::motion_pressure);
-  EXPECT_EQ(action.availability, weak_net::availability_e::low);
-  EXPECT_EQ(action.tier, weak_net::tier_e::fast);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
+  EXPECT_EQ(action.availability, stream_quality::availability_e::low);
+  EXPECT_EQ(action.tier, stream_quality::tier_e::fast);
   EXPECT_LT(action.target_bitrate_kbps, 120000);
   EXPECT_LT(action.actual_scale_percent, 100);
   EXPECT_TRUE(action.request_idr);
 }
 
-TEST(WeakNetControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBluray) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBluray) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4568,7 +4568,7 @@ TEST(WeakNetControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBlu
     });
   }
 
-  weak_net::action_t first_clean {};
+  stream_quality::action_t first_clean {};
   for (int i = 0; i < 2; ++i) {
     first_clean = controller.on_feedback({
       .duration_ms = 1000,
@@ -4587,10 +4587,10 @@ TEST(WeakNetControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBlu
     });
   }
 
-  EXPECT_NE(first_clean.tier, weak_net::tier_e::bluray)
+  EXPECT_NE(first_clean.tier, stream_quality::tier_e::bluray)
     << "The first clean recovery window should prove stability before returning to the top tier";
 
-  weak_net::action_t recovered {};
+  stream_quality::action_t recovered {};
   for (int i = 0; i < 8; ++i) {
     recovered = controller.on_feedback({
       .duration_ms = 1000,
@@ -4609,13 +4609,13 @@ TEST(WeakNetControllerTests, CleanRecoveryClimbsTiersWithoutJumpingStraightToBlu
     });
   }
 
-  EXPECT_EQ(recovered.availability, weak_net::availability_e::high);
-  EXPECT_EQ(recovered.tier, weak_net::tier_e::bluray);
+  EXPECT_EQ(recovered.availability, stream_quality::availability_e::high);
+  EXPECT_EQ(recovered.tier, stream_quality::tier_e::bluray);
   EXPECT_EQ(recovered.target_fps, 150);
 }
 
-TEST(WeakNetControllerTests, LocalDisplayPressureDoesNotLookLikeNetworkLoss) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, LocalDisplayPressureDoesNotLookLikeNetworkLoss) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -4647,14 +4647,14 @@ TEST(WeakNetControllerTests, LocalDisplayPressureDoesNotLookLikeNetworkLoss) {
     .frame_area = 3840ULL * 2160ULL,
   });
 
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_EQ(action.packet_loss, 0.0);
   EXPECT_LE(action.fec_percentage, 10);
-  EXPECT_EQ(action.availability, weak_net::availability_e::recovering);
+  EXPECT_EQ(action.availability, stream_quality::availability_e::recovering);
 }
 
-TEST(WeakNetControllerTests, DisplayStarvationWithRecoveredLossDoesNotReopenFec) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DisplayStarvationWithRecoveredLossDoesNotReopenFec) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -4686,14 +4686,14 @@ TEST(WeakNetControllerTests, DisplayStarvationWithRecoveredLossDoesNotReopenFec)
     .frame_area = 3840ULL * 2160ULL,
   });
 
-  EXPECT_NE(action.reason, weak_net::reason_e::random_loss)
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss)
     << "Recovered-only packet loss during a display/capture stall is not a reason to spend more bandwidth on FEC";
   EXPECT_LE(action.fec_percentage, 10);
-  EXPECT_EQ(action.availability, weak_net::availability_e::recovering);
+  EXPECT_EQ(action.availability, stream_quality::availability_e::recovering);
 }
 
-TEST(WeakNetControllerTests, DuplicateOnlyFrameReuseDoesNotLookLikeStaleVideo) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DuplicateOnlyFrameReuseDoesNotLookLikeStaleVideo) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 120000,
     .baseline_fec_percentage = 10,
@@ -4725,14 +4725,14 @@ TEST(WeakNetControllerTests, DuplicateOnlyFrameReuseDoesNotLookLikeStaleVideo) {
     .frame_area = 3840ULL * 2160ULL,
   });
 
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline)
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline)
     << "Intentional last-frame reuse should keep visual stats fresh without looking like a render stall";
-  EXPECT_NE(action.availability, weak_net::availability_e::low);
+  EXPECT_NE(action.availability, stream_quality::availability_e::low);
   EXPECT_LE(action.fec_percentage, 10);
 }
 
-TEST(WeakNetControllerTests, CleanLastFrameReuseDoesNotHoldLanAtLowFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanLastFrameReuseDoesNotHoldLanAtLowFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4751,7 +4751,7 @@ TEST(WeakNetControllerTests, CleanLastFrameReuseDoesNotHoldLanAtLowFps) {
   });
 
   auto clean_reuse_feedback = []() {
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 1000,
       .frames_seen = 58,
       .complete_frames = 58,
@@ -4773,27 +4773,27 @@ TEST(WeakNetControllerTests, CleanLastFrameReuseDoesNotHoldLanAtLowFps) {
       .dirty_area = 3840ULL * 2160ULL,
       .full_frame_dirty = true,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
   EXPECT_LT(clean_reuse_feedback().local_display_pressure, 200U)
     << "Intentional last-frame reuse on a clean LAN path is not client render pressure";
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback(clean_reuse_feedback());
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline)
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline)
     << "Frame reuse should not be reported back to Sunshine as client-render pressure";
   EXPECT_GT(action.target_fps, 60)
     << "A clean LAN path that is meeting the current target should probe upward from the conservative seed";
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, SparseDisplaySlipReuseDoesNotPinLanBelowTargetFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, SparseDisplaySlipReuseDoesNotPinLanBelowTargetFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4815,7 +4815,7 @@ TEST(WeakNetControllerTests, SparseDisplaySlipReuseDoesNotPinLanBelowTargetFps) 
     const auto frames = static_cast<std::uint32_t>(
       std::max(1, static_cast<int>(std::lround(static_cast<double>(target_fps) * 0.55))));
     const auto reused = std::max(2U, frames / 10U);
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 550,
       .frames_seen = frames,
       .complete_frames = frames,
@@ -4837,26 +4837,26 @@ TEST(WeakNetControllerTests, SparseDisplaySlipReuseDoesNotPinLanBelowTargetFps) 
       .dirty_area = 0,
       .full_frame_dirty = false,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
   EXPECT_EQ(clean_slip_reuse_feedback(90).local_display_pressure, 0U)
     << "One stale/late present in a clean reuse window is display smoothing, not client-render pressure";
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 8; ++i) {
     action = controller.on_feedback(clean_slip_reuse_feedback(controller.current_fps()));
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_GE(action.target_fps, 120)
     << "Clean LAN reuse with only sparse display slips should keep probing toward the 150fps target";
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, ModerateDisplayReuseSlipDoesNotTriggerClientRenderOnCleanLan) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, ModerateDisplayReuseSlipDoesNotTriggerClientRenderOnCleanLan) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -4875,7 +4875,7 @@ TEST(WeakNetControllerTests, ModerateDisplayReuseSlipDoesNotTriggerClientRenderO
   });
 
   auto lan_reuse_feedback = []() {
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 1104,
       .frames_seen = 107,
       .complete_frames = 107,
@@ -4897,25 +4897,25 @@ TEST(WeakNetControllerTests, ModerateDisplayReuseSlipDoesNotTriggerClientRenderO
       .dirty_area = 0,
       .full_frame_dirty = false,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
   EXPECT_EQ(lan_reuse_feedback().local_display_pressure, 0U)
     << "Clean LAN last-frame reuse with small stale/late slips is visual smoothing, not client-render pressure";
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; ++i) {
     action = controller.on_feedback(lan_reuse_feedback());
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_GE(action.target_fps, 104)
     << "The controller should not turn clean reuse feedback into a downward client-render clamp";
 }
 
-TEST(WeakNetControllerTests, DuplicateDominantNativeAppSwitchFeedbackDoesNotClampLanFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, DuplicateDominantNativeAppSwitchFeedbackDoesNotClampLanFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 145567,
     .baseline_fec_percentage = 10,
@@ -4934,7 +4934,7 @@ TEST(WeakNetControllerTests, DuplicateDominantNativeAppSwitchFeedbackDoesNotClam
   });
 
   auto native_app_switch_feedback = []() {
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 1085,
       .frames_seen = 80,
       .complete_frames = 80,
@@ -4956,27 +4956,27 @@ TEST(WeakNetControllerTests, DuplicateDominantNativeAppSwitchFeedbackDoesNotClam
       .dirty_area = 0,
       .full_frame_dirty = false,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
   EXPECT_EQ(native_app_switch_feedback().local_display_pressure, 0U)
     << "Clean duplicate-dominant Native/app-switch feedback is ALR/display reuse, not render pressure";
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 4; ++i) {
     action = controller.on_feedback(native_app_switch_feedback());
   }
 
-  EXPECT_NE(action.scenario, weak_net::scenario_e::local_render);
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::local_render);
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_GE(action.target_fps, 81)
     << "The LAN controller must not down-clamp clean duplicate-heavy app-switch feedback";
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefreshFps) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefreshFps) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -5001,7 +5001,7 @@ TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefre
       std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.84))));
     const auto reused = std::max(4U, displayed > frames ? displayed - frames : 4U);
     const auto sparse_slip = std::max(1U, reused / 4U);
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 1000,
       .frames_seen = frames,
       .complete_frames = frames,
@@ -5023,19 +5023,19 @@ TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefre
       .dirty_area = 0,
       .full_frame_dirty = false,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
   EXPECT_EQ(clean_alr_reuse_feedback(120).local_display_pressure, 0U)
     << "Near-cadence last-frame reuse with shallow decode/render queues should be clean ALR, not render pressure";
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 6; ++i) {
     action = controller.on_feedback(clean_alr_reuse_feedback(controller.current_fps()));
   }
 
-  EXPECT_NE(action.reason, weak_net::reason_e::render_deadline);
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline);
   EXPECT_EQ(action.target_fps, 150)
     << "Reference-client-style ALR probing should not leave a clean LAN 4K high-refresh session parked around 120-140fps";
   EXPECT_GT(action.target_bitrate_kbps, 120000)
@@ -5043,8 +5043,8 @@ TEST(WeakNetControllerTests, CleanAlrReuseNearCurrentCadenceReachesFullHighRefre
   EXPECT_LE(action.fec_percentage, 2);
 }
 
-TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLossCongestionAndLocalRender) {
-  weak_net::controller_t strong_lan;
+TEST(StreamQualityControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLossCongestionAndLocalRender) {
+  stream_quality::controller_t strong_lan;
   strong_lan.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -5074,11 +5074,11 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     .dirty_area = 3840ULL * 2160ULL,
     .full_frame_dirty = true,
   });
-  EXPECT_EQ(strong.scenario, weak_net::scenario_e::strong_lan);
+  EXPECT_EQ(strong.scenario, stream_quality::scenario_e::strong_lan);
   EXPECT_LE(strong.fec_percentage, 2);
   EXPECT_EQ(strong.target_fps, 150);
 
-  weak_net::controller_t alr;
+  stream_quality::controller_t alr;
   alr.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -5108,11 +5108,11 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     .frame_area = 3840ULL * 2160ULL,
     .dirty_area = 0,
   });
-  EXPECT_EQ(clean_alr.scenario, weak_net::scenario_e::clean_alr);
+  EXPECT_EQ(clean_alr.scenario, stream_quality::scenario_e::clean_alr);
   EXPECT_GT(clean_alr.target_bitrate_kbps, 58227);
   EXPECT_LE(clean_alr.fec_percentage, 2);
 
-  weak_net::controller_t random_loss;
+  stream_quality::controller_t random_loss;
   random_loss.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -5136,11 +5136,11 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     .rtt_variance_ms = 2,
     .displayed_frames = 120,
   });
-  EXPECT_EQ(random.scenario, weak_net::scenario_e::random_loss);
+  EXPECT_EQ(random.scenario, stream_quality::scenario_e::random_loss);
   EXPECT_GT(random.fec_percentage, 10);
-  EXPECT_NE(random.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_NE(random.reason, stream_quality::reason_e::delay_congestion);
 
-  weak_net::controller_t congestion;
+  stream_quality::controller_t congestion;
   congestion.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -5164,10 +5164,10 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     .delay_samples = 120,
     .delay_gradient_valid = true,
   });
-  EXPECT_EQ(congested.scenario, weak_net::scenario_e::delay_congestion);
+  EXPECT_EQ(congested.scenario, stream_quality::scenario_e::delay_congestion);
   EXPECT_LE(congested.fec_percentage, 10);
 
-  weak_net::controller_t local_render;
+  stream_quality::controller_t local_render;
   local_render.configure({
     .baseline_bitrate_kbps = 180000,
     .baseline_fec_percentage = 10,
@@ -5196,13 +5196,13 @@ TEST(WeakNetControllerTests, GeminiScenarioMatrixClassifiesStrongLanAlrRandomLos
     .local_display_pressure = 700,
     .frame_area = 3840ULL * 2160ULL,
   });
-  EXPECT_EQ(render.scenario, weak_net::scenario_e::local_render);
+  EXPECT_EQ(render.scenario, stream_quality::scenario_e::local_render);
   EXPECT_EQ(render.sustainable_estimate_kbps, 180000)
     << "Local render-only pressure must not teach the link estimator that the network capacity dropped";
 }
 
-TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPacingBrake) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPacingBrake) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 145567,
     .baseline_fec_percentage = 10,
@@ -5227,7 +5227,7 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
       std::max(1, static_cast<int>(std::lround(static_cast<double>(current_fps) * 0.84))));
     const auto reused = std::max(4U, displayed > frames ? displayed - frames : 4U);
     const auto sparse_slip = std::max(1U, reused / 4U);
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 1000,
       .frames_seen = frames,
       .complete_frames = frames,
@@ -5249,7 +5249,7 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
       .dirty_area = 0,
       .full_frame_dirty = false,
     };
-    feedback.local_display_pressure = weak_net::infer_local_display_pressure(feedback);
+    feedback.local_display_pressure = stream_quality::infer_local_display_pressure(feedback);
     return feedback;
   };
 
@@ -5262,7 +5262,7 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
   const auto bitrate_before_pressure = controller.current_bitrate_kbps();
   const auto fec_before_pressure = controller.current_fec_percentage();
 
-  weak_net::feedback_t native_display_backpressure {
+  stream_quality::feedback_t native_display_backpressure {
     .duration_ms = 1080,
     .frames_seen = 130,
     .complete_frames = 130,
@@ -5285,16 +5285,16 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
     .full_frame_dirty = false,
   };
   native_display_backpressure.local_display_pressure =
-    weak_net::infer_local_display_pressure(native_display_backpressure);
+    stream_quality::infer_local_display_pressure(native_display_backpressure);
 
   EXPECT_EQ(native_display_backpressure.local_display_pressure, 1000U)
     << "This reproduces the native display-layer backpressure window from the clean-LAN trace";
 
   const auto action = controller.on_feedback(native_display_backpressure);
 
-  EXPECT_EQ(action.scenario, weak_net::scenario_e::local_render);
-  EXPECT_EQ(action.reason, weak_net::reason_e::render_deadline);
-  EXPECT_NE(action.state, weak_net::state_e::constrained);
+  EXPECT_EQ(action.scenario, stream_quality::scenario_e::local_render);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::render_deadline);
+  EXPECT_NE(action.state, stream_quality::state_e::constrained);
   EXPECT_LT(action.target_fps, fps_before_pressure)
     << "Clean LAN local-render pressure should shed host pacing FPS before the client decode queue overflows";
   EXPECT_GE(action.target_fps, 120)
@@ -5313,8 +5313,8 @@ TEST(WeakNetControllerTests, CleanLanNativeDisplayBackpressureAppliesFpsOnlyPaci
     << "The local-render brake should avoid IDR snowballs rather than request another one";
 }
 
-TEST(WeakNetControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongestionBeforeLoss) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongestionBeforeLoss) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 80000,
     .baseline_fec_percentage = 10,
@@ -5326,7 +5326,7 @@ TEST(WeakNetControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongest
     .min_fps = 60,
   });
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 3; ++i) {
     action = controller.on_feedback({
       .duration_ms = 500,
@@ -5343,17 +5343,17 @@ TEST(WeakNetControllerTests, OwdGradientClassifiesEarlyQueueGrowthAsDelayCongest
     });
   }
 
-  EXPECT_EQ(action.scenario, weak_net::scenario_e::delay_congestion)
-    << "Receiver-side queue growth should trip the weak-net brake before packet loss starts";
-  EXPECT_EQ(action.reason, weak_net::reason_e::delay_congestion);
+  EXPECT_EQ(action.scenario, stream_quality::scenario_e::delay_congestion)
+    << "Receiver-side queue growth should trip the stream-quality brake before packet loss starts";
+  EXPECT_EQ(action.reason, stream_quality::reason_e::delay_congestion);
   EXPECT_LE(action.fec_percentage, 10)
     << "Delay-only congestion should shed or hold FEC, not add parity";
   EXPECT_GT(action.owd_gradient_us, 0);
   EXPECT_GT(action.owd_pressure, 0.0);
 }
 
-TEST(WeakNetControllerTests, QoSPolicerLossBacksOffInsteadOfOpeningFecOrIdr) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, QoSPolicerLossBacksOffInsteadOfOpeningFecOrIdr) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 60000,
     .baseline_fec_percentage = 10,
@@ -5385,8 +5385,8 @@ TEST(WeakNetControllerTests, QoSPolicerLossBacksOffInsteadOfOpeningFecOrIdr) {
     .full_frame_dirty = true,
   });
 
-  EXPECT_EQ(action.scenario, weak_net::scenario_e::qos_policer);
-  EXPECT_EQ(action.reason, weak_net::reason_e::qos_policer);
+  EXPECT_EQ(action.scenario, stream_quality::scenario_e::qos_policer);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::qos_policer);
   EXPECT_LE(action.fec_percentage, 20)
     << "Policer-like loss is a send-rate problem; extra parity would inflate the bucket";
   EXPECT_LT(action.target_bitrate_kbps, 60000);
@@ -5395,8 +5395,8 @@ TEST(WeakNetControllerTests, QoSPolicerLossBacksOffInsteadOfOpeningFecOrIdr) {
   EXPECT_LE(action.pacing_bitrate_kbps, 90000);
 }
 
-TEST(WeakNetControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapacity) {
-  weak_net::controller_t controller;
+TEST(StreamQualityControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapacity) {
+  stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 90000,
     .baseline_fec_percentage = 10,
@@ -5429,7 +5429,7 @@ TEST(WeakNetControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapaci
     });
   }
 
-  weak_net::action_t action {};
+  stream_quality::action_t action {};
   for (int i = 0; i < 2; ++i) {
     action = controller.on_feedback({
       .duration_ms = 1000,
@@ -5447,9 +5447,9 @@ TEST(WeakNetControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapaci
     });
   }
 
-  EXPECT_EQ(action.scenario, weak_net::scenario_e::handover);
-  EXPECT_EQ(action.reason, weak_net::reason_e::handover);
-  EXPECT_EQ(action.availability, weak_net::availability_e::low);
+  EXPECT_EQ(action.scenario, stream_quality::scenario_e::handover);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::handover);
+  EXPECT_EQ(action.availability, stream_quality::availability_e::low);
   EXPECT_LE(action.target_bitrate_kbps, 18000)
     << "A path blackhole should reset to a safe seed while the new route is probed";
   EXPECT_EQ(action.sustainable_estimate_kbps, 18000)
@@ -5458,8 +5458,8 @@ TEST(WeakNetControllerTests, HandoverBlackholeFallsBackWithoutLearningZeroCapaci
   EXPECT_LE(action.target_fps, 72);
 }
 
-TEST(WeakNetControllerTests, DisplayUnderrunStillReportsRenderPressure) {
-  weak_net::feedback_t feedback {
+TEST(StreamQualityControllerTests, DisplayUnderrunStillReportsRenderPressure) {
+  stream_quality::feedback_t feedback {
     .duration_ms = 1070,
     .frames_seen = 94,
     .complete_frames = 94,
@@ -5479,12 +5479,12 @@ TEST(WeakNetControllerTests, DisplayUnderrunStillReportsRenderPressure) {
     .frame_area = 3840ULL * 2160ULL,
   };
 
-  EXPECT_GT(weak_net::infer_local_display_pressure(feedback), 500U)
+  EXPECT_GT(stream_quality::infer_local_display_pressure(feedback), 500U)
     << "If the display loop is presenting far fewer frames than it receives, keep treating it as local render pressure";
 }
 
-TEST(WeakNetControllerTests, InfersLocalDisplayPressureFromRenderBackpressure) {
-  const weak_net::feedback_t feedback {
+TEST(StreamQualityControllerTests, InfersLocalDisplayPressureFromRenderBackpressure) {
+  const stream_quality::feedback_t feedback {
     .duration_ms = 1000,
     .frames_seen = 60,
     .complete_frames = 60,
@@ -5496,11 +5496,11 @@ TEST(WeakNetControllerTests, InfersLocalDisplayPressureFromRenderBackpressure) {
     .duplicate_frames = 6,
   };
 
-  EXPECT_GE(weak_net::infer_local_display_pressure(feedback), 500U);
+  EXPECT_GE(stream_quality::infer_local_display_pressure(feedback), 500U);
 }
 
-TEST(WeakNetControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsPresent) {
-  weak_net::feedback_t feedback {
+TEST(StreamQualityControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsPresent) {
+  stream_quality::feedback_t feedback {
     .duration_ms = 1000,
     .frames_seen = 60,
     .complete_frames = 40,
@@ -5514,20 +5514,20 @@ TEST(WeakNetControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsPresent
     .duplicate_frames = 6,
   };
 
-  EXPECT_LT(weak_net::infer_local_display_pressure(feedback), 500U);
+  EXPECT_LT(stream_quality::infer_local_display_pressure(feedback), 500U);
 }
 
-TEST(WeakNetControllerTests, TierAndAvailabilityNamesAreStableForLogs) {
-  EXPECT_STREQ(weak_net::reason_name(weak_net::reason_e::qos_policer), "qos-policer");
-  EXPECT_STREQ(weak_net::reason_name(weak_net::reason_e::handover), "handover");
-  EXPECT_STREQ(weak_net::scenario_name(weak_net::scenario_e::qos_policer), "qos-policer");
-  EXPECT_STREQ(weak_net::scenario_name(weak_net::scenario_e::handover), "handover");
-  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::fast), "fast");
-  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::general), "general");
-  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::hd), "hd");
-  EXPECT_STREQ(weak_net::tier_name(weak_net::tier_e::bluray), "bluray");
-  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::high), "high");
-  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::low), "low");
-  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::probing), "probing");
-  EXPECT_STREQ(weak_net::availability_name(weak_net::availability_e::recovering), "recovering");
+TEST(StreamQualityControllerTests, TierAndAvailabilityNamesAreStableForLogs) {
+  EXPECT_STREQ(stream_quality::reason_name(stream_quality::reason_e::qos_policer), "qos-policer");
+  EXPECT_STREQ(stream_quality::reason_name(stream_quality::reason_e::handover), "handover");
+  EXPECT_STREQ(stream_quality::scenario_name(stream_quality::scenario_e::qos_policer), "qos-policer");
+  EXPECT_STREQ(stream_quality::scenario_name(stream_quality::scenario_e::handover), "handover");
+  EXPECT_STREQ(stream_quality::tier_name(stream_quality::tier_e::fast), "fast");
+  EXPECT_STREQ(stream_quality::tier_name(stream_quality::tier_e::general), "general");
+  EXPECT_STREQ(stream_quality::tier_name(stream_quality::tier_e::hd), "hd");
+  EXPECT_STREQ(stream_quality::tier_name(stream_quality::tier_e::bluray), "bluray");
+  EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::high), "high");
+  EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::low), "low");
+  EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::probing), "probing");
+  EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::recovering), "recovering");
 }

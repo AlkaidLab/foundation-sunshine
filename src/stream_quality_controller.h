@@ -2,7 +2,9 @@
 
 #include <cstdint>
 
-namespace weak_net {
+#include <alkaidlab/stream_quality_control/stream_quality_control.h>
+
+namespace stream_quality {
   enum class state_e {
     healthy,
     constrained,
@@ -162,10 +164,6 @@ namespace weak_net {
     std::uint32_t waiting_for_rfi_frames = 0;
     std::uint32_t large_frame_fec_skipped = 0;
     std::uint32_t local_display_pressure = 0;
-    // Phase 3.3: client-reported OWD gradient. Set by V5+ feedback parsers.
-    // Positive = receiver-side queue is growing relative to send pacing
-    // (early-warning of tail-drop congestion). Zero when client did not
-    // negotiate ML_FF2_DELAY_GRADIENT.
     std::int32_t delay_gradient_us = 0;
     std::uint32_t interarrival_jitter_us = 0;
     std::uint32_t delay_samples = 0;
@@ -204,17 +202,23 @@ namespace weak_net {
     bool runtime_scale_applied = false;
     bool rfi_limited = false;
     bool request_idr = false;
-    // Phase 1.1/1.2/2/3.3 diagnostics — exposed for log/scan visibility.
-    bool congestion_anti_spiral = false;  // Phase 1.1: total-budget aware FEC fired
-    int recovery_hold_remaining = 0;      // Phase 1.2: countdown of probe-up suppression
-    int rtt_gradient_us = 0;              // Phase 2: smoothed RTT delta (μs)
-    int owd_gradient_us = 0;              // Phase 3.3: smoothed OWD pair-wise gradient (μs)
-    double owd_pressure = 0.0;            // Phase 3.3: derived early-warning pressure
+    bool congestion_anti_spiral = false;
+    int recovery_hold_remaining = 0;
+    int rtt_gradient_us = 0;
+    int owd_gradient_us = 0;
+    double owd_pressure = 0.0;
   };
 
   class controller_t {
   public:
     static constexpr int max_fec_percentage = 100;
+
+    controller_t();
+    ~controller_t();
+    controller_t(const controller_t &) = delete;
+    controller_t &operator=(const controller_t &) = delete;
+    controller_t(controller_t &&other) noexcept;
+    controller_t &operator=(controller_t &&other) noexcept;
 
     void configure(config_t config);
     action_t on_feedback(const feedback_t &feedback);
@@ -229,71 +233,8 @@ namespace weak_net {
     state_e state() const;
 
   private:
-    double ewma_loss_ = 0.0;
-    double ewma_unrecoverable_ = 0.0;
-    double ewma_jitter_ = 0.0;
-    double ewma_deadline_pressure_ = 0.0;
-    double ewma_input_pressure_ = 0.0;
-    double ewma_audio_pressure_ = 0.0;
-    double ewma_motion_pressure_ = 0.0;
-    double ewma_delay_pressure_ = 0.0;
-    double ewma_burst_pressure_ = 0.0;
-    int stable_windows_ = 0;
-    int video_deadline_windows_ = 0;
-    int fps_adjust_cooldown_windows_ = 0;
-    int fps_recovery_hold_windows_ = 0;
-    int fps_probe_interval_windows_ = 1;
-    int failed_fps_probe_windows_ = 0;
-    int last_recovery_probe_fps_ = 0;
-    int profile_tier_cooldown_windows_ = 0;
-    int media_recovery_cooldown_windows_ = 0;
-    int bitrate_probe_hold_windows_ = 0;
-    int no_video_delivery_windows_ = 0;
-    int bitrate_plateau_kbps_ = 0;
-    int last_probe_base_bitrate_kbps_ = 0;
-    int last_probe_target_bitrate_kbps_ = 0;
-    double last_probe_displayed_ratio_ = 0.0;
-    double last_probe_displayed_fps_ratio_ = 0.0;
-    double last_probe_render_pressure_ = 0.0;
-    double last_probe_delay_pressure_ = 0.0;
-    int current_bitrate_kbps_ = 0;
-    int current_fec_percentage_ = 0;
-    int pacing_bitrate_kbps_ = 0;
-    int current_fps_ = 0;
-    int current_resolution_scale_percent_ = 100;
-    int current_chroma_sampling_type_ = -1;
-    int current_dynamic_range_ = -1;
-    int current_quality_tier_ = 0;
-    tier_e current_tier_ = tier_e::bluray;
-    availability_e current_availability_ = availability_e::probing;
-    int motion_crisis_windows_ = 0;
-    int motion_crisis_guard_windows_ = 0;
-    int motion_crisis_recovery_windows_ = 0;
-    int requested_ceiling_kbps_ = 0;
-    int effective_ceiling_kbps_ = 0;
-    int sustainable_estimate_kbps_ = 0;
-    bool sustainable_limit_active_ = false;
-    int idr_cooldown_windows_ = 0;
-    int audio_cooldown_windows_ = 0;
-    // Phase 1.2: forbid bitrate up for N windows after exiting crisis/constrained.
-    int recovery_hold_windows_ = 0;
-    // Keep a measured weak-route sustainable cap alive after a loss cliff.
-    // Clean ALR/last-frame reuse can prove decoder/display continuity, but it
-    // is not capacity proof for public/tunnel routes that just dropped packets.
-    int sustainable_release_guard_windows_ = 0;
-    // Phase 2: smoothed RTT-pair gradient for early congestion detection.
-    std::uint32_t prev_rtt_ms_ = 0;
-    int prev_rtt_valid_windows_ = 0;
-    double rtt_gradient_ms_ewma_ = 0.0;
-    // Phase 3.3: smoothed OWD gradient from client feedback (already pair-wise
-    // averaged and EWMA'd on the receiver — we EWMA again across windows).
-    double owd_gradient_us_ewma_ = 0.0;
-    int owd_gradient_valid_windows_ = 0;
-    int startup_protection_remaining_ms_ = 0;
-    int safe_startup_floor_kbps_ = 0;
-    config_t config_;
-    state_e state_ = state_e::healthy;
-    bool configured_ = false;
+    AlkStreamQualityController *controller_ = nullptr;
+    AlkStreamQualityDecision last_decision_ {};
   };
 
   const char *
@@ -310,4 +251,4 @@ namespace weak_net {
 
   const char *
   tier_name(tier_e tier);
-}  // namespace weak_net
+}  // namespace stream_quality

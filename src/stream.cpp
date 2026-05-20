@@ -58,7 +58,7 @@ extern "C" {
 #include "system_tray.h"
 #include "thread_safe.h"
 #include "utility.h"
-#include "weak_net_controller.h"
+#include "stream_quality_controller.h"
 
 #include "platform/common.h"
 
@@ -862,43 +862,43 @@ namespace stream {
     std::atomic<int> current_total_bitrate { 0 };
     std::atomic<int> current_fec_percentage { 0 };
     std::atomic<int> pacing_total_bitrate { 0 };
-    std::atomic<std::uint64_t> weak_net_frame_area { 0 };
-    std::atomic<std::uint64_t> weak_net_dirty_area { 0 };
-    std::atomic<bool> weak_net_full_frame_dirty { false };
-    std::atomic<std::uint32_t> weak_net_rfi_requests { 0 };
-    std::atomic<std::uint32_t> weak_net_large_frame_fec_skipped { 0 };
-    weak_net::controller_t weak_net_controller;
-    std::chrono::steady_clock::time_point last_weak_net_fec_feedback {};
-    std::chrono::steady_clock::time_point last_weak_net_recovery_feedback {};
-    std::chrono::steady_clock::time_point weak_net_recovery_ready_after {};
-    std::chrono::steady_clock::time_point weak_net_startup_guard_until {};
-    std::chrono::steady_clock::time_point weak_net_startup_settle_until {};
-    std::chrono::steady_clock::time_point weak_net_resync_guard_until {};
+    std::atomic<std::uint64_t> stream_quality_frame_area { 0 };
+    std::atomic<std::uint64_t> stream_quality_dirty_area { 0 };
+    std::atomic<bool> stream_quality_full_frame_dirty { false };
+    std::atomic<std::uint32_t> stream_quality_rfi_requests { 0 };
+    std::atomic<std::uint32_t> stream_quality_large_frame_fec_skipped { 0 };
+    stream_quality::controller_t stream_quality_controller;
+    std::chrono::steady_clock::time_point last_stream_quality_fec_feedback {};
+    std::chrono::steady_clock::time_point last_stream_quality_recovery_feedback {};
+    std::chrono::steady_clock::time_point stream_quality_recovery_ready_after {};
+    std::chrono::steady_clock::time_point stream_quality_startup_guard_until {};
+    std::chrono::steady_clock::time_point stream_quality_startup_settle_until {};
+    std::chrono::steady_clock::time_point stream_quality_resync_guard_until {};
     std::chrono::steady_clock::time_point video_startup_pacing_until {};
     std::chrono::steady_clock::time_point last_adaptive_controller_off_log {};
     std::chrono::steady_clock::time_point last_client_idr_request {};
     std::chrono::steady_clock::time_point last_client_rfi_request {};
     std::chrono::steady_clock::time_point last_client_recovery_coalesce_log {};
-    std::chrono::steady_clock::time_point last_weak_net_startup_guard_log {};
+    std::chrono::steady_clock::time_point last_stream_quality_startup_guard_log {};
     std::uint32_t coalesced_client_recovery_requests { 0 };
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     bool adaptive_controller_enabled { false };
     const char *adaptive_controller_reason { "not-started" };
-    int last_applied_weak_net_bitrate { 0 };
-    int last_applied_weak_net_fec { -1 };
-    int last_applied_weak_net_fps { 0 };
-    int last_applied_weak_net_resolution_scale { 100 };
-    int last_applied_weak_net_chroma_sampling_type { -1 };
-    int last_applied_weak_net_dynamic_range { -1 };
+    int last_applied_stream_quality_bitrate { 0 };
+    int last_applied_stream_quality_fec { -1 };
+    int last_applied_stream_quality_fps { 0 };
+    int last_applied_stream_quality_resolution_scale { 100 };
+    int last_applied_stream_quality_chroma_sampling_type { -1 };
+    int last_applied_stream_quality_dynamic_range { -1 };
     std::uint32_t last_dynamic_clarity_flags { 0 };
     int last_dynamic_clarity_qp { 0 };
     int last_dynamic_clarity_bitrate { 0 };
     std::chrono::steady_clock::time_point last_control_input_received {};
-    std::chrono::steady_clock::time_point last_weak_net_bitrate_apply {};
-    std::chrono::steady_clock::time_point last_weak_net_fec_apply {};
-    std::chrono::steady_clock::time_point last_weak_net_fps_apply {};
-    std::chrono::steady_clock::time_point last_weak_net_profile_apply {};
+    std::chrono::steady_clock::time_point last_stream_quality_bitrate_apply {};
+    std::chrono::steady_clock::time_point last_stream_quality_fec_apply {};
+    std::chrono::steady_clock::time_point last_stream_quality_fps_apply {};
+    std::chrono::steady_clock::time_point last_stream_quality_profile_apply {};
     struct {
       std::chrono::steady_clock::time_point window_started {};
       std::uint32_t windows { 0 };
@@ -943,7 +943,7 @@ namespace stream {
       std::uint32_t fec_applies { 0 };
       std::uint32_t profile_applies { 0 };
       std::uint32_t idr_requests { 0 };
-    } weak_net_diag;
+    } stream_quality_diag;
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
@@ -1133,14 +1133,14 @@ namespace stream {
       .displayed_fps = static_cast<std::uint32_t>(std::max(session.config.monitor.framerate, 0)),
       .rtt_ms = rtt_ms,
       .loss_ppm = session.active_transport_path.score.loss_ppm,
-      .renderer_backpressure = session.weak_net_diag.max_render_queue_depth > 0,
-      .decode_queue_depth = session.weak_net_diag.max_decode_queue_depth,
-      .render_queue_depth = session.weak_net_diag.max_render_queue_depth,
-      .audio_queue_depth_ms = session.weak_net_diag.max_audio_buffer_depth_ms,
-      .input_queue_depth = session.weak_net_diag.max_input_queue_depth,
-      .input_send_latency_us = session.weak_net_diag.max_input_latency_us,
+      .renderer_backpressure = session.stream_quality_diag.max_render_queue_depth > 0,
+      .decode_queue_depth = session.stream_quality_diag.max_decode_queue_depth,
+      .render_queue_depth = session.stream_quality_diag.max_render_queue_depth,
+      .audio_queue_depth_ms = session.stream_quality_diag.max_audio_buffer_depth_ms,
+      .input_queue_depth = session.stream_quality_diag.max_input_queue_depth,
+      .input_send_latency_us = session.stream_quality_diag.max_input_latency_us,
       .input_ack_latency_us = 0,
-      .mouse_backlog_us = session.weak_net_diag.max_input_latency_us,
+      .mouse_backlog_us = session.stream_quality_diag.max_input_latency_us,
       .pointer_mode = pointer_mode,
       .cursor_state_flags = cursor_state_flags,
     };
@@ -1220,7 +1220,7 @@ namespace stream {
         li_session.state = LI_SESSION_STATE_PROBING;
         break;
       case session::state_e::RUNNING:
-        li_session.state = session.weak_net_controller.state() == weak_net::state_e::recovering ?
+        li_session.state = session.stream_quality_controller.state() == stream_quality::state_e::recovering ?
                              LI_SESSION_STATE_RECOVERING :
                              LI_SESSION_STATE_STREAMING;
         break;
@@ -1573,15 +1573,15 @@ namespace stream {
   }
 
   static const char *
-  weak_net_state_name(weak_net::state_e state) {
+  stream_quality_state_name(stream_quality::state_e state) {
     switch (state) {
-      case weak_net::state_e::healthy:
+      case stream_quality::state_e::healthy:
         return "healthy";
-      case weak_net::state_e::constrained:
+      case stream_quality::state_e::constrained:
         return "constrained";
-      case weak_net::state_e::crisis:
+      case stream_quality::state_e::crisis:
         return "crisis";
-      case weak_net::state_e::recovering:
+      case stream_quality::state_e::recovering:
         return "recovering";
       default:
         return "unknown";
@@ -1589,31 +1589,31 @@ namespace stream {
   }
 
   static const char *
-  weak_net_decision_reason_name(const weak_net::action_t &action) {
+  stream_quality_decision_reason_name(const stream_quality::action_t &action) {
     switch (action.reason) {
-      case weak_net::reason_e::startup:
+      case stream_quality::reason_e::startup:
         return "startup";
-      case weak_net::reason_e::recovering:
+      case stream_quality::reason_e::recovering:
         return "recovery";
-      case weak_net::reason_e::random_loss:
-      case weak_net::reason_e::delay_congestion:
+      case stream_quality::reason_e::random_loss:
+      case stream_quality::reason_e::delay_congestion:
         return "network";
-      case weak_net::reason_e::render_deadline:
+      case stream_quality::reason_e::render_deadline:
         return "client-render";
-      case weak_net::reason_e::motion_pressure:
+      case stream_quality::reason_e::motion_pressure:
         return "high-motion";
-      case weak_net::reason_e::audio_pressure:
+      case stream_quality::reason_e::audio_pressure:
         return "audio";
-      case weak_net::reason_e::input_pressure:
+      case stream_quality::reason_e::input_pressure:
         return "input";
-      case weak_net::reason_e::healthy:
+      case stream_quality::reason_e::healthy:
       default:
         return "healthy";
     }
   }
 
   static const char *
-  runtime_scale_mode_name(const weak_net::action_t &action) {
+  runtime_scale_mode_name(const stream_quality::action_t &action) {
     if (action.resolution_scale_percent >= 100) {
       return "none";
     }
@@ -1745,17 +1745,17 @@ namespace stream {
   }
 
   bool
-  should_synthesize_weak_net_recovery_feedback(int ml_feature_flags) {
+  should_synthesize_stream_quality_recovery_feedback(int ml_feature_flags) {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0;
   }
 
   bool
-  should_apply_frame_fec_weak_net_feedback(int ml_feature_flags) {
+  should_apply_frame_fec_stream_quality_feedback(int ml_feature_flags) {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0;
   }
 
   bool
-  weak_net_resync_guard_allows_safety_apply(const weak_net::action_t &action,
+  stream_quality_resync_guard_allows_safety_apply(const stream_quality::action_t &action,
                                             int last_applied_bitrate_kbps,
                                             int last_applied_fec_percentage) {
     if (!action.changed) {
@@ -1770,8 +1770,8 @@ namespace stream {
       last_applied_fec_percentage < 0 ||
       action.fec_percentage < last_applied_fec_percentage;
     const bool low_availability_safety =
-      action.availability == weak_net::availability_e::low ||
-      action.state == weak_net::state_e::crisis ||
+      action.availability == stream_quality::availability_e::low ||
+      action.state == stream_quality::state_e::crisis ||
       action.pressures.burst_loss >= 0.70 ||
       action.pressures.random_loss >= 0.70 ||
       action.pressures.render >= 0.70 ||
@@ -1779,7 +1779,7 @@ namespace stream {
       action.packet_loss >= 0.12 ||
       action.rfi_limited ||
       action.congestion_anti_spiral;
-    return action.state != weak_net::state_e::healthy &&
+    return action.state != stream_quality::state_e::healthy &&
            low_availability_safety &&
            (bitrate_downshift || fec_downshift);
   }
@@ -1834,43 +1834,43 @@ namespace stream {
     }
 
     if (feedback.frame_area > 0) {
-      session->weak_net_frame_area.store(feedback.frame_area, std::memory_order_relaxed);
+      session->stream_quality_frame_area.store(feedback.frame_area, std::memory_order_relaxed);
     }
-    atomic_store_max(session->weak_net_dirty_area, feedback.dirty_area);
+    atomic_store_max(session->stream_quality_dirty_area, feedback.dirty_area);
     if (feedback.full_frame_dirty) {
-      session->weak_net_full_frame_dirty.store(true, std::memory_order_relaxed);
+      session->stream_quality_full_frame_dirty.store(true, std::memory_order_relaxed);
     }
   }
 
   static void
-  annotate_feedback_with_host_motion(session_t *session, weak_net::feedback_t &feedback) {
+  annotate_feedback_with_host_motion(session_t *session, stream_quality::feedback_t &feedback) {
     if (!session) {
       return;
     }
 
-    auto frame_area = session->weak_net_frame_area.load(std::memory_order_relaxed);
+    auto frame_area = session->stream_quality_frame_area.load(std::memory_order_relaxed);
     if (frame_area == 0 && session->config.monitor.width > 0 && session->config.monitor.height > 0) {
       frame_area = static_cast<std::uint64_t>(session->config.monitor.width) *
                    static_cast<std::uint64_t>(session->config.monitor.height);
     }
     feedback.frame_area = frame_area;
-    feedback.dirty_area = session->weak_net_dirty_area.exchange(0, std::memory_order_relaxed);
-    feedback.full_frame_dirty = session->weak_net_full_frame_dirty.exchange(false, std::memory_order_relaxed);
-    feedback.rfi_requests = session->weak_net_rfi_requests.exchange(0, std::memory_order_relaxed);
-    feedback.large_frame_fec_skipped = session->weak_net_large_frame_fec_skipped.exchange(0, std::memory_order_relaxed);
+    feedback.dirty_area = session->stream_quality_dirty_area.exchange(0, std::memory_order_relaxed);
+    feedback.full_frame_dirty = session->stream_quality_full_frame_dirty.exchange(false, std::memory_order_relaxed);
+    feedback.rfi_requests = session->stream_quality_rfi_requests.exchange(0, std::memory_order_relaxed);
+    feedback.large_frame_fec_skipped = session->stream_quality_large_frame_fec_skipped.exchange(0, std::memory_order_relaxed);
   }
 
   static void
-  record_weak_net_feedback_diag(session_t *session,
-                                const weak_net::feedback_t &feedback,
-                                const weak_net::action_t &action,
+  record_stream_quality_feedback_diag(session_t *session,
+                                const stream_quality::feedback_t &feedback,
+                                const stream_quality::action_t &action,
                                 const char *source) {
     if (!session) {
       return;
     }
 
     const auto now = std::chrono::steady_clock::now();
-    auto &diag = session->weak_net_diag;
+    auto &diag = session->stream_quality_diag;
     if (diag.window_started.time_since_epoch().count() == 0) {
       diag.window_started = now;
     }
@@ -1923,16 +1923,16 @@ namespace stream {
     }
 
     switch (action.state) {
-      case weak_net::state_e::healthy:
+      case stream_quality::state_e::healthy:
         diag.healthy_actions++;
         break;
-      case weak_net::state_e::constrained:
+      case stream_quality::state_e::constrained:
         diag.constrained_actions++;
         break;
-      case weak_net::state_e::crisis:
+      case stream_quality::state_e::crisis:
         diag.crisis_actions++;
         break;
-      case weak_net::state_e::recovering:
+      case stream_quality::state_e::recovering:
         diag.recovering_actions++;
         break;
     }
@@ -1947,7 +1947,7 @@ namespace stream {
                                    0.0;
     const auto input_latency_ms = static_cast<double>(diag.max_input_latency_us) / 1000.0;
     std::ostringstream message;
-    message << "Weak-net diag runtime=" << session->identity.runtime_id
+    message << "Stream-quality diag runtime=" << session->identity.runtime_id
             << " source=" << source
             << " windowMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(now - diag.window_started).count()
             << " samples=" << diag.windows
@@ -1989,17 +1989,17 @@ namespace stream {
             << diag.fps_applies << "/" << diag.fec_applies
             << " profileApplies=" << diag.profile_applies
             << " idr=" << diag.idr_requests
-            << " availability=" << weak_net::availability_name(action.availability)
-            << " tier=" << weak_net::tier_name(action.tier)
-            << " scenario=" << weak_net::scenario_name(action.scenario)
-            << " decisionReason=" << weak_net_decision_reason_name(action)
+            << " availability=" << stream_quality::availability_name(action.availability)
+            << " tier=" << stream_quality::tier_name(action.tier)
+            << " scenario=" << stream_quality::scenario_name(action.scenario)
+            << " decisionReason=" << stream_quality_decision_reason_name(action)
             << " requestedScale=" << action.resolution_scale_percent << "%"
             << " actualScale=" << action.actual_scale_percent << "%"
             << " runtimeScaleMode=" << runtime_scale_mode_name(action)
             << " current(encoding/fps/fec/total/pacing)="
-            << session->weak_net_controller.current_bitrate_kbps() << "Kbps/"
-            << session->weak_net_controller.current_fps() << "fps/"
-            << session->weak_net_controller.current_fec_percentage() << "%/"
+            << session->stream_quality_controller.current_bitrate_kbps() << "Kbps/"
+            << session->stream_quality_controller.current_fps() << "fps/"
+            << session->stream_quality_controller.current_fec_percentage() << "%/"
             << session->current_total_bitrate.load(std::memory_order_relaxed) << "Kbps/"
             << session->pacing_total_bitrate.load(std::memory_order_relaxed) << "Kbps";
     BOOST_LOG(info) << message.str();
@@ -2009,7 +2009,7 @@ namespace stream {
   }
 
   static void
-  apply_weak_net_action(session_t *session, const weak_net::action_t &action, const char *source) {
+  apply_stream_quality_action(session_t *session, const stream_quality::action_t &action, const char *source) {
     if (!session || !action.changed) {
       return;
     }
@@ -2023,28 +2023,28 @@ namespace stream {
 
     const auto now = std::chrono::steady_clock::now();
     const bool resync_guard =
-      session->weak_net_resync_guard_until.time_since_epoch().count() != 0 &&
-      now < session->weak_net_resync_guard_until;
+      session->stream_quality_resync_guard_until.time_since_epoch().count() != 0 &&
+      now < session->stream_quality_resync_guard_until;
     const bool resync_guard_safety_apply =
       resync_guard &&
-      weak_net_resync_guard_allows_safety_apply(action,
-                                                session->last_applied_weak_net_bitrate,
-                                                session->last_applied_weak_net_fec);
+      stream_quality_resync_guard_allows_safety_apply(action,
+                                                session->last_applied_stream_quality_bitrate,
+                                                session->last_applied_stream_quality_fec);
     const bool dynamic_apply_blocked = resync_guard && !resync_guard_safety_apply;
-    const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_weak_net_bitrate);
-    const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_weak_net_bitrate) / 50);
+    const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_stream_quality_bitrate);
+    const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_stream_quality_bitrate) / 50);
     const bool startup_settle =
-      session->weak_net_startup_settle_until.time_since_epoch().count() != 0 &&
-      now < session->weak_net_startup_settle_until;
+      session->stream_quality_startup_settle_until.time_since_epoch().count() != 0 &&
+      now < session->stream_quality_startup_settle_until;
     const bool bitrate_probe_up =
-      session->last_applied_weak_net_bitrate > 0 &&
-      target_encoding_bitrate > session->last_applied_weak_net_bitrate;
+      session->last_applied_stream_quality_bitrate > 0 &&
+      target_encoding_bitrate > session->last_applied_stream_quality_bitrate;
     const bool bitrate_drop =
-      session->last_applied_weak_net_bitrate > 0 &&
-      target_encoding_bitrate < session->last_applied_weak_net_bitrate;
+      session->last_applied_stream_quality_bitrate > 0 &&
+      target_encoding_bitrate < session->last_applied_stream_quality_bitrate;
     const bool continuity_pressure =
-      action.state == weak_net::state_e::constrained ||
-      action.state == weak_net::state_e::crisis ||
+      action.state == stream_quality::state_e::constrained ||
+      action.state == stream_quality::state_e::crisis ||
       action.pressures.render >= 0.25 ||
       action.pressures.delay_congestion >= 0.25 ||
       action.pressures.burst_loss >= 0.25 ||
@@ -2056,30 +2056,30 @@ namespace stream {
                                           (bitrate_probe_up ? 1800ms : (bitrate_drop && continuity_pressure ? 180ms : 500ms)) :
                                           (bitrate_probe_up ? 900ms : (bitrate_drop && continuity_pressure ? 180ms : 350ms));
     const bool fec_increase =
-      session->last_applied_weak_net_fec >= 0 &&
-      target_fec_percentage > session->last_applied_weak_net_fec;
+      session->last_applied_stream_quality_fec >= 0 &&
+      target_fec_percentage > session->last_applied_stream_quality_fec;
     const auto fec_apply_cooldown = fec_increase && continuity_pressure ?
                                       300ms :
                                       (startup_settle ? 1800ms : 900ms);
     const bool apply_bitrate = !dynamic_apply_blocked &&
                                target_encoding_bitrate > 0 &&
-                               (session->last_applied_weak_net_bitrate <= 0 ||
+                               (session->last_applied_stream_quality_bitrate <= 0 ||
                                 (bitrate_delta >= bitrate_threshold &&
-                                 (session->last_weak_net_bitrate_apply.time_since_epoch().count() == 0 ||
-                                  now - session->last_weak_net_bitrate_apply >= bitrate_apply_cooldown)));
+                                 (session->last_stream_quality_bitrate_apply.time_since_epoch().count() == 0 ||
+                                  now - session->last_stream_quality_bitrate_apply >= bitrate_apply_cooldown)));
     const bool apply_fec = !dynamic_apply_blocked &&
                            target_fec_percentage >= 0 &&
-                           (session->last_applied_weak_net_fec < 0 ||
-                            (target_fec_percentage != session->last_applied_weak_net_fec &&
-                             (session->last_weak_net_fec_apply.time_since_epoch().count() == 0 ||
-                              now - session->last_weak_net_fec_apply >= fec_apply_cooldown)));
-    const auto last_fps = session->last_applied_weak_net_fps;
+                           (session->last_applied_stream_quality_fec < 0 ||
+                            (target_fec_percentage != session->last_applied_stream_quality_fec &&
+                             (session->last_stream_quality_fec_apply.time_since_epoch().count() == 0 ||
+                              now - session->last_stream_quality_fec_apply >= fec_apply_cooldown)));
+    const auto last_fps = session->last_applied_stream_quality_fps;
     const auto fps_elapsed_ms =
-      session->last_weak_net_fps_apply.time_since_epoch().count() == 0 ?
+      session->last_stream_quality_fps_apply.time_since_epoch().count() == 0 ?
         -1 :
         static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - session->last_weak_net_fps_apply).count());
-    const auto fps_decision = weak_net::runtime_fps_apply_decision(last_fps,
+                           now - session->last_stream_quality_fps_apply).count());
+    const auto fps_decision = stream_quality::runtime_fps_apply_decision(last_fps,
                                                                    target_fps,
                                                                    fps_elapsed_ms);
     const bool fps_target_changed = fps_decision.target_changed;
@@ -2098,32 +2098,32 @@ namespace stream {
                                        std::string {" fpsCooldownMs="} + std::to_string(fps_decision.cooldown_ms) :
                                        std::string {};
     const bool profile_target_changed =
-      action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale ||
-      action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type ||
-      action.dynamic_range != session->last_applied_weak_net_dynamic_range;
+      action.resolution_scale_percent != session->last_applied_stream_quality_resolution_scale ||
+      action.chroma_sampling_type != session->last_applied_stream_quality_chroma_sampling_type ||
+      action.dynamic_range != session->last_applied_stream_quality_dynamic_range;
     const bool profile_deferred = action.profile_tier_deferred && profile_target_changed;
     const bool profile_quality_down =
       profile_target_changed &&
       ((action.resolution_scale_percent > 0 &&
-        session->last_applied_weak_net_resolution_scale > 0 &&
-        action.resolution_scale_percent < session->last_applied_weak_net_resolution_scale) ||
+        session->last_applied_stream_quality_resolution_scale > 0 &&
+        action.resolution_scale_percent < session->last_applied_stream_quality_resolution_scale) ||
        (action.chroma_sampling_type >= 0 &&
-        session->last_applied_weak_net_chroma_sampling_type > action.chroma_sampling_type) ||
+        session->last_applied_stream_quality_chroma_sampling_type > action.chroma_sampling_type) ||
        (action.dynamic_range >= 0 &&
-        session->last_applied_weak_net_dynamic_range > action.dynamic_range));
+        session->last_applied_stream_quality_dynamic_range > action.dynamic_range));
     const bool profile_quality_up =
       profile_target_changed &&
-      ((action.resolution_scale_percent > session->last_applied_weak_net_resolution_scale &&
-        session->last_applied_weak_net_resolution_scale > 0) ||
+      ((action.resolution_scale_percent > session->last_applied_stream_quality_resolution_scale &&
+        session->last_applied_stream_quality_resolution_scale > 0) ||
        (action.chroma_sampling_type >= 0 &&
-        session->last_applied_weak_net_chroma_sampling_type >= 0 &&
-        action.chroma_sampling_type > session->last_applied_weak_net_chroma_sampling_type) ||
+        session->last_applied_stream_quality_chroma_sampling_type >= 0 &&
+        action.chroma_sampling_type > session->last_applied_stream_quality_chroma_sampling_type) ||
        (action.dynamic_range >= 0 &&
-        action.dynamic_range > session->last_applied_weak_net_dynamic_range));
+        action.dynamic_range > session->last_applied_stream_quality_dynamic_range));
     const bool profile_fast_recovery =
       profile_quality_up &&
-      (action.state == weak_net::state_e::healthy ||
-       action.state == weak_net::state_e::recovering) &&
+      (action.state == stream_quality::state_e::healthy ||
+       action.state == stream_quality::state_e::recovering) &&
       action.pressures.render < 0.20 &&
       action.pressures.delay_congestion < 0.20 &&
       action.pressures.burst_loss < 0.18 &&
@@ -2137,8 +2137,8 @@ namespace stream {
                                action.profile_tier_supported &&
                                action.profile_tier_changed &&
                                profile_target_changed &&
-                               (session->last_weak_net_profile_apply.time_since_epoch().count() == 0 ||
-                                now - session->last_weak_net_profile_apply >= profile_apply_cooldown);
+                               (session->last_stream_quality_profile_apply.time_since_epoch().count() == 0 ||
+                                now - session->last_stream_quality_profile_apply >= profile_apply_cooldown);
     const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
                                                                                 target_fec_percentage);
     const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
@@ -2147,10 +2147,10 @@ namespace stream {
       session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
       session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
     }
-    session->weak_net_diag.bitrate_applies += apply_bitrate ? 1U : 0U;
-    session->weak_net_diag.fps_applies += apply_fps ? 1U : 0U;
-    session->weak_net_diag.fec_applies += apply_fec ? 1U : 0U;
-    session->weak_net_diag.profile_applies += apply_profile ? 1U : 0U;
+    session->stream_quality_diag.bitrate_applies += apply_bitrate ? 1U : 0U;
+    session->stream_quality_diag.fps_applies += apply_fps ? 1U : 0U;
+    session->stream_quality_diag.fec_applies += apply_fec ? 1U : 0U;
+    session->stream_quality_diag.profile_applies += apply_profile ? 1U : 0U;
 
     if (apply_fec) {
       video::dynamic_param_t fec_param;
@@ -2158,8 +2158,8 @@ namespace stream {
       fec_param.value.int_value = target_fec_percentage;
       fec_param.valid = true;
       session->video.dynamic_param_change_events->raise(fec_param);
-      session->last_applied_weak_net_fec = target_fec_percentage;
-      session->last_weak_net_fec_apply = now;
+      session->last_applied_stream_quality_fec = target_fec_percentage;
+      session->last_stream_quality_fec_apply = now;
     }
 
     if (apply_bitrate) {
@@ -2168,8 +2168,8 @@ namespace stream {
       bitrate_param.value.int_value = target_encoding_bitrate;
       bitrate_param.valid = true;
       session->video.dynamic_param_change_events->raise(bitrate_param);
-      session->last_applied_weak_net_bitrate = target_encoding_bitrate;
-      session->last_weak_net_bitrate_apply = now;
+      session->last_applied_stream_quality_bitrate = target_encoding_bitrate;
+      session->last_stream_quality_bitrate_apply = now;
     }
 
     if (apply_fps) {
@@ -2178,15 +2178,15 @@ namespace stream {
       fps_param.value.float_value = static_cast<float>(target_fps);
       fps_param.valid = true;
       session->video.dynamic_param_change_events->raise(fps_param);
-      session->last_applied_weak_net_fps = target_fps;
-      session->last_weak_net_fps_apply = now;
+      session->last_applied_stream_quality_fps = target_fps;
+      session->last_stream_quality_fps_apply = now;
     }
 
     std::string profile_runtime_scale_suffix;
     if (apply_profile) {
       const bool resolution_scale_changed =
         action.resolution_scale_percent > 0 &&
-        action.resolution_scale_percent != session->last_applied_weak_net_resolution_scale;
+        action.resolution_scale_percent != session->last_applied_stream_quality_resolution_scale;
       if (resolution_scale_changed) {
         const auto runtime_resolution = runtime_profile_resolution_for_scale(session->config.monitor.width,
                                                                              session->config.monitor.height,
@@ -2224,7 +2224,7 @@ namespace stream {
       }
 
       if (action.chroma_sampling_type >= 0 &&
-          action.chroma_sampling_type != session->last_applied_weak_net_chroma_sampling_type) {
+          action.chroma_sampling_type != session->last_applied_stream_quality_chroma_sampling_type) {
         video::dynamic_param_t chroma_param;
         chroma_param.type = video::dynamic_param_type_e::CHROMA_SAMPLING;
         chroma_param.value.int_value = action.chroma_sampling_type;
@@ -2233,7 +2233,7 @@ namespace stream {
       }
 
       if (action.dynamic_range >= 0 &&
-          action.dynamic_range != session->last_applied_weak_net_dynamic_range) {
+          action.dynamic_range != session->last_applied_stream_quality_dynamic_range) {
         video::dynamic_param_t dynamic_range_param;
         dynamic_range_param.type = video::dynamic_param_type_e::DYNAMIC_RANGE;
         dynamic_range_param.value.int_value = action.dynamic_range;
@@ -2241,24 +2241,24 @@ namespace stream {
         session->video.dynamic_param_change_events->raise(dynamic_range_param);
       }
 
-      session->last_applied_weak_net_resolution_scale = action.resolution_scale_percent;
-      session->last_applied_weak_net_chroma_sampling_type = action.chroma_sampling_type;
-      session->last_applied_weak_net_dynamic_range = action.dynamic_range;
-      session->last_weak_net_profile_apply = now;
+      session->last_applied_stream_quality_resolution_scale = action.resolution_scale_percent;
+      session->last_applied_stream_quality_chroma_sampling_type = action.chroma_sampling_type;
+      session->last_applied_stream_quality_dynamic_range = action.dynamic_range;
+      session->last_stream_quality_profile_apply = now;
     }
 
     if (action.request_idr && !resync_guard) {
       session->video.idr_events->raise(true);
     }
 
-    BOOST_LOG(info) << "Weak-net controller [" << source << "] runtime="
+    BOOST_LOG(info) << "Stream-quality controller [" << source << "] runtime="
                     << session->identity.runtime_id
                     << " adaptiveController=auto reason=enabled"
-                    << " state=" << weak_net_state_name(action.state)
-                    << " availability=" << weak_net::availability_name(action.availability)
-                    << " reason=" << weak_net::reason_name(action.reason)
-                    << " scenario=" << weak_net::scenario_name(action.scenario)
-                    << " decisionReason=" << weak_net_decision_reason_name(action)
+                    << " state=" << stream_quality_state_name(action.state)
+                    << " availability=" << stream_quality::availability_name(action.availability)
+                    << " reason=" << stream_quality::reason_name(action.reason)
+                    << " scenario=" << stream_quality::scenario_name(action.scenario)
+                    << " decisionReason=" << stream_quality_decision_reason_name(action)
                     << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
                     << " effectiveCeiling=" << action.effective_ceiling_kbps << " Kbps"
                     << " sustainableEstimate=" << action.sustainable_estimate_kbps << " Kbps"
@@ -2276,7 +2276,7 @@ namespace stream {
                     << action.pressures.render << "/"
                     << action.pressures.audio << "/"
                     << action.pressures.input
-                    << " tier=" << weak_net::tier_name(action.tier)
+                    << " tier=" << stream_quality::tier_name(action.tier)
                     << " legacyTier=" << action.quality_tier
                     << " requestedScale=" << action.resolution_scale_percent << "%"
                     << " actualScale=" << action.actual_scale_percent << "%"
@@ -2316,7 +2316,7 @@ namespace stream {
   }
 
   static void
-  report_weak_net_recovery_request(session_t *session, const char *source) {
+  report_stream_quality_recovery_request(session_t *session, const char *source) {
     if (!session) {
       return;
     }
@@ -2324,32 +2324,32 @@ namespace stream {
       return;
     }
     const auto now = std::chrono::steady_clock::now();
-    if (session->weak_net_recovery_ready_after.time_since_epoch().count() != 0 &&
-        now < session->weak_net_recovery_ready_after) {
+    if (session->stream_quality_recovery_ready_after.time_since_epoch().count() != 0 &&
+        now < session->stream_quality_recovery_ready_after) {
       return;
     }
-    if (session->weak_net_startup_guard_until.time_since_epoch().count() != 0 &&
-        now < session->weak_net_startup_guard_until) {
-      if (session->last_weak_net_startup_guard_log.time_since_epoch().count() == 0 ||
-          now - session->last_weak_net_startup_guard_log >= 1000ms) {
-        session->last_weak_net_startup_guard_log = now;
-        BOOST_LOG(info) << "Weak-net startup guard ignoring synthetic recovery pressure"
+    if (session->stream_quality_startup_guard_until.time_since_epoch().count() != 0 &&
+        now < session->stream_quality_startup_guard_until) {
+      if (session->last_stream_quality_startup_guard_log.time_since_epoch().count() == 0 ||
+          now - session->last_stream_quality_startup_guard_log >= 1000ms) {
+        session->last_stream_quality_startup_guard_log = now;
+        BOOST_LOG(info) << "Stream-quality startup guard ignoring synthetic recovery pressure"
                         << " runtime=" << session->identity.runtime_id
                         << " source=" << source;
       }
       return;
     }
-    if (!should_synthesize_weak_net_recovery_feedback(session->config.mlFeatureFlags)) {
+    if (!should_synthesize_stream_quality_recovery_feedback(session->config.mlFeatureFlags)) {
       return;
     }
 
-    if (session->last_weak_net_recovery_feedback.time_since_epoch().count() != 0 &&
-        now - session->last_weak_net_recovery_feedback < 1500ms) {
+    if (session->last_stream_quality_recovery_feedback.time_since_epoch().count() != 0 &&
+        now - session->last_stream_quality_recovery_feedback < 1500ms) {
       return;
     }
-    session->last_weak_net_recovery_feedback = now;
+    session->last_stream_quality_recovery_feedback = now;
 
-    weak_net::feedback_t feedback {
+    stream_quality::feedback_t feedback {
       .duration_ms = 250,
       .frames_seen = 1,
       .complete_frames = 0,
@@ -2361,9 +2361,9 @@ namespace stream {
       .rtt_variance_ms = 120,
     };
     annotate_feedback_with_host_motion(session, feedback);
-    auto action = session->weak_net_controller.on_feedback(feedback);
-    apply_weak_net_action(session, action, source);
-    record_weak_net_feedback_diag(session, feedback, action, source);
+    auto action = session->stream_quality_controller.on_feedback(feedback);
+    apply_stream_quality_action(session, action, source);
+    record_stream_quality_feedback_diag(session, feedback, action, source);
   }
 
   static bool
@@ -2402,27 +2402,27 @@ namespace stream {
     last_request = now;
     const bool weak_route_recovery =
       adaptive_controller_active(session, source) &&
-      (session->weak_net_controller.state() == weak_net::state_e::crisis ||
-       session->weak_net_controller.state() == weak_net::state_e::constrained);
+      (session->stream_quality_controller.state() == stream_quality::state_e::crisis ||
+       session->stream_quality_controller.state() == stream_quality::state_e::constrained);
     const auto guard_until = now + (weak_route_recovery ? 700ms : 1500ms);
-    if (session->weak_net_resync_guard_until.time_since_epoch().count() == 0 ||
-        session->weak_net_resync_guard_until < guard_until) {
-      session->weak_net_resync_guard_until = guard_until;
+    if (session->stream_quality_resync_guard_until.time_since_epoch().count() == 0 ||
+        session->stream_quality_resync_guard_until < guard_until) {
+      session->stream_quality_resync_guard_until = guard_until;
     }
     return true;
   }
 
   static bool
-  should_hold_startup_weak_net_feedback(session_t *session,
-                                        const weak_net::feedback_t &feedback,
+  should_hold_startup_stream_quality_feedback(session_t *session,
+                                        const stream_quality::feedback_t &feedback,
                                         const char *source) {
     if (!session) {
       return false;
     }
 
     const auto now = std::chrono::steady_clock::now();
-    if (session->weak_net_startup_guard_until.time_since_epoch().count() == 0 ||
-        now >= session->weak_net_startup_guard_until) {
+    if (session->stream_quality_startup_guard_until.time_since_epoch().count() == 0 ||
+        now >= session->stream_quality_startup_guard_until) {
       return false;
     }
 
@@ -2462,10 +2462,10 @@ namespace stream {
       return false;
     }
 
-    if (session->last_weak_net_startup_guard_log.time_since_epoch().count() == 0 ||
-        now - session->last_weak_net_startup_guard_log >= 1000ms) {
-      session->last_weak_net_startup_guard_log = now;
-      BOOST_LOG(info) << "Weak-net startup guard holding transient feedback"
+    if (session->last_stream_quality_startup_guard_log.time_since_epoch().count() == 0 ||
+        now - session->last_stream_quality_startup_guard_log >= 1000ms) {
+      session->last_stream_quality_startup_guard_log = now;
+      BOOST_LOG(info) << "Stream-quality startup guard holding transient feedback"
                       << " runtime=" << session->identity.runtime_id
                       << " source=" << source
                       << " frames=" << feedback.frames_seen
@@ -3110,7 +3110,7 @@ namespace stream {
       return target_interval;
     }
 
-    if (session->weak_net_controller.state() == weak_net::state_e::healthy) {
+    if (session->stream_quality_controller.state() == stream_quality::state_e::healthy) {
       return target_interval;
     }
 
@@ -5310,7 +5310,7 @@ namespace stream {
     });
 
     server->map(SS_FRAME_FEC_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (!should_apply_frame_fec_weak_net_feedback(session->config.mlFeatureFlags)) {
+      if (!should_apply_frame_fec_stream_quality_feedback(session->config.mlFeatureFlags)) {
         return;
       }
       if (!adaptive_controller_active(session, "fec")) {
@@ -5322,11 +5322,11 @@ namespace stream {
       }
 
       const auto now = std::chrono::steady_clock::now();
-      if (session->last_weak_net_fec_feedback.time_since_epoch().count() != 0 &&
-          now - session->last_weak_net_fec_feedback < 250ms) {
+      if (session->last_stream_quality_fec_feedback.time_since_epoch().count() != 0 &&
+          now - session->last_stream_quality_fec_feedback < 250ms) {
         return;
       }
-      session->last_weak_net_fec_feedback = now;
+      session->last_stream_quality_fec_feedback = now;
 
       const auto *status = reinterpret_cast<const SS_FRAME_FEC_STATUS *>(payload.data());
       const auto total_data = read_be16_unaligned(&status->totalDataPackets);
@@ -5339,7 +5339,7 @@ namespace stream {
       const auto unrecoverable = received_packets < total_data ? 1U : 0U;
       const auto recovered = !unrecoverable && received_data < total_data ? 1U : 0U;
 
-      weak_net::feedback_t feedback {
+      stream_quality::feedback_t feedback {
         .duration_ms = 100,
         .frames_seen = 1,
         .complete_frames = unrecoverable ? 0U : 1U,
@@ -5350,9 +5350,9 @@ namespace stream {
         .received_packets = received_packets,
       };
       annotate_feedback_with_host_motion(session, feedback);
-      auto action = session->weak_net_controller.on_feedback(feedback);
-      apply_weak_net_action(session, action, "fec");
-      record_weak_net_feedback_diag(session, feedback, action, "fec");
+      auto action = session->stream_quality_controller.on_feedback(feedback);
+      apply_stream_quality_action(session, action, "fec");
+      record_stream_quality_feedback_diag(session, feedback, action, "fec");
     });
 
     server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
@@ -5382,7 +5382,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      weak_net::feedback_t network_feedback {
+      stream_quality::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -5396,14 +5396,14 @@ namespace stream {
         .rtt_variance_ms = read_be32_unaligned(&feedback->rttVarianceMs),
         .audio_underruns = read_be32_unaligned(&feedback->audioUnderruns),
       };
-      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+      if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      auto action = session->stream_quality_controller.on_feedback(network_feedback);
+      apply_stream_quality_action(session, action, "feedback");
+      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -5444,7 +5444,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      weak_net::feedback_t network_feedback {
+      stream_quality::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -5465,14 +5465,14 @@ namespace stream {
         .input_send_latency_us = read_be32_unaligned(&feedback->inputSendLatencyUs),
         .input_ack_latency_us = read_be32_unaligned(&feedback->inputAckLatencyUs),
       };
-      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+      if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      auto action = session->stream_quality_controller.on_feedback(network_feedback);
+      apply_stream_quality_action(session, action, "feedback");
+      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -5516,7 +5516,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      weak_net::feedback_t network_feedback {
+      stream_quality::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -5543,14 +5543,14 @@ namespace stream {
         .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
         .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
       };
-      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+      if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      auto action = session->stream_quality_controller.on_feedback(network_feedback);
+      apply_stream_quality_action(session, action, "feedback");
+      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -5597,7 +5597,7 @@ namespace stream {
       const auto received_data = read_be32_unaligned(&feedback->receivedDataPackets);
       const auto received_parity = read_be32_unaligned(&feedback->receivedParityPackets);
 
-      weak_net::feedback_t network_feedback {
+      stream_quality::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -5626,14 +5626,14 @@ namespace stream {
         .audio_buffer_depth_ms = read_be32_unaligned(&feedback->audioBufferDepthMs),
         .audio_drift_ppm = static_cast<std::int32_t>(read_be32_unaligned(&feedback->audioDriftPpm)),
       };
-      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+      if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      auto action = session->stream_quality_controller.on_feedback(network_feedback);
+      apply_stream_quality_action(session, action, "feedback");
+      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -5691,7 +5691,7 @@ namespace stream {
       const auto delay_gradient_raw = read_be32_unaligned(&feedback->delayGradientUs);
       const auto interarrival_jitter_us = read_be32_unaligned(&feedback->interarrivalJitterUs);
 
-      weak_net::feedback_t network_feedback {
+      stream_quality::feedback_t network_feedback {
         .duration_ms = read_be32_unaligned(&feedback->durationMs),
         .frames_seen = read_be32_unaligned(&feedback->framesSeen),
         .complete_frames = read_be32_unaligned(&feedback->completeFrames),
@@ -5724,14 +5724,14 @@ namespace stream {
         .delay_samples = delay_samples,
         .delay_gradient_valid = (delay_samples > 0),
       };
-      network_feedback.local_display_pressure = weak_net::infer_local_display_pressure(network_feedback);
+      network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
-      if (should_hold_startup_weak_net_feedback(session, network_feedback, "feedback")) {
+      if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->weak_net_controller.on_feedback(network_feedback);
-      apply_weak_net_action(session, action, "feedback");
-      record_weak_net_feedback_diag(session, network_feedback, action, "feedback");
+      auto action = session->stream_quality_controller.on_feedback(network_feedback);
+      apply_stream_quality_action(session, action, "feedback");
+      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -5751,14 +5751,14 @@ namespace stream {
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
-      session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
+      session->stream_quality_rfi_requests.fetch_add(1, std::memory_order_relaxed);
       if (!should_forward_client_recovery_request(session,
                                                   "idr",
                                                   session->last_client_idr_request,
                                                   450ms)) {
         return;
       }
-      report_weak_net_recovery_request(session, "idr");
+      report_stream_quality_recovery_request(session, "idr");
       session->video.idr_events->raise(true);
     });
 
@@ -5983,14 +5983,14 @@ namespace stream {
         << "firstFrame [" << firstFrame << ']' << std::endl
         << "lastFrame [" << lastFrame << ']';
 
-      session->weak_net_rfi_requests.fetch_add(1, std::memory_order_relaxed);
+      session->stream_quality_rfi_requests.fetch_add(1, std::memory_order_relaxed);
       if (!should_forward_client_recovery_request(session,
                                                   "rfi",
                                                   session->last_client_rfi_request,
                                                   250ms)) {
         return;
       }
-      report_weak_net_recovery_request(session, "rfi");
+      report_stream_quality_recovery_request(session, "rfi");
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
@@ -6920,7 +6920,7 @@ namespace stream {
       // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
       if (fec_blocks_needed > MAX_FEC_BLOCKS) {
         BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
-        session->weak_net_large_frame_fec_skipped.fetch_add(1, std::memory_order_relaxed);
+        session->stream_quality_large_frame_fec_skipped.fetch_add(1, std::memory_order_relaxed);
         fecPercentage = 0;
         fec_blocks_needed = MAX_FEC_BLOCKS;
       }
@@ -7900,7 +7900,7 @@ namespace stream {
       }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
-      const auto weak_net_started_at = std::chrono::steady_clock::now();
+      const auto stream_quality_started_at = std::chrono::steady_clock::now();
       const bool adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
                                                (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
       const bool lan_fast_start = adaptive_controller_enabled &&
@@ -7911,18 +7911,18 @@ namespace stream {
                                            (config::stream.adaptive_streaming_optimization ?
                                               "client-feedback-unsupported" :
                                               "config-disabled");
-      session.weak_net_startup_guard_until = adaptive_controller_enabled && !lan_fast_start ?
-                                               weak_net_started_at + 6500ms :
+      session.stream_quality_startup_guard_until = adaptive_controller_enabled && !lan_fast_start ?
+                                               stream_quality_started_at + 6500ms :
                                                std::chrono::steady_clock::time_point {};
-      session.weak_net_startup_settle_until = adaptive_controller_enabled && !lan_fast_start ?
-                                                weak_net_started_at + 10000ms :
+      session.stream_quality_startup_settle_until = adaptive_controller_enabled && !lan_fast_start ?
+                                                stream_quality_started_at + 10000ms :
                                                 std::chrono::steady_clock::time_point {};
       session.video_startup_pacing_until = adaptive_controller_enabled && !lan_fast_start ?
-                                             weak_net_started_at + 2500ms :
+                                             stream_quality_started_at + 2500ms :
                                              std::chrono::steady_clock::time_point {};
-      session.last_weak_net_startup_guard_log = {};
+      session.last_stream_quality_startup_guard_log = {};
       if (lan_fast_start) {
-        BOOST_LOG(info) << "Weak-net startup guard skipped runtime="
+        BOOST_LOG(info) << "Stream-quality startup guard skipped runtime="
                         << session.identity.runtime_id
                         << " peer=" << addr_string
                         << " kind=" << session_runtime::li_path_identity_kind_name(session.startup_path_decision.path_identity_kind)
@@ -7930,7 +7930,7 @@ namespace stream {
                         << " pathReason=" << session.startup_path_decision.reason;
       }
       else if (adaptive_controller_enabled) {
-        BOOST_LOG(info) << "Weak-net startup guard enabled runtime="
+        BOOST_LOG(info) << "Stream-quality startup guard enabled runtime="
                         << session.identity.runtime_id
                         << " peer=" << addr_string
                         << " kind=" << session_runtime::li_path_identity_kind_name(session.startup_path_decision.path_identity_kind)
@@ -8066,7 +8066,7 @@ namespace stream {
                                                "client-feedback-unsupported" :
                                                "config-disabled");
 
-      // Initialize encoding and pacing budgets separately. The weak-net
+      // Initialize encoding and pacing budgets separately. The stream-quality
       // controller adjusts encoder bitrate, while pacing reserves one FEC
       // overhead pass for the actual send budget.
       int encoding_bitrate = config.monitor.bitrate;
@@ -8142,7 +8142,7 @@ namespace stream {
       session->current_fec_percentage = fec_percentage;
       session->pacing_total_bitrate = session->current_total_bitrate.load(std::memory_order_relaxed);
       if (enhanced_feedback_client) {
-        session->weak_net_controller.configure({
+        session->stream_quality_controller.configure({
           .baseline_bitrate_kbps = ceiling_encoding_bitrate,
           .baseline_fec_percentage = fec_percentage,
           .max_fec_percentage = max_fec_percentage,
@@ -8160,21 +8160,23 @@ namespace stream {
           .fps_needed_kbps = fps_needed_bitrate,
         });
       }
-      session->last_applied_weak_net_bitrate = encoding_bitrate;
-      session->last_applied_weak_net_fec = fec_percentage;
-      session->last_applied_weak_net_fps = config.monitor.framerate;
-      session->last_applied_weak_net_resolution_scale = 100;
-      session->last_applied_weak_net_chroma_sampling_type = config.monitor.chromaSamplingType;
-      session->last_applied_weak_net_dynamic_range = config.monitor.dynamicRange;
+      session->last_applied_stream_quality_bitrate = encoding_bitrate;
+      session->last_applied_stream_quality_fec = fec_percentage;
+      session->last_applied_stream_quality_fps = config.monitor.framerate;
+      session->last_applied_stream_quality_resolution_scale = 100;
+      session->last_applied_stream_quality_chroma_sampling_type = config.monitor.chromaSamplingType;
+      session->last_applied_stream_quality_dynamic_range = config.monitor.dynamicRange;
       session->last_dynamic_clarity_flags = config.monitor.lowBitrateClarityIntentFlags;
       session->last_dynamic_clarity_qp = config.monitor.lowBitrateTargetQp;
       session->last_dynamic_clarity_bitrate = encoding_bitrate;
-      session->weak_net_recovery_ready_after = enhanced_feedback_client ?
+      session->stream_quality_recovery_ready_after = enhanced_feedback_client ?
                                                 std::chrono::steady_clock::now() + 1500ms :
                                                 std::chrono::steady_clock::time_point {};
-      BOOST_LOG(info) << "Weak-net startup baseline runtime=" << session->identity.runtime_id
+      BOOST_LOG(info) << "Stream-quality startup baseline runtime=" << session->identity.runtime_id
                       << " adaptiveController=" << adaptive_controller_state_name(session.get())
                       << " reason=" << adaptive_controller_reason(session.get())
+                      << " controllerSource=alkaid-sdk"
+                      << " weakNetContract=" << ALK_STREAM_QUALITY_CONTROL_VERSION
                       << " encoding=" << encoding_bitrate << " Kbps"
                       << " total=" << session->current_total_bitrate.load(std::memory_order_relaxed) << " Kbps"
                       << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps"

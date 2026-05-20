@@ -1,6 +1,6 @@
 /**
  * @file tests/unit/test_input_batching.cpp
- * @brief Tests for weak-network input coalescing.
+ * @brief Tests for stream-quality input coalescing.
  */
 
 #include <cstdint>

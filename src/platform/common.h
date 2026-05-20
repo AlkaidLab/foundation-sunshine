@@ -301,7 +301,7 @@ namespace platf {
     constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync
     constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync
     constexpr caps_t mic_session_id = 0x10;  // Microphone packets include a session token
-    constexpr caps_t network_feedback = 0x20;  // Client-to-host weak-network feedback
+    constexpr caps_t network_feedback = 0x20;  // Client-to-host stream-quality feedback
   };  // namespace platform_caps
 
   struct gamepad_state_t {

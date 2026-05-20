@@ -142,7 +142,7 @@ endif()
 if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(SUNSHINE_GNU_O3_ICE_WORKAROUND_FILES
             "${CMAKE_SOURCE_DIR}/src/stream.cpp"
-            "${CMAKE_SOURCE_DIR}/src/weak_net_controller.cpp")
+            "${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp")
     if (NOT BUILD_TESTS)
         set_source_files_properties(${SUNSHINE_GNU_O3_ICE_WORKAROUND_FILES}
                 DIRECTORY "${CMAKE_SOURCE_DIR}"

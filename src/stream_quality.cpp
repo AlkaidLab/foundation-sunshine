@@ -55,7 +55,7 @@ namespace stream_quality {
         // For remote-desktop/game streaming, a cursor/scroll/drag workload that
         // falls straight to 60fps feels worse than a moderately softer but
         // temporally stable stream.  Keep the floor proportional to the user's
-        // target instead of sticky-60; weak-net can still step down linearly
+        // target instead of sticky-60; stream-quality can still step down linearly
         // when render/network pressure proves the route cannot hold it.
         return std::clamp(static_cast<int>(std::lround(static_cast<double>(requested_fps) * 0.70)),
                           60,
@@ -237,7 +237,7 @@ namespace stream_quality {
      * unknown routes.  At 3840x2160@150, that is below a readable first-screen
      * budget and creates a blurry/frozen startup before feedback has a chance
      * to prove whether the route is actually weak.  Seed high-pixel streams at
-     * a conservative but viewable bpp, then let weak-net ramp down if delivery
+     * a conservative but viewable bpp, then let stream-quality ramp down if delivery
      * evidence says the path cannot sustain it.
      */
     const auto startup_bpp = high_pixel_rate ?

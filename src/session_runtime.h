@@ -2011,7 +2011,7 @@ namespace session_runtime {
 
   inline bool
   runtime_profile_resolution_reconfig_enabled() {
-    // Weak-net recovery must preserve the client-requested stream resolution.
+    // Stream-quality recovery must preserve the client-requested stream resolution.
     // Runtime resolution reconfiguration causes encoder rebuilds and visible
     // quality oscillation, so keep profile-tier scaling as a deferred hint.
     return false;
