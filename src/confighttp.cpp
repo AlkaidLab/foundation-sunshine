@@ -133,6 +133,49 @@ namespace confighttp {
     response->write(output_tree.dump(), headers);
   }
 
+  /**
+   * @brief Validate the request content type and send bad request when mismatch.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   * @param contentType The expected content type.
+   * @return true if the request's Content-Type matches the expected type.
+   *
+   * Backport of upstream LizardByte/Sunshine 738ac93a0ec1 (CVE-2025-53095).
+   * AlkaidLab does not have upstream's bad_request() helper, so the bad-request
+   * response is inlined here.
+   */
+  bool check_content_type(resp_https_t response, req_https_t request, const std::string &contentType) {
+    auto send_bad_request = [response](const std::string &error_message) {
+      nlohmann::json tree;
+      tree["status_code"] = 400;
+      tree["status"] = false;
+      tree["error"] = error_message;
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, tree.dump(), headers);
+    };
+    auto requestContentType = request->header.find("content-type");
+    if (requestContentType == request->header.end()) {
+      send_bad_request("Content type not provided");
+      return false;
+    }
+    // Extract the media type part before any parameters (e.g., charset)
+    std::string actualContentType = requestContentType->second;
+    size_t semicolonPos = actualContentType.find(';');
+    if (semicolonPos != std::string::npos) {
+      actualContentType = actualContentType.substr(0, semicolonPos);
+    }
+    boost::algorithm::trim(actualContentType);
+    boost::algorithm::to_lower(actualContentType);
+    std::string expectedContentType(contentType);
+    boost::algorithm::to_lower(expectedContentType);
+    if (actualContentType != expectedContentType) {
+      send_bad_request("Content type mismatch");
+      return false;
+    }
+    return true;
+  }
+
   void
   send_unauthorized(resp_https_t response, req_https_t request) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
@@ -728,6 +771,7 @@ namespace confighttp {
 
   void
   saveApp(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -891,6 +935,7 @@ namespace confighttp {
 
   void
   uploadCover(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     std::stringstream ss;
@@ -1157,6 +1202,7 @@ namespace confighttp {
 
   void
   saveConfig(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1255,6 +1301,7 @@ namespace confighttp {
 
   void
   savePassword(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!config::sunshine.username.empty() && !authenticate(response, request)) return;
 
     print_req(request);
@@ -1325,6 +1372,7 @@ namespace confighttp {
 
   void
   savePin(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1560,6 +1608,7 @@ namespace confighttp {
 
   void
   unpair(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
