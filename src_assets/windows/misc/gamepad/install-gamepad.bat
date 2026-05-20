@@ -48,18 +48,23 @@ for /f "tokens=3" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVer
 rem get browser_download_url from asset 0 of https://api.github.com/repos/nefarius/vigembus/releases/latest
 set latest_release_url=https://api.github.com/repos/nefarius/vigembus/releases/latest
 
-rem Use curl to get the api response, and find the browser_download_url.
-rem `--connect-timeout 10 --max-time 20` ensures we don't hang for minutes if
-rem GitHub or the local network is unreachable during install.
-for /F "tokens=* USEBACKQ" %%F in (`curl -s --connect-timeout 10 --max-time 20 !proxy! -L %latest_release_url% ^| findstr browser_download_url`) do (
-  set browser_download_url=%%F
+rem Step 1: download release metadata via curl (preserves the existing proxy
+rem support through !proxy!). Saving to disk avoids piping a multi-megabyte
+rem JSON payload through cmd.exe's narrow `for /F` token buffer.
+set "release_json=%temp_dir%\vigembus_release.json"
+curl -f -s -L --connect-timeout 10 --max-time 20 !proxy! -o "%release_json%" "%latest_release_url%"
+if errorlevel 1 (
+  echo ERROR: Could not fetch ViGEmBus release metadata.
+  exit /b 1
 )
 
-rem Strip quotes
-set browser_download_url=%browser_download_url:"=%
+rem Step 2: parse the JSON via PowerShell ConvertFrom-Json instead of fragile
+rem findstr + substring stripping. The previous approach silently produced an
+rem invalid URL if the JSON layout shifted, or if any asset name contained
+rem characters that confused `set` parsing.
+for /F "tokens=* USEBACKQ delims=" %%F in (`powershell -NoProfile -Command "try { $r = Get-Content -LiteralPath '%release_json%' -Raw ^| ConvertFrom-Json; $a = $r.assets ^| Where-Object { $_.name -like '*.exe' } ^| Select-Object -First 1; if ($a -and $a.browser_download_url) { $a.browser_download_url } } catch { }"`) do set "browser_download_url=%%F"
 
-rem Remove the browser_download_url key
-set browser_download_url=%browser_download_url:browser_download_url: =%
+del /q "%release_json%" >nul 2>&1
 
 if "%browser_download_url%"=="" (
   echo ERROR: Could not resolve ViGEmBus download URL.

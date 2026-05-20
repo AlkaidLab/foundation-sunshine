@@ -55,8 +55,12 @@ if exist "%OLD_DIR%\covers\" (
     if not exist "%NEW_DIR%\covers\" (
         move "%OLD_DIR%\covers" "%NEW_DIR%\"
 
-        rem Fix apps.json image path values that point at the old covers directory
-        powershell -c "(Get-Content '%NEW_DIR%\apps.json').replace('.\/covers\/', '.\/config\/covers\/') | Set-Content '%NEW_DIR%\apps.json'"
+        rem Fix apps.json image path values that point at the old covers directory.
+        rem Pass the path via environment to PowerShell and use -LiteralPath to avoid
+        rem PowerShell code injection if the install path contains characters like ' or $.
+        set "MIGRATE_APPS_JSON=%NEW_DIR%\apps.json"
+        powershell -NoProfile -Command "$p = $env:MIGRATE_APPS_JSON; (Get-Content -LiteralPath $p).Replace('.\/covers\/', '.\/config\/covers\/') | Set-Content -LiteralPath $p"
+        set "MIGRATE_APPS_JSON="
     )
 )
 
@@ -69,6 +73,8 @@ if exist "%NEW_DIR%\apps.json" (
     powershell -ExecutionPolicy Bypass -File "%~dp0migrate-images.ps1" "%NEW_DIR%"
 )
 
-rem Remove log files
-del "%OLD_DIR%\*.txt"
-del "%OLD_DIR%\*.log"
+rem Remove legacy Sunshine log files left at the install root by older versions.
+rem Restrict to known patterns instead of all *.txt / *.log to avoid clobbering
+rem user-placed files (e.g. notes, third-party README's) in the install dir.
+if exist "%OLD_DIR%\sunshine.log" del /q "%OLD_DIR%\sunshine.log" >nul 2>&1
+for %%F in ("%OLD_DIR%\sunshine.log.*") do if exist "%%~fF" del /q "%%~fF" >nul 2>&1

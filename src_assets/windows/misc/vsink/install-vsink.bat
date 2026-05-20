@@ -37,10 +37,25 @@ if %errorLevel% equ 0 (
 :: Set variables
 set "installer=VBCABLE_Driver_Pack43.zip"
 set "download_url=https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip"
-set "temp_dir=%TEMP%\vb_cable_install"
 
-:: Create temp directory
-if not exist "%temp_dir%" mkdir "%temp_dir%"
+:: Use an unpredictable temp directory under the admin user's %TEMP% to defeat
+:: any pre-positioned binary at a guessable path. %TEMP% under an elevated
+:: shell is the admin's own profile (not world-writable), but using a fresh
+:: random directory eliminates the residual TOCTOU window between mkdir and
+:: VBCABLE_Setup_x64.exe launch.
+for /F "usebackq delims=" %%R in (`powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"`) do set "RAND_ID=%%R"
+if "%RAND_ID%"=="" set "RAND_ID=%RANDOM%%RANDOM%%RANDOM%"
+set "temp_dir=%TEMP%\sunshine-vbcable-%RAND_ID%"
+
+:: Create temp directory (start clean; refuse to proceed if pre-existing path
+:: cannot be removed, in case an attacker pre-created a hardlink/junction).
+if exist "%temp_dir%" rd /s /q "%temp_dir%"
+if exist "%temp_dir%" (
+    echo ERROR: Could not prepare temp directory: %temp_dir%
+    pause
+    exit /b 1
+)
+mkdir "%temp_dir%"
 
 :: Download installer
 echo Downloading VB-Cable driver...
