@@ -42,6 +42,8 @@ const DEFAULT_TABS = [
       mouse: 'enabled',
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
+      zako_input_hid: 'disabled',
+      virtual_mouse: 'enabled',
       clipboard_sync: 'enabled',
       keybindings: '[0x10,0xA0,0x11,0xA2,0x12,0xA4]',
     },

@@ -31,10 +31,10 @@ INSTANTIATE_TEST_SUITE_P(
   Configurations,
   AudioTest,
   testing::Values(
-    std::make_tuple("HIGH_STEREO", config_t { 5, 2, 0x3, { 0 }, config_flags(config_t::HIGH_QUALITY) }),
-    std::make_tuple("SURROUND51", config_t { 5, 6, 0x3F, { 0 }, config_flags() }),
-    std::make_tuple("SURROUND71", config_t { 5, 8, 0x63F, { 0 }, config_flags() }),
-    std::make_tuple("SURROUND51_CUSTOM", config_t { 5, 6, 0x3F, { 6, 4, 2, { 0, 1, 4, 5, 2, 3 } }, config_flags(config_t::CUSTOM_SURROUND_PARAMS) })),
+    std::make_tuple("HIGH_STEREO", config_t { 5, 2, 0x3, CODEC_OPUS, 0, { 0 }, config_flags(config_t::HIGH_QUALITY) }),
+    std::make_tuple("SURROUND51", config_t { 5, 6, 0x3F, CODEC_OPUS, 0, { 0 }, config_flags() }),
+    std::make_tuple("SURROUND71", config_t { 5, 8, 0x63F, CODEC_OPUS, 0, { 0 }, config_flags() }),
+    std::make_tuple("SURROUND51_CUSTOM", config_t { 5, 6, 0x3F, CODEC_OPUS, 0, { 6, 4, 2, { 0, 1, 4, 5, 2, 3 } }, config_flags(config_t::CUSTOM_SURROUND_PARAMS) })),
   [](const auto &info) { return std::string(std::get<0>(info.param)); });
 
 TEST_P(AudioTest, TestEncode) {

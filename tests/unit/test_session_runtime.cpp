@@ -998,8 +998,8 @@ TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateWithoutCappi
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
-TEST(SessionRuntimeTests, RuntimeProfileResolutionReconfigEnabledForWeakNetRecovery) {
-  EXPECT_TRUE(session_runtime::runtime_profile_resolution_reconfig_enabled());
+TEST(SessionRuntimeTests, RuntimeProfileResolutionReconfigDisabledForWeakNetRecovery) {
+  EXPECT_FALSE(session_runtime::runtime_profile_resolution_reconfig_enabled());
 }
 
 TEST(SessionRuntimeTests, NackRtxHistorySelectsOnlyUsefulMissingPackets) {

@@ -144,6 +144,6 @@ TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
   EXPECT_EQ(full.height, 2160);
 }
 
-TEST(RuntimeProfileTierTests, EnablesRuntimeEncoderResolutionReconfigurationForWeakNetRecovery) {
-  EXPECT_TRUE(stream::runtime_profile_resolution_reconfig_enabled());
+TEST(RuntimeProfileTierTests, KeepsRuntimeEncoderResolutionReconfigurationDisabled) {
+  EXPECT_FALSE(stream::runtime_profile_resolution_reconfig_enabled());
 }

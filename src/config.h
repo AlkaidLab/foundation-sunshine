@@ -200,6 +200,7 @@ namespace config {
 
     bool high_resolution_scrolling;
     bool native_pen_touch;
+    bool zako_input_hid;
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
     /// Bidirectional clipboard sync (text + single image). On by default.

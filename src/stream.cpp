@@ -35,6 +35,7 @@
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
+#include <zako/input/zako_input.h>
 #include "rswrapper.h"
 // clang-format on
 }
@@ -44,6 +45,7 @@ extern "C" {
 #endif
 
 #include "config.h"
+#include "alkaidlab_session_bridge.h"
 #include "display_device/session.h"
 #include "globals.h"
 #include "rtsp.h"
@@ -716,6 +718,8 @@ namespace stream {
     session_runtime::startup_path_decision_t startup_path_decision;
     session_runtime::session_telemetry_t telemetry;
     LI_SESSION shared_session;
+    AlkSessionAdapterContext alkaidlab_session_context;
+    ZakoInputRuntime zako_input_runtime;
 
     // Legacy display/logging field. Critical routing must use identity/runtime IDs.
     std::string client_name;
@@ -1200,6 +1204,10 @@ namespace stream {
         session.shared_session.cursorPlane.epoch != 0) {
       li_session.cursorPlane = session.shared_session.cursorPlane;
     }
+    if (session.shared_session.lease.version == LI_SESSION_LEASE_VERSION &&
+        session.shared_session.lease.feature != LI_SESSION_RESOURCE_UNKNOWN) {
+      li_session.lease = session.shared_session.lease;
+    }
     switch (state) {
       case session::state_e::STOPPED:
         li_session.state = LI_SESSION_STATE_IDLE;
@@ -1217,6 +1225,12 @@ namespace stream {
         break;
     }
     session.shared_session = li_session;
+    alkaidlab_session_bridge::update_from_li_session(session.alkaidlab_session_context,
+                                                     session.shared_session);
+    alkaidlab_session_bridge::project_to_li_session(session.alkaidlab_session_context,
+                                                    session.shared_session);
+    zako_input_runtime_apply_snapshot(&session.zako_input_runtime,
+                                      &session.alkaidlab_session_context.snapshot);
   }
 
   void
@@ -4006,19 +4020,24 @@ namespace stream {
     }
 
     auto &last = session->control.cursor_plane;
+    const bool sample_visible = (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0;
+    const bool position_changed = sample_visible &&
+                                  (last.x != sample.x ||
+                                   last.y != sample.y);
+    const bool geometry_changed = sample_visible &&
+                                  (last.hotspot_x != sample.hotspot_x ||
+                                   last.hotspot_y != sample.hotspot_y ||
+                                   last.width != sample.width ||
+                                   last.height != sample.height ||
+                                   last.display_width != sample.display_width ||
+                                   last.display_height != sample.display_height ||
+                                   last.display_hotspot_x != sample.display_hotspot_x ||
+                                   last.display_hotspot_y != sample.display_hotspot_y ||
+                                   last.bitmap_width != sample.bitmap_width ||
+                                   last.bitmap_height != sample.bitmap_height);
     const bool changed = last.cursor_shape_id != sample.cursor_shape_id ||
-                         last.x != sample.x ||
-                         last.y != sample.y ||
-                         last.hotspot_x != sample.hotspot_x ||
-                         last.hotspot_y != sample.hotspot_y ||
-                         last.width != sample.width ||
-                         last.height != sample.height ||
-                         last.display_width != sample.display_width ||
-                         last.display_height != sample.display_height ||
-                         last.display_hotspot_x != sample.display_hotspot_x ||
-                         last.display_hotspot_y != sample.display_hotspot_y ||
-                         last.bitmap_width != sample.bitmap_width ||
-                         last.bitmap_height != sample.bitmap_height ||
+                         position_changed ||
+                         geometry_changed ||
                          last.flags != sample.flags;
     const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
     if (!never_sent && now - last.last_sent < 16ms) {
@@ -4249,7 +4268,10 @@ namespace stream {
     cursor_plane.maxClientPointSize = 128;
     cursor_plane.epoch = session->control.cursor_plane.epoch + 1U;
 
-    session->shared_session.cursorPlane = cursor_plane;
+    alkaidlab_session_bridge::update_cursor_plane(session->alkaidlab_session_context,
+                                                  cursor_plane);
+    alkaidlab_session_bridge::project_to_li_session(session->alkaidlab_session_context,
+                                                    session->shared_session);
     const auto packet = session_runtime::make_session_control_cursor_plane(
       session->shared_session,
       ++session->control.cursor_plane.session_cursor_plane_tx);
@@ -4968,7 +4990,13 @@ namespace stream {
             response_op = LI_SESSION_CONTROL_LEASE_OP_REJECT;
           }
 
-          session_p->shared_session.lease = response_lease;
+          alkaidlab_session_bridge::update_lease(session_p->alkaidlab_session_context,
+                                                 response_lease,
+                                                 status);
+          alkaidlab_session_bridge::project_to_li_session(session_p->alkaidlab_session_context,
+                                                          session_p->shared_session);
+          zako_input_runtime_apply_snapshot(&session_p->zako_input_runtime,
+                                            &session_p->alkaidlab_session_context.snapshot);
           (void) send_session_control_lease(session_p, response_lease, response_op, status);
           BOOST_LOG(info) << "Session lease received runtime="sv
                           << session_p->identity.runtime_id
@@ -8005,6 +8033,7 @@ namespace stream {
 
       session->config = config;
       LiInitializeSession(&session->shared_session);
+      zako_input_runtime_init(&session->zako_input_runtime);
       const auto app_id = launch_session.appid == 0 ? std::string {} : std::to_string(launch_session.appid);
       std::string app_name;
       try {

@@ -166,6 +166,31 @@ list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_ISSUE_URL="${SUNSHINE_PUBLIS
 
 include_directories("${CMAKE_SOURCE_DIR}")
 
+set(ALKAIDLAB_SESSION_CORE_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core" CACHE PATH "Path to alkaidlab-session-core")
+set(ALKAIDLAB_SESSION_SDK_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk" CACHE PATH "Path to alkaidlab-session-sdk")
+set(ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter" CACHE PATH "Path to alkaidlab-sunshine-session-adapter")
+set(ALKAIDLAB_ZAKO_INPUT_PATH "${CMAKE_SOURCE_DIR}/../zako-input" CACHE PATH "Path to zako-input")
+
+if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session_core.h" AND
+   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/session_sdk/session_sdk.h" AND
+   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
+   EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
+    list(APPEND SUNSHINE_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
+            "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp"
+            "${ALKAIDLAB_SESSION_CORE_PATH}/src/session_core.c"
+            "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
+            "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)
+    include_directories(
+            "${ALKAIDLAB_SESSION_CORE_PATH}/include"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/c/include"
+            "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include"
+            "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
+else()
+    message(WARNING "AlkaidLab Session sibling repositories were not found; building without new Session Core/SDK/Adapter/Module integration")
+endif()
+
 include_directories(
         SYSTEM
         "${CMAKE_SOURCE_DIR}/third-party"

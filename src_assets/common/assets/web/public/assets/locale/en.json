@@ -519,6 +519,8 @@
     "vdd_reuse_desc_windows": "When enabled, all clients will share the same VDD (Virtual Display Device). When disabled (default), each client gets its own unique VDD. Enable this for faster client switching, but note that all clients will share the same display settings.",
     "vdd_reuse_windows": "Reuse Same VDD for All Clients",
     "virtual_display": "Virtual Display",
+    "zako_input_hid": "Zako Input HID Bus",
+    "zako_input_hid_desc": "When enabled, Sunshine will use Zako Input HID Bus for both HID mouse and keyboard input. This is for strict game compatibility testing; if the driver is unavailable, it will not silently fall back to SendInput.",
     "virtual_mouse": "Virtual Mouse Driver",
     "virtual_mouse_desc": "When enabled, Sunshine will use the Zako Virtual Mouse driver (if installed) to simulate mouse input at the HID level. This allows games using Raw Input to receive mouse events. When disabled or driver not installed, falls back to SendInput.",
     "virtual_sink": "Virtual Sink",

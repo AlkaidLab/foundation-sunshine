@@ -548,6 +548,7 @@ namespace config {
     true,  // always send scancodes
     true,  // high resolution scrolling
     true,  // native pen/touch support
+    false, // zako input hid bus
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
     true,  // clipboard sync
@@ -1378,6 +1379,7 @@ namespace config {
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
     bool_f(vars, "clipboard_sync", input.clipboard_sync);
+    bool_f(vars, "zako_input_hid", input.zako_input_hid);
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
 

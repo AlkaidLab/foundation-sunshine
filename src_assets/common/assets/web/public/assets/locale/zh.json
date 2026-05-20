@@ -519,6 +519,8 @@
     "vdd_reuse_desc_windows": "不建议启用，启用此选项可加快客户端切换速度，但无法记忆屏幕缩放。",
     "vdd_reuse_windows": "所有客户端复用同一基地显示器",
     "virtual_display": "基地显示器",
+    "zako_input_hid": "Zako Input HID Bus",
+    "zako_input_hid_desc": "启用后，Sunshine 将通过 Zako Input HID Bus 同时模拟 HID 鼠标和键盘。此模式用于严格游戏兼容性测试；如果驱动不可用，不会静默回退到 SendInput。",
     "virtual_mouse": "虚拟鼠标驱动",
     "virtual_mouse_desc": "启用后，Sunshine 将使用 Zako 虚拟鼠标驱动（需已安装）在 HID 层模拟鼠标输入，使 Raw Input 游戏能正常接收鼠标事件。禁用或未安装驱动时，回退至 SendInput。",
     "virtual_sink": "虚拟音频输出设备",

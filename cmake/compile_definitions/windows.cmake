@@ -77,6 +77,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/input_hid.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/input_hid.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"

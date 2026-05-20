@@ -15,6 +15,7 @@
 
 #include "dsu_server.h"
 #include "clipboard.h"
+#include "input_hid.h"
 #include "keylayout.h"
 #include "misc.h"
 #include "virtual_mouse.h"
@@ -459,6 +460,7 @@ namespace platf {
   struct input_raw_t {
     ~input_raw_t() {
       delete vigem;
+      delete input_hid_dev;
       delete vmouse_dev;
       if (dsu_server) {
         dsu_server->stop();
@@ -485,7 +487,11 @@ namespace platf {
 
     vigem_t *vigem;
     dsu_server_t *dsu_server;
+    input_hid::device_t *input_hid_dev;
     vmouse::device_t *vmouse_dev;
+    bool input_hid_strict = false;
+    int input_hid_vscroll_accum = 0;
+    int input_hid_hscroll_accum = 0;
     int vmouse_vscroll_accum = 0;
     int vmouse_hscroll_accum = 0;
 
@@ -508,8 +514,22 @@ namespace platf {
     // 初始化DSU服务器（延迟初始化，只在需要时创建）
     raw.dsu_server = nullptr;
 
+    raw.input_hid_strict = config::input.zako_input_hid;
+    if (config::input.zako_input_hid) {
+      raw.input_hid_dev = new input_hid::device_t(input_hid::create());
+      if (raw.input_hid_dev->is_available()) {
+        BOOST_LOG(info) << "Zako Input HID Bus connected"sv;
+      }
+      else {
+        BOOST_LOG(error) << "Zako Input HID Bus enabled but unavailable; mouse/keyboard input will not fall back to SendInput"sv;
+      }
+    }
+    else {
+      raw.input_hid_dev = nullptr;
+    }
+
     // 初始化虚拟鼠标设备
-    if (config::input.virtual_mouse) {
+    if (!config::input.zako_input_hid && config::input.virtual_mouse) {
       raw.vmouse_dev = new vmouse::device_t(vmouse::create());
       if (raw.vmouse_dev->is_available()) {
         BOOST_LOG(info) << "Virtual mouse driver connected"sv;
@@ -598,6 +618,15 @@ namespace platf {
   void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
+      if (raw.input_hid_dev->is_available()) {
+        raw.input_hid_dev->move(
+          (int16_t) std::clamp(deltaX, -32767, 32767),
+          (int16_t) std::clamp(deltaY, -32767, 32767));
+      }
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       raw.vmouse_dev->move((int16_t) deltaX, (int16_t) deltaY);
       return;
@@ -633,6 +662,21 @@ namespace platf {
   void
   button_mouse(input_t &input, int button, bool release) {
     auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
+      if (raw.input_hid_dev->is_available()) {
+        uint8_t mask = 0;
+        switch (button) {
+          case 1: mask = input_hid::BTN_LEFT; break;
+          case 2: mask = input_hid::BTN_MIDDLE; break;
+          case 3: mask = input_hid::BTN_RIGHT; break;
+          case 4: mask = input_hid::BTN_SIDE; break;
+          default: mask = input_hid::BTN_EXTRA; break;
+        }
+        raw.input_hid_dev->button(mask, release);
+      }
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       uint8_t mask = 0;
       switch (button) {
@@ -675,6 +719,18 @@ namespace platf {
   void
   scroll(input_t &input, int distance) {
     auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
+      if (raw.input_hid_dev->is_available()) {
+        raw.input_hid_vscroll_accum += distance;
+        int notches = raw.input_hid_vscroll_accum / WHEEL_DELTA;
+        if (notches != 0) {
+          raw.input_hid_vscroll_accum -= notches * WHEEL_DELTA;
+          raw.input_hid_dev->scroll((int8_t) std::clamp(notches, -127, 127));
+        }
+      }
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       // HID wheel uses notch units; distance is in WHEEL_DELTA (120) units.
       // Accumulate sub-notch deltas for high-resolution scrolling support.
@@ -701,6 +757,18 @@ namespace platf {
   void
   hscroll(input_t &input, int distance) {
     auto &raw = *(input_raw_t *) input.get();
+    if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
+      if (raw.input_hid_dev->is_available()) {
+        raw.input_hid_hscroll_accum += distance;
+        int notches = raw.input_hid_hscroll_accum / WHEEL_DELTA;
+        if (notches != 0) {
+          raw.input_hid_hscroll_accum -= notches * WHEEL_DELTA;
+          raw.input_hid_dev->hscroll((int8_t) std::clamp(notches, -127, 127));
+        }
+      }
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       raw.vmouse_hscroll_accum += distance;
       int notches = raw.vmouse_hscroll_accum / WHEEL_DELTA;
@@ -724,6 +792,14 @@ namespace platf {
 
   void
   keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+    auto &raw = *(input_raw_t *) input.get();
+    if (raw.input_hid_dev) {
+      if (raw.input_hid_dev->is_available()) {
+        raw.input_hid_dev->keyboard_update(modcode, release, flags);
+      }
+      return;
+    }
+
     INPUT i {};
     i.type = INPUT_KEYBOARD;
     auto &ki = i.ki;

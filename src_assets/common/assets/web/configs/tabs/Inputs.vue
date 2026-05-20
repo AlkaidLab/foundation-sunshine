@@ -293,6 +293,19 @@ const vmouseStatusLabel = computed(() => {
       <div class="form-text">{{ $t('config.native_pen_touch_desc') }}</div>
     </div>
 
+    <!-- Zako Input HID Bus -->
+    <div class="mb-3" v-if="config.mouse === 'enabled' && config.keyboard === 'enabled' && platform === 'windows'">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="zako_input_hid"
+               v-model="config.zako_input_hid" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="zako_input_hid">
+          {{ $t('config.zako_input_hid') }}
+          <span class="badge bg-warning text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">{{ $t('config.experimental') }}</span>
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.zako_input_hid_desc') }}</div>
+    </div>
+
     <!-- Virtual mouse driver -->
     <div class="mb-3" v-if="config.mouse === 'enabled' && platform === 'windows'">
       <div class="form-check form-switch">
