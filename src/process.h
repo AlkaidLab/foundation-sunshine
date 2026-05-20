@@ -8,7 +8,9 @@
   #define __kernel_entry
 #endif
 
+#include <limits>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 
 #include <boost/process/v1.hpp>
@@ -20,6 +22,10 @@
 
 namespace proc {
   using file_t = util::safe_ptr_v2<FILE, int, fclose>;
+
+  inline constexpr int DESKTOP_APP_ID = std::numeric_limits<int>::max();
+  inline constexpr std::string_view DESKTOP_APP_NAME = "Desktop";
+  inline constexpr std::string_view DESKTOP_APP_IMAGE_PATH = "desktop";
 
   typedef config::prep_cmd_t cmd_t;
   struct scmd_t {

@@ -62,6 +62,21 @@ namespace proc {
     }
   };
 
+  namespace {
+    ctx_t
+    make_desktop_app() {
+      ctx_t app;
+      app.name = std::string(DESKTOP_APP_NAME);
+      app.image_path = std::string(DESKTOP_APP_IMAGE_PATH);
+      app.id = std::to_string(DESKTOP_APP_ID);
+      app.auto_detach = true;
+      app.wait_all = true;
+      app.mouse_mode = 0;
+      app.exit_timeout = std::chrono::seconds { 5 };
+      return app;
+    }
+  }  // namespace
+
   std::unique_ptr<platf::deinit_t>
   init() {
     return std::make_unique<deinit_t>();
@@ -156,17 +171,23 @@ namespace proc {
     // Ensure starting from a clean slate
     terminate();
 
-    auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
-      return app.id == std::to_string(app_id);
-    });
+    _app_id = app_id;
+    if (app_id == DESKTOP_APP_ID) {
+      _app = make_desktop_app();
+    }
+    else {
+      auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
+        return app.id == std::to_string(app_id);
+      });
 
-    if (iter == _apps.end()) {
-      BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
-      return 404;
+      if (iter == _apps.end()) {
+        BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
+        return 404;
+      }
+
+      _app = *iter;
     }
 
-    _app_id = app_id;
-    _app = *iter;
     _app_prep_begin = std::begin(_app.prep_cmds);
     _app_prep_it = _app_prep_begin;
 
@@ -409,7 +430,8 @@ namespace proc {
     for (const auto &app : apps) {
       combined_info += app.id + app.name;
     }
-    
+    combined_info += std::to_string(DESKTOP_APP_ID) + std::string(DESKTOP_APP_NAME);
+
     // Use CRC32 for the tag, same as used elsewhere
     auto crc = calculate_crc32(combined_info);
     _apps_etag = std::to_string(crc);
@@ -441,6 +463,10 @@ namespace proc {
   // Returns http content-type header compatible image type.
   std::string
   proc_t::get_app_image(int app_id) {
+    if (app_id == DESKTOP_APP_ID) {
+      return validate_app_image_path(std::string(DESKTOP_APP_IMAGE_PATH));
+    }
+
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
@@ -451,6 +477,10 @@ namespace proc {
 
   std::string
   proc_t::get_app_name(int app_id) {
+    if (app_id == DESKTOP_APP_ID) {
+      return std::string(DESKTOP_APP_NAME);
+    }
+
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
@@ -459,6 +489,10 @@ namespace proc {
 
   std::string
   proc_t::get_app_cmd(int app_id) {
+    if (app_id == DESKTOP_APP_ID) {
+      return std::string();
+    }
+
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
@@ -885,15 +919,19 @@ namespace proc {
         ctx.mouse_mode = mouse_mode.value_or(0);
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
-        auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
-        if (ids.count(std::get<0>(possible_ids)) == 0) {
-          // Avoid using index to generate id if possible
-          ctx.id = std::get<0>(possible_ids);
-        }
-        else {
-          // Fallback to include index on collision
-          ctx.id = std::get<1>(possible_ids);
-        }
+        std::tuple<std::string, std::string> possible_ids;
+        do {
+          possible_ids = calculate_app_id(name, ctx.image_path, i++);
+          if (ids.count(std::get<0>(possible_ids)) == 0) {
+            // Avoid using index to generate id if possible
+            ctx.id = std::get<0>(possible_ids);
+          }
+          else {
+            // Fallback to include index on collision
+            ctx.id = std::get<1>(possible_ids);
+          }
+        } while (ids.count(ctx.id) != 0 || ctx.id == std::to_string(DESKTOP_APP_ID));
+
         ids.insert(ctx.id);
 
         ctx.name = std::move(name);
