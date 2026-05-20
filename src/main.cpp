@@ -43,6 +43,18 @@ namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
   // Defaults to 0 (success) for the common case where main returns lifetime::desired_exit_code.
   std::atomic<int> g_final_exit_code { 0 };
+
+  void
+  harden_dll_search_path() {
+    // Avoid searching the PATH in case a user has configured their system insecurely
+    // by placing a user-writable directory in the system-wide PATH variable.
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+  }
+}
+
+namespace stream {
+  int
+  run_cursor_plane_helper_main();
 }
 #endif
 
@@ -134,6 +146,16 @@ int
 main(int argc, char *argv[]) {
   lifetime::argv = argv;
 
+#ifdef _WIN32
+  harden_dll_search_path();
+
+  for (int i = 1; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--cursor-plane-helper"sv) {
+      return stream::run_cursor_plane_helper_main();
+    }
+  }
+#endif
+
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
 
 #ifdef _WIN32
@@ -145,10 +167,6 @@ main(int argc, char *argv[]) {
     TerminateProcess(GetCurrentProcess(),
                      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
-
-  // Avoid searching the PATH in case a user has configured their system insecurely
-  // by placing a user-writable directory in the system-wide PATH variable.
-  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
 
   // Enable dark mode for the entire process before creating any windows
   // This must be called early, before any windows or system tray icons are created

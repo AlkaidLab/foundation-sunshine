@@ -5,8 +5,11 @@
 #include "process.h"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <future>
 #include <iomanip>
+#include <mutex>
 #include <queue>
 #include <unordered_map>
 
@@ -592,9 +595,14 @@ namespace stream {
         std::uint32_t flags { 0 };
         std::uint32_t source_width { 0 };
         std::uint32_t source_height { 0 };
+        std::uint16_t metric_width { 0 };
+        std::uint16_t metric_height { 0 };
         std::uint32_t bitmap_hash { 0 };
         std::uint32_t epoch { 0 };
         std::chrono::steady_clock::time_point last_sent {};
+        std::uint16_t refresh_metric_width { 0 };
+        std::uint16_t refresh_metric_height { 0 };
+        std::chrono::steady_clock::time_point last_cursor_resource_refresh {};
       } cursor_plane;
     } control;
 
@@ -1394,6 +1402,8 @@ namespace stream {
     std::uint32_t flags { 0 };
     std::uint32_t source_width { 0 };
     std::uint32_t source_height { 0 };
+    std::uint16_t metric_width { 0 };
+    std::uint16_t metric_height { 0 };
     std::uint32_t bitmap_hash { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
@@ -1411,75 +1421,83 @@ namespace stream {
   }
 
 #ifdef _WIN32
-  static std::vector<std::uint8_t>
-  read_cursor_mask_bits(HBITMAP mask, int width, int height) {
-    if (mask == nullptr || width <= 0 || height <= 0) {
-      return {};
-    }
+  struct known_cursor_t {
+    LPCSTR name;
+    std::uint32_t shape_id;
+  };
 
-    const int stride = ((width + 31) / 32) * 4;
-    std::vector<std::uint8_t> bits(static_cast<std::size_t>(stride) *
-                                   static_cast<std::size_t>(height));
-    BITMAPINFO bitmap_info {};
-    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmap_info.bmiHeader.biWidth = width;
-    bitmap_info.bmiHeader.biHeight = -height;
-    bitmap_info.bmiHeader.biPlanes = 1;
-    bitmap_info.bmiHeader.biBitCount = 1;
-    bitmap_info.bmiHeader.biCompression = BI_RGB;
+  static const known_cursor_t known_windows_cursors[] {
+    { IDC_ARROW, SS_CURSOR_PLANE_SHAPE_ARROW },
+    { IDC_HAND, SS_CURSOR_PLANE_SHAPE_HAND },
+    { IDC_IBEAM, SS_CURSOR_PLANE_SHAPE_IBEAM },
+    { IDC_WAIT, SS_CURSOR_PLANE_SHAPE_WAIT },
+    { IDC_APPSTARTING, SS_CURSOR_PLANE_SHAPE_WAIT },
+    { IDC_CROSS, SS_CURSOR_PLANE_SHAPE_CROSS },
+    { IDC_SIZEWE, SS_CURSOR_PLANE_SHAPE_SIZE_WE },
+    { IDC_SIZENS, SS_CURSOR_PLANE_SHAPE_SIZE_NS },
+    { IDC_SIZENWSE, SS_CURSOR_PLANE_SHAPE_SIZE_NWSE },
+    { IDC_SIZENESW, SS_CURSOR_PLANE_SHAPE_SIZE_NESW },
+    { IDC_SIZEALL, SS_CURSOR_PLANE_SHAPE_SIZE_ALL },
+    { IDC_NO, SS_CURSOR_PLANE_SHAPE_NO },
+  };
 
-    HDC hdc = GetDC(nullptr);
-    const int copied_rows = hdc != nullptr ?
-                              GetDIBits(hdc,
-                                        mask,
-                                        0,
-                                        height,
-                                        bits.data(),
-                                        &bitmap_info,
-                                        DIB_RGB_COLORS) :
-                              0;
-    if (hdc != nullptr) {
-      ReleaseDC(nullptr, hdc);
+  static WORD
+  cursor_resource_id(LPCSTR name) {
+    if (!IS_INTRESOURCE(name)) {
+      return 0;
     }
-    if (copied_rows != height) {
-      return {};
-    }
-    return bits;
-  }
-
-  static bool
-  cursor_mask_bit(const std::vector<std::uint8_t> &bits, int width, int x, int y) {
-    const int stride = ((width + 31) / 32) * 4;
-    const std::size_t offset = static_cast<std::size_t>(y) * stride +
-                               static_cast<std::size_t>(x / 8);
-    if (offset >= bits.size()) {
-      return false;
-    }
-    return (bits[offset] & (0x80 >> (x % 8))) != 0;
+    return static_cast<WORD>(reinterpret_cast<ULONG_PTR>(name));
   }
 
   static void
-  apply_cursor_alpha_from_mask(std::vector<std::uint8_t> &bgra,
-                               int width,
-                               int height,
-                               HBITMAP mask) {
-    auto bits = read_cursor_mask_bits(mask, width, height);
-    if (bits.empty()) {
-      return;
+  release_icon_info_bitmaps(ICONINFOEXW &icon_info) {
+    if (icon_info.hbmColor != nullptr) {
+      DeleteObject(icon_info.hbmColor);
+      icon_info.hbmColor = nullptr;
     }
-    for (int y = 0; y < height; ++y) {
-      for (int x = 0; x < width; ++x) {
-        const bool transparent = cursor_mask_bit(bits, width, x, y);
-        const std::size_t alpha = (static_cast<std::size_t>(y) * width + x) * 4 + 3;
-        if (alpha < bgra.size()) {
-          bgra[alpha] = transparent ? 0x00 : 0xFF;
-        }
-      }
+    if (icon_info.hbmMask != nullptr) {
+      DeleteObject(icon_info.hbmMask);
+      icon_info.hbmMask = nullptr;
     }
   }
-#endif
 
-#ifdef _WIN32
+  static const known_cursor_t *
+  known_cursor_from_resource_id(WORD resource_id) {
+    if (resource_id == 0) {
+      return nullptr;
+    }
+    for (const auto &candidate : known_windows_cursors) {
+      if (cursor_resource_id(candidate.name) == resource_id) {
+        return &candidate;
+      }
+    }
+    return nullptr;
+  }
+
+  static const known_cursor_t *
+  known_cursor_from_handle(HCURSOR cursor) {
+    if (cursor == nullptr) {
+      return nullptr;
+    }
+    for (const auto &candidate : known_windows_cursors) {
+      if (cursor == LoadCursorA(nullptr, candidate.name)) {
+        return &candidate;
+      }
+    }
+
+    ICONINFOEXW icon_info {};
+    icon_info.cbSize = sizeof(icon_info);
+    if (GetIconInfoExW(cursor, &icon_info)) {
+      const auto *known = known_cursor_from_resource_id(icon_info.wResID);
+      release_icon_info_bitmaps(icon_info);
+      if (known != nullptr) {
+        return known;
+      }
+    }
+
+    return nullptr;
+  }
+
   // Map a Windows HCURSOR to a stable shape id from Video.h. Standard system
   // cursors get the well-known SS_CURSOR_PLANE_SHAPE_* constants so the client
   // can substitute its own native cursor; everything else gets the
@@ -1490,28 +1508,8 @@ namespace stream {
     if (cursor == nullptr) {
       return SS_CURSOR_PLANE_SHAPE_UNKNOWN;
     }
-    struct known_cursor_t {
-      LPCSTR name;
-      std::uint32_t shape_id;
-    };
-    static const known_cursor_t known[] {
-      { IDC_ARROW, SS_CURSOR_PLANE_SHAPE_ARROW },
-      { IDC_HAND, SS_CURSOR_PLANE_SHAPE_HAND },
-      { IDC_IBEAM, SS_CURSOR_PLANE_SHAPE_IBEAM },
-      { IDC_WAIT, SS_CURSOR_PLANE_SHAPE_WAIT },
-      { IDC_APPSTARTING, SS_CURSOR_PLANE_SHAPE_WAIT },
-      { IDC_CROSS, SS_CURSOR_PLANE_SHAPE_CROSS },
-      { IDC_SIZEWE, SS_CURSOR_PLANE_SHAPE_SIZE_WE },
-      { IDC_SIZENS, SS_CURSOR_PLANE_SHAPE_SIZE_NS },
-      { IDC_SIZENWSE, SS_CURSOR_PLANE_SHAPE_SIZE_NWSE },
-      { IDC_SIZENESW, SS_CURSOR_PLANE_SHAPE_SIZE_NESW },
-      { IDC_SIZEALL, SS_CURSOR_PLANE_SHAPE_SIZE_ALL },
-      { IDC_NO, SS_CURSOR_PLANE_SHAPE_NO },
-    };
-    for (const auto &candidate : known) {
-      if (cursor == LoadCursorA(nullptr, candidate.name)) {
-        return candidate.shape_id;
-      }
+    if (const auto *known = known_cursor_from_handle(cursor)) {
+      return known->shape_id;
     }
     const auto cursor_handle = reinterpret_cast<std::uintptr_t>(cursor);
     auto hashed = static_cast<std::uint32_t>((cursor_handle >> 4U) ^ (cursor_handle >> 32U) ^ cursor_handle);
@@ -1520,6 +1518,739 @@ namespace stream {
     }
     return SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG | (hashed & ~SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG);
   }
+
+  using get_dpi_for_monitor_t = HRESULT(WINAPI *)(HMONITOR, int, UINT *, UINT *);
+  using get_system_metrics_for_dpi_t = int(WINAPI *)(int, UINT);
+
+  static UINT
+  cursor_dpi_for_point(const POINT &point) {
+    UINT dpi_x = 0;
+    UINT dpi_y = 0;
+    if (auto monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)) {
+      static const auto get_dpi_for_monitor = []() -> get_dpi_for_monitor_t {
+        auto shcore = LoadLibraryExA("Shcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (shcore == nullptr) {
+          return nullptr;
+        }
+        return reinterpret_cast<get_dpi_for_monitor_t>(GetProcAddress(shcore, "GetDpiForMonitor"));
+      }();
+      if (get_dpi_for_monitor != nullptr &&
+          SUCCEEDED(get_dpi_for_monitor(monitor, 0, &dpi_x, &dpi_y)) &&
+          dpi_x != 0) {
+        return dpi_x;
+      }
+    }
+    return 96;
+  }
+
+  static int
+  cursor_system_metric_for_dpi(int metric, UINT dpi) {
+    static const auto get_system_metrics_for_dpi = []() -> get_system_metrics_for_dpi_t {
+      auto user32 = GetModuleHandleA("user32.dll");
+      if (user32 == nullptr) {
+        user32 = LoadLibraryExA("user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      }
+      if (user32 == nullptr) {
+        return nullptr;
+      }
+      return reinterpret_cast<get_system_metrics_for_dpi_t>(GetProcAddress(user32, "GetSystemMetricsForDpi"));
+    }();
+    if (get_system_metrics_for_dpi != nullptr) {
+      const int value = get_system_metrics_for_dpi(metric, dpi);
+      if (value > 0) {
+        return value;
+      }
+    }
+    return GetSystemMetrics(metric);
+  }
+
+  static void
+  release_icon_info_bitmaps(ICONINFO &icon_info) {
+    if (icon_info.hbmColor != nullptr) {
+      DeleteObject(icon_info.hbmColor);
+      icon_info.hbmColor = nullptr;
+    }
+    if (icon_info.hbmMask != nullptr) {
+      DeleteObject(icon_info.hbmMask);
+      icon_info.hbmMask = nullptr;
+    }
+  }
+
+  static bool
+  cursor_bitmap_extent_from_icon_info(const ICONINFO &icon_info, int &width, int &height) {
+    BITMAP bitmap {};
+    if (icon_info.hbmColor != nullptr &&
+        GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+      width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
+      height = std::clamp<LONG>(bitmap.bmHeight, 1, 512);
+      return true;
+    }
+    if (icon_info.hbmMask != nullptr &&
+        GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
+      width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
+      height = std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512);
+      return true;
+    }
+    return false;
+  }
+
+  struct cursor_helper_bitmap_t {
+    std::uint32_t cursor_shape_id { SS_CURSOR_PLANE_SHAPE_UNKNOWN };
+    std::uint16_t hotspot_x { 0 };
+    std::uint16_t hotspot_y { 0 };
+    std::uint16_t width { 0 };
+    std::uint16_t height { 0 };
+    std::uint16_t bitmap_format { SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA };
+    std::uint16_t bitmap_stride { 0 };
+    std::uint32_t bitmap_hash { 0 };
+    std::uint32_t metric_width { 0 };
+    std::uint32_t metric_height { 0 };
+    std::vector<std::uint8_t> bitmap_bgra;
+  };
+
+  struct cursor_helper_cache_entry_t {
+    cursor_helper_bitmap_t bitmap;
+    std::chrono::steady_clock::time_point created_at;
+    std::chrono::steady_clock::time_point last_used;
+  };
+
+#pragma pack(push, 1)
+  struct cursor_helper_response_v1_t {
+    std::uint32_t magic;
+    std::uint16_t version;
+    std::uint16_t header_size;
+    std::uint32_t cursor_shape_id;
+    std::uint16_t hotspot_x;
+    std::uint16_t hotspot_y;
+    std::uint16_t width;
+    std::uint16_t height;
+    std::uint16_t bitmap_format;
+    std::uint16_t bitmap_stride;
+    std::uint32_t bitmap_hash;
+    std::uint32_t bitmap_bytes;
+    std::uint32_t metric_width;
+    std::uint32_t metric_height;
+  };
+#pragma pack(pop)
+
+  constexpr std::uint32_t cursor_helper_magic = 0x31504843u;  // "CHP1" little-endian
+  constexpr std::uint16_t cursor_helper_version = 1;
+
+  static std::uint64_t
+  cursor_helper_cache_key(std::uint32_t shape_id,
+                          std::uint16_t metric_width,
+                          std::uint16_t metric_height) {
+    return (static_cast<std::uint64_t>(shape_id) << 32U) |
+           (static_cast<std::uint64_t>(metric_width) << 16U) |
+           metric_height;
+  }
+
+  static std::mutex cursor_helper_cache_mutex;
+  static std::unordered_map<std::uint64_t, cursor_helper_cache_entry_t> cursor_helper_cache;
+  static std::chrono::steady_clock::time_point last_cursor_helper_spawn {};
+  constexpr std::size_t cursor_helper_cache_max_entries = 64;
+
+  static std::chrono::milliseconds
+  cursor_helper_cache_ttl_for_shape(std::uint32_t shape_id) {
+    if (shape_id == SS_CURSOR_PLANE_SHAPE_WAIT) {
+      return std::chrono::milliseconds(0);
+    }
+    if ((shape_id & SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG) != 0) {
+      return std::chrono::milliseconds(500);
+    }
+    return std::chrono::seconds(5);
+  }
+
+  static void
+  trim_cursor_helper_cache_locked() {
+    while (cursor_helper_cache.size() > cursor_helper_cache_max_entries) {
+      auto oldest = cursor_helper_cache.begin();
+      for (auto it = cursor_helper_cache.begin(); it != cursor_helper_cache.end(); ++it) {
+        if (it->second.last_used < oldest->second.last_used) {
+          oldest = it;
+        }
+      }
+      cursor_helper_cache.erase(oldest);
+    }
+  }
+
+  static bool
+  cursor_bgra_has_alpha(const std::vector<std::uint8_t> &bgra) {
+    for (std::size_t i = 3; i < bgra.size(); i += 4) {
+      if (bgra[i] != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool
+  read_cursor_mask_bits(HDC dc,
+                        HBITMAP mask,
+                        int width,
+                        int height,
+                        std::vector<std::uint8_t> &bits,
+                        bool &top_down) {
+    struct bitmap_info_1bpp_t {
+      BITMAPINFOHEADER header;
+      RGBQUAD colors[2];
+    };
+
+    const auto stride = static_cast<std::size_t>(((width + 31) / 32) * 4);
+    bits.assign(stride * static_cast<std::size_t>(height), 0);
+
+    bitmap_info_1bpp_t info {};
+    info.header.biSize = sizeof(info.header);
+    info.header.biWidth = width;
+    info.header.biHeight = -height;
+    info.header.biPlanes = 1;
+    info.header.biBitCount = 1;
+    info.header.biCompression = BI_RGB;
+    info.colors[0].rgbBlue = 0;
+    info.colors[0].rgbGreen = 0;
+    info.colors[0].rgbRed = 0;
+    info.colors[1].rgbBlue = 255;
+    info.colors[1].rgbGreen = 255;
+    info.colors[1].rgbRed = 255;
+
+    if (GetDIBits(dc,
+                  mask,
+                  0,
+                  static_cast<UINT>(height),
+                  bits.data(),
+                  reinterpret_cast<BITMAPINFO *>(&info),
+                  DIB_RGB_COLORS) == height) {
+      top_down = true;
+      return true;
+    }
+
+    std::fill(bits.begin(), bits.end(), 0);
+    info.header.biHeight = height;
+    if (GetDIBits(dc,
+                  mask,
+                  0,
+                  static_cast<UINT>(height),
+                  bits.data(),
+                  reinterpret_cast<BITMAPINFO *>(&info),
+                  DIB_RGB_COLORS) == height) {
+      top_down = false;
+      return true;
+    }
+
+    bits.clear();
+    return false;
+  }
+
+  static bool
+  cursor_mask_bit(const std::vector<std::uint8_t> &bits,
+                  int width,
+                  int height,
+                  bool top_down,
+                  int x,
+                  int y) {
+    const auto stride = static_cast<std::size_t>(((width + 31) / 32) * 4);
+    const int row = top_down ? y : (height - 1 - y);
+    const auto index = static_cast<std::size_t>(row) * stride + static_cast<std::size_t>(x / 8);
+    return (bits[index] & static_cast<std::uint8_t>(0x80U >> (x % 8))) != 0;
+  }
+
+  static bool
+  repair_cursor_alpha_from_mask(HDC dc,
+                                HCURSOR cursor,
+                                std::uint16_t width,
+                                std::uint16_t height,
+                                std::vector<std::uint8_t> &bgra) {
+    ICONINFO icon_info {};
+    if (!GetIconInfo(cursor, &icon_info) || icon_info.hbmMask == nullptr) {
+      release_icon_info_bitmaps(icon_info);
+      return false;
+    }
+
+    BITMAP mask_bitmap {};
+    const bool have_mask_bitmap =
+      GetObject(icon_info.hbmMask, sizeof(mask_bitmap), &mask_bitmap) == sizeof(mask_bitmap);
+    const bool has_color_bitmap = icon_info.hbmColor != nullptr;
+    if (!have_mask_bitmap ||
+        mask_bitmap.bmWidth < width ||
+        mask_bitmap.bmHeight < height) {
+      release_icon_info_bitmaps(icon_info);
+      return false;
+    }
+
+    std::vector<std::uint8_t> mask_bits;
+    bool top_down = true;
+    const bool mask_read = read_cursor_mask_bits(dc,
+                                                icon_info.hbmMask,
+                                                mask_bitmap.bmWidth,
+                                                mask_bitmap.bmHeight,
+                                                mask_bits,
+                                                top_down);
+    release_icon_info_bitmaps(icon_info);
+    if (!mask_read) {
+      return false;
+    }
+
+    const bool has_monochrome_xor_mask = !has_color_bitmap && mask_bitmap.bmHeight >= height * 2;
+    bool any_visible = false;
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        const bool and_mask = cursor_mask_bit(mask_bits,
+                                             mask_bitmap.bmWidth,
+                                             mask_bitmap.bmHeight,
+                                             top_down,
+                                             x,
+                                             y);
+        bool visible = !and_mask;
+        if (has_monochrome_xor_mask) {
+          const bool xor_mask = cursor_mask_bit(mask_bits,
+                                               mask_bitmap.bmWidth,
+                                               mask_bitmap.bmHeight,
+                                               top_down,
+                                               x,
+                                               y + height);
+          visible = !and_mask || xor_mask;
+        }
+
+        const auto alpha_index = (static_cast<std::size_t>(y) * width + x) * 4U + 3U;
+        bgra[alpha_index] = visible ? 0xFF : 0x00;
+        any_visible = any_visible || visible;
+      }
+    }
+
+    return any_visible;
+  }
+
+  static bool
+  draw_cursor_to_bgra(HCURSOR cursor,
+                      std::uint16_t width,
+                      std::uint16_t height,
+                      std::vector<std::uint8_t> &bgra) {
+    if (cursor == nullptr || width == 0 || height == 0) {
+      return false;
+    }
+
+    BITMAPINFO bitmap_info {};
+    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmap_info.bmiHeader.biWidth = width;
+    bitmap_info.bmiHeader.biHeight = -static_cast<LONG>(height);
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = 32;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+    void *bits = nullptr;
+    HDC screen_dc = GetDC(nullptr);
+    if (screen_dc == nullptr) {
+      return false;
+    }
+    HDC memory_dc = CreateCompatibleDC(screen_dc);
+    if (memory_dc == nullptr) {
+      ReleaseDC(nullptr, screen_dc);
+      return false;
+    }
+    HBITMAP dib = CreateDIBSection(screen_dc,
+                                   &bitmap_info,
+                                   DIB_RGB_COLORS,
+                                   &bits,
+                                   nullptr,
+                                   0);
+    if (dib == nullptr || bits == nullptr) {
+      if (dib != nullptr) {
+        DeleteObject(dib);
+      }
+      DeleteDC(memory_dc);
+      ReleaseDC(nullptr, screen_dc);
+      return false;
+    }
+
+    auto old_bitmap = SelectObject(memory_dc, dib);
+    const auto bytes = static_cast<std::size_t>(width) * height * 4U;
+    std::memset(bits, 0, bytes);
+    const bool drawn = DrawIconEx(memory_dc,
+                                  0,
+                                  0,
+                                  cursor,
+                                  width,
+                                  height,
+                                  0,
+                                  nullptr,
+                                  DI_NORMAL) != FALSE;
+    if (drawn) {
+      bgra.resize(bytes);
+      std::memcpy(bgra.data(), bits, bytes);
+      if (!cursor_bgra_has_alpha(bgra) &&
+          !repair_cursor_alpha_from_mask(screen_dc, cursor, width, height, bgra)) {
+        bgra.clear();
+      }
+    }
+
+    if (old_bitmap != nullptr) {
+      SelectObject(memory_dc, old_bitmap);
+    }
+    DeleteObject(dib);
+    DeleteDC(memory_dc);
+    ReleaseDC(nullptr, screen_dc);
+    return drawn && !bgra.empty();
+  }
+
+  static void
+  enable_fresh_cursor_helper_dpi_awareness() {
+    auto user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 == nullptr) {
+      user32 = LoadLibraryExW(L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    }
+    if (user32 == nullptr) {
+      return;
+    }
+
+    auto per_monitor_v2 = reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4));
+    using set_process_dpi_awareness_context_t = BOOL(WINAPI *)(HANDLE);
+    using set_thread_dpi_awareness_context_t = HANDLE(WINAPI *)(HANDLE);
+    if (auto set_process_dpi_awareness_context =
+          reinterpret_cast<set_process_dpi_awareness_context_t>(
+            GetProcAddress(user32, "SetProcessDpiAwarenessContext"))) {
+      set_process_dpi_awareness_context(per_monitor_v2);
+    }
+    if (auto set_thread_dpi_awareness_context =
+          reinterpret_cast<set_thread_dpi_awareness_context_t>(
+            GetProcAddress(user32, "SetThreadDpiAwarenessContext"))) {
+      set_thread_dpi_awareness_context(per_monitor_v2);
+    }
+  }
+
+  static bool
+  sample_cursor_bitmap_in_fresh_process(cursor_helper_bitmap_t &out) {
+    enable_fresh_cursor_helper_dpi_awareness();
+
+    CURSORINFO cursor_info {};
+    cursor_info.cbSize = sizeof(cursor_info);
+    if (!GetCursorInfo(&cursor_info) ||
+        cursor_info.hCursor == nullptr ||
+        (cursor_info.flags & CURSOR_SHOWING) == 0) {
+      return false;
+    }
+
+    POINT point = cursor_info.ptScreenPos;
+    if (point.x == 0 && point.y == 0) {
+      GetCursorPos(&point);
+    }
+    const auto dpi = cursor_dpi_for_point(point);
+    const auto metric_width = static_cast<std::uint16_t>(
+      std::clamp(cursor_system_metric_for_dpi(SM_CXCURSOR, dpi), 1, 512));
+    const auto metric_height = static_cast<std::uint16_t>(
+      std::clamp(cursor_system_metric_for_dpi(SM_CYCURSOR, dpi), 1, 512));
+
+    HCURSOR materialized_cursor = cursor_info.hCursor;
+    HCURSOR copied_cursor = nullptr;
+    ICONINFO icon_info {};
+    int width = 0;
+    int height = 0;
+    const bool is_known_cursor = known_cursor_from_handle(cursor_info.hCursor) != nullptr;
+    if (GetIconInfo(cursor_info.hCursor, &icon_info)) {
+      cursor_bitmap_extent_from_icon_info(icon_info, width, height);
+      release_icon_info_bitmaps(icon_info);
+    }
+    if (is_known_cursor && (width != metric_width || height != metric_height)) {
+      copied_cursor = static_cast<HCURSOR>(
+        CopyImage(cursor_info.hCursor, IMAGE_CURSOR, metric_width, metric_height, 0));
+      ICONINFO copied_icon {};
+      int copied_width = 0;
+      int copied_height = 0;
+      if (copied_cursor != nullptr &&
+          GetIconInfo(copied_cursor, &copied_icon) &&
+          cursor_bitmap_extent_from_icon_info(copied_icon, copied_width, copied_height) &&
+          copied_width == metric_width &&
+          copied_height == metric_height) {
+        materialized_cursor = copied_cursor;
+        width = copied_width;
+        height = copied_height;
+      }
+      release_icon_info_bitmaps(copied_icon);
+    }
+
+    ICONINFO materialized_icon {};
+    if (!GetIconInfo(materialized_cursor, &materialized_icon) ||
+        !cursor_bitmap_extent_from_icon_info(materialized_icon, width, height)) {
+      release_icon_info_bitmaps(materialized_icon);
+      if (copied_cursor != nullptr) {
+        DestroyCursor(copied_cursor);
+      }
+      return false;
+    }
+
+    out.cursor_shape_id = semantic_cursor_shape_id_win(cursor_info.hCursor);
+    out.hotspot_x = static_cast<std::uint16_t>(std::clamp<DWORD>(materialized_icon.xHotspot, 0, 512));
+    out.hotspot_y = static_cast<std::uint16_t>(std::clamp<DWORD>(materialized_icon.yHotspot, 0, 512));
+    out.width = static_cast<std::uint16_t>(std::clamp(width, 1, 512));
+    out.height = static_cast<std::uint16_t>(std::clamp(height, 1, 512));
+    out.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
+    out.bitmap_stride = static_cast<std::uint16_t>(out.width * 4U);
+    out.metric_width = metric_width;
+    out.metric_height = metric_height;
+
+    std::vector<std::uint8_t> bgra;
+    const bool drawn = draw_cursor_to_bgra(materialized_cursor, out.width, out.height, bgra);
+    release_icon_info_bitmaps(materialized_icon);
+    if (copied_cursor != nullptr) {
+      DestroyCursor(copied_cursor);
+    }
+    if (!drawn) {
+      return false;
+    }
+
+    out.bitmap_hash = hash_cursor_bitmap(bgra);
+    out.bitmap_bgra = std::move(bgra);
+    return true;
+  }
+
+  static bool
+  write_all_to_stdout(const void *data, std::size_t size) {
+    auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr) {
+      return false;
+    }
+    const auto *cursor = static_cast<const std::uint8_t *>(data);
+    while (size > 0) {
+      DWORD written = 0;
+      const auto chunk = static_cast<DWORD>(std::min<std::size_t>(size, 64U * 1024U));
+      if (!WriteFile(handle, cursor, chunk, &written, nullptr) || written == 0) {
+        return false;
+      }
+      cursor += written;
+      size -= written;
+    }
+    return true;
+  }
+
+  static bool
+  read_available_pipe_bytes(HANDLE pipe, std::vector<std::uint8_t> &output) {
+    DWORD available = 0;
+    if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) {
+      return false;
+    }
+    while (available > 0) {
+      std::array<std::uint8_t, 8192> buffer {};
+      DWORD bytes_read = 0;
+      const auto to_read = std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
+      if (!ReadFile(pipe, buffer.data(), to_read, &bytes_read, nullptr) || bytes_read == 0) {
+        return false;
+      }
+      output.insert(output.end(), buffer.begin(), buffer.begin() + bytes_read);
+      available -= bytes_read;
+    }
+    return true;
+  }
+
+  static std::wstring
+  quote_windows_arg(const std::wstring &arg) {
+    std::wstring quoted = L"\"";
+    for (wchar_t ch : arg) {
+      if (ch == L'\"') {
+        quoted += L"\\\"";
+      }
+      else {
+        quoted += ch;
+      }
+    }
+    quoted += L"\"";
+    return quoted;
+  }
+
+  static bool
+  run_cursor_helper_process(cursor_helper_bitmap_t &bitmap) {
+    wchar_t module_path[MAX_PATH] {};
+    if (GetModuleFileNameW(nullptr,
+                           module_path,
+                           static_cast<DWORD>(sizeof(module_path) / sizeof(module_path[0]))) == 0) {
+      return false;
+    }
+
+    SECURITY_ATTRIBUTES attrs {};
+    attrs.nLength = sizeof(attrs);
+    attrs.bInheritHandle = TRUE;
+    HANDLE read_pipe = nullptr;
+    HANDLE write_pipe = nullptr;
+    if (!CreatePipe(&read_pipe, &write_pipe, &attrs, 0)) {
+      return false;
+    }
+    SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOEXW startup {};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = nullptr;
+    startup.StartupInfo.hStdOutput = write_pipe;
+    startup.StartupInfo.hStdError = nullptr;
+
+    SIZE_T attribute_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_size);
+    std::vector<std::uint8_t> attribute_storage(attribute_size);
+    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attribute_storage.data());
+    if (attribute_size == 0 ||
+        !InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attribute_size)) {
+      CloseHandle(write_pipe);
+      CloseHandle(read_pipe);
+      return false;
+    }
+
+    HANDLE inherited_handles[] { write_pipe };
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList,
+                                   0,
+                                   PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                   inherited_handles,
+                                   sizeof(inherited_handles),
+                                   nullptr,
+                                   nullptr)) {
+      DeleteProcThreadAttributeList(startup.lpAttributeList);
+      CloseHandle(write_pipe);
+      CloseHandle(read_pipe);
+      return false;
+    }
+
+    PROCESS_INFORMATION process {};
+    auto command_line = quote_windows_arg(module_path) + L" --cursor-plane-helper";
+    const BOOL created = CreateProcessW(nullptr,
+                                        command_line.data(),
+                                        nullptr,
+                                        nullptr,
+                                        TRUE,
+                                        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+                                        nullptr,
+                                        nullptr,
+                                        &startup.StartupInfo,
+                                        &process);
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    CloseHandle(write_pipe);
+    if (!created) {
+      CloseHandle(read_pipe);
+      return false;
+    }
+
+    std::vector<std::uint8_t> bytes;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    bool timed_out = false;
+    for (;;) {
+      read_available_pipe_bytes(read_pipe, bytes);
+      const auto wait = WaitForSingleObject(process.hProcess, 10);
+      if (wait == WAIT_OBJECT_0) {
+        read_available_pipe_bytes(read_pipe, bytes);
+        break;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        timed_out = true;
+        TerminateProcess(process.hProcess, 2);
+        WaitForSingleObject(process.hProcess, 100);
+        break;
+      }
+    }
+
+    DWORD exit_code = 1;
+    GetExitCodeProcess(process.hProcess, &exit_code);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(read_pipe);
+    if (timed_out || exit_code != 0 || bytes.size() < sizeof(cursor_helper_response_v1_t)) {
+      return false;
+    }
+
+    cursor_helper_response_v1_t response {};
+    std::memcpy(&response, bytes.data(), sizeof(response));
+    if (response.magic != cursor_helper_magic ||
+        response.version != cursor_helper_version ||
+        response.header_size != sizeof(cursor_helper_response_v1_t) ||
+        response.bitmap_format != SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA ||
+        response.width == 0 ||
+        response.height == 0 ||
+        response.bitmap_stride < response.width * 4U ||
+        response.bitmap_bytes == 0 ||
+        bytes.size() != sizeof(cursor_helper_response_v1_t) + response.bitmap_bytes) {
+      return false;
+    }
+
+    bitmap.cursor_shape_id = response.cursor_shape_id;
+    bitmap.hotspot_x = response.hotspot_x;
+    bitmap.hotspot_y = response.hotspot_y;
+    bitmap.width = response.width;
+    bitmap.height = response.height;
+    bitmap.bitmap_format = response.bitmap_format;
+    bitmap.bitmap_stride = response.bitmap_stride;
+    bitmap.bitmap_hash = response.bitmap_hash;
+    bitmap.metric_width = response.metric_width;
+    bitmap.metric_height = response.metric_height;
+    bitmap.bitmap_bgra.assign(bytes.begin() + sizeof(cursor_helper_response_v1_t), bytes.end());
+    return true;
+  }
+
+  static bool
+  get_fresh_cursor_bitmap(std::uint32_t expected_shape_id,
+                          std::uint16_t expected_metric_width,
+                          std::uint16_t expected_metric_height,
+                          cursor_helper_bitmap_t &bitmap) {
+    const auto key = cursor_helper_cache_key(expected_shape_id, expected_metric_width, expected_metric_height);
+    const auto cache_ttl = cursor_helper_cache_ttl_for_shape(expected_shape_id);
+    const auto now = std::chrono::steady_clock::now();
+    {
+      std::lock_guard<std::mutex> lock(cursor_helper_cache_mutex);
+      if (auto it = cursor_helper_cache.find(key); it != cursor_helper_cache.end()) {
+        if (cache_ttl.count() > 0 && now - it->second.created_at < cache_ttl) {
+          it->second.last_used = now;
+          bitmap = it->second.bitmap;
+          return true;
+        }
+        cursor_helper_cache.erase(it);
+      }
+      if (last_cursor_helper_spawn.time_since_epoch().count() != 0 &&
+          now - last_cursor_helper_spawn < std::chrono::milliseconds(100)) {
+        return false;
+      }
+      last_cursor_helper_spawn = now;
+    }
+
+    cursor_helper_bitmap_t fresh {};
+    if (!run_cursor_helper_process(fresh) ||
+        fresh.cursor_shape_id != expected_shape_id ||
+        fresh.metric_width != expected_metric_width ||
+        fresh.metric_height != expected_metric_height) {
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(cursor_helper_cache_mutex);
+      if (cache_ttl.count() > 0) {
+        cursor_helper_cache[key] = cursor_helper_cache_entry_t { fresh, now, now };
+        trim_cursor_helper_cache_locked();
+      }
+    }
+    bitmap = std::move(fresh);
+    return true;
+  }
+
+  int
+  run_cursor_plane_helper_main() {
+    cursor_helper_bitmap_t bitmap {};
+    if (!sample_cursor_bitmap_in_fresh_process(bitmap) || bitmap.bitmap_bgra.empty()) {
+      return 1;
+    }
+
+    cursor_helper_response_v1_t response {};
+    response.magic = cursor_helper_magic;
+    response.version = cursor_helper_version;
+    response.header_size = sizeof(response);
+    response.cursor_shape_id = bitmap.cursor_shape_id;
+    response.hotspot_x = bitmap.hotspot_x;
+    response.hotspot_y = bitmap.hotspot_y;
+    response.width = bitmap.width;
+    response.height = bitmap.height;
+    response.bitmap_format = bitmap.bitmap_format;
+    response.bitmap_stride = bitmap.bitmap_stride;
+    response.bitmap_hash = bitmap.bitmap_hash;
+    response.bitmap_bytes = static_cast<std::uint32_t>(bitmap.bitmap_bgra.size());
+    response.metric_width = bitmap.metric_width;
+    response.metric_height = bitmap.metric_height;
+
+    return write_all_to_stdout(&response, sizeof(response)) &&
+             write_all_to_stdout(bitmap.bitmap_bgra.data(), bitmap.bitmap_bgra.size()) ? 0 : 1;
+  }
+
 #endif
 
   static cursor_plane_sample_t
@@ -1543,8 +2274,9 @@ namespace stream {
     const int origin_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int source_width = std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
     const int source_height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    const int fallback_width = std::max(1, GetSystemMetrics(SM_CXCURSOR));
-    const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
+    const auto cursor_dpi = cursor_dpi_for_point(point);
+    const int fallback_width = std::max(1, cursor_system_metric_for_dpi(SM_CXCURSOR, cursor_dpi));
+    const int fallback_height = std::max(1, cursor_system_metric_for_dpi(SM_CYCURSOR, cursor_dpi));
     const bool cursor_visible =
       (cursor_info.flags & CURSOR_SHOWING) != 0 &&
 #ifdef CURSOR_SUPPRESSED
@@ -1580,132 +2312,39 @@ namespace stream {
     }
     sample.source_width = static_cast<std::uint32_t>(source_width);
     sample.source_height = static_cast<std::uint32_t>(source_height);
+    sample.metric_width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
+    sample.metric_height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
     const int source_x = static_cast<int>(point.x - origin_x);
     const int source_y = static_cast<int>(point.y - origin_y);
     sample.x = static_cast<std::uint32_t>(std::clamp(source_x, 0, source_width - 1));
     sample.y = static_cast<std::uint32_t>(std::clamp(source_y, 0, source_height - 1));
-    sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
-    sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
+    sample.width = sample.metric_width;
+    sample.height = sample.metric_height;
     sample.cursor_shape_id = cursor_visible ?
                                semantic_cursor_shape_id_win(cursor_info.hCursor) :
                                SS_CURSOR_PLANE_SHAPE_UNKNOWN;
 
-    ICONINFO icon_info {};
-    if (cursor_visible && GetIconInfo(cursor_info.hCursor, &icon_info)) {
-      sample.hotspot_x = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.xHotspot, 0, 512));
-      sample.hotspot_y = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.yHotspot, 0, 512));
-
-      BITMAP bitmap {};
-      if (icon_info.hbmColor != nullptr &&
-          GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-        const int bitmap_width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
-        const int bitmap_height = std::clamp<LONG>(bitmap.bmHeight, 1, 512);
-        sample.width = static_cast<std::uint16_t>(bitmap_width);
-        sample.height = static_cast<std::uint16_t>(bitmap_height);
-
-        // Always prefer the host-provided cursor bitmap when Windows exposes
-        // one. Standard Windows cursors are not visually identical to client
-        // fallbacks, and game/special cursors must preserve their real
-        // appearance. Semantic shape ids are only a fallback/cache key.
-        const int stride = bitmap_width * 4;
-        std::vector<std::uint8_t> bgra(static_cast<std::size_t>(stride) *
-                                       static_cast<std::size_t>(bitmap_height));
-
-        BITMAPINFO bitmap_info {};
-        bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bitmap_info.bmiHeader.biWidth = bitmap_width;
-        bitmap_info.bmiHeader.biHeight = -bitmap_height;  // top-down DIB
-        bitmap_info.bmiHeader.biPlanes = 1;
-        bitmap_info.bmiHeader.biBitCount = 32;
-        bitmap_info.bmiHeader.biCompression = BI_RGB;
-
-        HDC hdc = GetDC(nullptr);
-        const int copied_rows = hdc != nullptr ?
-                                  GetDIBits(hdc,
-                                            icon_info.hbmColor,
-                                            0,
-                                            bitmap_height,
-                                            bgra.data(),
-                                            &bitmap_info,
-                                            DIB_RGB_COLORS) :
-                                  0;
-        if (hdc != nullptr) {
-          ReleaseDC(nullptr, hdc);
-        }
-
-        if (copied_rows == bitmap_height) {
-          // Some Windows cursor bitmaps use an all-zero alpha channel and rely
-          // on hbmMask for transparency. Use the host mask when available
-          // instead of guessing that black pixels are transparent.
-          bool has_alpha = false;
-          for (std::size_t i = 3; i < bgra.size(); i += 4) {
-            if (bgra[i] != 0) {
-              has_alpha = true;
-              break;
-            }
-          }
-          if (!has_alpha) {
-            apply_cursor_alpha_from_mask(bgra, bitmap_width, bitmap_height, icon_info.hbmMask);
-            for (std::size_t i = 3; i < bgra.size(); i += 4) {
-              if (bgra[i] != 0) {
-                has_alpha = true;
-                break;
-              }
-            }
-            if (!has_alpha) {
-              for (std::size_t i = 3; i < bgra.size(); i += 4) {
-                bgra[i] = 0xFF;
-              }
-            }
-          }
-          sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
-          sample.bitmap_stride = static_cast<std::uint16_t>(stride);
-          sample.bitmap_hash = hash_cursor_bitmap(bgra);
-          sample.bitmap_bgra = std::move(bgra);
-          sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
-        }
+    if (cursor_visible) {
+      cursor_helper_bitmap_t helper_bitmap {};
+      if (get_fresh_cursor_bitmap(sample.cursor_shape_id,
+                                  sample.metric_width,
+                                  sample.metric_height,
+                                  helper_bitmap)) {
+        sample.hotspot_x = helper_bitmap.hotspot_x;
+        sample.hotspot_y = helper_bitmap.hotspot_y;
+        sample.width = helper_bitmap.width;
+        sample.height = helper_bitmap.height;
+        sample.bitmap_format = helper_bitmap.bitmap_format;
+        sample.bitmap_stride = helper_bitmap.bitmap_stride;
+        sample.bitmap_hash = helper_bitmap.bitmap_hash;
+        sample.bitmap_bgra = std::move(helper_bitmap.bitmap_bgra);
+        sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
       }
-      else if (icon_info.hbmMask != nullptr &&
-               GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-        const int mask_width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
-        const int mask_height = std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512);
-        sample.width = static_cast<std::uint16_t>(mask_width);
-        sample.height = static_cast<std::uint16_t>(mask_height);
-
-        auto mask_bits = read_cursor_mask_bits(icon_info.hbmMask, mask_width, mask_height * 2);
-        if (!mask_bits.empty()) {
-          const int stride = mask_width * 4;
-          std::vector<std::uint8_t> bgra(static_cast<std::size_t>(stride) *
-                                         static_cast<std::size_t>(mask_height));
-          for (int y = 0; y < mask_height; ++y) {
-            for (int x = 0; x < mask_width; ++x) {
-              const bool and_bit = cursor_mask_bit(mask_bits, mask_width, x, y);
-              const bool xor_bit = cursor_mask_bit(mask_bits, mask_width, x, y + mask_height);
-              const std::size_t offset = (static_cast<std::size_t>(y) * mask_width + x) * 4;
-              if (and_bit && !xor_bit) {
-                bgra[offset + 3] = 0x00;
-              }
-              else {
-                const std::uint8_t color = xor_bit ? 0xFF : 0x00;
-                bgra[offset + 0] = color;
-                bgra[offset + 1] = color;
-                bgra[offset + 2] = color;
-                bgra[offset + 3] = 0xFF;
-              }
-            }
-          }
-          sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
-          sample.bitmap_stride = static_cast<std::uint16_t>(stride);
-          sample.bitmap_hash = hash_cursor_bitmap(bgra);
-          sample.bitmap_bgra = std::move(bgra);
-          sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
-        }
-      }
-      if (icon_info.hbmColor != nullptr) {
-        DeleteObject(icon_info.hbmColor);
-      }
-      if (icon_info.hbmMask != nullptr) {
-        DeleteObject(icon_info.hbmMask);
+      else {
+        // Main-process HCURSOR resources can remain pinned to the old DPI
+        // after a scale change. Tell clients to evict cached bitmaps instead
+        // of stretching the last good cursor while the helper refreshes.
+        sample.flags |= SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED;
       }
     }
 #else
@@ -1871,6 +2510,8 @@ namespace stream {
     }
 
     auto &last = session->control.cursor_plane;
+    const bool metric_changed = last.metric_width != sample.metric_width ||
+                                last.metric_height != sample.metric_height;
     const bool changed = last.cursor_shape_id != sample.cursor_shape_id ||
                          last.x != sample.x ||
                          last.y != sample.y ||
@@ -1881,6 +2522,7 @@ namespace stream {
                          last.flags != sample.flags ||
                          last.source_width != sample.source_width ||
                          last.source_height != sample.source_height ||
+                         metric_changed ||
                          last.bitmap_hash != sample.bitmap_hash;
     const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
     if (!never_sent && now - last.last_sent < std::chrono::milliseconds(16)) {
@@ -1900,6 +2542,8 @@ namespace stream {
         last.hotspot_y != sample.hotspot_y ||
         last.source_width != sample.source_width ||
         last.source_height != sample.source_height ||
+        last.metric_width != sample.metric_width ||
+        last.metric_height != sample.metric_height ||
         last.bitmap_hash != sample.bitmap_hash);
     const bool shape_changed = last.cursor_shape_id != sample.cursor_shape_id;
 
@@ -1929,16 +2573,21 @@ namespace stream {
       last.flags = sample.flags;
       last.source_width = sample.source_width;
       last.source_height = sample.source_height;
+      last.metric_width = sample.metric_width;
+      last.metric_height = sample.metric_height;
       last.bitmap_hash = sample.bitmap_hash;
       last.last_sent = now;
 
-      if (never_sent || shape_changed || should_send_bitmap) {
-        BOOST_LOG(info) << "Cursor plane update sent shape="sv << sample.cursor_shape_id
-                        << " flags=0x"sv << std::hex << sample.flags << std::dec
-                        << " pos="sv << sample.x << ","sv << sample.y
-                        << " hotspot="sv << sample.hotspot_x << ","sv << sample.hotspot_y
-                        << " size="sv << sample.width << "x"sv << sample.height
-                        << " bitmap="sv << (should_send_bitmap ? sample.bitmap_bgra.size() : 0);
+      if (never_sent || shape_changed || should_send_bitmap || metric_changed) {
+        BOOST_LOG(verbose) << "Cursor plane update sent shape="sv << sample.cursor_shape_id
+                           << " flags=0x"sv << std::hex << sample.flags << std::dec
+                           << " pos="sv << sample.x << ","sv << sample.y
+                           << " hotspot="sv << sample.hotspot_x << ","sv << sample.hotspot_y
+                           << " size="sv << sample.width << "x"sv << sample.height
+                           << " metric="sv << sample.metric_width << "x"sv << sample.metric_height
+                           << " source="sv << sample.source_width << "x"sv << sample.source_height
+                           << " bitmap="sv << (should_send_bitmap ? sample.bitmap_bgra.size() : 0)
+                           << " bitmap_hash=0x"sv << std::hex << sample.bitmap_hash << std::dec;
       }
     }
   }
