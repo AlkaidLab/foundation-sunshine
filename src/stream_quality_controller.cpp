@@ -7,6 +7,26 @@
 
 namespace stream_quality {
   namespace {
+    static void log_module_activation(const AlkSessionComponentManifest &manifest,
+                                      const config_t &config) {
+#ifndef SUNSHINE_TESTS
+      BOOST_LOG(info)
+        << "Alkaid runtime marker: using Alkaid SDK stream-quality module "
+        << "module=" << manifest.component_id << " "
+        << "contractVersion=" << ALK_STREAM_QUALITY_CONTROL_VERSION
+        << " baseline=" << config.baseline_bitrate_kbps << "Kbps/"
+        << config.baseline_fps << "fps/"
+        << config.baseline_fec_percentage << "% "
+        << "min=" << config.min_bitrate_kbps << "Kbps/"
+        << config.min_fps << "fps "
+        << "maxFec=" << config.max_fec_percentage << "% "
+        << "adapter=Sunshine-stream-quality coreSession=0";
+#else
+      (void) manifest;
+      (void) config;
+#endif
+    }
+
     static state_e from_alk_state(uint32_t value) {
       switch (value) {
         case ALK_STREAM_QUALITY_STATE_CONSTRAINED: return state_e::constrained;
@@ -262,23 +282,23 @@ namespace stream_quality {
   }
 
   controller_t::controller_t():
-      controller_(alk_stream_quality_controller_create()) {
+      module_(alk_stream_quality_default_controller_module_create()) {
     alk_stream_quality_decision_init(&last_decision_);
   }
 
   controller_t::~controller_t() {
-    alk_stream_quality_controller_destroy(controller_);
+    alk_stream_quality_default_controller_module_destroy(module_);
   }
 
   controller_t::controller_t(controller_t &&other) noexcept:
-      controller_(std::exchange(other.controller_, nullptr)),
+      module_(std::exchange(other.module_, nullptr)),
       last_decision_(other.last_decision_) {}
 
   controller_t &
   controller_t::operator=(controller_t &&other) noexcept {
     if (this != &other) {
-      alk_stream_quality_controller_destroy(controller_);
-      controller_ = std::exchange(other.controller_, nullptr);
+      alk_stream_quality_default_controller_module_destroy(module_);
+      module_ = std::exchange(other.module_, nullptr);
       last_decision_ = other.last_decision_;
     }
     return *this;
@@ -286,32 +306,26 @@ namespace stream_quality {
 
   void
   controller_t::configure(config_t config) {
-    if (!controller_) {
-      controller_ = alk_stream_quality_controller_create();
+    if (!module_) {
+      module_ = alk_stream_quality_default_controller_module_create();
     }
+    AlkSessionComponentManifest manifest;
+    alk_stream_quality_default_controller_manifest(&manifest);
     const auto alk_config = to_alk_config(config);
-    if (alk_stream_quality_controller_init(controller_, &alk_config)) {
-      alk_stream_quality_controller_get_decision(controller_, &last_decision_);
-      BOOST_LOG(info)
-        << "Alkaid runtime marker: using Alkaid SDK stream-quality controller "
-        << "contractVersion=" << ALK_STREAM_QUALITY_CONTROL_VERSION
-        << " baseline=" << config.baseline_bitrate_kbps << "Kbps/"
-        << config.baseline_fps << "fps/"
-        << config.baseline_fec_percentage << "% "
-        << "min=" << config.min_bitrate_kbps << "Kbps/"
-        << config.min_fps << "fps "
-        << "maxFec=" << config.max_fec_percentage << "% "
-        << "adapter=Sunshine-stream-quality coreSession=0";
+    if (alk_stream_quality_default_controller_module_configure(module_, &alk_config) &&
+        alk_stream_quality_default_controller_module_start(module_)) {
+      alk_stream_quality_default_controller_module_get_decision(module_, &last_decision_);
+      log_module_activation(manifest, config);
     }
   }
 
   action_t
   controller_t::on_feedback(const feedback_t &feedback) {
-    if (!controller_) {
-      controller_ = alk_stream_quality_controller_create();
+    if (!module_) {
+      module_ = alk_stream_quality_default_controller_module_create();
     }
     const auto alk_feedback = to_alk_feedback(feedback);
-    alk_stream_quality_controller_update(controller_, &alk_feedback, &last_decision_);
+    alk_stream_quality_default_controller_module_update(module_, &alk_feedback, &last_decision_);
     return from_alk_decision(last_decision_);
   }
 

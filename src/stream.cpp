@@ -46,6 +46,8 @@ extern "C" {
 
 #include "config.h"
 #include "alkaidlab_session_bridge.h"
+#include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
+#include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
 #include "display_device/session.h"
 #include "globals.h"
 #include "rtsp.h"
@@ -2922,11 +2924,11 @@ namespace stream {
                        << " generation=" << session->identity.control_generation;
       BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
-      BOOST_LOG(info) << "Alkaid adapter boundary: ENet control transport adapter active"
+      BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
                       << " runtime=" << session->identity.runtime_id
                       << " launchSession=" << session->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=detached";
+                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached";
 
       _registry.bind_control_peer(session, peer);
       refresh_mic_owner_for_session(*session);
@@ -2979,11 +2981,11 @@ namespace stream {
 
       BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
-      BOOST_LOG(info) << "Alkaid adapter boundary: ENet control transport adapter active"
+      BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
                       << " runtime=" << session_p->identity.runtime_id
                       << " launchSession=" << session_p->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=detached";
+                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached";
 
       // Insert this into the map for O(1) lookups in the future
       _registry.bind_control_peer(session_p, peer);

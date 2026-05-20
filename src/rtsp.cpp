@@ -30,6 +30,8 @@ extern "C" {
 
 // local includes
 #include "config.h"
+#include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
+#include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -2180,8 +2182,11 @@ namespace rtsp_stream {
 
       return;
     }
-    BOOST_LOG(info) << "Alkaid adapter boundary: RTSP is GameStream handshake/capability/launch adapter; "
-                       "ENet is GameStream transport adapter; Core/SDK stays protocol-neutral";
+    BOOST_LOG(info) << "Alkaid adapter boundary: "
+                    << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID
+                    << " handles GameStream handshake/capability/launch; "
+                    << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID
+                    << " handles ENet control transport; Core/SDK stays protocol-neutral";
 
     std::thread rtsp_thread { [&shutdown_event] {
       auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);

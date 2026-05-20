@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <alkaidlab/stream_quality_control/stream_quality_control.h>
+#include <alkaidlab/modules/stream_quality/default_controller.h>
 
 namespace stream_quality {
   enum class state_e {
@@ -233,7 +233,7 @@ namespace stream_quality {
     state_e state() const;
 
   private:
-    AlkStreamQualityController *controller_ = nullptr;
+    AlkStreamQualityDefaultControllerModule *module_ = nullptr;
     AlkStreamQualityDecision last_decision_ {};
   };
 
