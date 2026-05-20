@@ -1287,6 +1287,9 @@ namespace platf {
 
     int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, size, wide, size);
     if (chars <= 0) {
+      auto winerr = GetLastError();
+      BOOST_LOG(warning) << "unicode(): MultiByteToWideChar failed, error=" << winerr
+                         << ", size=" << size;
       return;
     }
 
