@@ -152,7 +152,17 @@ namespace display_device {
     // 初始化会话事件监听器（用于检测解锁事件）
     SessionEventListener::init();
     
-    session_t::get().restore_state();
+    // 延迟恢复显示设置，避免在系统启动期间与显示子系统初始化互相阻塞
+    auto &session = session_t::get();
+    {
+      std::lock_guard lock { session.mutex };
+      session.timer->setup_timer([&session]() {
+        BOOST_LOG(info) << "尝试恢复显示设置...";
+        session.restore_state_impl();
+        return true;  // 单次执行
+      });
+    }
+    
     return std::make_unique<deinit_t>();
   }
 
