@@ -50,6 +50,34 @@ namespace platf::dxgi {
   static constexpr UINT32 VDD_META_MAGIC = 0x5A564446;  // 'ZVDF'
   static constexpr UINT32 VDD_META_VERSION = 1;
 
+  // Mirror of CursorSharedMetadata in ZakoVDD/Driver.cpp. Layout is
+  // 4-byte aligned (#pragma pack(push, 4) on the producer side); the
+  // standard ABI on x64 already aligns the fields below identically.
+  struct CursorSharedMetadata {
+    UINT32 Magic;                // 'ZVCU' = 0x5A564355
+    UINT32 Version;              // 1
+    UINT32 IsVisible;            // 0/1
+    INT32  PositionX;            // top-left of cursor image (already hot-spot adjusted, DXGI semantics)
+    INT32  PositionY;
+    UINT32 PositionId;           // monotonic on position change
+    UINT32 ShapeId;              // monotonic on shape change
+    UINT32 ShapeType;            // IDDCX_CURSOR_SHAPE_TYPE value (0=mono, 1=color, 2=masked color)
+    UINT32 Width;
+    UINT32 Height;
+    UINT32 Pitch;
+    INT32  XHot;
+    INT32  YHot;
+    UINT32 SdrWhiteLevelX1000;
+    UINT32 ShapeBufferSize;
+    UINT32 Reserved0;
+    UINT64 LastUpdateQpc;
+    // Followed by up to 256 KiB of shape pixels.
+  };
+
+  static constexpr UINT32 VDD_CURSOR_MAGIC = 0x5A564355;  // 'ZVCU'
+  static constexpr UINT32 VDD_CURSOR_VERSION = 1;
+  static constexpr UINT32 VDD_CURSOR_MAX_BYTES = 256u * 256u * 4u;  // matches driver
+
   vdd_capture_t::vdd_capture_t() = default;
 
   vdd_capture_t::~vdd_capture_t() {
@@ -76,6 +104,20 @@ namespace platf::dxgi {
       CloseHandle(m_hEvent);
       m_hEvent = nullptr;
     }
+    if (m_pCursorMeta) {
+      UnmapViewOfFile(m_pCursorMeta);
+      m_pCursorMeta = nullptr;
+    }
+    if (m_hCursorMeta) {
+      CloseHandle(m_hCursorMeta);
+      m_hCursorMeta = nullptr;
+    }
+    if (m_hCursorEvent) {
+      CloseHandle(m_hCursorEvent);
+      m_hCursorEvent = nullptr;
+    }
+    m_lastSeenCursorShapeId = 0xFFFFFFFFu;
+    m_lastSeenCursorPositionId = 0xFFFFFFFFu;
   }
 
   int
@@ -185,6 +227,40 @@ namespace platf::dxgi {
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
                     << " hdr="sv << m_is_hdr;
+
+    // Optional: attach to the cursor SHM exported by the driver-side
+    // CursorExporter. Best-effort -- old driver builds won't have these
+    // mappings, in which case poll_cursor() returns false and we render
+    // frames without an overlay cursor (preserving previous behaviour).
+    {
+      std::wstring cursor_meta_name = L"Global\\ZakoVDD_CursorMeta_" + std::to_wstring(monitor_idx);
+      std::wstring cursor_event_name = L"Global\\ZakoVDD_CursorReady_" + std::to_wstring(monitor_idx);
+
+      m_hCursorMeta = OpenFileMappingW(FILE_MAP_READ, FALSE, cursor_meta_name.c_str());
+      if (m_hCursorMeta) {
+        const SIZE_T map_size = sizeof(CursorSharedMetadata) + VDD_CURSOR_MAX_BYTES;
+        m_pCursorMeta = MapViewOfFile(m_hCursorMeta, FILE_MAP_READ, 0, 0, map_size);
+        if (!m_pCursorMeta) {
+          BOOST_LOG(warning) << "[vdd_capture] cursor MapViewOfFile failed: "sv << GetLastError()
+                             << "; cursor overlay disabled."sv;
+          CloseHandle(m_hCursorMeta);
+          m_hCursorMeta = nullptr;
+        }
+        else {
+          // Event is purely diagnostic / future poll-driven wait; poll_cursor()
+          // works directly off the mapping so absence is non-fatal.
+          m_hCursorEvent = OpenEventW(SYNCHRONIZE, FALSE, cursor_event_name.c_str());
+          BOOST_LOG(info) << "[vdd_capture] cursor SHM attached (event="sv
+                          << (m_hCursorEvent ? "yes"sv : "no"sv) << ")"sv;
+        }
+      }
+      else {
+        BOOST_LOG(info) << "[vdd_capture] cursor SHM not present for monitor "sv
+                        << monitor_idx << " (driver may predate cursor export); "sv
+                        << "clients will see no overlay cursor for this output."sv;
+      }
+    }
+
     return 0;
   }
 
@@ -255,6 +331,102 @@ namespace platf::dxgi {
       m_holdsKey = false;
     }
     return capture_e::ok;
+  }
+
+  bool
+  vdd_capture_t::poll_cursor(cursor_snapshot &out) {
+    if (!m_pCursorMeta) {
+      return false;
+    }
+
+    auto *meta = static_cast<const CursorSharedMetadata *>(m_pCursorMeta);
+
+    // Lock-free read pattern: snapshot header, then verify ShapeBufferSize
+    // sanity. The producer writes payload before flipping ShapeId; if we read
+    // a torn shape we'll simply pick it up on the next poll (cursor state
+    // remains valid otherwise).
+    UINT32 magic = meta->Magic;
+    UINT32 version = meta->Version;
+    if (magic != VDD_CURSOR_MAGIC || version != VDD_CURSOR_VERSION) {
+      return false;  // producer hasn't published yet, or version skew
+    }
+
+    UINT32 shape_id = meta->ShapeId;
+    UINT32 position_id = meta->PositionId;
+    UINT32 shape_buffer_size = meta->ShapeBufferSize;
+    if (shape_buffer_size > VDD_CURSOR_MAX_BYTES) {
+      return false;  // torn read; try again next time
+    }
+
+    // Snapshot geometry headers and validate them before publishing. A torn
+    // read of the header could leave Width/Height/Pitch/ShapeType inconsistent
+    // with ShapeBufferSize; downstream make_cursor_alpha_image() /
+    // make_cursor_xor_image() do pointer arithmetic against
+    // Pitch * Height into out.shape_buffer, so any mismatch must be rejected
+    // here to avoid out-of-bounds reads.
+    UINT32 shape_type = meta->ShapeType;
+    UINT32 width = meta->Width;
+    UINT32 height = meta->Height;
+    UINT32 pitch = meta->Pitch;
+    if (shape_type > 2) {
+      return false;  // unknown shape type
+    }
+    // Hardware cursor sizes are capped at 256x256 (512 tall for monochrome
+    // which stores AND+XOR masks back-to-back). Reject anything bigger so a
+    // bogus header can't get past the size budget check below via overflow.
+    constexpr UINT32 kMaxCursorDim = 512;
+    if (width == 0 || width > kMaxCursorDim || height == 0 || height > kMaxCursorDim) {
+      return false;
+    }
+    // Per-type minimum pitch sanity. For color/masked-color each row is RGBA
+    // (>= 4*width). For monochrome each row is one packed-bit AND/XOR mask
+    // (>= ceil(width/8)). Height for monochrome encodes AND+XOR stacked, so
+    // it must be even.
+    UINT64 required_bytes = 0;
+    if (shape_type == 0 /* MONOCHROME */) {
+      if ((height & 1u) != 0u || pitch < (width + 7u) / 8u) {
+        return false;
+      }
+      required_bytes = static_cast<UINT64>(pitch) * height;  // AND+XOR stacked
+    } else {
+      if (pitch < static_cast<UINT64>(width) * 4u) {
+        return false;
+      }
+      required_bytes = static_cast<UINT64>(pitch) * height;
+    }
+    if (required_bytes > VDD_CURSOR_MAX_BYTES || shape_buffer_size < required_bytes) {
+      return false;  // header/payload mismatch — likely torn read
+    }
+
+    out.valid = true;
+    out.visible = (meta->IsVisible != 0);
+    out.x = meta->PositionX;
+    out.y = meta->PositionY;
+    out.position_id = position_id;
+    out.shape_id = shape_id;
+    out.shape_type = shape_type;
+    out.width = width;
+    out.height = height;
+    out.pitch = pitch;
+    out.xhot = meta->XHot;
+    out.yhot = meta->YHot;
+    out.position_updated = (position_id != m_lastSeenCursorPositionId);
+    out.shape_updated = (shape_id != m_lastSeenCursorShapeId);
+
+    if (out.shape_updated && shape_buffer_size > 0) {
+      const auto *payload = reinterpret_cast<const uint8_t *>(meta + 1);
+      out.shape_buffer.assign(payload, payload + shape_buffer_size);
+      // Re-check shape id after copy. If it changed mid-copy, drop this shape
+      // and let the next poll pick up the consistent version.
+      if (meta->ShapeId != shape_id) {
+        out.shape_buffer.clear();
+        out.shape_updated = false;
+      }
+    }
+
+    if (out.shape_updated) m_lastSeenCursorShapeId = shape_id;
+    if (out.position_updated) m_lastSeenCursorPositionId = position_id;
+    return true;
   }
 
   // ===========================================================================
@@ -382,6 +554,16 @@ namespace platf::dxgi {
                     << " fmt="sv << dxgi_format_to_string(capture_format)
                     << " hdr="sv << dup.is_hdr()
                     << " linear_gamma="sv << capture_linear_gamma;
+
+    // Initialise the shared cursor blend pipeline (same shaders / blend states
+    // as display_ddup_vram_t). If init fails we leave it for the caller to
+    // tear down -- there is no degraded mode that's worth supporting because
+    // the same shaders are required for HDR output anyway.
+    if (init_cursor_pipeline(config) != 0) {
+      BOOST_LOG(error) << "[vdd] cursor pipeline init failed"sv;
+      return -1;
+    }
+
     return 0;
   }
 

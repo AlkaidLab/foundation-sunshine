@@ -2464,38 +2464,6 @@ namespace platf::dxgi {
       }
     }
 
-    auto blend_cursor = [&](img_d3d_t &d3d_img) {
-      device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
-      device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
-      device_ctx->OMSetRenderTargets(1, &d3d_img.capture_rt, nullptr);
-
-      if (cursor_alpha.texture.get()) {
-        // Perform an alpha blending operation
-        device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
-        device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      if (cursor_xor.texture.get()) {
-        // Perform an invert blending without touching alpha values
-        device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
-        device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
-
-      ID3D11RenderTargetView *emptyRenderTarget = nullptr;
-      device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
-      device_ctx->RSSetViewports(0, nullptr);
-      ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
-      device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
-    };
-
     switch (out_frame_action) {
       case ofa::forward_last_img: {
         auto p_img = std::get_if<std::shared_ptr<platf::img_t>>(&last_frame_variant);
@@ -2527,7 +2495,7 @@ namespace platf::dxgi {
             BOOST_LOG(error) << "Failed to lock capture texture for cursor blend";
             return capture_e::error;
           }
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
         else if (p_surface) {
           // We have an intermediate surface, copy it first then blend
@@ -2537,7 +2505,7 @@ namespace platf::dxgi {
           if (!d3d_img) return capture_e::error;
 
           device_ctx->CopyResource(d3d_img->capture_texture.get(), p_surface->get());
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
         else if (p_img) {
           // Image is already in use by encoder, we need to get a new one
@@ -2555,7 +2523,7 @@ namespace platf::dxgi {
           if (src_lock_helper.lock()) {
             device_ctx->CopyResource(d3d_img->capture_texture.get(), d3d_img_src->capture_texture.get());
           }
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
         else {
           BOOST_LOG(error) << "Logical error at " << __FILE__ << ":" << __LINE__;
@@ -2581,7 +2549,7 @@ namespace platf::dxgi {
         }
 
         if (blend_mouse_cursor_flag) {
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
 
         break;
@@ -2606,11 +2574,7 @@ namespace platf::dxgi {
   }
 
   int
-  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
-    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
-      return -1;
-    }
-
+  display_vram_t::init_cursor_pipeline(const ::video::config_t &config) {
     D3D11_SAMPLER_DESC sampler_desc {};
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -2690,6 +2654,52 @@ namespace platf::dxgi {
     ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
     device_ctx->PSSetSamplers(0, 2, samplers);
     device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    return 0;
+  }
+
+  void
+  display_vram_t::blend_cursor(ID3D11RenderTargetView *capture_rt) {
+    device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
+    device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
+    device_ctx->OMSetRenderTargets(1, &capture_rt, nullptr);
+
+    if (cursor_alpha.texture.get()) {
+      // Perform an alpha blending operation
+      device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
+      device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    if (cursor_xor.texture.get()) {
+      // Perform an invert blending without touching alpha values
+      device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
+      device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
+
+    ID3D11RenderTargetView *emptyRenderTarget = nullptr;
+    device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
+    device_ctx->RSSetViewports(0, nullptr);
+    ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
+    device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
+  }
+
+  int
+  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
+    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
+      return -1;
+    }
+
+    if (init_cursor_pipeline(config) != 0) {
+      return -1;
+    }
 
     return 0;
   }
@@ -3442,7 +3452,7 @@ namespace platf::dxgi {
   capture_e
   display_vdd_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb,
                                std::shared_ptr<platf::img_t> &img_out,
-                               std::chrono::milliseconds timeout, bool /*cursor_visible*/) {
+                               std::chrono::milliseconds timeout, bool cursor_visible) {
     if (current_frame) {
       // Defensive: caller forgot to call release_snapshot(). Drop the stale ref.
       dup.release_frame();
@@ -3502,6 +3512,55 @@ namespace platf::dxgi {
       return capture_e::error;
     }
     device_ctx->CopyResource(d3d_img->capture_texture.get(), current_frame);
+
+    // VDD-side hardware cursor is delivered out-of-band via the cursor SHM;
+    // blend it onto the freshly-copied frame so non-Windows clients (e.g.
+    // Moonlight Android) see a cursor. The OS desktop framebuffer has the
+    // cursor stripped out because IddCx HardwareCursor=true routes pointer
+    // shape/position to an overlay channel rather than the swap chain.
+    vdd_capture_t::cursor_snapshot cs;
+    if (cursor_visible && dup.poll_cursor(cs) && cs.valid) {
+      if (cs.shape_updated && !cs.shape_buffer.empty() && cs.width > 0 && cs.height > 0) {
+        DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info{};
+        // IDDCX_CURSOR_SHAPE_TYPE 0/1/2 → DXGI 1/2/4
+        switch (cs.shape_type) {
+          case 0: shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME; break;
+          case 1: shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR; break;
+          case 2:
+          default: shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR; break;
+        }
+        shape_info.Width = cs.width;
+        shape_info.Height = cs.height;
+        shape_info.Pitch = cs.pitch;
+        shape_info.HotSpot.x = cs.xhot;
+        shape_info.HotSpot.y = cs.yhot;
+
+        util::buffer_t<std::uint8_t> img_data(cs.shape_buffer.size());
+        memcpy(std::begin(img_data), cs.shape_buffer.data(), cs.shape_buffer.size());
+
+        auto alpha_img = make_cursor_alpha_image(img_data, shape_info);
+        auto xor_img = make_cursor_xor_image(img_data, shape_info);
+        // If either upload fails, clear both cursor textures and skip blend
+        // this frame — leaving the previous textures in place would render a
+        // stale cursor at the new position; an empty SRV would otherwise be
+        // sampled by blend_cursor() below.
+        if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_img), shape_info) ||
+            !set_cursor_texture(device.get(), cursor_xor, std::move(xor_img), shape_info)) {
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO empty_info{};
+          set_cursor_texture(device.get(), cursor_alpha, {}, empty_info);
+          set_cursor_texture(device.get(), cursor_xor, {}, empty_info);
+        }
+      }
+
+      // CursorExporter publishes top-left coordinates that already include the
+      // hot-spot offset (DXGI semantics), so we feed x/y straight through.
+      cursor_alpha.set_pos(cs.x, cs.y, width, height, display_rotation, cs.visible);
+      cursor_xor.set_pos(cs.x, cs.y, width, height, display_rotation, cs.visible);
+
+      if (cs.visible && (cursor_alpha.texture || cursor_xor.texture)) {
+        blend_cursor(d3d_img->capture_rt.get());
+      }
+    }
 
     img_out = img;
     img_out->frame_timestamp = frame_timestamp;
