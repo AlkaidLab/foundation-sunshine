@@ -2922,6 +2922,11 @@ namespace stream {
                        << " generation=" << session->identity.control_generation;
       BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
+      BOOST_LOG(info) << "Alkaid adapter boundary: ENet control transport adapter active"
+                      << " runtime=" << session->identity.runtime_id
+                      << " launchSession=" << session->launch_session_id
+                      << " peer=" << peer_addr << ':' << peer_port
+                      << " rtspLaunchAdapter=detached";
 
       _registry.bind_control_peer(session, peer);
       refresh_mic_owner_for_session(*session);
@@ -2974,6 +2979,11 @@ namespace stream {
 
       BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
+      BOOST_LOG(info) << "Alkaid adapter boundary: ENet control transport adapter active"
+                      << " runtime=" << session_p->identity.runtime_id
+                      << " launchSession=" << session_p->launch_session_id
+                      << " peer=" << peer_addr << ':' << peer_port
+                      << " rtspLaunchAdapter=detached";
 
       // Insert this into the map for O(1) lookups in the future
       _registry.bind_control_peer(session_p, peer);

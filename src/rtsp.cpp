@@ -2180,6 +2180,8 @@ namespace rtsp_stream {
 
       return;
     }
+    BOOST_LOG(info) << "Alkaid adapter boundary: RTSP is GameStream handshake/capability/launch adapter; "
+                       "ENet is GameStream transport adapter; Core/SDK stays protocol-neutral";
 
     std::thread rtsp_thread { [&shutdown_event] {
       auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
