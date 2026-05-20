@@ -34,6 +34,9 @@ namespace nvprefs {
 
   nvprefs_interface::~nvprefs_interface() {
     if (owning_undo_file() && load()) {
+      // Roll back any leftover stream-time entries first so the undo file ends
+      // up empty before restore_global_profile() decides whether to delete it.
+      restore_stream_optimizations();
       restore_global_profile();
     }
     unload();
@@ -80,11 +83,18 @@ namespace nvprefs {
       // Try to restore from the undo file
       info_message("Opened undo file from previous improper termination");
       if (auto undo_data = undo_file->read_undo_data()) {
-        if (pimpl->driver_settings.restore_global_profile_to_undo(*undo_data) && pimpl->driver_settings.save_settings()) {
-          info_message("Restored global profile settings from undo file - deleting the file");
+        bool ok = pimpl->driver_settings.restore_global_profile_to_undo(*undo_data);
+        if (auto g = undo_data->get_game_profile()) {
+          ok = pimpl->driver_settings.restore_game_profile_to_undo(*g) && ok;
+        }
+        if (auto b = undo_data->get_base_extras()) {
+          ok = pimpl->driver_settings.restore_base_extras_to_undo(*b) && ok;
+        }
+        if (ok && pimpl->driver_settings.save_settings()) {
+          info_message("Restored driver settings from undo file - deleting the file");
         }
         else {
-          error_message("Failed to restore global profile settings from undo file, deleting the file anyway");
+          error_message("Failed to fully restore driver settings from undo file, deleting the file anyway");
         }
       }
       else {
@@ -210,13 +220,24 @@ namespace nvprefs {
     // Restore global profile settings with undo data
     if (pimpl->driver_settings.restore_global_profile_to_undo(*pimpl->undo_data) &&
         pimpl->driver_settings.save_settings()) {
-      // Global profile settings sucessfully restored, can delete undo file
-      if (!pimpl->undo_file->delete_file()) {
-        error_message("Couldn't delete undo file");
-        return false;
+      // Only nuke the undo file when there are no other branches still
+      // waiting to be restored (e.g. stream-time entries written by
+      // apply_stream_optimizations()).
+      if (!pimpl->undo_data->get_game_profile() && !pimpl->undo_data->get_base_extras()) {
+        if (!pimpl->undo_file->delete_file()) {
+          error_message("Couldn't delete undo file");
+          return false;
+        }
+        pimpl->undo_data = std::nullopt;
+        pimpl->undo_file = std::nullopt;
       }
-      pimpl->undo_data = std::nullopt;
-      pimpl->undo_file = std::nullopt;
+      else {
+        // Persist the trimmed manifest so a later run won't replay the
+        // already-restored global-profile entry.
+        if (!pimpl->undo_file->write_undo_data(*pimpl->undo_data)) {
+          error_message("Couldn't update undo file after restoring global profile");
+        }
+      }
     }
     else {
       error_message("Couldn't restore global profile settings");
@@ -224,6 +245,131 @@ namespace nvprefs {
     }
 
     return true;
+  }
+
+  // Helper used by both apply_stream_optimizations() and modify_global_profile()
+  // to commit a freshly merged undo_data to disk + driver. Caller is responsible
+  // for already populating pimpl->undo_data.
+  static bool
+  ensure_undo_dir_and_file(const std::filesystem::path &dir, const std::filesystem::path &file, std::optional<undo_file_t> &out) {
+    if (out) return true;
+    if (!CreateDirectoryW(dir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
+      error_message("Couldn't create undo folder");
+      return false;
+    }
+    out = undo_file_t::create_new_file(file);
+    if (!out) {
+      error_message("Couldn't create undo file");
+      return false;
+    }
+    return true;
+  }
+
+  bool
+  nvprefs_interface::apply_stream_optimizations(const std::wstring &exe_name, int client_fps) {
+    if (!pimpl->loaded) return false;
+
+    std::optional<undo_data_t::data_t::game_profile_t> game_undo;
+    std::optional<undo_data_t::data_t::base_extras_t> base_undo;
+
+    const bool ok_game = pimpl->driver_settings.check_and_modify_game_profile(exe_name, client_fps, game_undo);
+    if (!ok_game) {
+      error_message("Couldn't fully apply game-profile optimizations");
+    }
+    const bool ok_base = pimpl->driver_settings.check_and_modify_base_extras(client_fps, base_undo);
+    if (!ok_base) {
+      error_message("Couldn't fully apply base-profile optimizations");
+    }
+
+    if (!game_undo && !base_undo) {
+      // Either feature was disabled or no setting needed changing — nothing to persist.
+      return ok_game && ok_base;
+    }
+
+    // Merge new undo data with anything already on file.
+    undo_data_t fresh;
+    if (game_undo) fresh.set_game_profile(*game_undo);
+    if (base_undo) fresh.set_base_extras(*base_undo);
+
+    if (!pimpl->undo_data) {
+      pimpl->undo_data = undo_data_t {};
+    }
+    pimpl->undo_data->merge(fresh);
+
+    if (!ensure_undo_dir_and_file(pimpl->undo_folder_path, pimpl->undo_file_path, pimpl->undo_file)) {
+      pimpl->driver_settings.load_settings();
+      return false;
+    }
+    if (!pimpl->undo_file->write_undo_data(*pimpl->undo_data)) {
+      error_message("Couldn't write stream-optimization undo data");
+      pimpl->driver_settings.load_settings();
+      return false;
+    }
+    if (!pimpl->driver_settings.save_settings()) {
+      error_message("Couldn't save driver settings after stream optimizations");
+      return false;
+    }
+
+    return ok_game && ok_base;
+  }
+
+  bool
+  nvprefs_interface::restore_stream_optimizations() {
+    if (!pimpl->loaded || !pimpl->undo_data) return true;
+
+    bool ok = true;
+    bool game_restored = false;
+    bool base_restored = false;
+    if (auto g = pimpl->undo_data->get_game_profile()) {
+      if (pimpl->driver_settings.restore_game_profile_to_undo(*g)) {
+        game_restored = true;
+      }
+      else {
+        ok = false;
+      }
+    }
+    if (auto b = pimpl->undo_data->get_base_extras()) {
+      if (pimpl->driver_settings.restore_base_extras_to_undo(*b)) {
+        base_restored = true;
+      }
+      else {
+        ok = false;
+      }
+    }
+
+    if (!pimpl->driver_settings.save_settings()) {
+      // Don't trim the undo manifest — a later run (or crash recovery) needs
+      // to be able to replay the restore against the actual driver state.
+      error_message("Couldn't save driver settings after restoring stream optimizations");
+      return false;
+    }
+
+    // Only clear branches that we actually restored AND persisted, so a
+    // partial failure leaves the manifest intact for the next attempt.
+    if (game_restored) {
+      pimpl->undo_data->clear_game_profile();
+    }
+    if (base_restored) {
+      pimpl->undo_data->clear_base_extras();
+    }
+
+    // Drop the undo file when nothing else still needs to be remembered.
+    if (pimpl->undo_file && !pimpl->undo_data->get_opengl_swapchain() && !pimpl->undo_data->get_game_profile() && !pimpl->undo_data->get_base_extras()) {
+      if (!pimpl->undo_file->delete_file()) {
+        error_message("Couldn't delete now-empty undo file");
+      }
+      pimpl->undo_data.reset();
+      pimpl->undo_file.reset();
+    }
+    else if (pimpl->undo_file && (game_restored || base_restored)) {
+      // Persist the trimmed undo manifest so a later crash doesn't replay
+      // already-restored settings.
+      if (!pimpl->undo_file->write_undo_data(*pimpl->undo_data)) {
+        error_message("Couldn't update undo file after restoring stream optimizations");
+      }
+    }
+
+    return ok;
   }
 
 }  // namespace nvprefs

@@ -743,6 +743,28 @@ namespace platf {
   streaming_will_stop();
 
   /**
+   * @brief Apply per-stream GPU driver optimizations for the launched game.
+   *        On Windows this writes NVIDIA application/BASE profile entries
+   *        (force VSync, FRL frame-rate cap, low latency, P-state) gated on
+   *        the `nv_optimize_game` config switch and on the system actually
+   *        being NVIDIA. On other platforms this is a no-op.
+   * @param game_cmd The command line of the running game (e.g. proc::proc
+   *                 .get_app_cmd()). Used to derive the EXE basename for
+   *                 the per-game profile leg. Empty string is allowed and
+   *                 disables only the per-game leg.
+   * @param client_fps Client refresh rate, used to derive the FRL target.
+   */
+  void
+  apply_stream_optimizations(const std::string &game_cmd, int client_fps);
+
+  /**
+   * @brief Roll back any changes made by apply_stream_optimizations().
+   *        Safe to call unconditionally; does nothing if nothing was applied.
+   */
+  void
+  restore_stream_optimizations();
+
+  /**
    * @brief Enter Away Mode - display turns off, system stays running for instant wake.
    * On Windows, this uses ES_AWAYMODE_REQUIRED + ES_SYSTEM_REQUIRED and turns off the monitor.
    * On other platforms, this falls back to a no-op (or could be extended).

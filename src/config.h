@@ -38,6 +38,20 @@ namespace config {
     bool nv_realtime_hags;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
+
+    // Stream-time NVIDIA driver optimizations applied via NvAPI to the game's
+    // application profile (and optionally the BASE / global profile). All
+    // changes are persisted to an undo manifest in %ProgramData%\Sunshine and
+    // rolled back when the stream stops, or on the next launch after a crash.
+    bool nv_optimize_game;             // master switch for the per-game optimizations
+    bool nv_force_vsync;               // VSYNCMODE -> FORCEON
+    bool nv_lock_frame_rate;           // FRL_FPS -> client_fps + nv_frl_fps_offset
+    int  nv_frl_fps_offset;            // delta added to client fps for FRL target
+    int  nv_frl_fps_override;          // if > 0, use this value directly
+    bool nv_prefer_max_performance;    // PREFERRED_PSTATE -> PREFER_MAX
+    bool nv_low_latency_mode;          // PRERENDERLIMIT -> 1 (NVCP "Low Latency Mode = On")
+    bool nv_apply_to_base_profile;     // also write the same settings to the BASE profile
+
     bool vdd_keep_enabled;
     /** When true, after stream end if no display is found (headless), create Zako VDD automatically. Default false. */
     bool vdd_headless_create_enabled;

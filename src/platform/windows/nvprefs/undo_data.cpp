@@ -16,6 +16,9 @@ using json = nlohmann::json;
 namespace nlohmann {
   using data_t = nvprefs::undo_data_t::data_t;
   using opengl_swapchain_t = data_t::opengl_swapchain_t;
+  using setting_undo_t = data_t::setting_undo_t;
+  using game_profile_t = data_t::game_profile_t;
+  using base_extras_t = data_t::base_extras_t;
 
   template <typename T>
   struct adl_serializer<std::optional<T>> {
@@ -44,12 +47,23 @@ namespace nlohmann {
   struct adl_serializer<data_t> {
     static void
     to_json(json &j, const data_t &data) {
-      j = json { { "opengl_swapchain", data.opengl_swapchain } };
+      j = json {
+        { "opengl_swapchain", data.opengl_swapchain },
+        { "game_profile", data.game_profile },
+        { "base_extras", data.base_extras },
+      };
     }
 
     static void
     from_json(const json &j, data_t &data) {
       j.at("opengl_swapchain").get_to(data.opengl_swapchain);
+      // game_profile / base_extras are new fields, missing in legacy undo files.
+      if (j.contains("game_profile")) {
+        j.at("game_profile").get_to(data.game_profile);
+      }
+      if (j.contains("base_extras")) {
+        j.at("base_extras").get_to(data.base_extras);
+      }
     }
   };
 
@@ -69,6 +83,73 @@ namespace nlohmann {
       j.at("undo_value").get_to(opengl_swapchain.undo_value);
     }
   };
+
+  template <>
+  struct adl_serializer<setting_undo_t> {
+    static void
+    to_json(json &j, const setting_undo_t &s) {
+      j = json {
+        { "our_value", s.our_value },
+        { "undo_value", s.undo_value }
+      };
+    }
+
+    static void
+    from_json(const json &j, setting_undo_t &s) {
+      j.at("our_value").get_to(s.our_value);
+      j.at("undo_value").get_to(s.undo_value);
+    }
+  };
+
+  template <>
+  struct adl_serializer<game_profile_t> {
+    static void
+    to_json(json &j, const game_profile_t &g) {
+      j = json {
+        { "profile_name", g.profile_name },
+        { "exe_path", g.exe_path },
+        { "profile_was_created", g.profile_was_created },
+        { "application_was_added", g.application_was_added },
+        { "vsync", g.vsync },
+        { "frl", g.frl },
+        { "pstate", g.pstate },
+        { "prerender", g.prerender },
+      };
+    }
+
+    static void
+    from_json(const json &j, game_profile_t &g) {
+      j.at("profile_name").get_to(g.profile_name);
+      j.at("exe_path").get_to(g.exe_path);
+      j.at("profile_was_created").get_to(g.profile_was_created);
+      j.at("application_was_added").get_to(g.application_was_added);
+      if (j.contains("vsync")) j.at("vsync").get_to(g.vsync);
+      if (j.contains("frl")) j.at("frl").get_to(g.frl);
+      if (j.contains("pstate")) j.at("pstate").get_to(g.pstate);
+      if (j.contains("prerender")) j.at("prerender").get_to(g.prerender);
+    }
+  };
+
+  template <>
+  struct adl_serializer<base_extras_t> {
+    static void
+    to_json(json &j, const base_extras_t &b) {
+      j = json {
+        { "vsync", b.vsync },
+        { "frl", b.frl },
+        { "pstate", b.pstate },
+        { "prerender", b.prerender },
+      };
+    }
+
+    static void
+    from_json(const json &j, base_extras_t &b) {
+      if (j.contains("vsync")) j.at("vsync").get_to(b.vsync);
+      if (j.contains("frl")) j.at("frl").get_to(b.frl);
+      if (j.contains("pstate")) j.at("pstate").get_to(b.pstate);
+      if (j.contains("prerender")) j.at("prerender").get_to(b.prerender);
+    }
+  };
 }  // namespace nlohmann
 
 namespace nvprefs {
@@ -84,6 +165,36 @@ namespace nvprefs {
   std::optional<undo_data_t::data_t::opengl_swapchain_t>
   undo_data_t::get_opengl_swapchain() const {
     return data.opengl_swapchain;
+  }
+
+  void
+  undo_data_t::set_game_profile(const data_t::game_profile_t &game_profile) {
+    data.game_profile = game_profile;
+  }
+
+  std::optional<undo_data_t::data_t::game_profile_t>
+  undo_data_t::get_game_profile() const {
+    return data.game_profile;
+  }
+
+  void
+  undo_data_t::clear_game_profile() {
+    data.game_profile = std::nullopt;
+  }
+
+  void
+  undo_data_t::set_base_extras(const data_t::base_extras_t &base_extras) {
+    data.base_extras = base_extras;
+  }
+
+  std::optional<undo_data_t::data_t::base_extras_t>
+  undo_data_t::get_base_extras() const {
+    return data.base_extras;
+  }
+
+  void
+  undo_data_t::clear_base_extras() {
+    data.base_extras = std::nullopt;
   }
 
   std::string
@@ -116,6 +227,14 @@ namespace nvprefs {
     const auto &swapchain_data = newer_data.get_opengl_swapchain();
     if (swapchain_data) {
       set_opengl_swapchain(swapchain_data->our_value, swapchain_data->undo_value);
+    }
+    const auto &game = newer_data.get_game_profile();
+    if (game) {
+      set_game_profile(*game);
+    }
+    const auto &base = newer_data.get_base_extras();
+    if (base) {
+      set_base_extras(*base);
     }
   }
 
