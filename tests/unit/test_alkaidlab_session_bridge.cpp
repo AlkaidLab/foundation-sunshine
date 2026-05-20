@@ -64,6 +64,61 @@ make_full_cursor_plane() {
 
 }  // namespace
 
+
+TEST(AlkaidLabSessionBridgeTests, ActivePathDetailsSurviveCoreRoundTrip) {
+  AlkSessionAdapterContext context {};
+  auto base_session = make_base_session();
+  LiInitializeSessionTransportPath(&base_session.transportPath);
+  base_session.transportPath.pathId = 0x8182838485868788ULL;
+  base_session.transportPath.protocol = LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP;
+  base_session.transportPath.pathIdentityKind = LI_SESSION_PATH_IDENTITY_TRUE_LAN;
+  base_session.transportPath.startupClass = LI_SESSION_STARTUP_CLASS_LAN_FAST;
+  base_session.transportPath.priority = 10;
+  base_session.transportPath.rttUs = 12000;
+  base_session.transportPath.jitterUs = 2000;
+  base_session.transportPath.packetLossPpm = 3000;
+  base_session.transportPath.reasonFlags = LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED |
+                                          LI_SESSION_PATH_REASON_CLIENT_ROUTE_OBSERVED;
+  base_session.transportPath.riskFlags = LI_SESSION_PATH_RISK_PRIVATE_PEER_ONLY;
+  alk_session_copy_string(base_session.transportPath.providerId,
+                          sizeof(base_session.transportPath.providerId),
+                          "enet-primary");
+  alk_session_copy_string(base_session.transportPath.routeId,
+                          sizeof(base_session.transportPath.routeId),
+                          "lan-direct");
+  alk_session_copy_string(base_session.transportPath.localEndpoint,
+                          sizeof(base_session.transportPath.localEndpoint),
+                          "192.168.100.182:53123");
+  alk_session_copy_string(base_session.transportPath.remoteEndpoint,
+                          sizeof(base_session.transportPath.remoteEndpoint),
+                          "192.168.100.133:47989");
+  alk_session_copy_string(base_session.transportPath.observedEndpoint,
+                          sizeof(base_session.transportPath.observedEndpoint),
+                          "192.168.100.182:53123");
+  alk_session_copy_string(base_session.transportPath.hostLocalEndpoint,
+                          sizeof(base_session.transportPath.hostLocalEndpoint),
+                          "192.168.100.133:47989");
+  alk_session_copy_string(base_session.transportPath.explanationCode,
+                          sizeof(base_session.transportPath.explanationCode),
+                          "peer-lan-confirmed");
+
+  ASSERT_TRUE(stream::alkaidlab_session_bridge::update_from_li_session(context, base_session));
+
+  LI_SESSION projected {};
+  LiInitializeSession(&projected);
+  ASSERT_TRUE(stream::alkaidlab_session_bridge::project_to_li_session(context, projected));
+
+  EXPECT_EQ(projected.transportPath.pathId, base_session.transportPath.pathId);
+  EXPECT_EQ(projected.transportPath.reasonFlags, base_session.transportPath.reasonFlags);
+  EXPECT_EQ(projected.transportPath.riskFlags, base_session.transportPath.riskFlags);
+  EXPECT_STREQ(projected.transportPath.routeId, "lan-direct");
+  EXPECT_STREQ(projected.transportPath.localEndpoint, "192.168.100.182:53123");
+  EXPECT_STREQ(projected.transportPath.remoteEndpoint, "192.168.100.133:47989");
+  EXPECT_STREQ(projected.transportPath.observedEndpoint, "192.168.100.182:53123");
+  EXPECT_STREQ(projected.transportPath.hostLocalEndpoint, "192.168.100.133:47989");
+  EXPECT_STREQ(projected.transportPath.explanationCode, "peer-lan-confirmed");
+}
+
 TEST(AlkaidLabSessionBridgeTests, CursorModuleUpdateProjectsCompleteCursorPlane) {
   AlkSessionAdapterContext context {};
   auto base_session = make_base_session();

@@ -325,13 +325,26 @@ namespace stream::alkaidlab_session_bridge {
     context.snapshot.cursor_plane.max_client_point_size = session.cursorPlane.maxClientPointSize;
 
     if (session.transportPath.pathId != 0) {
-      alk_sunshine_adapter_set_active_path(&context,
-                                           session.transportPath.pathId,
-                                           map_transport_protocol(session.transportPath.protocol),
-                                           map_transport_identity(session.transportPath.pathIdentityKind),
-                                           map_startup_class(session.transportPath.startupClass),
-                                           session.transportPath.providerId,
-                                           session.transportPath.routeId);
+      AlkSunshineTransportPathDetails details;
+      alk_sunshine_transport_path_details_init(&details);
+      details.path_id = session.transportPath.pathId;
+      details.protocol = map_transport_protocol(session.transportPath.protocol);
+      details.identity_kind = map_transport_identity(session.transportPath.pathIdentityKind);
+      details.startup_class = map_startup_class(session.transportPath.startupClass);
+      details.priority = session.transportPath.priority;
+      details.rtt_us = session.transportPath.rttUs;
+      details.jitter_us = session.transportPath.jitterUs;
+      details.packet_loss_ppm = session.transportPath.packetLossPpm;
+      details.reason_flags = session.transportPath.reasonFlags;
+      details.risk_flags = session.transportPath.riskFlags;
+      alk_session_copy_string(details.provider_id, sizeof(details.provider_id), session.transportPath.providerId);
+      alk_session_copy_string(details.route_id, sizeof(details.route_id), session.transportPath.routeId);
+      alk_session_copy_string(details.local_endpoint, sizeof(details.local_endpoint), session.transportPath.localEndpoint);
+      alk_session_copy_string(details.remote_endpoint, sizeof(details.remote_endpoint), session.transportPath.remoteEndpoint);
+      alk_session_copy_string(details.observed_endpoint, sizeof(details.observed_endpoint), session.transportPath.observedEndpoint);
+      alk_session_copy_string(details.host_local_endpoint, sizeof(details.host_local_endpoint), session.transportPath.hostLocalEndpoint);
+      alk_session_copy_string(details.explanation_code, sizeof(details.explanation_code), session.transportPath.explanationCode);
+      alk_sunshine_adapter_set_active_path_details(&context, &details);
     }
 
     if (session.lease.valid) {
@@ -448,6 +461,9 @@ namespace stream::alkaidlab_session_bridge {
       alk_session_copy_string(session.transportPath.observedEndpoint,
                               sizeof(session.transportPath.observedEndpoint),
                               path.observed_endpoint);
+      alk_session_copy_string(session.transportPath.hostLocalEndpoint,
+                              sizeof(session.transportPath.hostLocalEndpoint),
+                              path.host_local_endpoint);
       alk_session_copy_string(session.transportPath.explanationCode,
                               sizeof(session.transportPath.explanationCode),
                               path.explanation_code);
