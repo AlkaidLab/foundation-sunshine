@@ -44,6 +44,10 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 
+#ifndef LI_FF2_RESCUE_CONTROL
+  #define LI_FF2_RESCUE_CONTROL (1ULL << 13)
+#endif
+
 namespace asio = boost::asio;
 
 using asio::ip::tcp;
@@ -96,7 +100,8 @@ namespace rtsp_stream {
            static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY) |
            static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE) |
            static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY) |
-           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS);
+           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS) |
+           static_cast<std::uint64_t>(LI_FF2_RESCUE_CONTROL);
   }
 
   int
@@ -1832,7 +1837,9 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Client featureFlags2=0x" << std::hex << config.mlFeatureFlags2 << std::dec
                       << " cursorPlaneSupport="
                       << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE)) != 0) ? 1 : 0)
-                      << " preferCursorPlane=" << (monitor.preferCursorPlane ? 1 : 0);
+                      << " preferCursorPlane=" << (monitor.preferCursorPlane ? 1 : 0)
+                      << " rescueControlSupport="
+                      << (((config.mlFeatureFlags2 & static_cast<std::uint64_t>(LI_FF2_RESCUE_CONTROL)) != 0) ? 1 : 0);
       if (monitor.preferCursorPlane) {
         BOOST_LOG(info) << "Client requested active cursor plane; disabling video cursor burn-in for this stream";
       }

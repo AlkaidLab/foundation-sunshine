@@ -49,7 +49,10 @@ extern "C" {
 #include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
 #include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
+#include "alkaidlab/sunshine_adapter/rescue_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
+#include "alkaidlab/control_path_health/control_path_health.h"
+#include "alkaidlab/rescue_control/rescue_control.h"
 #include "display_device/session.h"
 #include "globals.h"
 #include "rtsp.h"
@@ -99,6 +102,19 @@ extern "C" {
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension)
 #define IDX_CURSOR_PLANE 21  // Cursor plane metadata (Sunshine protocol extension)
 #define IDX_SESSION 22  // Session control (Foundation protocol extension)
+#define IDX_RESCUE 23  // Rescue control (Alkaid protocol extension)
+
+#ifndef LI_FF2_RESCUE_CONTROL
+  #define LI_FF2_RESCUE_CONTROL (1ULL << 13)
+#endif
+
+#ifndef ML_FF2_RESCUE_CONTROL
+  #define ML_FF2_RESCUE_CONTROL LI_FF2_RESCUE_CONTROL
+#endif
+
+#ifndef SS_RESCUE_PTYPE
+  #define SS_RESCUE_PTYPE ALK_SUNSHINE_RESCUE_PTYPE
+#endif
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -124,6 +140,7 @@ static const short packetTypes[] = {
   SS_CLIPBOARD_PTYPE,  // Clipboard sync (Sunshine protocol extension)
   SS_CURSOR_PLANE_PTYPE,  // Cursor plane metadata (Sunshine protocol extension)
   SS_SESSION_PTYPE,  // Session control (Foundation protocol extension)
+  SS_RESCUE_PTYPE,  // Rescue control (Alkaid protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -885,6 +902,10 @@ namespace stream {
     std::chrono::steady_clock::time_point last_client_recovery_coalesce_log {};
     std::chrono::steady_clock::time_point last_stream_quality_startup_guard_log {};
     std::uint32_t coalesced_client_recovery_requests { 0 };
+    std::chrono::steady_clock::time_point last_rescue_control_request {};
+    std::chrono::steady_clock::time_point rescue_control_hold_until {};
+    std::uint32_t rescue_control_requests { 0 };
+    std::uint32_t coalesced_rescue_control_requests { 0 };
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     bool adaptive_controller_enabled { false };
@@ -2915,11 +2936,12 @@ namespace stream {
                       << " runtime=" << session->identity.runtime_id
                       << " launchSession=" << session->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
-                      << " clipboardCodec=gamestream-clipboard-payload-codec"
-                      << " microphoneCodec=gamestream-microphone-payload-codec"
-                      << " leaseCodec=session-control-codec"
-                      << " cursorPlaneCodec=session-control-codec";
+	                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+	                      << " clipboardCodec=gamestream-clipboard-payload-codec"
+	                      << " microphoneCodec=gamestream-microphone-payload-codec"
+	                      << " rescueCodec=gamestream-rescue-payload-codec"
+	                      << " leaseCodec=session-control-codec"
+	                      << " cursorPlaneCodec=session-control-codec";
 
       _registry.bind_control_peer(session, peer);
       refresh_mic_owner_for_session(*session);
@@ -3010,9 +3032,42 @@ namespace stream {
     const auto last_recv_age = elapsed_since(peer->lastReceiveTime);
     const auto last_send_age = elapsed_since(peer->lastSendTime);
     const auto next_timeout_in = until(peer->nextTimeout);
+    const auto outbound_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingCommands));
+    const auto send_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingSendReliableCommands));
+    const auto sent_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->sentReliableCommands));
+    const auto packet_loss_ppm = static_cast<std::uint32_t>(
+      std::min<double>(
+        1000000.0,
+        static_cast<double>(peer->packetLoss) /
+          static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 1000000.0));
+
+    AlkControlPathHealthSample health_sample;
+    alk_control_path_health_sample_init(&health_sample);
+    health_sample.rtt_ms = peer->roundTripTime;
+    health_sample.rtt_variance_ms = peer->roundTripTimeVariance;
+    health_sample.packet_loss_ppm = packet_loss_ppm;
+    health_sample.last_recv_age_ms = last_recv_age;
+    health_sample.next_timeout_ms = next_timeout_in;
+    health_sample.outbound_queue_depth = outbound_queue_depth;
+    health_sample.send_reliable_queue_depth = send_reliable_queue_depth;
+    health_sample.sent_reliable_queue_depth = sent_reliable_queue_depth;
+    health_sample.waiting_queue_depth = static_cast<std::uint32_t>(
+      std::min<std::size_t>(peer->totalWaitingData, std::numeric_limits<std::uint32_t>::max()));
+    health_sample.reliable_in_transit = peer->reliableDataInTransit;
+    health_sample.unexpected_disconnect = reason && std::string_view { reason }.find("disconnect") != std::string_view::npos;
+    health_sample.reconnecting = session->state.load(std::memory_order_relaxed) == session::state_e::STARTING;
+
+    AlkControlPathHealthDecision health_decision;
+    alk_control_path_health_decision_init(&health_decision);
+    alk_control_path_health_evaluate(&health_sample, &health_decision);
 
     BOOST_LOG(info) << "Control peer diag [" << reason << "] runtime=" << session->identity.runtime_id
                     << " state=" << peer->state
+                    << " health=" << alk_control_path_health_state_name(health_decision.state)
+                    << " healthReason=0x" << std::hex << health_decision.reason_flags << std::dec
+                    << " healthPpm=" << health_decision.health_ppm
+                    << " rescue=" << (health_decision.rescue_recommended ? 1 : 0)
+                    << " reconnect=" << (health_decision.reconnect_recommended ? 1 : 0)
                     << " rtt=" << peer->roundTripTime << "ms"
                     << " loss=" << (static_cast<double>(peer->packetLoss) /
                                     static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
@@ -3023,9 +3078,9 @@ namespace stream {
                     << " timeout(limit/min/max)=" << peer->timeoutLimit << "/"
                     << peer->timeoutMinimum << "/" << peer->timeoutMaximum
                     << " queues(out/sendRel/sentRel/wait/reliableTransit)="
-                    << enet_list_size(&peer->outgoingCommands) << "/"
-                    << enet_list_size(&peer->outgoingSendReliableCommands) << "/"
-                    << enet_list_size(&peer->sentReliableCommands) << "/"
+                    << outbound_queue_depth << "/"
+                    << send_reliable_queue_depth << "/"
+                    << sent_reliable_queue_depth << "/"
                     << peer->totalWaitingData << "/"
                     << peer->reliableDataInTransit
                     << " rx=" << session->control.rx_events
@@ -3594,6 +3649,12 @@ namespace stream {
   client_supports_cursor_plane(session_t *session) {
     return session != nullptr &&
            (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_CURSOR_PLANE)) != 0;
+  }
+
+  bool
+  client_supports_rescue_control(session_t *session) {
+    return session != nullptr &&
+           (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_RESCUE_CONTROL)) != 0;
   }
 
   struct cursor_plane_sample_t {
@@ -4226,6 +4287,166 @@ namespace stream {
 
     session->control.session_control_tx++;
     return 0;
+  }
+
+  int
+  send_rescue_control_ack(session_t *session,
+                          const AlkSunshineRescueWireAck &ack,
+                          enet_uint32 packet_flags = ENET_PACKET_FLAG_RELIABLE) {
+    if (!session || !session->control.peer) {
+      BOOST_LOG(warning) << "Couldn't send rescue-control ack, control peer is unavailable";
+      return -1;
+    }
+
+    ALK_SUNSHINE_RESCUE_ACK ack_payload;
+    if (!alk_sunshine_rescue_build_ack(&ack, &ack_payload)) {
+      BOOST_LOG(warning) << "Couldn't build rescue-control ack payload";
+      return -1;
+    }
+
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + sizeof(ack_payload));
+    auto *header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    header->type = packetTypes[IDX_RESCUE];
+    header->payloadLength = static_cast<std::uint16_t>(sizeof(ack_payload));
+    std::memcpy(header->payload(), &ack_payload, sizeof(ack_payload));
+
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
+
+    auto payload = encode_control(session,
+                                  std::string_view {
+                                    reinterpret_cast<char *>(plaintext.data()),
+                                    plaintext.size(),
+                                  },
+                                  encrypted_payload);
+    if (payload.empty()) {
+      BOOST_LOG(error) << "Couldn't encode rescue-control ack";
+      return -1;
+    }
+
+    if (session->broadcast_ref->control_server.send(payload,
+                                                    session->control.peer,
+                                                    CTRL_CHANNEL_URGENT,
+                                                    packet_flags)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send rescue-control ack to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+
+    return 0;
+  }
+
+  static bool
+  apply_rescue_control_request(session_t *session, const AlkRescueControlRequest &request) {
+    if (!session || request.version != ALK_RESCUE_CONTROL_VERSION) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (session->last_rescue_control_request.time_since_epoch().count() != 0 &&
+        now - session->last_rescue_control_request < 250ms) {
+      session->coalesced_rescue_control_requests++;
+      BOOST_LOG(info) << "Alkaid rescue-control coalesced"
+                      << " runtime=" << session->identity.runtime_id
+                      << " requestId=" << request.request_id
+                      << " suppressed=" << session->coalesced_rescue_control_requests;
+      return false;
+    }
+    const auto coalesced = session->coalesced_rescue_control_requests;
+    session->coalesced_rescue_control_requests = 0;
+    session->last_rescue_control_request = now;
+    session->rescue_control_requests++;
+
+    const int current_bitrate = session->last_applied_stream_quality_bitrate > 0 ?
+                                  session->last_applied_stream_quality_bitrate :
+                                  std::max(1, session->config.monitor.bitrate);
+    const int requested_bitrate = request.max_bitrate_kbps > 0 ?
+                                    static_cast<int>(request.max_bitrate_kbps) :
+                                    std::max(1200, current_bitrate * 2 / 3);
+    const int target_bitrate = std::clamp(requested_bitrate, 800, std::max(800, current_bitrate));
+    const int target_fec = std::clamp(
+      std::max<int>(session->last_applied_stream_quality_fec, static_cast<int>(request.fec_percent)),
+      0,
+      45);
+    const int target_scale = std::clamp<int>(
+      request.target_scale_percent == 0 ? 75 : static_cast<int>(request.target_scale_percent),
+      25,
+      100);
+
+    video::dynamic_param_t bitrate_param;
+    bitrate_param.type = video::dynamic_param_type_e::BITRATE;
+    bitrate_param.value.int_value = target_bitrate;
+    bitrate_param.valid = true;
+    session->video.dynamic_param_change_events->raise(bitrate_param);
+    session->last_applied_stream_quality_bitrate = target_bitrate;
+    session->last_stream_quality_bitrate_apply = now;
+
+    video::dynamic_param_t fec_param;
+    fec_param.type = video::dynamic_param_type_e::FEC_PERCENTAGE;
+    fec_param.value.int_value = target_fec;
+    fec_param.valid = true;
+    session->video.dynamic_param_change_events->raise(fec_param);
+    session->last_applied_stream_quality_fec = target_fec;
+    session->last_stream_quality_fec_apply = now;
+
+    bool runtime_scale_requested = false;
+    runtime_profile_resolution_t runtime_resolution {
+      session->config.monitor.width,
+      session->config.monitor.height,
+    };
+    if (target_scale < 100 && target_scale != session->last_applied_stream_quality_resolution_scale) {
+      runtime_resolution = runtime_profile_resolution_for_scale(session->config.monitor.width,
+                                                                session->config.monitor.height,
+                                                                target_scale);
+      if (runtime_profile_resolution_reconfig_enabled()) {
+        video::dynamic_param_t resolution_param;
+        resolution_param.type = video::dynamic_param_type_e::RESOLUTION;
+        resolution_param.value.int_array_value[0] = runtime_resolution.width;
+        resolution_param.value.int_array_value[1] = runtime_resolution.height;
+        resolution_param.valid = runtime_resolution.width > 0 && runtime_resolution.height > 0;
+        session->video.dynamic_param_change_events->raise(resolution_param);
+        session->last_applied_stream_quality_resolution_scale = target_scale;
+        session->last_stream_quality_profile_apply = now;
+        runtime_scale_requested = true;
+      }
+    }
+
+    const auto hold_ms = std::clamp<std::uint32_t>(request.hold_ms == 0 ? 1000u : request.hold_ms,
+                                                   300u,
+                                                   3000u);
+    session->rescue_control_hold_until = now + std::chrono::milliseconds(hold_ms);
+    session->current_total_bitrate.store(total_video_bitrate_from_encoding_bitrate(target_bitrate, target_fec),
+                                         std::memory_order_relaxed);
+    session->current_fec_percentage.store(target_fec, std::memory_order_relaxed);
+    session->pacing_total_bitrate.store(total_video_bitrate_from_encoding_bitrate(target_bitrate, target_fec),
+                                        std::memory_order_relaxed);
+    session->stream_quality_resync_guard_until = std::max(session->stream_quality_resync_guard_until,
+                                                          now + 650ms);
+
+    if (request.request_idr) {
+      session->video.idr_events->raise(true);
+    }
+
+    BOOST_LOG(info) << "Alkaid rescue-control applied"
+                    << " runtime=" << session->identity.runtime_id
+                    << " requestId=" << request.request_id
+                    << " triggers=0x" << std::hex << request.trigger_flags << std::dec
+                    << " streamMode=" << request.stream_mode
+                    << " scale=" << target_scale << "%"
+                    << " target=" << runtime_resolution.width << "x" << runtime_resolution.height
+                    << " runtimeScale=" << (runtime_scale_requested ? 1 : 0)
+                    << " runtimeScaleMode=" << (runtime_scale_requested ? "soft" : "none")
+                    << " bitrate=" << target_bitrate << " Kbps"
+                    << " fec=" << target_fec << "%"
+                    << " holdMs=" << hold_ms
+                    << " blurry=" << (request.enable_blurry_upscale ? 1 : 0)
+                    << " idr=" << (request.request_idr ? 1 : 0)
+                    << " coalesced=" << coalesced
+                    << (target_scale < 100 && !runtime_scale_requested ?
+                          " rescueScaleDeferred=runtime-scale-unavailable-or-unchanged" : "");
+    return true;
   }
 
   static std::uint32_t
@@ -5222,6 +5443,64 @@ namespace stream {
         default:
           BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(clipboard_event.kind);
           break;
+      }
+    });
+
+    server->map(packetTypes[IDX_RESCUE], [&](session_t *session, const std::string_view &payload) {
+      BOOST_LOG(debug) << "type [IDX_RESCUE]"sv;
+
+      if (!client_supports_rescue_control(session)) {
+        BOOST_LOG(warning) << "Ignoring rescue-control packet from client without negotiated capability"
+                           << " runtime=" << (session ? session->identity.runtime_id : 0);
+        return;
+      }
+
+      AlkRescueControlRequest request;
+      if (!alk_sunshine_rescue_parse_request(payload.data(), payload.size(), &request)) {
+        BOOST_LOG(warning) << "Ignoring malformed rescue-control payload"
+                           << " runtime=" << (session ? session->identity.runtime_id : 0)
+                           << " payloadBytes=" << payload.size();
+        return;
+      }
+
+      BOOST_LOG(info) << "Alkaid rescue-control received"
+                      << " runtime=" << session->identity.runtime_id
+                      << " requestId=" << request.request_id
+                      << " triggers=0x" << std::hex << request.trigger_flags << std::dec
+                      << " streamMode=" << request.stream_mode
+                      << " urgency=" << request.urgency_ppm
+                      << " targetScale=" << request.target_scale_percent << "%"
+                      << " maxBitrate=" << request.max_bitrate_kbps << " Kbps"
+                      << " fec=" << request.fec_percent << "%"
+                      << " holdMs=" << request.hold_ms
+                      << " blurry=" << (request.enable_blurry_upscale ? 1 : 0)
+                      << " idr=" << (request.request_idr ? 1 : 0)
+                      << " codec=gamestream-rescue-payload-codec";
+
+      const bool accepted = apply_rescue_control_request(session, request);
+
+      AlkSunshineRescueWireAck ack;
+      alk_sunshine_rescue_ack_init(&ack);
+      ack.request_id = request.request_id;
+      ack.accepted = accepted;
+      ack.applied_scale_percent = std::clamp<std::uint32_t>(
+        request.target_scale_percent == 0 ? 100u : request.target_scale_percent,
+        25u,
+        100u);
+      ack.applied_bitrate_kbps = session->last_applied_stream_quality_bitrate > 0 ?
+                                   static_cast<std::uint32_t>(session->last_applied_stream_quality_bitrate) :
+                                   0u;
+      ack.applied_fec_percent = session->last_applied_stream_quality_fec >= 0 ?
+                                  static_cast<std::uint32_t>(session->last_applied_stream_quality_fec) :
+                                  0u;
+      if (send_rescue_control_ack(session, ack, ENET_PACKET_FLAG_RELIABLE) == 0) {
+        BOOST_LOG(info) << "Alkaid rescue-control ack sent"
+                        << " runtime=" << session->identity.runtime_id
+                        << " requestId=" << ack.request_id
+                        << " accepted=" << (ack.accepted ? 1 : 0)
+                        << " scale=" << ack.applied_scale_percent << "%"
+                        << " bitrate=" << ack.applied_bitrate_kbps << " Kbps"
+                        << " fec=" << ack.applied_fec_percent << "%";
       }
     });
 

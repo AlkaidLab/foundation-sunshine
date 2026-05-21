@@ -2011,10 +2011,11 @@ namespace session_runtime {
 
   inline bool
   runtime_profile_resolution_reconfig_enabled() {
-    // Stream-quality recovery must preserve the client-requested stream resolution.
-    // Runtime resolution reconfiguration causes encoder rebuilds and visible
-    // quality oscillation, so keep profile-tier scaling as a deferred hint.
-    return false;
+    // Runtime scale is now an explicit recovery backend: the control plane can
+    // request a temporary encoder output size without reconfiguring the display
+    // allocation. The video loop applies it as an encoder restart plus IDR, then
+    // stream-quality cooldown/hold windows prevent oscillation.
+    return true;
   }
 
   struct pacer_probe_plan_t {

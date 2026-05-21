@@ -60,6 +60,7 @@ TEST(RtspFeatureFlags2Tests, AdvertisesOnlyWiredEnhancedRtpCapabilities) {
   constexpr std::uint64_t cursorPlaneV1 = 1ULL << 3;
   constexpr std::uint64_t ft2QuicDatagramV1 = 1ULL << 7;
   constexpr std::uint64_t audioContinuityV1 = 1ULL << 9;
+  constexpr std::uint64_t rescueControlV1 = 1ULL << 13;
 
   auto flags = rtsp_stream::foundation_streaming_feature_flags2();
 
@@ -67,6 +68,7 @@ TEST(RtspFeatureFlags2Tests, AdvertisesOnlyWiredEnhancedRtpCapabilities) {
   EXPECT_NE(flags & inputPriorityV1, 0U);
   EXPECT_NE(flags & audioContinuityV1, 0U);
   EXPECT_NE(flags & cursorPlaneV1, 0U);
+  EXPECT_NE(flags & rescueControlV1, 0U);
   EXPECT_EQ(flags & ft2QuicDatagramV1, 0U);
 }
 

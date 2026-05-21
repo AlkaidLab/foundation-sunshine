@@ -174,9 +174,12 @@ set(ALKAIDLAB_ZAKO_INPUT_PATH "${CMAKE_SOURCE_DIR}/../zako-input" CACHE PATH "Pa
 if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session_core.h" AND
    EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/session_sdk/session_sdk.h" AND
    EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/modules/stream_quality/adaptive_controller.h" AND
+   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/control_path_health/control_path_health.h" AND
+   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/rescue_control/rescue_control.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
+   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/rescue_wire_codec.h" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
@@ -185,6 +188,9 @@ if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control.cpp"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control_internal.cpp"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_adaptive_module.cpp"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/control_path_health.cpp"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/rescue_control.cpp"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/session_runtime.cpp"
             "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)
