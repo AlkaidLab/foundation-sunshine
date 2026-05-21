@@ -5478,6 +5478,13 @@ namespace stream {
                       << " codec=gamestream-rescue-payload-codec";
 
       const bool accepted = apply_rescue_control_request(session, request);
+      if (!accepted) {
+        BOOST_LOG(info) << "Alkaid rescue-control ack skipped"
+                        << " runtime=" << session->identity.runtime_id
+                        << " requestId=" << request.request_id
+                        << " accepted=0 reason=coalesced";
+        return;
+      }
 
       AlkSunshineRescueWireAck ack;
       alk_sunshine_rescue_ack_init(&ack);
@@ -5493,7 +5500,7 @@ namespace stream {
       ack.applied_fec_percent = session->last_applied_stream_quality_fec >= 0 ?
                                   static_cast<std::uint32_t>(session->last_applied_stream_quality_fec) :
                                   0u;
-      if (send_rescue_control_ack(session, ack, ENET_PACKET_FLAG_RELIABLE) == 0) {
+      if (send_rescue_control_ack(session, ack, ENET_PACKET_FLAG_UNSEQUENCED) == 0) {
         BOOST_LOG(info) << "Alkaid rescue-control ack sent"
                         << " runtime=" << session->identity.runtime_id
                         << " requestId=" << ack.request_id

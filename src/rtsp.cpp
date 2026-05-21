@@ -2051,13 +2051,20 @@ namespace rtsp_stream {
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
                           << qualityCeilingFramerate
-                          << " fps; stream-quality keeps display/capture cadence at the quality ceiling"
+                          << " fps; stream-quality keeps the quality ceiling for recovery"
                           << " pathReason=" << startupPathDecision.reason
                           << " startupPolicy=" << startupPolicy.reason
                           << " route=" << session_runtime::transport_route_name(startupPathDecision.route)
                           << " egressKind=" << session_runtime::li_path_egress_kind_name(startupPathDecision.egress_kind)
                           << " encapsulation=" << session_runtime::li_path_encapsulation_name(startupPathDecision.encapsulation);
           configuredBitrateKbps = startupBitrateKbps;
+          if (startupPolicy.fps_cap > 0 &&
+              startupFps > 0 &&
+              startupFps < config.monitor.framerate) {
+            config.monitor.framerate = startupFps;
+            config.monitor.frameRateNum = startupFps;
+            config.monitor.frameRateDen = 1;
+          }
         }
       }
       else if (adaptive_controller_enabled) {

@@ -1980,16 +1980,16 @@ namespace session_runtime {
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD &&
         std::string_view { decision.reason ? decision.reason : "" } == "host-public-port-forward-lan-hairpin") {
       return {
-        .bitrate_seed_kbps = 12000,
-        .fps_cap = 0,
-        .reason = "hairpin-fast",
+        .bitrate_seed_kbps = 7000,
+        .fps_cap = std::min(requested_fps > 0 ? requested_fps : 60, 60),
+        .reason = "hairpin-safe",
       };
     }
 
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
       return {
-        .bitrate_seed_kbps = 12000,
-        .fps_cap = 0,
+        .bitrate_seed_kbps = 9000,
+        .fps_cap = requested_fps >= 90 ? 60 : 0,
         .reason = "router-port-forward-safe",
       };
     }
