@@ -4370,10 +4370,10 @@ namespace stream {
       std::max<int>(session->last_applied_stream_quality_fec, static_cast<int>(request.fec_percent)),
       0,
       45);
-    const int target_scale = std::clamp<int>(
-      request.target_scale_percent == 0 ? 75 : static_cast<int>(request.target_scale_percent),
-      25,
-      100);
+    // Keep rescue on soft quality tiers for the main stream.  The request may
+    // carry an advisory scale for future/dedicated rescue streams, but applying
+    // it to the active encoder caused visible resolution reinit/RFI storms.
+    const int target_scale = 100;
 
     video::dynamic_param_t bitrate_param;
     bitrate_param.type = video::dynamic_param_type_e::BITRATE;
@@ -4434,10 +4434,12 @@ namespace stream {
                     << " requestId=" << request.request_id
                     << " triggers=0x" << std::hex << request.trigger_flags << std::dec
                     << " streamMode=" << request.stream_mode
-                    << " scale=" << target_scale << "%"
+                    << " requestedScale=" << request.target_scale_percent << "%"
+                    << " effectiveScale=" << target_scale << "%"
                     << " target=" << runtime_resolution.width << "x" << runtime_resolution.height
                     << " runtimeScale=" << (runtime_scale_requested ? 1 : 0)
                     << " runtimeScaleMode=" << (runtime_scale_requested ? "soft" : "none")
+                    << " qualityProfile=soft-bitrate-fec-idr"
                     << " bitrate=" << target_bitrate << " Kbps"
                     << " fec=" << target_fec << "%"
                     << " holdMs=" << hold_ms
