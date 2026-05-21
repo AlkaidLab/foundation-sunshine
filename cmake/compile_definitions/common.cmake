@@ -173,7 +173,7 @@ set(ALKAIDLAB_ZAKO_INPUT_PATH "${CMAKE_SOURCE_DIR}/../zako-input" CACHE PATH "Pa
 
 if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session_core.h" AND
    EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/session_sdk/session_sdk.h" AND
-   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/modules/stream_quality/default_controller.h" AND
+   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/modules/stream_quality/adaptive_controller.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
@@ -184,7 +184,7 @@ if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session
             "${ALKAIDLAB_SESSION_CORE_PATH}/src/session_core.c"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control.cpp"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control_internal.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_default_module.cpp"
+            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_adaptive_module.cpp"
             "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)

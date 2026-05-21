@@ -102,7 +102,7 @@ add_executable(stream_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/src/session_core.c
         ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control.cpp
         ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control_internal.cpp
-        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_default_module.cpp)
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_adaptive_module.cpp)
 target_include_directories(stream_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/include"

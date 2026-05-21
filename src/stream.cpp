@@ -46,7 +46,9 @@ extern "C" {
 
 #include "config.h"
 #include "alkaidlab_session_bridge.h"
+#include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
+#include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
 #include "display_device/session.h"
 #include "globals.h"
@@ -2597,34 +2599,24 @@ namespace stream {
                      std::uint32_t total_length,
                      const std::string_view &mime_type,
                      const std::string_view &name) {
-      std::vector<uint8_t> payload;
-      payload.reserve(1 + 1 + 1 + 1 + sizeof(std::uint64_t) + sizeof(std::uint64_t) +
-                      sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) +
-                      mime_type.size() + name.size());
-
-      auto append_bytes = [&payload](const auto &value) {
-        const auto *bytes = reinterpret_cast<const uint8_t *>(&value);
-        payload.insert(payload.end(), bytes, bytes + sizeof(value));
-      };
-
-      payload.push_back(LI_CLIPBOARD_MSG_ITEM_START);
-      payload.push_back(transfer_flags);
-      payload.push_back(item_type);
-      payload.push_back(0);
-
-      const auto little_item_id = util::endian::little(item_id);
-      const auto little_content_hash = util::endian::little(content_hash);
-      const auto little_total_length = util::endian::little(total_length);
-      const auto little_mime_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(mime_type.size()));
-      const auto little_name_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(name.size()));
-
-      append_bytes(little_item_id);
-      append_bytes(little_content_hash);
-      append_bytes(little_total_length);
-      append_bytes(little_mime_length);
-      append_bytes(little_name_length);
-      payload.insert(payload.end(), mime_type.begin(), mime_type.end());
-      payload.insert(payload.end(), name.begin(), name.end());
+      const auto payload_size = alk_sunshine_clipboard_item_start_size(mime_type.size(), name.size());
+      std::vector<uint8_t> payload(payload_size);
+      std::size_t payload_length = 0;
+      if (!alk_sunshine_clipboard_build_item_start(transfer_flags,
+                                                   item_type,
+                                                   item_id,
+                                                   content_hash,
+                                                   total_length,
+                                                   reinterpret_cast<const std::uint8_t *>(mime_type.data()),
+                                                   mime_type.size(),
+                                                   reinterpret_cast<const std::uint8_t *>(name.data()),
+                                                   name.size(),
+                                                   payload.data(),
+                                                   payload.size(),
+                                                   &payload_length)) {
+        return {};
+      }
+      payload.resize(payload_length);
       return payload;
     }
 
@@ -2632,34 +2624,29 @@ namespace stream {
     build_item_chunk(std::uint64_t item_id,
                      std::uint32_t chunk_offset,
                      const std::string_view &chunk) {
-      std::vector<uint8_t> payload;
-      payload.reserve(1 + 1 + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint32_t) + chunk.size());
-
-      const auto little_chunk_length = util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(chunk.size()));
-      const auto little_item_id = util::endian::little(item_id);
-      const auto little_chunk_offset = util::endian::little(chunk_offset);
-
-      payload.push_back(LI_CLIPBOARD_MSG_ITEM_CHUNK);
-      payload.push_back(0);
-      payload.insert(payload.end(),
-                     reinterpret_cast<const uint8_t *>(&little_chunk_length),
-                     reinterpret_cast<const uint8_t *>(&little_chunk_length) + sizeof(little_chunk_length));
-      payload.insert(payload.end(),
-                     reinterpret_cast<const uint8_t *>(&little_item_id),
-                     reinterpret_cast<const uint8_t *>(&little_item_id) + sizeof(little_item_id));
-      payload.insert(payload.end(),
-                     reinterpret_cast<const uint8_t *>(&little_chunk_offset),
-                     reinterpret_cast<const uint8_t *>(&little_chunk_offset) + sizeof(little_chunk_offset));
-      payload.insert(payload.end(), chunk.begin(), chunk.end());
+      std::vector<uint8_t> payload(16u + chunk.size());
+      std::size_t payload_length = 0;
+      if (!alk_sunshine_clipboard_build_item_chunk(item_id,
+                                                   chunk_offset,
+                                                   reinterpret_cast<const std::uint8_t *>(chunk.data()),
+                                                   chunk.size(),
+                                                   payload.data(),
+                                                   payload.size(),
+                                                   &payload_length)) {
+        return {};
+      }
+      payload.resize(payload_length);
       return payload;
     }
 
     std::array<std::uint8_t, 1 + sizeof(std::uint64_t)>
     build_item_end(std::uint64_t item_id) {
       std::array<std::uint8_t, 1 + sizeof(std::uint64_t)> payload {};
-      payload[0] = LI_CLIPBOARD_MSG_ITEM_END;
-      const auto little_item_id = util::endian::little(item_id);
-      std::memcpy(payload.data() + 1, &little_item_id, sizeof(little_item_id));
+      std::size_t payload_length = 0;
+      (void) alk_sunshine_clipboard_build_item_end(item_id,
+                                                   payload.data(),
+                                                   payload.size(),
+                                                   &payload_length);
       return payload;
     }
   }  // namespace clipboard_payload
@@ -2928,7 +2915,11 @@ namespace stream {
                       << " runtime=" << session->identity.runtime_id
                       << " launchSession=" << session->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached";
+                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+                      << " clipboardCodec=gamestream-clipboard-payload-codec"
+                      << " microphoneCodec=gamestream-microphone-payload-codec"
+                      << " leaseCodec=session-control-codec"
+                      << " cursorPlaneCodec=session-control-codec";
 
       _registry.bind_control_peer(session, peer);
       refresh_mic_owner_for_session(*session);
@@ -2985,7 +2976,11 @@ namespace stream {
                       << " runtime=" << session_p->identity.runtime_id
                       << " launchSession=" << session_p->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached";
+                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+                      << " clipboardCodec=gamestream-clipboard-payload-codec"
+                      << " microphoneCodec=gamestream-microphone-payload-codec"
+                      << " leaseCodec=session-control-codec"
+                      << " cursorPlaneCodec=session-control-codec";
 
       // Insert this into the map for O(1) lookups in the future
       _registry.bind_control_peer(session_p, peer);
@@ -4486,6 +4481,10 @@ namespace stream {
                                                                    static_cast<std::uint32_t>(data.size()),
                                                                    mime_type,
                                                                    name);
+    if (start_payload.empty()) {
+      BOOST_LOG(error) << "Clipboard item start payload failed adapter encode";
+      return -1;
+    }
     if (send_clipboard_payload(session,
                                std::string_view {
                                  reinterpret_cast<const char *>(start_payload.data()),
@@ -4502,6 +4501,10 @@ namespace stream {
                                                                        reinterpret_cast<const char *>(data.data() + offset),
                                                                        chunk_length,
                                                                      });
+      if (chunk_payload.empty() && chunk_length != 0) {
+        BOOST_LOG(error) << "Clipboard item chunk payload failed adapter encode";
+        return -1;
+      }
       if (send_clipboard_payload(session,
                                  std::string_view {
                                    reinterpret_cast<const char *>(chunk_payload.data()),
@@ -4676,24 +4679,6 @@ namespace stream {
     auto maybe_send_host_clipboard_update = [](session_t *) {};
 #endif
 
-    auto read_u16_le = [](const char *ptr) -> std::uint16_t {
-      std::uint16_t value {};
-      std::memcpy(&value, ptr, sizeof(value));
-      return util::endian::little(value);
-    };
-
-    auto read_u32_le = [](const char *ptr) -> std::uint32_t {
-      std::uint32_t value {};
-      std::memcpy(&value, ptr, sizeof(value));
-      return util::endian::little(value);
-    };
-
-    auto read_u64_le = [](const char *ptr) -> std::uint64_t {
-      std::uint64_t value {};
-      std::memcpy(&value, ptr, sizeof(value));
-      return util::endian::little(value);
-    };
-
     struct control_mic_stats_t {
       std::uint64_t packets {};
       std::uint64_t bytes {};
@@ -4704,12 +4689,10 @@ namespace stream {
       std::uint64_t invalid {};
     };
     std::unordered_map<std::uint64_t, control_mic_stats_t> control_mic_stats;
-    constexpr std::uint32_t control_mic_magic = 0x3143494D;  // 'MIC1'
-    constexpr std::uint16_t control_mic_version = 1;
-    constexpr std::uint16_t control_mic_flag_session_token = 0x0001;
-    constexpr std::size_t control_mic_token_size = 16;
-    constexpr std::size_t control_mic_header_size =
-      sizeof(std::uint32_t) + sizeof(std::uint16_t) * 4 + control_mic_token_size;
+    constexpr std::uint32_t control_mic_magic = ALK_SUNSHINE_MICROPHONE_CONTROL_DATA_MAGIC;
+    constexpr std::uint16_t control_mic_version = ALK_SUNSHINE_MICROPHONE_CONTROL_VERSION;
+    constexpr std::uint16_t control_mic_flag_session_token = ALK_SUNSHINE_MICROPHONE_CONTROL_FLAG_SESSION_TOKEN;
+    constexpr std::size_t control_mic_token_size = ALK_SUNSHINE_MICROPHONE_SESSION_TOKEN_LENGTH;
     auto log_control_mic_stats = [&](session_t *session,
                                      control_mic_stats_t &stats,
                                      const char *event) {
@@ -4759,7 +4742,7 @@ namespace stream {
       BOOST_LOG(debug) << "type [IDX_START_B]"sv;
     });
 
-    server->map(packetTypes[IDX_MIC_DATA], [&, read_u16_le, read_u32_le](session_t *session, const std::string_view &payload) {
+    server->map(packetTypes[IDX_MIC_DATA], [&](session_t *session, const std::string_view &payload) {
       if (!session || !session->broadcast_ref) {
         return;
       }
@@ -4768,30 +4751,21 @@ namespace stream {
       stats.packets++;
       stats.bytes += payload.size();
 
-      if (payload.size() < control_mic_header_size) {
+      AlkSunshineMicrophoneControlPacket mic_packet;
+      if (!alk_sunshine_microphone_parse_control_packet(payload.data(), payload.size(), &mic_packet) ||
+          mic_packet.payload.length == 0 ||
+          mic_packet.magic != control_mic_magic ||
+          mic_packet.control_version != control_mic_version) {
         stats.invalid++;
         log_control_mic_stats(session, stats, "control-invalid");
         return;
       }
 
-      const auto *data = payload.data();
-      const auto magic = read_u32_le(data);
-      const auto version = read_u16_le(data + 4);
-      const auto sequence_number = read_u16_le(data + 6);
-      const auto payload_length = read_u16_le(data + 8);
-      const auto flags = read_u16_le(data + 10);
-      const auto *token = data + 12;
-      const auto *opus = data + control_mic_header_size;
-      const auto opus_size = payload.size() - control_mic_header_size;
-
-      if (magic != control_mic_magic ||
-          version != control_mic_version ||
-          payload_length != opus_size ||
-          opus_size == 0) {
-        stats.invalid++;
-        log_control_mic_stats(session, stats, "control-invalid");
-        return;
-      }
+      const auto sequence_number = mic_packet.sequence_number;
+      const auto flags = mic_packet.flags;
+      const auto *token = reinterpret_cast<const char *>(mic_packet.session_token.data);
+      const auto *opus = reinterpret_cast<const char *>(mic_packet.payload.data);
+      const auto opus_size = mic_packet.payload.length;
 
       if ((flags & control_mic_flag_session_token) != 0 &&
           session->audio.ping_payload.size() == control_mic_token_size &&
@@ -5036,7 +5010,7 @@ namespace stream {
       }
     });
 
-    server->map(packetTypes[IDX_CLIPBOARD], [&, reset_clipboard_transfer, clear_clipboard_binding, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item, read_u16_le, read_u32_le, read_u64_le](session_t *session, const std::string_view &payload) {
+    server->map(packetTypes[IDX_CLIPBOARD], [&, reset_clipboard_transfer, clear_clipboard_binding, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_CLIPBOARD]"sv;
 
 #ifdef _WIN32
@@ -5048,16 +5022,13 @@ namespace stream {
       }
 #endif
 
-      if (payload.empty()) {
-        BOOST_LOG(warning) << "Clipboard payload was empty";
+      AlkSunshineClipboardWireEvent clipboard_event;
+      if (!alk_sunshine_clipboard_parse(payload.data(), payload.size(), &clipboard_event)) {
+        BOOST_LOG(warning) << "Clipboard payload failed adapter parse";
         return;
       }
 
-      const auto *bytes = reinterpret_cast<const std::uint8_t *>(payload.data());
-      std::size_t pos = 1;
-      const auto kind = bytes[0];
-
-      switch (kind) {
+      switch (clipboard_event.kind) {
         case LI_CLIPBOARD_MSG_BIND: {
           if (!client_supports_clipboard(session)) {
             BOOST_LOG(warning) << "Ignoring clipboard bind from client without negotiated clipboard capability " << session->client_name;
@@ -5107,43 +5078,22 @@ namespace stream {
           }
           break;
         case LI_CLIPBOARD_MSG_ITEM_START: {
-          constexpr std::size_t header_size =
-            1 + 1 + 1 + 1 + sizeof(std::uint64_t) + sizeof(std::uint64_t) +
-            sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t);
+          const auto transfer_flags = clipboard_event.item_start.transfer_flags;
+          const auto item_type = clipboard_event.item_start.item_type;
           if (!is_clipboard_owner(session)) {
             reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item start from non-owner client " << session->client_name;
             return;
           }
-          if (payload.size() < header_size) {
-            BOOST_LOG(warning) << "Clipboard ITEM_START was truncated";
-            return;
-          }
-
-          const auto transfer_flags = bytes[pos++];
-          const auto item_type = bytes[pos++];
-          pos++;  // reserved
           if (!client_supports_clipboard_item(session, item_type)) {
             reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item type " << static_cast<int>(item_type)
                                << " from client without negotiated type capability " << session->client_name;
             return;
           }
-          const auto item_id = read_u64_le(payload.data() + pos);
-          pos += sizeof(std::uint64_t);
-          const auto content_hash = read_u64_le(payload.data() + pos);
-          pos += sizeof(std::uint64_t);
-          const auto total_length = read_u32_le(payload.data() + pos);
-          pos += sizeof(std::uint32_t);
-          const auto mime_length = read_u16_le(payload.data() + pos);
-          pos += sizeof(std::uint16_t);
-          const auto name_length = read_u16_le(payload.data() + pos);
-          pos += sizeof(std::uint16_t);
-
-          if (payload.size() < pos + mime_length + name_length) {
-            BOOST_LOG(warning) << "Clipboard ITEM_START metadata exceeded payload size";
-            return;
-          }
+          const auto item_id = clipboard_event.item_start.item_id;
+          const auto content_hash = clipboard_event.item_start.content_hash;
+          const auto total_length = clipboard_event.item_start.total_length;
 
           if (!clipboard_transfer_length_valid(item_type, total_length)) {
             BOOST_LOG(warning) << "Clipboard ITEM_START exceeded size limits for client "
@@ -5161,10 +5111,10 @@ namespace stream {
           session->control.clipboard.content_hash = content_hash;
           session->control.clipboard.total_length = total_length;
           session->control.clipboard.received_length = 0;
-          session->control.clipboard.mime_type.assign(payload.substr(pos, mime_length));
-          pos += mime_length;
-          session->control.clipboard.name.assign(payload.substr(pos, name_length));
-          pos += name_length;
+          session->control.clipboard.mime_type.assign(reinterpret_cast<const char *>(clipboard_event.item_start.mime_type.data),
+                                                      clipboard_event.item_start.mime_type.length);
+          session->control.clipboard.name.assign(reinterpret_cast<const char *>(clipboard_event.item_start.name.data),
+                                                 clipboard_event.item_start.name.length);
           session->control.clipboard.data.assign(total_length, 0);
           BOOST_LOG(info) << "Clipboard ITEM_START from client " << session->client_name
                           << " type=" << static_cast<int>(item_type)
@@ -5172,35 +5122,18 @@ namespace stream {
           break;
         }
         case LI_CLIPBOARD_MSG_ITEM_CHUNK: {
-          constexpr std::size_t header_size =
-            1 + 1 + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint32_t);
+          const auto chunk_length = clipboard_event.item_chunk.chunk_length;
+          const auto item_id = clipboard_event.item_chunk.item_id;
+          const auto chunk_offset = clipboard_event.item_chunk.chunk_offset;
           if (!is_clipboard_owner(session)) {
             reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item chunk from non-owner client " << session->client_name;
             return;
           }
-          if (payload.size() < header_size) {
-            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK was truncated";
-            return;
-          }
-
-          pos++;  // reserved
-          const auto chunk_length = read_u16_le(payload.data() + pos);
-          pos += sizeof(std::uint16_t);
-          const auto item_id = read_u64_le(payload.data() + pos);
-          pos += sizeof(std::uint64_t);
-          const auto chunk_offset = read_u32_le(payload.data() + pos);
-          pos += sizeof(std::uint32_t);
 
           if (!session->control.clipboard.transfer_active ||
               session->control.clipboard.item_id != item_id) {
             BOOST_LOG(warning) << "Clipboard ITEM_CHUNK had no active transfer";
-            return;
-          }
-
-          if (payload.size() < pos + chunk_length) {
-            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK bounds were invalid";
-            reset_clipboard_transfer(session);
             return;
           }
 
@@ -5217,25 +5150,19 @@ namespace stream {
 
           if (chunk_length != 0) {
             std::memcpy(session->control.clipboard.data.data() + chunk_offset,
-                        payload.data() + pos,
+                        clipboard_event.item_chunk.chunk.data,
                         chunk_length);
           }
           session->control.clipboard.received_length = next_received_length;
           break;
         }
         case LI_CLIPBOARD_MSG_ITEM_END: {
-          constexpr std::size_t header_size = 1 + sizeof(std::uint64_t);
+          const auto item_id = clipboard_event.item_id;
           if (!is_clipboard_owner(session)) {
             reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item end from non-owner client " << session->client_name;
             return;
           }
-          if (payload.size() < header_size) {
-            BOOST_LOG(warning) << "Clipboard ITEM_END was truncated";
-            return;
-          }
-
-          const auto item_id = read_u64_le(payload.data() + pos);
           if (!session->control.clipboard.transfer_active ||
               session->control.clipboard.item_id != item_id) {
             BOOST_LOG(warning) << "Clipboard ITEM_END had no matching transfer";
@@ -5281,26 +5208,19 @@ namespace stream {
           break;
         }
         case LI_CLIPBOARD_MSG_ITEM_CANCEL: {
-          constexpr std::size_t header_size = 1 + sizeof(std::uint64_t);
-          if (payload.size() < header_size) {
-            BOOST_LOG(warning) << "Clipboard ITEM_CANCEL was truncated";
-            return;
-          }
-
+          const auto item_id = clipboard_event.item_id;
           if (!is_clipboard_owner(session)) {
             reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item cancel from non-owner client " << session->client_name;
             return;
           }
-
-          const auto item_id = read_u64_le(payload.data() + pos);
           if (item_id == 0 || session->control.clipboard.item_id == item_id) {
             reset_clipboard_transfer(session);
           }
           break;
         }
         default:
-          BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(kind);
+          BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(clipboard_event.kind);
           break;
       }
     });

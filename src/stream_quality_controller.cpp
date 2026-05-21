@@ -282,12 +282,12 @@ namespace stream_quality {
   }
 
   controller_t::controller_t():
-      module_(alk_stream_quality_default_controller_module_create()) {
+      module_(alk_stream_quality_adaptive_controller_module_create()) {
     alk_stream_quality_decision_init(&last_decision_);
   }
 
   controller_t::~controller_t() {
-    alk_stream_quality_default_controller_module_destroy(module_);
+    alk_stream_quality_adaptive_controller_module_destroy(module_);
   }
 
   controller_t::controller_t(controller_t &&other) noexcept:
@@ -297,7 +297,7 @@ namespace stream_quality {
   controller_t &
   controller_t::operator=(controller_t &&other) noexcept {
     if (this != &other) {
-      alk_stream_quality_default_controller_module_destroy(module_);
+      alk_stream_quality_adaptive_controller_module_destroy(module_);
       module_ = std::exchange(other.module_, nullptr);
       last_decision_ = other.last_decision_;
     }
@@ -307,14 +307,14 @@ namespace stream_quality {
   void
   controller_t::configure(config_t config) {
     if (!module_) {
-      module_ = alk_stream_quality_default_controller_module_create();
+      module_ = alk_stream_quality_adaptive_controller_module_create();
     }
     AlkSessionComponentManifest manifest;
-    alk_stream_quality_default_controller_manifest(&manifest);
+    alk_stream_quality_adaptive_controller_manifest(&manifest);
     const auto alk_config = to_alk_config(config);
-    if (alk_stream_quality_default_controller_module_configure(module_, &alk_config) &&
-        alk_stream_quality_default_controller_module_start(module_)) {
-      alk_stream_quality_default_controller_module_get_decision(module_, &last_decision_);
+    if (alk_stream_quality_adaptive_controller_module_configure(module_, &alk_config) &&
+        alk_stream_quality_adaptive_controller_module_start(module_)) {
+      alk_stream_quality_adaptive_controller_module_get_decision(module_, &last_decision_);
       log_module_activation(manifest, config);
     }
   }
@@ -322,10 +322,10 @@ namespace stream_quality {
   action_t
   controller_t::on_feedback(const feedback_t &feedback) {
     if (!module_) {
-      module_ = alk_stream_quality_default_controller_module_create();
+      module_ = alk_stream_quality_adaptive_controller_module_create();
     }
     const auto alk_feedback = to_alk_feedback(feedback);
-    alk_stream_quality_default_controller_module_update(module_, &alk_feedback, &last_decision_);
+    alk_stream_quality_adaptive_controller_module_update(module_, &alk_feedback, &last_decision_);
     return from_alk_decision(last_decision_);
   }
 
