@@ -1977,19 +1977,10 @@ namespace session_runtime {
       return {};
     }
 
-    if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD &&
-        std::string_view { decision.reason ? decision.reason : "" } == "host-public-port-forward-lan-hairpin") {
-      return {
-        .bitrate_seed_kbps = 7000,
-        .fps_cap = std::min(requested_fps > 0 ? requested_fps : 60, 60),
-        .reason = "hairpin-safe",
-      };
-    }
-
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
       return {
-        .bitrate_seed_kbps = 9000,
-        .fps_cap = requested_fps >= 90 ? 60 : 0,
+        .bitrate_seed_kbps = 12000,
+        .fps_cap = 0,
         .reason = "router-port-forward-safe",
       };
     }
@@ -2011,11 +2002,13 @@ namespace session_runtime {
 
   inline bool
   runtime_profile_resolution_reconfig_enabled() {
-    // Runtime scale is now an explicit recovery backend: the control plane can
-    // request a temporary encoder output size without reconfiguring the display
-    // allocation. The video loop applies it as an encoder restart plus IDR, then
-    // stream-quality cooldown/hold windows prevent oscillation.
-    return true;
+    // Keep runtime encoder-size reconfiguration disabled by default. The 11:00
+    // baseline only used bitrate/FEC/IDR safety actions; enabling runtime scale
+    // caused rescue/profile decisions to oscillate encoder resolution and force
+    // repeated encoder restarts, which is far more visible than a short quality
+    // dip. Runtime scale can be reintroduced later behind a stronger hold/hysteresis
+    // gate or a true secondary rescue stream.
+    return false;
   }
 
   struct pacer_probe_plan_t {

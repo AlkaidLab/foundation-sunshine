@@ -317,7 +317,7 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemo
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
   EXPECT_EQ(policy.fps_cap, 0);
-  EXPECT_STREQ(policy.reason, "hairpin-fast");
+  EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
 TEST(SessionRuntimeTests, StartupPathPublicIdentityOnHostPublicInterfaceClassifiesHostDirect) {
@@ -1028,6 +1028,22 @@ TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateWithoutCappi
   };
 
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 100);
+
+  EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
+  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_STREQ(policy.reason, "router-port-forward-safe");
+}
+
+TEST(SessionRuntimeTests, HairpinPortForwardUsesElevenOClockRouterBaseline) {
+  session_runtime::startup_path_decision_t decision {
+    .route = session_runtime::transport_route_e::manual_public_port_forward,
+    .allow_lan_fast_start = false,
+    .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+    .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+    .reason = "host-public-port-forward-lan-hairpin",
+  };
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
 
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
   EXPECT_EQ(policy.fps_cap, 0);

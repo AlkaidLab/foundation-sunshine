@@ -5491,7 +5491,9 @@ namespace stream {
       ack.request_id = request.request_id;
       ack.accepted = accepted;
       ack.applied_scale_percent = std::clamp<std::uint32_t>(
-        request.target_scale_percent == 0 ? 100u : request.target_scale_percent,
+        session->last_applied_stream_quality_resolution_scale > 0 ?
+          static_cast<std::uint32_t>(session->last_applied_stream_quality_resolution_scale) :
+          100u,
         25u,
         100u);
       ack.applied_bitrate_kbps = session->last_applied_stream_quality_bitrate > 0 ?
