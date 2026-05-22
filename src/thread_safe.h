@@ -546,33 +546,41 @@ namespace safe {
     using queue_t = std::shared_ptr<post_t<queue_t<T>>>;
 
     template <class T>
-    event_t<T>
-    event(const std::string_view &id) {
-      std::lock_guard lg { mutex };
+	    event_t<T>
+	    event(const std::string_view &id) {
+	      std::lock_guard lg { mutex };
 
-      auto it = id_to_post.find(id);
-      if (it != std::end(id_to_post)) {
-        return lock<event_t<T>>(it->second);
-      }
+	      auto it = id_to_post.find(id);
+	      if (it != std::end(id_to_post)) {
+	        auto post = lock<event_t<T>>(it->second);
+	        if (post) {
+	          return post;
+	        }
+	        id_to_post.erase(it);
+	      }
 
-      auto post = std::make_shared<typename event_t<T>::element_type>(shared_from_this());
-      id_to_post.emplace(std::pair<std::string, std::weak_ptr<void>> { std::string { id }, post });
+	      auto post = std::make_shared<typename event_t<T>::element_type>(shared_from_this());
+	      id_to_post.emplace(std::pair<std::string, std::weak_ptr<void>> { std::string { id }, post });
 
       return post;
     }
 
     template <class T>
-    queue_t<T>
-    queue(const std::string_view &id) {
-      std::lock_guard lg { mutex };
+	    queue_t<T>
+	    queue(const std::string_view &id) {
+	      std::lock_guard lg { mutex };
 
-      auto it = id_to_post.find(id);
-      if (it != std::end(id_to_post)) {
-        return lock<queue_t<T>>(it->second);
-      }
+	      auto it = id_to_post.find(id);
+	      if (it != std::end(id_to_post)) {
+	        auto post = lock<queue_t<T>>(it->second);
+	        if (post) {
+	          return post;
+	        }
+	        id_to_post.erase(it);
+	      }
 
-      auto post = std::make_shared<typename queue_t<T>::element_type>(shared_from_this(), 32);
-      id_to_post.emplace(std::pair<std::string, std::weak_ptr<void>> { std::string { id }, post });
+	      auto post = std::make_shared<typename queue_t<T>::element_type>(shared_from_this(), 32);
+	      id_to_post.emplace(std::pair<std::string, std::weak_ptr<void>> { std::string { id }, post });
 
       return post;
     }

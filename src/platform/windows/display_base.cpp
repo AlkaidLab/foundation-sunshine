@@ -929,24 +929,26 @@ namespace platf::dxgi {
       }
     }
 
-    const auto requested_capture_frame_rate =
-      std::max(config.framerate,
-               config.qualityCeilingFramerate > 0 ? config.qualityCeilingFramerate : config.framerate);
-    client_frame_rate = std::max(1, requested_capture_frame_rate);
+    // Capture pacing must follow the active startup/runtime framerate.
+    // qualityCeilingFramerate is only a recovery ceiling for the adaptive
+    // controller; using it here makes remote-safe startup capture at the
+    // original high-FPS request (for example 150fps) even after RTSP and the
+    // encoder were intentionally seeded at a lower startup cadence.
+    client_frame_rate = std::max(1, config.framerate);
 
-    if (config.qualityCeilingFramerate > config.framerate) {
-      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
-      BOOST_LOG(info) << "Capture pacing using quality ceiling framerate: startup="
-                      << config.framerate << "fps ceiling="
-                      << config.qualityCeilingFramerate << "fps";
-    }
-    else if (config.frameRateNum > 0 && config.frameRateDen > 0) {
+    if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
       BOOST_LOG(info) << "Fractional framerate: " << config.frameRateNum << "/" << config.frameRateDen
                       << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
       client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
+    }
+
+    if (config.qualityCeilingFramerate > config.framerate) {
+      BOOST_LOG(info) << "Capture pacing using active framerate under quality ceiling: active="
+                      << config.framerate << "fps ceiling="
+                      << config.qualityCeilingFramerate << "fps";
     }
 
     if (display_refresh_rate.Numerator == 0 || display_refresh_rate.Denominator == 0) {

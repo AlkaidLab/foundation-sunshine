@@ -332,11 +332,42 @@ namespace stream::alkaidlab_session_bridge {
       details.identity_kind = map_transport_identity(session.transportPath.pathIdentityKind);
       details.startup_class = map_startup_class(session.transportPath.startupClass);
       details.priority = session.transportPath.priority;
+      details.flags = session.transportPath.flags;
+      details.stack_flags = session.transportPath.stackFlags;
       details.rtt_us = session.transportPath.rttUs;
       details.jitter_us = session.transportPath.jitterUs;
       details.packet_loss_ppm = session.transportPath.packetLossPpm;
+      details.candidate_type = session.transportPath.candidateType;
+      details.discovery_source = session.transportPath.discoverySource;
+      details.address_family = session.transportPath.addressFamily;
+      details.address_scope = session.transportPath.addressScope;
+      details.egress_kind = session.transportPath.egressKind;
+      details.underlay_kind = session.transportPath.underlayKind;
+      details.encapsulation = session.transportPath.encapsulation;
+      details.evidence_flags = session.transportPath.evidenceFlags;
+      details.identity_confidence_ppm = session.transportPath.identityConfidencePpm;
+      details.quality_confidence_ppm = session.transportPath.qualityConfidencePpm;
+      details.relay_mode = session.transportPath.relayMode != LI_SESSION_PATH_RELAY_MODE_NONE ?
+        session.transportPath.relayMode :
+        ((session.transportPath.flags & LI_SESSION_TRANSPORT_FLAG_RELAY) != 0 ?
+          ALK_TRANSPORT_RELAY_MODE_SELECTED :
+          ALK_TRANSPORT_RELAY_MODE_NONE);
+      details.p2p_state = session.transportPath.p2pState != LI_SESSION_PATH_P2P_STATE_NONE ?
+        session.transportPath.p2pState :
+        ((session.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_P2P) != 0 &&
+         (session.transportPath.evidenceFlags & LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED) != 0 ?
+          ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED :
+          ALK_TRANSPORT_P2P_NONE);
+      details.p2p_flags =
+        session.transportPath.p2pFlags != 0 ?
+          session.transportPath.p2pFlags :
+        (details.p2p_state == ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED ?
+          ALK_TRANSPORT_P2P_FLAG_FULL_PUNCH :
+          0u);
       details.reason_flags = session.transportPath.reasonFlags;
       details.risk_flags = session.transportPath.riskFlags;
+      details.local_port = session.transportPath.localPort;
+      details.remote_port = session.transportPath.remotePort;
       alk_session_copy_string(details.provider_id, sizeof(details.provider_id), session.transportPath.providerId);
       alk_session_copy_string(details.route_id, sizeof(details.route_id), session.transportPath.routeId);
       alk_session_copy_string(details.local_endpoint, sizeof(details.local_endpoint), session.transportPath.localEndpoint);
@@ -344,6 +375,7 @@ namespace stream::alkaidlab_session_bridge {
       alk_session_copy_string(details.observed_endpoint, sizeof(details.observed_endpoint), session.transportPath.observedEndpoint);
       alk_session_copy_string(details.host_local_endpoint, sizeof(details.host_local_endpoint), session.transportPath.hostLocalEndpoint);
       alk_session_copy_string(details.explanation_code, sizeof(details.explanation_code), session.transportPath.explanationCode);
+      alk_session_copy_string(details.relay_name, sizeof(details.relay_name), session.transportPath.relayName);
       alk_sunshine_adapter_set_active_path_details(&context, &details);
     }
 
@@ -441,11 +473,28 @@ namespace stream::alkaidlab_session_bridge {
       session.transportPath.pathIdentityKind = map_transport_identity_to_li(path.identity_kind);
       session.transportPath.startupClass = map_startup_class_to_li(path.startup_class);
       session.transportPath.priority = path.priority;
+      session.transportPath.flags = path.flags;
+      session.transportPath.stackFlags = path.stack_flags;
       session.transportPath.rttUs = path.rtt_us;
       session.transportPath.jitterUs = path.jitter_us;
       session.transportPath.packetLossPpm = path.packet_loss_ppm;
+      session.transportPath.candidateType = path.candidate_type;
+      session.transportPath.discoverySource = path.discovery_source;
+      session.transportPath.addressFamily = path.address_family;
+      session.transportPath.addressScope = path.address_scope;
+      session.transportPath.egressKind = path.egress_kind;
+      session.transportPath.underlayKind = path.underlay_kind;
+      session.transportPath.encapsulation = path.encapsulation;
+      session.transportPath.evidenceFlags = path.evidence_flags;
+      session.transportPath.identityConfidencePpm = path.identity_confidence_ppm;
+      session.transportPath.qualityConfidencePpm = path.quality_confidence_ppm;
+      session.transportPath.relayMode = path.relay_mode;
+      session.transportPath.p2pState = path.p2p_state;
+      session.transportPath.p2pFlags = path.p2p_flags;
       session.transportPath.reasonFlags = path.reason_flags;
       session.transportPath.riskFlags = path.risk_flags;
+      session.transportPath.localPort = path.local_port;
+      session.transportPath.remotePort = path.remote_port;
       alk_session_copy_string(session.transportPath.providerId,
                               sizeof(session.transportPath.providerId),
                               path.provider_id);
@@ -467,6 +516,9 @@ namespace stream::alkaidlab_session_bridge {
       alk_session_copy_string(session.transportPath.explanationCode,
                               sizeof(session.transportPath.explanationCode),
                               path.explanation_code);
+      alk_session_copy_string(session.transportPath.relayName,
+                              sizeof(session.transportPath.relayName),
+                              path.relay_name);
     }
 
     if (snapshot.lease_count > 0) {

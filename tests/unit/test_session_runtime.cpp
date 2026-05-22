@@ -316,7 +316,7 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemo
 
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_EQ(policy.fps_cap, 90);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
@@ -691,6 +691,9 @@ TEST(SessionRuntimeTests, SessionSnapshotAttributesCanCarryFullRuntimeStateOutsi
   EXPECT_NE(joined.find("x-ss-core.transportPath.discoverySource:relay-directory"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.egressKind:relay"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.encapsulation:relay"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.relayMode:selected"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.p2pState:none"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.p2pFlags:0x0"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.routeId:relay-quic"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.telemetry.pointerMode:relative"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.telemetry.cursorFlags:"), std::string::npos);
@@ -810,6 +813,8 @@ TEST(SessionRuntimeTests, SessionControlTelemetryCarriesCanonicalRuntimeBusRepor
   EXPECT_EQ(telemetry.transportPath.packetLossPpm, 35000U);
   EXPECT_NE(telemetry.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_QUIC, 0U);
   EXPECT_NE(telemetry.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_RELAY, 0U);
+  EXPECT_EQ(telemetry.transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
+  EXPECT_EQ(telemetry.transportPath.p2pState, LI_SESSION_PATH_P2P_STATE_NONE);
   EXPECT_LT(sizeof(telemetry), static_cast<std::size_t>(LI_SESSION_CONTROL_MAX_MESSAGE_SIZE));
 
   const auto parsed = session_runtime::parse_session_control_telemetry({
@@ -821,6 +826,7 @@ TEST(SessionRuntimeTests, SessionControlTelemetryCarriesCanonicalRuntimeBusRepor
   EXPECT_EQ(parsed->telemetry.inputAckLatencyUs, 2200U);
   EXPECT_EQ(parsed->transportPath.rttUs, 42000U);
   EXPECT_EQ(parsed->transportPath.candidateType, LI_SESSION_PATH_CANDIDATE_RELAY);
+  EXPECT_EQ(parsed->transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
 }
 
 TEST(SessionRuntimeTests, SessionControlCursorPlaneCarriesDisplayAndBitmapSemantics) {
@@ -1018,7 +1024,7 @@ TEST(SessionRuntimeTests, PacerProbePlansUseExponentialStartupAndAlrGain) {
   EXPECT_GT(plan.probe_budget_bytes, 0U);
 }
 
-TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateWithoutCappingCadence) {
+TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateAndCapsHighRefreshCadence) {
   session_runtime::startup_path_decision_t decision {
     .route = session_runtime::transport_route_e::manual_public_port_forward,
     .allow_lan_fast_start = false,
@@ -1030,7 +1036,7 @@ TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateWithoutCappi
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 100);
 
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_EQ(policy.fps_cap, 90);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
@@ -1046,7 +1052,7 @@ TEST(SessionRuntimeTests, HairpinPortForwardUsesElevenOClockRouterBaseline) {
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
 
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_EQ(policy.fps_cap, 90);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
@@ -1171,6 +1177,9 @@ TEST(SessionRuntimeTests, RuntimeExportsCanonicalLiSessionContract) {
   EXPECT_EQ(session.transportPath.candidateType, LI_SESSION_PATH_CANDIDATE_RELAY);
   EXPECT_EQ(session.transportPath.discoverySource, LI_SESSION_PATH_DISCOVERY_RELAY_DIRECTORY);
   EXPECT_EQ(session.transportPath.encapsulation, LI_SESSION_PATH_ENCAPSULATION_RELAY);
+  EXPECT_EQ(session.transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
+  EXPECT_EQ(session.transportPath.p2pState, LI_SESSION_PATH_P2P_STATE_NONE);
+  EXPECT_EQ(session.transportPath.p2pFlags, 0U);
   EXPECT_EQ(session.transportPath.rttUs, 38000U);
   EXPECT_EQ(session.transportPath.jitterUs, 8000U);
   EXPECT_EQ(session.transportPath.packetLossPpm, 12000U);

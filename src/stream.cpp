@@ -103,6 +103,7 @@ extern "C" {
 #define IDX_CURSOR_PLANE 21  // Cursor plane metadata (Sunshine protocol extension)
 #define IDX_SESSION 22  // Session control (Foundation protocol extension)
 #define IDX_RESCUE 23  // Rescue control (Alkaid protocol extension)
+#define HOST_RESCUE_CONTROL_ENABLED 0
 
 #ifndef LI_FF2_RESCUE_CONTROL
   #define LI_FF2_RESCUE_CONTROL (1ULL << 13)
@@ -906,6 +907,8 @@ namespace stream {
     std::chrono::steady_clock::time_point rescue_control_hold_until {};
     std::uint32_t rescue_control_requests { 0 };
     std::uint32_t coalesced_rescue_control_requests { 0 };
+    std::chrono::steady_clock::time_point last_control_path_rescue {};
+    std::chrono::steady_clock::time_point last_control_path_rescue_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_wait_log {};
     std::chrono::steady_clock::time_point last_gamepad_feedback_fail_log {};
     bool adaptive_controller_enabled { false };
@@ -3015,11 +3018,26 @@ namespace stream {
     return nullptr;
   }
 
-  static void
-  log_control_peer_diag(session_t *session, net::peer_t peer, const char *reason) {
+  struct control_peer_health_snapshot_t {
+    enet_uint32 last_recv_age { 0 };
+    enet_uint32 last_send_age { 0 };
+    enet_uint32 next_timeout_in { 0 };
+    std::uint32_t outbound_queue_depth { 0 };
+    std::uint32_t send_reliable_queue_depth { 0 };
+    std::uint32_t sent_reliable_queue_depth { 0 };
+    std::uint32_t packet_loss_ppm { 0 };
+    std::uint32_t waiting_queue_depth { 0 };
+    std::uint32_t reliable_in_transit { 0 };
+    AlkControlPathHealthDecision decision {};
+  };
+
+  static bool
+  capture_control_peer_health(session_t *session,
+                              net::peer_t peer,
+                              const char *reason,
+                              control_peer_health_snapshot_t &snapshot) {
     if (!session || !peer) {
-      BOOST_LOG(info) << "Control peer diag [" << reason << "] unavailable";
-      return;
+      return false;
     }
 
     const auto service_time = peer->host ? peer->host->serviceTime : 0;
@@ -3029,58 +3047,68 @@ namespace stream {
     const auto until = [service_time](enet_uint32 future) -> enet_uint32 {
       return future != 0 && future >= service_time ? future - service_time : 0;
     };
-    const auto last_recv_age = elapsed_since(peer->lastReceiveTime);
-    const auto last_send_age = elapsed_since(peer->lastSendTime);
-    const auto next_timeout_in = until(peer->nextTimeout);
-    const auto outbound_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingCommands));
-    const auto send_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingSendReliableCommands));
-    const auto sent_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->sentReliableCommands));
-    const auto packet_loss_ppm = static_cast<std::uint32_t>(
+    snapshot.last_recv_age = elapsed_since(peer->lastReceiveTime);
+    snapshot.last_send_age = elapsed_since(peer->lastSendTime);
+    snapshot.next_timeout_in = until(peer->nextTimeout);
+    snapshot.outbound_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingCommands));
+    snapshot.send_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingSendReliableCommands));
+    snapshot.sent_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->sentReliableCommands));
+    snapshot.packet_loss_ppm = static_cast<std::uint32_t>(
       std::min<double>(
         1000000.0,
         static_cast<double>(peer->packetLoss) /
           static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 1000000.0));
+    snapshot.waiting_queue_depth = static_cast<std::uint32_t>(
+      std::min<std::size_t>(peer->totalWaitingData, std::numeric_limits<std::uint32_t>::max()));
+    snapshot.reliable_in_transit = peer->reliableDataInTransit;
 
     AlkControlPathHealthSample health_sample;
     alk_control_path_health_sample_init(&health_sample);
     health_sample.rtt_ms = peer->roundTripTime;
     health_sample.rtt_variance_ms = peer->roundTripTimeVariance;
-    health_sample.packet_loss_ppm = packet_loss_ppm;
-    health_sample.last_recv_age_ms = last_recv_age;
-    health_sample.next_timeout_ms = next_timeout_in;
-    health_sample.outbound_queue_depth = outbound_queue_depth;
-    health_sample.send_reliable_queue_depth = send_reliable_queue_depth;
-    health_sample.sent_reliable_queue_depth = sent_reliable_queue_depth;
-    health_sample.waiting_queue_depth = static_cast<std::uint32_t>(
-      std::min<std::size_t>(peer->totalWaitingData, std::numeric_limits<std::uint32_t>::max()));
-    health_sample.reliable_in_transit = peer->reliableDataInTransit;
+    health_sample.packet_loss_ppm = snapshot.packet_loss_ppm;
+    health_sample.last_recv_age_ms = snapshot.last_recv_age;
+    health_sample.next_timeout_ms = snapshot.next_timeout_in;
+    health_sample.outbound_queue_depth = snapshot.outbound_queue_depth;
+    health_sample.send_reliable_queue_depth = snapshot.send_reliable_queue_depth;
+    health_sample.sent_reliable_queue_depth = snapshot.sent_reliable_queue_depth;
+    health_sample.waiting_queue_depth = snapshot.waiting_queue_depth;
+    health_sample.reliable_in_transit = snapshot.reliable_in_transit;
     health_sample.unexpected_disconnect = reason && std::string_view { reason }.find("disconnect") != std::string_view::npos;
     health_sample.reconnecting = session->state.load(std::memory_order_relaxed) == session::state_e::STARTING;
 
-    AlkControlPathHealthDecision health_decision;
-    alk_control_path_health_decision_init(&health_decision);
-    alk_control_path_health_evaluate(&health_sample, &health_decision);
+    alk_control_path_health_decision_init(&snapshot.decision);
+    return alk_control_path_health_evaluate(&health_sample, &snapshot.decision);
+  }
+
+  static void
+  log_control_peer_diag(session_t *session, net::peer_t peer, const char *reason) {
+    control_peer_health_snapshot_t health {};
+    if (!capture_control_peer_health(session, peer, reason, health)) {
+      BOOST_LOG(info) << "Control peer diag [" << reason << "] unavailable";
+      return;
+    }
 
     BOOST_LOG(info) << "Control peer diag [" << reason << "] runtime=" << session->identity.runtime_id
                     << " state=" << peer->state
-                    << " health=" << alk_control_path_health_state_name(health_decision.state)
-                    << " healthReason=0x" << std::hex << health_decision.reason_flags << std::dec
-                    << " healthPpm=" << health_decision.health_ppm
-                    << " rescue=" << (health_decision.rescue_recommended ? 1 : 0)
-                    << " reconnect=" << (health_decision.reconnect_recommended ? 1 : 0)
+                    << " health=" << alk_control_path_health_state_name(health.decision.state)
+                    << " healthReason=0x" << std::hex << health.decision.reason_flags << std::dec
+                    << " healthPpm=" << health.decision.health_ppm
+                    << " rescue=" << (health.decision.rescue_recommended ? 1 : 0)
+                    << " reconnect=" << (health.decision.reconnect_recommended ? 1 : 0)
                     << " rtt=" << peer->roundTripTime << "ms"
                     << " loss=" << (static_cast<double>(peer->packetLoss) /
                                     static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
                     << "%"
-                    << " lastRecvAge=" << last_recv_age << "ms"
-                    << " lastSendAge=" << last_send_age << "ms"
-                    << " nextTimeoutIn=" << next_timeout_in << "ms"
+                    << " lastRecvAge=" << health.last_recv_age << "ms"
+                    << " lastSendAge=" << health.last_send_age << "ms"
+                    << " nextTimeoutIn=" << health.next_timeout_in << "ms"
                     << " timeout(limit/min/max)=" << peer->timeoutLimit << "/"
                     << peer->timeoutMinimum << "/" << peer->timeoutMaximum
                     << " queues(out/sendRel/sentRel/wait/reliableTransit)="
-                    << outbound_queue_depth << "/"
-                    << send_reliable_queue_depth << "/"
-                    << sent_reliable_queue_depth << "/"
+                    << health.outbound_queue_depth << "/"
+                    << health.send_reliable_queue_depth << "/"
+                    << health.sent_reliable_queue_depth << "/"
                     << peer->totalWaitingData << "/"
                     << peer->reliableDataInTransit
                     << " rx=" << session->control.rx_events
@@ -3653,8 +3681,13 @@ namespace stream {
 
   bool
   client_supports_rescue_control(session_t *session) {
+#if HOST_RESCUE_CONTROL_ENABLED
     return session != nullptr &&
            (session->config.mlFeatureFlags2 & static_cast<std::uint64_t>(ML_FF2_RESCUE_CONTROL)) != 0;
+#else
+    (void)session;
+    return false;
+#endif
   }
 
   struct cursor_plane_sample_t {
@@ -4085,7 +4118,24 @@ namespace stream {
       return;
     }
 
+    if (!session->config.monitor.preferCursorPlane) {
+      update_host_cursor_suppression_for_session(session, false, "cursor-plane-not-active");
+      return;
+    }
+
     update_host_cursor_suppression_for_session(session, true, "cursor-plane-control-loop");
+
+    if (!session->control.session_control_welcome_sent) {
+      static constexpr auto kCursorPlaneDeferLogInterval = 1000ms;
+      auto &last = session->control.cursor_plane;
+      if (last.last_bitmap_retry.time_since_epoch().count() == 0 ||
+          now - last.last_bitmap_retry >= kCursorPlaneDeferLogInterval) {
+        last.last_bitmap_retry = now;
+        BOOST_LOG(info) << "Cursor plane update deferred until Session control welcome runtime="
+                        << session->identity.runtime_id;
+      }
+      return;
+    }
 
     auto sample = sample_host_cursor_plane(session);
     if (!sample.available) {
@@ -4449,6 +4499,68 @@ namespace stream {
                     << (target_scale < 100 && !runtime_scale_requested ?
                           " rescueScaleDeferred=runtime-scale-unavailable-or-unchanged" : "");
     return true;
+  }
+
+  static void
+  maybe_apply_control_path_health_rescue(session_t *session,
+                                         std::chrono::steady_clock::time_point now) {
+#if !HOST_RESCUE_CONTROL_ENABLED
+    (void)session;
+    (void)now;
+    return;
+#endif
+    if (!session || !session->control.peer || !session->adaptive_controller_enabled) {
+      return;
+    }
+
+    control_peer_health_snapshot_t health {};
+    if (!capture_control_peer_health(session, session->control.peer, "health-poll", health) ||
+        !health.decision.rescue_recommended) {
+      return;
+    }
+
+    if (session->rescue_control_hold_until.time_since_epoch().count() != 0 &&
+        now < session->rescue_control_hold_until) {
+      return;
+    }
+    if (session->last_control_path_rescue.time_since_epoch().count() != 0 &&
+        now - session->last_control_path_rescue < 2500ms) {
+      return;
+    }
+
+    AlkRescueControlSignal signal;
+    alk_rescue_control_signal_init(&signal);
+    signal.trigger_flags = ALK_RESCUE_TRIGGER_CONTROL_STALLING;
+    signal.control_path_state = health.decision.state;
+    signal.peer_supports_rescue = true;
+    signal.client_display_visible = true;
+    signal.now_ms = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+
+    AlkRescueControlDecision rescue_decision;
+    alk_rescue_control_decision_init(&rescue_decision);
+    if (!alk_rescue_control_evaluate(&signal, &rescue_decision) ||
+        rescue_decision.action == ALK_RESCUE_ACTION_NONE) {
+      return;
+    }
+
+    session->last_control_path_rescue = now;
+    const bool accepted = apply_rescue_control_request(session, rescue_decision.request);
+    if (accepted &&
+        (session->last_control_path_rescue_log.time_since_epoch().count() == 0 ||
+         now - session->last_control_path_rescue_log >= 1000ms)) {
+      session->last_control_path_rescue_log = now;
+      BOOST_LOG(info) << "Alkaid rescue-control local health rescue applied"
+                      << " runtime=" << session->identity.runtime_id
+                      << " health=" << alk_control_path_health_state_name(health.decision.state)
+                      << " healthReason=0x" << std::hex << health.decision.reason_flags << std::dec
+                      << " rtt=" << (session->control.peer ? session->control.peer->roundTripTime : 0) << "ms"
+                      << " lastRecvAge=" << health.last_recv_age << "ms"
+                      << " nextTimeoutIn=" << health.next_timeout_in << "ms"
+                      << " bitrate=" << session->last_applied_stream_quality_bitrate << " Kbps"
+                      << " fec=" << session->last_applied_stream_quality_fec << "%"
+                      << " source=control-path-health";
+    }
   }
 
   static std::uint32_t
@@ -6418,6 +6530,7 @@ namespace stream {
 
             maybe_send_cursor_plane_update(session, now);
             maybe_send_host_clipboard_update(session);
+            maybe_apply_control_path_health_rescue(session, now);
           }
 
           ++pos;
@@ -7671,11 +7784,17 @@ namespace stream {
     broadcast_shutdown_event->reset();
   }
 
-  int
-  recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
-    auto messages = std::make_shared<message_queue_t::element_type>(30);
-    av_session_id_t session_id = std::string { expected_payload };
-    const auto type_name = socket_name(type);
+	  int
+	  recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
+	    if (!session || !session->shutdown_event) {
+	      BOOST_LOG(error) << "Initial "sv << socket_name(type)
+	                       << " ping wait cannot start because session shutdown event is unavailable";
+	      return -1;
+	    }
+
+	    auto messages = std::make_shared<message_queue_t::element_type>(30);
+	    av_session_id_t session_id = std::string { expected_payload };
+	    const auto type_name = socket_name(type);
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID)) {
@@ -8065,11 +8184,33 @@ namespace stream {
       BOOST_LOG(debug) << "Session ended"sv;
     }
 
-    int
-    start(session_t &session, const std::string &addr_string) {
-      session.startup_path_evidence.peer_is_lan_or_pc = is_lan_or_pc_peer(addr_string);
-      session.startup_path_evidence.host_observed_peer_endpoint = addr_string;
-      session.startup_path_decision = session_runtime::classify_startup_path(session.startup_path_evidence);
+	    int
+	    start(session_t &session, const std::string &addr_string) {
+	      if (!session.shutdown_event) {
+	        if (!session.mail) {
+	          BOOST_LOG(error) << "Cannot start streaming session because session mail context is unavailable"
+	                           << " runtime=" << session.identity.runtime_id;
+	          session.state.store(state_e::STOPPED, std::memory_order_release);
+	          refresh_li_session(session, state_e::STOPPED);
+	          return -1;
+	        }
+
+	        session.shutdown_event = session.mail->event<bool>(mail::shutdown);
+	        if (!session.shutdown_event) {
+	          BOOST_LOG(error) << "Cannot start streaming session because shutdown event creation failed"
+	                           << " runtime=" << session.identity.runtime_id;
+	          session.state.store(state_e::STOPPED, std::memory_order_release);
+	          refresh_li_session(session, state_e::STOPPED);
+	          return -1;
+	        }
+
+	        BOOST_LOG(warning) << "Recovered missing session shutdown event before stream start"
+	                           << " runtime=" << session.identity.runtime_id;
+	      }
+
+	      session.startup_path_evidence.peer_is_lan_or_pc = is_lan_or_pc_peer(addr_string);
+	      session.startup_path_evidence.host_observed_peer_endpoint = addr_string;
+	      session.startup_path_decision = session_runtime::classify_startup_path(session.startup_path_evidence);
       session.active_transport_path = session_runtime::make_transport_path(session.startup_path_decision,
                                                                            session.startup_path_evidence);
       session.active_transport_path.state = session_runtime::transport_path_state_e::active;
@@ -8226,12 +8367,13 @@ namespace stream {
     }
 
     std::shared_ptr<session_t>
-    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session) {
-      auto session = std::make_shared<session_t>();
+	    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session) {
+	      auto session = std::make_shared<session_t>();
 
-      auto mail = std::make_shared<safe::mail_raw_t>();
+	      auto mail = std::make_shared<safe::mail_raw_t>();
+	      session->mail = mail;
 
-      session->shutdown_event = mail->event<bool>(mail::shutdown);
+	      session->shutdown_event = session->mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
       session->identity = launch_session.identity;
       session->identity.runtime_id = next_runtime_id.fetch_add(1, std::memory_order_relaxed);
@@ -8339,7 +8481,11 @@ namespace stream {
         .chroma_sampling_type = config.monitor.chromaSamplingType,
         .content_type = stream_quality_content_type_from_monitor(config.monitor.contentType),
       };
+      int current_stream_fps = std::max(config.monitor.framerate, 1);
       if (enhanced_feedback_client && !strong_lan_fast_start) {
+        const auto startup_policy =
+          session_runtime::startup_ceiling_policy_for_path(session->startup_path_decision,
+                                                           ceiling_fps);
         const int startup_encoding_limit = encoding_bitrate_from_total_video_budget(ceiling_total_bitrate,
                                                                                     fec_percentage);
         const int rtsp_seeded_bitrate = encoding_bitrate;
@@ -8349,14 +8495,33 @@ namespace stream {
         encoding_bitrate = std::clamp(startup_encoding_bitrate,
                                       1,
                                       std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
-        session->config.monitor.framerate = config.monitor.framerate;
-        session->config.monitor.frameRateNum = config.monitor.frameRateNum;
-        session->config.monitor.frameRateDen = config.monitor.frameRateDen;
+        int startup_fps = stream_quality::startup_fps_for_bitrate(startup_quality_stream,
+                                                                  encoding_bitrate);
+        if (startup_policy.fps_cap > 0) {
+          startup_fps = std::min(startup_fps, startup_policy.fps_cap);
+        }
+        if (startup_fps > 0 && startup_fps < current_stream_fps) {
+          current_stream_fps = startup_fps;
+          session->config.monitor.framerate = current_stream_fps;
+          session->config.monitor.frameRateNum = current_stream_fps;
+          session->config.monitor.frameRateDen = 1;
+          BOOST_LOG(info) << "Remote-safe startup cadence applied runtime="
+                          << session->identity.runtime_id
+                          << " startupFps=" << current_stream_fps
+                          << " ceilingFps=" << ceiling_fps
+                          << " pathReason=" << session->startup_path_decision.reason
+                          << " startupPolicy=" << startup_policy.reason;
+        }
+        else {
+          session->config.monitor.framerate = config.monitor.framerate;
+          session->config.monitor.frameRateNum = config.monitor.frameRateNum;
+          session->config.monitor.frameRateDen = config.monitor.frameRateDen;
+        }
         if (rtsp_seeded_bitrate > 0 && startup_encoding_bitrate < computed_startup_bitrate) {
           BOOST_LOG(info) << "Remote-safe startup seed preserved runtime=" << session->identity.runtime_id
                           << " rtspSeed=" << rtsp_seeded_bitrate << " Kbps"
                           << " startup=" << encoding_bitrate << " Kbps"
-                          << " fps=" << config.monitor.framerate
+                          << " fps=" << current_stream_fps
                           << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps";
         }
       }
@@ -8371,7 +8536,7 @@ namespace stream {
           .startup_bitrate_kbps = encoding_bitrate,
           .ceiling_total_bitrate_kbps = ceiling_total_bitrate,
           .baseline_fps = ceiling_fps,
-          .startup_fps = config.monitor.framerate,
+          .startup_fps = current_stream_fps,
           .frame_width = config.monitor.width,
           .frame_height = config.monitor.height,
           .chroma_sampling_type = config.monitor.chromaSamplingType,
@@ -8384,7 +8549,7 @@ namespace stream {
       }
       session->last_applied_stream_quality_bitrate = encoding_bitrate;
       session->last_applied_stream_quality_fec = fec_percentage;
-      session->last_applied_stream_quality_fps = config.monitor.framerate;
+      session->last_applied_stream_quality_fps = current_stream_fps;
       session->last_applied_stream_quality_resolution_scale = 100;
       session->last_applied_stream_quality_chroma_sampling_type = config.monitor.chromaSamplingType;
       session->last_applied_stream_quality_dynamic_range = config.monitor.dynamicRange;
@@ -8403,10 +8568,10 @@ namespace stream {
                       << " total=" << session->current_total_bitrate.load(std::memory_order_relaxed) << " Kbps"
                       << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps"
                       << " userQuality=" << user_quality_bitrate << " Kbps"
-                      << " idealDemand=" << ideal_demand_bitrate << " Kbps"
-                      << " fpsNeeded=" << fps_needed_bitrate << " Kbps"
+	                      << " idealDemand=" << ideal_demand_bitrate << " Kbps"
+	                      << " fpsNeeded=" << fps_needed_bitrate << " Kbps"
 	                      << " ceilingTotal=" << ceiling_total_bitrate << " Kbps"
-	                      << " fps=" << config.monitor.framerate
+	                      << " fps=" << current_stream_fps
 	                      << " ceilingFps=" << ceiling_fps
 	                      << " fec=" << fec_percentage << "%"
 	                      << " maxFec=" << max_fec_percentage << "%"
@@ -8494,10 +8659,8 @@ namespace stream {
                          std::to_string(launch_session.appid),
                          launch_session.client_name);
 
-      session->mail = std::move(mail);
-
-      return session;
-    }
+	      return session;
+	    }
 
     static bool
     apply_dynamic_param_to_session(session_t *session_p, const video::dynamic_param_t &param, const std::string &target_label) {
