@@ -1321,29 +1321,6 @@ namespace session_runtime {
     return flags;
   }
 
-  inline std::uint32_t
-  li_path_relay_mode(const transport_path_t &path) {
-    if ((li_transport_flags(path) & LI_SESSION_TRANSPORT_FLAG_RELAY) == 0) {
-      return LI_SESSION_PATH_RELAY_MODE_NONE;
-    }
-    return LI_SESSION_PATH_RELAY_MODE_SELECTED;
-  }
-
-  inline std::uint32_t
-  li_path_p2p_state(const transport_path_t &path) {
-    if (path.route != transport_route_e::ice_stun_p2p) {
-      return LI_SESSION_PATH_P2P_STATE_NONE;
-    }
-    return LI_SESSION_PATH_P2P_STATE_PUNCH_SUCCEEDED;
-  }
-
-  inline std::uint32_t
-  li_path_p2p_flags(const transport_path_t &path) {
-    return li_path_p2p_state(path) == LI_SESSION_PATH_P2P_STATE_PUNCH_SUCCEEDED ?
-             LI_SESSION_PATH_P2P_FLAG_FULL_PUNCH :
-             0U;
-  }
-
   enum class ice_candidate_type_e : std::uint8_t {
     host,
     server_reflexive,
@@ -1777,36 +1754,6 @@ namespace session_runtime {
   }
 
   inline std::string_view
-  li_path_relay_mode_name(std::uint32_t relay_mode) {
-    switch (relay_mode) {
-      case LI_SESSION_PATH_RELAY_MODE_FORCED:
-        return "forced";
-      case LI_SESSION_PATH_RELAY_MODE_FALLBACK:
-        return "fallback";
-      case LI_SESSION_PATH_RELAY_MODE_SELECTED:
-        return "selected";
-      case LI_SESSION_PATH_RELAY_MODE_NONE:
-      default:
-        return "none";
-    }
-  }
-
-  inline std::string_view
-  li_path_p2p_state_name(std::uint32_t p2p_state) {
-    switch (p2p_state) {
-      case LI_SESSION_PATH_P2P_STATE_PROBING:
-        return "probing";
-      case LI_SESSION_PATH_P2P_STATE_PUNCH_SUCCEEDED:
-        return "punch-succeeded";
-      case LI_SESSION_PATH_P2P_STATE_PUNCH_FAILED:
-        return "punch-failed";
-      case LI_SESSION_PATH_P2P_STATE_NONE:
-      default:
-        return "none";
-    }
-  }
-
-  inline std::string_view
   li_path_identity_kind_name(std::uint32_t kind) {
     switch (kind) {
       case LI_SESSION_PATH_IDENTITY_TRUE_LAN:
@@ -1894,9 +1841,6 @@ namespace session_runtime {
       "x-ss-core.transportPath.qualityConfidencePpm:" + std::to_string(session.transportPath.qualityConfidencePpm),
       "x-ss-core.transportPath.pathIdentityKind:" + std::string { li_path_identity_kind_name(session.transportPath.pathIdentityKind) },
       "x-ss-core.transportPath.startupClass:" + std::string { li_startup_class_name(session.transportPath.startupClass) },
-      "x-ss-core.transportPath.relayMode:" + std::string { li_path_relay_mode_name(session.transportPath.relayMode) },
-      "x-ss-core.transportPath.p2pState:" + std::string { li_path_p2p_state_name(session.transportPath.p2pState) },
-      "x-ss-core.transportPath.p2pFlags:" + to_hex_string(session.transportPath.p2pFlags),
       "x-ss-core.transportPath.reasonFlags:" + to_hex_string(session.transportPath.reasonFlags),
       "x-ss-core.transportPath.riskFlags:" + to_hex_string(session.transportPath.riskFlags),
       "x-ss-core.transportPath.routeId:" + std::string { session.transportPath.routeId },
@@ -2507,9 +2451,6 @@ namespace session_runtime {
       active_path.score.rtt_ms != 0 || active_path.score.loss_ppm != 0 ? 800000U : 0U;
     session.transportPath.pathIdentityKind = active_path.path_identity_kind;
     session.transportPath.startupClass = active_path.startup_class;
-    session.transportPath.relayMode = li_path_relay_mode(active_path);
-    session.transportPath.p2pState = li_path_p2p_state(active_path);
-    session.transportPath.p2pFlags = li_path_p2p_flags(active_path);
     session.transportPath.reasonFlags = active_path.reason_flags;
     session.transportPath.riskFlags = active_path.risk_flags;
     session.transportPath.rttUs = active_path.score.rtt_ms * 1000U;

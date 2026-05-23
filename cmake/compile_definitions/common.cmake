@@ -169,6 +169,7 @@ include_directories("${CMAKE_SOURCE_DIR}")
 set(ALKAIDLAB_SESSION_CORE_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core" CACHE PATH "Path to alkaidlab-session-core")
 set(ALKAIDLAB_SESSION_SDK_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk" CACHE PATH "Path to alkaidlab-session-sdk")
 set(ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter" CACHE PATH "Path to alkaidlab-sunshine-session-adapter")
+set(ALKAIDLAB_PLATFORM_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-platform" CACHE PATH "Path to alkaidlab-platform")
 set(ALKAIDLAB_ZAKO_INPUT_PATH "${CMAKE_SOURCE_DIR}/../zako-input" CACHE PATH "Path to zako-input")
 
 if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session_core.h" AND
@@ -180,6 +181,7 @@ if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
    EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/rescue_wire_codec.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include/alkaidlab/microphone_uplink/microphone_uplink.h" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
@@ -191,12 +193,15 @@ if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/control_path_health.cpp"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/rescue_control.cpp"
             "${ALKAIDLAB_SESSION_SDK_PATH}/src/session_runtime.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
             "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)
     include_directories(
             "${ALKAIDLAB_SESSION_CORE_PATH}/include"
             "${ALKAIDLAB_SESSION_SDK_PATH}/c/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include"
             "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
 else()

@@ -46,6 +46,7 @@ extern "C" {
 
 #include "config.h"
 #include "alkaidlab_session_bridge.h"
+#include "alkaidlab/microphone_uplink/microphone_uplink.h"
 #include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
 #include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
@@ -483,6 +484,16 @@ namespace stream {
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
   using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t>>>;
 
+  struct broadcast_ctx_t;
+
+  int
+  write_microphone_frame_to_backend(const std::uint8_t *data,
+                                    std::size_t size,
+                                    std::uint16_t sequence_number);
+
+  bool
+  microphone_module_write_remote_frame(void *user_data, const AlkMicrophoneUplinkFrame *frame);
+
   // return bytes written on success
   // return -1 on error
   static inline int
@@ -717,6 +728,9 @@ namespace stream {
     feature_lease_registry_t feature_leases;
     host_cursor_suppression_manager_t host_cursor_suppression;
     resource_allocator_t resources;
+
+    AlkMicrophoneUplink *microphone_uplink = nullptr;
+    bool microphone_module_active = false;
   };
 
   struct session_t {
@@ -976,6 +990,40 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  int
+  write_microphone_frame_to_backend(const std::uint8_t *data,
+                                    std::size_t size,
+                                    std::uint16_t sequence_number) {
+    return audio::write_mic_data(data, size, sequence_number);
+  }
+
+  bool
+  microphone_module_write_remote_frame(void *user_data, const AlkMicrophoneUplinkFrame *frame) {
+    (void)user_data;
+    if (!frame || !frame->data || frame->length == 0 || frame->length > std::numeric_limits<std::uint16_t>::max()) {
+      return false;
+    }
+
+    return write_microphone_frame_to_backend(reinterpret_cast<const std::uint8_t *>(frame->data),
+                                             frame->length,
+                                             static_cast<std::uint16_t>(frame->sequence & 0xffffu)) >= 0;
+  }
+
+  int
+  write_microphone_frame_via_module_or_backend(broadcast_ctx_t &ctx,
+                                               const std::uint8_t *data,
+                                               std::size_t size,
+                                               std::uint16_t sequence_number) {
+    if (ctx.microphone_module_active && ctx.microphone_uplink) {
+      return alk_microphone_uplink_on_remote_opus(ctx.microphone_uplink,
+                                                  data,
+                                                  size,
+                                                  sequence_number) ? 0 : -1;
+    }
+
+    return write_microphone_frame_to_backend(data, size, sequence_number);
+  }
 
   static bool
   is_lan_or_pc_peer(std::string_view address) {
@@ -2741,6 +2789,52 @@ namespace stream {
     return true;
   }
 
+  bool
+  ensure_microphone_uplink_module(broadcast_ctx_t &ctx) {
+    if (ctx.microphone_module_active && ctx.microphone_uplink) {
+      return true;
+    }
+
+    auto *uplink = alk_microphone_uplink_create();
+    if (!uplink) {
+      return false;
+    }
+
+    AlkMicrophoneUplinkConfig config;
+    alk_microphone_uplink_config_init(&config);
+    config.role = ALK_SESSION_ROLE_HOST;
+    config.backend_mode = ALK_MICROPHONE_UPLINK_BACKEND_DIRECT_PLATFORM;
+
+    AlkMicrophoneUplinkCallbacks callbacks;
+    alk_microphone_uplink_callbacks_init(&callbacks);
+    callbacks.user_data = &ctx;
+    callbacks.write_remote_frame = microphone_module_write_remote_frame;
+
+    if (!alk_microphone_uplink_init(uplink, &config, &callbacks)) {
+      alk_microphone_uplink_destroy(uplink);
+      return false;
+    }
+
+    ctx.microphone_uplink = uplink;
+    ctx.microphone_module_active = true;
+    BOOST_LOG(info) << "Alkaid runtime marker: using Alkaid SDK microphone-uplink module"
+                    << " slot=" << ALK_MICROPHONE_UPLINK_SLOT_ID
+                    << " module=" << ALK_MICROPHONE_UPLINK_MODULE_ID
+                    << " contract=" << ALK_MICROPHONE_UPLINK_CONTRACT_ID
+                    << " microphoneModuleActive=1"
+                    << " adapterCodecActive=1";
+    return true;
+  }
+
+  void
+  destroy_microphone_uplink_module(broadcast_ctx_t &ctx) {
+    if (ctx.microphone_uplink) {
+      alk_microphone_uplink_destroy(ctx.microphone_uplink);
+      ctx.microphone_uplink = nullptr;
+    }
+    ctx.microphone_module_active = false;
+  }
+
   /**
    * @brief 重置麦克风加密状态（清除所有客户端的加密上下文）。
    * 在所有麦克风会话结束或 broadcast 结束时调用。
@@ -2893,6 +2987,10 @@ namespace stream {
                     << ": Microphone socket enabled runtime=" << session.identity.runtime_id
                     << " micSessions=" << ctx.mic_sessions_count.load()
                     << " socketOpen=" << ctx.mic_sock.is_open();
+
+    if (!ensure_microphone_uplink_module(ctx)) {
+      BOOST_LOG(warning) << "Alkaid microphone-uplink module unavailable; microphone receive path will use adapter-only fallback";
+    }
 
     return activate_mic_owner_for_session(session);
   }
@@ -5116,9 +5214,10 @@ namespace stream {
         return;
       }
 
-      const int write_result = audio::write_mic_data(reinterpret_cast<const std::uint8_t *>(opus),
-                                                     opus_size,
-                                                     sequence_number);
+      const int write_result = write_microphone_frame_via_module_or_backend(*session->broadcast_ref.get(),
+                                                                            reinterpret_cast<const std::uint8_t *>(opus),
+                                                                            opus_size,
+                                                                            sequence_number);
       if (write_result >= 0) {
         stats.write_ok++;
         log_control_mic_stats(session, stats, "control-write-ok");
@@ -6751,8 +6850,11 @@ namespace stream {
             }
           }
 
-          // 解密成功且数据看起来有效
-          const int write_result = audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
+          // 解密成功且数据看起来有效，交给 microphone-uplink module 处理。
+          const int write_result = write_microphone_frame_via_module_or_backend(ctx,
+                                                                                plaintext.data(),
+                                                                                plaintext.size(),
+                                                                                sequence_number);
           if (write_result >= 0) {
             stats.write_success++;
             maybe_log_mic_stats("write-ok-encrypted");
@@ -6774,10 +6876,13 @@ namespace stream {
         return;
       }
 
-      // 未加密数据或加密未启用，直接处理
+      // 未加密数据或加密未启用，交给 microphone-uplink module 处理，模块不可用时走原 backend。
       // 也要统计未加密数据
       stats.decrypt_success++;  // 明文数据算作"成功"
-      const int write_result = audio::write_mic_data(audio_data, data_size, sequence_number);
+      const int write_result = write_microphone_frame_via_module_or_backend(ctx,
+                                                                            audio_data,
+                                                                            data_size,
+                                                                            sequence_number);
       if (write_result >= 0) {
         stats.write_success++;
         maybe_log_mic_stats("write-ok-plaintext");
@@ -7008,6 +7113,7 @@ namespace stream {
     if (mic_device_initialized) {
       audio::release_mic_redirect_device();
     }
+    destroy_microphone_uplink_module(ctx);
 
     // 打印所有客户端的麦克风解密统计
     if (!client_stats.empty()) {
@@ -7762,6 +7868,7 @@ namespace stream {
       ctx.mic_sessions_count.store(0);
       
       reset_mic_encryption(ctx);
+      destroy_microphone_uplink_module(ctx);
       
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }

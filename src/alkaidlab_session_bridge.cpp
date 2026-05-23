@@ -347,23 +347,17 @@ namespace stream::alkaidlab_session_bridge {
       details.evidence_flags = session.transportPath.evidenceFlags;
       details.identity_confidence_ppm = session.transportPath.identityConfidencePpm;
       details.quality_confidence_ppm = session.transportPath.qualityConfidencePpm;
-      details.relay_mode = session.transportPath.relayMode != LI_SESSION_PATH_RELAY_MODE_NONE ?
-        session.transportPath.relayMode :
-        ((session.transportPath.flags & LI_SESSION_TRANSPORT_FLAG_RELAY) != 0 ?
-          ALK_TRANSPORT_RELAY_MODE_SELECTED :
-          ALK_TRANSPORT_RELAY_MODE_NONE);
-      details.p2p_state = session.transportPath.p2pState != LI_SESSION_PATH_P2P_STATE_NONE ?
-        session.transportPath.p2pState :
-        ((session.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_P2P) != 0 &&
-         (session.transportPath.evidenceFlags & LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED) != 0 ?
+      details.relay_mode = (session.transportPath.flags & LI_SESSION_TRANSPORT_FLAG_RELAY) != 0 ?
+                             ALK_TRANSPORT_RELAY_MODE_SELECTED :
+                             ALK_TRANSPORT_RELAY_MODE_NONE;
+      details.p2p_state =
+        (session.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_P2P) != 0 &&
+        (session.transportPath.evidenceFlags & LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED) != 0 ?
           ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED :
-          ALK_TRANSPORT_P2P_NONE);
-      details.p2p_flags =
-        session.transportPath.p2pFlags != 0 ?
-          session.transportPath.p2pFlags :
-        (details.p2p_state == ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED ?
-          ALK_TRANSPORT_P2P_FLAG_FULL_PUNCH :
-          0u);
+          ALK_TRANSPORT_P2P_NONE;
+      details.p2p_flags = details.p2p_state == ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED ?
+                            ALK_TRANSPORT_P2P_FLAG_FULL_PUNCH :
+                            0u;
       details.reason_flags = session.transportPath.reasonFlags;
       details.risk_flags = session.transportPath.riskFlags;
       details.local_port = session.transportPath.localPort;
@@ -488,9 +482,6 @@ namespace stream::alkaidlab_session_bridge {
       session.transportPath.evidenceFlags = path.evidence_flags;
       session.transportPath.identityConfidencePpm = path.identity_confidence_ppm;
       session.transportPath.qualityConfidencePpm = path.quality_confidence_ppm;
-      session.transportPath.relayMode = path.relay_mode;
-      session.transportPath.p2pState = path.p2p_state;
-      session.transportPath.p2pFlags = path.p2p_flags;
       session.transportPath.reasonFlags = path.reason_flags;
       session.transportPath.riskFlags = path.risk_flags;
       session.transportPath.localPort = path.local_port;
