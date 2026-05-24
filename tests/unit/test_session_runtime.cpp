@@ -813,8 +813,6 @@ TEST(SessionRuntimeTests, SessionControlTelemetryCarriesCanonicalRuntimeBusRepor
   EXPECT_EQ(telemetry.transportPath.packetLossPpm, 35000U);
   EXPECT_NE(telemetry.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_QUIC, 0U);
   EXPECT_NE(telemetry.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_RELAY, 0U);
-  EXPECT_EQ(telemetry.transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
-  EXPECT_EQ(telemetry.transportPath.p2pState, LI_SESSION_PATH_P2P_STATE_NONE);
   EXPECT_LT(sizeof(telemetry), static_cast<std::size_t>(LI_SESSION_CONTROL_MAX_MESSAGE_SIZE));
 
   const auto parsed = session_runtime::parse_session_control_telemetry({
@@ -826,7 +824,6 @@ TEST(SessionRuntimeTests, SessionControlTelemetryCarriesCanonicalRuntimeBusRepor
   EXPECT_EQ(parsed->telemetry.inputAckLatencyUs, 2200U);
   EXPECT_EQ(parsed->transportPath.rttUs, 42000U);
   EXPECT_EQ(parsed->transportPath.candidateType, LI_SESSION_PATH_CANDIDATE_RELAY);
-  EXPECT_EQ(parsed->transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
 }
 
 TEST(SessionRuntimeTests, SessionControlCursorPlaneCarriesDisplayAndBitmapSemantics) {
@@ -1177,9 +1174,6 @@ TEST(SessionRuntimeTests, RuntimeExportsCanonicalLiSessionContract) {
   EXPECT_EQ(session.transportPath.candidateType, LI_SESSION_PATH_CANDIDATE_RELAY);
   EXPECT_EQ(session.transportPath.discoverySource, LI_SESSION_PATH_DISCOVERY_RELAY_DIRECTORY);
   EXPECT_EQ(session.transportPath.encapsulation, LI_SESSION_PATH_ENCAPSULATION_RELAY);
-  EXPECT_EQ(session.transportPath.relayMode, LI_SESSION_PATH_RELAY_MODE_SELECTED);
-  EXPECT_EQ(session.transportPath.p2pState, LI_SESSION_PATH_P2P_STATE_NONE);
-  EXPECT_EQ(session.transportPath.p2pFlags, 0U);
   EXPECT_EQ(session.transportPath.rttUs, 38000U);
   EXPECT_EQ(session.transportPath.jitterUs, 8000U);
   EXPECT_EQ(session.transportPath.packetLossPpm, 12000U);

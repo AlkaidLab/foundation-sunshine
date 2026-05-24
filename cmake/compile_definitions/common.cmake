@@ -166,46 +166,59 @@ list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_ISSUE_URL="${SUNSHINE_PUBLIS
 
 include_directories("${CMAKE_SOURCE_DIR}")
 
-set(ALKAIDLAB_SESSION_CORE_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core" CACHE PATH "Path to alkaidlab-session-core")
-set(ALKAIDLAB_SESSION_SDK_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk" CACHE PATH "Path to alkaidlab-session-sdk")
-set(ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter" CACHE PATH "Path to alkaidlab-sunshine-session-adapter")
 set(ALKAIDLAB_PLATFORM_PATH "${CMAKE_SOURCE_DIR}/../alkaidlab-platform" CACHE PATH "Path to alkaidlab-platform")
 set(ALKAIDLAB_ZAKO_INPUT_PATH "${CMAKE_SOURCE_DIR}/../zako-input" CACHE PATH "Path to zako-input")
 
-if(EXISTS "${ALKAIDLAB_SESSION_CORE_PATH}/include/alkaidlab/session_core/session_core.h" AND
-   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/session_sdk/session_sdk.h" AND
-   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/modules/stream_quality/adaptive_controller.h" AND
-   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/control_path_health/control_path_health.h" AND
-   EXISTS "${ALKAIDLAB_SESSION_SDK_PATH}/c/include/alkaidlab/rescue_control/rescue_control.h" AND
-   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
-   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
-   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
-   EXISTS "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include/alkaidlab/sunshine_adapter/rescue_wire_codec.h" AND
+if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core/session_core.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/session_sdk/session_sdk.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/modules/stream_quality/adaptive_controller.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/control_path_health/control_path_health.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/rescue_control/rescue_control.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/rescue_wire_codec.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/include/alkaidlab/clipboard_sync/clipboard_sync.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/backends/win32/include/alkaidlab/clipboard_sync/win32_clipboard_backend.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include/alkaidlab/microphone_uplink/microphone_uplink.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/include/alkaidlab/microphone_uplink/windows_wasapi_sink_backend.h" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp"
-            "${ALKAIDLAB_SESSION_CORE_PATH}/src/session_core.c"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_control_internal.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/stream_quality_adaptive_module.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/control_path_health.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/rescue_control.cpp"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/src/session_runtime.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/src/session_core.c"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_control.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_control_internal.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_adaptive_module.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/control_path_health.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/rescue_control.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/src/clipboard_sync.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/session_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
-            "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/src/sunshine_session_adapter.c"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
-    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_SESSION_CORE=1)
+    if(WIN32)
+        list(APPEND SUNSHINE_TARGET_FILES
+                "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/backends/win32/src/win32_clipboard_backend.cpp"
+                "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/src/windows_wasapi_sink_backend.cpp")
+    endif()
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_PLATFORM_CORE=1)
     include_directories(
-            "${ALKAIDLAB_SESSION_CORE_PATH}/include"
-            "${ALKAIDLAB_SESSION_SDK_PATH}/c/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include"
-            "${ALKAIDLAB_SUNSHINE_SESSION_ADAPTER_PATH}/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
+    if(WIN32)
+        include_directories(
+                "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/backends/win32/include"
+                "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/include")
+    endif()
 else()
-    message(WARNING "AlkaidLab Session sibling repositories were not found; building without new Session Core/SDK/Adapter/Module integration")
+    message(WARNING "AlkaidLab Platform was not found; building without platform Core/SDK/Adapter/Module integration")
 endif()
 
 include_directories(

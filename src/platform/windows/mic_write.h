@@ -15,8 +15,14 @@
 #include <mmdeviceapi.h>
 #include <windows.h>
 
+// AlkaidLab backend provider
+#include <alkaidlab/microphone_uplink/windows_wasapi_sink_backend.h>
+
 // Forward declarations
 struct OpusDecoder;
+namespace alkaidlab::backend::microphone_windows_wasapi_sink {
+  class backend_t;
+}
 
 namespace platf::audio {
   
@@ -206,7 +212,9 @@ namespace platf::audio {
     uint64_t total_packets = 0;
     uint64_t packet_loss_count = 0;
     uint64_t fec_recovered_packets = 0;
+
+    std::unique_ptr<alkaidlab::backend::microphone_windows_wasapi_sink::backend_t> backend;
   };
 
   extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
-}  // namespace platf::audio 
+}  // namespace platf::audio

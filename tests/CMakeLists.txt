@@ -99,14 +99,15 @@ add_executable(stream_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Session.c
         ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp
         ${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp
-        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/src/session_core.c
-        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control.cpp
-        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_control_internal.cpp
-        ${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/src/stream_quality_adaptive_module.cpp)
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/src/session_core.c
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_control.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_control_internal.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_adaptive_module.cpp)
 target_include_directories(stream_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/include"
-        "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/c/include")
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/include")
 target_link_libraries(stream_controller_unit_tests
         gtest_main)
 target_compile_definitions(stream_controller_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
@@ -116,20 +117,20 @@ set_target_properties(stream_controller_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME stream_controller_unit_tests COMMAND stream_controller_unit_tests)
 
 if (EXISTS "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp" AND
-    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/include/alkaidlab/session_core/session_core.h" AND
-    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/c/include/alkaidlab/session_sdk/session_sdk.h" AND
-    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h")
+    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include/alkaidlab/session_core/session_core.h" AND
+    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/include/alkaidlab/session_sdk/session_sdk.h" AND
+    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h")
     add_executable(alkaid_session_bridge_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_alkaidlab_session_bridge.cpp
             ${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp
-            ${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/src/session_core.c
-            ${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter/src/sunshine_session_adapter.c
+            ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/src/session_core.c
+            ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/src/sunshine_session_adapter.c
             ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Session.c)
     target_include_directories(alkaid_session_bridge_unit_tests PRIVATE
             "${CMAKE_SOURCE_DIR}"
-            "${CMAKE_SOURCE_DIR}/../alkaidlab-session-core/include"
-            "${CMAKE_SOURCE_DIR}/../alkaidlab-session-sdk/c/include"
-            "${CMAKE_SOURCE_DIR}/../alkaidlab-sunshine-session-adapter/include")
+            "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include"
+            "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/include"
+            "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/include")
     target_link_libraries(alkaid_session_bridge_unit_tests
             gtest_main)
     target_compile_definitions(alkaid_session_bridge_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})

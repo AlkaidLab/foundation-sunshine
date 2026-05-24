@@ -13,6 +13,7 @@
 #include <future>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <queue>
 #include <sstream>
 #include <set>
@@ -46,6 +47,7 @@ extern "C" {
 
 #include "config.h"
 #include "alkaidlab_session_bridge.h"
+#include "alkaidlab/clipboard_sync/clipboard_sync.h"
 #include "alkaidlab/microphone_uplink/microphone_uplink.h"
 #include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
@@ -79,7 +81,12 @@ extern "C" {
   #endif
   #include <windows.h>
   #include "platform/windows/clipboard.h"
+  static constexpr const char *kSunshineClipboardBackendProviderId = platf::clipboard::backend_provider_id;
+#else
+  static constexpr const char kSunshineClipboardBackendProviderId[] = "win32";
 #endif
+
+static constexpr const char kSunshineMicrophoneBackendProviderId[] = "windows-wasapi-sink";
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -154,6 +161,15 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace stream {
+  using clipboard_sync_ptr = std::unique_ptr<AlkClipboardSync, void (*)(AlkClipboardSync *)>;
+
+  enum class clipboard_read_status_e : std::uint8_t {
+    none = 0,
+    item = 1,
+    skipped = 2,
+    failed = 3,
+  };
+
   static std::atomic<std::uint64_t> next_runtime_id { 1 };
 
   enum class socket_e : int {
@@ -860,21 +876,12 @@ namespace stream {
         bool bitmap_sent { false };
       } cursor_plane;
       struct {
-        bool bound { false };
-        bool transfer_active { false };
-        uint8_t item_type { LI_CLIPBOARD_ITEM_TYPE_NONE };
-        uint8_t transfer_flags { 0 };
-        std::uint64_t item_id { 0 };
-        std::uint64_t content_hash { 0 };
-        std::uint32_t total_length { 0 };
-        std::uint32_t received_length { 0 };
-        std::string mime_type;
-        std::string name;
-        std::vector<uint8_t> data;
         std::uint32_t last_host_sequence { 0 };
-        std::uint64_t last_sent_hash { 0 };
-        bool suppress_next_host_echo { false };
-        std::uint64_t suppressed_host_hash { 0 };
+        clipboard_sync_ptr sync { nullptr, &alk_clipboard_sync_destroy };
+        std::vector<std::uint8_t> staged_item_data;
+        std::string staged_mime_type;
+        std::string staged_name;
+        clipboard_read_status_e last_read_status { clipboard_read_status_e::none };
       } clipboard;
     } control;
 
@@ -2821,6 +2828,7 @@ namespace stream {
                     << " slot=" << ALK_MICROPHONE_UPLINK_SLOT_ID
                     << " module=" << ALK_MICROPHONE_UPLINK_MODULE_ID
                     << " contract=" << ALK_MICROPHONE_UPLINK_CONTRACT_ID
+                    << " backendProvider=" << kSunshineMicrophoneBackendProviderId
                     << " microphoneModuleActive=1"
                     << " adapterCodecActive=1";
     return true;
@@ -3038,6 +3046,7 @@ namespace stream {
                       << " launchSession=" << session->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
 	                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+	                      << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
 	                      << " clipboardCodec=gamestream-clipboard-payload-codec"
 	                      << " microphoneCodec=gamestream-microphone-payload-codec"
 	                      << " rescueCodec=gamestream-rescue-payload-codec"
@@ -3100,6 +3109,7 @@ namespace stream {
                       << " launchSession=" << session_p->launch_session_id
                       << " peer=" << peer_addr << ':' << peer_port
                       << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+                      << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
                       << " clipboardCodec=gamestream-clipboard-payload-codec"
                       << " microphoneCodec=gamestream-microphone-payload-codec"
                       << " leaseCodec=session-control-codec"
@@ -4966,35 +4976,253 @@ namespace stream {
                                0);
   }
 
+  static void
+  reset_clipboard_backend_staging(session_t *session) {
+    if (!session) {
+      return;
+    }
+    session->control.clipboard.last_host_sequence = 0;
+    session->control.clipboard.staged_item_data.clear();
+    session->control.clipboard.staged_mime_type.clear();
+    session->control.clipboard.staged_name.clear();
+    session->control.clipboard.last_read_status = clipboard_read_status_e::none;
+  }
+
+  static bool
+  ensure_clipboard_sync(session_t *session) {
+#ifdef _WIN32
+    if (!session || !config::input.clipboard_sync || !platf::clipboard::is_backend_available()) {
+      return false;
+    }
+
+    if (session->control.clipboard.sync) {
+      return true;
+    }
+
+    const auto backend_caps = platf::clipboard::supported_capabilities();
+    if (backend_caps == 0) {
+      return false;
+    }
+
+    auto sync = clipboard_sync_ptr { alk_clipboard_sync_create(), &alk_clipboard_sync_destroy };
+    if (!sync) {
+      return false;
+    }
+
+    AlkClipboardSyncConfig clipboard_config;
+    alk_clipboard_sync_config_init(&clipboard_config);
+    clipboard_config.role = ALK_SESSION_ROLE_HOST;
+    clipboard_config.capability_flags = ALK_CLIPBOARD_SYNC_CAP_TEXT_UTF8 |
+                                        ALK_CLIPBOARD_SYNC_CAP_PNG_IMAGE |
+                                        ALK_CLIPBOARD_SYNC_CAP_CHUNKED_ITEMS |
+                                        ALK_CLIPBOARD_SYNC_CAP_ECHO_SUPPRESSION;
+    clipboard_config.max_chunk_size = LI_CLIPBOARD_MAX_CHUNK_SIZE;
+    clipboard_config.max_text_size = 1U * 1024U * 1024U;
+    clipboard_config.max_image_size = static_cast<std::uint32_t>(platf::clipboard::image_size_limit);
+    clipboard_config.max_blob_size = 0;
+    clipboard_config.blob_inline_threshold = 0;
+    clipboard_config.backend_mode = ALK_CLIPBOARD_SYNC_BACKEND_DIRECT_PLATFORM;
+
+    AlkClipboardSyncCallbacks callbacks;
+    alk_clipboard_sync_callbacks_init(&callbacks);
+    callbacks.user_data = session;
+    callbacks.send_module_message = [](void *user_data,
+                                       const AlkModuleMessage *message,
+                                       const void *payload,
+                                       size_t payload_length,
+                                       bool more_data) {
+      (void) message;
+      (void) more_data;
+      auto *session = static_cast<session_t *>(user_data);
+      if (!session || payload == nullptr || payload_length == 0) {
+        return false;
+      }
+      return send_clipboard_payload(session,
+                                    std::string_view {
+                                      reinterpret_cast<const char *>(payload),
+                                      payload_length,
+                                    }) == 0;
+    };
+    callbacks.read_local_clipboard = [](void *user_data, AlkClipboardSyncItem *item) {
+      auto *session = static_cast<session_t *>(user_data);
+      if (!session || item == nullptr) {
+        return false;
+      }
+
+      alk_clipboard_sync_item_init(item);
+
+#ifdef _WIN32
+      platf::clipboard::item_t local_item;
+      std::string reason;
+      if (!platf::clipboard::read_current_item(local_item, &reason)) {
+        session->control.clipboard.last_read_status = clipboard_read_status_e::failed;
+        if (!reason.empty()) {
+          BOOST_LOG(warning) << "Failed to read Windows clipboard: " << reason;
+        }
+        return false;
+      }
+
+      if (local_item.type == LI_CLIPBOARD_ITEM_TYPE_NONE) {
+        session->control.clipboard.staged_item_data.clear();
+        session->control.clipboard.staged_mime_type.clear();
+        session->control.clipboard.staged_name.clear();
+        session->control.clipboard.last_read_status = clipboard_read_status_e::skipped;
+        if (!reason.empty()) {
+          BOOST_LOG(debug) << "Skipping empty/unsupported clipboard update: " << reason;
+        }
+        return false;
+      }
+
+      if (local_item.type != LI_CLIPBOARD_ITEM_TYPE_TEXT &&
+          local_item.type != LI_CLIPBOARD_ITEM_TYPE_IMAGE) {
+        return false;
+      }
+
+      session->control.clipboard.staged_item_data = std::move(local_item.data);
+      session->control.clipboard.staged_mime_type = std::move(local_item.mime_type);
+      session->control.clipboard.staged_name = std::move(local_item.name);
+      session->control.clipboard.last_read_status = clipboard_read_status_e::item;
+      item->type = local_item.type == LI_CLIPBOARD_ITEM_TYPE_TEXT ?
+                     ALK_CLIPBOARD_SYNC_ITEM_TEXT_UTF8 :
+                     ALK_CLIPBOARD_SYNC_ITEM_PNG;
+      item->flags = 0;
+      item->data = session->control.clipboard.staged_item_data.empty() ?
+                     nullptr :
+                     session->control.clipboard.staged_item_data.data();
+      item->length = session->control.clipboard.staged_item_data.size();
+      item->mime_type = session->control.clipboard.staged_mime_type.c_str();
+      item->name = session->control.clipboard.staged_name.c_str();
+      item->content_hash = local_item.content_hash;
+      return true;
+#else
+      (void) session;
+      return false;
+#endif
+    };
+    callbacks.write_local_clipboard = [](void *user_data, const AlkClipboardSyncItem *item) {
+      auto *session = static_cast<session_t *>(user_data);
+      if (!session || item == nullptr || item->version != ALK_CLIPBOARD_SYNC_VERSION) {
+        return false;
+      }
+
+#ifdef _WIN32
+      platf::clipboard::item_t local_item;
+      local_item.type = item->type == ALK_CLIPBOARD_SYNC_ITEM_TEXT_UTF8 ?
+                          LI_CLIPBOARD_ITEM_TYPE_TEXT :
+                        item->type == ALK_CLIPBOARD_SYNC_ITEM_PNG ?
+                          LI_CLIPBOARD_ITEM_TYPE_IMAGE :
+                          LI_CLIPBOARD_ITEM_TYPE_NONE;
+      local_item.content_hash = item->content_hash;
+      if (item->length != 0 && item->data != nullptr) {
+        local_item.data.assign(item->data, item->data + item->length);
+      }
+      if (item->mime_type != nullptr) {
+        local_item.mime_type = item->mime_type;
+      }
+      if (item->name != nullptr) {
+        local_item.name = item->name;
+      }
+
+      std::string reason;
+      if (!platf::clipboard::write_item(local_item, &reason)) {
+        if (!reason.empty()) {
+          BOOST_LOG(warning) << "Failed to apply client clipboard item to Windows clipboard: " << reason;
+        }
+        return false;
+      }
+      return true;
+#else
+      (void) session;
+      return false;
+#endif
+    };
+    callbacks.now_ms = [](void *) {
+      return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count());
+    };
+
+    if (!alk_clipboard_sync_init(sync.get(), &clipboard_config, &callbacks)) {
+      return false;
+    }
+
+    session->control.clipboard.sync = std::move(sync);
+    reset_clipboard_backend_staging(session);
+    BOOST_LOG(info) << "Clipboard module backend initialized runtime=" << session->identity.runtime_id
+                    << " provider=" << kSunshineClipboardBackendProviderId
+                    << " slot=" << ALK_CLIPBOARD_SYNC_SLOT_ID
+                    << " module=" << ALK_CLIPBOARD_SYNC_MODULE_ID
+                    << " contract=" << ALK_CLIPBOARD_SYNC_CONTRACT_ID;
+    return true;
+#else
+    (void) session;
+    return false;
+#endif
+  }
+
+  static bool
+  clipboard_is_owner(session_t *session) {
+    return session != nullptr &&
+           session->control.clipboard.sync != nullptr &&
+           alk_clipboard_sync_is_owner_bound(session->control.clipboard.sync.get()) &&
+           session->broadcast_ref &&
+           session->broadcast_ref->feature_leases.validate(session_runtime::feature_e::clipboard, *session);
+  }
+
+  static void
+  clipboard_release_owner(session_t *session) {
+    if (!session) {
+      return;
+    }
+    session->control.clipboard.last_host_sequence = 0;
+    reset_clipboard_backend_staging(session);
+  }
+
+  static void
+  clipboard_reset_inbound_state(session_t *session) {
+    reset_clipboard_backend_staging(session);
+  }
+
+  static int
+  clipboard_request_snapshot(session_t *session) {
+    if (!ensure_clipboard_sync(session) || session->control.clipboard.sync == nullptr) {
+      return send_empty_clipboard_snapshot(session);
+    }
+    return alk_clipboard_sync_request_snapshot(session->control.clipboard.sync.get()) ? 0 : -1;
+  }
+
+  static int
+  clipboard_notify_local_change(session_t *session) {
+#ifdef _WIN32
+    if (!ensure_clipboard_sync(session) || session->control.clipboard.sync == nullptr) {
+      return -1;
+    }
+
+    const auto sequence = platf::clipboard::current_sequence_number();
+    if (sequence == 0 || sequence == session->control.clipboard.last_host_sequence) {
+      return 0;
+    }
+
+    const bool changed = alk_clipboard_sync_notify_local_change(session->control.clipboard.sync.get());
+    if (changed) {
+      session->control.clipboard.last_host_sequence = sequence;
+      return 1;
+    }
+    if (session->control.clipboard.last_read_status == clipboard_read_status_e::skipped) {
+      session->control.clipboard.last_host_sequence = sequence;
+      return 0;
+    }
+    return -1;
+#else
+    (void) session;
+    return 0;
+#endif
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
-    auto reset_clipboard_transfer = [](session_t *session) {
-      session->control.clipboard.transfer_active = false;
-      session->control.clipboard.item_type = LI_CLIPBOARD_ITEM_TYPE_NONE;
-      session->control.clipboard.transfer_flags = 0;
-      session->control.clipboard.item_id = 0;
-      session->control.clipboard.content_hash = 0;
-      session->control.clipboard.total_length = 0;
-      session->control.clipboard.received_length = 0;
-      session->control.clipboard.mime_type.clear();
-      session->control.clipboard.name.clear();
-      std::vector<std::uint8_t>().swap(session->control.clipboard.data);
-    };
-
-    auto clear_clipboard_binding = [reset_clipboard_transfer](session_t *session) {
-      session->control.clipboard.bound = false;
-      session->control.clipboard.last_host_sequence = 0;
-      session->control.clipboard.last_sent_hash = 0;
-      session->control.clipboard.suppress_next_host_echo = false;
-      session->control.clipboard.suppressed_host_hash = 0;
-      reset_clipboard_transfer(session);
-    };
-
     auto is_clipboard_owner = [](session_t *session) {
-      return session &&
-             session->control.clipboard.bound &&
-             session->broadcast_ref &&
-             session->broadcast_ref->feature_leases.validate(session_runtime::feature_e::clipboard, *session);
+      return clipboard_is_owner(session);
     };
 
     auto client_supports_clipboard = [](session_t *session) {
@@ -5019,98 +5247,14 @@ namespace stream {
       }
     };
 
-#ifdef _WIN32
-    auto send_host_clipboard_snapshot = [client_supports_clipboard_item](session_t *session,
-                                                                         uint8_t transfer_flags,
-                                                                         bool update_sequence_tracking) {
-      platf::clipboard::item_t item;
-      std::string reason;
-      const auto sequence = platf::clipboard::current_sequence_number();
-
-      if (!platf::clipboard::read_current_item(item, &reason)) {
-        BOOST_LOG(warning) << "Failed to read Windows clipboard: " << reason;
-        return -1;
-      }
-
-      if (item.type == LI_CLIPBOARD_ITEM_TYPE_NONE) {
-        if (update_sequence_tracking) {
-          session->control.clipboard.last_host_sequence = sequence;
-          session->control.clipboard.last_sent_hash = 0;
-        }
-
-        if ((transfer_flags & LI_CLIPBOARD_TRANSFER_FLAG_SNAPSHOT) != 0) {
-          return send_empty_clipboard_snapshot(session);
-        }
-
-        if (reason.find("size limit") != std::string::npos) {
-          BOOST_LOG(info) << "Skipping clipboard update: " << reason;
-        }
-        else {
-          BOOST_LOG(debug) << "Skipping empty/unsupported clipboard update: " << reason;
-        }
-        return 0;
-      }
-
-      if (!client_supports_clipboard_item(session, item.type)) {
-        BOOST_LOG(debug) << "Skipping host clipboard item type " << static_cast<int>(item.type)
-                         << " because client did not negotiate this clipboard capability";
-        return 0;
-      }
-
-      if (session->control.clipboard.suppress_next_host_echo &&
-          session->control.clipboard.suppressed_host_hash == item.content_hash) {
-        session->control.clipboard.suppress_next_host_echo = false;
-        session->control.clipboard.suppressed_host_hash = 0;
-        if (update_sequence_tracking) {
-          session->control.clipboard.last_host_sequence = sequence;
-          session->control.clipboard.last_sent_hash = item.content_hash;
-        }
-        BOOST_LOG(debug) << "Suppressed echoed host clipboard item hash=" << item.content_hash;
-        return 0;
-      }
-
-      if (send_clipboard_item(session,
-                              transfer_flags,
-                              item.type,
-                              item.mime_type,
-                              item.name,
-                              item.data,
-                              item.content_hash) != 0) {
-        BOOST_LOG(warning) << "Failed to send host clipboard item to client " << session->client_name;
-        return -1;
-      }
-
-      if (update_sequence_tracking) {
-        session->control.clipboard.last_host_sequence = sequence;
-        session->control.clipboard.last_sent_hash = item.content_hash;
-      }
-
-      BOOST_LOG(info) << "Sent host clipboard item to client " << session->client_name
-                      << " type=" << static_cast<int>(item.type)
-                      << " length=" << item.data.size()
-                      << " flags=0x" << std::hex << static_cast<int>(transfer_flags) << std::dec;
-      return 0;
-    };
-
-    auto maybe_send_host_clipboard_update = [send_host_clipboard_snapshot, is_clipboard_owner, client_supports_clipboard](session_t *session) {
-      if (!config::input.clipboard_sync ||
-          !client_supports_clipboard(session) ||
-          !is_clipboard_owner(session) ||
-          !platf::clipboard::is_backend_available()) {
+    auto maybe_send_host_clipboard_update = [client_supports_clipboard, is_clipboard_owner](session_t *session) {
+      if (!client_supports_clipboard(session) || !is_clipboard_owner(session)) {
         return;
       }
-
-      const auto host_sequence = platf::clipboard::current_sequence_number();
-      if (host_sequence != 0 &&
-          host_sequence != session->control.clipboard.last_host_sequence) {
-        if (send_host_clipboard_snapshot(session, 0, true) != 0) {
-          BOOST_LOG(warning) << "Failed to send clipboard change update to client " << session->client_name;
-        }
+      if (clipboard_notify_local_change(session) < 0) {
+        BOOST_LOG(warning) << "Failed to send clipboard change update to client " << session->client_name;
       }
     };
-#else
-    auto maybe_send_host_clipboard_update = [](session_t *) {};
-#endif
 
     struct control_mic_stats_t {
       std::uint64_t packets {};
@@ -5444,26 +5588,32 @@ namespace stream {
       }
     });
 
-    server->map(packetTypes[IDX_CLIPBOARD], [&, reset_clipboard_transfer, clear_clipboard_binding, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item](session_t *session, const std::string_view &payload) {
+    server->map(packetTypes[IDX_CLIPBOARD], [&, is_clipboard_owner, client_supports_clipboard, client_supports_clipboard_item](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_CLIPBOARD]"sv;
 
 #ifdef _WIN32
       if (!config::input.clipboard_sync || !platf::clipboard::is_backend_available()) {
         session->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *session);
-        clear_clipboard_binding(session);
+        clipboard_release_owner(session);
         BOOST_LOG(debug) << "Ignoring clipboard control packet because clipboard sync is disabled"sv;
         return;
       }
 #endif
 
-      AlkSunshineClipboardWireEvent clipboard_event;
-      if (!alk_sunshine_clipboard_parse(payload.data(), payload.size(), &clipboard_event)) {
+      if (payload.empty()) {
         BOOST_LOG(warning) << "Clipboard payload failed adapter parse";
         return;
       }
 
-      switch (clipboard_event.kind) {
-        case LI_CLIPBOARD_MSG_BIND: {
+      const auto kind = static_cast<std::uint8_t>(payload.front());
+      if (!ensure_clipboard_sync(session)) {
+        BOOST_LOG(warning) << "Clipboard module backend unavailable for client " << session->client_name;
+        return;
+      }
+
+      auto *sync = session->control.clipboard.sync.get();
+      switch (kind) {
+        case ALK_CLIPBOARD_SYNC_MSG_BIND: {
           if (!client_supports_clipboard(session)) {
             BOOST_LOG(warning) << "Ignoring clipboard bind from client without negotiated clipboard capability " << session->client_name;
             break;
@@ -5471,25 +5621,28 @@ namespace stream {
           auto sessions_lock = server->_sessions.lock();
           for (auto *other: *server->_sessions) {
             if (other != session) {
-              clear_clipboard_binding(other);
+              if (other->broadcast_ref) {
+                other->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *other);
+              }
+              clipboard_release_owner(other);
             }
           }
-          reset_clipboard_transfer(session);
           session->broadcast_ref->feature_leases.acquire(session_runtime::feature_e::clipboard, *session);
-          session->control.clipboard.bound = true;
-          session->control.clipboard.last_host_sequence = 0;
-          session->control.clipboard.last_sent_hash = 0;
-          session->control.clipboard.suppress_next_host_echo = false;
-          session->control.clipboard.suppressed_host_hash = 0;
+          clipboard_reset_inbound_state(session);
+          if (!alk_clipboard_sync_bind_owner(sync)) {
+            BOOST_LOG(warning) << "Failed to bind clipboard module owner for client " << session->client_name;
+            session->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *session);
+            break;
+          }
           BOOST_LOG(info) << "Clipboard session bound for client " << session->client_name;
           break;
         }
-        case LI_CLIPBOARD_MSG_UNBIND:
+        case ALK_CLIPBOARD_SYNC_MSG_UNBIND:
           session->broadcast_ref->feature_leases.release(session_runtime::feature_e::clipboard, *session);
-          clear_clipboard_binding(session);
+          clipboard_release_owner(session);
           BOOST_LOG(info) << "Clipboard session unbound for client " << session->client_name;
           break;
-        case LI_CLIPBOARD_MSG_SNAPSHOT_REQUEST:
+        case ALK_CLIPBOARD_SYNC_MSG_SNAPSHOT_REQUEST:
           if (!is_clipboard_owner(session)) {
             BOOST_LOG(warning) << "Ignoring clipboard snapshot request from non-owner client " << session->client_name;
             break;
@@ -5499,162 +5652,44 @@ namespace stream {
             break;
           }
           BOOST_LOG(info) << "Clipboard snapshot requested by client " << session->client_name;
-#ifdef _WIN32
-          if (platf::clipboard::is_backend_available()) {
-            if (send_host_clipboard_snapshot(session, LI_CLIPBOARD_TRANSFER_FLAG_SNAPSHOT, true) != 0) {
-              BOOST_LOG(warning) << "Failed to send clipboard snapshot to client " << session->client_name;
-            }
-            break;
-          }
-#endif
-          if (send_empty_clipboard_snapshot(session) != 0) {
+          if (!alk_clipboard_sync_request_snapshot(sync)) {
             BOOST_LOG(warning) << "Failed to send empty clipboard snapshot to client " << session->client_name;
           }
           break;
-        case LI_CLIPBOARD_MSG_ITEM_START: {
-          const auto transfer_flags = clipboard_event.item_start.transfer_flags;
-          const auto item_type = clipboard_event.item_start.item_type;
+        case ALK_CLIPBOARD_SYNC_MSG_ITEM_START: {
+          if (payload.size() < 28u) {
+            BOOST_LOG(warning) << "Clipboard ITEM_START payload too short";
+            break;
+          }
+          const auto item_type = static_cast<std::uint8_t>(payload[2]);
           if (!is_clipboard_owner(session)) {
-            reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item start from non-owner client " << session->client_name;
             return;
           }
           if (!client_supports_clipboard_item(session, item_type)) {
-            reset_clipboard_transfer(session);
             BOOST_LOG(warning) << "Ignoring clipboard item type " << static_cast<int>(item_type)
                                << " from client without negotiated type capability " << session->client_name;
             return;
           }
-          const auto item_id = clipboard_event.item_start.item_id;
-          const auto content_hash = clipboard_event.item_start.content_hash;
-          const auto total_length = clipboard_event.item_start.total_length;
-
-          if (!clipboard_transfer_length_valid(item_type, total_length)) {
-            BOOST_LOG(warning) << "Clipboard ITEM_START exceeded size limits for client "
-                               << session->client_name
-                               << " type=" << static_cast<int>(item_type)
-                               << " length=" << total_length;
-            return;
+          if (!alk_clipboard_sync_on_remote_message(sync, payload.data(), payload.size())) {
+            BOOST_LOG(warning) << "Failed to apply clipboard item start for client " << session->client_name;
           }
-
-          reset_clipboard_transfer(session);
-          session->control.clipboard.transfer_active = true;
-          session->control.clipboard.transfer_flags = transfer_flags;
-          session->control.clipboard.item_type = item_type;
-          session->control.clipboard.item_id = item_id;
-          session->control.clipboard.content_hash = content_hash;
-          session->control.clipboard.total_length = total_length;
-          session->control.clipboard.received_length = 0;
-          session->control.clipboard.mime_type.assign(reinterpret_cast<const char *>(clipboard_event.item_start.mime_type.data),
-                                                      clipboard_event.item_start.mime_type.length);
-          session->control.clipboard.name.assign(reinterpret_cast<const char *>(clipboard_event.item_start.name.data),
-                                                 clipboard_event.item_start.name.length);
-          session->control.clipboard.data.assign(total_length, 0);
-          BOOST_LOG(info) << "Clipboard ITEM_START from client " << session->client_name
-                          << " type=" << static_cast<int>(item_type)
-                          << " length=" << total_length;
           break;
         }
-        case LI_CLIPBOARD_MSG_ITEM_CHUNK: {
-          const auto chunk_length = clipboard_event.item_chunk.chunk_length;
-          const auto item_id = clipboard_event.item_chunk.item_id;
-          const auto chunk_offset = clipboard_event.item_chunk.chunk_offset;
+        case ALK_CLIPBOARD_SYNC_MSG_ITEM_CHUNK:
+        case ALK_CLIPBOARD_SYNC_MSG_ITEM_END:
+        case ALK_CLIPBOARD_SYNC_MSG_ITEM_CANCEL: {
           if (!is_clipboard_owner(session)) {
-            reset_clipboard_transfer(session);
-            BOOST_LOG(warning) << "Ignoring clipboard item chunk from non-owner client " << session->client_name;
+            BOOST_LOG(warning) << "Ignoring clipboard item payload from non-owner client " << session->client_name;
             return;
           }
-
-          if (!session->control.clipboard.transfer_active ||
-              session->control.clipboard.item_id != item_id) {
-            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK had no active transfer";
-            return;
-          }
-
-          std::uint32_t next_received_length = 0;
-          if (!clipboard_transfer_chunk_next_length(session->control.clipboard.received_length,
-                                                    session->control.clipboard.total_length,
-                                                    chunk_offset,
-                                                    chunk_length,
-                                                    next_received_length)) {
-            BOOST_LOG(warning) << "Clipboard ITEM_CHUNK was out of order or invalid";
-            reset_clipboard_transfer(session);
-            return;
-          }
-
-          if (chunk_length != 0) {
-            std::memcpy(session->control.clipboard.data.data() + chunk_offset,
-                        clipboard_event.item_chunk.chunk.data,
-                        chunk_length);
-          }
-          session->control.clipboard.received_length = next_received_length;
-          break;
-        }
-        case LI_CLIPBOARD_MSG_ITEM_END: {
-          const auto item_id = clipboard_event.item_id;
-          if (!is_clipboard_owner(session)) {
-            reset_clipboard_transfer(session);
-            BOOST_LOG(warning) << "Ignoring clipboard item end from non-owner client " << session->client_name;
-            return;
-          }
-          if (!session->control.clipboard.transfer_active ||
-              session->control.clipboard.item_id != item_id) {
-            BOOST_LOG(warning) << "Clipboard ITEM_END had no matching transfer";
-            return;
-          }
-
-          if (session->control.clipboard.received_length !=
-              session->control.clipboard.total_length) {
-            BOOST_LOG(warning) << "Clipboard ITEM_END before transfer completion";
-            reset_clipboard_transfer(session);
-            return;
-          }
-
-          BOOST_LOG(info) << "Clipboard item fully received from client "
-                          << session->client_name
-                          << " type=" << static_cast<int>(session->control.clipboard.item_type)
-                          << " length=" << session->control.clipboard.total_length
-                          << " mime=" << session->control.clipboard.mime_type
-                          << " name=" << session->control.clipboard.name;
-#ifdef _WIN32
-          if (platf::clipboard::is_backend_available()) {
-            platf::clipboard::item_t item;
-            item.type = session->control.clipboard.item_type;
-            item.data = std::move(session->control.clipboard.data);
-            item.mime_type = std::move(session->control.clipboard.mime_type);
-            item.name = std::move(session->control.clipboard.name);
-            item.content_hash = session->control.clipboard.content_hash;
-
-            std::string reason;
-            if (platf::clipboard::write_item(item, &reason)) {
-              session->control.clipboard.suppress_next_host_echo = item.content_hash != 0;
-              session->control.clipboard.suppressed_host_hash = item.content_hash;
-              BOOST_LOG(info) << "Applied client clipboard item to Windows clipboard"
-                              << " type=" << static_cast<int>(item.type)
-                              << " length=" << item.data.size();
-            }
-            else {
-              BOOST_LOG(warning) << "Failed to apply client clipboard item to Windows clipboard: " << reason;
-            }
-          }
-#endif
-          reset_clipboard_transfer(session);
-          break;
-        }
-        case LI_CLIPBOARD_MSG_ITEM_CANCEL: {
-          const auto item_id = clipboard_event.item_id;
-          if (!is_clipboard_owner(session)) {
-            reset_clipboard_transfer(session);
-            BOOST_LOG(warning) << "Ignoring clipboard item cancel from non-owner client " << session->client_name;
-            return;
-          }
-          if (item_id == 0 || session->control.clipboard.item_id == item_id) {
-            reset_clipboard_transfer(session);
+          if (!alk_clipboard_sync_on_remote_message(sync, payload.data(), payload.size())) {
+            BOOST_LOG(warning) << "Failed to apply clipboard item payload for client " << session->client_name;
           }
           break;
         }
         default:
-          BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(clipboard_event.kind);
+          BOOST_LOG(warning) << "Unknown clipboard control message kind: " << static_cast<int>(kind);
           break;
       }
     });

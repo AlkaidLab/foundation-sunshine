@@ -1795,6 +1795,13 @@ namespace session_runtime {
 
   inline std::vector<std::string>
   session_snapshot_attributes(const LI_SESSION &session) {
+    const bool relay_selected = (session.transportPath.flags & LI_SESSION_TRANSPORT_FLAG_RELAY) != 0;
+    const bool p2p_valid = (session.transportPath.stackFlags & LI_SESSION_TRANSPORT_STACK_P2P) != 0 &&
+                           (session.transportPath.evidenceFlags & LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED) != 0;
+    const auto relay_mode_name = relay_selected ? "selected" : "none";
+    const auto p2p_state_name = p2p_valid ? "punch-succeeded" : "none";
+    const auto p2p_flags_value = p2p_valid ? "0x1" : "0x0";
+
     return {
       "x-ss-core.sessionVersion:" + std::to_string(LI_SESSION_VERSION),
       "x-ss-core.sessionId:" + std::string { session.sessionId.value },
@@ -1841,6 +1848,9 @@ namespace session_runtime {
       "x-ss-core.transportPath.qualityConfidencePpm:" + std::to_string(session.transportPath.qualityConfidencePpm),
       "x-ss-core.transportPath.pathIdentityKind:" + std::string { li_path_identity_kind_name(session.transportPath.pathIdentityKind) },
       "x-ss-core.transportPath.startupClass:" + std::string { li_startup_class_name(session.transportPath.startupClass) },
+      "x-ss-core.transportPath.relayMode:" + std::string { relay_mode_name },
+      "x-ss-core.transportPath.p2pState:" + std::string { p2p_state_name },
+      "x-ss-core.transportPath.p2pFlags:" + std::string { p2p_flags_value },
       "x-ss-core.transportPath.reasonFlags:" + to_hex_string(session.transportPath.reasonFlags),
       "x-ss-core.transportPath.riskFlags:" + to_hex_string(session.transportPath.riskFlags),
       "x-ss-core.transportPath.routeId:" + std::string { session.transportPath.routeId },

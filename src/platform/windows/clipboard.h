@@ -11,6 +11,7 @@
 
 namespace platf::clipboard {
   constexpr std::size_t image_size_limit = 4 * 1024 * 1024;
+  constexpr const char backend_provider_id[] = "win32";
 
   struct item_t {
     std::uint8_t type = 0;
