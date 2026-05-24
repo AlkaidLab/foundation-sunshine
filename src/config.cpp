@@ -868,6 +868,33 @@ namespace config {
   }
 
   void
+  bool_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::optional<bool> &input) {
+    std::string tmp;
+    string_f(vars, name, tmp);
+
+    if (tmp.empty()) {
+      return;
+    }
+
+    input = to_bool(tmp);
+  }
+
+  void
+  int_between_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::optional<int> &input, const std::pair<int, int> &range) {
+    std::optional<int> temp;
+    int_f(vars, name, temp);
+
+    if (!temp) {
+      return;
+    }
+
+    TUPLE_2D_REF(lower, upper, range);
+    if (*temp >= lower && *temp <= upper) {
+      input = *temp;
+    }
+  }
+
+  void
   double_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, double &input) {
     std::string tmp;
     string_f(vars, name, tmp);
@@ -1188,6 +1215,15 @@ namespace config {
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
+    // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
+    // matches FFmpeg amfenc.c behavior of never setting the property unless
+    // the user explicitly opts in). See AlkaidLab/foundation-sunshine#666 for
+    // the RDNA4 freeze that motivated removing aggressive defaults.
+    bool_f(vars, "amd_high_motion_qb", video.amd.amd_high_motion_qb);
+    bool_f(vars, "amd_lowlatency_mode", video.amd.amd_lowlatency_mode);
+    int_between_f(vars, "amd_input_queue_size", video.amd.amd_input_queue_size, { 1, 16 });
+    // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_* enum: 0=NONE, 1=POWER_SAVING_REAL_TIME, 2=REAL_TIME, 3=LOWEST_LATENCY
+    int_between_f(vars, "amd_av1_latency_mode", video.amd.amd_av1_latency_mode, { 0, 3 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);

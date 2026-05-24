@@ -75,6 +75,17 @@ namespace config {
       int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
       int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
+      // The properties below historically had aggressive hardcoded defaults that
+      // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
+      // INPUT_QUEUE_SIZE=1, LOWLATENCY_MODE=on, AV1 LOWEST_LATENCY). Those paths
+      // expose latent AMD driver bugs (e.g. RDNA4 Adrenalin 26.5.x freeze after
+      // ~minutes, AlkaidLab/foundation-sunshine#666). Default is nullopt =
+      // "do not call SetProperty" so the driver picks its own default, matching
+      // FFmpeg amfenc behavior. Users can still opt in via the WebUI.
+      std::optional<bool> amd_high_motion_qb;
+      std::optional<bool> amd_lowlatency_mode;
+      std::optional<int> amd_input_queue_size;   // 1-16
+      std::optional<int> amd_av1_latency_mode;   // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
     } amd;
 
     struct {

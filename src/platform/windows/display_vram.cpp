@@ -2107,8 +2107,18 @@ namespace platf::dxgi {
         amf_cfg.pa_high_motion_quality_boost = 1;  // Auto
       }
 
-      // High motion quality boost at encoder level
-      amf_cfg.high_motion_quality_boost_enable = true;
+      // High motion quality boost: opt-in only. Default nullopt = do not call
+      // SetProperty, let the AMD driver pick its default (FFmpeg-aligned).
+      // Forcing this on unconditionally was found to expose driver bugs on
+      // RDNA4 + Adrenalin 26.5.x (AlkaidLab/foundation-sunshine#666).
+      amf_cfg.high_motion_quality_boost_enable = config::video.amd.amd_high_motion_qb;
+
+      // Low latency mode / input queue size / AV1 encoding latency mode:
+      // also opt-in to match FFmpeg amfenc behavior. Default nullopt =
+      // do not SetProperty, driver picks the default code path.
+      amf_cfg.lowlatency_mode = config::video.amd.amd_lowlatency_mode;
+      amf_cfg.input_queue_size = config::video.amd.amd_input_queue_size;
+      amf_cfg.av1_encoding_latency_mode = config::video.amd.amd_av1_latency_mode;
 
       // Apply server-side slices per frame override if configured
       auto effective_config = client_config;

@@ -163,6 +163,93 @@ const config = ref(props.config)
       </select>
       <div class="form-text">{{ $t('config.amd_slices_per_frame_desc') }}</div>
     </div>
+
+    <!-- AMF Advanced (driver workarounds) -->
+    <div class="accordion mb-3" v-if="platform === 'windows'">
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button
+            class="accordion-button collapsed"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#panelsStayOpen-collapseAmdAdvanced"
+          >
+            {{ $t('config.amd_advanced_group') }}
+          </button>
+        </h2>
+        <div
+          id="panelsStayOpen-collapseAmdAdvanced"
+          class="accordion-collapse collapse"
+        >
+          <div class="accordion-body">
+            <div class="form-text mb-3">{{ $t('config.amd_advanced_group_desc') }}</div>
+
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary mb-3"
+              @click="
+                config.amd_high_motion_qb = '';
+                config.amd_lowlatency_mode = '';
+                config.amd_input_queue_size = '';
+                config.amd_av1_latency_mode = '';
+              "
+            >
+              {{ $t('config.amd_advanced_reset') }}
+            </button>
+
+            <!-- High Motion Quality Boost -->
+            <div class="mb-3">
+              <label for="amd_high_motion_qb" class="form-label">{{ $t('config.amd_high_motion_qb') }}</label>
+              <select id="amd_high_motion_qb" class="form-select" v-model="config.amd_high_motion_qb">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.amd_high_motion_qb_desc') }}</div>
+            </div>
+
+            <!-- Low Latency Mode -->
+            <div class="mb-3">
+              <label for="amd_lowlatency_mode" class="form-label">{{ $t('config.amd_lowlatency_mode') }}</label>
+              <select id="amd_lowlatency_mode" class="form-select" v-model="config.amd_lowlatency_mode">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.amd_lowlatency_mode_desc') }}</div>
+            </div>
+
+            <!-- Input Queue Size -->
+            <div class="mb-3">
+              <label for="amd_input_queue_size" class="form-label">{{ $t('config.amd_input_queue_size') }}</label>
+              <input
+                type="number"
+                class="form-control"
+                id="amd_input_queue_size"
+                min="1"
+                max="16"
+                step="1"
+                :placeholder="$t('config.amd_driver_default')"
+                v-model.number="config.amd_input_queue_size"
+              />
+              <div class="form-text">{{ $t('config.amd_input_queue_size_desc') }}</div>
+            </div>
+
+            <!-- AV1 Encoding Latency Mode -->
+            <div class="mb-3">
+              <label for="amd_av1_latency_mode" class="form-label">{{ $t('config.amd_av1_latency_mode') }}</label>
+              <select id="amd_av1_latency_mode" class="form-select" v-model="config.amd_av1_latency_mode">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
+                <option value="1">{{ $t('config.amd_av1_latency_mode_power_saving') }}</option>
+                <option value="2">{{ $t('config.amd_av1_latency_mode_real_time') }}</option>
+                <option value="3">{{ $t('config.amd_av1_latency_mode_lowest') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.amd_av1_latency_mode_desc') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

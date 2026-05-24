@@ -106,7 +106,26 @@ namespace amf {
     bool enable_ssim_feedback = false;
 
     // --- High Motion Quality Boost (encoder-level, separate from PA) ---
+    // Default nullopt = do not set the property, let the AMD driver decide
+    // (FFmpeg amfenc.c never sets this property either). Some AMD driver
+    // releases (e.g. Adrenalin 26.5.x on RDNA4) appear to expose latent VCN
+    // bugs when this is enabled, leading to encoder freezes after ~minutes.
     std::optional<bool> high_motion_quality_boost_enable;
+
+    // --- Low Latency Mode (encoder-level) ---
+    // Default nullopt = do not set the property, let the driver default decide.
+    // Matches FFmpeg amfenc behavior (only set when user opts in or Smart
+    // Access Video is enabled). Streaming workloads usually want this true,
+    // but exposing it lets users disable it as a workaround for driver bugs.
+    std::optional<bool> lowlatency_mode;
+
+    // --- Input Queue Size (async_depth) ---
+    // Default nullopt = do not set the property; AMD driver default ~16,
+    // matches FFmpeg amfenc default. Sunshine historically forced 1 for
+    // minimum latency, but that is the most fragile code path inside the
+    // driver. Users can opt-in to 1 for absolute lowest latency or larger
+    // values (4/8/16) as a workaround for driver freezes.
+    std::optional<int> input_queue_size;
   };
 
 }  // namespace amf
