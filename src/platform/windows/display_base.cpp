@@ -156,6 +156,10 @@ namespace platf::dxgi {
       case WAIT_ABANDONED:
       case DXGI_ERROR_ACCESS_LOST:
       case DXGI_ERROR_ACCESS_DENIED:
+      case DXGI_ERROR_INVALID_CALL:
+        BOOST_LOG(warning) << "Desktop duplication state invalid during AcquireNextFrame [0x"sv
+                           << util::hex(status).to_string_view()
+                           << "], requesting capture reinit"sv;
         return capture_e::reinit;
       case DXGI_ERROR_DEVICE_REMOVED:
       case DXGI_ERROR_DEVICE_RESET:

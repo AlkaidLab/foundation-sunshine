@@ -91,6 +91,16 @@ namespace rtsp_stream {
              session.setup_control ||
              session.setup_mic;
     }
+
+    long long
+    startup_elapsed_ms(const launch_session_t &session) {
+      if (session.startup_started.time_since_epoch().count() == 0) {
+        return -1;
+      }
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - session.startup_started)
+        .count();
+    }
   }
 
   std::uint64_t
@@ -1331,7 +1341,8 @@ namespace rtsp_stream {
                     << " remote="sv << sock.remote_endpoint().address().to_string()
                     << " cseq="sv << req->sequenceNumber
                     << " pending="sv << rtsp_stream::pending_launch_session_count()
-                    << " active="sv << rtsp_stream::session_count();
+                    << " active="sv << rtsp_stream::session_count()
+                    << " startupMs="sv << startup_elapsed_ms(session);
 
     // Tell the client about our supported features
     auto host_feature_flags = static_cast<std::uint32_t>(platf::get_capabilities());
@@ -1511,7 +1522,8 @@ namespace rtsp_stream {
                     << (session.setup_video ? 1 : 0) << "/"
                     << (session.setup_audio ? 1 : 0) << "/"
                     << (session.setup_control ? 1 : 0) << "/"
-                    << (session.setup_mic ? 1 : 0);
+                    << (session.setup_mic ? 1 : 0)
+                    << " startupMs="sv << startup_elapsed_ms(session);
 
     seqn.next = &session_option;
 
@@ -1562,7 +1574,8 @@ namespace rtsp_stream {
                     << (session.setup_video ? 1 : 0) << "/"
                     << (session.setup_audio ? 1 : 0) << "/"
                     << (session.setup_control ? 1 : 0) << "/"
-                    << (session.setup_mic ? 1 : 0);
+                    << (session.setup_mic ? 1 : 0)
+                    << " startupMs="sv << startup_elapsed_ms(session);
 
     std::vector<std::string_view> lines;
 
@@ -2050,7 +2063,7 @@ namespace rtsp_stream {
                           << " fps under quality ceiling "
                           << qualityCeilingBitrateKbps << " Kbps / "
                           << qualityCeilingFramerate
-                          << " fps; stream-quality keeps the quality ceiling for recovery"
+                          << " fps; capture keeps ceiling fps and stream-quality starts encode pacing at startup fps"
                           << " pathReason=" << startupPathDecision.reason
                           << " startupPolicy=" << startupPolicy.reason
                           << " route=" << session_runtime::transport_route_name(startupPathDecision.route)
@@ -2060,9 +2073,7 @@ namespace rtsp_stream {
           if (startupPolicy.fps_cap > 0 &&
               startupFps > 0 &&
               startupFps < config.monitor.framerate) {
-            config.monitor.framerate = startupFps;
-            config.monitor.frameRateNum = startupFps;
-            config.monitor.frameRateDen = 1;
+            config.monitor.startupFramerate = startupFps;
           }
         }
       }
@@ -2146,8 +2157,10 @@ namespace rtsp_stream {
                     << " id="sv << session.id
                     << " peer="sv << sock.remote_endpoint().address().to_string()
                     << " fps="sv << config.monitor.framerate
+                    << " startupFps="sv << config.monitor.startupFramerate
                     << " bitrate="sv << config.monitor.bitrate
-                    << " mic="sv << (session.enable_mic ? 1 : 0);
+                    << " mic="sv << (session.enable_mic ? 1 : 0)
+                    << " startupMs="sv << startup_elapsed_ms(session);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
     stream_session_cleanup.disable();
@@ -2173,7 +2186,8 @@ namespace rtsp_stream {
                     << (session.setup_mic ? 1 : 0)
                     << " pending="sv << rtsp_stream::pending_launch_session_count()
                     << " active="sv << rtsp_stream::session_count()
-                    << " remote="sv << sock.remote_endpoint().address().to_string();
+                    << " remote="sv << sock.remote_endpoint().address().to_string()
+                    << " startupMs="sv << startup_elapsed_ms(session);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

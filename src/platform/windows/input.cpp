@@ -719,6 +719,19 @@ namespace platf {
   void
   scroll(input_t &input, int distance) {
     auto &raw = *(input_raw_t *) input.get();
+    if (distance != 0 && std::abs(distance) < WHEEL_DELTA) {
+      INPUT i {};
+
+      i.type = INPUT_MOUSE;
+      auto &mi = i.mi;
+
+      mi.dwFlags = MOUSEEVENTF_WHEEL;
+      mi.mouseData = distance;
+
+      send_input(i);
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
       if (raw.input_hid_dev->is_available()) {
         raw.input_hid_vscroll_accum += distance;
@@ -757,6 +770,19 @@ namespace platf {
   void
   hscroll(input_t &input, int distance) {
     auto &raw = *(input_raw_t *) input.get();
+    if (distance != 0 && std::abs(distance) < WHEEL_DELTA) {
+      INPUT i {};
+
+      i.type = INPUT_MOUSE;
+      auto &mi = i.mi;
+
+      mi.dwFlags = MOUSEEVENTF_HWHEEL;
+      mi.mouseData = distance;
+
+      send_input(i);
+      return;
+    }
+
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.input_hid_dev) {
       if (raw.input_hid_dev->is_available()) {
         raw.input_hid_hscroll_accum += distance;

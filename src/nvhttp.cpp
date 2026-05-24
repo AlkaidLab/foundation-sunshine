@@ -8,6 +8,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -88,6 +89,30 @@ namespace nvhttp {
     // state. Keep them serialized so a retry cannot overlap a slow VDD prepare.
     static auto *mutex = new std::mutex();
     return *mutex;
+  }
+
+  std::atomic<int> &
+  session_start_in_progress_count() {
+    static auto *count = new std::atomic<int>(0);
+    return *count;
+  }
+
+  struct session_start_in_progress_guard_t {
+    session_start_in_progress_guard_t() {
+      session_start_in_progress_count().fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    ~session_start_in_progress_guard_t() {
+      session_start_in_progress_count().fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    session_start_in_progress_guard_t(const session_start_in_progress_guard_t &) = delete;
+    session_start_in_progress_guard_t &operator=(const session_start_in_progress_guard_t &) = delete;
+  };
+
+  bool
+  session_start_in_progress() {
+    return session_start_in_progress_count().load(std::memory_order_acquire) > 0;
   }
 
   struct encoder_probe_warm_cache_t {
@@ -183,12 +208,30 @@ namespace nvhttp {
         return;
       }
       status = probe_state.in_flight.wait_for(wait_budget);
+      const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - now)
+                               .count();
       if (status == std::future_status::ready) {
         probe_state.last_result = probe_state.in_flight.get();
         probe_state.last_finish = std::chrono::steady_clock::now();
         if (probe_state.last_result == 0) {
           probe_state.last_success = probe_state.last_finish;
         }
+        BOOST_LOG(info) << "NVHTTP encoder probe warm wait finished"
+                        << " reason=" << reason
+                        << " launchSession=" << launch_session_id
+                        << " status=ready"
+                        << " result=" << probe_state.last_result
+                        << " waitedMs=" << waited_ms
+                        << " waitBudgetMs=" << wait_budget.count();
+      }
+      else {
+        BOOST_LOG(info) << "NVHTTP encoder probe warm wait finished"
+                        << " reason=" << reason
+                        << " launchSession=" << launch_session_id
+                        << " status=timeout"
+                        << " waitedMs=" << waited_ms
+                        << " waitBudgetMs=" << wait_budget.count();
       }
     }
   }
@@ -275,6 +318,16 @@ namespace nvhttp {
         summary.stopping != 0 ||
         rtsp_active_sessions != 0 ||
         rtsp_pending_sessions != 0) {
+      return false;
+    }
+
+    if (session_start_in_progress()) {
+      BOOST_LOG(info) << "NVHTTP orphan recovery deferred during session start"
+                      << " reason=" << reason
+                      << " currentgame=" << current_appid
+                      << " rtspActive=" << rtsp_active_sessions
+                      << " rtspPending=" << rtsp_pending_sessions
+                      << " runtimeTotal=" << summary.total;
       return false;
     }
 
@@ -2722,6 +2775,8 @@ namespace nvhttp {
       return;
     }
 
+    session_start_in_progress_guard_t session_start_guard;
+
     auto appid = util::from_view(get_arg(args, "appid"));
 
     auto current_appid = proc::proc.running();
@@ -2755,6 +2810,7 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->startup_started = launch_started;
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
     promote_launch_session_identity_from_request(launch_session, request);
     BOOST_LOG(info) << "NVHTTP launch session prepared"
@@ -2777,6 +2833,7 @@ namespace nvhttp {
                     << " routeHost=" << launch_session->client_route_host
                     << " routeResolved=" << join_values(launch_session->client_target_address_candidates);
 
+    const auto teardown_wait_started = std::chrono::steady_clock::now();
     if (!wait_for_runtime_teardown_to_drain("launch")) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 503);
@@ -2784,6 +2841,14 @@ namespace nvhttp {
       tree.put("root.gamesession", 0);
       return;
     }
+    BOOST_LOG(info) << "Startup timeline server stage=nvhttp-teardown-drain"
+                    << " launchSession=" << launch_session->id
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - teardown_wait_started)
+                         .count()
+                    << " totalMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - launch_started)
+                         .count();
 
     const auto runtime_summary = runtime_session_summary();
     const bool no_active_sessions = rtsp_stream::session_count() == 0 &&
@@ -2816,7 +2881,16 @@ namespace nvhttp {
         // The display should be restored by the fail guard in case something happens.
         need_to_restore_display_state = true;
 
+        const auto probe_warm_started = std::chrono::steady_clock::now();
         schedule_encoder_probe_warm("launch-display-prepared", launch_session->id, 1200ms);
+        BOOST_LOG(info) << "Startup timeline server stage=nvhttp-encoder-probe-warm"
+                        << " launchSession=" << launch_session->id
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - probe_warm_started)
+                             .count()
+                        << " totalMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - launch_started)
+                             .count();
       }
     }
 
@@ -2832,7 +2906,18 @@ namespace nvhttp {
     }
 
     if (appid > 0) {
+      const auto execute_started = std::chrono::steady_clock::now();
       auto err = proc::proc.execute(appid, launch_session);
+      BOOST_LOG(info) << "Startup timeline server stage=nvhttp-app-execute"
+                      << " launchSession=" << launch_session->id
+                      << " appid=" << appid
+                      << " err=" << err
+                      << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - execute_started)
+                           .count()
+                      << " totalMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - launch_started)
+                           .count();
       if (err) {
         tree.put("root.<xmlattr>.status_code", err);
         tree.put("root.<xmlattr>.status_message", "Failed to start the specified application");
@@ -2929,6 +3014,8 @@ namespace nvhttp {
       BOOST_LOG(warning) << "Rejecting overlapping resume request while another session is starting";
       return;
     }
+
+    session_start_in_progress_guard_t session_start_guard;
 
     const auto resume_rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
     const std::string client_cert_uuid = get_client_cert_uuid_from_request(request);

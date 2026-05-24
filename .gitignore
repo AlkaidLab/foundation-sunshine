@@ -91,3 +91,6 @@ src_assets/common/assets/web/welcome.html
 src_assets/common/assets/web/dist/
 # Local dev scripts
 build.sh
+
+# Local deployment artifacts
+build-skyindows-artifacts/

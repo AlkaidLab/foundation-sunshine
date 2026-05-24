@@ -62,6 +62,7 @@ namespace video {
     int bitrate;  // Video bitrate in kilobits (1000 bits) for requested framerate
     int qualityCeilingBitrate;  // Maximum video bitrate permitted after probing, in kilobits
     int qualityCeilingFramerate;  // Maximum framerate permitted after probing
+    int startupFramerate = 0;  // Initial encode pacing seed; capture keeps framerate/quality ceiling
     int contentType;  // Client content hint: desktop/text/motion/game
     int slicesPerFrame;  // Number of slices per frame
     int numRefFrames;  // Max number of reference frames

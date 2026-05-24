@@ -887,6 +887,7 @@ namespace stream {
 
     std::uint32_t launch_session_id;
     std::atomic_bool teardown_counted { false };
+    std::chrono::steady_clock::time_point startup_started {};
 
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
@@ -917,6 +918,7 @@ namespace stream {
     std::chrono::steady_clock::time_point stream_quality_startup_guard_until {};
     std::chrono::steady_clock::time_point stream_quality_startup_settle_until {};
     std::chrono::steady_clock::time_point stream_quality_resync_guard_until {};
+    std::chrono::steady_clock::time_point transport_startup_grace_until {};
     std::chrono::steady_clock::time_point video_startup_pacing_until {};
     std::chrono::steady_clock::time_point last_adaptive_controller_off_log {};
     std::chrono::steady_clock::time_point last_client_idr_request {};
@@ -3312,8 +3314,24 @@ namespace stream {
       return target_interval;
     }
 
-    const auto startup_fps = std::clamp(std::min(target_fps, 90), 30, std::max(target_fps, 30));
+    const int configured_startup_fps = session->config.monitor.startupFramerate > 0 ?
+                                         session->config.monitor.startupFramerate :
+                                         std::min(target_fps, session_runtime::kStartupHighRefreshCadenceCap);
+    const auto startup_fps = std::clamp(configured_startup_fps,
+                                        30,
+                                        std::max(target_fps, 30));
     return std::chrono::duration<double, std::milli> { 1000.0 / static_cast<double>(startup_fps) };
+  }
+
+  static long long
+  startup_elapsed_ms(const session_t &session) {
+    if (session.startup_started.time_since_epoch().count() == 0) {
+      return -1;
+    }
+
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now() - session.startup_started)
+      .count();
   }
 
   void
@@ -6591,6 +6609,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
+      bool has_session_awaiting_startup = false;
 
       {
         auto lg = server->_sessions.lock();
@@ -6639,6 +6658,17 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (!session->control_only &&
+                session->transport_startup_grace_until.time_since_epoch().count() != 0 &&
+                now < session->transport_startup_grace_until) {
+              has_session_awaiting_startup = true;
+            }
+            if (!session->control.session_control_welcome_sent) {
+              has_session_awaiting_startup = true;
+              ++pos;
+              continue;
+            }
+
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -6672,7 +6702,7 @@ namespace stream {
       }
 
       // Don't break until any pending sessions either expire or connect
-      if (proc::proc.running() == 0 && !has_session_awaiting_peer) {
+      if (proc::proc.running() == 0 && !has_session_awaiting_peer && !has_session_awaiting_startup) {
         BOOST_LOG(info) << "Process terminated"sv;
         break;
       }
@@ -8021,10 +8051,22 @@ namespace stream {
     while_starting_do_nothing(session->state);
 
     auto ref = broadcast_shared.ref();
+    const auto ping_wait_started = std::chrono::steady_clock::now();
+    BOOST_LOG(info) << "Startup timeline server stage=video-wait-initial-ping"
+                    << " runtime=" << session->identity.runtime_id
+                    << " launchSession=" << session->launch_session_id
+                    << " totalMs=" << startup_elapsed_ms(*session);
     auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
     if (error < 0) {
       return;
     }
+    BOOST_LOG(info) << "Startup timeline server stage=video-initial-ping"
+                    << " runtime=" << session->identity.runtime_id
+                    << " launchSession=" << session->launch_session_id
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - ping_wait_started)
+                         .count()
+                    << " totalMs=" << startup_elapsed_ms(*session);
 
     // Enable local prioritization and QoS tagging on video traffic if requested by the client
     auto address = session->video.peer.address();
@@ -8040,6 +8082,13 @@ namespace stream {
     }
     // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
+    BOOST_LOG(info) << "Startup timeline server stage=video-capture-call"
+                    << " runtime=" << session->identity.runtime_id
+                    << " launchSession=" << session->launch_session_id
+                    << " requested=" << session->config.monitor.width << 'x' << session->config.monitor.height
+                    << '@' << session->config.monitor.framerate
+                    << " startupFps=" << session->config.monitor.startupFramerate
+                    << " totalMs=" << startup_elapsed_ms(*session);
     video::capture(session->mail,
                    session->config.monitor,
                    session,
@@ -8328,6 +8377,12 @@ namespace stream {
 
 	    int
 	    start(session_t &session, const std::string &addr_string) {
+      BOOST_LOG(info) << "Startup timeline server stage=stream-start"
+                      << " runtime=" << session.identity.runtime_id
+                      << " launchSession=" << session.launch_session_id
+                      << " peer=" << addr_string
+                      << " totalMs=" << startup_elapsed_ms(session);
+
 	      if (!session.shutdown_event) {
 	        if (!session.mail) {
 	          BOOST_LOG(error) << "Cannot start streaming session because session mail context is unavailable"
@@ -8399,12 +8454,20 @@ namespace stream {
       if (!session.control_only) {
         session.audioThread = std::thread { audioThread, &session };
         session.videoThread = std::thread { videoThread, &session };
+        BOOST_LOG(info) << "Startup timeline server stage=stream-av-threads-spawned"
+                        << " runtime=" << session.identity.runtime_id
+                        << " launchSession=" << session.launch_session_id
+                        << " totalMs=" << startup_elapsed_ms(session);
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video and audio thread creation"sv;
       }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+      BOOST_LOG(info) << "Startup timeline server stage=stream-running"
+                      << " runtime=" << session.identity.runtime_id
+                      << " launchSession=" << session.launch_session_id
+                      << " totalMs=" << startup_elapsed_ms(session);
       const auto stream_quality_started_at = std::chrono::steady_clock::now();
       const bool adaptive_controller_enabled = config::stream.adaptive_streaming_optimization &&
                                                (session.config.mlFeatureFlags & ML_FF_NETWORK_FEEDBACK) != 0;
@@ -8421,6 +8484,9 @@ namespace stream {
                                                std::chrono::steady_clock::time_point {};
       session.stream_quality_startup_settle_until = adaptive_controller_enabled && !lan_fast_start ?
                                                 stream_quality_started_at + 10000ms :
+                                                std::chrono::steady_clock::time_point {};
+      session.transport_startup_grace_until = !session.control_only ?
+                                                stream_quality_started_at + 12000ms :
                                                 std::chrono::steady_clock::time_point {};
       session.video_startup_pacing_until = adaptive_controller_enabled && !lan_fast_start ?
                                              stream_quality_started_at + 2500ms :
@@ -8515,8 +8581,9 @@ namespace stream {
 	      auto mail = std::make_shared<safe::mail_raw_t>();
 	      session->mail = mail;
 
-	      session->shutdown_event = session->mail->event<bool>(mail::shutdown);
+      session->shutdown_event = session->mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->startup_started = launch_session.startup_started;
       session->identity = launch_session.identity;
       session->identity.runtime_id = next_runtime_id.fetch_add(1, std::memory_order_relaxed);
       if (session->identity.launch_session_id == 0) {
@@ -8623,7 +8690,8 @@ namespace stream {
         .chroma_sampling_type = config.monitor.chromaSamplingType,
         .content_type = stream_quality_content_type_from_monitor(config.monitor.contentType),
       };
-      int current_stream_fps = std::max(config.monitor.framerate, 1);
+      const int capture_stream_fps = std::max(config.monitor.framerate, 1);
+      int current_stream_fps = capture_stream_fps;
       if (enhanced_feedback_client && !strong_lan_fast_start) {
         const auto startup_policy =
           session_runtime::startup_ceiling_policy_for_path(session->startup_path_decision,
@@ -8642,22 +8710,23 @@ namespace stream {
         if (startup_policy.fps_cap > 0) {
           startup_fps = std::min(startup_fps, startup_policy.fps_cap);
         }
-        if (startup_fps > 0 && startup_fps < current_stream_fps) {
+        if (startup_fps > 0 && startup_fps < capture_stream_fps) {
           current_stream_fps = startup_fps;
-          session->config.monitor.framerate = current_stream_fps;
-          session->config.monitor.frameRateNum = current_stream_fps;
-          session->config.monitor.frameRateDen = 1;
+          session->config.monitor.startupFramerate = current_stream_fps;
           BOOST_LOG(info) << "Remote-safe startup cadence applied runtime="
                           << session->identity.runtime_id
                           << " startupFps=" << current_stream_fps
+                          << " captureFps=" << capture_stream_fps
                           << " ceilingFps=" << ceiling_fps
                           << " pathReason=" << session->startup_path_decision.reason
                           << " startupPolicy=" << startup_policy.reason;
         }
+        else if (config.monitor.startupFramerate > 0 &&
+                 config.monitor.startupFramerate < capture_stream_fps) {
+          current_stream_fps = config.monitor.startupFramerate;
+        }
         else {
-          session->config.monitor.framerate = config.monitor.framerate;
-          session->config.monitor.frameRateNum = config.monitor.frameRateNum;
-          session->config.monitor.frameRateDen = config.monitor.frameRateDen;
+          session->config.monitor.startupFramerate = 0;
         }
         if (rtsp_seeded_bitrate > 0 && startup_encoding_bitrate < computed_startup_bitrate) {
           BOOST_LOG(info) << "Remote-safe startup seed preserved runtime=" << session->identity.runtime_id

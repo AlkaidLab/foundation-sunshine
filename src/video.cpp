@@ -1690,7 +1690,8 @@ namespace video {
                     << " target=" << target_display_name
                     << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
                     << " requested=" << config.width << 'x' << config.height
-                    << '@' << config.framerate;
+                    << '@' << config.framerate
+                    << " startupFps=" << config.startupFramerate;
     auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
     if (!disp) {
       return;
@@ -3153,10 +3154,19 @@ namespace video {
     frame_interest_feedback_fn_t frame_interest_feedback,
     input_activity_fn_t input_activity,
     startup_pacing_fn_t startup_pacing) {
+    const auto encoder_init_started = std::chrono::steady_clock::now();
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
     }
+    BOOST_LOG(info) << "Startup timeline server stage=video-encoder-ready"
+                    << " encoder=" << session->encoder_backend_name()
+                    << " requested=" << config.width << 'x' << config.height
+                    << '@' << config.framerate
+                    << " startupFps=" << config.startupFramerate
+                    << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - encoder_init_started)
+                         .count();
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -3212,8 +3222,24 @@ namespace video {
     std::uint64_t new_frame_encode_count = 0;
     std::uint64_t keepalive_encode_count = 0;
     std::uint64_t keepalive_reconvert_count = 0;
+    std::uint64_t pop_wait_us = 0;
+    std::uint64_t startup_sleep_us = 0;
+    std::uint64_t stale_scan_us = 0;
+    std::uint64_t convert_us = 0;
+    std::uint64_t cursor_probe_us = 0;
+    std::uint64_t frame_interest_us = 0;
+    std::uint64_t mouse_keys_us = 0;
+    std::uint64_t encode_us = 0;
     auto last_encode_loop_log = std::chrono::steady_clock::now();
     auto last_static_frame_mode = stream_quality::static_frame_mode_e::idle;
+    auto add_elapsed_us = [](std::uint64_t &accumulator,
+                             std::chrono::steady_clock::time_point started) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started);
+      if (elapsed.count() > 0) {
+        accumulator += static_cast<std::uint64_t>(elapsed.count());
+      }
+    };
     auto refresh_frame_interest_intent = [&config] {
       const auto content_type = std::clamp(config.contentType, 0, 3);
       const auto clarity_plan = stream_quality::plan_low_bitrate_clarity({
@@ -3383,14 +3409,20 @@ namespace video {
         last_static_frame_mode = static_frame_mode;
       }
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(minimum_frame_time)) {
+        const auto pop_started = std::chrono::steady_clock::now();
+        auto img = images->pop(minimum_frame_time);
+        add_elapsed_us(pop_wait_us, pop_started);
+        if (img) {
           std::uint32_t dropped_stale_frames = 0;
           if (startup_pacing_active && startup_next_emit_time) {
             const auto now = std::chrono::steady_clock::now();
             if (now < *startup_next_emit_time) {
+              const auto sleep_started = std::chrono::steady_clock::now();
               std::this_thread::sleep_until(*startup_next_emit_time);
+              add_elapsed_us(startup_sleep_us, sleep_started);
             }
           }
+          const auto stale_scan_started = std::chrono::steady_clock::now();
           while (!requested_idr_frame && images->peek()) {
             if (auto newer_img = images->pop(0ms)) {
               img = std::move(newer_img);
@@ -3400,6 +3432,7 @@ namespace video {
               break;
             }
           }
+          add_elapsed_us(stale_scan_us, stale_scan_started);
           if (dropped_stale_frames > 0) {
             stale_frame_drop_count += dropped_stale_frames;
             const auto now = std::chrono::steady_clock::now();
@@ -3439,13 +3472,20 @@ namespace video {
                                        now + effective_target_duration;
           }
 
-          if (session->convert(*img)) {
+          const auto convert_started = std::chrono::steady_clock::now();
+          const int convert_result = session->convert(*img);
+          add_elapsed_us(convert_us, convert_started);
+          if (convert_result) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          const auto cursor_probe_started = std::chrono::steady_clock::now();
           log_cursor_encoder_input_probe(config, *img, "async");
+          add_elapsed_us(cursor_probe_us, cursor_probe_started);
+          const auto frame_interest_started = std::chrono::steady_clock::now();
           apply_frame_interest_to_encoder(*session, *img, config, channel_data, frame_interest_feedback);
+          add_elapsed_us(frame_interest_us, frame_interest_started);
           last_keepalive_img = img;
           has_new_frame = true;
         }
@@ -3453,7 +3493,10 @@ namespace video {
           break;
         }
         else if (last_keepalive_img) {
-          if (session->convert(*last_keepalive_img)) {
+          const auto convert_started = std::chrono::steady_clock::now();
+          const int convert_result = session->convert(*last_keepalive_img);
+          add_elapsed_us(convert_us, convert_started);
+          if (convert_result) {
             BOOST_LOG(error) << "Could not reconvert last image for static keepalive"sv;
             break;
           }
@@ -3468,7 +3511,9 @@ namespace video {
       // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
       // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
       // even when no new frame would be encoded.
+      const auto mouse_keys_started = std::chrono::steady_clock::now();
       platf::enable_mouse_keys();
+      add_elapsed_us(mouse_keys_us, mouse_keys_started);
 
       // If variable refresh rate is enabled, skip encoding when no new frame is available.
       // Keepalive frames still encode to avoid stale static streams.
@@ -3478,7 +3523,10 @@ namespace video {
         }
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      const auto encode_started = std::chrono::steady_clock::now();
+      const int encode_result = encode(frame_nr++, *session, packets, channel_data, frame_timestamp);
+      add_elapsed_us(encode_us, encode_started);
+      if (encode_result) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
@@ -3508,6 +3556,17 @@ namespace video {
                           << " keepaliveReconvert=" << keepalive_reconvert_count
                           << " pacingDrops=" << pacing_frame_drop_count
                           << " targetFrameMs=" << target_frame_time.count()
+                          << " effectiveFrameMs=" << effective_target_frame_time.count()
+                          << " startupPacing=" << (startup_pacing_active ? 1 : 0)
+                          << " timingUs{pop=" << pop_wait_us
+                          << ",startupSleep=" << startup_sleep_us
+                          << ",stale=" << stale_scan_us
+                          << ",convert=" << convert_us
+                          << ",cursorProbe=" << cursor_probe_us
+                          << ",frameInterest=" << frame_interest_us
+                          << ",mouseKeys=" << mouse_keys_us
+                          << ",encode=" << encode_us
+                          << "}"
                           << " nextFrame=" << frame_nr
                           << " imagesRunning=" << (images->running() ? 1 : 0)
                           << " reinit=" << (reinit_event.peek() ? 1 : 0)
@@ -3516,6 +3575,14 @@ namespace video {
           keepalive_encode_count = 0;
           keepalive_reconvert_count = 0;
           pacing_frame_drop_count = 0;
+          pop_wait_us = 0;
+          startup_sleep_us = 0;
+          stale_scan_us = 0;
+          convert_us = 0;
+          cursor_probe_us = 0;
+          frame_interest_us = 0;
+          mouse_keys_us = 0;
+          encode_us = 0;
           last_encode_loop_log = now;
         }
       }
@@ -3967,6 +4034,7 @@ namespace video {
     BOOST_LOG(info) << "[Display] capture_async queueing session"
                     << " requested=" << config.width << 'x' << config.height
                     << '@' << config.framerate
+                    << " startupFps=" << config.startupFramerate
                     << " preferCursorPlane=" << (config.preferCursorPlane ? 1 : 0)
                     << " displayName=" << (config.display_name.empty() ? "<default>" : config.display_name)
                     << " queueRunning=" << (state->capture_ctx_queue->running() ? 1 : 0);

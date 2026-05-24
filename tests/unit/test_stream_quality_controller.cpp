@@ -4249,6 +4249,100 @@ TEST(StreamQualityControllerTests, HighAvailabilityAfterConservativeStartReaches
     << "High availability should regain quality after cadence is proven";
 }
 
+TEST(StreamQualityControllerTests, RecoverableLossAtCurrentCadenceDoesNotPinHighRefreshStartupFps) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 2,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 10000,
+    .ceiling_total_bitrate_kbps = 148478,
+    .baseline_fps = 150,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 126000,
+    .fps_needed_kbps = 126000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 18; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 540,
+      .frames_seen = 68,
+      .complete_frames = 68,
+      .recovered_frames = 4,
+      .unrecoverable_frames = 0,
+      .missing_packets = 4,
+      .total_packets = 75,
+      .received_packets = 71,
+      .video_bytes = 1700 * 1024,
+      .rtt_ms = 11,
+      .rtt_variance_ms = 2,
+      .audio_underruns = 50,
+      .audio_concealed_ms = 500,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .displayed_frames = 68,
+      .local_display_pressure = 300,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+    });
+  }
+
+  EXPECT_GE(action.target_fps, 130)
+    << "FEC-recovered loss with stable current cadence should probe above the 120fps startup seed toward 150fps";
+}
+
+TEST(StreamQualityControllerTests, LowLatencyRecoveredPublicPathCanProbeToHighRefreshTarget) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 2,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 10000,
+    .ceiling_total_bitrate_kbps = 148478,
+    .baseline_fps = 150,
+    .startup_fps = 120,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .user_quality_kbps = 126000,
+    .fps_needed_kbps = 126000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 48; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1110,
+      .frames_seen = 133,
+      .complete_frames = 133,
+      .recovered_frames = static_cast<std::uint32_t>((i % 5 == 0) ? 30 : 24),
+      .unrecoverable_frames = 0,
+      .missing_packets = static_cast<std::uint32_t>((i % 7 == 0) ? 34 : 28),
+      .total_packets = static_cast<std::uint32_t>((i % 7 == 0) ? 617 : 515),
+      .received_packets = static_cast<std::uint32_t>((i % 7 == 0) ? 583 : 487),
+      .video_bytes = 4100 * 1024,
+      .rtt_ms = static_cast<std::uint32_t>((i % 11 == 0) ? 14 : 12),
+      .rtt_variance_ms = static_cast<std::uint32_t>((i % 13 == 0) ? 3 : 2),
+      .audio_underruns = 104,
+      .audio_concealed_ms = 1040,
+      .decode_queue_depth = static_cast<std::uint32_t>((i % 11 == 0) ? 5 : ((i % 3 == 0) ? 3 : 2)),
+      .render_queue_depth = 2,
+      .displayed_frames = static_cast<std::uint32_t>((i % 4 == 0) ? 144 : 139),
+      .local_display_pressure = static_cast<std::uint32_t>((i % 11 == 0) ? 625 : ((i % 3 == 0) ? 350 : 262)),
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+    });
+  }
+
+  EXPECT_GE(action.target_fps, 145)
+    << "Low-RTT public paths with fully FEC-recovered loss should treat 120fps as a seed, not a long-term ceiling";
+}
+
 TEST(StreamQualityControllerTests, CleanAlrReuseDoesNotLearnLowSendRateAsLinkCapacity) {
   stream_quality::controller_t controller;
   controller.configure({

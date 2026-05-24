@@ -37,6 +37,7 @@ namespace rtsp_stream {
     std::string client_route_host;
     std::vector<std::string> client_target_address_candidates;
     std::vector<std::string> host_public_candidates;
+    std::chrono::steady_clock::time_point startup_started;
     std::chrono::steady_clock::time_point pending_since;
 
     boost::process::v1::environment env;

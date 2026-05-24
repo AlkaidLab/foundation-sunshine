@@ -316,7 +316,7 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemo
 
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 90);
+  EXPECT_EQ(policy.fps_cap, 120);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
@@ -1033,7 +1033,7 @@ TEST(SessionRuntimeTests, RouterPortForwardStartupPolicySeedsBitrateAndCapsHighR
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 100);
 
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 90);
+  EXPECT_EQ(policy.fps_cap, 120);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
@@ -1049,7 +1049,7 @@ TEST(SessionRuntimeTests, HairpinPortForwardUsesElevenOClockRouterBaseline) {
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
 
   EXPECT_EQ(policy.bitrate_seed_kbps, 12000);
-  EXPECT_EQ(policy.fps_cap, 90);
+  EXPECT_EQ(policy.fps_cap, 120);
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
