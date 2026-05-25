@@ -48,6 +48,14 @@
             <i class="fas fa-plus"></i>
           </button>
           <button
+            class="cute-btn"
+            :class="selectionMode ? 'cute-btn-warning' : 'cute-btn-secondary'"
+            @click="toggleSelectionMode"
+            :title="$t('apps.batch_select_toggle')"
+          >
+            <i class="fas" :class="selectionMode ? 'fa-square-check' : 'fa-square'"></i>
+          </button>
+          <button
             v-if="isTauriEnv()"
             class="cute-btn cute-btn-info"
             @click="scanGameLibraries()"
@@ -78,6 +86,35 @@
         </div>
       </div>
 
+      <!-- 批量操作工具栏 -->
+      <Transition name="fade">
+        <div v-if="selectionMode" class="batch-action-bar">
+          <div class="batch-action-info">
+            <i class="fas fa-square-check me-2"></i>
+            <span>{{ $t('apps.batch_selected', { count: selectedIndices.size }) }}</span>
+          </div>
+          <div class="batch-action-buttons">
+            <button class="btn btn-sm btn-outline-secondary" @click="selectAllFiltered">
+              <i class="fas fa-check-double me-1"></i>{{ $t('apps.batch_select_all') }}
+            </button>
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              :disabled="selectedIndices.size === 0"
+              @click="clearSelection"
+            >
+              <i class="fas fa-eraser me-1"></i>{{ $t('apps.batch_clear') }}
+            </button>
+            <button
+              class="btn btn-sm btn-danger"
+              :disabled="selectedIndices.size === 0 || isBatchDeleting"
+              @click="askBatchDelete"
+            >
+              <i class="fas fa-trash me-1"></i>{{ $t('apps.batch_delete') }}
+            </button>
+          </div>
+        </div>
+      </Transition>
+
       <!-- 应用卡片列表 -->
       <div class="apps-grid-container">
         <!-- 网格视图 - 拖拽模式 -->
@@ -96,33 +133,58 @@
           @end="onDragEnd"
         >
           <template #item="{ element: app, index }">
-            <AppCard
-              :app="app"
-              :draggable="true"
-              :is-drag-result="false"
-              :is-dragging="isDragging"
-              @edit="editApp(index)"
-              @delete="showDeleteForm(index)"
-              @copy-success="handleCopySuccess"
-              @copy-error="handleCopyError"
-            />
+            <div class="app-card-wrapper" :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(index) }">
+              <div
+                v-if="selectionMode"
+                class="app-select-checkbox"
+                role="checkbox"
+                :aria-checked="isAppSelected(index)"
+                @click.stop="toggleAppSelection(index)"
+              >
+                <i class="fas" :class="isAppSelected(index) ? 'fa-square-check' : 'fa-square'"></i>
+              </div>
+              <AppCard
+                :app="app"
+                :draggable="!selectionMode"
+                :is-drag-result="false"
+                :is-dragging="isDragging"
+                @edit="selectionMode ? toggleAppSelection(index) : editApp(index)"
+                @delete="showDeleteForm(index)"
+                @copy-success="handleCopySuccess"
+                @copy-error="handleCopyError"
+              />
+            </div>
           </template>
         </draggable>
 
         <!-- 网格视图 - 搜索模式 -->
         <div v-else-if="viewMode === 'grid' && searchQuery" class="apps-grid">
-          <AppCard
+          <div
             v-for="(app, index) in filteredApps"
             :key="`search-grid-${app.name}-${index}`"
-            :app="app"
-            :draggable="false"
-            :is-search-result="true"
-            :is-dragging="false"
-            @edit="editApp(getOriginalIndex(app, index))"
-            @delete="showDeleteForm(getOriginalIndex(app, index))"
-            @copy-success="handleCopySuccess"
-            @copy-error="handleCopyError"
-          />
+            class="app-card-wrapper"
+            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(getOriginalIndex(app)) }"
+          >
+            <div
+              v-if="selectionMode"
+              class="app-select-checkbox"
+              role="checkbox"
+              :aria-checked="isAppSelected(getOriginalIndex(app))"
+              @click.stop="toggleAppSelection(getOriginalIndex(app))"
+            >
+              <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
+            </div>
+            <AppCard
+              :app="app"
+              :draggable="false"
+              :is-search-result="true"
+              :is-dragging="false"
+              @edit="selectionMode ? toggleAppSelection(getOriginalIndex(app)) : editApp(getOriginalIndex(app, index))"
+              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              @copy-success="handleCopySuccess"
+              @copy-error="handleCopyError"
+            />
+          </div>
         </div>
 
         <!-- 列表视图 - 拖拽模式 -->
@@ -141,32 +203,57 @@
           @end="onDragEnd"
         >
           <template #item="{ element: app, index }">
-            <AppListItem
-              :app="app"
-              :draggable="true"
-              :is-dragging="isDragging"
-              @edit="editApp(index)"
-              @delete="showDeleteForm(index)"
-              @copy-success="handleCopySuccess"
-              @copy-error="handleCopyError"
-            />
+            <div class="app-list-wrapper" :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(index) }">
+              <div
+                v-if="selectionMode"
+                class="app-select-checkbox app-select-checkbox--list"
+                role="checkbox"
+                :aria-checked="isAppSelected(index)"
+                @click.stop="toggleAppSelection(index)"
+              >
+                <i class="fas" :class="isAppSelected(index) ? 'fa-square-check' : 'fa-square'"></i>
+              </div>
+              <AppListItem
+                :app="app"
+                :draggable="!selectionMode"
+                :is-dragging="isDragging"
+                @edit="selectionMode ? toggleAppSelection(index) : editApp(index)"
+                @delete="showDeleteForm(index)"
+                @copy-success="handleCopySuccess"
+                @copy-error="handleCopyError"
+              />
+            </div>
           </template>
         </draggable>
 
         <!-- 列表视图 - 搜索模式 -->
         <div v-else-if="viewMode === 'list' && searchQuery" class="apps-list">
-          <AppListItem
+          <div
             v-for="(app, index) in filteredApps"
             :key="`search-list-${app.name}-${index}`"
-            :app="app"
-            :draggable="false"
-            :is-search-result="true"
-            :is-dragging="false"
-            @edit="editApp(getOriginalIndex(app, index))"
-            @delete="showDeleteForm(getOriginalIndex(app, index))"
-            @copy-success="handleCopySuccess"
-            @copy-error="handleCopyError"
-          />
+            class="app-list-wrapper"
+            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(getOriginalIndex(app)) }"
+          >
+            <div
+              v-if="selectionMode"
+              class="app-select-checkbox app-select-checkbox--list"
+              role="checkbox"
+              :aria-checked="isAppSelected(getOriginalIndex(app))"
+              @click.stop="toggleAppSelection(getOriginalIndex(app))"
+            >
+              <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
+            </div>
+            <AppListItem
+              :app="app"
+              :draggable="false"
+              :is-search-result="true"
+              :is-dragging="false"
+              @edit="selectionMode ? toggleAppSelection(getOriginalIndex(app)) : editApp(getOriginalIndex(app, index))"
+              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              @copy-success="handleCopySuccess"
+              @copy-error="handleCopyError"
+            />
+          </div>
         </div>
 
         <!-- 空状态 - 搜索无结果 -->
@@ -331,6 +418,31 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
         </div>
       </div>
     </Transition>
+    <!-- 批量删除确认对话框 -->
+    <Transition name="fade">
+      <div v-if="batchDeleteConfirm" class="delete-app-overlay" @click.self="cancelBatchDelete">
+        <div class="delete-app-modal">
+          <div class="delete-app-header">
+            <h5>
+              <i class="fas fa-exclamation-triangle me-2"></i>{{ $t('apps.batch_delete') }}
+            </h5>
+            <button class="btn-close" @click="cancelBatchDelete"></button>
+          </div>
+          <div class="delete-app-body">
+            <p>{{ $t('apps.batch_delete_confirm', { count: selectedIndices.size }) }}</p>
+          </div>
+          <div class="delete-app-footer">
+            <button type="button" class="btn btn-secondary" :disabled="isBatchDeleting" @click="cancelBatchDelete">
+              {{ $t('_common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" :disabled="isBatchDeleting" @click="confirmBatchDelete">
+              <i v-if="isBatchDeleting" class="fas fa-spinner fa-spin me-1"></i>
+              {{ $t('_common.delete') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -378,6 +490,18 @@ const {
   cancelDeleteApp,
   confirmDeleteApp,
   deleteConfirmIndex,
+  selectionMode,
+  selectedIndices,
+  batchDeleteConfirm,
+  isBatchDeleting,
+  toggleSelectionMode,
+  toggleAppSelection,
+  isAppSelected,
+  selectAllFiltered,
+  clearSelection,
+  askBatchDelete,
+  cancelBatchDelete,
+  confirmBatchDelete,
   save,
   hasUnsavedChanges,
   onDragStart,

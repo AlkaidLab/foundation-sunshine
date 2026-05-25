@@ -508,6 +508,79 @@
 }
 
 // ============================================================================
+// 批量选择 - 工具栏 + 卡片复选框覆盖层
+// ============================================================================
+.batch-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+
+  .batch-action-info {
+    color: var(--text-secondary, #cbd5e1);
+    font-size: var(--font-size-sm, 14px);
+  }
+
+  .batch-action-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+.app-card-wrapper,
+.app-list-wrapper {
+  position: relative;
+
+  &.selection-mode {
+    cursor: pointer;
+  }
+
+  &.is-selected {
+    // 用细描边而不是 box-shadow 抢占视觉，避免和 hover 状态打架
+    outline: 2px solid var(--bs-primary, #6366f1);
+    outline-offset: 2px;
+    border-radius: 14px;
+  }
+}
+
+.app-select-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+  pointer-events: auto;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.9);
+  }
+
+  &--list {
+    top: 50%;
+    left: 8px;
+    transform: translateY(-50%);
+  }
+}
+
 // APP CARD
 // ============================================================================
 

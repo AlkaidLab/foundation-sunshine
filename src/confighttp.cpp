@@ -933,6 +933,142 @@ namespace confighttp {
     proc::refresh(config::stream.file_apps);
   }
 
+  /**
+   * @brief Delete multiple apps in a single atomic operation.
+   *
+   * Expects JSON body: {"indices":[<int>, <int>, ...]}
+   *
+   * Rationale: clients that want to delete N apps cannot just loop on
+   * DELETE /api/apps/{id} — each successful delete shifts the remaining
+   * indices, and a second concurrent caller is rejected by apps_writing.
+   * By taking the lock once and rebuilding the array under it, we avoid both
+   * problems: indices are interpreted against a single snapshot, the JSON file
+   * is rewritten once, and proc::refresh runs only once.
+   *
+   * Response:
+   *   200 {"status": true,  "deleted": <N>, "remaining": <M>}
+   *   400 if Content-Type / JSON / indices invalid
+   *   409 if another apps writer is already in flight
+   *
+   * @api_examples{/api/apps/batch-delete| POST| {"indices":[2,5,7]}}
+   */
+  void
+  batchDeleteApps(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    // Same single-writer guard as deleteApp / saveApp.
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree busy;
+      busy.put("status", "false");
+      busy.put("error", "Another operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, busy);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+
+    pt::ptree outputTree;
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+
+    std::set<int> indices_to_remove;
+    try {
+      pt::ptree body;
+      pt::read_json(ss, body);
+
+      auto indices_node = body.get_child_optional("indices");
+      if (!indices_node) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Missing 'indices' array");
+        return;
+      }
+
+      if (indices_node->size() > 1024) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Too many indices in a single request");
+        return;
+      }
+      for (const auto &kv : *indices_node) {
+        // boost::property_tree json reader stores array values as anonymous
+        // children with empty keys. get_value<int>() will throw if the value
+        // is not parseable as an integer.
+        int idx = kv.second.get_value<int>();
+        indices_to_remove.insert(idx);
+      }
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: invalid JSON body: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid JSON body");
+      return;
+    }
+
+    if (indices_to_remove.empty()) {
+      outputTree.put("status", "true");
+      outputTree.put("deleted", 0);
+      return;
+    }
+
+    pt::ptree fileTree;
+    int deleted_count = 0;
+    int remaining_count = 0;
+    try {
+      pt::read_json(config::stream.file_apps, fileTree);
+      auto &apps_node = fileTree.get_child("apps"s);
+      const int apps_count = static_cast<int>(apps_node.size());
+
+      // Validate every index against the single snapshot we just loaded.
+      for (int idx : indices_to_remove) {
+        if (idx < 0 || idx >= apps_count) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid Index");
+          return;
+        }
+      }
+
+      pt::ptree newApps;
+      int i = 0;
+      for (const auto &kv : apps_node) {
+        if (indices_to_remove.find(i) == indices_to_remove.end()) {
+          newApps.push_back(std::make_pair("", kv.second));
+        }
+        else {
+          ++deleted_count;
+        }
+        ++i;
+      }
+      remaining_count = static_cast<int>(newApps.size());
+      fileTree.erase("apps");
+      fileTree.push_back(std::make_pair("apps", newApps));
+
+      pt::write_json(config::stream.file_apps, fileTree);
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid File JSON");
+      return;
+    }
+
+    BOOST_LOG(info) << "BatchDeleteApps: removed "sv << deleted_count
+                    << " app(s), "sv << remaining_count << " remaining"sv;
+    outputTree.put("status", "true");
+    outputTree.put("deleted", deleted_count);
+    outputTree.put("remaining", remaining_count);
+    proc::refresh(config::stream.file_apps);
+  }
+
   void
   uploadCover(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
@@ -2824,6 +2960,7 @@ namespace confighttp {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/password$"]["POST"] = savePassword;
     server.resource["^/api/apps/([0-9]+)$"]["DELETE"] = deleteApp;
+    server.resource["^/api/apps/batch-delete$"]["POST"] = batchDeleteApps;
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = listClients;
     server.resource["^/api/clients/list$"]["POST"] = saveConfig;

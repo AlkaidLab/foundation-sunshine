@@ -82,5 +82,6 @@ export const ENV_VARS_CONFIG = {
 export const API_ENDPOINTS = {
   APPS: '/api/apps',
   CONFIG: '/api/config',
-  APP_DELETE: (index) => `/api/apps/${index}`
+  APP_DELETE: (index) => `/api/apps/${index}`,
+  APPS_BATCH_DELETE: '/api/apps/batch-delete'
 }; 

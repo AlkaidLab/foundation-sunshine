@@ -33,6 +33,14 @@ export function useApps() {
   const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
   const deleteConfirmIndex = ref(null)
 
+  // 批量删除：selectionMode 仅控制 UI 是否显示多选 checkbox；
+  // selectedIndices 是 Set<number>，存的是 apps.value 的原始 index，
+  // 不能存 filteredApps 的下标，否则搜索后下标会错位。
+  const selectionMode = ref(false)
+  const selectedIndices = ref(new Set())
+  const batchDeleteConfirm = ref(false)
+  const isBatchDeleting = ref(false)
+
   // 计算属性
   const messageClass = computed(() => ({
     [`alert-${messageType.value}`]: true,
@@ -62,8 +70,11 @@ export function useApps() {
     ...overrides,
   })
 
+  let translate = (key, params) => (params ? `${key} ${JSON.stringify(params)}` : key)
+
   // 初始化
   const init = (t) => {
+    translate = t
     envVars.value = Object.fromEntries(
       Object.entries(ENV_VARS_CONFIG).map(([key, translationKey]) => [key, t(translationKey)])
     )
@@ -158,6 +169,74 @@ export function useApps() {
     } catch (error) {
       console.error('删除应用失败:', error)
       showMessage('删除应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    }
+  }
+
+  // 进入/退出多选模式，退出时清空选择
+  const toggleSelectionMode = () => {
+    selectionMode.value = !selectionMode.value
+    if (!selectionMode.value) {
+      selectedIndices.value = new Set()
+    }
+  }
+
+  const toggleAppSelection = (index) => {
+    const next = new Set(selectedIndices.value)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
+    selectedIndices.value = next
+  }
+
+  const isAppSelected = (index) => selectedIndices.value.has(index)
+
+  // 全选/反选
+  const selectAllFiltered = () => {
+    const next = new Set(selectedIndices.value)
+    filteredApps.value.forEach((app) => {
+      const i = apps.value.indexOf(app)
+      if (i >= 0) next.add(i)
+    })
+    selectedIndices.value = next
+  }
+
+  const clearSelection = () => {
+    selectedIndices.value = new Set()
+  }
+
+  const askBatchDelete = () => {
+    if (selectedIndices.value.size === 0) return
+    batchDeleteConfirm.value = true
+  }
+
+  const cancelBatchDelete = () => {
+    batchDeleteConfirm.value = false
+  }
+
+  const confirmBatchDelete = async () => {
+    const indices = Array.from(selectedIndices.value)
+    if (indices.length === 0) {
+      batchDeleteConfirm.value = false
+      return
+    }
+    try {
+      isBatchDeleting.value = true
+      const result = await AppService.batchDeleteApps(indices)
+      await loadApps()
+      selectedIndices.value = new Set()
+      selectionMode.value = false
+      batchDeleteConfirm.value = false
+      showMessage(
+        translate('apps.batch_delete_result', { deleted: result.deleted, remaining: result.remaining }),
+        APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
+    } catch (error) {
+      console.error('批量删除失败:', error)
+      showMessage(
+        error?.message || translate('apps.batch_delete_failed'),
+        APP_CONSTANTS.MESSAGE_TYPES.ERROR
+      )
+    } finally {
+      isBatchDeleting.value = false
     }
   }
 
@@ -533,6 +612,10 @@ export function useApps() {
     scannedAppsSearchQuery,
     showGamesOnly,
     selectedAppType,
+    selectionMode,
+    selectedIndices,
+    batchDeleteConfirm,
+    isBatchDeleting,
     // 计算属性
     messageClass,
     filteredScannedApps,
@@ -553,6 +636,14 @@ export function useApps() {
     cancelDeleteApp,
     confirmDeleteApp,
     deleteConfirmIndex,
+    toggleSelectionMode,
+    toggleAppSelection,
+    isAppSelected,
+    selectAllFiltered,
+    clearSelection,
+    askBatchDelete,
+    cancelBatchDelete,
+    confirmBatchDelete,
     save,
     hasUnsavedChanges,
     onDragStart,

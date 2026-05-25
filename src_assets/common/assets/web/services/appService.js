@@ -76,6 +76,33 @@ export class AppService {
   }
 
   /**
+   * 批量删除应用（原子操作，按单次快照解释 indices）
+   * @param {number[]} indices 应用索引数组
+   * @returns {Promise<{deleted:number, remaining:number}>}
+   */
+  static async batchDeleteApps(indices) {
+    try {
+      const response = await fetch(API_ENDPOINTS.APPS_BATCH_DELETE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ indices })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.status === false || data.status === 'false') {
+        throw new Error(data.error || `批量删除失败: ${response.status}`);
+      }
+      return {
+        deleted: Number(data.deleted) || 0,
+        remaining: Number(data.remaining) || 0
+      };
+    } catch (error) {
+      console.error('批量删除应用失败:', error);
+      throw new Error(formatError(error));
+    }
+  }
+
+  /**
    * 获取平台信息
    * @returns {Promise<string>} 平台信息
    */
