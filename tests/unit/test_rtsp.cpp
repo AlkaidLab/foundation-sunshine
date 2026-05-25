@@ -68,7 +68,7 @@ TEST(RtspFeatureFlags2Tests, AdvertisesOnlyWiredEnhancedRtpCapabilities) {
   EXPECT_NE(flags & inputPriorityV1, 0U);
   EXPECT_NE(flags & audioContinuityV1, 0U);
   EXPECT_NE(flags & cursorPlaneV1, 0U);
-  EXPECT_EQ(flags & rescueControlV1, 0U);
+  EXPECT_NE(flags & rescueControlV1, 0U);
   EXPECT_EQ(flags & ft2QuicDatagramV1, 0U);
 }
 

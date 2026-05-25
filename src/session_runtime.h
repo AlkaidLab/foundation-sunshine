@@ -1021,8 +1021,9 @@ namespace session_runtime {
     if (reason == "host-direct-public") {
       return "host-direct-public";
     }
-    if (reason == "host-public-port-forward-lan-hairpin") {
-      return "host-public-port-forward-lan-hairpin";
+    if (reason == "router-snat-port-forward" ||
+        reason == "host-public-port-forward-lan-hairpin") {
+      return "router-snat-port-forward";
     }
     if (reason == "host-public-port-forward") {
       return "host-public-port-forward";

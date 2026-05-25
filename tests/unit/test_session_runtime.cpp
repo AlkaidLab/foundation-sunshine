@@ -311,7 +311,7 @@ TEST(SessionRuntimeTests, StartupPathLanHairpinPublicIdentityUsesHairpinFastRemo
   EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
   EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
   EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
-  EXPECT_STREQ(decision.reason, "host-public-port-forward-lan-hairpin");
+  EXPECT_STREQ(decision.reason, "router-snat-port-forward");
   EXPECT_GE(decision.identity_confidence_ppm, 850000U);
 
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
@@ -533,7 +533,7 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
   EXPECT_EQ(session.transportPath.pathIdentityKind, LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD);
   EXPECT_EQ(session.transportPath.startupClass, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
   EXPECT_NE(session.transportPath.reasonFlags & LI_SESSION_PATH_REASON_HOST_PUBLIC_MATCH, 0U);
-  EXPECT_STREQ(session.transportPath.explanationCode, "host-public-port-forward-lan-hairpin");
+  EXPECT_STREQ(session.transportPath.explanationCode, "router-snat-port-forward");
   EXPECT_STREQ(session.transportPath.localEndpoint, "192.168.100.20:53123");
   EXPECT_STREQ(session.transportPath.remoteEndpoint, "home.example.net:57989");
   EXPECT_STREQ(session.transportPath.observedEndpoint, "192.168.100.1:53123");
@@ -547,7 +547,7 @@ TEST(SessionRuntimeTests, PathIdentityAndObservedEndpointsReachLiSession) {
   });
   EXPECT_NE(joined.find("x-ss-core.transportPath.pathIdentityKind:router-port-forward"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.startupClass:remote-safe"), std::string::npos);
-  EXPECT_NE(joined.find("x-ss-core.transportPath.explanationCode:host-public-port-forward-lan-hairpin"), std::string::npos);
+  EXPECT_NE(joined.find("x-ss-core.transportPath.explanationCode:router-snat-port-forward"), std::string::npos);
   EXPECT_NE(joined.find("x-ss-core.transportPath.hostLocalEndpoint:192.168.100.133:57989"), std::string::npos);
 }
 
@@ -1043,7 +1043,7 @@ TEST(SessionRuntimeTests, HairpinPortForwardUsesElevenOClockRouterBaseline) {
     .allow_lan_fast_start = false,
     .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
     .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
-    .reason = "host-public-port-forward-lan-hairpin",
+    .reason = "router-snat-port-forward",
   };
 
   const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);

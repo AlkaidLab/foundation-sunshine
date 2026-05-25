@@ -54,6 +54,8 @@ extern "C" {
 #include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/rescue_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
+#include "alkaidlab/session_runtime/transport_runtime.h"
+#include "alkaidlab/transport/gamestream_enet_transport.h"
 #include "alkaidlab/control_path_health/control_path_health.h"
 #include "alkaidlab/rescue_control/rescue_control.h"
 #include "display_device/session.h"
@@ -111,7 +113,19 @@ static constexpr const char kSunshineMicrophoneBackendProviderId[] = "windows-wa
 #define IDX_CURSOR_PLANE 21  // Cursor plane metadata (Sunshine protocol extension)
 #define IDX_SESSION 22  // Session control (Foundation protocol extension)
 #define IDX_RESCUE 23  // Rescue control (Alkaid protocol extension)
-#define HOST_RESCUE_CONTROL_ENABLED 0
+#define HOST_RESCUE_CONTROL_ENABLED 1
+
+// P4 network.transport observe-first: keep control-carrier observations active,
+// but do not account every video/audio/microphone datagram on realtime send/recv
+// paths yet.  Full media byte accounting belongs in a sampled observer pass so
+// the module split cannot change capture/encode/send timing.
+#ifndef ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
+  #define ALKAID_TRANSPORT_CARRIER_SEND_ENABLED 0
+#endif
+
+#ifndef ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED
+  #define ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED 0
+#endif
 
 #ifndef LI_FF2_RESCUE_CONTROL
   #define LI_FF2_RESCUE_CONTROL (1ULL << 13)
@@ -563,6 +577,20 @@ namespace stream {
     sync_util::sync_t<std::unordered_map<std::uint64_t, std::vector<session_t *>>> _cert_key_to_sessions;
   };
 
+
+  static void
+  record_network_transport_datagram(session_t *session, std::uint8_t channel, enet_uint32 flags, std::size_t length, bool tx);
+
+  class control_server_t;
+
+  static int
+  send_control_datagram_via_transport_or_direct(session_t *session,
+                                                control_server_t *control_server,
+                                                const std::string_view &payload,
+                                                net::peer_t peer,
+                                                std::uint8_t channel,
+                                                enet_uint32 flags);
+
   class feature_lease_registry_t {
   public:
     session_runtime::owner_token_t
@@ -646,11 +674,14 @@ namespace stream {
     }
 
     int
-    send(const std::string_view &payload,
-         net::peer_t peer,
-         std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-         enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
+    send_direct(const std::string_view &payload,
+                net::peer_t peer,
+                std::uint8_t channel = CTRL_CHANNEL_GENERIC,
+                enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
       auto packet = enet_packet_create(payload.data(), payload.size(), flags);
+      if (!packet) {
+        return -1;
+      }
       if (channel >= peer->channelCount) {
         channel = CTRL_CHANNEL_GENERIC;
       }
@@ -661,6 +692,23 @@ namespace stream {
       }
 
       return 0;
+    }
+
+    int
+    send(const std::string_view &payload,
+         net::peer_t peer,
+         std::uint8_t channel = CTRL_CHANNEL_GENERIC,
+         enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
+      if (auto *session = _registry.find_by_control_peer(peer)) {
+        return send_control_datagram_via_transport_or_direct(session,
+                                                             this,
+                                                             payload,
+                                                             peer,
+                                                             channel,
+                                                             flags);
+      }
+
+      return send_direct(payload, peer, channel, flags);
     }
 
     void
@@ -822,6 +870,9 @@ namespace stream {
       std::string expected_peer_address;  // Only used for legacy clients without ML_FF_SESSION_ID
 
       net::peer_t peer;
+      AlkRuntime *transport_runtime { nullptr };
+      AlkGamestreamEnetObserver *transport_observer { nullptr };
+      AlkTransportRuntimeBinding transport_binding {};
       std::uint32_t seq;
       std::chrono::steady_clock::time_point last_periodic_ping_log {};
       std::chrono::steady_clock::time_point last_rx_diag_log {};
@@ -982,6 +1033,7 @@ namespace stream {
       std::uint64_t max_dirty_area { 0 };
       std::uint32_t full_frame_dirty_windows { 0 };
       std::uint32_t rfi_requests { 0 };
+      std::uint32_t waiting_for_rfi_frames { 0 };
       std::uint32_t large_frame_fec_skipped { 0 };
       std::uint32_t max_rtt_ms { 0 };
       std::uint32_t max_rtt_variance_ms { 0 };
@@ -1685,6 +1737,8 @@ namespace stream {
       case stream_quality::reason_e::random_loss:
       case stream_quality::reason_e::delay_congestion:
         return "network";
+      case stream_quality::reason_e::media_continuity:
+        return "media-continuity";
       case stream_quality::reason_e::render_deadline:
         return "client-render";
       case stream_quality::reason_e::motion_pressure:
@@ -1948,6 +2002,70 @@ namespace stream {
   }
 
   static void
+  update_active_path_score_from_transport_stats(session_t *session,
+                                                const AlkTransportStats &stats) {
+    if (!session) {
+      return;
+    }
+    if (stats.rtt_us != 0) {
+      session->active_transport_path.score.rtt_ms = stats.rtt_us / 1000U;
+    }
+    if (stats.jitter_us != 0) {
+      session->active_transport_path.score.jitter_ms = stats.jitter_us / 1000U;
+    }
+    if (stats.packet_loss_ppm != 0) {
+      session->active_transport_path.score.loss_ppm = stats.packet_loss_ppm;
+    }
+  }
+
+  static bool
+  snapshot_transport_stats(session_t *session, AlkTransportStats &stats) {
+    if (!session) {
+      return false;
+    }
+    alk_transport_stats_init(&stats);
+    return alk_transport_runtime_stats(&session->control.transport_binding, &stats);
+  }
+
+  static void
+  annotate_feedback_with_transport_stats(session_t *session,
+                                         stream_quality::feedback_t &feedback,
+                                         const char *source) {
+    if (!session) {
+      return;
+    }
+
+    AlkTransportStats stats;
+    if (!snapshot_transport_stats(session, stats)) {
+      return;
+    }
+
+    if (stats.rtt_us != 0) {
+      feedback.rtt_ms = stats.rtt_us / 1000U;
+    }
+    if (stats.jitter_us != 0) {
+      feedback.rtt_variance_ms = stats.jitter_us / 1000U;
+    }
+    update_active_path_score_from_transport_stats(session, stats);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (session->control.last_rx_diag_log.time_since_epoch().count() == 0 ||
+        now - session->control.last_rx_diag_log >= 1000ms) {
+      session->control.last_rx_diag_log = now;
+      BOOST_LOG(info) << "Alkaid adaptive input from transport"
+                      << " slot=" << ALK_TRANSPORT_SLOT_ID
+                      << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
+                      << " runtime=" << session->identity.runtime_id
+                      << " source=" << (source ? source : "unknown")
+                      << " rttMs=" << feedback.rtt_ms
+                      << " jitterMs=" << feedback.rtt_variance_ms
+                      << " transportLossPpm=" << stats.packet_loss_ppm
+                      << " reliableBacklogBytes=" << stats.reliable_backlog_bytes
+                      << " reliableBacklogPackets=" << stats.reliable_backlog_packets;
+    }
+  }
+
+  static void
   record_stream_quality_feedback_diag(session_t *session,
                                 const stream_quality::feedback_t &feedback,
                                 const stream_quality::action_t &action,
@@ -2002,6 +2120,7 @@ namespace stream {
     diag.max_dirty_area = std::max(diag.max_dirty_area, feedback.dirty_area);
     diag.full_frame_dirty_windows += feedback.full_frame_dirty ? 1U : 0U;
     diag.rfi_requests += feedback.rfi_requests;
+    diag.waiting_for_rfi_frames += feedback.waiting_for_rfi_frames;
     diag.large_frame_fec_skipped += feedback.large_frame_fec_skipped;
     diag.max_rtt_ms = std::max(diag.max_rtt_ms, feedback.rtt_ms);
     diag.max_rtt_variance_ms = std::max(diag.max_rtt_variance_ms, feedback.rtt_variance_ms);
@@ -2033,6 +2152,11 @@ namespace stream {
                                      100.0 / static_cast<double>(diag.total_packets) :
                                    0.0;
     const auto input_latency_ms = static_cast<double>(diag.max_input_latency_us) / 1000.0;
+    const bool media_continuity =
+      action.reason == stream_quality::reason_e::media_continuity ||
+      diag.unrecoverable_frames > 0 ||
+      diag.rfi_requests > 0 ||
+      diag.waiting_for_rfi_frames > 0;
     std::ostringstream message;
     message << "Stream-quality diag runtime=" << session->identity.runtime_id
             << " source=" << source
@@ -2066,6 +2190,7 @@ namespace stream {
             << " frameAreaMax=" << diag.max_frame_area
             << " fullFrameDirty=" << diag.full_frame_dirty_windows
             << " rfiRequests=" << diag.rfi_requests
+            << " waitingForRfi=" << diag.waiting_for_rfi_frames
             << " largeFrameFecSkipped=" << diag.large_frame_fec_skipped
             << " rttMax=" << diag.max_rtt_ms << "ms"
             << " jitterMax=" << diag.max_rtt_variance_ms << "ms"
@@ -2080,6 +2205,7 @@ namespace stream {
             << " tier=" << stream_quality::tier_name(action.tier)
             << " scenario=" << stream_quality::scenario_name(action.scenario)
             << " decisionReason=" << stream_quality_decision_reason_name(action)
+            << " continuity=" << (media_continuity ? "media-continuity" : "normal")
             << " requestedScale=" << action.resolution_scale_percent << "%"
             << " actualScale=" << action.actual_scale_percent << "%"
             << " runtimeScaleMode=" << runtime_scale_mode_name(action)
@@ -2448,6 +2574,7 @@ namespace stream {
       .rtt_variance_ms = 120,
     };
     annotate_feedback_with_host_motion(session, feedback);
+    annotate_feedback_with_transport_stats(session, feedback, source);
     auto action = session->stream_quality_controller.on_feedback(feedback);
     apply_stream_quality_action(session, action, source);
     record_stream_quality_feedback_diag(session, feedback, action, source);
@@ -3143,6 +3270,495 @@ namespace stream {
     AlkControlPathHealthDecision decision {};
   };
 
+
+  static void
+  copy_transport_string(char *destination, std::size_t destination_length, const std::string &source) {
+    alk_session_copy_string(destination,
+                            destination_length,
+                            source.empty() ? "" : source.c_str());
+  }
+
+  static std::uint32_t
+  alk_transport_protocol_family(const session_runtime::transport_protocol_e protocol) {
+    switch (protocol) {
+      case session_runtime::transport_protocol_e::enet_udp:
+      case session_runtime::transport_protocol_e::udp:
+      case session_runtime::transport_protocol_e::quic:
+        return ALK_TRANSPORT_PROTOCOL_FAMILY_UDP;
+      case session_runtime::transport_protocol_e::tcp_tls:
+        return ALK_TRANSPORT_PROTOCOL_FAMILY_TLS;
+    }
+    return ALK_TRANSPORT_PROTOCOL_FAMILY_UNKNOWN;
+  }
+
+  static std::uint32_t
+  alk_transport_path_state(const session_runtime::transport_path_state_e state) {
+    switch (state) {
+      case session_runtime::transport_path_state_e::candidate:
+        return ALK_TRANSPORT_PATH_CANDIDATE;
+      case session_runtime::transport_path_state_e::checking:
+        return ALK_TRANSPORT_PATH_CHECKING;
+      case session_runtime::transport_path_state_e::active:
+        return ALK_TRANSPORT_PATH_ACTIVE;
+      case session_runtime::transport_path_state_e::failed:
+        return ALK_TRANSPORT_PATH_FAILED;
+      case session_runtime::transport_path_state_e::standby:
+        return ALK_TRANSPORT_PATH_STANDBY;
+    }
+    return ALK_TRANSPORT_PATH_CANDIDATE;
+  }
+
+  static std::uint32_t
+  alk_transport_candidate_type(const session_runtime::transport_route_e route) {
+    switch (route) {
+      case session_runtime::transport_route_e::relay_quic:
+      case session_runtime::transport_route_e::relay_tcp_tls:
+        return ALK_TRANSPORT_CANDIDATE_RELAY;
+      case session_runtime::transport_route_e::lan_direct:
+      case session_runtime::transport_route_e::manual_public_port_forward:
+      case session_runtime::transport_route_e::upnp_public_mapping:
+        return ALK_TRANSPORT_CANDIDATE_HOST;
+      case session_runtime::transport_route_e::ice_stun_p2p:
+        return ALK_TRANSPORT_CANDIDATE_SERVER_REFLEXIVE;
+    }
+    return ALK_TRANSPORT_CANDIDATE_UNKNOWN;
+  }
+
+  static std::uint32_t
+  alk_transport_discovery_source(const session_runtime::transport_route_e route) {
+    switch (route) {
+      case session_runtime::transport_route_e::lan_direct:
+        return ALK_TRANSPORT_DISCOVERY_LAN_DISCOVERY;
+      case session_runtime::transport_route_e::manual_public_port_forward:
+        return ALK_TRANSPORT_DISCOVERY_USER_CONFIG;
+      case session_runtime::transport_route_e::upnp_public_mapping:
+        return ALK_TRANSPORT_DISCOVERY_HOST_ADVERTISEMENT;
+      case session_runtime::transport_route_e::ice_stun_p2p:
+        return ALK_TRANSPORT_DISCOVERY_P2P_NEGOTIATION;
+      case session_runtime::transport_route_e::relay_quic:
+      case session_runtime::transport_route_e::relay_tcp_tls:
+        return ALK_TRANSPORT_DISCOVERY_RELAY_DIRECTORY;
+    }
+    return ALK_TRANSPORT_DISCOVERY_UNKNOWN;
+  }
+
+  static std::uint32_t
+  alk_transport_flags(const session_runtime::transport_path_t &path) {
+    std::uint32_t flags = ALK_TRANSPORT_FLAG_LOW_LATENCY;
+    if (path.state == session_runtime::transport_path_state_e::active) {
+      flags |= ALK_TRANSPORT_FLAG_SELECTED | ALK_TRANSPORT_FLAG_VALIDATED;
+    }
+    switch (path.protocol) {
+      case session_runtime::transport_protocol_e::enet_udp:
+      case session_runtime::transport_protocol_e::udp:
+        flags |= ALK_TRANSPORT_FLAG_DATAGRAM;
+        break;
+      case session_runtime::transport_protocol_e::quic:
+        flags |= ALK_TRANSPORT_FLAG_DATAGRAM |
+                 ALK_TRANSPORT_FLAG_ENCRYPTED |
+                 ALK_TRANSPORT_FLAG_MIGRATABLE |
+                 ALK_TRANSPORT_FLAG_PACED;
+        break;
+      case session_runtime::transport_protocol_e::tcp_tls:
+        flags |= ALK_TRANSPORT_FLAG_STREAM |
+                 ALK_TRANSPORT_FLAG_ENCRYPTED |
+                 ALK_TRANSPORT_FLAG_PACED;
+        break;
+    }
+    if (path.route == session_runtime::transport_route_e::relay_quic ||
+        path.route == session_runtime::transport_route_e::relay_tcp_tls) {
+      flags |= ALK_TRANSPORT_FLAG_RELAY | ALK_TRANSPORT_FLAG_PROXIED;
+    }
+    if (path.observed_egress_kind == LI_SESSION_PATH_EGRESS_TUNNEL ||
+        path.observed_egress_kind == LI_SESSION_PATH_EGRESS_VIRTUAL ||
+        path.observed_encapsulation == LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL ||
+        path.observed_encapsulation == LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL) {
+      flags |= ALK_TRANSPORT_FLAG_TUNNELED;
+    }
+    if (path.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD ||
+        path.path_identity_kind == LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD) {
+      flags |= ALK_TRANSPORT_FLAG_ADDRESS_TRANSLATED;
+    }
+    return flags;
+  }
+
+  static std::uint32_t
+  alk_transport_stack_flags(const session_runtime::transport_path_t &path) {
+    std::uint32_t flags = 0;
+    switch (path.protocol) {
+      case session_runtime::transport_protocol_e::enet_udp:
+      case session_runtime::transport_protocol_e::udp:
+        flags |= ALK_TRANSPORT_STACK_CARRIER_DATAGRAM |
+                 ALK_TRANSPORT_STACK_MEDIA_PACKETIZATION |
+                 ALK_TRANSPORT_STACK_DATA_CHANNEL;
+        break;
+      case session_runtime::transport_protocol_e::quic:
+        flags |= ALK_TRANSPORT_STACK_CARRIER_DATAGRAM |
+                 ALK_TRANSPORT_STACK_ENCRYPTION |
+                 ALK_TRANSPORT_STACK_DATA_CHANNEL;
+        break;
+      case session_runtime::transport_protocol_e::tcp_tls:
+        flags |= ALK_TRANSPORT_STACK_CARRIER_STREAM |
+                 ALK_TRANSPORT_STACK_ENCRYPTION |
+                 ALK_TRANSPORT_STACK_DATA_CHANNEL;
+        break;
+    }
+    if (path.route == session_runtime::transport_route_e::ice_stun_p2p) {
+      flags |= ALK_TRANSPORT_STACK_NAT_TRAVERSAL | ALK_TRANSPORT_STACK_P2P;
+    }
+    if (path.route == session_runtime::transport_route_e::relay_quic ||
+        path.route == session_runtime::transport_route_e::relay_tcp_tls) {
+      flags |= ALK_TRANSPORT_STACK_RELAY;
+    }
+    return flags;
+  }
+
+  static std::uint32_t
+  alk_transport_egress_kind(const std::uint32_t egress_kind) {
+    switch (egress_kind) {
+      case LI_SESSION_PATH_EGRESS_PHYSICAL:
+        return ALK_TRANSPORT_EGRESS_PHYSICAL;
+      case LI_SESSION_PATH_EGRESS_TUNNEL:
+        return ALK_TRANSPORT_EGRESS_TUNNEL;
+      case LI_SESSION_PATH_EGRESS_VIRTUAL:
+        return ALK_TRANSPORT_EGRESS_VIRTUAL;
+      case LI_SESSION_PATH_EGRESS_LOOPBACK:
+        return ALK_TRANSPORT_EGRESS_LOOPBACK;
+      case LI_SESSION_PATH_EGRESS_PROXY:
+        return ALK_TRANSPORT_EGRESS_PROXY;
+      case LI_SESSION_PATH_EGRESS_RELAY:
+        return ALK_TRANSPORT_EGRESS_RELAY;
+      default:
+        return ALK_TRANSPORT_EGRESS_UNKNOWN;
+    }
+  }
+
+  static std::uint32_t
+  alk_transport_encapsulation(const std::uint32_t encapsulation) {
+    switch (encapsulation) {
+      case LI_SESSION_PATH_ENCAPSULATION_NONE:
+        return ALK_TRANSPORT_ENCAPSULATION_NONE;
+      case LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP:
+        return ALK_TRANSPORT_ENCAPSULATION_NATIVE_IP;
+      case LI_SESSION_PATH_ENCAPSULATION_VPN_TUNNEL:
+        return ALK_TRANSPORT_ENCAPSULATION_VPN_TUNNEL;
+      case LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL:
+        return ALK_TRANSPORT_ENCAPSULATION_UDP_TUNNEL;
+      case LI_SESSION_PATH_ENCAPSULATION_TCP_PROXY:
+        return ALK_TRANSPORT_ENCAPSULATION_TCP_PROXY;
+      case LI_SESSION_PATH_ENCAPSULATION_TLS_PROXY:
+        return ALK_TRANSPORT_ENCAPSULATION_TLS_PROXY;
+      case LI_SESSION_PATH_ENCAPSULATION_RELAY:
+        return ALK_TRANSPORT_ENCAPSULATION_RELAY;
+      case LI_SESSION_PATH_ENCAPSULATION_ICE:
+        return ALK_TRANSPORT_ENCAPSULATION_P2P_NEGOTIATED;
+      default:
+        return ALK_TRANSPORT_ENCAPSULATION_UNKNOWN;
+    }
+  }
+
+  static std::uint32_t
+  alk_transport_evidence_flags(const std::uint32_t li_evidence_flags) {
+    std::uint32_t flags = 0;
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_CLIENT_CONFIGURED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_CLIENT_ROUTE_OBSERVED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_HOST_PEER_OBSERVED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_STUN_OBSERVED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_REFLEXIVE_OBSERVED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_ICE_VALIDATED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_P2P_VALIDATED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_RELAY_ALLOCATED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_RELAY_ALLOCATED;
+    }
+    if ((li_evidence_flags & LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED) != 0) {
+      flags |= ALK_TRANSPORT_EVIDENCE_QUALITY_SAMPLED;
+    }
+    return flags;
+  }
+
+  static std::uint32_t
+  alk_transport_identity_kind(const std::uint32_t li_identity_kind) {
+    switch (li_identity_kind) {
+      case LI_SESSION_PATH_IDENTITY_TRUE_LAN:
+        return ALK_TRANSPORT_IDENTITY_TRUE_LAN;
+      case LI_SESSION_PATH_IDENTITY_HOST_DIRECT_PUBLIC:
+        return ALK_TRANSPORT_IDENTITY_HOST_DIRECT_PUBLIC;
+      case LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD:
+        return ALK_TRANSPORT_IDENTITY_ROUTER_PORT_FORWARD;
+      case LI_SESSION_PATH_IDENTITY_EXTERNAL_FORWARD:
+        return ALK_TRANSPORT_IDENTITY_EXTERNAL_FORWARD;
+      case LI_SESSION_PATH_IDENTITY_VPN_OVERLAY:
+        return ALK_TRANSPORT_IDENTITY_VPN_OVERLAY;
+      case LI_SESSION_PATH_IDENTITY_RELAY:
+        return ALK_TRANSPORT_IDENTITY_RELAY;
+      case LI_SESSION_PATH_IDENTITY_ICE_P2P:
+        return ALK_TRANSPORT_IDENTITY_P2P_DIRECT;
+      default:
+        return ALK_TRANSPORT_IDENTITY_UNKNOWN;
+    }
+  }
+
+  static std::uint32_t
+  alk_transport_startup_class(const std::uint32_t li_startup_class) {
+    switch (li_startup_class) {
+      case LI_SESSION_STARTUP_CLASS_LAN_FAST:
+        return ALK_STARTUP_CLASS_LAN_FAST;
+      case LI_SESSION_STARTUP_CLASS_REMOTE_SAFE:
+        return ALK_STARTUP_CLASS_REMOTE_SAFE;
+      case LI_SESSION_STARTUP_CLASS_RELAY_SAFE:
+        return ALK_STARTUP_CLASS_RELAY_SAFE;
+      case LI_SESSION_STARTUP_CLASS_PROBE_FIRST:
+        return ALK_STARTUP_CLASS_PROBE_FIRST;
+      default:
+        return ALK_STARTUP_CLASS_UNKNOWN;
+    }
+  }
+
+  static void
+  copy_transport_path_to_alk(const session_runtime::transport_path_t &source, AlkTransportPath &destination) {
+    alk_transport_path_init(&destination);
+    destination.protocol_family = alk_transport_protocol_family(source.protocol);
+    destination.state = alk_transport_path_state(source.state);
+    destination.priority = 0;
+    destination.flags = alk_transport_flags(source);
+    destination.stack_flags = alk_transport_stack_flags(source);
+    destination.path_id = source.path_id;
+    destination.rtt_us = source.score.rtt_ms * 1000U;
+    destination.jitter_us = source.score.jitter_ms * 1000U;
+    destination.packet_loss_ppm = source.score.loss_ppm;
+    destination.throughput_kbps = source.score.throughput_kbps;
+    destination.candidate_type = alk_transport_candidate_type(source.route);
+    destination.discovery_source = alk_transport_discovery_source(source.route);
+    destination.egress_kind = alk_transport_egress_kind(source.observed_egress_kind);
+    destination.encapsulation = alk_transport_encapsulation(source.observed_encapsulation);
+    destination.evidence_flags = alk_transport_evidence_flags(session_runtime::li_path_evidence_flags(source) |
+                                                              source.extra_evidence_flags);
+    destination.identity_confidence_ppm = source.identity_confidence_ppm;
+    destination.quality_confidence_ppm = (source.score.rtt_ms != 0 ||
+                                          source.score.loss_ppm != 0 ||
+                                          source.score.jitter_ms != 0) ? 800000U : 0U;
+    destination.identity_kind = alk_transport_identity_kind(source.path_identity_kind);
+    destination.startup_class = alk_transport_startup_class(source.startup_class);
+    destination.relay_mode =
+      (source.route == session_runtime::transport_route_e::relay_quic ||
+       source.route == session_runtime::transport_route_e::relay_tcp_tls) ?
+        ALK_TRANSPORT_RELAY_MODE_SELECTED :
+        ALK_TRANSPORT_RELAY_MODE_NONE;
+    destination.p2p_state = source.route == session_runtime::transport_route_e::ice_stun_p2p ?
+                              ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED :
+                              ALK_TRANSPORT_P2P_NONE;
+    destination.p2p_flags = destination.p2p_state == ALK_TRANSPORT_P2P_PUNCH_SUCCEEDED ?
+                              ALK_TRANSPORT_P2P_FLAG_FULL_PUNCH :
+                              0U;
+    destination.reason_flags = source.reason_flags;
+    destination.risk_flags = source.risk_flags;
+    copy_transport_string(destination.provider_id, sizeof(destination.provider_id), source.provider_id);
+    alk_session_copy_string(destination.route_id,
+                            sizeof(destination.route_id),
+                            std::string(session_runtime::transport_route_name(source.route)).c_str());
+    copy_transport_string(destination.local_endpoint, sizeof(destination.local_endpoint), source.local_endpoint);
+    copy_transport_string(destination.remote_endpoint, sizeof(destination.remote_endpoint), source.remote_endpoint);
+    copy_transport_string(destination.observed_endpoint, sizeof(destination.observed_endpoint), source.observed_endpoint);
+    copy_transport_string(destination.host_local_endpoint, sizeof(destination.host_local_endpoint), source.host_local_endpoint);
+    copy_transport_string(destination.explanation_code, sizeof(destination.explanation_code), source.explanation_code);
+    if (destination.relay_mode != ALK_TRANSPORT_RELAY_MODE_NONE) {
+      alk_session_copy_string(destination.relay_name,
+                              sizeof(destination.relay_name),
+                              std::string(session_runtime::transport_route_name(source.route)).c_str());
+    }
+  }
+
+  static int
+  send_control_datagram_via_transport_or_direct(session_t *session,
+                                                control_server_t *control_server,
+                                                const std::string_view &payload,
+                                                net::peer_t peer,
+                                                std::uint8_t channel,
+                                                enet_uint32 flags) {
+    if (!session || !control_server) {
+      return -1;
+    }
+
+    AlkTransportDatagram datagram;
+    alk_transport_datagram_init(&datagram);
+    datagram.channel_kind = alk_sunshine_gamestream_enet_control_channel_kind(channel, flags);
+    datagram.carrier_channel_id = channel;
+    datagram.flags = flags;
+    datagram.payload = payload.data();
+    datagram.payload_length = payload.size();
+
+#if ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
+    if (alk_transport_runtime_send(&session->control.transport_binding, &datagram)) {
+      return 0;
+    }
+#endif
+
+    BOOST_LOG(debug) << "Alkaid transport carrier send fallback"
+                     << " runtime=" << session->identity.runtime_id
+                     << " channel=" << static_cast<int>(channel)
+                     << " bytes=" << payload.size();
+    if (control_server->send_direct(payload, peer, channel, flags) == 0) {
+      record_network_transport_datagram(session, channel, flags, payload.size(), true);
+      return 0;
+    }
+    return -1;
+  }
+
+  static void
+  record_network_transport_datagram(session_t *session, std::uint8_t channel, enet_uint32 flags, std::size_t length, bool tx) {
+    if (!session) {
+      return;
+    }
+    alk_transport_runtime_record_datagram(&session->control.transport_binding,
+                                          alk_sunshine_gamestream_enet_control_channel_kind(channel, flags),
+                                          length,
+                                          tx);
+  }
+
+  static void
+  record_network_transport_channel_datagram(session_t *session, std::uint32_t channel_kind, std::size_t length, bool tx) {
+    if (!session) {
+      return;
+    }
+    if ((channel_kind == ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM ||
+         channel_kind == ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM ||
+         channel_kind == ALK_TRANSPORT_CHANNEL_MICROPHONE_DATAGRAM) &&
+        !ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED) {
+      return;
+    }
+    alk_transport_runtime_record_datagram(&session->control.transport_binding,
+                                          channel_kind,
+                                          length,
+                                          tx);
+  }
+
+  static bool
+  transport_carrier_open(void *user_data, const AlkTransportOpenParams *params) {
+    auto *session = static_cast<session_t *>(user_data);
+    (void) params;
+    return session &&
+           session->broadcast_ref &&
+           session->control.peer;
+  }
+
+  static bool
+  transport_carrier_send(void *user_data, const AlkTransportDatagram *datagram) {
+    auto *session = static_cast<session_t *>(user_data);
+    if (!session || !datagram || !datagram->payload || datagram->payload_length == 0 ||
+        !session->broadcast_ref || !session->control.peer) {
+      return false;
+    }
+
+    const auto flags = datagram->flags & ~ALK_TRANSPORT_DATAGRAM_FLAG_MORE_DATA;
+    auto channel = static_cast<std::uint8_t>(datagram->carrier_channel_id);
+    const std::string_view payload {
+      static_cast<const char *>(datagram->payload),
+      datagram->payload_length,
+    };
+    return session->broadcast_ref->control_server.send_direct(payload,
+                                                              session->control.peer,
+                                                              channel,
+                                                              flags) == 0;
+  }
+
+  static bool
+  transport_carrier_service(void *user_data, const AlkTransportDatagram *datagram) {
+    auto *session = static_cast<session_t *>(user_data);
+    (void) datagram;
+    if (!session || !session->broadcast_ref) {
+      return false;
+    }
+    session->broadcast_ref->control_server.flush();
+    return true;
+  }
+
+  static void
+  transport_carrier_close(void *user_data) {
+    auto *session = static_cast<session_t *>(user_data);
+    if (!session || !session->broadcast_ref) {
+      return;
+    }
+    session->broadcast_ref->control_server.flush();
+  }
+
+  static void
+  open_network_transport_observer(session_t *session, net::peer_t peer) {
+    if (!session || !peer || !session->control.transport_observer) {
+      return;
+    }
+
+    AlkTransportOpenParams params;
+    alk_transport_open_params_init(&params);
+    params.role = ALK_SESSION_ROLE_HOST;
+    params.control_port = net::map_port(CONTROL_PORT);
+    params.video_port = net::map_port(VIDEO_STREAM_PORT);
+    params.audio_port = net::map_port(AUDIO_STREAM_PORT);
+    params.channel_mask = ALK_GAMESTREAM_ENET_CHANNEL_MASK_CONTROL |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_VIDEO |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_AUDIO |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_DATA |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_INPUT |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_MICROPHONE |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_CLIPBOARD |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_RESCUE |
+                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_DIAGNOSTICS;
+    copy_transport_path_to_alk(session->active_transport_path, params.initial_path);
+    TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
+    const auto remote_endpoint = peer_addr + ":" + std::to_string(peer_port);
+    alk_session_copy_string(params.remote_endpoint, sizeof(params.remote_endpoint), remote_endpoint.c_str());
+    alk_session_copy_string(params.local_endpoint, sizeof(params.local_endpoint), session->active_transport_path.host_local_endpoint.c_str());
+    alk_session_copy_string(params.route_profile_id,
+                            sizeof(params.route_profile_id),
+                            std::string(session_runtime::transport_route_name(session->active_transport_path.route)).c_str());
+    alk_session_copy_string(params.session_id, sizeof(params.session_id), session->shared_session.sessionId.value);
+    alk_transport_runtime_open(&session->control.transport_binding, &params);
+    BOOST_LOG(info) << "Alkaid runtime marker: slot=" << ALK_TRANSPORT_SLOT_ID
+                    << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
+                    << " phase=observe-only-ab role=host"
+                    << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
+                    << " runtime=" << session->identity.runtime_id
+                    << " route=" << params.route_profile_id
+                    << " identity=" << params.initial_path.identity_kind
+                    << " startup=" << params.initial_path.startup_class
+                    << " remote=" << params.remote_endpoint;
+  }
+
+  static void
+  update_network_transport_peer_snapshot(session_t *session,
+                                         net::peer_t peer,
+                                         const control_peer_health_snapshot_t &health) {
+    if (!session || !peer) {
+      return;
+    }
+
+    AlkTransportStats stats;
+    alk_transport_stats_init(&stats);
+    stats.state = peer->state == ENET_PEER_STATE_CONNECTED ? ALK_TRANSPORT_PATH_ACTIVE : ALK_TRANSPORT_PATH_FAILED;
+    stats.rtt_us = peer->roundTripTime * 1000U;
+    stats.jitter_us = peer->roundTripTimeVariance * 1000U;
+    stats.packet_loss_ppm = health.packet_loss_ppm;
+    stats.reliable_backlog_bytes = health.waiting_queue_depth + health.reliable_in_transit;
+    stats.reliable_backlog_packets = health.send_reliable_queue_depth + health.sent_reliable_queue_depth;
+    copy_transport_path_to_alk(session->active_transport_path, stats.active_path);
+    stats.active_path.state = stats.state;
+    stats.active_path.rtt_us = stats.rtt_us;
+    stats.active_path.jitter_us = stats.jitter_us;
+    stats.active_path.packet_loss_ppm = stats.packet_loss_ppm;
+    TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
+    const auto remote_endpoint = peer_addr + ":" + std::to_string(peer_port);
+    alk_session_copy_string(stats.active_path.remote_endpoint, sizeof(stats.active_path.remote_endpoint), remote_endpoint.c_str());
+    alk_session_copy_string(stats.active_path.local_endpoint, sizeof(stats.active_path.local_endpoint), session->active_transport_path.host_local_endpoint.c_str());
+    alk_transport_runtime_observe_stats(&session->control.transport_binding, &stats);
+  }
+
   static bool
   capture_control_peer_health(session_t *session,
                               net::peer_t peer,
@@ -3200,6 +3816,18 @@ namespace stream {
       BOOST_LOG(info) << "Control peer diag [" << reason << "] unavailable";
       return;
     }
+
+    update_network_transport_peer_snapshot(session, peer, health);
+    BOOST_LOG(info) << "Alkaid transport observe: slot=" << ALK_TRANSPORT_SLOT_ID
+                    << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
+                    << " channel=control"
+                    << " runtime=" << session->identity.runtime_id
+                    << " path=" << session_runtime::transport_route_name(session->active_transport_path.route)
+                    << " rttUs=" << peer->roundTripTime * 1000U
+                    << " jitterUs=" << peer->roundTripTimeVariance * 1000U
+                    << " lossPpm=" << health.packet_loss_ppm
+                    << " reliableBacklogBytes=" << (health.waiting_queue_depth + health.reliable_in_transit)
+                    << " reliableBacklogPackets=" << (health.send_reliable_queue_depth + health.sent_reliable_queue_depth);
 
     BOOST_LOG(info) << "Control peer diag [" << reason << "] runtime=" << session->identity.runtime_id
                     << " state=" << peer->state
@@ -3365,6 +3993,7 @@ namespace stream {
           auto type = *(std::uint16_t *) packet->data;
           std::string_view payload { (char *) packet->data + sizeof(type), packet->dataLength - sizeof(type) };
           session->control.rx_events++;
+          record_network_transport_datagram(session, event.channelID, event.packet->flags, event.packet->dataLength, false);
           session->control.last_wire_type = type;
           session->control.last_payload_size = payload.size();
 
@@ -3387,6 +4016,7 @@ namespace stream {
                           << " timeout(limit/min/max)="sv << event.peer->timeoutLimit << "/"
                           << event.peer->timeoutMinimum << "/" << event.peer->timeoutMaximum
                           << " pingInterval="sv << event.peer->pingInterval << "ms";
+          open_network_transport_observer(session, event.peer);
           log_control_peer_diag(session, event.peer, "connect");
           enet_host_flush(_host.get());
           break;
@@ -5513,9 +6143,15 @@ namespace stream {
             .pointer_acceleration_risk_ppm = telemetry->telemetry.pointerAccelerationRiskPpm,
           };
           session_p->telemetry.submit(report);
-          session_p->active_transport_path.score.rtt_ms = report.rtt_ms;
-          session_p->active_transport_path.score.loss_ppm = report.loss_ppm;
-          session_p->active_transport_path.score.jitter_ms = telemetry->telemetry.jitterUs / 1000U;
+          AlkTransportStats transport_stats;
+          if (snapshot_transport_stats(session_p, transport_stats)) {
+            update_active_path_score_from_transport_stats(session_p, transport_stats);
+          }
+          else {
+            session_p->active_transport_path.score.rtt_ms = report.rtt_ms;
+            session_p->active_transport_path.score.loss_ppm = report.loss_ppm;
+            session_p->active_transport_path.score.jitter_ms = telemetry->telemetry.jitterUs / 1000U;
+          }
           refresh_li_session(*session_p, session::state(*session_p));
 
           const auto now = std::chrono::steady_clock::now();
@@ -5838,6 +6474,7 @@ namespace stream {
         .received_packets = received_packets,
       };
       annotate_feedback_with_host_motion(session, feedback);
+      annotate_feedback_with_transport_stats(session, feedback, "fec");
       auto action = session->stream_quality_controller.on_feedback(feedback);
       apply_stream_quality_action(session, action, "fec");
       record_stream_quality_feedback_diag(session, feedback, action, "fec");
@@ -5886,6 +6523,7 @@ namespace stream {
       };
       network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
+      annotate_feedback_with_transport_stats(session, network_feedback, "feedback");
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
@@ -5955,6 +6593,7 @@ namespace stream {
       };
       network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
+      annotate_feedback_with_transport_stats(session, network_feedback, "feedback");
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
@@ -6033,6 +6672,7 @@ namespace stream {
       };
       network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
+      annotate_feedback_with_transport_stats(session, network_feedback, "feedback");
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
@@ -6116,6 +6756,7 @@ namespace stream {
       };
       network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
+      annotate_feedback_with_transport_stats(session, network_feedback, "feedback");
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
@@ -6214,6 +6855,7 @@ namespace stream {
       };
       network_feedback.local_display_pressure = stream_quality::infer_local_display_pressure(network_feedback);
       annotate_feedback_with_host_motion(session, network_feedback);
+      annotate_feedback_with_transport_stats(session, network_feedback, "feedback");
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
@@ -6870,6 +7512,12 @@ namespace stream {
         stats.lease_rejected++;
         maybe_log_mic_stats("lease-rejected");
         return;
+      }
+      if (auto *owner_session = ctx.control_server._registry.find_by_runtime_id(mic_owner.runtime_id)) {
+        record_network_transport_channel_datagram(owner_session,
+                                                  ALK_TRANSPORT_CHANNEL_MICROPHONE_DATAGRAM,
+                                                  data_size,
+                                                  false);
       }
 
       if (cipher_ctx) {
@@ -7647,6 +8295,14 @@ namespace stream {
         });
 
         session->video.lowseq = lowseq;
+        if (frame_sent_bytes > 0) {
+          record_network_transport_channel_datagram(session,
+                                                    ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
+                                                    static_cast<std::size_t>(std::min<std::uint64_t>(
+                                                      frame_sent_bytes,
+                                                      static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))),
+                                                    true);
+        }
         ++sent_summary_frames;
         sent_summary_dupes += packet_started_without_timestamp ? 1U : 0U;
         sent_summary_shards += frame_sent_shards;
@@ -7780,6 +8436,10 @@ namespace stream {
           session->localAddress,
         };
         platf::send(send_info);
+        record_network_transport_channel_datagram(session,
+                                                  ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+                                                  sizeof(audio_packet) + static_cast<std::size_t>(bytes),
+                                                  true);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -7807,6 +8467,10 @@ namespace stream {
               session->localAddress,
             };
             platf::send(send_info);
+            record_network_transport_channel_datagram(session,
+                                                      ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+                                                      sizeof(fec_packet) + static_cast<std::size_t>(bytes),
+                                                      true);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
@@ -8011,6 +8675,12 @@ namespace stream {
       }
 
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
+      record_network_transport_channel_datagram(session,
+                                                type == socket_e::video ?
+                                                  ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM :
+                                                  ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+                                                msg.size(),
+                                                false);
       if (msg.find(expected_payload) != std::string::npos) {
         // Match the new PING payload format
         BOOST_LOG(debug) << "Received "sv << type_name << " ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
@@ -8369,6 +9039,15 @@ namespace stream {
         }
       }
 
+      alk_transport_runtime_close(&session.control.transport_binding);
+      if (session.control.transport_runtime) {
+        alk_runtime_destroy(session.control.transport_runtime);
+        session.control.transport_runtime = nullptr;
+      }
+      if (session.control.transport_observer) {
+        alk_gamestream_enet_observer_destroy(session.control.transport_observer);
+        session.control.transport_observer = nullptr;
+      }
       abr::cleanup_for_runtime(session.identity.runtime_id);
       abr::cleanup(session.client_name);
       session.state.store(state_e::STOPPED, std::memory_order_relaxed);
@@ -8617,6 +9296,40 @@ namespace stream {
 
       session->config = config;
       LiInitializeSession(&session->shared_session);
+      session->control.transport_observer = alk_gamestream_enet_observer_create();
+      alk_transport_runtime_binding_init(&session->control.transport_binding);
+      if (session->control.transport_observer) {
+        auto *runtime = alk_runtime_create();
+        if (runtime) {
+          AlkRuntimeConfig runtime_config;
+          AlkTransportModuleV1 transport_module;
+          AlkTransportCarrierV1 transport_carrier;
+          alk_runtime_config_init(&runtime_config);
+          alk_transport_carrier_v1_init(&transport_carrier);
+          transport_carrier.user_data = session.get();
+          transport_carrier.open = transport_carrier_open;
+          transport_carrier.send = transport_carrier_send;
+          transport_carrier.service = transport_carrier_service;
+          transport_carrier.close = transport_carrier_close;
+          runtime_config.role = ALK_SESSION_ROLE_HOST;
+          runtime_config.runtime_id = session->identity.runtime_id;
+          if (alk_runtime_init(runtime, &runtime_config, nullptr) &&
+              alk_gamestream_enet_transport_module_init(&transport_module, session->control.transport_observer) &&
+              alk_transport_runtime_bind_module(&session->control.transport_binding, runtime, &transport_module) &&
+              alk_transport_runtime_bind_carrier(&session->control.transport_binding, &transport_carrier) &&
+              alk_transport_runtime_enable(&session->control.transport_binding)) {
+            session->control.transport_runtime = runtime;
+          }
+          else {
+            alk_runtime_destroy(runtime);
+          }
+        }
+      }
+      BOOST_LOG(info) << "Alkaid runtime marker: slot=" << ALK_TRANSPORT_SLOT_ID
+                      << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
+                      << " phase=observe-only-ab observer=" << (session->control.transport_observer ? 1 : 0)
+                      << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
+                      << " runtime=" << session->identity.runtime_id;
       zako_input_runtime_init(&session->zako_input_runtime);
       const auto app_id = launch_session.appid == 0 ? std::string {} : std::to_string(launch_session.appid);
       std::string app_name;

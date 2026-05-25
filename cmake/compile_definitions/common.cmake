@@ -182,6 +182,8 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/backends/win32/include/alkaidlab/clipboard_sync/win32_clipboard_backend.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include/alkaidlab/microphone_uplink/microphone_uplink.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/include/alkaidlab/microphone_uplink/windows_wasapi_sink_backend.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include/alkaidlab/transport/transport_module.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include/alkaidlab/transport/gamestream_enet_transport.h" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
@@ -194,7 +196,10 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/rescue_control.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/src/clipboard_sync.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/session_runtime.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/module_runtime.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/src/gamestream_enet_transport.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     if(WIN32)
@@ -210,6 +215,8 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
     if(WIN32)

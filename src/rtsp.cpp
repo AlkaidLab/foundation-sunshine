@@ -110,7 +110,8 @@ namespace rtsp_stream {
            static_cast<std::uint64_t>(LI_FF2_LOW_BITRATE_QUALITY) |
            static_cast<std::uint64_t>(LI_FF2_CURSOR_PLANE) |
            static_cast<std::uint64_t>(LI_FF2_AUDIO_CONTINUITY) |
-           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS);
+           static_cast<std::uint64_t>(LI_FF2_VISUAL_FRESHNESS) |
+           static_cast<std::uint64_t>(LI_FF2_RESCUE_CONTROL);
   }
 
   int

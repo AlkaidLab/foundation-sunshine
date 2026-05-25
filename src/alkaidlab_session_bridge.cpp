@@ -1,5 +1,7 @@
 #include "alkaidlab_session_bridge.h"
 
+#include <cstring>
+
 namespace stream::alkaidlab_session_bridge {
 
   namespace {
@@ -29,19 +31,99 @@ namespace stream::alkaidlab_session_bridge {
     }
 
     uint32_t
-    map_transport_protocol(uint32_t li_protocol) {
+    map_transport_protocol_family(uint32_t li_protocol) {
       switch (li_protocol) {
         case LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP:
-          return ALK_TRANSPORT_PROTOCOL_ENET_UDP;
         case LI_SESSION_TRANSPORT_PROTOCOL_UDP:
-          return ALK_TRANSPORT_PROTOCOL_UDP;
         case LI_SESSION_TRANSPORT_PROTOCOL_QUIC:
-          return ALK_TRANSPORT_PROTOCOL_QUIC;
+          return ALK_TRANSPORT_PROTOCOL_FAMILY_UDP;
         case LI_SESSION_TRANSPORT_PROTOCOL_TCP_TLS:
-          return ALK_TRANSPORT_PROTOCOL_TCP_TLS;
+          return ALK_TRANSPORT_PROTOCOL_FAMILY_TLS;
         default:
-          return ALK_TRANSPORT_PROTOCOL_UNKNOWN;
+          return ALK_TRANSPORT_PROTOCOL_FAMILY_UNKNOWN;
       }
+    }
+
+    uint32_t
+    map_transport_stack_flags(uint32_t li_stack_flags) {
+      uint32_t flags = 0;
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_ENET |
+                             LI_SESSION_TRANSPORT_STACK_UDP |
+                             LI_SESSION_TRANSPORT_STACK_QUIC |
+                             LI_SESSION_TRANSPORT_STACK_WEBRTC)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_CARRIER_DATAGRAM;
+      }
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_TCP |
+                             LI_SESSION_TRANSPORT_STACK_TLS |
+                             LI_SESSION_TRANSPORT_STACK_SCTP)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_CARRIER_STREAM;
+      }
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_TLS |
+                             LI_SESSION_TRANSPORT_STACK_QUIC |
+                             LI_SESSION_TRANSPORT_STACK_WEBRTC)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_ENCRYPTION;
+      }
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_STUN |
+                             LI_SESSION_TRANSPORT_STACK_ICE |
+                             LI_SESSION_TRANSPORT_STACK_TURN)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_NAT_TRAVERSAL;
+      }
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_TURN |
+                             LI_SESSION_TRANSPORT_STACK_RELAY)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_RELAY;
+      }
+      if ((li_stack_flags & (LI_SESSION_TRANSPORT_STACK_RTP |
+                             LI_SESSION_TRANSPORT_STACK_RTCP)) != 0) {
+        flags |= ALK_TRANSPORT_STACK_MEDIA_PACKETIZATION;
+      }
+      if ((li_stack_flags & LI_SESSION_TRANSPORT_STACK_DATA_CHANNEL) != 0) {
+        flags |= ALK_TRANSPORT_STACK_DATA_CHANNEL;
+      }
+      if ((li_stack_flags & LI_SESSION_TRANSPORT_STACK_P2P) != 0) {
+        flags |= ALK_TRANSPORT_STACK_P2P;
+      }
+      return flags;
+    }
+
+    bool
+    transport_provider_is_gamestream_enet(const char *provider_id) {
+      return provider_id != nullptr && std::strstr(provider_id, "gamestream-enet") != nullptr;
+    }
+
+    uint32_t
+    map_transport_stack_flags_to_li(uint32_t stack_flags, const char *provider_id) {
+      uint32_t flags = 0;
+      if (transport_provider_is_gamestream_enet(provider_id)) {
+        flags |= LI_SESSION_TRANSPORT_STACK_ENET |
+                 LI_SESSION_TRANSPORT_STACK_UDP |
+                 LI_SESSION_TRANSPORT_STACK_RTP |
+                 LI_SESSION_TRANSPORT_STACK_RTCP;
+      }
+      else if ((stack_flags & ALK_TRANSPORT_STACK_CARRIER_DATAGRAM) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_UDP;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_CARRIER_STREAM) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_TCP;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_ENCRYPTION) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_TLS;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_NAT_TRAVERSAL) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_STUN | LI_SESSION_TRANSPORT_STACK_ICE;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_RELAY) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_RELAY;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_MEDIA_PACKETIZATION) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_RTP | LI_SESSION_TRANSPORT_STACK_RTCP;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_DATA_CHANNEL) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_DATA_CHANNEL;
+      }
+      if ((stack_flags & ALK_TRANSPORT_STACK_P2P) != 0) {
+        flags |= LI_SESSION_TRANSPORT_STACK_P2P;
+      }
+      return flags;
     }
 
     uint32_t
@@ -60,7 +142,7 @@ namespace stream::alkaidlab_session_bridge {
         case LI_SESSION_PATH_IDENTITY_RELAY:
           return ALK_TRANSPORT_IDENTITY_RELAY;
         case LI_SESSION_PATH_IDENTITY_ICE_P2P:
-          return ALK_TRANSPORT_IDENTITY_ICE_P2P;
+          return ALK_TRANSPORT_IDENTITY_P2P_DIRECT;
         default:
           return ALK_TRANSPORT_IDENTITY_UNKNOWN;
       }
@@ -129,15 +211,15 @@ namespace stream::alkaidlab_session_bridge {
     }
 
     uint32_t
-    map_transport_protocol_to_li(uint32_t protocol) {
-      switch (protocol) {
-        case ALK_TRANSPORT_PROTOCOL_ENET_UDP:
-          return LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP;
-        case ALK_TRANSPORT_PROTOCOL_UDP:
+    map_transport_protocol_family_to_li(uint32_t protocol_family, const char *provider_id) {
+      if (transport_provider_is_gamestream_enet(provider_id)) {
+        return LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP;
+      }
+      switch (protocol_family) {
+        case ALK_TRANSPORT_PROTOCOL_FAMILY_UDP:
           return LI_SESSION_TRANSPORT_PROTOCOL_UDP;
-        case ALK_TRANSPORT_PROTOCOL_QUIC:
-          return LI_SESSION_TRANSPORT_PROTOCOL_QUIC;
-        case ALK_TRANSPORT_PROTOCOL_TCP_TLS:
+        case ALK_TRANSPORT_PROTOCOL_FAMILY_TCP:
+        case ALK_TRANSPORT_PROTOCOL_FAMILY_TLS:
           return LI_SESSION_TRANSPORT_PROTOCOL_TCP_TLS;
         default:
           return LI_SESSION_TRANSPORT_PROTOCOL_UNKNOWN;
@@ -159,7 +241,7 @@ namespace stream::alkaidlab_session_bridge {
           return LI_SESSION_PATH_IDENTITY_VPN_OVERLAY;
         case ALK_TRANSPORT_IDENTITY_RELAY:
           return LI_SESSION_PATH_IDENTITY_RELAY;
-        case ALK_TRANSPORT_IDENTITY_ICE_P2P:
+        case ALK_TRANSPORT_IDENTITY_P2P_DIRECT:
           return LI_SESSION_PATH_IDENTITY_ICE_P2P;
         default:
           return LI_SESSION_PATH_IDENTITY_UNKNOWN;
@@ -328,12 +410,12 @@ namespace stream::alkaidlab_session_bridge {
       AlkSunshineTransportPathDetails details;
       alk_sunshine_transport_path_details_init(&details);
       details.path_id = session.transportPath.pathId;
-      details.protocol = map_transport_protocol(session.transportPath.protocol);
+      details.protocol_family = map_transport_protocol_family(session.transportPath.protocol);
       details.identity_kind = map_transport_identity(session.transportPath.pathIdentityKind);
       details.startup_class = map_startup_class(session.transportPath.startupClass);
       details.priority = session.transportPath.priority;
       details.flags = session.transportPath.flags;
-      details.stack_flags = session.transportPath.stackFlags;
+      details.stack_flags = map_transport_stack_flags(session.transportPath.stackFlags);
       details.rtt_us = session.transportPath.rttUs;
       details.jitter_us = session.transportPath.jitterUs;
       details.packet_loss_ppm = session.transportPath.packetLossPpm;
@@ -463,12 +545,13 @@ namespace stream::alkaidlab_session_bridge {
     if (snapshot.transport_path_count > 0) {
       const auto &path = snapshot.transport_paths[0];
       session.transportPath.pathId = path.path_id;
-      session.transportPath.protocol = map_transport_protocol_to_li(path.protocol);
+      session.transportPath.protocol =
+        map_transport_protocol_family_to_li(path.protocol_family, path.provider_id);
       session.transportPath.pathIdentityKind = map_transport_identity_to_li(path.identity_kind);
       session.transportPath.startupClass = map_startup_class_to_li(path.startup_class);
       session.transportPath.priority = path.priority;
       session.transportPath.flags = path.flags;
-      session.transportPath.stackFlags = path.stack_flags;
+      session.transportPath.stackFlags = map_transport_stack_flags_to_li(path.stack_flags, path.provider_id);
       session.transportPath.rttUs = path.rtt_us;
       session.transportPath.jitterUs = path.jitter_us;
       session.transportPath.packetLossPpm = path.packet_loss_ppm;

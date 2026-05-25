@@ -38,6 +38,7 @@ namespace stream_quality {
     input_pressure,
     audio_pressure,
     motion_pressure,
+    media_continuity,
   };
 
   enum class scenario_e {
@@ -53,6 +54,7 @@ namespace stream_quality {
     audio_pressure,
     input_pressure,
     no_video_delivery,
+    media_continuity,
     recovering,
     healthy,
   };

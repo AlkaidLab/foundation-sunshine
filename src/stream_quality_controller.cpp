@@ -69,6 +69,7 @@ namespace stream_quality {
         case reason_e::input_pressure: return ALK_STREAM_QUALITY_REASON_INPUT_PRESSURE;
         case reason_e::audio_pressure: return ALK_STREAM_QUALITY_REASON_AUDIO_PRESSURE;
         case reason_e::motion_pressure: return ALK_STREAM_QUALITY_REASON_MOTION_PRESSURE;
+        case reason_e::media_continuity: return ALK_STREAM_QUALITY_REASON_MEDIA_CONTINUITY;
         case reason_e::healthy:
         default: return ALK_STREAM_QUALITY_REASON_HEALTHY;
       }
@@ -86,6 +87,7 @@ namespace stream_quality {
         case ALK_STREAM_QUALITY_REASON_INPUT_PRESSURE: return reason_e::input_pressure;
         case ALK_STREAM_QUALITY_REASON_AUDIO_PRESSURE: return reason_e::audio_pressure;
         case ALK_STREAM_QUALITY_REASON_MOTION_PRESSURE: return reason_e::motion_pressure;
+        case ALK_STREAM_QUALITY_REASON_MEDIA_CONTINUITY: return reason_e::media_continuity;
         case ALK_STREAM_QUALITY_REASON_HEALTHY:
         default: return reason_e::healthy;
       }
@@ -105,6 +107,7 @@ namespace stream_quality {
         case scenario_e::audio_pressure: return ALK_STREAM_QUALITY_SCENARIO_AUDIO_PRESSURE;
         case scenario_e::input_pressure: return ALK_STREAM_QUALITY_SCENARIO_INPUT_PRESSURE;
         case scenario_e::no_video_delivery: return ALK_STREAM_QUALITY_SCENARIO_NO_VIDEO_DELIVERY;
+        case scenario_e::media_continuity: return ALK_STREAM_QUALITY_SCENARIO_MEDIA_CONTINUITY;
         case scenario_e::recovering: return ALK_STREAM_QUALITY_SCENARIO_RECOVERING;
         case scenario_e::healthy:
         default: return ALK_STREAM_QUALITY_SCENARIO_HEALTHY;
@@ -125,6 +128,7 @@ namespace stream_quality {
         case ALK_STREAM_QUALITY_SCENARIO_AUDIO_PRESSURE: return scenario_e::audio_pressure;
         case ALK_STREAM_QUALITY_SCENARIO_INPUT_PRESSURE: return scenario_e::input_pressure;
         case ALK_STREAM_QUALITY_SCENARIO_NO_VIDEO_DELIVERY: return scenario_e::no_video_delivery;
+        case ALK_STREAM_QUALITY_SCENARIO_MEDIA_CONTINUITY: return scenario_e::media_continuity;
         case ALK_STREAM_QUALITY_SCENARIO_RECOVERING: return scenario_e::recovering;
         case ALK_STREAM_QUALITY_SCENARIO_HEALTHY:
         default: return scenario_e::healthy;
