@@ -193,7 +193,8 @@ namespace platf {
         }
       }
     }
-    BOOST_LOG(warning) << "Unable to find MAC address for "sv << address;
+    BOOST_LOG(debug) << "Unable to find MAC address for "sv << address
+                     << "; using placeholder MAC";
     return "00:00:00:00:00:00"s;
   }
 

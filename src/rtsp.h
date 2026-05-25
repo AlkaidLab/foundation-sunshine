@@ -35,6 +35,7 @@ namespace rtsp_stream {
     std::string client_route_egress_if;
     std::string client_route_source;
     std::string client_route_host;
+    std::string client_route_path_kind;
     std::vector<std::string> client_target_address_candidates;
     std::vector<std::string> host_public_candidates;
     std::chrono::steady_clock::time_point startup_started;

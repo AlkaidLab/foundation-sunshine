@@ -1214,3 +1214,36 @@ TEST(SessionRuntimeTests, InputSmoothingSnapshotPromotesSessionTelemetryAndFlags
   EXPECT_EQ(report.pointer_acceleration_risk_ppm, 22000U);
   EXPECT_NE(report.cursor_state_flags & LI_SESSION_CURSOR_FLAG_RELEASE_SMOOTHING_ACTIVE, 0U);
 }
+
+TEST(SessionRuntimeTests, StartupPathPrivateOverlayUsesRemoteSafeWithoutTunnelRisk) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .remote_streaming_hint = true,
+    .client_route_remote_hint = true,
+    .startup_profile = "remote",
+    .client_egress_kind = "physical",
+    .client_route_host = "10.89.0.1",
+    .client_route_path_kind = "private-overlay",
+    .rtsp_route_host = "10.89.0.1",
+    .client_source_endpoint = "10.89.0.5",
+    .host_observed_peer_endpoint = "10.89.0.5:53000",
+    .host_observed_local_endpoint = "10.89.0.1:47989",
+    .client_target_address_candidates = { "10.89.0.1" },
+    .host_public_candidates = { "218.1.2.3" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_FALSE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
+  EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_VPN_OVERLAY);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
+  EXPECT_EQ(decision.risk_flags, 0U);
+  EXPECT_STREQ(decision.reason, "client-private-overlay");
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150);
+  EXPECT_EQ(policy.fps_cap, 0);
+  EXPECT_STREQ(policy.reason, "default");
+}

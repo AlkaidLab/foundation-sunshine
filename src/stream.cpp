@@ -1061,6 +1061,7 @@ namespace stream {
       .startup_profile = launch_session.startup_profile,
       .client_egress_kind = launch_session.client_route_egress_kind,
       .client_route_host = launch_session.client_route_host,
+      .client_route_path_kind = launch_session.client_route_path_kind,
       .rtsp_route_host = launch_session.rtsp_route_host,
       .client_source_endpoint = launch_session.client_route_source,
       .host_observed_peer_endpoint = launch_session.rtsp_peer_address,
@@ -1100,6 +1101,7 @@ namespace stream {
                     << " hostPeer=" << evidence.host_observed_peer_endpoint
                     << " hostLocal=" << evidence.host_observed_local_endpoint
                     << " clientEgress=" << evidence.client_egress_kind
+                    << " clientPathKind=" << evidence.client_route_path_kind
                     << " remoteHint=" << (evidence.remote_streaming_hint ? 1 : 0)
                     << " clientRouteRemote=" << (evidence.client_route_remote_hint ? 1 : 0)
                     << " rtspRouteRemote=" << (evidence.rtsp_route_remote_hint ? 1 : 0)

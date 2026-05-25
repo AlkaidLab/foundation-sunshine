@@ -384,19 +384,36 @@ namespace nvhttp {
       reason = "session-state-without-app";
     }
 
-    BOOST_LOG(info) << "NVHTTP serverinfo runtime state"
-                    << " state=" << (current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE")
-                    << " reason=" << reason
-                    << " currentgame=" << current_appid
-                    << " rtspActive=" << rtsp_active_sessions
-                    << " rtspPending=" << rtsp_pending_sessions
-                    << " runtimeTotal=" << summary.total
-                    << " runtimeRunning=" << summary.running
-                    << " runtimeStarting=" << summary.starting
-                    << " runtimeStopping=" << summary.stopping
-                    << " micSessions=" << summary.mic_enabled
-                    << " remote=" << request_remote
-                    << " uniqueid=" << request_unique_id;
+    if (std::string_view { reason } == "free") {
+      BOOST_LOG(debug) << "NVHTTP serverinfo runtime state"
+                       << " state=" << (current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE")
+                       << " reason=" << reason
+                       << " currentgame=" << current_appid
+                       << " rtspActive=" << rtsp_active_sessions
+                       << " rtspPending=" << rtsp_pending_sessions
+                       << " runtimeTotal=" << summary.total
+                       << " runtimeRunning=" << summary.running
+                       << " runtimeStarting=" << summary.starting
+                       << " runtimeStopping=" << summary.stopping
+                       << " micSessions=" << summary.mic_enabled
+                       << " remote=" << request_remote
+                       << " uniqueid=" << request_unique_id;
+    }
+    else {
+      BOOST_LOG(info) << "NVHTTP serverinfo runtime state"
+                      << " state=" << (current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE")
+                      << " reason=" << reason
+                      << " currentgame=" << current_appid
+                      << " rtspActive=" << rtsp_active_sessions
+                      << " rtspPending=" << rtsp_pending_sessions
+                      << " runtimeTotal=" << summary.total
+                      << " runtimeRunning=" << summary.running
+                      << " runtimeStarting=" << summary.starting
+                      << " runtimeStopping=" << summary.stopping
+                      << " micSessions=" << summary.mic_enabled
+                      << " remote=" << request_remote
+                      << " uniqueid=" << request_unique_id;
+    }
   }
 
   struct named_cert_t {
@@ -884,6 +901,7 @@ namespace nvhttp {
     launch_session->client_route_egress_if = get_arg(args, "mlRouteEgressIf", "");
     launch_session->client_route_source = get_arg(args, "mlRouteSource", "");
     launch_session->client_route_host = get_arg(args, "mlRouteHost", "");
+    launch_session->client_route_path_kind = get_arg(args, "mlRoutePathKind", "");
     launch_session->client_target_address_candidates = split_candidate_list(get_arg(args, "mlRouteResolved", ""));
 
     // Get display_name from query parameter if provided
@@ -940,6 +958,7 @@ namespace nvhttp {
     launch_session->env["SUNSHINE_CLIENT_ROUTE_EGRESS_IF"] = launch_session->client_route_egress_if;
     launch_session->env["SUNSHINE_CLIENT_ROUTE_SOURCE"] = launch_session->client_route_source;
     launch_session->env["SUNSHINE_CLIENT_ROUTE_HOST"] = launch_session->client_route_host;
+    launch_session->env["SUNSHINE_CLIENT_ROUTE_PATH_KIND"] = launch_session->client_route_path_kind;
     int channelCount = launch_session->surround_info & (65535);
     switch (channelCount) {
       case 2:
@@ -2830,6 +2849,7 @@ namespace nvhttp {
                     << " egressKind=" << launch_session->client_route_egress_kind
                     << " egressIf=" << launch_session->client_route_egress_if
                     << " routeSource=" << launch_session->client_route_source
+                    << " pathKind=" << launch_session->client_route_path_kind
                     << " routeHost=" << launch_session->client_route_host
                     << " routeResolved=" << join_values(launch_session->client_target_address_candidates);
 
@@ -3080,6 +3100,7 @@ namespace nvhttp {
                     << " egressKind=" << launch_session->client_route_egress_kind
                     << " egressIf=" << launch_session->client_route_egress_if
                     << " routeSource=" << launch_session->client_route_source
+                    << " pathKind=" << launch_session->client_route_path_kind
                     << " routeHost=" << launch_session->client_route_host
                     << " routeResolved=" << join_values(launch_session->client_target_address_candidates)
                     << " noActiveSessions=" << no_active_sessions;

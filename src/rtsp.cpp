@@ -1946,6 +1946,7 @@ namespace rtsp_stream {
         .startup_profile = session.startup_profile,
         .client_egress_kind = session.client_route_egress_kind,
         .client_route_host = session.client_route_host,
+        .client_route_path_kind = session.client_route_path_kind,
         .rtsp_route_host = session.rtsp_route_host,
         .host_observed_peer_endpoint = rtspPeerAddress,
         .host_observed_local_endpoint = session.rtsp_route_local_endpoint,

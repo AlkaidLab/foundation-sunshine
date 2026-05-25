@@ -579,6 +579,7 @@ namespace session_runtime {
     std::string startup_profile;
     std::string client_egress_kind;
     std::string client_route_host;
+    std::string client_route_path_kind;
     std::string rtsp_route_host;
     std::string client_source_endpoint;
     std::string host_observed_peer_endpoint;
@@ -1094,8 +1095,50 @@ namespace session_runtime {
     return route_evidence;
   }
 
+  inline bool
+  client_route_path_is_private_overlay(std::string_view path_kind) {
+    return path_kind == "private-overlay" ||
+           path_kind == "private_overlay" ||
+           path_kind == "private-overlay-direct";
+  }
+
+  inline startup_path_decision_t
+  private_overlay_startup_path_decision(const startup_path_evidence_t &evidence) {
+    const auto egress_kind = li_path_egress_kind_for_client_hint(evidence.client_egress_kind);
+    std::uint32_t reason_flags = LI_SESSION_PATH_REASON_CLIENT_ROUTE_OBSERVED |
+                                 LI_SESSION_PATH_REASON_REMOTE_HINT;
+    if (evidence.peer_is_lan_or_pc || !evidence.host_observed_peer_endpoint.empty()) {
+      reason_flags |= LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED;
+    }
+
+    return {
+      .route = transport_route_e::manual_public_port_forward,
+      .allow_lan_fast_start = false,
+      .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                       LI_SESSION_PATH_EGRESS_PHYSICAL :
+                       egress_kind,
+      .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+      .evidence_flags = LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED |
+                        LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED |
+                        LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED |
+                        LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+      .identity_confidence_ppm = 820000U,
+      .path_identity_kind = LI_SESSION_PATH_IDENTITY_VPN_OVERLAY,
+      .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+      .reason_flags = reason_flags,
+      .risk_flags = 0U,
+      .reason = "client-private-overlay",
+    };
+  }
+
   inline startup_path_decision_t
   classify_startup_path(const startup_path_evidence_t &evidence) {
+    if (client_route_path_is_private_overlay(evidence.client_route_path_kind) &&
+        !evidence.client_route_tunnel &&
+        evidence.client_egress_kind != "tunnel" &&
+        evidence.client_egress_kind != "vpn") {
+      return private_overlay_startup_path_decision(evidence);
+    }
     const auto route_evidence = make_alk_route_startup_evidence(evidence);
     AlkRouteStartupDecision route_decision {};
     if (!alk_route_control_classify_startup_path(&route_evidence, &route_decision)) {
