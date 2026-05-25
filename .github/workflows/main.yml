@@ -198,7 +198,7 @@ jobs:
           # downloads (vmouse) may fail. Downgrade missing drivers from
           # FATAL_ERROR to WARNING so the build/configure still succeeds; the
           # affected drivers are simply excluded from the installer.
-          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
+          DRIVER_DEPS_REQUIRED: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) || github.event_name == 'workflow_dispatch') && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
           cmake \
