@@ -420,6 +420,14 @@
 <script>
 import { trackEvents } from '../config/firebase.js'
 import { openExternalUrl } from '../utils/helpers.js'
+import { detectSystemLocale } from '../config/i18n.js'
+
+// 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
+// 因此把系统语言探测结果折叠到这两者之一即可
+function detectInitialWizardLocale() {
+  const sys = detectSystemLocale() // 已经过支持白名单过滤，未知语言落到 'en'
+  return (sys === 'zh' || sys === 'zh_TW') ? 'zh' : 'en'
+}
 
 export default {
   name: 'SetupWizard',
@@ -440,7 +448,7 @@ export default {
   data() {
     return {
       currentStep: 1,
-      selectedLocale: 'zh', // 默认中文
+      selectedLocale: detectInitialWizardLocale(), // 根据系统/浏览器语言自动选择（zh / en）
       selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）

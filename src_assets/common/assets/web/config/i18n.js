@@ -3,20 +3,56 @@ import {createI18n} from "vue-i18n";
 // Import only the fallback language files
 import en from '../public/assets/locale/en.json'
 
+// 与后端 string_restricted_f("locale", ...) 白名单保持一致
+const SUPPORTED_LOCALES = [
+    'bg', 'cs', 'de', 'en', 'en_GB', 'en_US', 'es', 'fr',
+    'it', 'ja', 'pt', 'ru', 'sv', 'tr', 'zh', 'zh_TW',
+];
+
+// 把浏览器 / 系统语言（navigator.language，例如 "zh-CN" / "en-US"）映射到支持的 locale
+export function detectSystemLocale() {
+    try {
+        const candidates = [];
+        if (typeof navigator !== 'undefined') {
+            if (Array.isArray(navigator.languages)) candidates.push(...navigator.languages);
+            if (navigator.language) candidates.push(navigator.language);
+        }
+        for (const raw of candidates) {
+            if (!raw) continue;
+            const norm = raw.replace('-', '_'); // zh-CN -> zh_CN
+            // 1) 完整匹配（en_GB / en_US / zh_TW）
+            if (SUPPORTED_LOCALES.includes(norm)) return norm;
+            // 2) 繁体中文 / 港澳粤 → zh_TW
+            const lower = norm.toLowerCase();
+            if (lower.startsWith('zh') && /(_tw|_hk|_mo|hant)/.test(lower)) return 'zh_TW';
+            // 3) 主语言匹配（zh_CN -> zh，en_AU -> en，...）
+            const primary = norm.split('_')[0];
+            if (SUPPORTED_LOCALES.includes(primary)) return primary;
+        }
+    } catch (e) {
+        console.warn('detectSystemLocale failed', e);
+    }
+    return 'en';
+}
+
 export default async function() {
     // 先尝试从 /api/config 获取实时配置（会读取配置文件）
-    let locale = "en";
+    // 若用户/配置文件未指定 locale，则按系统语言自动选择，最终回退到 en
+    let locale = null;
     try {
         let config = await (await fetch("/api/config")).json();
-        locale = config.locale ?? "en";
+        locale = config.locale || null;
     } catch (e) {
         // 如果失败，回退到 /api/configLocale（从内存读取）
         try {
             let r = await (await fetch("/api/configLocale")).json();
-            locale = r.locale ?? "en";
+            locale = r.locale || null;
         } catch (e2) {
             console.error("Failed to get locale config", e, e2);
         }
+    }
+    if (!locale) {
+        locale = detectSystemLocale();
     }
     
     document.querySelector('html').setAttribute('lang', locale);
