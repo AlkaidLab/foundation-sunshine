@@ -1247,6 +1247,18 @@ namespace config {
     
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
+    {
+      auto first = video.adapter_name.find_first_not_of(" \t\r\n");
+      auto last = video.adapter_name.find_last_not_of(" \t\r\n");
+      std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
+      std::string lower = trimmed;
+      std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); }
+      );
+      if (trimmed.empty() || lower == "default" || lower == "auto") {
+          video.adapter_name.clear();
+      }
+    }
     string_f(vars, "output_name", video.output_name);
     
 #ifdef _WIN32
