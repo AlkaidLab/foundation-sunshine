@@ -448,7 +448,9 @@ export default {
   data() {
     return {
       currentStep: 1,
-      selectedLocale: detectInitialWizardLocale(), // 根据系统/浏览器语言自动选择（zh / en）
+      // 已有 locale 时向导会跳过第一步，不预置，避免 saveConfiguration() 覆盖已有设置（如 de / ja）
+      // 首次进入向导时依然按系统 / 浏览器语言预选 zh / en
+      selectedLocale: this.hasLocale ? null : detectInitialWizardLocale(),
       selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）

@@ -36,26 +36,29 @@ export function detectSystemLocale() {
 }
 
 export default async function() {
-    // 先尝试从 /api/config 获取实时配置（会读取配置文件）
-    // 若用户/配置文件未指定 locale，则按系统语言自动选择，最终回退到 en
+    // 优先从 /api/config 拿；读不到再试 /api/configLocale（包括 /api/config 返回但 locale 为空的情况）
+    // 全都拿不到才走系统语言探测，最后回退 en
     let locale = null;
     try {
         let config = await (await fetch("/api/config")).json();
         locale = config.locale || null;
     } catch (e) {
-        // 如果失败，回退到 /api/configLocale（从内存读取）
+        console.warn("Failed to get /api/config", e);
+    }
+    if (!locale) {
         try {
             let r = await (await fetch("/api/configLocale")).json();
             locale = r.locale || null;
         } catch (e2) {
-            console.error("Failed to get locale config", e, e2);
+            console.error("Failed to get /api/configLocale", e2);
         }
     }
     if (!locale) {
         locale = detectSystemLocale();
     }
     
-    document.querySelector('html').setAttribute('lang', locale);
+    // html[lang] 用 BCP-47 连字符形式，让 辅助技术 / 翻译插件 能正确识别 en_US -> en-US, zh_TW -> zh-TW
+    document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
     let messages = {
         en
     };
