@@ -1256,7 +1256,10 @@ namespace config {
         [](unsigned char c) { return std::tolower(c); }
       );
       if (trimmed.empty() || lower == "default" || lower == "auto") {
-          video.adapter_name.clear();
+        video.adapter_name.clear();
+      }
+      else {
+        video.adapter_name = std::move(trimmed);
       }
     }
     string_f(vars, "output_name", video.output_name);
