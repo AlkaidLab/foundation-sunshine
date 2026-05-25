@@ -562,7 +562,15 @@ namespace platf::dxgi {
       return -1;
     }
 
-    const auto adapter_name = from_utf8(config::video.adapter_name);
+    auto adapter_name = from_utf8(config::video.adapter_name);
+    // Treat the legacy sentinel values "default"/"auto" as an empty selector so the
+    // adapter is auto-picked. The external control panel and some users put the
+    // literal string "default" in sunshine.conf expecting auto behavior, but the
+    // code below does an exact wstring match against DXGI_ADAPTER_DESC1::Description
+    // and would otherwise skip every adapter (see issue #671).
+    if (adapter_name == L"default" || adapter_name == L"auto") {
+      adapter_name.clear();
+    }
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
