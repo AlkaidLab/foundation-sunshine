@@ -243,25 +243,32 @@ namespace proc {
       BOOST_LOG(info) << "Executing Do Cmd: ["sv << cmd.do_cmd << ']';
       auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, _env, _pipe.get(), ec, nullptr);
 
+      // Track if we hit the desktop-mode permission_denied exception,
+      // so we can also skip the wait/exit_code checks that would otherwise fail.
+      bool skip_prep_failure = false;
       if (ec) {
         BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
         // We don't want any prep commands failing launch of the desktop.
         // This is to prevent the issue where users reboot their PC and need to log in with Sunshine.
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
-        if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
+        if (_app.cmd.empty() && ec == std::errc::permission_denied) {
+          skip_prep_failure = true;
+        } else {
           return -1;
         }
       }
 
-      child.wait(ec);
-      if (ec) {
-        BOOST_LOG(error) << '[' << cmd.do_cmd << "] wait failed with error code ["sv << ec << ']';
-        return -1;
-      }
-      auto ret = child.exit_code();
-      if (ret != 0) {
-        BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
-        return -1;
+      if (!skip_prep_failure) {
+        child.wait(ec);
+        if (ec) {
+          BOOST_LOG(error) << '[' << cmd.do_cmd << "] wait failed with error code ["sv << ec << ']';
+          return -1;
+        }
+        auto ret = child.exit_code();
+        if (ret != 0) {
+          BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
+          return -1;
+        }
       }
     }
 
