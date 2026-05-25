@@ -50,6 +50,9 @@
           <button
             class="cute-btn"
             :class="selectionMode ? 'cute-btn-warning' : 'cute-btn-secondary'"
+            type="button"
+            :aria-pressed="selectionMode"
+            :aria-label="$t('apps.batch_select_toggle')"
             @click="toggleSelectionMode"
             :title="$t('apps.batch_select_toggle')"
           >
@@ -138,8 +141,12 @@
                 v-if="selectionMode"
                 class="app-select-checkbox"
                 role="checkbox"
+                tabindex="0"
                 :aria-checked="isAppSelected(index)"
+                :aria-label="$t('apps.batch_select_toggle')"
                 @click.stop="toggleAppSelection(index)"
+                @keydown.space.prevent="toggleAppSelection(index)"
+                @keydown.enter.prevent="toggleAppSelection(index)"
               >
                 <i class="fas" :class="isAppSelected(index) ? 'fa-square-check' : 'fa-square'"></i>
               </div>
@@ -169,8 +176,12 @@
               v-if="selectionMode"
               class="app-select-checkbox"
               role="checkbox"
+              tabindex="0"
               :aria-checked="isAppSelected(getOriginalIndex(app))"
+              :aria-label="$t('apps.batch_select_toggle')"
               @click.stop="toggleAppSelection(getOriginalIndex(app))"
+              @keydown.space.prevent="toggleAppSelection(getOriginalIndex(app))"
+              @keydown.enter.prevent="toggleAppSelection(getOriginalIndex(app))"
             >
               <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
             </div>
@@ -208,8 +219,12 @@
                 v-if="selectionMode"
                 class="app-select-checkbox app-select-checkbox--list"
                 role="checkbox"
+                tabindex="0"
                 :aria-checked="isAppSelected(index)"
+                :aria-label="$t('apps.batch_select_toggle')"
                 @click.stop="toggleAppSelection(index)"
+                @keydown.space.prevent="toggleAppSelection(index)"
+                @keydown.enter.prevent="toggleAppSelection(index)"
               >
                 <i class="fas" :class="isAppSelected(index) ? 'fa-square-check' : 'fa-square'"></i>
               </div>
@@ -238,8 +253,12 @@
               v-if="selectionMode"
               class="app-select-checkbox app-select-checkbox--list"
               role="checkbox"
+              tabindex="0"
               :aria-checked="isAppSelected(getOriginalIndex(app))"
+              :aria-label="$t('apps.batch_select_toggle')"
               @click.stop="toggleAppSelection(getOriginalIndex(app))"
+              @keydown.space.prevent="toggleAppSelection(getOriginalIndex(app))"
+              @keydown.enter.prevent="toggleAppSelection(getOriginalIndex(app))"
             >
               <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
             </div>

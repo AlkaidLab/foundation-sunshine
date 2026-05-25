@@ -946,9 +946,13 @@ namespace confighttp {
    * is rewritten once, and proc::refresh runs only once.
    *
    * Response:
-   *   200 {"status": true,  "deleted": <N>, "remaining": <M>}
-   *   400 if Content-Type / JSON / indices invalid
-   *   409 if another apps writer is already in flight
+   *   200 {"status":"true",  "deleted":<N>, "remaining":<M>}
+   *   400 {"status":"false", "error":"..."} for content-type / JSON / index /
+   *        file-write business errors. Follows uploadCover() convention in
+   *        this same file (status code derived from presence of 'error' key
+   *        inside the fail_guard).
+   *   401  not authenticated (via authenticate)
+   *   409  another apps-writer is already in flight
    *
    * @api_examples{/api/apps/batch-delete| POST| {"indices":[2,5,7]}}
    */
@@ -974,9 +978,16 @@ namespace confighttp {
 
     pt::ptree outputTree;
     auto g = util::fail_guard([&]() {
+      // Mirror uploadCover's convention in this file: when fail_guard fires
+      // with an 'error' field, emit 4xx so clients can distinguish business
+      // failures from success rather than parsing status:"false" out of a 200.
+      SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok;
+      if (outputTree.get_child_optional("error").has_value()) {
+        code = SimpleWeb::StatusCode::client_error_bad_request;
+      }
       std::ostringstream data;
       pt::write_json(data, outputTree);
-      response->write(data.str());
+      response->write(code, data.str());
     });
 
     std::stringstream ss;
@@ -1014,29 +1025,41 @@ namespace confighttp {
       return;
     }
 
-    if (indices_to_remove.empty()) {
-      outputTree.put("status", "true");
-      outputTree.put("deleted", 0);
+    pt::ptree fileTree;
+    try {
+      pt::read_json(config::stream.file_apps, fileTree);
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid File JSON");
       return;
     }
 
-    pt::ptree fileTree;
+    // Validate every index against the single snapshot we just loaded BEFORE
+    // any write, so a partially invalid request fails atomically.
+    const int apps_count = static_cast<int>(fileTree.get_child("apps"s).size());
+    for (int idx : indices_to_remove) {
+      if (idx < 0 || idx >= apps_count) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Invalid Index");
+        return;
+      }
+    }
+
+    // Empty selection: success no-op. Skip the write+refresh, but still emit
+    // 'remaining' so the success contract matches the non-empty path.
+    if (indices_to_remove.empty()) {
+      outputTree.put("status", "true");
+      outputTree.put("deleted", 0);
+      outputTree.put("remaining", apps_count);
+      return;
+    }
+
     int deleted_count = 0;
     int remaining_count = 0;
     try {
-      pt::read_json(config::stream.file_apps, fileTree);
       auto &apps_node = fileTree.get_child("apps"s);
-      const int apps_count = static_cast<int>(apps_node.size());
-
-      // Validate every index against the single snapshot we just loaded.
-      for (int idx : indices_to_remove) {
-        if (idx < 0 || idx >= apps_count) {
-          outputTree.put("status", "false");
-          outputTree.put("error", "Invalid Index");
-          return;
-        }
-      }
-
       pt::ptree newApps;
       int i = 0;
       for (const auto &kv : apps_node) {
