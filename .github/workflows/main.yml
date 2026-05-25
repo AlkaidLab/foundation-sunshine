@@ -161,7 +161,7 @@ jobs:
           which cmake || (echo "cmake not found" && exit 1)
           which ninja || (echo "ninja not found" && exit 1)
           which gcc || (echo "gcc not found" && exit 1)
-          
+
           echo "All build tools verified successfully"
           echo "  CMake: $(cmake --version | head -1)"
           echo "  Ninja: $(ninja --version)"
@@ -198,7 +198,7 @@ jobs:
           # downloads (vmouse) may fail. Downgrade missing drivers from
           # FATAL_ERROR to WARNING so the build/configure still succeeds; the
           # affected drivers are simply excluded from the installer.
-          DRIVER_DEPS_REQUIRED: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) || github.event_name == 'workflow_dispatch') && 'OFF' || 'ON' }}
+          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
           cmake \
@@ -245,10 +245,10 @@ jobs:
           # package - 生成 Inno Setup 安装包和 ZIP 便携版
           # 先安装到 staging 目录
           cmake --install . --prefix ./inno_staging
-          
+
           # 运行 Inno Setup 编译器
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss
-          
+
           # 生成 ZIP 便携版
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
 
