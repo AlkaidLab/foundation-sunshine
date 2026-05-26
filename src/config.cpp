@@ -450,6 +450,7 @@ namespace config {
     {},  // output_name
     {},  // capture_target (default: empty, will be set to "display" in apply_config)
     {},  // window_title
+    true,  // capture_cursor (default: composite the host mouse cursor)
     (int) display_device::parsed_config_t::device_prep_e::no_operation,  // display_device_prep
     (int) display_device::parsed_config_t::resolution_change_e::automatic,  // resolution_change
     {},  // manual_resolution
@@ -1301,6 +1302,11 @@ namespace config {
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
+
+    // Whether to composite the host mouse cursor into the captured frames.
+    // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
+    bool_f(vars, "capture_cursor", video.capture_cursor);
+    display_cursor = video.capture_cursor;
 
     // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
     string_f(vars, "downscaling_quality", video.downscaling_quality);

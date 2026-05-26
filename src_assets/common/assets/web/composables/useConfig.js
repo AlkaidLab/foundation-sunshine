@@ -43,6 +43,7 @@ const DEFAULT_TABS = [
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
       virtual_mouse: 'enabled',
+      capture_cursor: true,
       amf_draw_mouse_cursor: false,
       enable_dsu_server: 'disabled',
       dsu_server_port: 26760,

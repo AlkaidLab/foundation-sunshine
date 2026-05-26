@@ -436,6 +436,18 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- Capture mouse cursor into the stream -->
+    <div class="mb-3">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="capture_cursor"
+               v-model="config.capture_cursor">
+        <label class="form-check-label" for="capture_cursor">
+          {{ $t('config.capture_cursor') }}
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.capture_cursor_desc') }}</div>
+    </div>
+
     <!-- Draw mouse cursor in AMF -->
     <div class="mb-3">
       <div class="form-check form-switch">

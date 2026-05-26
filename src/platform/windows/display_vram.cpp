@@ -2824,7 +2824,7 @@ namespace platf::dxgi {
       texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
       if (lock_helper.lock()) {
         device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
-        if (config::input.amf_draw_mouse_cursor) {
+        if (cursor_visible && config::input.amf_draw_mouse_cursor) {
           GetCursorInfo(&pt);
           if (pt.flags == CURSOR_SHOWING) {
             blend_cursor(*d3d_img);

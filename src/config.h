@@ -114,6 +114,7 @@ namespace config {
     std::string output_name;
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
     std::string window_title;     // Window title to capture when capture_target="window"
+    bool capture_cursor;          // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
     int display_device_prep;
     int resolution_change;
     std::string manual_resolution;
