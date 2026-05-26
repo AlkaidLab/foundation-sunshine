@@ -2026,6 +2026,7 @@ namespace session_runtime {
   // Keep risky-route startup conservative, but still align with the 150 Hz
   // high-refresh startup floor used by stream_quality::startup_fps_for_bitrate().
   inline constexpr int kStartupHighRefreshCadenceCap = 120;
+  inline constexpr int kStartupRouterPortForwardCadenceCap = 90;
 
   inline startup_ceiling_policy_t
   startup_ceiling_policy_for_path(const startup_path_decision_t &decision,
@@ -2038,7 +2039,7 @@ namespace session_runtime {
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
       return {
         .bitrate_seed_kbps = 12000,
-        .fps_cap = std::min(std::max(requested_fps, 1), kStartupHighRefreshCadenceCap),
+        .fps_cap = std::min(std::max(requested_fps, 1), kStartupRouterPortForwardCadenceCap),
         .reason = "router-port-forward-safe",
       };
     }

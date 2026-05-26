@@ -77,4 +77,7 @@ namespace stream_quality {
                              int minimum_fps_target,
                              static_frame_mode_e mode = static_frame_mode_e::idle);
 
+  static_frame_mode_e
+  static_frame_mode_for_input_activity(bool input_active, bool cursor_plane_active);
+
 }  // namespace stream_quality

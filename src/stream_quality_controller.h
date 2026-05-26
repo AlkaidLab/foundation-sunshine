@@ -170,6 +170,7 @@ namespace stream_quality {
     std::uint32_t interarrival_jitter_us = 0;
     std::uint32_t delay_samples = 0;
     bool delay_gradient_valid = false;
+    bool user_input_active = false;
   };
 
   struct action_t {
@@ -205,6 +206,9 @@ namespace stream_quality {
     bool rfi_limited = false;
     bool request_idr = false;
     bool congestion_anti_spiral = false;
+    bool burst_safe_mode = false;
+    bool unsafe_ceiling_active = false;
+    bool unsafe_fps_ceiling_active = false;
     int recovery_hold_remaining = 0;
     int rtt_gradient_us = 0;
     int owd_gradient_us = 0;

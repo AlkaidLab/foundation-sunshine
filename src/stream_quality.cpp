@@ -317,4 +317,12 @@ namespace stream_quality {
     const auto non_vrr_idle_keepalive = std::min(5, requested_fps);
     return std::clamp(non_vrr_idle_keepalive, 1, requested_fps);
   }
+
+  static_frame_mode_e
+  static_frame_mode_for_input_activity(bool input_active, bool cursor_plane_active) {
+    if (!input_active || cursor_plane_active) {
+      return static_frame_mode_e::idle;
+    }
+    return static_frame_mode_e::interactive_input;
+  }
 }  // namespace stream_quality

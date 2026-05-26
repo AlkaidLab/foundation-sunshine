@@ -203,6 +203,9 @@ namespace stream_quality {
       if (feedback.delay_gradient_valid) {
         result.flags |= ALK_STREAM_QUALITY_FEEDBACK_FLAG_DELAY_GRADIENT_VALID;
       }
+      if (feedback.user_input_active) {
+        result.flags |= ALK_STREAM_QUALITY_FEEDBACK_FLAG_USER_INPUT_ACTIVE;
+      }
       return result;
     }
 
@@ -246,6 +249,9 @@ namespace stream_quality {
       result.rfi_limited = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_RFI_LIMITED) != 0;
       result.request_idr = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_REQUEST_IDR) != 0;
       result.congestion_anti_spiral = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_CONGESTION_ANTI_SPIRAL) != 0;
+      result.burst_safe_mode = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_BURST_SAFE_MODE) != 0;
+      result.unsafe_ceiling_active = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_UNSAFE_CEILING_ACTIVE) != 0;
+      result.unsafe_fps_ceiling_active = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_UNSAFE_FPS_CEILING_ACTIVE) != 0;
       result.recovery_hold_remaining = decision.recovery_hold_remaining;
       result.rtt_gradient_us = decision.rtt_gradient_us;
       result.owd_gradient_us = decision.owd_gradient_us;

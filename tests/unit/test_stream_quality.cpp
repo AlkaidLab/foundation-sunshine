@@ -354,6 +354,24 @@ TEST(StreamQualityTests, StaticKeepaliveRaisesCadenceDuringInteractiveInput) {
             60);
 }
 
+TEST(StreamQualityTests, CursorPlaneInputUsesIdleStaticKeepaliveMode) {
+  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(true, true),
+            stream_quality::static_frame_mode_e::idle);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(
+              150,
+              true,
+              0,
+              stream_quality::static_frame_mode_for_input_activity(true, true)),
+            1);
+}
+
+TEST(StreamQualityTests, NonCursorPlaneInputKeepsInteractiveStaticKeepaliveMode) {
+  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(true, false),
+            stream_quality::static_frame_mode_e::interactive_input);
+  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(false, false),
+            stream_quality::static_frame_mode_e::idle);
+}
+
 TEST(StreamQualityTests, StaticKeepaliveDefaultsRemainBandwidthFriendly) {
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120,
                                                        true,

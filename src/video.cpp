@@ -3390,10 +3390,11 @@ namespace video {
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
-      const auto static_frame_mode =
-        input_activity && input_activity(channel_data) ?
-          stream_quality::static_frame_mode_e::interactive_input :
-          stream_quality::static_frame_mode_e::idle;
+      const bool static_keepalive_input_active = input_activity && input_activity(channel_data);
+      const bool static_keepalive_cursor_plane_active = config.preferCursorPlane;
+      const auto static_frame_mode = stream_quality::static_frame_mode_for_input_activity(
+        static_keepalive_input_active,
+        static_keepalive_cursor_plane_active);
       if (static_frame_mode != last_static_frame_mode) {
         const auto keepalive_fps = stream_quality::static_frame_keepalive_fps(
           config.framerate,
@@ -3405,7 +3406,9 @@ namespace video {
                         << (static_frame_mode == stream_quality::static_frame_mode_e::interactive_input ?
                               "interactive-input" : "idle")
                         << ": " << keepalive_fps << " fps ("
-                        << minimum_frame_time.count() << "ms)";
+                        << minimum_frame_time.count() << "ms)"
+                        << " inputActive=" << (static_keepalive_input_active ? 1 : 0)
+                        << " preferCursorPlane=" << (static_keepalive_cursor_plane_active ? 1 : 0);
         last_static_frame_mode = static_frame_mode;
       }
       if (!requested_idr_frame || images->peek()) {
