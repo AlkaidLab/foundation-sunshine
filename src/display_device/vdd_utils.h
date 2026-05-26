@@ -8,7 +8,13 @@
 #include <string_view>
 #include <thread>
 #include <unordered_set>
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+using DWORD = unsigned long;
+using HANDLE = void *;
+#endif
 
 #include "parsed_config.h"
 

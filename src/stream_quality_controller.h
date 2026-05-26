@@ -19,6 +19,22 @@ namespace stream_quality {
     recovering,
   };
 
+  enum class link_quality_state_e {
+    unknown,
+    probing,
+    verified_good,
+    bursty_good,
+    fragile,
+    rescue,
+  };
+
+  enum class scene_class_e {
+    static_scene,
+    pointer_interactive,
+    high_motion,
+    recovery,
+  };
+
   enum class tier_e {
     fast,
     general,
@@ -100,6 +116,45 @@ namespace stream_quality {
     int recovery_probe_interval_windows = 1;
   };
 
+  struct action_t;
+
+  struct runtime_action_context_t {
+    bool resync_guard_active = false;
+    bool startup_settle_active = false;
+    int last_applied_bitrate_kbps = 0;
+    int last_applied_fec_percentage = -1;
+    int last_applied_fps = 0;
+    int last_applied_resolution_scale_percent = 100;
+    int last_applied_chroma_sampling_type = -1;
+    int last_applied_dynamic_range = -1;
+    int elapsed_ms_since_bitrate_apply = -1;
+    int elapsed_ms_since_fec_apply = -1;
+    int elapsed_ms_since_fps_apply = -1;
+    int elapsed_ms_since_profile_apply = -1;
+  };
+
+  struct runtime_action_plan_t {
+    bool apply_bitrate = false;
+    bool apply_fec = false;
+    bool apply_fps = false;
+    bool apply_profile = false;
+    bool apply_idr = false;
+    bool dynamic_apply_blocked = false;
+    bool fps_deferred = false;
+    bool profile_deferred = false;
+    bool update_runtime_totals = false;
+    int target_bitrate_kbps = 0;
+    int target_fec_percentage = 0;
+    int target_fps = 0;
+    int target_total_bitrate_kbps = 0;
+    int pacing_total_bitrate_kbps = 0;
+    int bitrate_apply_cooldown_ms = 0;
+    int fec_apply_cooldown_ms = 0;
+    int fps_apply_cooldown_ms = 0;
+    int profile_apply_cooldown_ms = 0;
+    int bitrate_apply_threshold_kbps = 0;
+  };
+
   struct config_t {
     int baseline_bitrate_kbps = 0;
     int baseline_fec_percentage = 0;
@@ -130,6 +185,9 @@ namespace stream_quality {
                                           bool pressure_after_probe,
                                           int previous_failed_probe_count,
                                           int previous_hold_windows);
+
+  runtime_action_plan_t
+  plan_runtime_action(const action_t &action, const runtime_action_context_t &context);
 
   struct feedback_t {
     std::uint32_t duration_ms = 0;
@@ -177,6 +235,8 @@ namespace stream_quality {
     bool changed = false;
     state_e state = state_e::healthy;
     availability_e availability = availability_e::probing;
+    link_quality_state_e link_quality_state = link_quality_state_e::unknown;
+    scene_class_e scene_class = scene_class_e::static_scene;
     reason_e reason = reason_e::healthy;
     scenario_e scenario = scenario_e::healthy;
     tier_e tier = tier_e::bluray;
@@ -199,6 +259,18 @@ namespace stream_quality {
     int chroma_sampling_type = -1;
     int dynamic_range = -1;
     int quality_tier = 0;
+    int static_last_good_bitrate_kbps = 0;
+    int static_last_good_fps = 0;
+    int pointer_last_good_bitrate_kbps = 0;
+    int pointer_last_good_fps = 0;
+    int high_motion_last_good_bitrate_kbps = 0;
+    int high_motion_last_good_fps = 0;
+    int static_unsafe_ceiling_kbps = 0;
+    int static_unsafe_fps_ceiling = 0;
+    int pointer_unsafe_ceiling_kbps = 0;
+    int pointer_unsafe_fps_ceiling = 0;
+    int high_motion_unsafe_ceiling_kbps = 0;
+    int high_motion_unsafe_fps_ceiling = 0;
     bool profile_tier_changed = false;
     bool profile_tier_deferred = false;
     bool profile_tier_supported = false;
@@ -254,6 +326,12 @@ namespace stream_quality {
 
   const char *
   availability_name(availability_e availability);
+
+  const char *
+  link_quality_state_name(link_quality_state_e state);
+
+  const char *
+  scene_class_name(scene_class_e scene_class);
 
   const char *
   tier_name(tier_e tier);

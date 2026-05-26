@@ -207,6 +207,11 @@ namespace platf {
     return display_names;
   }
 
+  std::vector<std::string>
+  adapter_names() {
+    return {};
+  }
+
   /**
    * @brief Returns if GPUs/drivers have changed since the last call to this function.
    * @return `true` if a change has occurred or if it is unknown whether a change occurred.

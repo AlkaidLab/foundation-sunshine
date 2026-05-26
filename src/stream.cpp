@@ -131,7 +131,7 @@ static constexpr std::uint32_t STREAM_QUALITY_HOST_MOTION_SOURCE_ENCODED_SIZE = 
 #endif
 
 #ifndef ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED
-  #define ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED 0
+  #define ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED 1
 #endif
 
 #ifndef LI_FF2_RESCUE_CONTROL
@@ -692,7 +692,7 @@ namespace stream {
         return -1;
       }
       AlkRuntimeConfig runtime_config;
-      AlkTransportModuleV1 transport_module;
+      AlkTransportModule transport_module;
       AlkTransportOpenParams open_params;
       alk_runtime_config_init(&runtime_config);
       runtime_config.role = ALK_SESSION_ROLE_HOST;
@@ -2023,36 +2023,6 @@ namespace stream {
     return (ml_feature_flags & ML_FF_NETWORK_FEEDBACK) == 0;
   }
 
-  bool
-  stream_quality_resync_guard_allows_safety_apply(const stream_quality::action_t &action,
-                                            int last_applied_bitrate_kbps,
-                                            int last_applied_fec_percentage) {
-    if (!action.changed) {
-      return false;
-    }
-
-    const bool bitrate_downshift =
-      last_applied_bitrate_kbps <= 0 ||
-      (action.target_bitrate_kbps > 0 &&
-       action.target_bitrate_kbps < last_applied_bitrate_kbps);
-    const bool fec_downshift =
-      last_applied_fec_percentage < 0 ||
-      action.fec_percentage < last_applied_fec_percentage;
-    const bool low_availability_safety =
-      action.availability == stream_quality::availability_e::low ||
-      action.state == stream_quality::state_e::crisis ||
-      action.pressures.burst_loss >= 0.70 ||
-      action.pressures.random_loss >= 0.70 ||
-      action.pressures.render >= 0.70 ||
-      action.unrecoverable_loss >= 0.03 ||
-      action.packet_loss >= 0.12 ||
-      action.rfi_limited ||
-      action.congestion_anti_spiral;
-    return action.state != stream_quality::state_e::healthy &&
-           low_availability_safety &&
-           (bitrate_downshift || fec_downshift);
-  }
-
   const char *
   adaptive_controller_state_name(const session_t *session) {
     return session && session->adaptive_controller_enabled ? "auto" : "off";
@@ -2118,9 +2088,11 @@ namespace stream {
       request.remote_feature_flags2 = session->config.mlFeatureFlags2;
     }
 #if ALKAID_TRANSPORT_NATIVE_PRIMARY_ENABLED
-    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_NATIVE_PRIMARY;
+    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_NATIVE_PRIMARY |
+                     ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
 #elif ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
-    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_CARRIER_ADAPTER;
+    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_CARRIER_ADAPTER |
+                     ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
 #endif
     return alk_sunshine_gamestream_enet_control_transport_compatibility_mode(&request);
   }
@@ -2367,7 +2339,11 @@ namespace stream {
     if (stats.jitter_us != 0) {
       feedback.rtt_variance_ms = stats.jitter_us / 1000U;
     }
-    if (stats.packet_loss_ppm != 0 && feedback.total_packets == 0) {
+    const bool transport_loss_is_media_video =
+      stats.channel_kind == ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM;
+    if (transport_loss_is_media_video &&
+        stats.packet_loss_ppm != 0 &&
+        feedback.total_packets == 0) {
       feedback.total_packets = 1000000U;
       feedback.missing_packets = std::min<std::uint32_t>(stats.packet_loss_ppm, 1000000U);
       feedback.received_packets = 1000000U - feedback.missing_packets;
@@ -2388,6 +2364,7 @@ namespace stream {
                       << " transportStatsSource=network.transport"
                       << " runtime=" << session->identity.runtime_id
                       << " source=" << (source ? source : "unknown")
+                      << " channel=" << stats.channel_kind
                       << " rttMs=" << feedback.rtt_ms
                       << " jitterMs=" << feedback.rtt_variance_ms
                       << " transportLossPpm=" << stats.packet_loss_ppm
@@ -2543,6 +2520,8 @@ namespace stream {
             << " profileApplies=" << diag.profile_applies
             << " idr=" << diag.idr_requests
             << " availability=" << stream_quality::availability_name(action.availability)
+            << " linkQuality=" << stream_quality::link_quality_state_name(action.link_quality_state)
+            << " sceneClass=" << stream_quality::scene_class_name(action.scene_class)
             << " tier=" << stream_quality::tier_name(action.tier)
             << " scenario=" << stream_quality::scenario_name(action.scenario)
             << " decisionReason=" << stream_quality_decision_reason_name(action)
@@ -2571,132 +2550,59 @@ namespace stream {
       return;
     }
 
-    const auto target_fec_percentage = std::clamp(action.fec_percentage, 0, 100);
-    const auto target_encoding_bitrate = action.target_bitrate_kbps;
-    const auto target_fps = action.target_fps;
-
     const auto now = std::chrono::steady_clock::now();
     const bool resync_guard =
       session->stream_quality_resync_guard_until.time_since_epoch().count() != 0 &&
       now < session->stream_quality_resync_guard_until;
-    const bool resync_guard_safety_apply =
-      resync_guard &&
-      stream_quality_resync_guard_allows_safety_apply(action,
-                                                session->last_applied_stream_quality_bitrate,
-                                                session->last_applied_stream_quality_fec);
-    const bool dynamic_apply_blocked = resync_guard && !resync_guard_safety_apply;
-    const auto bitrate_delta = std::abs(target_encoding_bitrate - session->last_applied_stream_quality_bitrate);
-    const auto bitrate_threshold = std::max(250, std::max(target_encoding_bitrate, session->last_applied_stream_quality_bitrate) / 50);
     const bool startup_settle =
       session->stream_quality_startup_settle_until.time_since_epoch().count() != 0 &&
       now < session->stream_quality_startup_settle_until;
-    const bool bitrate_probe_up =
-      session->last_applied_stream_quality_bitrate > 0 &&
-      target_encoding_bitrate > session->last_applied_stream_quality_bitrate;
-    const bool bitrate_drop =
-      session->last_applied_stream_quality_bitrate > 0 &&
-      target_encoding_bitrate < session->last_applied_stream_quality_bitrate;
-    const bool continuity_pressure =
-      action.state == stream_quality::state_e::constrained ||
-      action.state == stream_quality::state_e::crisis ||
-      action.pressures.render >= 0.25 ||
-      action.pressures.delay_congestion >= 0.25 ||
-      action.pressures.burst_loss >= 0.25 ||
-      action.pressures.random_loss >= 0.25;
+
+    auto elapsed_since_ms = [&](const std::chrono::steady_clock::time_point &stamp) {
+      if (stamp.time_since_epoch().count() == 0) {
+        return -1;
+      }
+      return static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - stamp).count());
+    };
+
+    const auto plan = stream_quality::plan_runtime_action(action, {
+      .resync_guard_active = resync_guard,
+      .startup_settle_active = startup_settle,
+      .last_applied_bitrate_kbps = session->last_applied_stream_quality_bitrate,
+      .last_applied_fec_percentage = session->last_applied_stream_quality_fec,
+      .last_applied_fps = session->last_applied_stream_quality_fps,
+      .last_applied_resolution_scale_percent = session->last_applied_stream_quality_resolution_scale,
+      .last_applied_chroma_sampling_type = session->last_applied_stream_quality_chroma_sampling_type,
+      .last_applied_dynamic_range = session->last_applied_stream_quality_dynamic_range,
+      .elapsed_ms_since_bitrate_apply = elapsed_since_ms(session->last_stream_quality_bitrate_apply),
+      .elapsed_ms_since_fec_apply = elapsed_since_ms(session->last_stream_quality_fec_apply),
+      .elapsed_ms_since_fps_apply = elapsed_since_ms(session->last_stream_quality_fps_apply),
+      .elapsed_ms_since_profile_apply = elapsed_since_ms(session->last_stream_quality_profile_apply),
+    });
+
+    const auto target_fec_percentage = plan.target_fec_percentage;
+    const auto target_encoding_bitrate = plan.target_bitrate_kbps;
+    const auto target_fps = plan.target_fps;
+    const auto target_total_bitrate = plan.target_total_bitrate_kbps;
+    const auto pacing_total_bitrate = plan.pacing_total_bitrate_kbps;
+    const bool dynamic_apply_blocked = plan.dynamic_apply_blocked;
+    const bool resync_guard_safety_apply = resync_guard && !dynamic_apply_blocked;
+    const bool apply_bitrate = plan.apply_bitrate;
+    const bool apply_fec = plan.apply_fec;
+    const bool apply_fps = plan.apply_fps;
+    const bool apply_profile = plan.apply_profile;
+    const bool profile_deferred = plan.profile_deferred;
+    const bool profile_quality_down = apply_profile &&
+                                      action.resolution_scale_percent <
+                                        session->last_applied_stream_quality_resolution_scale;
+    const bool profile_fast_recovery = apply_profile &&
+                                       action.state == stream_quality::state_e::healthy;
+    const auto fps_cooldown_suffix = plan.fps_apply_cooldown_ms > 0 ?
+                                       std::string {" fpsCooldownMs="} + std::to_string(plan.fps_apply_cooldown_ms) :
+                                       std::string {};
     if (!dynamic_apply_blocked) {
       update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
-    }
-    const auto bitrate_apply_cooldown = startup_settle ?
-                                          (bitrate_probe_up ? 1800ms : (bitrate_drop && continuity_pressure ? 180ms : 500ms)) :
-                                          (bitrate_probe_up ? 900ms : (bitrate_drop && continuity_pressure ? 180ms : 350ms));
-    const bool fec_increase =
-      session->last_applied_stream_quality_fec >= 0 &&
-      target_fec_percentage > session->last_applied_stream_quality_fec;
-    const auto fec_apply_cooldown = fec_increase && continuity_pressure ?
-                                      300ms :
-                                      (startup_settle ? 1800ms : 900ms);
-    const bool apply_bitrate = !dynamic_apply_blocked &&
-                               target_encoding_bitrate > 0 &&
-                               (session->last_applied_stream_quality_bitrate <= 0 ||
-                                (bitrate_delta >= bitrate_threshold &&
-                                 (session->last_stream_quality_bitrate_apply.time_since_epoch().count() == 0 ||
-                                  now - session->last_stream_quality_bitrate_apply >= bitrate_apply_cooldown)));
-    const bool apply_fec = !dynamic_apply_blocked &&
-                           target_fec_percentage >= 0 &&
-                           (session->last_applied_stream_quality_fec < 0 ||
-                            (target_fec_percentage != session->last_applied_stream_quality_fec &&
-                             (session->last_stream_quality_fec_apply.time_since_epoch().count() == 0 ||
-                              now - session->last_stream_quality_fec_apply >= fec_apply_cooldown)));
-    const auto last_fps = session->last_applied_stream_quality_fps;
-    const auto fps_elapsed_ms =
-      session->last_stream_quality_fps_apply.time_since_epoch().count() == 0 ?
-        -1 :
-        static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - session->last_stream_quality_fps_apply).count());
-    const auto fps_decision = stream_quality::runtime_fps_apply_decision(last_fps,
-                                                                   target_fps,
-                                                                   fps_elapsed_ms);
-    const bool fps_target_changed = fps_decision.target_changed;
-    const bool startup_fps_down_allowed =
-      action.pressures.random_loss >= 0.90 ||
-      action.pressures.burst_loss >= 0.90 ||
-      action.pressures.delay_congestion >= 0.90 ||
-      action.pressures.render >= 0.95;
-    const bool startup_fps_down_suppressed =
-      startup_settle &&
-      last_fps > 0 &&
-      target_fps < last_fps &&
-      !startup_fps_down_allowed;
-    const bool apply_fps = !dynamic_apply_blocked && fps_decision.apply && !startup_fps_down_suppressed;
-    const auto fps_cooldown_suffix = fps_target_changed ?
-                                       std::string {" fpsCooldownMs="} + std::to_string(fps_decision.cooldown_ms) :
-                                       std::string {};
-    const bool profile_target_changed =
-      action.resolution_scale_percent != session->last_applied_stream_quality_resolution_scale ||
-      action.chroma_sampling_type != session->last_applied_stream_quality_chroma_sampling_type ||
-      action.dynamic_range != session->last_applied_stream_quality_dynamic_range;
-    const bool profile_deferred = action.profile_tier_deferred && profile_target_changed;
-    const bool profile_quality_down =
-      profile_target_changed &&
-      ((action.resolution_scale_percent > 0 &&
-        session->last_applied_stream_quality_resolution_scale > 0 &&
-        action.resolution_scale_percent < session->last_applied_stream_quality_resolution_scale) ||
-       (action.chroma_sampling_type >= 0 &&
-        session->last_applied_stream_quality_chroma_sampling_type > action.chroma_sampling_type) ||
-       (action.dynamic_range >= 0 &&
-        session->last_applied_stream_quality_dynamic_range > action.dynamic_range));
-    const bool profile_quality_up =
-      profile_target_changed &&
-      ((action.resolution_scale_percent > session->last_applied_stream_quality_resolution_scale &&
-        session->last_applied_stream_quality_resolution_scale > 0) ||
-       (action.chroma_sampling_type >= 0 &&
-        session->last_applied_stream_quality_chroma_sampling_type >= 0 &&
-        action.chroma_sampling_type > session->last_applied_stream_quality_chroma_sampling_type) ||
-       (action.dynamic_range >= 0 &&
-        action.dynamic_range > session->last_applied_stream_quality_dynamic_range));
-    const bool profile_fast_recovery =
-      profile_quality_up &&
-      (action.state == stream_quality::state_e::healthy ||
-       action.state == stream_quality::state_e::recovering) &&
-      action.pressures.render < 0.20 &&
-      action.pressures.delay_congestion < 0.20 &&
-      action.pressures.burst_loss < 0.18 &&
-      action.pressures.random_loss < 0.18;
-    const auto profile_apply_cooldown = profile_quality_down && continuity_pressure ?
-                                          250ms :
-                                        profile_fast_recovery ?
-                                          700ms :
-                                          1500ms;
-    const bool apply_profile = !dynamic_apply_blocked &&
-                               action.profile_tier_supported &&
-                               action.profile_tier_changed &&
-                               profile_target_changed &&
-                               (session->last_stream_quality_profile_apply.time_since_epoch().count() == 0 ||
-                                now - session->last_stream_quality_profile_apply >= profile_apply_cooldown);
-    const auto target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
-                                                                                target_fec_percentage);
-    const auto pacing_total_bitrate = std::max(action.pacing_bitrate_kbps, target_total_bitrate);
-    if (!dynamic_apply_blocked) {
       session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
       session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
       session->pacing_total_bitrate.store(pacing_total_bitrate, std::memory_order_relaxed);
@@ -2801,7 +2707,7 @@ namespace stream {
       session->last_stream_quality_profile_apply = now;
     }
 
-    if (action.request_idr && !resync_guard) {
+    if (plan.apply_idr) {
       session->video.idr_events->raise(true);
     }
 
@@ -2810,6 +2716,8 @@ namespace stream {
                     << " adaptiveController=auto reason=enabled"
                     << " state=" << stream_quality_state_name(action.state)
                     << " availability=" << stream_quality::availability_name(action.availability)
+                    << " linkQuality=" << stream_quality::link_quality_state_name(action.link_quality_state)
+                    << " sceneClass=" << stream_quality::scene_class_name(action.scene_class)
                     << " reason=" << stream_quality::reason_name(action.reason)
                     << " scenario=" << stream_quality::scenario_name(action.scenario)
                     << " decisionReason=" << stream_quality_decision_reason_name(action)
@@ -2841,6 +2749,14 @@ namespace stream {
                     << " recoveredLoss=" << action.recovered_loss
                     << " unrecoverableLoss=" << action.unrecoverable_loss
                     << " fecEfficiency=" << action.fec_efficiency
+                    << " lastGood(static/pointer/highMotion)="
+                    << action.static_last_good_bitrate_kbps << "Kbps/" << action.static_last_good_fps << "fps,"
+                    << action.pointer_last_good_bitrate_kbps << "Kbps/" << action.pointer_last_good_fps << "fps,"
+                    << action.high_motion_last_good_bitrate_kbps << "Kbps/" << action.high_motion_last_good_fps << "fps"
+                    << " unsafe(static/pointer/highMotion)="
+                    << action.static_unsafe_ceiling_kbps << "Kbps/" << action.static_unsafe_fps_ceiling << "fps,"
+                    << action.pointer_unsafe_ceiling_kbps << "Kbps/" << action.pointer_unsafe_fps_ceiling << "fps,"
+                    << action.high_motion_unsafe_ceiling_kbps << "Kbps/" << action.high_motion_unsafe_fps_ceiling << "fps"
                     << " pacing=" << pacing_total_bitrate << " Kbps"
                     << " apply(bitrate=" << (apply_bitrate ? 1 : 0)
                     << ",fps=" << (apply_fps ? 1 : 0)
@@ -2850,8 +2766,7 @@ namespace stream {
                     << (resync_guard ? " resyncGuard=1" : "")
                     << (resync_guard_safety_apply ? " resyncSafetyApply=1" : "")
                     << (apply_fps ? " fpsApplied=runtime-pacing" : "")
-                    << (startup_fps_down_suppressed ? " fpsDeferred=startup-grace" : "")
-                    << (fps_decision.deferred ? " fpsDeferred=runtime-pacing-cooldown" : "")
+                    << (plan.fps_deferred ? " fpsDeferred=runtime-plan" : "")
                     << fps_cooldown_suffix
                     << (profile_deferred ? " profileDeferred=runtime-profile-tier-backend-unavailable" : "")
                     << profile_runtime_scale_suffix
@@ -2859,8 +2774,8 @@ namespace stream {
                     << (apply_profile && profile_fast_recovery ? " profileFastRecovery=1" : "")
                     << (action.profile_tier_changed && !profile_deferred && !apply_profile ?
                           " profileStable=runtime-profile-tier-no-change" : "")
-                    << (action.request_idr && !resync_guard ? " idr=1" : "")
-                    << (action.request_idr && resync_guard ? " idrSuppressed=resync-guard" : "")
+                    << (plan.apply_idr ? " idr=1" : "")
+                    << (action.request_idr && !plan.apply_idr ? " idrSuppressed=runtime-plan" : "")
                     << (action.rfi_limited ? " rfiLimited=1" : "")
                     << (action.congestion_anti_spiral ? " congestionAntiSpiral=1" : "")
                     << (action.burst_safe_mode ? " burstSafe=1" : "")
@@ -5774,11 +5689,27 @@ namespace stream {
     const int requested_bitrate = request.max_bitrate_kbps > 0 ?
                                     static_cast<int>(request.max_bitrate_kbps) :
                                     std::max(1200, current_bitrate * 2 / 3);
-    const int target_bitrate = std::clamp(requested_bitrate, 800, std::max(800, current_bitrate));
+    const bool severe_media_rescue =
+      (request.trigger_flags & ALK_RESCUE_TRIGGER_CONTROL_STALLING) != 0 ||
+      ((request.trigger_flags & ALK_RESCUE_TRIGGER_RFI_WAIT) != 0 &&
+       (request.trigger_flags & ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES) != 0);
+    int target_bitrate = std::clamp(requested_bitrate, 800, std::max(800, current_bitrate));
+    if (severe_media_rescue) {
+      // CPE/public-forward burst loss is dominated by packet cadence and burst
+      // size, not just the nominal encoder bitrate.  Clamp the rescue bitrate
+      // hard enough to create an actual breathing window before the controller
+      // probes upward again.
+      target_bitrate = std::min(target_bitrate, std::max(2500, current_bitrate / 2));
+    }
     const int target_fec = std::clamp(
-      std::max<int>(session->last_applied_stream_quality_fec, static_cast<int>(request.fec_percent)),
+      std::max<int>(session->last_applied_stream_quality_fec,
+                    severe_media_rescue ? 45 : static_cast<int>(request.fec_percent)),
       0,
       45);
+    const int current_fps = session->last_applied_stream_quality_fps > 0 ?
+                              session->last_applied_stream_quality_fps :
+                              std::max(1, session->config.monitor.framerate);
+    const int target_rescue_fps = severe_media_rescue && current_fps > 60 ? 60 : current_fps;
     // Keep rescue on soft quality tiers for the main stream.  The request may
     // carry an advisory scale for future/dedicated rescue streams, but applying
     // it to the active encoder caused visible resolution reinit/RFI storms.
@@ -5799,6 +5730,18 @@ namespace stream {
     session->video.dynamic_param_change_events->raise(fec_param);
     session->last_applied_stream_quality_fec = target_fec;
     session->last_stream_quality_fec_apply = now;
+
+    bool rescue_fps_requested = false;
+    if (target_rescue_fps > 0 && target_rescue_fps < current_fps) {
+      video::dynamic_param_t fps_param;
+      fps_param.type = video::dynamic_param_type_e::FPS;
+      fps_param.value.float_value = static_cast<float>(target_rescue_fps);
+      fps_param.valid = true;
+      session->video.dynamic_param_change_events->raise(fps_param);
+      session->last_applied_stream_quality_fps = target_rescue_fps;
+      session->last_stream_quality_fps_apply = now;
+      rescue_fps_requested = true;
+    }
 
     bool runtime_scale_requested = false;
     runtime_profile_resolution_t runtime_resolution {
@@ -5831,8 +5774,11 @@ namespace stream {
     session->current_fec_percentage.store(target_fec, std::memory_order_relaxed);
     session->pacing_total_bitrate.store(total_video_bitrate_from_encoding_bitrate(target_bitrate, target_fec),
                                         std::memory_order_relaxed);
+    const auto rescue_guard = severe_media_rescue ?
+                                std::chrono::milliseconds(hold_ms) :
+                                650ms;
     session->stream_quality_resync_guard_until = std::max(session->stream_quality_resync_guard_until,
-                                                          now + 650ms);
+                                                          now + rescue_guard);
 
     if (request.request_idr) {
       session->video.idr_events->raise(true);
@@ -5851,6 +5797,9 @@ namespace stream {
                     << " qualityProfile=soft-bitrate-fec-idr"
                     << " bitrate=" << target_bitrate << " Kbps"
                     << " fec=" << target_fec << "%"
+                    << " fps=" << target_rescue_fps
+                    << " fpsRescue=" << (rescue_fps_requested ? 1 : 0)
+                    << " severe=" << (severe_media_rescue ? 1 : 0)
                     << " holdMs=" << hold_ms
                     << " blurry=" << (request.enable_blurry_upscale ? 1 : 0)
                     << " idr=" << (request.request_idr ? 1 : 0)
@@ -9947,10 +9896,10 @@ namespace stream {
         auto *runtime = alk_runtime_create();
         if (runtime) {
           AlkRuntimeConfig runtime_config;
-          AlkTransportModuleV1 transport_module;
-          AlkTransportCarrierV1 transport_carrier;
+          AlkTransportModule transport_module;
+          AlkTransportCarrier transport_carrier;
           alk_runtime_config_init(&runtime_config);
-          alk_transport_carrier_v1_init(&transport_carrier);
+          alk_transport_carrier_init(&transport_carrier);
           transport_carrier.user_data = session.get();
           transport_carrier.open = transport_carrier_open;
           transport_carrier.send = transport_carrier_send;
@@ -10129,6 +10078,19 @@ namespace stream {
                             << " total=" << startup_total_budget << " Kbps";
           }
         }
+      }
+      if (enhanced_feedback_client && current_stream_fps > 0 && current_stream_fps < capture_stream_fps) {
+        // startupFramerate is only a temporary pacing hint.  For risky routes
+        // we need the encoder cadence itself to start at the safe cap, or it
+        // returns to the negotiated high-FPS cadence after the short startup
+        // pacing window and immediately floods fragile CPE/public-forward paths.
+        session->config.monitor.framerate = current_stream_fps;
+        config.monitor.framerate = current_stream_fps;
+        BOOST_LOG(info) << "Remote-safe startup encoder cadence capped runtime="
+                        << session->identity.runtime_id
+                        << " encoderFps=" << current_stream_fps
+                        << " negotiatedFps=" << capture_stream_fps
+                        << " ceilingFps=" << ceiling_fps;
       }
       session->current_total_bitrate = total_video_bitrate_from_encoding_bitrate(encoding_bitrate,
                                                                                  startup_active_fec_percentage);

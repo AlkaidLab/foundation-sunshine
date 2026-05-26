@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <string>
+
 #include "entry_handler.h"
 #include "thread_pool.h"
 /**
@@ -21,6 +23,15 @@ extern thread_pool_util::ThreadPool task_pool;
  */
 extern bool display_cursor;
 
+extern const std::string ZAKO_NAME;
+
+/**
+ * @brief Cached result of is_running_as_system() check.
+ * @details This is set once at program startup and never changes during runtime.
+ * Non-Windows builds keep this false.
+ */
+extern bool is_running_as_system_user;
+
 #ifdef _WIN32
   // Declare global singleton used for NVIDIA control panel modifications
   #include "platform/windows/nvprefs/nvprefs_interface.h"
@@ -31,14 +42,7 @@ extern bool display_cursor;
 extern nvprefs::nvprefs_interface nvprefs_instance;
 
 extern const std::string VDD_NAME;
-extern const std::string ZAKO_NAME;
 extern std::string zako_device_id;
-
-/**
- * @brief Cached result of is_running_as_system() check.
- * @details This is set once at program startup and never changes during runtime.
- */
-extern bool is_running_as_system_user;
 #endif
 
 /**

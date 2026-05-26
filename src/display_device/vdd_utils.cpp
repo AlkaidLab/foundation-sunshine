@@ -2,6 +2,44 @@
 
 #include "vdd_utils.h"
 
+#ifndef _WIN32
+
+namespace display_device::vdd_utils {
+
+  const wchar_t *kVddPipeName = L"";
+  const DWORD kPipeTimeoutMs = 0;
+  const DWORD kPipeBufferSize = 0;
+  const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
+
+  std::chrono::milliseconds
+  calculate_exponential_backoff(int attempt) {
+    auto delay = kInitialRetryDelay * (1 << attempt);
+    return std::min(delay, kMaxRetryDelay);
+  }
+
+  bool execute_vdd_command(const std::string &) { return false; }
+  HANDLE connect_to_pipe_with_retry(const wchar_t *, int) { return nullptr; }
+  bool execute_pipe_command(const wchar_t *, const wchar_t *, std::string *, bool *) { return false; }
+  bool reload_driver() { return false; }
+  std::string generate_client_guid(const std::string &) { return {}; }
+  physical_size_t get_client_physical_size(const std::string &, const std::string &) { return {}; }
+  bool create_vdd_monitor(const std::string &, const hdr_brightness_t &, const physical_size_t &) { return false; }
+  bool destroy_vdd_monitor() { return true; }
+  void destroy_vdd_monitor_nolog() {}
+  void enable_vdd() {}
+  void disable_vdd() {}
+  void disable_enable_vdd() {}
+  bool toggle_display_power() { return false; }
+  bool is_display_on() { return false; }
+  bool set_hdr_state(bool) { return false; }
+  bool ensure_vdd_extended_mode(const std::string &, const std::unordered_set<std::string> &) { return false; }
+  bool apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e, const device_info_map_t &) { return true; }
+  VddSettings prepare_vdd_settings(const parsed_config_t &) { return {}; }
+
+}  // namespace display_device::vdd_utils
+
+#else
+
 #include "vdd_ioctl.h"
 
 #include <algorithm>
@@ -891,3 +929,5 @@ namespace display_device {
     }
   }  // namespace vdd_utils
 }  // namespace display_device
+
+#endif

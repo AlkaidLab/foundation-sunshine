@@ -235,6 +235,9 @@ include_directories(
         "${CMAKE_SOURCE_DIR}/third-party/nanors"
         "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
         ${FFMPEG_INCLUDE_DIRS}
+        /opt/homebrew/include
+        /opt/local/include
+        /usr/local/include
         ${Boost_INCLUDE_DIRS}  # has to be the last, or we get runtime error on macOS ffmpeg encoder
 )
 

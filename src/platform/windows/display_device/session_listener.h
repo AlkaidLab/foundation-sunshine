@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef _WIN32
+
 // Windows includes must come first
 #include <windows.h>
 
@@ -88,3 +90,25 @@ namespace display_device {
   };
 
 }  // namespace display_device
+
+#else
+
+#include <functional>
+
+namespace display_device {
+  class SessionEventListener {
+  public:
+    using UnlockCallback = std::function<void()>;
+    static bool init() { return false; }
+    static void deinit() {}
+    static bool is_event_based() { return false; }
+    static void add_unlock_task(UnlockCallback task) {
+      if (task) {
+        task();
+      }
+    }
+    static void clear_unlock_task() {}
+  };
+}  // namespace display_device
+
+#endif

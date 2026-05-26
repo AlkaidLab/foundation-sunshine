@@ -10,9 +10,24 @@ namespace display_device {
   }
 
   std::string
+  find_one_of_the_available_devices(const std::string &device_id) {
+    return device_id;
+  }
+
+  std::string
+  find_device_by_friendlyname(const std::string &) {
+    return {};
+  }
+
+  std::string
   get_display_name(const std::string &value) {
     // Not implemented, but just passthrough the value
     return value;
+  }
+
+  std::string
+  get_display_friendly_name(const std::string &device_id) {
+    return get_display_name(device_id);
   }
 
   device_display_mode_map_t
@@ -98,7 +113,10 @@ namespace display_device {
   }
 
   settings_t::apply_result_t
-  settings_t::apply_config(const parsed_config_t &) {
+  settings_t::apply_config(
+    const parsed_config_t &,
+    const rtsp_stream::launch_session_t &,
+    const boost::optional<active_topology_t> &) {
     // Not implemented
     return { apply_result_t::result_e::success };
   }
@@ -113,6 +131,28 @@ namespace display_device {
 
   void
   settings_t::reset_persistence() {
+    // Not implemented
+  }
+
+  bool
+  settings_t::has_persistent_data() const {
+    // Not implemented
+    return false;
+  }
+
+  bool
+  settings_t::is_vdd_in_initial_topology() const {
+    // Not implemented
+    return false;
+  }
+
+  void
+  settings_t::remove_vdd_from_initial_topology(const std::string &) {
+    // Not implemented
+  }
+
+  void
+  settings_t::replace_vdd_id(const std::string &, const std::string &) {
     // Not implemented
   }
 

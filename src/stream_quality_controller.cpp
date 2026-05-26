@@ -37,6 +37,16 @@ namespace stream_quality {
       }
     }
 
+    static uint32_t to_alk_state(state_e value) {
+      switch (value) {
+        case state_e::constrained: return ALK_STREAM_QUALITY_STATE_CONSTRAINED;
+        case state_e::crisis: return ALK_STREAM_QUALITY_STATE_CRISIS;
+        case state_e::recovering: return ALK_STREAM_QUALITY_STATE_RECOVERING;
+        case state_e::healthy:
+        default: return ALK_STREAM_QUALITY_STATE_HEALTHY;
+      }
+    }
+
     static availability_e from_alk_availability(uint32_t value) {
       switch (value) {
         case ALK_STREAM_QUALITY_AVAILABILITY_LOW: return availability_e::low;
@@ -47,6 +57,60 @@ namespace stream_quality {
       }
     }
 
+    static uint32_t to_alk_availability(availability_e value) {
+      switch (value) {
+        case availability_e::low: return ALK_STREAM_QUALITY_AVAILABILITY_LOW;
+        case availability_e::probing: return ALK_STREAM_QUALITY_AVAILABILITY_PROBING;
+        case availability_e::recovering: return ALK_STREAM_QUALITY_AVAILABILITY_RECOVERING;
+        case availability_e::high:
+        default: return ALK_STREAM_QUALITY_AVAILABILITY_HIGH;
+      }
+    }
+
+    static link_quality_state_e from_alk_link_quality_state(uint32_t value) {
+      switch (value) {
+        case ALK_STREAM_QUALITY_LINK_STATE_PROBING: return link_quality_state_e::probing;
+        case ALK_STREAM_QUALITY_LINK_STATE_VERIFIED_GOOD: return link_quality_state_e::verified_good;
+        case ALK_STREAM_QUALITY_LINK_STATE_BURSTY_GOOD: return link_quality_state_e::bursty_good;
+        case ALK_STREAM_QUALITY_LINK_STATE_FRAGILE: return link_quality_state_e::fragile;
+        case ALK_STREAM_QUALITY_LINK_STATE_RESCUE: return link_quality_state_e::rescue;
+        case ALK_STREAM_QUALITY_LINK_STATE_UNKNOWN:
+        default: return link_quality_state_e::unknown;
+      }
+    }
+
+    static uint32_t to_alk_link_quality_state(link_quality_state_e value) {
+      switch (value) {
+        case link_quality_state_e::probing: return ALK_STREAM_QUALITY_LINK_STATE_PROBING;
+        case link_quality_state_e::verified_good: return ALK_STREAM_QUALITY_LINK_STATE_VERIFIED_GOOD;
+        case link_quality_state_e::bursty_good: return ALK_STREAM_QUALITY_LINK_STATE_BURSTY_GOOD;
+        case link_quality_state_e::fragile: return ALK_STREAM_QUALITY_LINK_STATE_FRAGILE;
+        case link_quality_state_e::rescue: return ALK_STREAM_QUALITY_LINK_STATE_RESCUE;
+        case link_quality_state_e::unknown:
+        default: return ALK_STREAM_QUALITY_LINK_STATE_UNKNOWN;
+      }
+    }
+
+    static scene_class_e from_alk_scene_class(uint32_t value) {
+      switch (value) {
+        case ALK_STREAM_QUALITY_SCENE_POINTER_INTERACTIVE: return scene_class_e::pointer_interactive;
+        case ALK_STREAM_QUALITY_SCENE_HIGH_MOTION: return scene_class_e::high_motion;
+        case ALK_STREAM_QUALITY_SCENE_RECOVERY: return scene_class_e::recovery;
+        case ALK_STREAM_QUALITY_SCENE_STATIC:
+        default: return scene_class_e::static_scene;
+      }
+    }
+
+    static uint32_t to_alk_scene_class(scene_class_e value) {
+      switch (value) {
+        case scene_class_e::pointer_interactive: return ALK_STREAM_QUALITY_SCENE_POINTER_INTERACTIVE;
+        case scene_class_e::high_motion: return ALK_STREAM_QUALITY_SCENE_HIGH_MOTION;
+        case scene_class_e::recovery: return ALK_STREAM_QUALITY_SCENE_RECOVERY;
+        case scene_class_e::static_scene:
+        default: return ALK_STREAM_QUALITY_SCENE_STATIC;
+      }
+    }
+
     static tier_e from_alk_tier(uint32_t value) {
       switch (value) {
         case ALK_STREAM_QUALITY_TIER_FAST: return tier_e::fast;
@@ -54,6 +118,16 @@ namespace stream_quality {
         case ALK_STREAM_QUALITY_TIER_HD: return tier_e::hd;
         case ALK_STREAM_QUALITY_TIER_BLURAY:
         default: return tier_e::bluray;
+      }
+    }
+
+    static uint32_t to_alk_tier(tier_e value) {
+      switch (value) {
+        case tier_e::fast: return ALK_STREAM_QUALITY_TIER_FAST;
+        case tier_e::general: return ALK_STREAM_QUALITY_TIER_GENERAL;
+        case tier_e::hd: return ALK_STREAM_QUALITY_TIER_HD;
+        case tier_e::bluray:
+        default: return ALK_STREAM_QUALITY_TIER_BLURAY;
       }
     }
 
@@ -214,6 +288,8 @@ namespace stream_quality {
       result.changed = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_CHANGED) != 0;
       result.state = from_alk_state(decision.state);
       result.availability = from_alk_availability(decision.availability);
+      result.link_quality_state = from_alk_link_quality_state(decision.link_quality_state);
+      result.scene_class = from_alk_scene_class(decision.scene_class);
       result.reason = from_alk_reason(decision.reason);
       result.scenario = from_alk_scenario(decision.scenario);
       result.tier = from_alk_tier(decision.tier);
@@ -242,6 +318,18 @@ namespace stream_quality {
       result.chroma_sampling_type = decision.chroma_sampling_type;
       result.dynamic_range = decision.dynamic_range;
       result.quality_tier = decision.quality_tier;
+      result.static_last_good_bitrate_kbps = decision.static_last_good_bitrate_kbps;
+      result.static_last_good_fps = decision.static_last_good_fps;
+      result.pointer_last_good_bitrate_kbps = decision.pointer_last_good_bitrate_kbps;
+      result.pointer_last_good_fps = decision.pointer_last_good_fps;
+      result.high_motion_last_good_bitrate_kbps = decision.high_motion_last_good_bitrate_kbps;
+      result.high_motion_last_good_fps = decision.high_motion_last_good_fps;
+      result.static_unsafe_ceiling_kbps = decision.static_unsafe_ceiling_kbps;
+      result.static_unsafe_fps_ceiling = decision.static_unsafe_fps_ceiling;
+      result.pointer_unsafe_ceiling_kbps = decision.pointer_unsafe_ceiling_kbps;
+      result.pointer_unsafe_fps_ceiling = decision.pointer_unsafe_fps_ceiling;
+      result.high_motion_unsafe_ceiling_kbps = decision.high_motion_unsafe_ceiling_kbps;
+      result.high_motion_unsafe_fps_ceiling = decision.high_motion_unsafe_fps_ceiling;
       result.profile_tier_changed = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_CHANGED) != 0;
       result.profile_tier_deferred = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_DEFERRED) != 0;
       result.profile_tier_supported = (decision.flags & ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_SUPPORTED) != 0;
@@ -257,6 +345,71 @@ namespace stream_quality {
       result.owd_gradient_us = decision.owd_gradient_us;
       result.owd_pressure = decision.owd_pressure;
       return result;
+    }
+
+    static AlkStreamQualityDecision to_alk_decision(const action_t &action) {
+      AlkStreamQualityDecision decision;
+      alk_stream_quality_decision_init(&decision);
+      if (action.changed) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_CHANGED;
+      if (action.profile_tier_changed) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_CHANGED;
+      if (action.profile_tier_deferred) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_DEFERRED;
+      if (action.profile_tier_supported) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_PROFILE_TIER_SUPPORTED;
+      if (action.runtime_scale_applied) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_RUNTIME_SCALE_APPLIED;
+      if (action.rfi_limited) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_RFI_LIMITED;
+      if (action.request_idr) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_REQUEST_IDR;
+      if (action.congestion_anti_spiral) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_CONGESTION_ANTI_SPIRAL;
+      if (action.burst_safe_mode) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_BURST_SAFE_MODE;
+      if (action.unsafe_ceiling_active) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_UNSAFE_CEILING_ACTIVE;
+      if (action.unsafe_fps_ceiling_active) decision.flags |= ALK_STREAM_QUALITY_DECISION_FLAG_UNSAFE_FPS_CEILING_ACTIVE;
+      decision.state = to_alk_state(action.state);
+      decision.availability = to_alk_availability(action.availability);
+      decision.link_quality_state = to_alk_link_quality_state(action.link_quality_state);
+      decision.scene_class = to_alk_scene_class(action.scene_class);
+      decision.reason = to_alk_reason(action.reason);
+      decision.scenario = to_alk_scenario(action.scenario);
+      decision.tier = to_alk_tier(action.tier);
+      decision.target_bitrate_kbps = action.target_bitrate_kbps;
+      decision.fec_percentage = action.fec_percentage;
+      decision.pacing_bitrate_kbps = action.pacing_bitrate_kbps;
+      decision.target_fps = action.target_fps;
+      decision.requested_ceiling_kbps = action.requested_ceiling_kbps;
+      decision.effective_ceiling_kbps = action.effective_ceiling_kbps;
+      decision.sustainable_estimate_kbps = action.sustainable_estimate_kbps;
+      decision.encoding_budget_kbps = action.encoding_budget_kbps;
+      decision.fec_budget_kbps = action.fec_budget_kbps;
+      decision.packet_loss = action.packet_loss;
+      decision.recovered_loss = action.recovered_loss;
+      decision.unrecoverable_loss = action.unrecoverable_loss;
+      decision.fec_efficiency = action.fec_efficiency;
+      decision.pressures.random_loss = action.pressures.random_loss;
+      decision.pressures.burst_loss = action.pressures.burst_loss;
+      decision.pressures.delay_congestion = action.pressures.delay_congestion;
+      decision.pressures.motion = action.pressures.motion;
+      decision.pressures.render = action.pressures.render;
+      decision.pressures.audio = action.pressures.audio;
+      decision.pressures.input = action.pressures.input;
+      decision.resolution_scale_percent = action.resolution_scale_percent;
+      decision.actual_scale_percent = action.actual_scale_percent;
+      decision.chroma_sampling_type = action.chroma_sampling_type;
+      decision.dynamic_range = action.dynamic_range;
+      decision.quality_tier = action.quality_tier;
+      decision.static_last_good_bitrate_kbps = action.static_last_good_bitrate_kbps;
+      decision.static_last_good_fps = action.static_last_good_fps;
+      decision.pointer_last_good_bitrate_kbps = action.pointer_last_good_bitrate_kbps;
+      decision.pointer_last_good_fps = action.pointer_last_good_fps;
+      decision.high_motion_last_good_bitrate_kbps = action.high_motion_last_good_bitrate_kbps;
+      decision.high_motion_last_good_fps = action.high_motion_last_good_fps;
+      decision.static_unsafe_ceiling_kbps = action.static_unsafe_ceiling_kbps;
+      decision.static_unsafe_fps_ceiling = action.static_unsafe_fps_ceiling;
+      decision.pointer_unsafe_ceiling_kbps = action.pointer_unsafe_ceiling_kbps;
+      decision.pointer_unsafe_fps_ceiling = action.pointer_unsafe_fps_ceiling;
+      decision.high_motion_unsafe_ceiling_kbps = action.high_motion_unsafe_ceiling_kbps;
+      decision.high_motion_unsafe_fps_ceiling = action.high_motion_unsafe_fps_ceiling;
+      decision.recovery_hold_remaining = action.recovery_hold_remaining;
+      decision.rtt_gradient_us = action.rtt_gradient_us;
+      decision.owd_gradient_us = action.owd_gradient_us;
+      decision.owd_pressure = action.owd_pressure;
+      return decision;
     }
   }  // namespace
 
@@ -288,6 +441,56 @@ namespace stream_quality {
       .failed_probe_count = backoff.failed_probe_count,
       .recovery_hold_windows = backoff.recovery_hold_windows,
       .recovery_probe_interval_windows = backoff.recovery_probe_interval_windows,
+    };
+  }
+
+  runtime_action_plan_t
+  plan_runtime_action(const action_t &action, const runtime_action_context_t &context) {
+    AlkStreamQualityRuntimeActionContext alk_context;
+    alk_stream_quality_runtime_action_context_init(&alk_context);
+    if (context.resync_guard_active) {
+      alk_context.flags |= ALK_STREAM_QUALITY_RUNTIME_CONTEXT_FLAG_RESYNC_GUARD_ACTIVE;
+    }
+    if (context.startup_settle_active) {
+      alk_context.flags |= ALK_STREAM_QUALITY_RUNTIME_CONTEXT_FLAG_STARTUP_SETTLE_ACTIVE;
+    }
+    alk_context.last_applied_bitrate_kbps = context.last_applied_bitrate_kbps;
+    alk_context.last_applied_fec_percentage = context.last_applied_fec_percentage;
+    alk_context.last_applied_fps = context.last_applied_fps;
+    alk_context.last_applied_resolution_scale_percent = context.last_applied_resolution_scale_percent;
+    alk_context.last_applied_chroma_sampling_type = context.last_applied_chroma_sampling_type;
+    alk_context.last_applied_dynamic_range = context.last_applied_dynamic_range;
+    alk_context.elapsed_ms_since_bitrate_apply = context.elapsed_ms_since_bitrate_apply;
+    alk_context.elapsed_ms_since_fec_apply = context.elapsed_ms_since_fec_apply;
+    alk_context.elapsed_ms_since_fps_apply = context.elapsed_ms_since_fps_apply;
+    alk_context.elapsed_ms_since_profile_apply = context.elapsed_ms_since_profile_apply;
+
+    AlkStreamQualityRuntimeActionPlan alk_plan;
+    alk_stream_quality_runtime_action_plan_init(&alk_plan);
+    const auto alk_decision = to_alk_decision(action);
+    if (!alk_stream_quality_plan_runtime_action(&alk_decision, &alk_context, &alk_plan)) {
+      return {};
+    }
+    return {
+      .apply_bitrate = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_BITRATE) != 0,
+      .apply_fec = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_FEC) != 0,
+      .apply_fps = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_FPS) != 0,
+      .apply_profile = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_PROFILE) != 0,
+      .apply_idr = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_IDR) != 0,
+      .dynamic_apply_blocked = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_DYNAMIC_APPLY_BLOCKED) != 0,
+      .fps_deferred = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_FPS_DEFERRED) != 0,
+      .profile_deferred = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_PROFILE_DEFERRED) != 0,
+      .update_runtime_totals = (alk_plan.flags & ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_UPDATE_RUNTIME_TOTALS) != 0,
+      .target_bitrate_kbps = alk_plan.target_bitrate_kbps,
+      .target_fec_percentage = alk_plan.target_fec_percentage,
+      .target_fps = alk_plan.target_fps,
+      .target_total_bitrate_kbps = alk_plan.target_total_bitrate_kbps,
+      .pacing_total_bitrate_kbps = alk_plan.pacing_total_bitrate_kbps,
+      .bitrate_apply_cooldown_ms = alk_plan.bitrate_apply_cooldown_ms,
+      .fec_apply_cooldown_ms = alk_plan.fec_apply_cooldown_ms,
+      .fps_apply_cooldown_ms = alk_plan.fps_apply_cooldown_ms,
+      .profile_apply_cooldown_ms = alk_plan.profile_apply_cooldown_ms,
+      .bitrate_apply_threshold_kbps = alk_plan.bitrate_apply_threshold_kbps,
     };
   }
 
@@ -356,6 +559,12 @@ namespace stream_quality {
 
   const char *reason_name(reason_e reason) { return alk_stream_quality_reason_name(to_alk_reason(reason)); }
   const char *scenario_name(scenario_e scenario) { return alk_stream_quality_scenario_name(to_alk_scenario(scenario)); }
+  const char *link_quality_state_name(link_quality_state_e state) {
+    return alk_stream_quality_link_quality_state_name(to_alk_link_quality_state(state));
+  }
+  const char *scene_class_name(scene_class_e scene_class) {
+    return alk_stream_quality_scene_class_name(to_alk_scene_class(scene_class));
+  }
   const char *availability_name(availability_e availability) {
     switch (availability) {
       case availability_e::high: return alk_stream_quality_availability_name(ALK_STREAM_QUALITY_AVAILABILITY_HIGH);

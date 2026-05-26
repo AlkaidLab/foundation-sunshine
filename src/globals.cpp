@@ -7,11 +7,11 @@
 safe::mail_t mail::man;
 thread_pool_util::ThreadPool task_pool;
 bool display_cursor = true;
+const std::string ZAKO_NAME = "Zako HDR";
+bool is_running_as_system_user = false;
 
 #ifdef _WIN32
 nvprefs::nvprefs_interface nvprefs_instance;
 const std::string VDD_NAME = "ZakoHDR";
-const std::string ZAKO_NAME = "Zako HDR";
 std::string zako_device_id;
-bool is_running_as_system_user = false;
 #endif

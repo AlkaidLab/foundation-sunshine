@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef _WIN32
+
 // the most stupid windows include (because it needs to be first...)
 #include <windows.h>
 
@@ -521,3 +523,19 @@ namespace display_device::w_utils {
   bool
   rotate_display(int angle, const std::string &display_name);
 }  // namespace display_device::w_utils
+
+#else
+
+#include <string>
+
+namespace display_device::w_utils {
+  inline bool is_any_rdp_session_active() {
+    return false;
+  }
+
+  inline bool rotate_display(int, const std::string &) {
+    return false;
+  }
+}  // namespace display_device::w_utils
+
+#endif

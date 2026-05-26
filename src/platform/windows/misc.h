@@ -4,18 +4,38 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
+#include <string>
 #include <string_view>
 #include <system_error>
-#include <windows.h>
-#include <winnt.h>
+#include <vector>
+
+#ifdef _WIN32
+  #include <windows.h>
+  #include <winnt.h>
+#else
+using HANDLE = void *;
+using HDESK = void *;
+using HRESULT = long;
+#endif
 
 namespace platf {
+#ifdef _WIN32
   void
   print_status(const std::string_view &prefix, HRESULT status);
   HDESK
   syncThreadDesktop();
+#else
+  inline void
+  print_status(const std::string_view &, HRESULT) {}
+
+  inline HDESK
+  syncThreadDesktop() {
+    return nullptr;
+  }
+#endif
 
   int64_t
   qpc_counter();
@@ -80,3 +100,63 @@ namespace platf {
   std::vector<std::wstring>
   split_words(const std::wstring &text);
 }  // namespace platf
+
+#ifndef _WIN32
+namespace platf {
+  inline int64_t
+  qpc_counter() {
+    return 0;
+  }
+
+  inline std::chrono::nanoseconds
+  qpc_time_difference(int64_t, int64_t) {
+    return std::chrono::nanoseconds::zero();
+  }
+
+  inline std::wstring
+  from_utf8(const std::string &string) {
+    return std::wstring(string.begin(), string.end());
+  }
+
+  inline std::string
+  to_utf8(const std::wstring &string) {
+    return std::string(string.begin(), string.end());
+  }
+
+  inline bool
+  is_running_as_system() {
+    return false;
+  }
+
+  inline HANDLE
+  retrieve_users_token(bool) {
+    return nullptr;
+  }
+
+  inline std::error_code
+  impersonate_current_user(HANDLE, std::function<void()> callback) {
+    if (callback) {
+      callback();
+    }
+    return {};
+  }
+
+  inline bool
+  fuzzy_match(const std::wstring &text, const std::wstring &pattern) {
+    auto it = text.begin();
+    for (wchar_t ch : pattern) {
+      it = std::find(it, text.end(), ch);
+      if (it == text.end()) {
+        return false;
+      }
+      ++it;
+    }
+    return true;
+  }
+
+  inline std::vector<std::wstring>
+  split_words(const std::wstring &text) {
+    return text.empty() ? std::vector<std::wstring> {} : std::vector<std::wstring> { text };
+  }
+}  // namespace platf
+#endif

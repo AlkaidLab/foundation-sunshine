@@ -646,3 +646,10 @@ namespace dyn {
     return err;
   }
 }  // namespace dyn
+
+namespace system_tray {
+  int
+  end_tray() {
+    return 0;
+  }
+}  // namespace system_tray

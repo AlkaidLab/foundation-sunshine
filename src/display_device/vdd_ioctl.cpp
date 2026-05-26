@@ -9,6 +9,20 @@
 #define WIN32_LEAN_AND_MEAN
 #include "vdd_ioctl.h"
 
+#ifndef _WIN32
+
+namespace display_device::vdd_ioctl {
+  result send_command(const std::wstring &) {
+    return result::interface_missing;
+  }
+
+  bool ping() {
+    return false;
+  }
+}  // namespace display_device::vdd_ioctl
+
+#else
+
 // Emit the storage for GUID_DEVINTERFACE_ZAKO_VDD_CONTROL exactly once
 // (DEFINE_GUID expands to extern unless INITGUID is set first).
 #define INITGUID
@@ -265,3 +279,5 @@ namespace display_device::vdd_ioctl {
   }
 
 }  // namespace display_device::vdd_ioctl
+
+#endif
