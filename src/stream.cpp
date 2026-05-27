@@ -1124,6 +1124,8 @@ namespace stream {
     int last_dynamic_clarity_bitrate { 0 };
     std::chrono::steady_clock::time_point last_control_input_received {};
     std::atomic<std::uint64_t> last_pointer_move_ms { 0 };
+    std::atomic<std::uint64_t> last_gamepad_input_ms { 0 };
+    std::atomic<std::uint64_t> gamepad_input_active_until_ms { 0 };
     std::atomic<std::uint64_t> mouse_button_active_until_ms { 0 };
     std::atomic<std::uint64_t> drag_motion_active_until_ms { 0 };
     std::atomic<std::uint64_t> last_host_motion_predictor_log_ms { 0 };
@@ -2246,10 +2248,15 @@ namespace stream {
       now_ms - last_pointer_move_ms <= 1500U;
     const bool button_input_active =
       session->mouse_button_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
+    const bool gamepad_input_active =
+      session->gamepad_input_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
     const bool recent_non_pointer_input =
       session->last_control_input_received.time_since_epoch().count() != 0 &&
       std::chrono::steady_clock::now() - session->last_control_input_received <= 1200ms;
-    feedback.user_input_active = pointer_input_active || button_input_active || recent_non_pointer_input;
+    feedback.user_input_active = pointer_input_active ||
+                                 button_input_active ||
+                                 gamepad_input_active ||
+                                 recent_non_pointer_input;
 
     std::uint32_t host_motion_source_mask = 0;
     std::uint64_t synthetic_dirty_area = 0;
@@ -4385,6 +4392,64 @@ namespace stream {
             header.packet_size == sizeof(NV_MOUSE_BUTTON_PACKET) - sizeof(std::uint32_t));
   }
 
+  static bool
+  is_gamepad_input_payload(const input_payload_header_t &header) {
+    return header.magic == CONTROLLER_MAGIC ||
+           header.magic == MULTI_CONTROLLER_MAGIC ||
+           header.magic == MULTI_CONTROLLER_MAGIC_GEN5 ||
+           header.magic == SS_CONTROLLER_TOUCH_MAGIC ||
+           header.magic == SS_CONTROLLER_MOTION_MAGIC;
+  }
+
+  static bool
+  is_gamepad_state_active_input_payload(const std::string_view &payload,
+                                        const input_payload_header_t &header) {
+    constexpr int stick_deadzone = 4000;
+    auto stick_active = [stick_deadzone](short value) {
+      const auto native = boost::endian::little_to_native(value);
+      return std::abs(static_cast<int>(native)) > stick_deadzone;
+    };
+
+    switch (header.magic) {
+      case CONTROLLER_MAGIC: {
+        if (payload.size() < sizeof(NV_CONTROLLER_PACKET)) {
+          return true;
+        }
+        const auto *packet = reinterpret_cast<const NV_CONTROLLER_PACKET *>(payload.data());
+        const auto buttons = boost::endian::little_to_native(packet->buttonFlags);
+        return buttons != 0 ||
+               packet->leftTrigger != 0 ||
+               packet->rightTrigger != 0 ||
+               stick_active(packet->leftStickX) ||
+               stick_active(packet->leftStickY) ||
+               stick_active(packet->rightStickX) ||
+               stick_active(packet->rightStickY);
+      }
+      case MULTI_CONTROLLER_MAGIC:
+      case MULTI_CONTROLLER_MAGIC_GEN5: {
+        if (payload.size() < sizeof(NV_MULTI_CONTROLLER_PACKET)) {
+          return true;
+        }
+        const auto *packet = reinterpret_cast<const NV_MULTI_CONTROLLER_PACKET *>(payload.data());
+        const auto buttons = boost::endian::little_to_native(packet->buttonFlags);
+        const auto buttons2 = boost::endian::little_to_native(packet->buttonFlags2);
+        return buttons != 0 ||
+               buttons2 != 0 ||
+               packet->leftTrigger != 0 ||
+               packet->rightTrigger != 0 ||
+               stick_active(packet->leftStickX) ||
+               stick_active(packet->leftStickY) ||
+               stick_active(packet->rightStickX) ||
+               stick_active(packet->rightStickY);
+      }
+      case SS_CONTROLLER_TOUCH_MAGIC:
+      case SS_CONTROLLER_MOTION_MAGIC:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   static void
   record_control_input_received(session_t *session, const std::string_view &payload, const char *path) {
     if (!session) {
@@ -4398,6 +4463,9 @@ namespace stream {
     const bool pointer_move = is_pointer_move_input_payload(header);
     const bool mouse_button_down = is_mouse_button_down_input_payload(header);
     const bool mouse_button_up = is_mouse_button_up_input_payload(header);
+    const bool gamepad_input = is_gamepad_input_payload(header);
+    const bool gamepad_active_state = gamepad_input &&
+                                      is_gamepad_state_active_input_payload(payload, header);
     if (mouse_button_down) {
       session->mouse_button_active_until_ms.store(now_ms + 6000U, std::memory_order_relaxed);
     }
@@ -4409,6 +4477,16 @@ namespace stream {
       if (session->mouse_button_active_until_ms.load(std::memory_order_relaxed) >= now_ms) {
         session->drag_motion_active_until_ms.store(now_ms + 700U, std::memory_order_relaxed);
       }
+    }
+    if (gamepad_input) {
+      session->last_gamepad_input_ms.store(now_ms, std::memory_order_relaxed);
+      // A held gamepad stick can keep the game camera moving after the last
+      // controller packet.  Keep a gameplay-interactive window so continuity
+      // does not misclassify controller play as static video just because the
+      // control state stopped changing.  Neutral/release packets decay quickly.
+      session->gamepad_input_active_until_ms.store(
+        now_ms + (gamepad_active_state ? 15000U : 1500U),
+        std::memory_order_relaxed);
     }
     const bool drag_active =
       session->drag_motion_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
@@ -4431,6 +4509,8 @@ namespace stream {
                       << " buttonDown="sv << (mouse_button_down ? 1 : 0)
                       << " buttonUp="sv << (mouse_button_up ? 1 : 0)
                       << " dragActive="sv << (drag_active ? 1 : 0)
+                      << " gamepad="sv << (gamepad_input ? 1 : 0)
+                      << " gamepadActive="sv << (gamepad_active_state ? 1 : 0)
                       << " preferCursorPlane="sv << (session->config.monitor.preferCursorPlane ? 1 : 0)
                       << " staticKeepaliveSuppressed="sv << (suppress_static_keepalive_activity ? 1 : 0);
     }
