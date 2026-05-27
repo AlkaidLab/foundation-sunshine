@@ -12,6 +12,7 @@
 #include <boost/uuid/name_generator_sha1.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <cmath>
 #include <filesystem>
 #include <future>
 #include <sstream>
@@ -267,6 +268,47 @@ namespace display_device {
         BOOST_LOG(info) << "Reload VDD driver requested (PIPE)";
       }
       return ok;
+    }
+
+    bool
+    set_vdd_session_mode(const parsed_config_t &config) {
+      if (!config.resolution || !config.refresh_rate) {
+        BOOST_LOG(debug) << "SETMODES skipped: session resolution or refresh rate is not set";
+        return false;
+      }
+
+      if (config.refresh_rate->denominator == 0) {
+        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate denominator";
+        return false;
+      }
+
+      const double refresh_hz = static_cast<double>(config.refresh_rate->numerator) / config.refresh_rate->denominator;
+      const auto rounded_refresh_hz = static_cast<unsigned int>(std::lround(refresh_hz));
+      if (rounded_refresh_hz == 0) {
+        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate " << refresh_hz;
+        return false;
+      }
+
+      std::wstringstream command;
+      command << L"SETMODES "
+              << config.resolution->width << L"x"
+              << config.resolution->height << L"x"
+              << rounded_refresh_hz;
+
+      switch (vdd_ioctl::send_command(command.str())) {
+        case vdd_ioctl::result::success:
+          BOOST_LOG(info) << "VDD live session mode updated via SETMODES: "
+                          << to_string(*config.resolution) << "@" << rounded_refresh_hz << "Hz";
+          return true;
+        case vdd_ioctl::result::failed:
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; falling back to persistent XML update";
+          return false;
+        case vdd_ioctl::result::interface_missing:
+          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing";
+          return false;
+      }
+
+      return false;
     }
 
     std::string

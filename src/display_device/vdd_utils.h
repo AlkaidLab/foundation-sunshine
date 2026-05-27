@@ -74,6 +74,16 @@ namespace display_device::vdd_utils {
   reload_driver();
 
   /**
+   * @brief Push the current session mode to ZakoVDD in-memory mode list.
+   * @details Uses the SETMODES IOCTL command exposed by newer ZakoVDD builds.
+   *          This does not persist the session resolution to vdd_settings.xml.
+   * @param config Parsed display configuration containing resolution + refresh rate.
+   * @return true if the driver accepted the live mode update, false otherwise.
+   */
+  bool
+  set_vdd_session_mode(const parsed_config_t &config);
+
+  /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）
    * @param identifier 客户端标识符，如果为空则返回空字符串
    * @return GUID格式字符串: {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}，如果identifier为空则返回空字符串
