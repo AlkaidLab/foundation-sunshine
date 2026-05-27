@@ -574,6 +574,9 @@ namespace stream {
     session_t *
     find_waiting_by_connect_data(std::uint32_t connect_data);
 
+    session_t *
+    find_waiting_by_peer_address(const std::string &peer_address);
+
     std::vector<session_t *>
     find_by_client_cert_key(std::uint64_t client_cert_key);
 
@@ -733,7 +736,10 @@ namespace stream {
     get_session(const net::peer_t peer, uint32_t connect_data);
 
     session_t *
-    get_native_session(std::uint64_t peer_id, std::uint32_t connect_data);
+    get_native_session(std::uint64_t peer_id,
+                       std::uint32_t connect_data,
+                       const char *remote_endpoint,
+                       const char *local_endpoint);
 
     // Circular dependency:
     //   iterate refers to session
@@ -1618,11 +1624,34 @@ namespace stream {
     auto it = _connect_data_to_session->find(connect_data);
     if (it == _connect_data_to_session->end() ||
         it->second->control.peer ||
+        it->second->control.transport_peer_id != 0 ||
         !(it->second->config.mlFeatureFlags & ML_FF_SESSION_ID)) {
       return nullptr;
     }
 
     return it->second;
+  }
+
+  session_t *
+  session_registry_t::find_waiting_by_peer_address(const std::string &peer_address) {
+    if (peer_address.empty()) {
+      return nullptr;
+    }
+
+    auto lg = _runtime_to_session.lock();
+    for (auto &[runtime_id, session] : *_runtime_to_session) {
+      (void) runtime_id;
+      if (!session ||
+          session->control.peer ||
+          session->control.transport_peer_id != 0 ||
+          !session->control.connect_data ||
+          (session->config.mlFeatureFlags & ML_FF_SESSION_ID) ||
+          session->control.expected_peer_address != peer_address) {
+        continue;
+      }
+      return session;
+    }
+    return nullptr;
   }
 
   std::vector<session_t *>
@@ -3517,7 +3546,10 @@ namespace stream {
   }
 
   session_t *
-  control_server_t::get_native_session(std::uint64_t peer_id, std::uint32_t connect_data) {
+  control_server_t::get_native_session(std::uint64_t peer_id,
+                                       std::uint32_t connect_data,
+                                       const char *remote_endpoint,
+                                       const char *local_endpoint) {
     if (peer_id == 0) {
       return nullptr;
     }
@@ -3530,7 +3562,23 @@ namespace stream {
       }
     }
 
+    const std::string remote_endpoint_str = remote_endpoint ? remote_endpoint : "";
+    const std::string local_endpoint_str = local_endpoint ? local_endpoint : "";
+    auto remote_host = remote_endpoint_str;
+    auto colon = remote_host.rfind(':');
+    if (colon != std::string::npos) {
+      remote_host = remote_host.substr(0, colon);
+      if (remote_host.size() > 2 && remote_host.front() == '[' && remote_host.back() == ']') {
+        remote_host = remote_host.substr(1, remote_host.size() - 2);
+      }
+    }
+
     auto *session = _registry.find_waiting_by_connect_data(connect_data);
+    const char *match_reason = "connect-data";
+    if (!session && !remote_host.empty()) {
+      session = _registry.find_waiting_by_peer_address(remote_host);
+      match_reason = "peer-address";
+    }
     if (!session) {
       return nullptr;
     }
@@ -3539,16 +3587,37 @@ namespace stream {
     session->control.transport_peer_id = peer_id;
     session->control.transport_connect_data = connect_data;
     session->identity.control_generation++;
+    if (!remote_host.empty()) {
+      session->control.expected_peer_address = remote_host;
+    }
+    if (!local_endpoint_str.empty()) {
+      auto local_host = local_endpoint_str;
+      auto local_colon = local_host.rfind(':');
+      if (local_colon != std::string::npos) {
+        local_host = local_host.substr(0, local_colon);
+        if (local_host.size() > 2 && local_host.front() == '[' && local_host.back() == ']') {
+          local_host = local_host.substr(1, local_host.size() - 2);
+        }
+      }
+      boost::system::error_code ec;
+      auto address = boost::asio::ip::make_address(local_host, ec);
+      if (!ec) {
+        session->localAddress = address;
+      }
+    }
 
-    BOOST_LOG(debug) << "Initialized native control stream session by connect data match"
+    BOOST_LOG(debug) << "Initialized native control stream session by " << match_reason
                      << " runtime_id=" << session->identity.runtime_id
                      << " generation=" << session->identity.control_generation
                      << " peerId=" << peer_id
-                     << " connectData=" << connect_data;
+                     << " connectData=" << connect_data
+                     << " remote=" << remote_endpoint_str
+                     << " local=" << local_endpoint_str;
     BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
                     << " runtime=" << session->identity.runtime_id
                     << " launchSession=" << session->launch_session_id
                     << " nativePeerId=" << peer_id
+                    << " peer=" << (remote_endpoint_str.empty() ? "unknown" : remote_endpoint_str)
                     << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
                     << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
                     << " clipboardCodec=gamestream-clipboard-payload-codec"
@@ -4402,16 +4471,27 @@ namespace stream {
       for (int events_processed = 0; events_processed < max_events_per_iter; ++events_processed) {
         AlkTransportDatagram datagram;
         if (events_processed == 0) {
-          alk_transport_runtime_service(&_transport_binding, nullptr);
+          alk_transport_runtime_service_timeout(&_transport_binding, 0);
         }
-        if (!alk_transport_runtime_poll(&_transport_binding, &datagram)) {
+
+        AlkTransportEvent event;
+        alk_transport_event_init(&event);
+        if (!alk_transport_runtime_poll_event(&_transport_binding, &event)) {
           if (events_processed == 0 && timeout.count() > 0) {
             std::this_thread::sleep_for(std::min(timeout, 1ms));
           }
           return;
         }
 
-        auto *session = get_native_session(datagram.peer_id, datagram.event_code);
+        auto *session = get_native_session(event.peer_id, event.event_code, event.remote_endpoint, event.local_endpoint);
+        datagram.peer_id = event.peer_id;
+        datagram.event_code = event.event_code;
+        datagram.flags = event.flags;
+        datagram.sequence = event.sequence;
+        datagram.channel_kind = event.channel_kind;
+        datagram.carrier_channel_id = event.carrier_channel_id;
+        datagram.payload = event.payload;
+        datagram.payload_length = event.payload_length;
         if (!session) {
           BOOST_LOG(warning) << "Rejected native control event: peerId=" << datagram.peer_id
                              << " connectData=" << datagram.event_code
