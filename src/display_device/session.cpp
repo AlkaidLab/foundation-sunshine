@@ -13,6 +13,7 @@
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "to_string.h"
+#include "vdd_ioctl.h"
 #include "vdd_utils.h"
 
 namespace display_device {
@@ -515,13 +516,28 @@ namespace display_device {
 
     // Wait for device to be ready
     if (!wait_for_vdd_device(device_zako, 5, 200ms, 1000ms)) {
-      BOOST_LOG(error) << "VDD设备初始化失败，尝试恢复";
-      vdd_utils::disable_enable_vdd();
-      std::this_thread::sleep_for(2s);
+      // 优先走 IOCTL DESTROY/CREATE 干净路径：driver 内部会调
+      // IddCxMonitorDeparture，PnP 数据库里不会留 phantom monitor。
+      // 历史上这里曾用 vdd_utils::disable_enable_vdd()，等同于 DevManView
+      // /disable_enable 强拔 adapter，会留 CM_PROB_PHANTOM monitor，下一次
+      // CREATEMONITOR 用新 GUID 会与 phantom 同 HardwareId 冲突，监视器永远attach 不上。
+      BOOST_LOG(error) << "VDD设备初始化失败，尝试通过 IOCTL DESTROY+CREATE 恢复";
+      vdd_utils::destroy_vdd_monitor();
+      std::this_thread::sleep_for(500ms);
 
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
-        vdd_utils::disable_enable_vdd();
+
+        // last-resort：只有 IOCTL 通路彻底死掉才动 adapter，因为
+        // disable_enable_vdd() 必然会留 phantom monitor（清理需要 SetupAPI
+        // 工具函数，留作后续 PR）。
+        if (!vdd_ioctl::ping()) {
+          BOOST_LOG(warning) << "VDD IOCTL ping 失败，driver 可能已死；last-resort disable/enable adapter（注意会留 phantom monitor）";
+          vdd_utils::disable_enable_vdd();
+        }
+        else {
+          BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
+        }
         return;
       }
     }
