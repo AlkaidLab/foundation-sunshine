@@ -607,7 +607,8 @@ namespace stream {
                                                 const std::string_view &payload,
                                                 net::peer_t peer,
                                                 std::uint8_t channel,
-                                                enet_uint32 flags);
+                                                enet_uint32 flags,
+                                                std::uint32_t transport_channel_kind_override = ALK_TRANSPORT_CHANNEL_UNKNOWN);
 
   class feature_lease_registry_t {
   public:
@@ -753,7 +754,8 @@ namespace stream {
     send_session(const std::string_view &payload,
                  session_t *session,
                  std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-                 enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE);
+                 enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE,
+                 std::uint32_t transport_channel_kind_override = ALK_TRANSPORT_CHANNEL_UNKNOWN);
 
     /**
      * @brief Call the handler for a given control stream message.
@@ -802,7 +804,8 @@ namespace stream {
                                                              payload,
                                                              peer,
                                                              channel,
-                                                             flags);
+                                                             flags,
+                                                             ALK_TRANSPORT_CHANNEL_UNKNOWN);
       }
 
       return send_direct(payload, peer, channel, flags);
@@ -3935,7 +3938,8 @@ namespace stream {
   control_server_t::send_session(const std::string_view &payload,
                                  session_t *session,
                                  std::uint8_t channel,
-                                 enet_uint32 flags) {
+                                 enet_uint32 flags,
+                                 std::uint32_t transport_channel_kind_override) {
     if (!session) {
       return -1;
     }
@@ -3944,7 +3948,8 @@ namespace stream {
                                                          payload,
                                                          session->control.peer,
                                                          channel,
-                                                         flags);
+                                                         flags,
+                                                         transport_channel_kind_override);
   }
 
   static int
@@ -3953,7 +3958,8 @@ namespace stream {
                                                 const std::string_view &payload,
                                                 net::peer_t peer,
                                                 std::uint8_t channel,
-                                                enet_uint32 flags) {
+                                                enet_uint32 flags,
+                                                std::uint32_t transport_channel_kind_override) {
     if (!session || !control_server) {
       return -1;
     }
@@ -3965,11 +3971,13 @@ namespace stream {
                                                        false,
                                                        payload.data(),
                                                        payload.size());
+    if (transport_channel_kind_override != ALK_TRANSPORT_CHANNEL_UNKNOWN) {
+      datagram.channel_kind = transport_channel_kind_override;
+    }
     datagram.peer_id = session->control.transport_peer_id;
 
     if (transport_uses_native_primary(session)) {
       if (control_server->send_native(session, datagram)) {
-        record_network_transport_datagram(session, channel, flags, payload.size(), true);
         return 0;
       }
       BOOST_LOG(warning) << "Alkaid native transport send failed without implicit legacy fallback"
@@ -4001,7 +4009,16 @@ namespace stream {
     }
 
     if (control_server->send_direct(payload, peer, channel, flags) == 0) {
-      record_network_transport_datagram(session, channel, flags, payload.size(), true);
+      if (transport_channel_kind_override != ALK_TRANSPORT_CHANNEL_UNKNOWN) {
+        record_network_transport_channel_datagrams(session,
+                                                   transport_channel_kind_override,
+                                                   payload.size(),
+                                                   1,
+                                                   true);
+      }
+      else {
+        record_network_transport_datagram(session, channel, flags, payload.size(), true);
+      }
       return 0;
     }
     return -1;
@@ -5633,7 +5650,11 @@ namespace stream {
       return -1;
     }
 
-    if (session->broadcast_ref->control_server.send_session(payload, session)) {
+    if (session->broadcast_ref->control_server.send_session(payload,
+                                                            session,
+                                                            CTRL_CHANNEL_GENERIC,
+                                                            ENET_PACKET_FLAG_RELIABLE,
+                                                            ALK_TRANSPORT_CHANNEL_CLIPBOARD_RELIABLE)) {
       BOOST_LOG(warning) << "Couldn't send clipboard payload to ["sv << control_peer_label(session) << ']';
       return -1;
     }
