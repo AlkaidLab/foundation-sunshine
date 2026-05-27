@@ -184,6 +184,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/include/alkaidlab/microphone_uplink/windows_wasapi_sink_backend.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include/alkaidlab/transport/transport_module.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include/alkaidlab/transport/gamestream_enet_transport.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include/alkaidlab/media_packetization/gamestream_media_packetization.h" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
@@ -198,8 +199,10 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/session_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/module_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_runtime.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_monitor.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/src/gamestream_enet_transport.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/src/gamestream_media_packetization.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     if(WIN32)
@@ -217,6 +220,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
     if(WIN32)
