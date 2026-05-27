@@ -74,13 +74,27 @@ namespace display_device::vdd_utils {
   reload_driver();
 
   /**
+   * @brief Outcome of attempting a live SETMODES update.
+   * @details Lets callers distinguish "driver accepted" / "driver rejected" /
+   *          "feature not present" / "config is unusable" so the persistent
+   *          XML fallback only triggers when the driver genuinely lacks the
+   *          IOCTL interface.
+   */
+  enum class set_vdd_result {
+    ok,                 ///< Driver accepted the live mode update.
+    failed,             ///< Driver reachable but rejected the IOCTL.
+    interface_missing,  ///< IOCTL interface not present (old driver) -> safe to XML-fallback.
+    invalid_config,     ///< Resolution/refresh rate missing or unusable; nothing was sent.
+  };
+
+  /**
    * @brief Push the current session mode to ZakoVDD in-memory mode list.
    * @details Uses the SETMODES IOCTL command exposed by newer ZakoVDD builds.
    *          This does not persist the session resolution to vdd_settings.xml.
    * @param config Parsed display configuration containing resolution + refresh rate.
-   * @return true if the driver accepted the live mode update, false otherwise.
+   * @return Typed outcome; only ::interface_missing should trigger XML fallback.
    */
-  bool
+  set_vdd_result
   set_vdd_session_mode(const parsed_config_t &config);
 
   /**

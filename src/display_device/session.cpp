@@ -433,10 +433,21 @@ namespace display_device {
       return;
     }
 
-    if (vdd_utils::set_vdd_session_mode(config)) {
-      last_vdd_setting = new_setting;
-      BOOST_LOG(info) << "VDD会话模式更新完成（未写入XML）: " << new_setting;
-      return;
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config);
+    switch (setmodes_result) {
+      case vdd_utils::set_vdd_result::ok:
+        last_vdd_setting = new_setting;
+        BOOST_LOG(info) << "VDD会话模式更新完成（未写入XML）: " << new_setting;
+        return;
+      case vdd_utils::set_vdd_result::failed:
+        BOOST_LOG(error) << "VDD SETMODES 被驱动拒绝，跳过 XML 回退以避免运行态/持久态不一致: " << new_setting;
+        return;
+      case vdd_utils::set_vdd_result::invalid_config:
+        BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
+        return;
+      case vdd_utils::set_vdd_result::interface_missing:
+        // Old driver without IOCTL: fall through to persistent XML + reload path below.
+        break;
     }
 
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {

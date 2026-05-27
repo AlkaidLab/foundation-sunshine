@@ -270,23 +270,23 @@ namespace display_device {
       return ok;
     }
 
-    bool
+    set_vdd_result
     set_vdd_session_mode(const parsed_config_t &config) {
       if (!config.resolution || !config.refresh_rate) {
         BOOST_LOG(debug) << "SETMODES skipped: session resolution or refresh rate is not set";
-        return false;
+        return set_vdd_result::invalid_config;
       }
 
       if (config.refresh_rate->denominator == 0) {
         BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate denominator";
-        return false;
+        return set_vdd_result::invalid_config;
       }
 
       const double refresh_hz = static_cast<double>(config.refresh_rate->numerator) / config.refresh_rate->denominator;
       const auto rounded_refresh_hz = static_cast<unsigned int>(std::lround(refresh_hz));
       if (rounded_refresh_hz == 0) {
         BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate " << refresh_hz;
-        return false;
+        return set_vdd_result::invalid_config;
       }
 
       std::wstringstream command;
@@ -299,16 +299,16 @@ namespace display_device {
         case vdd_ioctl::result::success:
           BOOST_LOG(info) << "VDD live session mode updated via SETMODES: "
                           << to_string(*config.resolution) << "@" << rounded_refresh_hz << "Hz";
-          return true;
+          return set_vdd_result::ok;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; falling back to persistent XML update";
-          return false;
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL rejected by driver; not falling back to XML to avoid partial state";
+          return set_vdd_result::failed;
         case vdd_ioctl::result::interface_missing:
-          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing";
-          return false;
+          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing; XML fallback will be used";
+          return set_vdd_result::interface_missing;
       }
 
-      return false;
+      return set_vdd_result::failed;
     }
 
     std::string
