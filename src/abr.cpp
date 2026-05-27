@@ -549,22 +549,31 @@ namespace abr {
       state.last_fg_detect = std::chrono::steady_clock::now();
     }
 
-    // Apply mode presets if min/max not explicitly configured
-    if (cfg.min_bitrate_kbps <= 0 || cfg.max_bitrate_kbps <= 0) {
+    // Apply mode presets only for bounds that were not explicitly configured.
+    // This preserves a client/host maxBitrate cap when minBitrate is omitted.
+    if (state.config.min_bitrate_kbps <= 0 || state.config.max_bitrate_kbps <= 0) {
+      int preset_min_bitrate_kbps = 0;
+      int preset_max_bitrate_kbps = 0;
       switch (cfg.mode) {
         case mode_e::QUALITY:
-          state.config.min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
+          preset_min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
           break;
         case mode_e::LOW_LATENCY:
-          state.config.min_bitrate_kbps = 2000;
-          state.config.max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
+          preset_min_bitrate_kbps = 2000;
+          preset_max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
           break;
         case mode_e::BALANCED:
         default:
-          state.config.min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
+          preset_min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
           break;
+      }
+      if (state.config.min_bitrate_kbps <= 0) {
+        state.config.min_bitrate_kbps = preset_min_bitrate_kbps;
+      }
+      if (state.config.max_bitrate_kbps <= 0) {
+        state.config.max_bitrate_kbps = preset_max_bitrate_kbps;
       }
       // Guard against inverted range when initial_bitrate is very low
       if (state.config.min_bitrate_kbps > state.config.max_bitrate_kbps) {
@@ -854,6 +863,30 @@ TEST(AbrLlmParseTests, DetectsTruncatedReasoningWhenFinishReasonLength) {
   EXPECT_EQ(action.new_bitrate_kbps, 0);
   EXPECT_EQ(action.target_bitrate_kbps, 0);
   EXPECT_EQ(action.reason, "llm_truncated: reasoning exceeded max_tokens");
+}
+
+TEST(AbrConfigTests, PreservesExplicitMaxBitrateWhenMinIsOmitted) {
+  abr::config_t cfg;
+  cfg.enabled = true;
+  cfg.min_bitrate_kbps = 0;
+  cfg.max_bitrate_kbps = 15000;
+  cfg.mode = abr::mode_e::BALANCED;
+
+  const std::string client_name = "abr-max-cap-test";
+  abr::enable(client_name, cfg, 50000, "Test Game");
+
+  auto action = abr::process_feedback(client_name, {
+    .packet_loss = 6.0,
+    .rtt_ms = 10.0,
+    .decode_fps = 60.0,
+    .dropped_frames = 0,
+    .current_bitrate_kbps = 50000,
+  });
+
+  EXPECT_GT(action.new_bitrate_kbps, 0);
+  EXPECT_LE(action.new_bitrate_kbps, cfg.max_bitrate_kbps);
+
+  abr::cleanup(client_name);
 }
 
 #endif

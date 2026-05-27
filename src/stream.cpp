@@ -729,6 +729,17 @@ namespace stream {
   void
   end_broadcast(broadcast_ctx_t &ctx);
 
+  static int
+  clamp_total_bitrate_to_host_cap(int bitrate_kbps, std::string_view client_name) {
+    if (config::video.max_bitrate > 0 && bitrate_kbps > config::video.max_bitrate) {
+      BOOST_LOG(info) << "Clamping dynamic bitrate for client '" << client_name
+                      << "' from " << bitrate_kbps << " Kbps to host maximum "
+                      << config::video.max_bitrate << " Kbps";
+      return config::video.max_bitrate;
+    }
+    return bitrate_kbps;
+  }
+
   static auto broadcast_shared = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
 
   session_t *
@@ -1537,11 +1548,14 @@ namespace stream {
       };
 
       switch (param_type_enum) {
-        case video::dynamic_param_type_e::BITRATE:
-          if (validate_and_raise(param_value > 0 && param_value <= 800000, param_value, "bitrate", " Kbps")) {
-            session->current_total_bitrate = param_value;
+        case video::dynamic_param_type_e::BITRATE: {
+          const auto valid_bitrate = param_value > 0 && param_value <= 800000;
+          const auto capped_bitrate = valid_bitrate ? clamp_total_bitrate_to_host_cap(param_value, session->client_name) : param_value;
+          if (validate_and_raise(valid_bitrate, capped_bitrate, "bitrate", " Kbps")) {
+            session->current_total_bitrate = capped_bitrate;
           }
           break;
+        }
         case video::dynamic_param_type_e::QP:
           validate_and_raise(param_value >= 0 && param_value <= 51, param_value, "QP");
           break;
@@ -3245,6 +3259,8 @@ namespace stream {
 
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
+      auto effective_param = param;
+
       // 先检查是否有活动的广播引用，避免在无活跃session时
       // 触发start_broadcast/end_broadcast循环（"僵尸广播"），
       // 这可能阻塞HTTPS服务器线程导致客户端显示主机离线
@@ -3263,16 +3279,17 @@ namespace stream {
         if (session_p->client_name == client_name &&
             session_p->state.load(std::memory_order_relaxed) == state_e::RUNNING) {
           // Update session's current total bitrate if this is a bitrate change
-          if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
+          if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
+            effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            session_p->current_total_bitrate = param.value.int_value;
+            session_p->current_total_bitrate = effective_param.value.int_value;
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
-                            << "': " << param.value.int_value << " Kbps (including FEC)";
+                            << "': " << effective_param.value.int_value << " Kbps (including FEC)";
           }
 
-          session_p->video.dynamic_param_change_events->raise(param);
+          session_p->video.dynamic_param_change_events->raise(effective_param);
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
-                          << "': type=" << (int) param.type;
+                          << "': type=" << (int) effective_param.type;
           return true;
         }
       }

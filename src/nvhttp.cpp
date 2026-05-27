@@ -6,6 +6,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -1554,6 +1555,41 @@ namespace nvhttp {
     return {};
   }
 
+  static int
+  host_max_bitrate_kbps() {
+    return std::max(config::video.max_bitrate, 0);
+  }
+
+  static bool
+  apply_host_bitrate_cap(abr::config_t &cfg) {
+    const auto host_cap = host_max_bitrate_kbps();
+    if (host_cap <= 0) {
+      return false;
+    }
+
+    const auto requested_max = cfg.max_bitrate_kbps;
+    cfg.max_bitrate_kbps = requested_max > 0 ? std::min(requested_max, host_cap) : host_cap;
+    if (cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
+      cfg.min_bitrate_kbps = cfg.max_bitrate_kbps;
+    }
+
+    return requested_max <= 0 || cfg.max_bitrate_kbps != requested_max;
+  }
+
+  static int
+  clamp_bitrate_to_range(int bitrate, const abr::config_t &cfg) {
+    if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0) {
+      return std::clamp(bitrate, cfg.min_bitrate_kbps, cfg.max_bitrate_kbps);
+    }
+    if (cfg.max_bitrate_kbps > 0) {
+      return std::min(bitrate, cfg.max_bitrate_kbps);
+    }
+    if (cfg.min_bitrate_kbps > 0) {
+      return std::max(bitrate, cfg.min_bitrate_kbps);
+    }
+    return bitrate;
+  }
+
   /**
    * @brief GET /api/abr/capabilities — Query server ABR support.
    */
@@ -1566,8 +1602,9 @@ namespace nvhttp {
     json resp_json;
     resp_json["supported"] = caps.supported;
     resp_json["version"] = caps.version;
-    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold" });
+    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold", "bitrate_cap" });
     resp_json["llmEnabled"] = confighttp::isAiEnabled();
+    resp_json["hostMaxBitrate"] = host_max_bitrate_kbps();
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
@@ -1644,6 +1681,8 @@ namespace nvhttp {
       cfg.min_bitrate_kbps = body.value("minBitrate", 0);
       cfg.max_bitrate_kbps = body.value("maxBitrate", 0);
       cfg.mode = mode;
+      const auto requested_max_bitrate = cfg.max_bitrate_kbps;
+      const auto host_max_bitrate = host_max_bitrate_kbps();
 
       // Validate bitrate range
       if (cfg.min_bitrate_kbps < 0 || cfg.max_bitrate_kbps < 0) {
@@ -1661,11 +1700,24 @@ namespace nvhttp {
         return;
       }
 
+      apply_host_bitrate_cap(cfg);
+      const auto capped_by_host = host_max_bitrate > 0 && requested_max_bitrate > 0 && cfg.max_bitrate_kbps < requested_max_bitrate;
+      const auto inherited_host_cap = host_max_bitrate > 0 && requested_max_bitrate <= 0;
+
       int initial_bitrate = client.bitrate > 0 ? client.bitrate
                             : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
                             : 20000;
+      initial_bitrate = clamp_bitrate_to_range(initial_bitrate, cfg);
 
       abr::enable(client.name, cfg, initial_bitrate, client.app_name);
+
+      if (client.bitrate > 0 && cfg.max_bitrate_kbps > 0 && client.bitrate > cfg.max_bitrate_kbps) {
+        video::dynamic_param_t param;
+        param.type = video::dynamic_param_type_e::BITRATE;
+        param.value.int_value = cfg.max_bitrate_kbps;
+        param.valid = true;
+        stream::session::change_dynamic_param_for_client(client.name, param);
+      }
 
       json resp_json;
       resp_json["success"] = true;
@@ -1674,6 +1726,10 @@ namespace nvhttp {
       resp_json["minBitrate"] = cfg.min_bitrate_kbps;
       resp_json["maxBitrate"] = cfg.max_bitrate_kbps;
       resp_json["initialBitrate"] = initial_bitrate;
+      resp_json["requestedMaxBitrate"] = requested_max_bitrate;
+      resp_json["hostMaxBitrate"] = host_max_bitrate;
+      resp_json["maxBitrateCapped"] = capped_by_host;
+      resp_json["maxBitrateInheritedFromHost"] = inherited_host_cap;
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
     }
     catch (const json::exception &e) {
