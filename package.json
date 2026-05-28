@@ -2,8 +2,9 @@
   "type": "module",
   "scripts": {
     "prebuild": "node ./src_assets/common/assets/web/scripts/extract-welcome-locales.js",
-    "build": "vite build --debug",
-    "build-clean": "vite build --debug --emptyOutDir",
+    "build": "vite build",
+    "build-clean": "vite build --emptyOutDir",
+    "build:debug": "vite build --debug",
     "dev": "vite build --watch",
     "dev-server": "vite serve --config vite.dev.config.js",
     "dev-full": "node dev-server.js",

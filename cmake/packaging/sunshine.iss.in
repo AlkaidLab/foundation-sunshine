@@ -160,9 +160,9 @@ Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full com
 Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
 Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
-Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: full
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
-Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: full
+Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: recommended full
+Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -273,8 +273,15 @@ Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart
 ; Finish page actions - user selectable
 ; Use explorer.exe to launch GUI so it always runs as the non-elevated current user,
 ; even though the installer itself is running with admin privileges.
+; `runascurrentuser` is required: without it Inno 6 routes postinstall items
+; through its SpawnServer to demote to the originating user. That helper
+; expects to talk to Inno's own rundll32-based child and fails with
+; "CallSpawnServer: Unexpected response: $0" the moment explorer.exe forwards
+; the request to the existing shell instance and exits. We don't need Inno's
+; demotion here anyway — the explorer.exe trick performs the de-elevation at
+; the Windows shell level on its own.
 Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
-Filename: "{win}\explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
+Filename: "{win}\explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent runascurrentuser
 
 [UninstallRun]
 ; Stop running processes first. We force-kill the service binary
@@ -656,7 +663,8 @@ begin
     Detail := 'ImagePath: ' + ImagePath;
   Detail := Detail + #13#10 + 'Expected: ' + ExpectedPath;
   Detail := Detail + #13#10 + 'sc qc exit: ' + IntToStr(ResultCode);
-  RaiseException(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail);
+  MsgBox(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK);
+  Abort();
 end;
 
 // Initialization: handle old NSIS upgrade
