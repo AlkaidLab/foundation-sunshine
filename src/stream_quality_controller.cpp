@@ -444,8 +444,13 @@ namespace stream_quality {
     };
   }
 
-  runtime_action_plan_t
-  plan_runtime_action(const action_t &action, const runtime_action_context_t &context) {
+  AlkStreamQualityDecision
+  to_sdk_decision(const action_t &action) {
+    return to_alk_decision(action);
+  }
+
+  AlkStreamQualityRuntimeActionContext
+  to_sdk_runtime_action_context(const runtime_action_context_t &context) {
     AlkStreamQualityRuntimeActionContext alk_context;
     alk_stream_quality_runtime_action_context_init(&alk_context);
     if (context.resync_guard_active) {
@@ -464,11 +469,23 @@ namespace stream_quality {
     alk_context.elapsed_ms_since_fec_apply = context.elapsed_ms_since_fec_apply;
     alk_context.elapsed_ms_since_fps_apply = context.elapsed_ms_since_fps_apply;
     alk_context.elapsed_ms_since_profile_apply = context.elapsed_ms_since_profile_apply;
+    return alk_context;
+  }
 
+  AlkStreamQualityRuntimeActionPlan
+  plan_runtime_action_sdk(const action_t &action, const runtime_action_context_t &context) {
+    const auto alk_decision = to_alk_decision(action);
+    auto alk_context = to_sdk_runtime_action_context(context);
     AlkStreamQualityRuntimeActionPlan alk_plan;
     alk_stream_quality_runtime_action_plan_init(&alk_plan);
-    const auto alk_decision = to_alk_decision(action);
-    if (!alk_stream_quality_plan_runtime_action(&alk_decision, &alk_context, &alk_plan)) {
+    alk_stream_quality_plan_runtime_action(&alk_decision, &alk_context, &alk_plan);
+    return alk_plan;
+  }
+
+  runtime_action_plan_t
+  plan_runtime_action(const action_t &action, const runtime_action_context_t &context) {
+    const auto alk_plan = plan_runtime_action_sdk(action, context);
+    if (alk_plan.version != ALK_STREAM_QUALITY_CONTROL_VERSION) {
       return {};
     }
     return {
@@ -550,6 +567,7 @@ namespace stream_quality {
   int controller_t::effective_ceiling_kbps() const { return last_decision_.effective_ceiling_kbps; }
   int controller_t::sustainable_estimate_kbps() const { return last_decision_.sustainable_estimate_kbps; }
   state_e controller_t::state() const { return from_alk_state(last_decision_.state); }
+  AlkStreamQualityDecision controller_t::last_decision() const { return last_decision_; }
 
   std::uint32_t
   infer_local_display_pressure(const feedback_t &feedback) {

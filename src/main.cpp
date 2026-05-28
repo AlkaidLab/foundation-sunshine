@@ -28,9 +28,6 @@
   #include "platform/windows/win_dark_mode.h"
 #endif
 
-extern "C" {
-#include "rswrapper.h"
-}
 
 using namespace std::literals;
 
@@ -352,7 +349,6 @@ main(int argc, char *argv[]) {
     BOOST_LOG(error) << "Proc failed to initialize"sv;
   }
 
-  reed_solomon_init();
   auto input_deinit_guard = input::init();
 
   if (input::probe_gamepads()) {

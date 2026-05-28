@@ -144,8 +144,6 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/round_robin.h"
         "${CMAKE_SOURCE_DIR}/src/stat_trackers.h"
         "${CMAKE_SOURCE_DIR}/src/stat_trackers.cpp"
-        "${CMAKE_SOURCE_DIR}/src/rswrapper.h"
-        "${CMAKE_SOURCE_DIR}/src/rswrapper.c"
         ${PLATFORM_TARGET_FILES})
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
@@ -185,6 +183,13 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include/alkaidlab/transport/transport_module.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include/alkaidlab/transport/gamestream_enet_transport.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include/alkaidlab/media_packetization/gamestream_media_packetization.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp/include/alkaidlab/media_packetization/gamestream_rtp.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/redundancy/gamestream-rs-fec/include/alkaidlab/media_redundancy/gamestream_rs_fec.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/session_handshake/session_handshake.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/frame_interest/frame_interest.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/src/gamestream_rtsp_handshake.cpp" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/src/alkaid_handshake.cpp" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/frame-interest/roi-map/src/frame_interest.cpp" AND
    EXISTS "${ALKAIDLAB_ZAKO_INPUT_PATH}/include/zako/input/zako_input.h")
     list(APPEND SUNSHINE_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.h"
@@ -200,9 +205,13 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/module_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_monitor.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/session_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/src/gamestream_enet_transport.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/src/gamestream_media_packetization.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/src/gamestream_rtsp_handshake.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/src/alkaid_handshake.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/media/frame-interest/roi-map/src/frame_interest.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/src/sunshine_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     if(WIN32)
@@ -221,6 +230,10 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/media/redundancy/gamestream-rs-fec/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
     if(WIN32)

@@ -189,6 +189,15 @@ namespace stream_quality {
   runtime_action_plan_t
   plan_runtime_action(const action_t &action, const runtime_action_context_t &context);
 
+  AlkStreamQualityDecision
+  to_sdk_decision(const action_t &action);
+
+  AlkStreamQualityRuntimeActionContext
+  to_sdk_runtime_action_context(const runtime_action_context_t &context);
+
+  AlkStreamQualityRuntimeActionPlan
+  plan_runtime_action_sdk(const action_t &action, const runtime_action_context_t &context);
+
   struct feedback_t {
     std::uint32_t duration_ms = 0;
     std::uint32_t frames_seen = 0;
@@ -309,6 +318,7 @@ namespace stream_quality {
     int effective_ceiling_kbps() const;
     int sustainable_estimate_kbps() const;
     state_e state() const;
+    AlkStreamQualityDecision last_decision() const;
 
   private:
     AlkStreamQualityAdaptiveControllerModule *module_ = nullptr;

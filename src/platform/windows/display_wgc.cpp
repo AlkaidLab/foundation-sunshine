@@ -1125,6 +1125,23 @@ namespace platf::dxgi {
                                 offset_y,
                                 cursor_probe_last_hash,
                                 cursor_probe_samples);
+    if (img->cursor_probe.active &&
+        img->cursor_probe.pointer_visible &&
+        img->cursor_probe.crop_valid &&
+        img->cursor_probe.w > 0 &&
+        img->cursor_probe.h > 0) {
+      frame_interest::map_t map;
+      map.frame_width = img->width;
+      map.frame_height = img->height;
+      map.sequence = img->cursor_probe.sample_index;
+      frame_interest::add_cursor_roi(map,
+                                     img->cursor_probe.x + img->cursor_probe.w / 2,
+                                     img->cursor_probe.y + img->cursor_probe.h / 2,
+                                     std::max(img->cursor_probe.w, img->cursor_probe.h),
+                                     -6);
+      frame_interest::finalize(map);
+      img->interest_map = map;
+    }
 
     if (img) {
       img->frame_timestamp = frame_timestamp;

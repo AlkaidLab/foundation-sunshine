@@ -91,6 +91,128 @@ namespace video {
       return std::clamp(fec_percentage, 0, 100);
     }
 
+    uint32_t
+    platform_frame_interest_backend_flags(const frame_interest::backend_caps_t &caps) {
+      uint32_t flags = 0;
+      if (caps.roi_qp_map) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_CURSOR_ROI |
+                 ALK_FRAME_INTEREST_BACKEND_CAP_FOCUS_ROI |
+                 ALK_FRAME_INTEREST_BACKEND_CAP_QP_DELTA_MAP;
+      }
+      if (caps.dirty_rects) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_DIRTY_RECTS;
+      }
+      if (caps.move_rects) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_MOVE_RECTS;
+      }
+      if (caps.long_term_reference) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_LTR;
+      }
+      if (caps.intra_refresh) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_INTRA_REFRESH;
+      }
+      if (caps.adaptive_quantization) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_AQ;
+      }
+      if (caps.temporal_layers) {
+        flags |= ALK_FRAME_INTEREST_BACKEND_CAP_CONSERVATIVE_BITRATE;
+      }
+      return flags;
+    }
+
+    bool
+    build_platform_frame_interest(const frame_interest::map_t &map,
+                                  std::uint32_t intent_flags,
+                                  AlkFrameInterest &interest,
+                                  AlkFrameInterestMap *out) {
+      AlkFrameInterestConfig config;
+      AlkFrameInterestFrameInfo frame;
+      alk_frame_interest_config_init(&config);
+      alk_frame_interest_frame_info_init(&frame);
+      frame.frame_index = map.sequence;
+      frame.frame_width = static_cast<uint32_t>(std::max(map.frame_width, 0));
+      frame.frame_height = static_cast<uint32_t>(std::max(map.frame_height, 0));
+      if (!alk_frame_interest_init(&interest, &config) ||
+          !alk_frame_interest_begin_frame(&interest, &frame)) {
+        return false;
+      }
+
+      for (const auto &roi : map.roi_rects) {
+        alk_frame_interest_add_focus_roi(&interest,
+                                         roi.rect.x,
+                                         roi.rect.y,
+                                         static_cast<uint32_t>(std::max(roi.rect.width, 0)),
+                                         static_cast<uint32_t>(std::max(roi.rect.height, 0)),
+                                         static_cast<uint32_t>(std::max(roi.priority, 0)),
+                                         ALK_FRAME_INTEREST_WEIGHT_PPM_MAX);
+      }
+      for (const auto &dirty : map.dirty_rects) {
+        alk_frame_interest_add_dirty_rect(&interest,
+                                          dirty.x,
+                                          dirty.y,
+                                          static_cast<uint32_t>(std::max(dirty.width, 0)),
+                                          static_cast<uint32_t>(std::max(dirty.height, 0)));
+      }
+      for (const auto &move : map.move_rects) {
+        alk_frame_interest_add_move_rect(&interest,
+                                         move.source_x,
+                                         move.source_y,
+                                         move.dest.x,
+                                         move.dest.y,
+                                         static_cast<uint32_t>(std::max(move.dest.width, 0)),
+                                         static_cast<uint32_t>(std::max(move.dest.height, 0)));
+      }
+      if ((intent_flags & (stream_quality::clarity_intent_roi |
+                           stream_quality::clarity_intent_dirty_region)) != 0) {
+        AlkFrameInterestQpDeltaMapPolicy policy;
+        alk_frame_interest_qp_delta_map_policy_init(&policy);
+        policy.policy = ALK_FRAME_INTEREST_QP_DELTA_POLICY_AUTO;
+        policy.roi_qp_delta = -4;
+        policy.background_qp_delta = 2;
+        alk_frame_interest_set_qp_delta_map_policy(&interest, &policy);
+      }
+      if (out == nullptr) {
+        return true;
+      }
+      return alk_frame_interest_build_map(&interest, out);
+    }
+
+    bool
+    build_platform_frame_interest_observation(const frame_interest::map_t &map,
+                                              const frame_interest::backend_caps_t &caps,
+                                              std::uint32_t intent_flags,
+                                              const char *backend_name,
+                                              AlkFrameInterestObservation &observation) {
+      AlkFrameInterest platform_interest;
+      AlkFrameInterestMap platform_map;
+      alk_frame_interest_map_init(&platform_map);
+      if (!build_platform_frame_interest(map, intent_flags, platform_interest, &platform_map)) {
+        return false;
+      }
+
+      AlkFrameInterestBackendCaps platform_caps;
+      alk_frame_interest_backend_caps_init(&platform_caps);
+      platform_caps.provider_id = "foundation-sunshine";
+      platform_caps.backend_id = backend_name != nullptr ? backend_name : "unknown";
+      platform_caps.capability_flags = platform_frame_interest_backend_flags(caps);
+      platform_caps.max_roi_rects = ALK_FRAME_INTEREST_MAX_ROI_RECTS;
+      platform_caps.max_dirty_rects = ALK_FRAME_INTEREST_MAX_DIRTY_RECTS;
+      platform_caps.max_move_rects = ALK_FRAME_INTEREST_MAX_MOVE_RECTS;
+
+      AlkFrameInterestApplyResult apply_result;
+      alk_frame_interest_apply_result_init(&apply_result);
+      if (!alk_frame_interest_apply(&platform_interest, &platform_caps, &apply_result)) {
+        alk_frame_interest_apply_result_init(&apply_result);
+        apply_result.fallback_reason_flags = ALK_FRAME_INTEREST_FALLBACK_REASON_BACKEND_CAPS_MISSING;
+        apply_result.primary_fallback_reason = ALK_FRAME_INTEREST_FALLBACK_REASON_BACKEND_CAPS_MISSING;
+      }
+      alk_frame_interest_observation_init(&observation);
+      return alk_frame_interest_observe_apply_result(&platform_map,
+                                                     &platform_caps,
+                                                     &apply_result,
+                                                     &observation);
+    }
+
     /**
      * @brief Check if we can allow probing for the encoders.
      * @return True if there should be no issues with the probing, false if we should prevent it.
@@ -2249,6 +2371,26 @@ namespace video {
 
     const auto caps = session.frame_interest_caps();
     const auto decision = frame_interest::decide_backend(map, caps, intent_flags);
+    AlkFrameInterestObservation platform_observation;
+    const bool has_platform_observation =
+      build_platform_frame_interest_observation(map,
+                                                caps,
+                                                intent_flags,
+                                                session.encoder_backend_name(),
+                                                platform_observation);
+    if (frame_interest_feedback && has_platform_observation) {
+      const auto frame_area = map.frame_width > 0 && map.frame_height > 0 ?
+                                static_cast<std::uint64_t>(map.frame_width) *
+                                  static_cast<std::uint64_t>(map.frame_height) :
+                                0;
+      frame_interest_feedback(channel_data, {
+        .frame_area = frame_area,
+        .dirty_area = static_cast<std::uint64_t>(std::max<std::int64_t>(0, frame_interest::total_dirty_area(map))),
+        .full_frame_dirty = frame_interest::has_full_frame_dirty_region(map),
+        .has_platform_observation = true,
+        .platform_observation = platform_observation,
+      });
+    }
     const bool accepted = decision.roi_accepted ||
                           decision.dirty_rects_accepted ||
                           decision.move_rects_accepted ||
@@ -2837,7 +2979,6 @@ namespace video {
             params.maxscl[0] = av_make_q(1, 1);
             params.maxscl[1] = av_make_q(1, 1);
             params.maxscl[2] = av_make_q(1, 1);
-            params.maxscl[3] = av_make_q(0, 1);  // Unused
 
             // Set average maxRGB to 1.0
             params.average_maxrgb = av_make_q(1, 1);

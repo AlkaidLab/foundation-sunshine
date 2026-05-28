@@ -5,6 +5,8 @@
 #pragma once
 
 #include <chrono>
+
+#include <alkaidlab/frame_interest/frame_interest.h>
 #include <cstdint>
 
 #include "input.h"
@@ -458,6 +460,8 @@ namespace video {
     std::uint64_t frame_area = 0;
     std::uint64_t dirty_area = 0;
     bool full_frame_dirty = false;
+    bool has_platform_observation = false;
+    AlkFrameInterestObservation platform_observation {};
   };
 
   using frame_interest_feedback_fn_t = void (*)(void *, const frame_interest_feedback_t &);

@@ -38,13 +38,8 @@ extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <zako/input/zako_input.h>
-#include "rswrapper.h"
 // clang-format on
 }
-
-#ifndef DATA_SHARDS_MAX
-  #define DATA_SHARDS_MAX 255
-#endif
 
 #include "config.h"
 #include "alkaidlab_session_bridge.h"
@@ -52,10 +47,20 @@ extern "C" {
 #include "alkaidlab/microphone_uplink/microphone_uplink.h"
 #include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
+#define ALK_SUNSHINE_GAMESTREAM_MEDIA_UDP_PRODUCT_PLATFORM_OPS 1
+#include "alkaidlab/sunshine_adapter/gamestream_media_udp_transport_adapter.hpp"
+#undef ALK_SUNSHINE_GAMESTREAM_MEDIA_UDP_PRODUCT_PLATFORM_OPS
 #include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/rescue_wire_codec.h"
 #include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
 #include "alkaidlab/session_runtime/transport_runtime.h"
+#include "alkaidlab/session_runtime/transport_monitor.h"
+#include "alkaidlab/session_runtime/continuity_facade.h"
+#include "alkaidlab/session_handshake/session_handshake.h"
+#include "alkaidlab/frame_interest/frame_interest.h"
+#include "alkaidlab/media_packetization/gamestream_rtp.h"
+#include "alkaidlab/media_packetization/gamestream_media_packetization.h"
+#include "alkaidlab/media_redundancy/gamestream_rs_fec.h"
 #include "alkaidlab/transport/gamestream_enet_transport.h"
 #include "alkaidlab/control_path_health/control_path_health.h"
 #include "alkaidlab/rescue_control/rescue_control.h"
@@ -246,35 +251,14 @@ namespace stream {
     sizeof(video_short_frame_header_t) == 8,
     "Short frame header must be 8 bytes");
 
-  struct video_packet_raw_t {
+  using video_packet_raw_t = AlkGamestreamVideoPacketRaw;
+  using video_packet_enc_prefix_t = AlkGamestreamVideoEncryptionPrefix;
+  using audio_packet_t = AlkGamestreamAudioPacket;
+
+  struct control_header_v2: AlkSunshineGamestreamControlHeader {
     uint8_t *
     payload() {
-      return (uint8_t *) (this + 1);
-    }
-
-    RTP_PACKET rtp;
-    char reserved[4];
-
-    NV_VIDEO_PACKET packet;
-  };
-
-  struct video_packet_enc_prefix_t {
-    std::uint8_t iv[12];  // 12-byte IV is ideal for AES-GCM
-    std::uint32_t frameNumber;
-    std::uint8_t tag[16];
-  };
-
-  struct audio_packet_t {
-    RTP_PACKET rtp;
-  };
-
-  struct control_header_v2 {
-    std::uint16_t type;
-    std::uint16_t payloadLength;
-
-    uint8_t *
-    payload() {
-      return (uint8_t *) (this + 1);
+      return alk_sunshine_gamestream_control_payload(this);
     }
   };
 
@@ -366,27 +350,18 @@ namespace stream {
     std::uint32_t epoch;
   };
 
-  typedef struct control_encrypted_t {
-    std::uint16_t encryptedHeaderType;  // Always LE 0x0001
-    std::uint16_t length;  // sizeof(seq) + 16 byte tag + secondary header and data
-
-    // seq is accepted as an arbitrary value in Moonlight
-    std::uint32_t seq;  // Monotonically increasing sequence number (used as IV for AES-GCM)
-
+  typedef struct control_encrypted_t: AlkSunshineGamestreamEncryptedControlHeader {
     uint8_t *
     payload() {
-      return (uint8_t *) (this + 1);
+      return alk_sunshine_gamestream_encrypted_control_payload(this);
     }
     // encrypted control_header_v2 and payload data follow
   } *control_encrypted_p;
 
-  struct audio_fec_packet_t {
-    RTP_PACKET rtp;
-    AUDIO_FEC_HEADER fecHeader;
-  };
+  using audio_fec_packet_t = AlkGamestreamAudioFecPacket;
 
   struct mic_packet_t {
-    RTP_PACKET rtp;
+    AlkGamestreamRtpPacket rtp;
   };
 
   // 扩展的RTP包结构，支持16位包类型
@@ -589,7 +564,7 @@ namespace stream {
 
 
   static void
-  record_network_transport_datagram(session_t *session, std::uint8_t channel, enet_uint32 flags, std::size_t length, bool tx);
+  record_network_transport_datagram(session_t *session, std::uint8_t channel, std::uint32_t flags, std::size_t length, bool tx);
   static void
   record_network_transport_channel_datagrams(session_t *session,
                                              std::uint32_t channel_kind,
@@ -607,7 +582,7 @@ namespace stream {
                                                 const std::string_view &payload,
                                                 net::peer_t peer,
                                                 std::uint8_t channel,
-                                                enet_uint32 flags,
+                                                std::uint32_t flags,
                                                 std::uint32_t transport_channel_kind_override = ALK_TRANSPORT_CHANNEL_UNKNOWN);
 
   class feature_lease_registry_t {
@@ -724,9 +699,9 @@ namespace stream {
                       << " phase=native-enet role=host controlPort=" << port;
       return 0;
 #else
-      _host = net::host_create(address_family, _addr, port);
-
-      return !(bool) _host;
+      (void)address_family;
+      BOOST_LOG(error) << "Legacy GameStream control carrier is disabled; use network.transport/gamestream-enet native IO";
+      return -1;
 #endif
     }
 
@@ -754,7 +729,7 @@ namespace stream {
     send_session(const std::string_view &payload,
                  session_t *session,
                  std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-                 enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE,
+                 std::uint32_t flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE,
                  std::uint32_t transport_channel_kind_override = ALK_TRANSPORT_CHANNEL_UNKNOWN);
 
     /**
@@ -772,32 +747,23 @@ namespace stream {
       _map_type_cb.emplace(type, std::move(cb));
     }
 
-    int
-    send_direct(const std::string_view &payload,
-                net::peer_t peer,
-                std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-                enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
-      auto packet = enet_packet_create(payload.data(), payload.size(), flags);
-      if (!packet) {
-        return -1;
-      }
-      if (channel >= peer->channelCount) {
-        channel = CTRL_CHANNEL_GENERIC;
-      }
-      if (enet_peer_send(peer, channel, packet)) {
-        enet_packet_destroy(packet);
-
-        return -1;
-      }
-
-      return 0;
-    }
+	    int
+	    send_direct(const std::string_view &payload,
+	                net::peer_t peer,
+	                std::uint8_t channel = CTRL_CHANNEL_GENERIC,
+	                std::uint32_t flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
+      (void)payload;
+      (void)peer;
+      (void)channel;
+      (void)flags;
+      return -1;
+	    }
 
     int
     send(const std::string_view &payload,
          net::peer_t peer,
          std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-         enet_uint32 flags = ENET_PACKET_FLAG_RELIABLE) {
+         std::uint32_t flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
       if (auto *session = _registry.find_by_control_peer(peer)) {
         return send_control_datagram_via_transport_or_direct(session,
                                                              this,
@@ -813,13 +779,10 @@ namespace stream {
 
     void
     flush() {
-      if (_transport_native_open) {
-        alk_transport_runtime_service(&_transport_binding, nullptr);
-      }
-      else if (_host) {
-        enet_host_flush(_host.get());
-      }
-    }
+	      if (_transport_native_open) {
+	        alk_transport_runtime_service(&_transport_binding, nullptr);
+	      }
+	    }
 
     bool
     send_native(session_t *session,
@@ -842,8 +805,6 @@ namespace stream {
 
     session_registry_t _registry;
 
-    ENetAddress _addr;
-    net::host_t _host;
     AlkRuntime *_transport_runtime { nullptr };
     AlkGamestreamEnetObserver *_transport_observer { nullptr };
     AlkTransportRuntimeBinding _transport_binding {};
@@ -934,10 +895,15 @@ namespace stream {
     boost::asio::ip::address localAddress;
 
     session_runtime::identity_t identity;
-    session_runtime::transport_path_t active_transport_path { session_runtime::make_enet_direct_transport_path() };
+    session_runtime::transport_path_t active_transport_path { session_runtime::make_provider_datagram_direct_transport_path() };
     session_runtime::startup_path_evidence_t startup_path_evidence;
     session_runtime::startup_path_decision_t startup_path_decision;
     session_runtime::session_telemetry_t telemetry;
+    AlkTransportMonitor transport_monitor {};
+    AlkTransportMonitorHistory transport_history {};
+    AlkTransportMonitorTuningSnapshot transport_tuning {};
+    std::uint64_t transport_monitor_last_refresh_ms { 0 };
+    AlkHandshakeSelection handshake_selection {};
     LI_SESSION shared_session;
     AlkSessionAdapterContext alkaidlab_session_context;
     ZakoInputRuntime zako_input_runtime;
@@ -1122,6 +1088,8 @@ namespace stream {
     std::uint32_t last_dynamic_clarity_flags { 0 };
     int last_dynamic_clarity_qp { 0 };
     int last_dynamic_clarity_bitrate { 0 };
+    AlkFrameInterestObservation frame_interest_observation {};
+    std::chrono::steady_clock::time_point last_frame_interest_observation_log {};
     std::chrono::steady_clock::time_point last_control_input_received {};
     std::atomic<std::uint64_t> last_pointer_move_ms { 0 };
     std::atomic<std::uint64_t> last_gamepad_input_ms { 0 };
@@ -2107,6 +2075,41 @@ namespace stream {
         .count());
   }
 
+  static void
+  refresh_transport_monitor_views(session_t *session, bool force = false) {
+    if (!session) {
+      return;
+    }
+    constexpr std::uint64_t refresh_interval_ms = 100;
+    const auto now_ms = steady_clock_ms();
+    if (!force &&
+        session->transport_monitor_last_refresh_ms != 0 &&
+        now_ms >= session->transport_monitor_last_refresh_ms &&
+        now_ms - session->transport_monitor_last_refresh_ms < refresh_interval_ms) {
+      return;
+    }
+    session->transport_monitor_last_refresh_ms = now_ms;
+    alk_transport_monitor_history(&session->transport_monitor, &session->transport_history);
+    alk_transport_monitor_tuning_snapshot(&session->transport_monitor, &session->transport_tuning);
+  }
+
+  static void
+  observe_transport_channel_snapshot(session_t *session, std::uint32_t channel_kind) {
+    if (!session) {
+      return;
+    }
+    AlkTransportChannelStats channel_stats;
+    alk_transport_channel_stats_init(&channel_stats);
+    if (alk_transport_runtime_channel_stats(&session->control.transport_binding,
+                                            channel_kind,
+                                            &channel_stats)) {
+      alk_transport_monitor_observe_channel(&session->transport_monitor,
+                                            &channel_stats,
+                                            steady_clock_ms());
+      refresh_transport_monitor_views(session);
+    }
+  }
+
 
   static AlkSunshineGamestreamEnetControlTransportCompatibilityMode
   select_network_transport_compatibility_mode(const session_t *session) {
@@ -2159,14 +2162,21 @@ namespace stream {
   }
 
   static const char *
+  transport_fallback_reason_name(const session_t *session) {
+    if (!session) {
+      return "missing-session";
+    }
+    return alk_sunshine_gamestream_enet_control_transport_fallback_reason_name(
+      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
+  }
+
+  static const char *
   transport_phase_name(const session_t *session) {
-    if (transport_uses_native_primary(session)) {
-      return "native-enet";
+    if (!session) {
+      return "observe-only";
     }
-    if (transport_uses_carrier_adapter(session)) {
-      return "carrier-semantic";
-    }
-    return "observe-only";
+    return alk_sunshine_gamestream_enet_control_transport_phase_name(
+      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
   static bool
@@ -2182,8 +2192,7 @@ namespace stream {
       return "unknown";
     }
     if (session->control.peer) {
-      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
-      return addr + ":" + std::to_string(port);
+      return "legacy-peer";
     }
     if (session->control.transport_peer_id != 0) {
       return "native-peer:" + std::to_string(session->control.transport_peer_id);
@@ -2222,6 +2231,28 @@ namespace stream {
     atomic_store_max(session->stream_quality_dirty_area, feedback.dirty_area);
     if (feedback.full_frame_dirty) {
       session->stream_quality_full_frame_dirty.store(true, std::memory_order_relaxed);
+    }
+    if (feedback.has_platform_observation &&
+        feedback.platform_observation.version == ALK_FRAME_INTEREST_VERSION) {
+      session->frame_interest_observation = feedback.platform_observation;
+      const auto now = std::chrono::steady_clock::now();
+      if (session->last_frame_interest_observation_log.time_since_epoch().count() == 0 ||
+          now - session->last_frame_interest_observation_log >= 1000ms) {
+        session->last_frame_interest_observation_log = now;
+        BOOST_LOG(info) << "Alkaid frame-interest observation runtime=" << session->identity.runtime_id
+                        << " flags=0x" << std::hex << feedback.platform_observation.flags << std::dec
+                        << " intent=0x" << std::hex << feedback.platform_observation.intent_flags << std::dec
+                        << " roi=" << feedback.platform_observation.roi_rect_count
+                        << " dirty=" << feedback.platform_observation.dirty_rect_count
+                        << " move=" << feedback.platform_observation.move_rect_count
+                        << " accepted=" << feedback.platform_observation.accepted
+                        << " roiAccepted=" << feedback.platform_observation.roi_accepted
+                        << " fallback=0x" << std::hex << feedback.platform_observation.fallback_reason_flags << std::dec
+                        << " primaryFallback="
+                        << alk_frame_interest_fallback_reason_name(feedback.platform_observation.primary_fallback_reason)
+                        << " provider=" << feedback.platform_observation.provider_id
+                        << " backend=" << feedback.platform_observation.backend_id;
+      }
     }
   }
 
@@ -2582,7 +2613,7 @@ namespace stream {
 
   static void
   apply_stream_quality_action(session_t *session, const stream_quality::action_t &action, const char *source) {
-    if (!session || !action.changed) {
+    if (!session) {
       return;
     }
     if (!adaptive_controller_active(session, source)) {
@@ -2605,7 +2636,7 @@ namespace stream {
         std::chrono::duration_cast<std::chrono::milliseconds>(now - stamp).count());
     };
 
-    const auto plan = stream_quality::plan_runtime_action(action, {
+    const stream_quality::runtime_action_context_t runtime_action_context {
       .resync_guard_active = resync_guard,
       .startup_settle_active = startup_settle,
       .last_applied_bitrate_kbps = session->last_applied_stream_quality_bitrate,
@@ -2618,7 +2649,18 @@ namespace stream {
       .elapsed_ms_since_fec_apply = elapsed_since_ms(session->last_stream_quality_fec_apply),
       .elapsed_ms_since_fps_apply = elapsed_since_ms(session->last_stream_quality_fps_apply),
       .elapsed_ms_since_profile_apply = elapsed_since_ms(session->last_stream_quality_profile_apply),
-    });
+    };
+    const auto plan = stream_quality::plan_runtime_action(action, runtime_action_context);
+    const auto sdk_decision = stream_quality::to_sdk_decision(action);
+    const auto sdk_plan = stream_quality::plan_runtime_action_sdk(action, runtime_action_context);
+    alk_transport_monitor_observe_weak_network_decision(&session->transport_monitor,
+                                                        &sdk_decision,
+                                                        &sdk_plan,
+                                                        steady_clock_ms());
+    refresh_transport_monitor_views(session, true);
+    if (!action.changed) {
+      return;
+    }
 
     const auto target_fec_percentage = plan.target_fec_percentage;
     const auto target_encoding_bitrate = plan.target_bitrate_kbps;
@@ -3446,112 +3488,8 @@ namespace stream {
 
   session_t *
   control_server_t::get_session(const net::peer_t peer, uint32_t connect_data) {
-    {
-      // Fast path - look up existing session by peer
-      auto session = _registry.find_by_control_peer(peer);
-      if (session) {
-        return session;
-      }
-    }
-
-    if (auto session = _registry.find_waiting_by_connect_data(connect_data)) {
-      TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
-
-      rtsp_stream::launch_session_clear(session->launch_session_id);
-
-      session->control.peer = peer;
-      session->identity.control_generation++;
-
-      auto local_address = platf::from_sockaddr((sockaddr *) &peer->localAddress.address);
-      session->localAddress = boost::asio::ip::make_address(local_address);
-
-      BOOST_LOG(debug) << "Initialized new control stream session by connect data match [registry]"
-                       << " runtime_id=" << session->identity.runtime_id
-                       << " generation=" << session->identity.control_generation;
-      BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
-      BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
-      BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
-                      << " runtime=" << session->identity.runtime_id
-                      << " launchSession=" << session->launch_session_id
-                      << " peer=" << peer_addr << ':' << peer_port
-	                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
-	                      << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
-	                      << " clipboardCodec=gamestream-clipboard-payload-codec"
-	                      << " microphoneCodec=gamestream-microphone-payload-codec"
-	                      << " rescueCodec=gamestream-rescue-payload-codec"
-	                      << " leaseCodec=session-control-codec"
-	                      << " cursorPlaneCodec=session-control-codec";
-
-      _registry.bind_control_peer(session, peer);
-      refresh_mic_owner_for_session(*session);
-      auto ptslg = _peer_to_session.lock();
-      _peer_to_session->emplace(peer, session);
-      return session;
-    }
-
-    // Slow path - process new session
-    TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
-    auto lg = _sessions.lock();
-    for (auto pos = std::begin(*_sessions); pos != std::end(*_sessions); ++pos) {
-      auto session_p = *pos;
-
-      // Skip sessions that are already established
-      if (session_p->control.peer) {
-        continue;
-      }
-
-      // Identify the connection by the unique connect data if the client supports it.
-      // Only fall back to IP address matching for clients without session ID support.
-      if (session_p->config.mlFeatureFlags & ML_FF_SESSION_ID) {
-        if (session_p->control.connect_data != connect_data) {
-          continue;
-        }
-        else {
-          BOOST_LOG(debug) << "Initialized new control stream session by connect data match [v2]"sv;
-        }
-      }
-      else {
-        if (session_p->control.expected_peer_address != peer_addr) {
-          continue;
-        }
-        else {
-          BOOST_LOG(debug) << "Initialized new control stream session by IP address match [v1]"sv;
-        }
-      }
-
-      // Once the control stream connection is established, RTSP session state can be torn down
-      rtsp_stream::launch_session_clear(session_p->launch_session_id);
-
-      session_p->control.peer = peer;
-      session_p->identity.control_generation++;
-
-      // Use the local address from the control connection as the source address
-      // for other communications to the client. This is necessary to ensure
-      // proper routing on multi-homed hosts.
-      auto local_address = platf::from_sockaddr((sockaddr *) &peer->localAddress.address);
-      session_p->localAddress = boost::asio::ip::make_address(local_address);
-
-      BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
-      BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
-      BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
-                      << " runtime=" << session_p->identity.runtime_id
-                      << " launchSession=" << session_p->launch_session_id
-                      << " peer=" << peer_addr << ':' << peer_port
-                      << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
-                      << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
-                      << " clipboardCodec=gamestream-clipboard-payload-codec"
-                      << " microphoneCodec=gamestream-microphone-payload-codec"
-                      << " leaseCodec=session-control-codec"
-                      << " cursorPlaneCodec=session-control-codec";
-
-      // Insert this into the map for O(1) lookups in the future
-      _registry.bind_control_peer(session_p, peer);
-      refresh_mic_owner_for_session(*session_p);
-      auto ptslg = _peer_to_session.lock();
-      _peer_to_session->emplace(peer, session_p);
-      return session_p;
-    }
-
+    (void) peer;
+    (void) connect_data;
     return nullptr;
   }
 
@@ -3646,9 +3584,9 @@ namespace stream {
   }
 
   struct control_peer_health_snapshot_t {
-    enet_uint32 last_recv_age { 0 };
-    enet_uint32 last_send_age { 0 };
-    enet_uint32 next_timeout_in { 0 };
+    std::uint32_t last_recv_age { 0 };
+    std::uint32_t last_send_age { 0 };
+    std::uint32_t next_timeout_in { 0 };
     std::uint32_t outbound_queue_depth { 0 };
     std::uint32_t send_reliable_queue_depth { 0 };
     std::uint32_t sent_reliable_queue_depth { 0 };
@@ -3730,7 +3668,7 @@ namespace stream {
       flags |= ALK_TRANSPORT_FLAG_SELECTED | ALK_TRANSPORT_FLAG_VALIDATED;
     }
     switch (path.protocol) {
-      case session_runtime::transport_protocol_e::enet_udp:
+      case session_runtime::transport_protocol_e::provider_datagram:
       case session_runtime::transport_protocol_e::udp:
         flags |= ALK_TRANSPORT_FLAG_DATAGRAM;
         break;
@@ -3945,7 +3883,7 @@ namespace stream {
   control_server_t::send_session(const std::string_view &payload,
                                  session_t *session,
                                  std::uint8_t channel,
-                                 enet_uint32 flags,
+                                 std::uint32_t flags,
                                  std::uint32_t transport_channel_kind_override) {
     if (!session) {
       return -1;
@@ -3965,7 +3903,7 @@ namespace stream {
                                                 const std::string_view &payload,
                                                 net::peer_t peer,
                                                 std::uint8_t channel,
-                                                enet_uint32 flags,
+                                                std::uint32_t flags,
                                                 std::uint32_t transport_channel_kind_override) {
     if (!session || !control_server) {
       return -1;
@@ -4032,7 +3970,7 @@ namespace stream {
   }
 
   static void
-  record_network_transport_datagram(session_t *session, std::uint8_t channel, enet_uint32 flags, std::size_t length, bool tx) {
+  record_network_transport_datagram(session_t *session, std::uint8_t channel, std::uint32_t flags, std::size_t length, bool tx) {
     if (!session) {
       return;
     }
@@ -4067,6 +4005,7 @@ namespace stream {
                                            length,
                                            packet_count == 0 ? 1 : packet_count,
                                            tx);
+    observe_transport_channel_snapshot(session, channel_kind);
   }
 
   static bool
@@ -4140,12 +4079,8 @@ namespace stream {
                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_RESCUE |
                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_DIAGNOSTICS;
     copy_transport_path_to_alk(session->active_transport_path, params.initial_path);
-    if (peer) {
-      TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
-      const auto remote_endpoint = peer_addr + ":" + std::to_string(peer_port);
-      alk_session_copy_string(params.remote_endpoint, sizeof(params.remote_endpoint), remote_endpoint.c_str());
-    }
-    else if (!session->control.expected_peer_address.empty()) {
+    (void)peer;
+    if (!session->control.expected_peer_address.empty()) {
       alk_session_copy_string(params.remote_endpoint,
                               sizeof(params.remote_endpoint),
                               session->control.expected_peer_address.c_str());
@@ -4160,6 +4095,7 @@ namespace stream {
                     << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
                     << " phase=" << transport_phase_name(session)
                     << " compat=" << transport_compatibility_mode_name(session)
+                    << " fallbackReason=" << transport_fallback_reason_name(session)
                     << " role=host"
                     << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
                     << " nativePrimary=" << (session->control.transport_native_primary ? 1 : 0)
@@ -4174,30 +4110,29 @@ namespace stream {
 
   static void
   update_network_transport_peer_snapshot(session_t *session,
-                                         net::peer_t peer,
                                          const control_peer_health_snapshot_t &health) {
-    if (!session || !peer) {
+    if (!session) {
       return;
     }
-
     AlkTransportStats stats;
     alk_transport_stats_init(&stats);
-    stats.state = peer->state == ENET_PEER_STATE_CONNECTED ? ALK_TRANSPORT_PATH_ACTIVE : ALK_TRANSPORT_PATH_FAILED;
-    stats.rtt_us = peer->roundTripTime * 1000U;
-    stats.jitter_us = peer->roundTripTimeVariance * 1000U;
+    if (!alk_transport_runtime_stats(&session->control.transport_binding, &stats)) {
+      stats.state = control_transport_ready(session) ? ALK_TRANSPORT_PATH_ACTIVE : ALK_TRANSPORT_PATH_FAILED;
+      copy_transport_path_to_alk(session->active_transport_path, stats.active_path);
+    }
     stats.packet_loss_ppm = health.packet_loss_ppm;
     stats.reliable_backlog_bytes = health.waiting_queue_depth + health.reliable_in_transit;
     stats.reliable_backlog_packets = health.send_reliable_queue_depth + health.sent_reliable_queue_depth;
-    copy_transport_path_to_alk(session->active_transport_path, stats.active_path);
     stats.active_path.state = stats.state;
     stats.active_path.rtt_us = stats.rtt_us;
     stats.active_path.jitter_us = stats.jitter_us;
     stats.active_path.packet_loss_ppm = stats.packet_loss_ppm;
-    TUPLE_2D(peer_port, peer_addr, platf::from_sockaddr_ex((sockaddr *) &peer->address.address));
-    const auto remote_endpoint = peer_addr + ":" + std::to_string(peer_port);
-    alk_session_copy_string(stats.active_path.remote_endpoint, sizeof(stats.active_path.remote_endpoint), remote_endpoint.c_str());
-    alk_session_copy_string(stats.active_path.local_endpoint, sizeof(stats.active_path.local_endpoint), session->active_transport_path.host_local_endpoint.c_str());
+    alk_session_copy_string(stats.active_path.local_endpoint,
+                            sizeof(stats.active_path.local_endpoint),
+                            session->active_transport_path.host_local_endpoint.c_str());
     alk_transport_runtime_observe_stats(&session->control.transport_binding, &stats);
+    alk_transport_monitor_observe_stats(&session->transport_monitor, &stats, steady_clock_ms());
+    refresh_transport_monitor_views(session);
   }
 
   static bool
@@ -4205,36 +4140,43 @@ namespace stream {
                               net::peer_t peer,
                               const char *reason,
                               control_peer_health_snapshot_t &snapshot) {
-    if (!session || !peer) {
+    (void)peer;
+    if (!session || !control_transport_ready(session)) {
       return false;
     }
 
-    const auto service_time = peer->host ? peer->host->serviceTime : 0;
-    const auto elapsed_since = [service_time](enet_uint32 then) -> enet_uint32 {
-      return then != 0 && service_time >= then ? service_time - then : 0;
-    };
-    const auto until = [service_time](enet_uint32 future) -> enet_uint32 {
-      return future != 0 && future >= service_time ? future - service_time : 0;
-    };
-    snapshot.last_recv_age = elapsed_since(peer->lastReceiveTime);
-    snapshot.last_send_age = elapsed_since(peer->lastSendTime);
-    snapshot.next_timeout_in = until(peer->nextTimeout);
-    snapshot.outbound_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingCommands));
-    snapshot.send_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->outgoingSendReliableCommands));
-    snapshot.sent_reliable_queue_depth = static_cast<std::uint32_t>(enet_list_size(&peer->sentReliableCommands));
-    snapshot.packet_loss_ppm = static_cast<std::uint32_t>(
-      std::min<double>(
-        1000000.0,
-        static_cast<double>(peer->packetLoss) /
-          static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 1000000.0));
-    snapshot.waiting_queue_depth = static_cast<std::uint32_t>(
-      std::min<std::size_t>(peer->totalWaitingData, std::numeric_limits<std::uint32_t>::max()));
-    snapshot.reliable_in_transit = peer->reliableDataInTransit;
+    AlkTransportPeerStats peer_stats;
+    alk_transport_peer_stats_init(&peer_stats);
+    AlkTransportStats stats;
+    alk_transport_stats_init(&stats);
+    if (session->control.transport_peer_id != 0 &&
+        alk_transport_runtime_peer_stats(&session->broadcast_ref->control_server._transport_binding,
+                                         session->control.transport_peer_id,
+                                         &peer_stats)) {
+      snapshot.packet_loss_ppm = peer_stats.packet_loss_ppm;
+      snapshot.waiting_queue_depth = peer_stats.reliable_backlog_bytes;
+      snapshot.reliable_in_transit = 0;
+      snapshot.send_reliable_queue_depth = peer_stats.reliable_backlog_packets;
+      snapshot.sent_reliable_queue_depth = 0;
+      stats.rtt_us = peer_stats.rtt_us;
+      stats.jitter_us = peer_stats.jitter_us;
+      stats.state = peer_stats.state;
+    }
+    else if (alk_transport_runtime_stats(&session->control.transport_binding, &stats)) {
+      snapshot.packet_loss_ppm = stats.packet_loss_ppm;
+      snapshot.waiting_queue_depth = stats.reliable_backlog_bytes;
+      snapshot.reliable_in_transit = 0;
+      snapshot.send_reliable_queue_depth = stats.reliable_backlog_packets;
+      snapshot.sent_reliable_queue_depth = 0;
+    }
+    else {
+      return false;
+    }
 
     AlkControlPathHealthSample health_sample;
     alk_control_path_health_sample_init(&health_sample);
-    health_sample.rtt_ms = peer->roundTripTime;
-    health_sample.rtt_variance_ms = peer->roundTripTimeVariance;
+    health_sample.rtt_ms = stats.rtt_us / 1000U;
+    health_sample.rtt_variance_ms = stats.jitter_us / 1000U;
     health_sample.packet_loss_ppm = snapshot.packet_loss_ppm;
     health_sample.last_recv_age_ms = snapshot.last_recv_age;
     health_sample.next_timeout_ms = snapshot.next_timeout_in;
@@ -4252,46 +4194,47 @@ namespace stream {
 
   static void
   log_control_peer_diag(session_t *session, net::peer_t peer, const char *reason) {
+    (void)peer;
     control_peer_health_snapshot_t health {};
-    if (!capture_control_peer_health(session, peer, reason, health)) {
-      BOOST_LOG(info) << "Control peer diag [" << reason << "] unavailable";
+    if (!capture_control_peer_health(session, nullptr, reason, health)) {
+      BOOST_LOG(info) << "Control transport diag [" << reason << "] unavailable";
       return;
     }
+    AlkTransportStats stats;
+    alk_transport_stats_init(&stats);
+    alk_transport_runtime_stats(&session->control.transport_binding, &stats);
 
-    update_network_transport_peer_snapshot(session, peer, health);
+    update_network_transport_peer_snapshot(session, health);
     BOOST_LOG(info) << "Alkaid transport observe: slot=" << ALK_TRANSPORT_SLOT_ID
                     << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
                     << " channel=control"
                     << " runtime=" << session->identity.runtime_id
                     << " path=" << session_runtime::transport_route_name(session->active_transport_path.route)
-                    << " rttUs=" << peer->roundTripTime * 1000U
-                    << " jitterUs=" << peer->roundTripTimeVariance * 1000U
+                    << " rttUs=" << stats.rtt_us
+                    << " jitterUs=" << stats.jitter_us
                     << " lossPpm=" << health.packet_loss_ppm
                     << " reliableBacklogBytes=" << (health.waiting_queue_depth + health.reliable_in_transit)
                     << " reliableBacklogPackets=" << (health.send_reliable_queue_depth + health.sent_reliable_queue_depth);
 
-    BOOST_LOG(info) << "Control peer diag [" << reason << "] runtime=" << session->identity.runtime_id
-                    << " state=" << peer->state
+    BOOST_LOG(info) << "Control transport diag [" << reason << "] runtime=" << session->identity.runtime_id
+                    << " state=" << stats.state
                     << " health=" << alk_control_path_health_state_name(health.decision.state)
                     << " healthReason=0x" << std::hex << health.decision.reason_flags << std::dec
                     << " healthPpm=" << health.decision.health_ppm
                     << " rescue=" << (health.decision.rescue_recommended ? 1 : 0)
                     << " reconnect=" << (health.decision.reconnect_recommended ? 1 : 0)
-                    << " rtt=" << peer->roundTripTime << "ms"
-                    << " loss=" << (static_cast<double>(peer->packetLoss) /
-                                    static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
+                    << " rtt=" << (stats.rtt_us / 1000U) << "ms"
+                    << " loss=" << (static_cast<double>(health.packet_loss_ppm) / 10000.0)
                     << "%"
                     << " lastRecvAge=" << health.last_recv_age << "ms"
                     << " lastSendAge=" << health.last_send_age << "ms"
                     << " nextTimeoutIn=" << health.next_timeout_in << "ms"
-                    << " timeout(limit/min/max)=" << peer->timeoutLimit << "/"
-                    << peer->timeoutMinimum << "/" << peer->timeoutMaximum
                     << " queues(out/sendRel/sentRel/wait/reliableTransit)="
                     << health.outbound_queue_depth << "/"
                     << health.send_reliable_queue_depth << "/"
                     << health.sent_reliable_queue_depth << "/"
-                    << peer->totalWaitingData << "/"
-                    << peer->reliableDataInTransit
+                    << health.waiting_queue_depth << "/"
+                    << health.reliable_in_transit
                     << " rx=" << session->control.rx_events
                     << " encRx=" << session->control.encrypted_rx_events
                     << " decRx=" << session->control.decrypted_rx_events
@@ -4405,7 +4348,7 @@ namespace stream {
   is_gamepad_state_active_input_payload(const std::string_view &payload,
                                         const input_payload_header_t &header) {
     constexpr int stick_deadzone = 4000;
-    auto stick_active = [stick_deadzone](short value) {
+    auto stick_active = [](short value) {
       const auto native = boost::endian::little_to_native(value);
       return std::abs(static_cast<int>(native)) > stick_deadzone;
     };
@@ -4618,273 +4561,37 @@ namespace stream {
           }
           continue;
         }
-        if (!datagram.payload || datagram.payload_length < sizeof(std::uint16_t)) {
+        AlkSunshineGamestreamControlMessage control_message;
+        if (!alk_sunshine_gamestream_control_message_from_transport(&datagram, &control_message)) {
           continue;
         }
-
-        auto type = *(std::uint16_t *) datagram.payload;
         std::string_view payload {
-          static_cast<const char *>(datagram.payload) + sizeof(type),
-          datagram.payload_length - sizeof(type),
+          reinterpret_cast<const char *>(control_message.payload),
+          control_message.payload_length,
         };
         session->control.rx_events++;
         record_network_transport_datagram(session,
-                                          static_cast<std::uint8_t>(datagram.carrier_channel_id),
-                                          datagram.flags,
-                                          datagram.payload_length,
+                                          static_cast<std::uint8_t>(control_message.carrier_channel_id),
+                                          control_message.flags,
+                                          control_message.payload_length + sizeof(control_message.wire_type),
                                           false);
-        session->control.last_wire_type = type;
+        session->control.last_wire_type = control_message.wire_type;
         session->control.last_payload_size = payload.size();
 
-        call(type, session, payload, false);
+        call(control_message.wire_type, session, payload, false);
         alk_transport_runtime_service(&_transport_binding, nullptr);
       }
       return;
     }
 
-    for (int events_processed = 0; events_processed < max_events_per_iter; ++events_processed) {
-      ENetEvent event;
-      auto res = enet_host_service(_host.get(), &event, events_processed == 0 ? timeout.count() : 0);
-
-      if (res <= 0) {
-        return;
-      }
-
-      auto session = get_session(event.peer, event.data);
-      if (!session) {
-        BOOST_LOG(warning) << "Rejected connection from ["sv << platf::from_sockaddr((sockaddr *) &event.peer->address.address) << "]: it's not properly set up"sv;
-        enet_peer_disconnect_now(event.peer, 0);
-
-        continue;
-      }
-
-      session->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
-
-      switch (event.type) {
-        case ENET_EVENT_TYPE_RECEIVE: {
-          net::packet_t packet { event.packet };
-
-          auto type = *(std::uint16_t *) packet->data;
-          std::string_view payload { (char *) packet->data + sizeof(type), packet->dataLength - sizeof(type) };
-          session->control.rx_events++;
-          record_network_transport_datagram(session, event.channelID, event.packet->flags, event.packet->dataLength, false);
-          session->control.last_wire_type = type;
-          session->control.last_payload_size = payload.size();
-
-          const auto now = std::chrono::steady_clock::now();
-          if (session->control.last_rx_diag_log.time_since_epoch().count() == 0 ||
-              now - session->control.last_rx_diag_log >= 1000ms) {
-            session->control.last_rx_diag_log = now;
-            log_control_peer_diag(session, event.peer, "rx");
-          }
-
-          call(type, session, payload, false);
-          enet_host_flush(_host.get());
-        } break;
-        case ENET_EVENT_TYPE_CONNECT:
-          enet_peer_timeout(event.peer, 2, 10000, 10000);
-          enet_peer_ping_interval(event.peer, 500);
-          BOOST_LOG(info) << "CLIENT CONNECTED runtime="sv << session->identity.runtime_id
-                          << " peer="sv << platf::from_sockaddr((sockaddr *) &event.peer->address.address)
-                          << " channels="sv << event.peer->channelCount
-                          << " timeout(limit/min/max)="sv << event.peer->timeoutLimit << "/"
-                          << event.peer->timeoutMinimum << "/" << event.peer->timeoutMaximum
-                          << " pingInterval="sv << event.peer->pingInterval << "ms";
-          open_network_transport_observer(session, event.peer);
-          log_control_peer_diag(session, event.peer, "connect");
-          enet_host_flush(_host.get());
-          break;
-        case ENET_EVENT_TYPE_DISCONNECT:
-          {
-            log_control_peer_diag(session, event.peer, "disconnect-event");
-            const auto service_time = _host && _host.get() ? _host.get()->serviceTime : 0;
-            const auto last_recv_age = event.peer->lastReceiveTime != 0 ?
-                                         service_time - event.peer->lastReceiveTime :
-                                         0;
-            const auto last_send_age = event.peer->lastSendTime != 0 ?
-                                         service_time - event.peer->lastSendTime :
-                                         0;
-            BOOST_LOG(info) << "CLIENT DISCONNECTED runtime="sv << session->identity.runtime_id
-                            << " eventData="sv << event.data
-                            << " peerState="sv << event.peer->state
-                            << " roundTrip="sv << event.peer->roundTripTime << "ms"
-                            << " packetLoss="sv
-                            << (static_cast<double>(event.peer->packetLoss) /
-                                static_cast<double>(ENET_PEER_PACKET_LOSS_SCALE) * 100.0)
-                            << "%"
-                            << " lastRecvAge="sv << last_recv_age << "ms"
-                            << " lastSendAge="sv << last_send_age << "ms";
-          }
-          // No more clients to send video data to ^_^
-          if (session->state == session::state_e::RUNNING) {
-            session::stop(*session);
-          }
-          enet_host_flush(_host.get());
-          break;
-        case ENET_EVENT_TYPE_NONE:
-          break;
-      }
+    if (timeout.count() > 0) {
+      std::this_thread::sleep_for(std::min(timeout, 1ms));
     }
+    BOOST_LOG(error) << "Legacy GameStream control carrier event loop is disabled; network.transport/gamestream-enet native IO must be open";
   }
 
-  namespace fec {
-    using rs_t = util::safe_ptr<reed_solomon, [](reed_solomon *rs) { reed_solomon_release(rs); }>;
 
-    struct fec_t {
-      size_t data_shards;
-      size_t nr_shards;
-      size_t percentage;
-
-      size_t blocksize;
-      size_t prefixsize;
-      util::buffer_t<char> shards;
-      util::buffer_t<char> headers;
-      util::buffer_t<uint8_t *> shards_p;
-
-      std::vector<platf::buffer_descriptor_t> payload_buffers;
-
-      char *
-      data(size_t el) {
-        return (char *) shards_p[el];
-      }
-
-      char *
-      prefix(size_t el) {
-        return prefixsize ? &headers[el * prefixsize] : nullptr;
-      }
-
-      size_t
-      size() const {
-        return nr_shards;
-      }
-    };
-
-    static fec_t
-    encode(const std::string_view &payload, size_t blocksize, size_t fecpercentage, size_t minparityshards, size_t prefixsize) {
-      auto payload_size = payload.size();
-
-      auto pad = payload_size % blocksize != 0;
-
-      auto aligned_data_shards = payload_size / blocksize;
-      auto data_shards = aligned_data_shards + (pad ? 1 : 0);
-      auto parity_shards = (data_shards * fecpercentage + 99) / 100;
-
-      // increase the FEC percentage for this frame if the parity shard minimum is not met
-      if (parity_shards < minparityshards && fecpercentage != 0) {
-        parity_shards = minparityshards;
-        fecpercentage = (100 * parity_shards) / data_shards;
-
-        BOOST_LOG(verbose) << "Increasing FEC percentage to "sv << fecpercentage << " to meet parity shard minimum"sv << std::endl;
-      }
-
-      auto nr_shards = data_shards + parity_shards;
-
-      // If we need to store a zero-padded data shard, allocate that first to
-      // to keep the shards in order and reduce buffer fragmentation
-      auto parity_shard_offset = pad ? 1 : 0;
-      util::buffer_t<char> shards { (parity_shard_offset + parity_shards) * blocksize };
-      util::buffer_t<uint8_t *> shards_p { nr_shards };
-      std::vector<platf::buffer_descriptor_t> payload_buffers;
-      payload_buffers.reserve(2);
-
-      // Point into the payload buffer for all except the final padded data shard
-      auto next = std::begin(payload);
-      for (auto x = 0; x < aligned_data_shards; ++x) {
-        shards_p[x] = (uint8_t *) next;
-        next += blocksize;
-      }
-      payload_buffers.emplace_back(std::begin(payload), aligned_data_shards * blocksize);
-
-      // If the last data shard needs to be zero-padded, we must use the shards buffer
-      if (pad) {
-        shards_p[aligned_data_shards] = (uint8_t *) &shards[0];
-
-        // GCC doesn't figure out that std::copy_n() can be replaced with memcpy() here
-        // and ends up compiling a horribly slow element-by-element copy loop, so we
-        // help it by using memcpy()/memset() directly.
-        auto copy_len = std::min<size_t>(blocksize, std::end(payload) - next);
-        std::memcpy(shards_p[aligned_data_shards], next, copy_len);
-        if (copy_len < blocksize) {
-          // Zero any additional space after the end of the payload
-          std::memset(shards_p[aligned_data_shards] + copy_len, 0, blocksize - copy_len);
-        }
-      }
-
-      // Add a payload buffer describing the shard buffer
-      payload_buffers.emplace_back(std::begin(shards), shards.size());
-
-      if (fecpercentage != 0) {
-        // Point into our allocated buffer for the parity shards
-        for (auto x = 0; x < parity_shards; ++x) {
-          shards_p[data_shards + x] = (uint8_t *) &shards[(parity_shard_offset + x) * blocksize];
-        }
-
-        // packets = parity_shards + data_shards
-        rs_t rs { reed_solomon_new(data_shards, parity_shards) };
-
-        reed_solomon_encode(rs.get(), shards_p.begin(), nr_shards, blocksize);
-      }
-
-      return {
-        data_shards,
-        nr_shards,
-        fecpercentage,
-        blocksize,
-        prefixsize,
-        std::move(shards),
-        util::buffer_t<char> { nr_shards * prefixsize },
-        std::move(shards_p),
-        std::move(payload_buffers),
-      };
-    }
-  }  // namespace fec
-
-  /**
-   * @brief Combines two buffers and inserts new buffers at each slice boundary of the result.
-   * @param insert_size The number of bytes to insert.
-   * @param slice_size The number of bytes between insertions.
-   * @param data1 The first data buffer.
-   * @param data2 The second data buffer.
-   */
-  std::vector<uint8_t>
-  concat_and_insert(uint64_t insert_size, uint64_t slice_size, const std::string_view &data1, const std::string_view &data2) {
-    auto data_size = data1.size() + data2.size();
-    auto pad = data_size % slice_size != 0;
-    auto elements = data_size / slice_size + (pad ? 1 : 0);
-
-    std::vector<uint8_t> result;
-    result.resize(elements * insert_size + data_size);
-
-    auto next = std::begin(data1);
-    auto end = std::end(data1);
-    for (auto x = 0; x < elements; ++x) {
-      void *p = &result[x * (insert_size + slice_size)];
-
-      // For the last iteration, only copy to the end of the data
-      if (x == elements - 1) {
-        slice_size = data_size - (x * slice_size);
-      }
-
-      // Test if this slice will extend into the next buffer
-      if (next + slice_size > end) {
-        // Copy the first portion from the first buffer
-        auto copy_len = end - next;
-        std::copy(next, end, (char *) p + insert_size);
-
-        // Copy the remaining portion from the second buffer
-        next = std::begin(data2);
-        end = std::end(data2);
-        std::copy(next, next + (slice_size - copy_len), (char *) p + copy_len + insert_size);
-        next += slice_size - copy_len;
-      }
-      else {
-        std::copy(next, next + slice_size, (char *) p + insert_size);
-        next += slice_size;
-      }
-    }
-
-    return result;
-  }
+  // GameStream RTP/FEC implementation moved to Alkaid media.packetization / gamestream-rtp-fec.
 
   std::vector<uint8_t>
   replace(const std::string_view &original, const std::string_view &old, const std::string_view &_new) {
@@ -5504,7 +5211,7 @@ namespace stream {
       return -1;
     }
 
-    const auto packet_flags = include_bitmap ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED;
+    const auto packet_flags = include_bitmap ? ALK_TRANSPORT_SEND_FLAG_RELIABLE : ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED;
     if (session->broadcast_ref->control_server.send_session(payload,
                                                     session,
                                                     CTRL_CHANNEL_GENERIC,
@@ -5733,7 +5440,7 @@ namespace stream {
     if (session->broadcast_ref->control_server.send_session(payload,
                                                             session,
                                                             CTRL_CHANNEL_GENERIC,
-                                                            ENET_PACKET_FLAG_RELIABLE,
+                                                            ALK_TRANSPORT_SEND_FLAG_RELIABLE,
                                                             ALK_TRANSPORT_CHANNEL_CLIPBOARD_RELIABLE)) {
       BOOST_LOG(warning) << "Couldn't send clipboard payload to ["sv << control_peer_label(session) << ']';
       return -1;
@@ -5747,7 +5454,7 @@ namespace stream {
                                const void *session_payload,
                                std::size_t session_payload_size,
                                std::string_view label,
-                               enet_uint32 packet_flags = ENET_PACKET_FLAG_RELIABLE) {
+                               std::uint32_t packet_flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
     if (!session || !control_transport_ready(session) || !session_payload || session_payload_size == 0) {
       BOOST_LOG(warning) << "Couldn't send Session control " << label
                          << ", control peer is unavailable";
@@ -5798,7 +5505,7 @@ namespace stream {
   int
   send_rescue_control_ack(session_t *session,
                           const AlkSunshineRescueWireAck &ack,
-                          enet_uint32 packet_flags = ENET_PACKET_FLAG_RELIABLE) {
+                          std::uint32_t packet_flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
     if (!session || !control_transport_ready(session)) {
       BOOST_LOG(warning) << "Couldn't send rescue-control ack, control peer is unavailable";
       return -1;
@@ -6035,15 +5742,18 @@ namespace stream {
 
     session->last_control_path_rescue = now;
     const bool accepted = apply_rescue_control_request(session, rescue_decision.request);
-    if (accepted &&
-        (session->last_control_path_rescue_log.time_since_epoch().count() == 0 ||
-         now - session->last_control_path_rescue_log >= 1000ms)) {
-      session->last_control_path_rescue_log = now;
-      BOOST_LOG(info) << "Alkaid rescue-control local health rescue applied"
+	    if (accepted &&
+	        (session->last_control_path_rescue_log.time_since_epoch().count() == 0 ||
+	         now - session->last_control_path_rescue_log >= 1000ms)) {
+      AlkTransportStats transport_stats;
+      alk_transport_stats_init(&transport_stats);
+      alk_transport_runtime_stats(&session->control.transport_binding, &transport_stats);
+	      session->last_control_path_rescue_log = now;
+	      BOOST_LOG(info) << "Alkaid rescue-control local health rescue applied"
                       << " runtime=" << session->identity.runtime_id
                       << " health=" << alk_control_path_health_state_name(health.decision.state)
                       << " healthReason=0x" << std::hex << health.decision.reason_flags << std::dec
-                      << " rtt=" << (session->control.peer ? session->control.peer->roundTripTime : 0) << "ms"
+                      << " rtt=" << (transport_stats.rtt_us / 1000U) << "ms"
                       << " lastRecvAge=" << health.last_recv_age << "ms"
                       << " nextTimeoutIn=" << health.next_timeout_in << "ms"
                       << " bitrate=" << session->last_applied_stream_quality_bitrate << " Kbps"
@@ -6119,7 +5829,7 @@ namespace stream {
                                                      &packet,
                                                      sizeof(packet),
                                                      "cursor-plane"sv,
-                                                     ENET_PACKET_FLAG_UNSEQUENCED);
+                                                     ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED);
     if (result == 0) {
       BOOST_LOG(debug) << "Session cursor plane sent runtime="sv
                        << session->identity.runtime_id
@@ -6203,7 +5913,7 @@ namespace stream {
                                                      &telemetry,
                                                      sizeof(telemetry),
                                                      "telemetry"sv,
-                                                     ENET_PACKET_FLAG_UNSEQUENCED);
+                                                     ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED);
     if (result == 0) {
       BOOST_LOG(debug) << "Session telemetry sent runtime="sv
                        << session->identity.runtime_id
@@ -6563,7 +6273,7 @@ namespace stream {
     reset_clipboard_backend_staging(session);
   }
 
-  static int
+  [[maybe_unused]] static int
   clipboard_request_snapshot(session_t *session) {
     if (!ensure_clipboard_sync(session) || session->control.clipboard.sync == nullptr) {
       return send_empty_clipboard_snapshot(session);
@@ -7136,7 +6846,7 @@ namespace stream {
       ack.applied_fec_percent = session->last_applied_stream_quality_fec >= 0 ?
                                   static_cast<std::uint32_t>(session->last_applied_stream_quality_fec) :
                                   0u;
-      if (send_rescue_control_ack(session, ack, ENET_PACKET_FLAG_UNSEQUENCED) == 0) {
+      if (send_rescue_control_ack(session, ack, ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED) == 0) {
         BOOST_LOG(info) << "Alkaid rescue-control ack sent"
                         << " runtime=" << session->identity.runtime_id
                         << " requestId=" << ack.request_id
@@ -7170,7 +6880,7 @@ namespace stream {
       if (!adaptive_controller_active(session, "fec")) {
         return;
       }
-      if (payload.size() < sizeof(SS_FRAME_FEC_STATUS)) {
+      if (payload.size() < sizeof(AlkGamestreamFrameFecStatus)) {
         BOOST_LOG(warning) << "Ignoring truncated frame FEC status payload: " << payload.size();
         return;
       }
@@ -7182,7 +6892,7 @@ namespace stream {
       }
       session->last_stream_quality_fec_feedback = now;
 
-      const auto *status = reinterpret_cast<const SS_FRAME_FEC_STATUS *>(payload.data());
+      const auto *status = reinterpret_cast<const AlkGamestreamFrameFecStatus *>(payload.data());
       const auto total_data = read_be16_unaligned(&status->totalDataPackets);
       const auto total_parity = read_be16_unaligned(&status->totalParityPackets);
       const auto received_data = read_be16_unaligned(&status->receivedDataPackets);
@@ -8005,7 +7715,7 @@ namespace stream {
           auto session = *pos;
 
           if (now > session->pingTimeout) {
-            auto address = session->control.peer ? platf::from_sockaddr((sockaddr *) &session->control.peer->address.address) : session->control.expected_peer_address;
+            auto address = control_peer_label(session);
             BOOST_LOG(info) << address << ": Ping Timeout"sv;
             log_control_peer_diag(session, session->control.peer, "ping-timeout");
             session::stop(*session);
@@ -8019,12 +7729,8 @@ namespace stream {
 
 
             if (session->control.peer) {
-              {
-                auto ptslg = server->_peer_to_session.lock();
-                server->_peer_to_session->erase(session->control.peer);
-              }
-
-              enet_peer_disconnect_now(session->control.peer, 0);
+              auto ptslg = server->_peer_to_session.lock();
+              server->_peer_to_session->erase(session->control.peer);
             }
             if (session->control.transport_peer_id != 0) {
               auto native_lg = server->_native_peer_to_session.lock();
@@ -8386,7 +8092,7 @@ namespace stream {
         return;  // fail_guard 会重新注册接收
       }
 
-      if (received_bytes < sizeof(RTP_PACKET)) {
+      if (received_bytes < sizeof(AlkGamestreamRtpPacket)) {
         return;
       }
 
@@ -8648,8 +8354,8 @@ namespace stream {
     };
 
     // 初始化接收函数
-    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
-      recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
+    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str, std::uint32_t channel_kind) {
+      recv_funcs[buf_idx] = [&, buf_idx, type_str, channel_kind](const boost::system::error_code &ec, size_t bytes) {
         // 静默处理正常关闭错误
         if (ec == boost::asio::error::operation_aborted ||
             ec == boost::asio::error::bad_descriptor) {
@@ -8681,7 +8387,11 @@ namespace stream {
 
         // 只有在成功接收数据后才重新调度
         try {
-          sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+          alk_sunshine_gamestream_media_udp_async_receive_from(channel_kind,
+                                                               sock,
+                                                               asio::buffer(buffers[buf_idx]),
+                                                               peer,
+                                                               recv_funcs[buf_idx]);
         }
         catch (const std::exception &e) {
           BOOST_LOG(error) << "Failed to restart async receive: " << e.what();
@@ -8690,11 +8400,19 @@ namespace stream {
     };
 
     try {
-      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
-      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
+      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO", ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM);
+      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO", ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM);
 
-      video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
-      audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
+      alk_sunshine_gamestream_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
+                                                           video_sock,
+                                                           asio::buffer(buffers[0]),
+                                                           peer,
+                                                           recv_funcs[0]);
+      alk_sunshine_gamestream_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+                                                           audio_sock,
+                                                           asio::buffer(buffers[1]),
+                                                           peer,
+                                                           recv_funcs[1]);
 
       while (!broadcast_shutdown_event->peek()) {
         io.run();
@@ -8767,9 +8485,14 @@ namespace stream {
       frame_header.frameType = packet->is_idr()                     ? 2 :
                                packet->after_ref_frame_invalidation ? 5 :
                                                                       1;
-      frame_header.lastPayloadLen = (payload.size() + sizeof(frame_header)) % (session->config.packetsize - sizeof(NV_VIDEO_PACKET));
+      const auto video_payload_block_bytes = alk_gamestream_video_payload_block_bytes(session->config.packetsize);
+      if (video_payload_block_bytes == 0) {
+        BOOST_LOG(error) << "Invalid GameStream video packet size for RTP payload layout: "sv << session->config.packetsize;
+        continue;
+      }
+      frame_header.lastPayloadLen = (payload.size() + sizeof(frame_header)) % video_payload_block_bytes;
       if (frame_header.lastPayloadLen == 0) {
-        frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
+        frame_header.lastPayloadLen = video_payload_block_bytes;
       }
 
       if (packet->frame_timestamp) {
@@ -8788,69 +8511,65 @@ namespace stream {
 
       auto fecPercentage = std::clamp(session->current_fec_percentage.load(std::memory_order_relaxed), 0, 100);
 
-      // Insert space for packet headers
-      auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
-      auto payload_blocksize = blocksize - sizeof(video_packet_raw_t);
-      auto payload_new = concat_and_insert(sizeof(video_packet_raw_t), payload_blocksize,
-        std::string_view { (char *) &frame_header, sizeof(frame_header) }, payload);
-
-      payload = std::string_view { (char *) payload_new.data(), payload_new.size() };
-
-      // There are 2 bits for FEC block count for a maximum of 4 FEC blocks
-      constexpr auto MAX_FEC_BLOCKS = 4;
-
-      // The max number of data shards per block is found by solving this system of equations for D:
-      // D = 255 - P
-      // P = D * F
-      // which results in the solution:
-      // D = 255 / (1 + F)
-      // multiplied by 100 since F is the percentage as an integer:
-      // D = (255 * 100) / (100 + F)
-      auto max_data_shards_per_fec_block = (DATA_SHARDS_MAX * 100) / (100 + fecPercentage);
-
-      // Compute the number of FEC blocks needed for this frame using the block size and max shards
-      auto max_data_per_fec_block = max_data_shards_per_fec_block * blocksize;
-      auto fec_blocks_needed = (payload.size() + (max_data_per_fec_block - 1)) / max_data_per_fec_block;
-
-      // If the number of FEC blocks needed exceeds the protocol limit, turn off FEC for this frame.
-      // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
-      if (fec_blocks_needed > MAX_FEC_BLOCKS) {
-        BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
-        session->stream_quality_large_frame_fec_skipped.fetch_add(1, std::memory_order_relaxed);
-        fecPercentage = 0;
-        fec_blocks_needed = MAX_FEC_BLOCKS;
+      AlkGamestreamVideoPayloadLayout payload_layout;
+      if (!alk_gamestream_video_payload_layout_build(payload.size(),
+                                                     sizeof(frame_header),
+                                                     session->config.packetsize,
+                                                     &payload_layout)) {
+        BOOST_LOG(error) << "Alkaid GameStream video RTP payload layout failed"sv;
+        continue;
       }
 
-      std::array<std::string_view, MAX_FEC_BLOCKS> fec_blocks;
-      decltype(fec_blocks)::iterator
-        fec_blocks_begin = std::begin(fec_blocks),
-        fec_blocks_end = std::begin(fec_blocks) + fec_blocks_needed;
+      std::vector<uint8_t> payload_new(payload_layout.wire_payload_bytes);
+      size_t payload_new_bytes = 0;
+      if (!alk_gamestream_video_payload_build(payload_new.data(),
+                                              payload_new.size(),
+                                              &payload_new_bytes,
+                                              &frame_header,
+                                              sizeof(frame_header),
+                                              payload.data(),
+                                              payload.size(),
+                                              session->config.packetsize)) {
+        BOOST_LOG(error) << "Alkaid GameStream video RTP payload build failed"sv;
+        continue;
+      }
+
+      payload = std::string_view { (char *) payload_new.data(), payload_new_bytes };
+
+      AlkGamestreamVideoFrameWirePlan frame_wire_plan;
+      if (!alk_gamestream_video_frame_wire_plan_build(payload.size(),
+                                                      session->config.packetsize,
+                                                      static_cast<std::uint32_t>(fecPercentage),
+                                                      static_cast<std::uint32_t>(session->config.minRequiredFecPackets),
+                                                      &frame_wire_plan)) {
+        BOOST_LOG(error) << "Alkaid GameStream video RTP/FEC frame plan failed"sv;
+        continue;
+      }
+      if (frame_wire_plan.large_frame_fec_skipped) {
+        BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed more than "sv
+                           << ALK_GAMESTREAM_VIDEO_MAX_FEC_BLOCKS << " FEC blocks)"sv;
+        session->stream_quality_large_frame_fec_skipped.fetch_add(1, std::memory_order_relaxed);
+      }
+      fecPercentage = static_cast<int>(frame_wire_plan.fec_percentage);
+      const auto blocksize = static_cast<size_t>(frame_wire_plan.block_bytes);
+      const auto fec_blocks_needed = static_cast<size_t>(frame_wire_plan.fec_block_count);
+
+      std::array<std::string_view, ALK_GAMESTREAM_VIDEO_MAX_FEC_BLOCKS> fec_blocks;
+      auto fec_blocks_begin = std::begin(fec_blocks);
+      auto fec_blocks_end = std::begin(fec_blocks) + fec_blocks_needed;
 
       BOOST_LOG(verbose) << "Generating "sv << fec_blocks_needed << " FEC blocks"sv;
       const bool packet_started_without_timestamp = !packet->frame_timestamp;
       std::uint64_t frame_sent_shards = 0;
       std::uint64_t frame_sent_bytes = 0;
 
-      // Align individual FEC blocks to blocksize
-      auto unaligned_size = payload.size() / fec_blocks_needed;
-      auto aligned_size = ((unaligned_size + (blocksize - 1)) / blocksize) * blocksize;
-
-      // If we exceed the 10-bit FEC packet index (which means our frame exceeded 4096 packets),
-      // the frame will be unrecoverable. Log an error for this case.
-      if (aligned_size / blocksize >= 1024) {
-        BOOST_LOG(error) << "Encoder produced a frame too large to send! Is the encoder broken? (needed "sv << (aligned_size / blocksize) << " packets)"sv;
+      if (frame_wire_plan.aligned_fec_block_bytes / blocksize >= 1024) {
+        BOOST_LOG(error) << "Encoder produced a frame too large to send! Is the encoder broken? (needed "sv
+                         << (frame_wire_plan.aligned_fec_block_bytes / blocksize) << " packets)"sv;
       }
 
-      // Split the data into aligned FEC blocks
-      for (int x = 0; x < fec_blocks_needed; ++x) {
-        if (x == fec_blocks_needed - 1) {
-          // The last block must extend to the end of the payload
-          fec_blocks[x] = payload.substr(x * aligned_size);
-        }
-        else {
-          // Earlier blocks just extend to the next block offset
-          fec_blocks[x] = payload.substr(x * aligned_size, aligned_size);
-        }
+      for (size_t x = 0; x < fec_blocks_needed; ++x) {
+        fec_blocks[x] = payload.substr(frame_wire_plan.block_offsets[x], frame_wire_plan.block_lengths[x]);
       }
 
       try {
@@ -8885,42 +8604,55 @@ namespace stream {
 
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
-          auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
-
-          for (int x = 0; x < packets; ++x) {
-            auto *inspect = (video_packet_raw_t *) &current_payload[x * blocksize];
-
-            inspect->packet.frameIndex = packet->frame_index();
-            inspect->packet.streamPacketIndex = ((uint32_t) lowseq + x) << 8;
-
-            // Match multiFecFlags with Moonlight
-            inspect->packet.multiFecFlags = 0x10;
-            inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
-
-            inspect->packet.flags = FLAG_CONTAINS_PIC_DATA;
-            if (x == 0) {
-              inspect->packet.flags |= FLAG_SOF;
-            }
-            if (x == packets - 1) {
-              inspect->packet.flags |= FLAG_EOF;
-            }
+          if (!alk_gamestream_video_prepare_data_shard_headers(const_cast<char *>(current_payload.data()),
+                                                               current_payload.size(),
+                                                               static_cast<std::uint32_t>(blocksize),
+                                                               packet->frame_index(),
+                                                               static_cast<std::uint32_t>(lowseq),
+                                                               static_cast<std::uint32_t>(blockIndex),
+                                                               static_cast<std::uint32_t>(fec_blocks_needed))) {
+            BOOST_LOG(error) << "Alkaid GameStream video RTP pre-FEC header prepare failed"sv;
+            return;
           }
 
           frame_fec_latency_logger.first_point_now();
-          // If video encryption is enabled, we allocate space for the encryption header before each shard
-          auto shards = fec::encode(current_payload, blocksize, fecPercentage, session->config.minRequiredFecPackets,
-            session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
+          std::unique_ptr<AlkGamestreamVideoFecFrame, decltype(&alk_gamestream_video_fec_frame_destroy)> shards(
+            alk_gamestream_video_fec_frame_create(),
+            alk_gamestream_video_fec_frame_destroy);
+          if (!shards || !alk_gamestream_video_fec_encode(shards.get(),
+                                                          current_payload.data(),
+                                                          current_payload.size(),
+                                                          blocksize,
+                                                          fecPercentage,
+                                                          session->config.minRequiredFecPackets,
+                                                          session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0)) {
+            BOOST_LOG(error) << "Alkaid GameStream video RTP/FEC encode failed"sv;
+            return;
+          }
           frame_fec_latency_logger.second_point_now_and_log();
-          frame_sent_shards += shards.size();
-          frame_sent_bytes += static_cast<std::uint64_t>(shards.size()) *
-                              static_cast<std::uint64_t>(shards.blocksize + shards.prefixsize);
+          const auto shard_count = alk_gamestream_video_fec_frame_shard_count(shards.get());
+          const auto shard_block_bytes = alk_gamestream_video_fec_frame_block_bytes(shards.get());
+          const auto shard_prefix_bytes = alk_gamestream_video_fec_frame_prefix_bytes(shards.get());
+          const auto shard_percentage = alk_gamestream_video_fec_frame_percentage(shards.get());
+          frame_sent_shards += shard_count;
+          frame_sent_bytes += static_cast<std::uint64_t>(shard_count) *
+                              static_cast<std::uint64_t>(shard_block_bytes + shard_prefix_bytes);
+
+          std::vector<platf::buffer_descriptor_t> payload_buffers;
+          const auto payload_buffer_count = alk_gamestream_video_fec_frame_payload_buffer_count(shards.get());
+          payload_buffers.reserve(payload_buffer_count);
+          for (size_t buffer_index = 0; buffer_index < payload_buffer_count; ++buffer_index) {
+            payload_buffers.emplace_back(
+              static_cast<const char *>(alk_gamestream_video_fec_frame_payload_buffer_data(shards.get(), buffer_index)),
+              alk_gamestream_video_fec_frame_payload_buffer_bytes(shards.get(), buffer_index));
+          }
 
           auto peer_address = session->video.peer.address();
           auto batch_info = platf::batched_send_info_t {
-            shards.headers.begin(),
-            shards.prefixsize,
-            shards.payload_buffers,
-            shards.blocksize,
+            static_cast<const char *>(alk_gamestream_video_fec_frame_prefix_data(shards.get(), 0)),
+            shard_prefix_bytes,
+            payload_buffers,
+            shard_block_bytes,
             0,
             0,
             (uintptr_t) sock.native_handle(),
@@ -8942,20 +8674,23 @@ namespace stream {
           uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - video_epoch).count();
 
           // set FEC info now that we know for sure what our percentage will be for this frame
-          for (auto x = 0; x < shards.size(); ++x) {
-            auto *inspect = (video_packet_raw_t *) shards.data(x);
+          for (size_t x = 0; x < shard_count; ++x) {
+            auto *inspect = (video_packet_raw_t *) alk_gamestream_video_fec_frame_shard_data(shards.get(), x);
 
-            inspect->packet.fecInfo =
-              (x << 12 |
-                shards.data_shards << 22 |
-                shards.percentage << 4);
-
-            inspect->rtp.header = 0x80 | FLAG_EXTENSION;
-            inspect->rtp.sequenceNumber = util::endian::big<uint16_t>(lowseq + x);
-            inspect->rtp.timestamp = util::endian::big<uint32_t>(timestamp);
-
-            inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
-            inspect->packet.frameIndex = packet->frame_index();
+            AlkGamestreamVideoShardWireParams shard_wire;
+            alk_gamestream_video_shard_wire_params_init(&shard_wire);
+            shard_wire.frame_index = packet->frame_index();
+            shard_wire.stream_packet_index = static_cast<std::uint32_t>(lowseq + x);
+            shard_wire.rtp_sequence_number = static_cast<std::uint32_t>(lowseq + x);
+            shard_wire.rtp_timestamp = timestamp;
+            shard_wire.block_index = static_cast<std::uint32_t>(blockIndex);
+            shard_wire.block_count = static_cast<std::uint32_t>(fec_blocks_needed);
+            shard_wire.shard_index = static_cast<std::uint32_t>(x);
+            shard_wire.data_shards = static_cast<std::uint32_t>(alk_gamestream_video_fec_frame_data_shards(shards.get()));
+            shard_wire.fec_percentage = static_cast<std::uint32_t>(shard_percentage);
+            shard_wire.frame_start = x == 0;
+            shard_wire.frame_end = x + 1 == shard_count;
+            alk_gamestream_video_packet_raw_prepare(inspect, &shard_wire);
 
             // Encrypt this shard if video encryption is enabled
             if (session->video.cipher) {
@@ -8972,7 +8707,7 @@ namespace stream {
               session->video.gcm_iv_counter++;
 
               // Encrypt the target buffer in place
-              auto *prefix = (video_packet_enc_prefix_t *) shards.prefix(x);
+              auto *prefix = (video_packet_enc_prefix_t *) alk_gamestream_video_fec_frame_prefix_data(shards.get(), x);
               prefix->frameNumber = packet->frame_index();
               std::copy(std::begin(iv), std::end(iv), prefix->iv);
               session->video.cipher->encrypt(std::string_view { (char *) inspect, (size_t) blocksize },
@@ -8980,7 +8715,7 @@ namespace stream {
             }
 
             if (x - next_shard_to_send + 1 >= send_batch_size ||
-                x + 1 == shards.size()) {
+                x + 1 == shard_count) {
               auto due = ratecontrol_frame_start + ratecontrol_packet_interval * ratecontrol_frame_packets_sent;
               auto now = std::chrono::steady_clock::now();
               if (now < due) {
@@ -8988,28 +8723,33 @@ namespace stream {
               }
 
               size_t current_batch_size = x - next_shard_to_send + 1;
-              batch_info.block_offset = next_shard_to_send;
-              batch_info.block_count = current_batch_size;
-
               frame_send_batch_latency_logger.first_point_now();
-              // Use a batched send if it's supported on this platform
-              if (!platf::send_batch(batch_info)) {
-                // Batched send is not available, so send each packet individually
-                BOOST_LOG(verbose) << "Falling back to unbatched send"sv;
-                for (auto y = 0; y < current_batch_size; y++) {
-                  auto send_info = platf::send_info_t {
-                    shards.prefix(next_shard_to_send + y),
-                    shards.prefixsize,
-                    shards.data(next_shard_to_send + y),
-                    shards.blocksize,
+              const auto send_result = alk_sunshine_gamestream_media_udp_send_batch_or_each(
+                ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
+                batch_info,
+                next_shard_to_send,
+                current_batch_size,
+                [](platf::batched_send_info_t &info) {
+                  return alk_sunshine_gamestream_media_udp_product_send_batch(info);
+                },
+                [&](std::size_t shard_index) {
+                  return alk_sunshine_gamestream_media_udp_product_send_fragments(
+                    static_cast<const char *>(alk_gamestream_video_fec_frame_prefix_data(shards.get(), shard_index)),
+                    shard_prefix_bytes,
+                    static_cast<const char *>(alk_gamestream_video_fec_frame_shard_data(shards.get(), shard_index)),
+                    shard_block_bytes,
                     (uintptr_t) sock.native_handle(),
                     peer_address,
                     session->video.peer.port(),
-                    session->localAddress,
-                  };
-
-                  platf::send(send_info);
-                }
+                    session->localAddress);
+                });
+              if (send_result.fallback_used) {
+                BOOST_LOG(verbose) << "Falling back to unbatched send"sv;
+              }
+              if (!send_result.success) {
+                BOOST_LOG(warning) << "Video media UDP adapter send failed after "
+                                   << send_result.sent_datagrams << "/"sv << send_result.attempted_datagrams
+                                   << " datagrams"sv;
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
 
@@ -9025,13 +8765,13 @@ namespace stream {
           frame_network_latency_logger.second_point_now_and_log();
 
           BOOST_LOG(verbose) << "Sent Frame seq ["sv << packet->frame_index() << "] pts ["sv << timestamp
-                             << "] shards ["sv << shards.size() << "/"sv << shards.percentage << "%]"sv
+                             << "] shards ["sv << shard_count << "/"sv << shard_percentage << "%]"sv
                              << (frame_is_dupe ? " Dupe" : "")
                              << (packet->is_idr() ? " Key" : "")
                              << (packet->after_ref_frame_invalidation ? " RFI" : "");
 
           ++blockIndex;
-          lowseq += shards.size();
+          lowseq += shard_count;
         });
 
         session->video.lowseq = lowseq;
@@ -9084,20 +8824,24 @@ namespace stream {
     auto packets = mail::man->queue<audio::packet_t>(mail::audio_packets);
 
     audio_packet_t audio_packet;
-    fec::rs_t rs { reed_solomon_new(RTPA_DATA_SHARDS, RTPA_FEC_SHARDS) };
+    AlkMediaRsFecCodec *audio_fec_codec = alk_gamestream_rs_fec_codec_create();
+    AlkMediaRsFecConfig audio_fec_config;
+    alk_media_rs_fec_config_init(&audio_fec_config);
+    audio_fec_config.data_shards = ALK_GAMESTREAM_AUDIO_DATA_SHARDS;
+    audio_fec_config.fec_shards = ALK_GAMESTREAM_AUDIO_FEC_SHARDS;
+    audio_fec_config.shard_bytes = crypto::cipher::round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE);
+    audio_fec_config.flags = ALK_MEDIA_RS_FEC_FLAG_GAMESTREAM_AUDIO_PARITY;
+    if (audio_fec_codec == nullptr || !alk_media_rs_fec_codec_init(audio_fec_codec, &audio_fec_config)) {
+      BOOST_LOG(error) << "Failed to initialize Alkaid GameStream audio RS-FEC codec"sv;
+      if (audio_fec_codec != nullptr) {
+        alk_media_rs_fec_codec_destroy(audio_fec_codec);
+      }
+      shutdown_event->raise(true);
+      return;
+    }
     crypto::aes_t iv(16);
 
-    // For unknown reasons, the RS parity matrix computed by our RS implementation
-    // doesn't match the one Nvidia uses for audio data. I'm not exactly sure why,
-    // but we can simply replace it with the matrix generated by OpenFEC which
-    // works correctly. This is possible because the data and FEC shard count is
-    // constant and known in advance.
-    const unsigned char parity[] = { 0x77, 0x40, 0x38, 0x0e, 0xc7, 0xa7, 0x0d, 0x6c };
-    memcpy(rs.get()->p, parity, sizeof(parity));
-
-    audio_packet.rtp.header = 0x80;
-    audio_packet.rtp.packetType = 97;
-    audio_packet.rtp.ssrc = 0;
+    // Audio RTP/FEC wire header preparation is owned by media.packetization/gamestream-rtp-fec.
 
     // Audio traffic is sent on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
@@ -9137,7 +8881,7 @@ namespace stream {
       }
       
       auto bytes = encode_audio(audio_encryption_enabled, packet_data,
-        shards_p[sequenceNumber % RTPA_DATA_SHARDS], iv, session->audio.cipher);
+        shards_p[sequenceNumber % ALK_GAMESTREAM_AUDIO_DATA_SHARDS], iv, session->audio.cipher);
       
       if (sequenceNumber == 0) {
         // 验证加密是否真的执行了
@@ -9160,61 +8904,97 @@ namespace stream {
 
       BOOST_LOG(verbose) << "Audio [seq "sv << sequenceNumber << ", pts "sv << timestamp << "] ::  send..."sv;
 
-      audio_packet.rtp.sequenceNumber = util::endian::big(sequenceNumber);
-      audio_packet.rtp.timestamp = util::endian::big(timestamp);
+      if (!alk_gamestream_audio_packet_prepare(&audio_packet, sequenceNumber, timestamp, 0)) {
+        BOOST_LOG(error) << "Alkaid GameStream audio RTP header prepare failed"sv;
+        break;
+      }
 
       session->audio.sequenceNumber++;
       session->audio.timestamp += session->config.audio.packetDuration;
 
       auto peer_address = session->audio.peer.address();
       try {
-        auto send_info = platf::send_info_t {
-          (const char *) &audio_packet,
-          sizeof(audio_packet),
-          (const char *) shards_p[sequenceNumber % RTPA_DATA_SHARDS],
-          (size_t) bytes,
-          (uintptr_t) sock.native_handle(),
-          peer_address,
-          session->audio.peer.port(),
-          session->localAddress,
-        };
-        platf::send(send_info);
-        record_network_transport_channel_datagram(session,
-                                                  ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
-                                                  sizeof(audio_packet) + static_cast<std::size_t>(bytes),
-                                                  true);
-
-        auto &fec_packet = session->audio.fec_packet;
-        // initialize the FEC header at the beginning of the FEC block
-        if (sequenceNumber % RTPA_DATA_SHARDS == 0) {
-          fec_packet.fecHeader.baseSequenceNumber = util::endian::big(sequenceNumber);
-          fec_packet.fecHeader.baseTimestamp = util::endian::big(timestamp);
-        }
-
-        // generate parity shards at the end of the FEC block
-        if ((sequenceNumber + 1) % RTPA_DATA_SHARDS == 0) {
-          reed_solomon_encode(rs.get(), shards_p.begin(), RTPA_TOTAL_SHARDS, bytes);
-
-          for (auto x = 0; x < RTPA_FEC_SHARDS; ++x) {
-            fec_packet.rtp.sequenceNumber = util::endian::big<std::uint16_t>(sequenceNumber + x + 1);
-            fec_packet.fecHeader.fecShardIndex = x;
-
-            auto send_info = platf::send_info_t {
-              (const char *) &fec_packet,
-              sizeof(fec_packet),
-              (const char *) shards_p[RTPA_DATA_SHARDS + x],
+        const auto audio_send_result = alk_sunshine_gamestream_media_udp_send_one(
+          ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+          [&]() {
+            return alk_sunshine_gamestream_media_udp_product_send_fragments(
+              (const char *) &audio_packet,
+              sizeof(audio_packet),
+              (const char *) shards_p[sequenceNumber % ALK_GAMESTREAM_AUDIO_DATA_SHARDS],
               (size_t) bytes,
               (uintptr_t) sock.native_handle(),
               peer_address,
               session->audio.peer.port(),
-              session->localAddress,
-            };
-            platf::send(send_info);
+              session->localAddress);
+          });
+        if (!audio_send_result.success) {
+          BOOST_LOG(warning) << "Audio media UDP adapter send failed";
+        }
+        record_network_transport_channel_datagram(session,
+                                                  ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+                                                  sizeof(audio_packet) + static_cast<std::size_t>(bytes),
+                                                  audio_send_result.success);
+
+        auto &fec_packet = session->audio.fec_packet;
+
+        // generate parity shards at the end of the FEC block
+        if ((sequenceNumber + 1) % ALK_GAMESTREAM_AUDIO_DATA_SHARDS == 0) {
+          std::array<AlkMediaRsFecShard, ALK_GAMESTREAM_AUDIO_DATA_SHARDS> data_shards {};
+          std::array<AlkMediaRsFecShard, ALK_GAMESTREAM_AUDIO_FEC_SHARDS> fec_shards {};
+          for (auto i = 0; i < ALK_GAMESTREAM_AUDIO_DATA_SHARDS; ++i) {
+            alk_media_rs_fec_shard_init(&data_shards[i]);
+            data_shards[i].index = i;
+            data_shards[i].flags = ALK_MEDIA_RS_FEC_SHARD_FLAG_DATA | ALK_MEDIA_RS_FEC_SHARD_FLAG_PRESENT;
+            data_shards[i].payload = shards_p[i];
+            data_shards[i].payload_length = bytes;
+            data_shards[i].payload_capacity = audio_fec_config.shard_bytes;
+          }
+          for (auto i = 0; i < ALK_GAMESTREAM_AUDIO_FEC_SHARDS; ++i) {
+            alk_media_rs_fec_shard_init(&fec_shards[i]);
+            fec_shards[i].index = i;
+            fec_shards[i].payload = shards_p[ALK_GAMESTREAM_AUDIO_DATA_SHARDS + i];
+            fec_shards[i].payload_capacity = audio_fec_config.shard_bytes;
+          }
+          if (!alk_media_rs_fec_encode(audio_fec_codec, data_shards.data(), fec_shards.data())) {
+            BOOST_LOG(error) << "Alkaid GameStream audio RS-FEC encode failed"sv;
+            break;
+          }
+
+          for (auto x = 0; x < ALK_GAMESTREAM_AUDIO_FEC_SHARDS; ++x) {
+            const auto block_base_sequence = static_cast<std::uint16_t>(sequenceNumber & ~(ALK_GAMESTREAM_AUDIO_DATA_SHARDS - 1));
+            const auto block_base_timestamp = static_cast<std::uint32_t>(
+              timestamp - (sequenceNumber % ALK_GAMESTREAM_AUDIO_DATA_SHARDS) * session->config.audio.packetDuration);
+            if (!alk_gamestream_audio_fec_packet_prepare(&fec_packet,
+                                                         static_cast<std::uint16_t>(sequenceNumber + x + 1),
+                                                         static_cast<std::uint8_t>(x),
+                                                         block_base_sequence,
+                                                         block_base_timestamp,
+                                                         0)) {
+              BOOST_LOG(error) << "Alkaid GameStream audio FEC RTP header prepare failed"sv;
+              break;
+            }
+
+            const auto audio_fec_send_result = alk_sunshine_gamestream_media_udp_send_one(
+              ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+              [&]() {
+                return alk_sunshine_gamestream_media_udp_product_send_fragments(
+                  (const char *) &fec_packet,
+                  sizeof(fec_packet),
+                  (const char *) shards_p[ALK_GAMESTREAM_AUDIO_DATA_SHARDS + x],
+                  (size_t) bytes,
+                  (uintptr_t) sock.native_handle(),
+                  peer_address,
+                  session->audio.peer.port(),
+                  session->localAddress);
+              });
+            if (!audio_fec_send_result.success) {
+              BOOST_LOG(warning) << "Audio FEC media UDP adapter send failed";
+            }
             record_network_transport_channel_datagram(session,
                                                       ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
                                                       sizeof(fec_packet) + static_cast<std::size_t>(bytes),
-                                                      true);
-            BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
+                                                      audio_fec_send_result.success);
+            BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(ALK_GAMESTREAM_AUDIO_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
       }
@@ -9224,6 +9004,9 @@ namespace stream {
       }
     }
 
+    if (audio_fec_codec != nullptr) {
+      alk_media_rs_fec_codec_destroy(audio_fec_codec);
+    }
     shutdown_event->raise(true);
   }
 
@@ -9555,11 +9338,8 @@ namespace stream {
 
     static std::string
     session_peer_address(const session_t &session) {
-      if (session.control.peer) {
-        try {
-          return platf::from_sockaddr((sockaddr *) &session.control.peer->address.address);
-        }
-        catch (...) {}
+      if (session.control.transport_peer_id != 0) {
+        return "native-peer:" + std::to_string(session.control.transport_peer_id);
       }
       return session.control.expected_peer_address;
     }
@@ -10026,11 +9806,70 @@ namespace stream {
       }
       session->identity.control_connect_data = launch_session.control_connect_data;
       session->identity.av_ping_payload = launch_session.av_ping_payload;
+      alk_transport_monitor_init(&session->transport_monitor);
+      alk_transport_monitor_history_init(&session->transport_history);
+      alk_transport_monitor_tuning_snapshot_init(&session->transport_tuning);
+      alk_frame_interest_observation_init(&session->frame_interest_observation);
       session->startup_path_evidence = startup_path_evidence_for_launch_session(launch_session);
       session->startup_path_decision = session_runtime::classify_startup_path(session->startup_path_evidence);
       session->active_transport_path = session_runtime::make_transport_path(session->startup_path_decision,
                                                                             session->startup_path_evidence);
       session->active_transport_path.state = session_runtime::transport_path_state_e::active;
+      alk_handshake_selection_init(&session->handshake_selection);
+      {
+        AlkHandshakeOpenParams handshake_params;
+        AlkHandshakeTransportCandidate transport_candidate;
+        alk_handshake_open_params_init(&handshake_params);
+        alk_handshake_transport_candidate_init(&transport_candidate);
+        handshake_params.local_identity.role = ALK_SESSION_ROLE_HOST;
+        handshake_params.peer_identity.role = ALK_SESSION_ROLE_CLIENT;
+        handshake_params.local_identity.supported_handshake_modules =
+          alk_sunshine_gamestream_handshake_supported_modules(true);
+        handshake_params.peer_identity.supported_handshake_modules =
+          alk_sunshine_gamestream_handshake_supported_modules(false);
+        handshake_params.media_profile.width = static_cast<std::uint32_t>(std::max(config.monitor.width, 0));
+        handshake_params.media_profile.height = static_cast<std::uint32_t>(std::max(config.monitor.height, 0));
+        handshake_params.media_profile.fps = static_cast<std::uint32_t>(std::max(config.monitor.framerate, 0));
+        alk_session_copy_string(handshake_params.media_profile.packetization_module_id,
+                                sizeof(handshake_params.media_profile.packetization_module_id),
+                                ALK_HANDSHAKE_DEFAULT_PACKETIZATION_MODULE_ID);
+        alk_session_copy_string(handshake_params.media_profile.redundancy_module_id,
+                                sizeof(handshake_params.media_profile.redundancy_module_id),
+                                ALK_HANDSHAKE_DEFAULT_REDUNDANCY_MODULE_ID);
+        handshake_params.launch_context.launch_session_id = launch_session.id;
+        handshake_params.legacy_rtsp.connect_data = launch_session.control_connect_data;
+        handshake_params.legacy_rtsp.control_port = net::map_port(CONTROL_PORT);
+        handshake_params.legacy_rtsp.video_port = net::map_port(VIDEO_STREAM_PORT);
+        handshake_params.legacy_rtsp.audio_port = net::map_port(AUDIO_STREAM_PORT);
+        transport_candidate.priority = 100;
+        transport_candidate.channel_mask = ALK_GAMESTREAM_ENET_CHANNEL_MASK_CONTROL |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_VIDEO |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_AUDIO |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_DATA |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_INPUT |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_MICROPHONE |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_CLIPBOARD |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_RESCUE |
+                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_DIAGNOSTICS;
+        transport_candidate.control_port = net::map_port(CONTROL_PORT);
+        transport_candidate.video_port = net::map_port(VIDEO_STREAM_PORT);
+        transport_candidate.audio_port = net::map_port(AUDIO_STREAM_PORT);
+        transport_candidate.connect_data = launch_session.control_connect_data;
+        alk_session_copy_string(transport_candidate.transport_module_id,
+                                sizeof(transport_candidate.transport_module_id),
+                                ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID);
+        alk_session_copy_string(transport_candidate.transport_module_version,
+                                sizeof(transport_candidate.transport_module_version),
+                                ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_VERSION);
+        copy_transport_path_to_alk(session->active_transport_path, transport_candidate.path);
+        if (!launch_session.rtsp_route_host.empty()) {
+          alk_session_copy_string(transport_candidate.path.remote_endpoint,
+                                  sizeof(transport_candidate.path.remote_endpoint),
+                                  launch_session.rtsp_route_host.c_str());
+        }
+        alk_handshake_open_params_add_transport_candidate(&handshake_params, &transport_candidate);
+        alk_sunshine_gamestream_handshake_select(&handshake_params, true, &session->handshake_selection);
+      }
       log_startup_path_decision(session->identity.runtime_id,
                                 "launch",
                                 session->startup_path_evidence,
@@ -10111,6 +9950,7 @@ namespace stream {
                       << " module=" << ALK_GAMESTREAM_ENET_TRANSPORT_MODULE_ID
                       << " phase=" << transport_phase_name(session.get())
                       << " compat=" << transport_compatibility_mode_name(session.get())
+                      << " fallbackReason=" << transport_fallback_reason_name(session.get())
                       << " adapter=" << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID
                       << " observer=" << (session->control.transport_observer ? 1 : 0)
                       << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
@@ -10118,6 +9958,15 @@ namespace stream {
                       << " legacyFallback=" << (session->control.transport_legacy_fallback ? 1 : 0)
                       << " mediaObserve=" << (ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED ? 1 : 0)
                       << " runtime=" << session->identity.runtime_id;
+      BOOST_LOG(info) << "Alkaid handshake selection runtime=" << session->identity.runtime_id
+                      << " slot=" << ALK_HANDSHAKE_SLOT_ID
+                      << " module=" << session->handshake_selection.selected_handshake_module_id
+                      << " transport=" << session->handshake_selection.selected_transport_module_id
+                      << " packetization=" << session->handshake_selection.selected_packetization_module_id
+                      << " redundancy=" << session->handshake_selection.selected_redundancy_module_id
+                      << " fallback="
+                      << alk_handshake_fallback_code_name(session->handshake_selection.fallback_reason.code)
+                      << " status=" << session->handshake_selection.status;
       zako_input_runtime_init(&session->zako_input_runtime);
       const auto app_id = launch_session.appid == 0 ? std::string {} : std::to_string(launch_session.appid);
       std::string app_name;
@@ -10369,10 +10218,10 @@ namespace stream {
       // failures even when the encoder reported success.
       constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE);
 
-      util::buffer_t<char> shards { RTPA_TOTAL_SHARDS * max_block_size };
-      util::buffer_t<uint8_t *> shards_p { RTPA_TOTAL_SHARDS };
+      util::buffer_t<char> shards { ALK_GAMESTREAM_AUDIO_TOTAL_SHARDS * max_block_size };
+      util::buffer_t<uint8_t *> shards_p { ALK_GAMESTREAM_AUDIO_TOTAL_SHARDS };
 
-      for (auto x = 0; x < RTPA_TOTAL_SHARDS; ++x) {
+      for (auto x = 0; x < ALK_GAMESTREAM_AUDIO_TOTAL_SHARDS; ++x) {
         shards_p[x] = (uint8_t *) &shards[x * max_block_size];
       }
 
@@ -10381,13 +10230,7 @@ namespace stream {
       session->audio.shards = std::move(shards);
       session->audio.shards_p = std::move(shards_p);
 
-      session->audio.fec_packet.rtp.header = 0x80;
-      session->audio.fec_packet.rtp.packetType = 127;
-      session->audio.fec_packet.rtp.timestamp = 0;
-      session->audio.fec_packet.rtp.ssrc = 0;
-
-      session->audio.fec_packet.fecHeader.payloadType = 97;
-      session->audio.fec_packet.fecHeader.ssrc = 0;
+      std::memset(&session->audio.fec_packet, 0, sizeof(session->audio.fec_packet));
 
       session->audio.cipher = crypto::cipher::cbc_t {
         launch_session.gcm_key, true
@@ -10533,18 +10376,7 @@ namespace stream {
           info.session_id = li_session.launchSessionId;
           info.trusted_client_identity = session_p->identity.has_trusted_client_identity();
 
-          // Get client address
-          if (session_p->control.peer) {
-            try {
-              info.client_address = platf::from_sockaddr((sockaddr *) &session_p->control.peer->address.address);
-            }
-            catch (...) {
-              info.client_address = session_p->control.expected_peer_address;
-            }
-          }
-          else {
-            info.client_address = session_p->control.expected_peer_address;
-          }
+          info.client_address = control_peer_label(session_p);
 
           // Get session state
           switch (state) {

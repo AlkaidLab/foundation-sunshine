@@ -9,14 +9,9 @@
 
 #include <boost/asio.hpp>
 
-#include <enet/enet.h>
-
 #include "utility.h"
 
 namespace net {
-  void
-  free_host(ENetHost *host);
-
   /**
    * @brief Map a specified port based on the base port.
    * @param port The port to map as a difference from the base port.
@@ -29,9 +24,7 @@ namespace net {
   std::uint16_t
   map_port(int port);
 
-  using host_t = util::safe_ptr<ENetHost, free_host>;
-  using peer_t = ENetPeer *;
-  using packet_t = util::safe_ptr<ENetPacket, enet_packet_destroy>;
+  using peer_t = void *;
 
   enum net_e : int {
     PC,  ///< PC
@@ -51,9 +44,6 @@ namespace net {
 
   net_e
   from_address(const std::string_view &view);
-
-  host_t
-  host_create(af_e af, ENetAddress &addr, std::uint16_t port);
 
   /**
    * @brief Get the address family enum value from a string.

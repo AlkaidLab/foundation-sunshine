@@ -515,7 +515,7 @@ namespace session_runtime {
   };
 
   enum class transport_protocol_e : std::uint8_t {
-    enet_udp,
+    provider_datagram,
     udp,
     quic,
     tcp_tls,
@@ -549,7 +549,7 @@ namespace session_runtime {
   struct transport_path_t {
     std::uint64_t path_id {};
     transport_route_e route { transport_route_e::lan_direct };
-    transport_protocol_e protocol { transport_protocol_e::enet_udp };
+    transport_protocol_e protocol { transport_protocol_e::provider_datagram };
     transport_path_state_e state { transport_path_state_e::candidate };
     transport_path_score_t score;
     feature_caps_t required_caps;
@@ -631,11 +631,11 @@ namespace session_runtime {
       case transport_route_e::lan_direct:
       case transport_route_e::manual_public_port_forward:
       case transport_route_e::upnp_public_mapping:
-        return transport_protocol_e::enet_udp;
+        return transport_protocol_e::provider_datagram;
       case transport_route_e::ice_stun_p2p:
         return transport_protocol_e::udp;
     }
-    return transport_protocol_e::enet_udp;
+    return transport_protocol_e::provider_datagram;
   }
 
   inline feature_caps_t
@@ -676,7 +676,7 @@ namespace session_runtime {
   }
 
   inline transport_path_t
-  make_enet_direct_transport_path() {
+  make_provider_datagram_direct_transport_path() {
     return make_transport_path(transport_route_e::lan_direct);
   }
 
@@ -1180,7 +1180,7 @@ namespace session_runtime {
       evidence.rtsp_route_host;
     path.observed_endpoint = evidence.host_observed_peer_endpoint;
     path.host_local_endpoint = evidence.host_observed_local_endpoint;
-    path.provider_id = "enet-primary";
+    path.provider_id = "gamestream-enet";
     return path;
   }
 
@@ -1204,7 +1204,7 @@ namespace session_runtime {
   inline std::uint32_t
   li_transport_protocol(transport_protocol_e protocol) {
     switch (protocol) {
-      case transport_protocol_e::enet_udp:
+      case transport_protocol_e::provider_datagram:
         return LI_SESSION_TRANSPORT_PROTOCOL_ENET_UDP;
       case transport_protocol_e::udp:
         return LI_SESSION_TRANSPORT_PROTOCOL_UDP;
@@ -1229,7 +1229,7 @@ namespace session_runtime {
                LI_SESSION_TRANSPORT_FLAG_PACED;
     }
     if (path.protocol == transport_protocol_e::quic ||
-        path.protocol == transport_protocol_e::enet_udp ||
+        path.protocol == transport_protocol_e::provider_datagram ||
         path.protocol == transport_protocol_e::udp) {
       flags |= LI_SESSION_TRANSPORT_FLAG_DATAGRAM;
     }
@@ -1247,7 +1247,7 @@ namespace session_runtime {
     std::uint32_t flags = 0;
 
     switch (path.protocol) {
-      case transport_protocol_e::enet_udp:
+      case transport_protocol_e::provider_datagram:
         flags |= LI_SESSION_TRANSPORT_STACK_ENET |
                  LI_SESSION_TRANSPORT_STACK_UDP |
                  LI_SESSION_TRANSPORT_STACK_RTP |
