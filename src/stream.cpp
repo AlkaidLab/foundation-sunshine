@@ -131,10 +131,6 @@ static constexpr std::uint32_t STREAM_QUALITY_HOST_MOTION_SOURCE_ENCODED_SIZE = 
   #define ALKAID_TRANSPORT_NATIVE_PRIMARY_ENABLED 1
 #endif
 
-#ifndef ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
-  #define ALKAID_TRANSPORT_CARRIER_SEND_ENABLED 0
-#endif
-
 #ifndef ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED
   #define ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED 1
 #endif
@@ -580,7 +576,6 @@ namespace stream {
   send_control_datagram_via_transport_or_direct(session_t *session,
                                                 control_server_t *control_server,
                                                 const std::string_view &payload,
-                                                net::peer_t peer,
                                                 std::uint8_t channel,
                                                 std::uint32_t flags,
                                                 std::uint32_t transport_channel_kind_override = ALK_TRANSPORT_CHANNEL_UNKNOWN);
@@ -745,36 +740,6 @@ namespace stream {
     void
     map(uint16_t type, std::function<void(session_t *, const std::string_view &)> cb) {
       _map_type_cb.emplace(type, std::move(cb));
-    }
-
-	    int
-	    send_direct(const std::string_view &payload,
-	                net::peer_t peer,
-	                std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-	                std::uint32_t flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
-      (void)payload;
-      (void)peer;
-      (void)channel;
-      (void)flags;
-      return -1;
-	    }
-
-    int
-    send(const std::string_view &payload,
-         net::peer_t peer,
-         std::uint8_t channel = CTRL_CHANNEL_GENERIC,
-         std::uint32_t flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
-      if (auto *session = _registry.find_by_control_peer(peer)) {
-        return send_control_datagram_via_transport_or_direct(session,
-                                                             this,
-                                                             payload,
-                                                             peer,
-                                                             channel,
-                                                             flags,
-                                                             ALK_TRANSPORT_CHANNEL_UNKNOWN);
-      }
-
-      return send_direct(payload, peer, channel, flags);
     }
 
     void
@@ -959,9 +924,8 @@ namespace stream {
       AlkRuntime *transport_runtime { nullptr };
       AlkGamestreamEnetObserver *transport_observer { nullptr };
       AlkTransportRuntimeBinding transport_binding {};
-      std::uint32_t transport_compatibility_mode { ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_LEGACY_ENET };
+      std::uint32_t transport_compatibility_mode { ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_NATIVE_PRIMARY };
       bool transport_native_primary { false };
-      bool transport_legacy_fallback { true };
       std::uint64_t transport_peer_id { 0 };
       std::uint32_t transport_connect_data { 0 };
       std::uint32_t seq;
@@ -2127,9 +2091,6 @@ namespace stream {
 #if ALKAID_TRANSPORT_NATIVE_PRIMARY_ENABLED
     request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_NATIVE_PRIMARY |
                      ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
-#elif ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
-    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_CARRIER_ADAPTER |
-                     ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
 #endif
     return alk_sunshine_gamestream_enet_control_transport_compatibility_mode(&request);
   }
@@ -2137,18 +2098,6 @@ namespace stream {
   static bool
   transport_uses_native_primary(const session_t *session) {
     return session && alk_sunshine_gamestream_enet_control_should_use_native(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
-  }
-
-  static bool
-  transport_uses_carrier_adapter(const session_t *session) {
-    return session && alk_sunshine_gamestream_enet_control_should_use_carrier_adapter(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
-  }
-
-  static bool
-  transport_uses_legacy_fallback(const session_t *session) {
-    return !session || alk_sunshine_gamestream_enet_control_should_use_legacy_fallback(
       static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
@@ -3891,7 +3840,6 @@ namespace stream {
     return send_control_datagram_via_transport_or_direct(session,
                                                          this,
                                                          payload,
-                                                         session->control.peer,
                                                          channel,
                                                          flags,
                                                          transport_channel_kind_override);
@@ -3901,7 +3849,6 @@ namespace stream {
   send_control_datagram_via_transport_or_direct(session_t *session,
                                                 control_server_t *control_server,
                                                 const std::string_view &payload,
-                                                net::peer_t peer,
                                                 std::uint8_t channel,
                                                 std::uint32_t flags,
                                                 std::uint32_t transport_channel_kind_override) {
@@ -3933,39 +3880,12 @@ namespace stream {
       return -1;
     }
 
-#if ALKAID_TRANSPORT_CARRIER_SEND_ENABLED
-    if (alk_transport_runtime_send(&session->control.transport_binding, &datagram)) {
-      return 0;
-    }
-    BOOST_LOG(warning) << "Alkaid transport carrier send failed without implicit legacy fallback"
+    BOOST_LOG(warning) << "Alkaid transport send blocked: adapter did not select native primary"
                        << " runtime=" << session->identity.runtime_id
+                       << " compat=" << transport_compatibility_mode_name(session)
+                       << " fallbackReason=" << transport_fallback_reason_name(session)
                        << " channel=" << static_cast<int>(channel)
                        << " bytes=" << payload.size();
-    return -1;
-#endif
-
-    if (!transport_uses_legacy_fallback(session)) {
-      BOOST_LOG(warning) << "Alkaid transport send blocked: no native/carrier route and adapter did not select legacy fallback"
-                         << " runtime=" << session->identity.runtime_id
-                         << " compat=" << transport_compatibility_mode_name(session)
-                         << " channel=" << static_cast<int>(channel)
-                         << " bytes=" << payload.size();
-      return -1;
-    }
-
-    if (control_server->send_direct(payload, peer, channel, flags) == 0) {
-      if (transport_channel_kind_override != ALK_TRANSPORT_CHANNEL_UNKNOWN) {
-        record_network_transport_channel_datagrams(session,
-                                                   transport_channel_kind_override,
-                                                   payload.size(),
-                                                   1,
-                                                   true);
-      }
-      else {
-        record_network_transport_datagram(session, channel, flags, payload.size(), true);
-      }
-      return 0;
-    }
     return -1;
   }
 
@@ -4008,55 +3928,6 @@ namespace stream {
     observe_transport_channel_snapshot(session, channel_kind);
   }
 
-  static bool
-  transport_carrier_open(void *user_data, const AlkTransportOpenParams *params) {
-    auto *session = static_cast<session_t *>(user_data);
-    (void) params;
-    return session &&
-           session->broadcast_ref &&
-           session->control.peer;
-  }
-
-  static bool
-  transport_carrier_send(void *user_data, const AlkTransportDatagram *datagram) {
-    auto *session = static_cast<session_t *>(user_data);
-    if (!session || !datagram || !datagram->payload || datagram->payload_length == 0 ||
-        !session->broadcast_ref || !session->control.peer) {
-      return false;
-    }
-
-    const auto flags = datagram->flags & ~ALK_TRANSPORT_DATAGRAM_FLAG_MORE_DATA;
-    auto channel = static_cast<std::uint8_t>(datagram->carrier_channel_id);
-    const std::string_view payload {
-      static_cast<const char *>(datagram->payload),
-      datagram->payload_length,
-    };
-    return session->broadcast_ref->control_server.send_direct(payload,
-                                                              session->control.peer,
-                                                              channel,
-                                                              flags) == 0;
-  }
-
-  static bool
-  transport_carrier_service(void *user_data, const AlkTransportDatagram *datagram) {
-    auto *session = static_cast<session_t *>(user_data);
-    (void) datagram;
-    if (!session || !session->broadcast_ref) {
-      return false;
-    }
-    session->broadcast_ref->control_server.flush();
-    return true;
-  }
-
-  static void
-  transport_carrier_close(void *user_data) {
-    auto *session = static_cast<session_t *>(user_data);
-    if (!session || !session->broadcast_ref) {
-      return;
-    }
-    session->broadcast_ref->control_server.flush();
-  }
-
   static void
   open_network_transport_observer(session_t *session, net::peer_t peer) {
     if (!session || !session->control.transport_observer) {
@@ -4064,20 +3935,11 @@ namespace stream {
     }
 
     AlkTransportOpenParams params;
-    alk_transport_open_params_init(&params);
-    params.role = ALK_SESSION_ROLE_HOST;
-    params.control_port = net::map_port(CONTROL_PORT);
-    params.video_port = net::map_port(VIDEO_STREAM_PORT);
-    params.audio_port = net::map_port(AUDIO_STREAM_PORT);
-    params.channel_mask = ALK_GAMESTREAM_ENET_CHANNEL_MASK_CONTROL |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_VIDEO |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_AUDIO |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_DATA |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_INPUT |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_MICROPHONE |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_CLIPBOARD |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_RESCUE |
-                          ALK_GAMESTREAM_ENET_CHANNEL_MASK_DIAGNOSTICS;
+    alk_sunshine_gamestream_enet_control_transport_open_params_init(&params,
+                                                                    ALK_SESSION_ROLE_HOST,
+                                                                    net::map_port(CONTROL_PORT),
+                                                                    net::map_port(VIDEO_STREAM_PORT),
+                                                                    net::map_port(AUDIO_STREAM_PORT));
     copy_transport_path_to_alk(session->active_transport_path, params.initial_path);
     (void)peer;
     if (!session->control.expected_peer_address.empty()) {
@@ -4097,9 +3959,7 @@ namespace stream {
                     << " compat=" << transport_compatibility_mode_name(session)
                     << " fallbackReason=" << transport_fallback_reason_name(session)
                     << " role=host"
-                    << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
                     << " nativePrimary=" << (session->control.transport_native_primary ? 1 : 0)
-                    << " legacyFallback=" << (session->control.transport_legacy_fallback ? 1 : 0)
                     << " mediaObserve=" << (ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED ? 1 : 0)
                     << " runtime=" << session->identity.runtime_id
                     << " route=" << params.route_profile_id
@@ -9842,15 +9702,7 @@ namespace stream {
         handshake_params.legacy_rtsp.video_port = net::map_port(VIDEO_STREAM_PORT);
         handshake_params.legacy_rtsp.audio_port = net::map_port(AUDIO_STREAM_PORT);
         transport_candidate.priority = 100;
-        transport_candidate.channel_mask = ALK_GAMESTREAM_ENET_CHANNEL_MASK_CONTROL |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_VIDEO |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_AUDIO |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_DATA |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_INPUT |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_MICROPHONE |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_CLIPBOARD |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_RESCUE |
-                                           ALK_GAMESTREAM_ENET_CHANNEL_MASK_DIAGNOSTICS;
+        transport_candidate.channel_mask = alk_sunshine_gamestream_enet_control_channel_mask();
         transport_candidate.control_port = net::map_port(CONTROL_PORT);
         transport_candidate.video_port = net::map_port(VIDEO_STREAM_PORT);
         transport_candidate.audio_port = net::map_port(AUDIO_STREAM_PORT);
@@ -9890,7 +9742,6 @@ namespace stream {
       session->config = config;
       session->control.transport_compatibility_mode = select_network_transport_compatibility_mode(session.get());
       session->control.transport_native_primary = transport_uses_native_primary(session.get());
-      session->control.transport_legacy_fallback = transport_uses_legacy_fallback(session.get());
       LiInitializeSession(&session->shared_session);
       session->control.transport_observer = alk_gamestream_enet_observer_create();
       alk_transport_runtime_binding_init(&session->control.transport_binding);
@@ -9908,33 +9759,19 @@ namespace stream {
           native_config.ping_interval_ms = 500;
           native_config.enable_qos = 1;
         }
-        else if (transport_uses_carrier_adapter(session.get())) {
-          native_config.mode = ALK_GAMESTREAM_ENET_MODE_CARRIER_ADAPTER;
-        }
         alk_gamestream_enet_observer_set_native_config(session->control.transport_observer, &native_config);
 
         auto *runtime = alk_runtime_create();
         if (runtime) {
           AlkRuntimeConfig runtime_config;
           AlkTransportModule transport_module;
-          AlkTransportCarrier transport_carrier;
           alk_runtime_config_init(&runtime_config);
-          alk_transport_carrier_init(&transport_carrier);
-          transport_carrier.user_data = session.get();
-          transport_carrier.open = transport_carrier_open;
-          transport_carrier.send = transport_carrier_send;
-          transport_carrier.service = transport_carrier_service;
-          transport_carrier.close = transport_carrier_close;
           runtime_config.role = ALK_SESSION_ROLE_HOST;
           runtime_config.runtime_id = session->identity.runtime_id;
           if (alk_runtime_init(runtime, &runtime_config, nullptr) &&
               alk_gamestream_enet_transport_module_init(&transport_module, session->control.transport_observer) &&
               alk_transport_runtime_bind_module(&session->control.transport_binding, runtime, &transport_module)) {
-            bool transport_ready = true;
-            if (transport_uses_carrier_adapter(session.get())) {
-              transport_ready = alk_transport_runtime_bind_carrier(&session->control.transport_binding, &transport_carrier);
-            }
-            if (transport_ready && alk_transport_runtime_enable(&session->control.transport_binding)) {
+            if (alk_transport_runtime_enable(&session->control.transport_binding)) {
               session->control.transport_runtime = runtime;
             }
             else {
@@ -9953,9 +9790,7 @@ namespace stream {
                       << " fallbackReason=" << transport_fallback_reason_name(session.get())
                       << " adapter=" << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID
                       << " observer=" << (session->control.transport_observer ? 1 : 0)
-                      << " carrierSend=" << (ALKAID_TRANSPORT_CARRIER_SEND_ENABLED ? 1 : 0)
                       << " nativePrimary=" << (session->control.transport_native_primary ? 1 : 0)
-                      << " legacyFallback=" << (session->control.transport_legacy_fallback ? 1 : 0)
                       << " mediaObserve=" << (ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED ? 1 : 0)
                       << " runtime=" << session->identity.runtime_id;
       BOOST_LOG(info) << "Alkaid handshake selection runtime=" << session->identity.runtime_id
