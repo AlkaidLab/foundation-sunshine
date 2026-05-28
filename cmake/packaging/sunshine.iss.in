@@ -259,8 +259,9 @@ Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--sh
 Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
 
 [Run]
-; Post-install actions (shown on progress page)
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C /Q >nul 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden
+; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
+; attribute on files & dirs. The latter is what fixes the rare "Sunshine
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
