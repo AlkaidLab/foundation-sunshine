@@ -1889,6 +1889,8 @@ namespace platf {
 
   bool
   send(send_info_t &send_info) {
+    ensure_address_change_watcher();
+
     WSAMSG msg;
 
     // Convert the target address into a SOCKADDR
