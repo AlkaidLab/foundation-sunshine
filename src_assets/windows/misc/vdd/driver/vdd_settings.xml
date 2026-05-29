@@ -1,113 +1,111 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <vdd_settings>
-    <monitors>
-        <count>1</count>
-    </monitors>
-    <gpu>
-        <friendlyname>default</friendlyname>
-    </gpu>
-	<global>
-		<!--These are global refreshrates, any you add in here, will be replicated to all resolutions-->
-		<g_refresh_rate>60</g_refresh_rate>
-		<g_refresh_rate>90</g_refresh_rate>
-		<g_refresh_rate>120</g_refresh_rate>
-		<g_refresh_rate>144</g_refresh_rate>
-		<g_refresh_rate>165</g_refresh_rate>
-		<g_refresh_rate>240</g_refresh_rate>
-	</global>
-    <resolutions>
-        <resolution>
-            <width>800</width>
-            <height>600</height>
-            <refresh_rate>30</refresh_rate>
-        </resolution>
-        <resolution>
-            <width>1366</width>
-            <height>768</height>
-            <refresh_rate>30</refresh_rate>
-        </resolution>
-        <resolution>
-            <width>1920</width>
-            <height>1080</height>
-            <refresh_rate>30</refresh_rate>
-        </resolution>
-        <resolution>
-            <width>2560</width>
-            <height>1440</height>
-            <refresh_rate>30</refresh_rate>
-        </resolution>
-        <resolution>
-            <width>3840</width>
-            <height>2160</height>
-            <refresh_rate>30</refresh_rate>
-        </resolution>
-    
-        
-    </resolutions>
-	<logging>
-		<SendLogsThroughPipe>true</SendLogsThroughPipe> <!-- Can only send logs through pipe if logging is enabled-->
-		<logging>false</logging>
-		<!-- DEBUG LOGGING FOR EXPERTS ONLY!-->
-		<debuglogging>false</debuglogging>
-		<!-- DEBUG LOGS CAN GENERATE 1000+ LINES-->
-		<!-- Warning: Leaving logging on too long can lead to excessive filesize. Especially DebugLogging, which should only be used for short periods to log errors. -->
-		<!-- Logging: Useful to troubleshoot and determine which GPUs are being used, and if displays are working as intended.-->
-		<!-- Debug Logging: Logs local system information with every driver function/event/process. Useful for GitHub Help Tickets.-->
-	</logging>
-	<colour>
-		<SDR10bit>false</SDR10bit>
-		<HDRPlus>false</HDRPlus> <!-- If you have SDR10 bit enabled, HDRPlus wont work - there’s a conflict because the display system cannot simultaneously handle both high dynamic range 12-bit and standard dynamic range 10-bit settings. -->
-		<ColourFormat>RGB</ColourFormat>
-		<!--
-		Supported colour formats:
-		RGB
-		YCbCr444
-		YCbCr422
-		YCbCr420
-		
-		Any invalid colour formats which are used will default to use RGB
-		-->
-	</colour>
-	<cursor>
-		<HardwareCursor>false</HardwareCursor>
-		<!--Whether to display a hardware cursor in the buffer (If disabled streaming apps will use client cursor)-->
-		<CursorMaxY>128</CursorMaxY>
-		<!--The maximum height support for all cursor types. Older intel cpus may be limited to 64x64 -->
-		<CursorMaxX>128</CursorMaxX>
-		<!--The maximum width supported for all supported cursor types.-->
-		<AlphaCursorSupport>true</AlphaCursorSupport>
-		<!--Indicates if the adapter supports the 32-bit alpha cursor format. Most cursors are alpha format.-->
-		<XorCursorSupportLevel>2</XorCursorSupportLevel>
-		<!-- Do not change if you don't know what you're doing -->
-		<!--
-		0 = IDDCX_XOR_CURSOR_SUPPORT_UNINITIALIZED
-		1 = IDDCX_XOR_CURSOR_SUPPORT_NONE
-		2 = IDDCX_XOR_CURSOR_SUPPORT_FULL
-		3 = IDDCX_XOR_CURSOR_SUPPORT_EMULATION
-		-->
-	</cursor>
-	<edid>
-		<CustomEdid>false</CustomEdid>
-		<!-- Custom Edid should be named "user_edid.bin"! This does not support emulating resolutions!-->
-		<PreventSpoof>false</PreventSpoof>
-		<!--Enable this to prevent manufacturer spoofing when using custom edid. Please only do so if you need to!-->
-		<EdidCeaOverride>false</EdidCeaOverride>
-		<!--Enable this to override or add hard coded cea-extension block to custom Edid support allowing you to enable HDR-->
-		<EdidProfile>auto</EdidProfile>
-		<!--
-		EDID profile for the built-in default EDID:
-		  auto    -> pick by host OS (Win10 22H2 -> legacy, Win11+ -> modern,
-		             detection failures also fall back to legacy)
-		  legacy  -> EDID 1.3 base block, broadest compatibility (issue #612)
-		  modern  -> EDID 1.4 + 10bpc + BT.2020 + Colorimetry CDB (full HDR)
-		Ignored when CustomEdid is enabled.
-		-->
-		<Vrr>false</Vrr>
-		<!--
-		VRR / FreeSync / G-Sync compatible support. When enabled the
-		adapter advertises IDDCX_ADAPTER_FLAGS_VARIABLE_REFRESH_RATE_SUPPORTED
-		(IddCx >= 1.4). Default OFF until the EDID FreeSync Range Block
-		also lands; some hosts will refuse to enable VRR without it.
-		-->
-	</edid>
+  <monitors>
+    <count>1</count>
+  </monitors>
+  <gpu>
+    <friendlyname>default</friendlyname>
+  </gpu>
+  <global>
+    <!--These are global refreshrates, any you add in here, will be replicated to all resolutions-->
+    <g_refresh_rate>60</g_refresh_rate>
+    <g_refresh_rate>90</g_refresh_rate>
+    <g_refresh_rate>120</g_refresh_rate>
+    <g_refresh_rate>144</g_refresh_rate>
+    <g_refresh_rate>165</g_refresh_rate>
+    <g_refresh_rate>240</g_refresh_rate>
+  </global>
+  <resolutions>
+    <resolution>
+      <width>800</width>
+      <height>600</height>
+      <refresh_rate>30</refresh_rate>
+    </resolution>
+    <resolution>
+      <width>1366</width>
+      <height>768</height>
+      <refresh_rate>30</refresh_rate>
+    </resolution>
+    <resolution>
+      <width>1920</width>
+      <height>1080</height>
+      <refresh_rate>30</refresh_rate>
+    </resolution>
+    <resolution>
+      <width>2560</width>
+      <height>1440</height>
+      <refresh_rate>30</refresh_rate>
+    </resolution>
+    <resolution>
+      <width>3840</width>
+      <height>2160</height>
+      <refresh_rate>30</refresh_rate>
+    </resolution>
+  </resolutions>
+  <colour>
+    <SDR10bit>false</SDR10bit>
+    <HDRPlus>false</HDRPlus> <!-- If you have SDR10 bit enabled, HDRPlus wont work - there’s a conflict because the display system cannot simultaneously handle both high dynamic range 12-bit and standard dynamic range 10-bit settings. -->
+    <ColourFormat>RGB</ColourFormat>
+    <!--
+    Supported colour formats:
+    RGB
+    YCbCr444
+    YCbCr422
+    YCbCr420
+
+    Any invalid colour formats which are used will default to use RGB
+    -->
+  </colour>
+  <logging>
+    <SendLogsThroughPipe>true</SendLogsThroughPipe> <!-- Can only send logs through pipe if logging is enabled-->
+    <logging>false</logging>
+    <!-- DEBUG LOGGING FOR EXPERTS ONLY!-->
+    <debuglogging>false</debuglogging>
+    <!-- DEBUG LOGS CAN GENERATE 1000+ LINES-->
+    <!-- Warning: Leaving logging on too long can lead to excessive filesize. Especially DebugLogging, which should only be used for short periods to log errors. -->
+    <!-- Logging: Useful to troubleshoot and determine which GPUs are being used, and if displays are working as intended.-->
+    <!-- Debug Logging: Logs local system information with every driver function/event/process. Useful for GitHub Help Tickets.-->
+  </logging>
+  <cursor>
+    <HardwareCursor>false</HardwareCursor>
+    <!--Whether to display a hardware cursor in the buffer (If disabled streaming apps will use client cursor)-->
+    <CursorMaxY>128</CursorMaxY>
+    <!--The maximum height support for all cursor types. Older intel cpus may be limited to 64x64 -->
+    <CursorMaxX>128</CursorMaxX>
+    <!--The maximum width supported for all supported cursor types.-->
+    <AlphaCursorSupport>true</AlphaCursorSupport>
+    <!--Indicates if the adapter supports the 32-bit alpha cursor format. Most cursors are alpha format.-->
+    <XorCursorSupportLevel>2</XorCursorSupportLevel>
+    <!-- Do not change if you don't know what you're doing -->
+    <!--
+    0 = IDDCX_XOR_CURSOR_SUPPORT_UNINITIALIZED
+    1 = IDDCX_XOR_CURSOR_SUPPORT_NONE
+    2 = IDDCX_XOR_CURSOR_SUPPORT_FULL
+    3 = IDDCX_XOR_CURSOR_SUPPORT_EMULATION
+    -->
+  </cursor>
+  <edid>
+    <CustomEdid>false</CustomEdid>
+    <!-- Custom Edid should be named "user_edid.bin"! This does not support emulating resolutions!-->
+    <PreventSpoof>false</PreventSpoof>
+    <!--Enable this to prevent manufacturer spoofing when using custom edid. Please only do so if you need to!-->
+    <EdidCeaOverride>false</EdidCeaOverride>
+    <!--Enable this to override or add hard coded cea-extension block to custom Edid support allowing you to enable HDR-->
+    <EdidProfile>auto</EdidProfile>
+    <!--
+    EDID profile for the built-in default EDID:
+      auto    -> pick by host OS (Win10 22H2 -> legacy, Win11+ -> modern,
+                 detection failures also fall back to legacy)
+      legacy  -> EDID 1.3 base block, broadest compatibility (issue #612)
+      modern  -> EDID 1.4 + 10bpc + BT.2020 + Colorimetry CDB (full HDR)
+    Ignored when CustomEdid is enabled.
+    -->
+    <Vrr>false</Vrr>
+    <!--
+    VRR / FreeSync / G-Sync compatible support. When enabled the
+    adapter advertises IDDCX_ADAPTER_FLAGS_VARIABLE_REFRESH_RATE_SUPPORTED
+    (IddCx >= 1.4). Default OFF until the EDID FreeSync Range Block
+    also lands; some hosts will refuse to enable VRR without it.
+    -->
+  </edid>
 </vdd_settings>
