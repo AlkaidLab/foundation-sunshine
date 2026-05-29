@@ -35,6 +35,17 @@ using json = nlohmann::json;
 
 namespace abr {
 
+  // NOTE: sessions are keyed by client_name (the device display name), which is the
+  // identifier that bridges the stateless HTTPS REST endpoints (abrFeedback/
+  // configureAbr resolve the client by source IP) and the streaming layer
+  // (stream::session::change_dynamic_param_for_client also routes by client_name).
+  // Limitation: two concurrently-running sessions that share the same device name
+  // would collide on a single entry and cross-contaminate state. This is acceptable
+  // because single-session deployments are immune and normally-paired devices have
+  // distinct names; supporting multi-session-same-name would require a coordinated
+  // rekey to a session-level id across resolve_client, this map, and
+  // change_dynamic_param_for_client.
+  //
   // The LLM worker runs on a detached thread and may still be in flight (its HTTP
   // call has a 300s timeout) when the process begins shutting down. To avoid a
   // static-destruction-order crash — where the worker reacquires the lock and
@@ -625,6 +636,14 @@ namespace abr {
 
     std::lock_guard lock(sessions_mutex);
     auto it = sessions.find(client_name);
+    // The BOOST_LOG calls below touch the global severity loggers, which (unlike
+    // sessions/sessions_mutex) are destroyed at static teardown. A late worker
+    // logging after logging::deinit() would be a use-after-free. This is safe in
+    // practice: on shutdown the stream session is torn down first, which calls
+    // abr::cleanup() and erases this entry, so the lookup below fails and the
+    // worker returns *before* reaching any BOOST_LOG. The only residual exposure
+    // is an extremely narrow race (entry not yet erased while logging is mid-
+    // deinit), deemed acceptable rather than coupling abr to the shutdown sequence.
     if (it == sessions.end() || it->second.generation != generation) {
       return;  // Session was cleaned up or re-created while LLM was in flight
     }
