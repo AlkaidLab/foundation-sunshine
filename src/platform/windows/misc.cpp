@@ -1695,6 +1695,39 @@ namespace platf {
     return !addr.is_unspecified() && !source_pin_disabled.load(std::memory_order_relaxed);
   }
 
+  // Writes an IP_PKTINFO / IPV6_PKTINFO control message into cm that pins the source
+  // address (letting the OS pick the interface via ipi_ifindex=0). Returns the number
+  // of control-buffer bytes consumed (WSA_CMSG_SPACE for the option).
+  static ULONG
+  write_source_pktinfo(WSACMSGHDR *cm, const boost::asio::ip::address &source_address) {
+    if (source_address.is_v6()) {
+      IN6_PKTINFO pktInfo;
+
+      SOCKADDR_IN6 saddr_v6 = to_sockaddr(source_address.to_v6(), 0);
+      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
+      pktInfo.ipi6_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IPV6;
+      cm->cmsg_type = IPV6_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+    else {
+      IN_PKTINFO pktInfo;
+
+      SOCKADDR_IN saddr_v4 = to_sockaddr(source_address.to_v4(), 0);
+      pktInfo.ipi_addr = saddr_v4.sin_addr;
+      pktInfo.ipi_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IP;
+      cm->cmsg_type = IP_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+  }
+
   // Rate-limited logging for the WSASendMsg() failure flood (up to 3x per video frame).
   // Emits at most one line per second and reports how many were suppressed.
   static void
@@ -1829,34 +1862,7 @@ namespace platf {
     // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
     // OS pick the source interface so the stream keeps flowing.
     if (should_pin_source_address(send_info.source_address)) {
-      if (send_info.source_address.is_v6()) {
-        IN6_PKTINFO pktInfo;
-
-        SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-        pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-        pktInfo.ipi6_ifindex = 0;
-
-        cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-        cm->cmsg_level = IPPROTO_IPV6;
-        cm->cmsg_type = IPV6_PKTINFO;
-        cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-        memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-      }
-      else {
-        IN_PKTINFO pktInfo;
-
-        SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-        pktInfo.ipi_addr = saddr_v4.sin_addr;
-        pktInfo.ipi_ifindex = 0;
-
-        cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-        cm->cmsg_level = IPPROTO_IP;
-        cm->cmsg_type = IP_PKTINFO;
-        cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-        memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-      }
+      cmbuflen += write_source_pktinfo(cm, send_info.source_address);
       have_cmsg = true;
     }
 
@@ -1926,35 +1932,7 @@ namespace platf {
     // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
     // OS pick the source interface so the stream keeps flowing.
     if (should_pin_source_address(send_info.source_address)) {
-      auto cm = WSA_CMSG_FIRSTHDR(&msg);
-      if (send_info.source_address.is_v6()) {
-        IN6_PKTINFO pktInfo;
-
-        SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-        pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-        pktInfo.ipi6_ifindex = 0;
-
-        cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-        cm->cmsg_level = IPPROTO_IPV6;
-        cm->cmsg_type = IPV6_PKTINFO;
-        cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-        memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-      }
-      else {
-        IN_PKTINFO pktInfo;
-
-        SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-        pktInfo.ipi_addr = saddr_v4.sin_addr;
-        pktInfo.ipi_ifindex = 0;
-
-        cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-        cm->cmsg_level = IPPROTO_IP;
-        cm->cmsg_type = IP_PKTINFO;
-        cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-        memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-      }
+      cmbuflen += write_source_pktinfo(WSA_CMSG_FIRSTHDR(&msg), send_info.source_address);
     }
 
     msg.Control.len = cmbuflen;
