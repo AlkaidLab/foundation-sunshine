@@ -35,8 +35,13 @@ using json = nlohmann::json;
 
 namespace abr {
 
-  static std::mutex sessions_mutex;
-  static std::unordered_map<std::string, session_state_t> sessions;
+  // The LLM worker runs on a detached thread and may still be in flight (its HTTP
+  // call has a 300s timeout) when the process begins shutting down. To avoid a
+  // static-destruction-order crash — where the worker reacquires the lock and
+  // touches these globals after they have been destroyed — both are allocated with
+  // process lifetime and intentionally never freed, so a late worker is always safe.
+  static std::mutex &sessions_mutex = *new std::mutex();
+  static std::unordered_map<std::string, session_state_t> &sessions = *new std::unordered_map<std::string, session_state_t>();
 
   /**
    * @brief Sanitize client-provided network feedback values.
