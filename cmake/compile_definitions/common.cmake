@@ -51,7 +51,9 @@ endif()
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")  # required for importing version.h
 set(ALKAIDLAB_PLATFORM_PATH "${CMAKE_SOURCE_DIR}/third-party/alkaidlab-platform" CACHE PATH "Path to AlkaidLab Platform")
-if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h")
+set(ALKAIDLAB_INTERACTION_CURSOR_AVAILABLE OFF)
+if(WIN32 AND EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h")
+    set(ALKAIDLAB_INTERACTION_CURSOR_AVAILABLE ON)
     list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_INTERACTION_CURSOR=1)
     include_directories(
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
@@ -159,7 +161,7 @@ if(WIN32)
             "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.cpp")
 endif()
 
-if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h")
+if(ALKAIDLAB_INTERACTION_CURSOR_AVAILABLE)
     list(APPEND SUNSHINE_TARGET_FILES
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/src/session_core.c"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/interaction/cursor/interaction-cursor/src/interaction_cursor.cpp")

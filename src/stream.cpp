@@ -2504,7 +2504,8 @@ namespace stream {
                                       std::uint32_t bitmap_hash = 0,
                                       std::uint16_t bitmap_format = 0,
                                       std::uint16_t bitmap_stride = 0,
-                                      const std::vector<std::uint8_t> *bitmap_bgra = nullptr);
+                                      const std::vector<std::uint8_t> *bitmap_bgra = nullptr,
+                                      bool *bitmap_included = nullptr);
 
   static int
   send_cursor_plane_update(session_t *session,
@@ -2521,7 +2522,11 @@ namespace stream {
                            std::uint32_t bitmap_hash,
                            std::uint16_t bitmap_format,
                            std::uint16_t bitmap_stride,
-                           const std::vector<std::uint8_t> *bitmap_bgra) {
+                           const std::vector<std::uint8_t> *bitmap_bgra,
+                           bool *bitmap_included) {
+    if (bitmap_included != nullptr) {
+      *bitmap_included = false;
+    }
     if (!session || !client_supports_cursor_plane(session)) {
       return -1;
     }
@@ -2550,7 +2555,14 @@ namespace stream {
                                       hotspot_y,
                                       width,
                                       height,
-                                      flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP);
+                                      flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      nullptr,
+                                      bitmap_included);
     }
 
     std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + cursor_payload_size);
@@ -2626,6 +2638,9 @@ namespace stream {
       BOOST_LOG(warning) << "Couldn't send cursor plane update to ["sv << addr << ':' << port << ']';
       return -1;
     }
+    if (bitmap_included != nullptr) {
+      *bitmap_included = include_bitmap;
+    }
     return 0;
   }
 
@@ -2676,6 +2691,7 @@ namespace stream {
     const bool shape_changed =
       (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_SHAPE_CHANGED) != 0u;
 
+    bool bitmap_included = false;
     if (send_cursor_plane_update(session,
                                  sample.cursor_shape_id,
                                  sample.x,
@@ -2691,7 +2707,8 @@ namespace stream {
                                  should_send_bitmap ? sample.bitmap_hash : 0,
                                  should_send_bitmap ? sample.bitmap_format : 0,
                                  should_send_bitmap ? sample.bitmap_stride : 0,
-                                 should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0) {
+                                 should_send_bitmap ? &sample.bitmap_bgra : nullptr,
+                                 &bitmap_included) == 0) {
       last.cursor_shape_id = sample.cursor_shape_id;
       last.x = sample.x;
       last.y = sample.y;
@@ -2706,11 +2723,11 @@ namespace stream {
       last.metric_height = sample.metric_height;
       last.bitmap_hash = sample.bitmap_hash;
       last.last_sent = now;
-      last.bitmap_sent = last.bitmap_sent || should_send_bitmap;
+      last.bitmap_sent = last.bitmap_sent || bitmap_included;
       alk_interaction_cursor_mark_host_emitted(&last.alkaid_cursor,
                                                &cursor_state,
                                                steady_time_ms(now),
-                                               should_send_bitmap ? 1u : 0u);
+                                               bitmap_included ? 1u : 0u);
 
       if (shape_changed || should_send_bitmap || metric_changed ||
           (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_FIRST) != 0u) {
@@ -2722,7 +2739,7 @@ namespace stream {
                            << " display="sv << sample.display_width << "x"sv << sample.display_height
                            << " metric="sv << sample.metric_width << "x"sv << sample.metric_height
                            << " source="sv << sample.source_width << "x"sv << sample.source_height
-                           << " bitmap="sv << (should_send_bitmap ? sample.bitmap_bgra.size() : 0)
+                           << " bitmap="sv << (bitmap_included ? sample.bitmap_bgra.size() : 0)
                            << " bitmap_hash=0x"sv << std::hex << sample.bitmap_hash << std::dec
                            << " assetEpoch="sv << sample.animation_epoch
                            << " interaction.cursor=platform-native"
