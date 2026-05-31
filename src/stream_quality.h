@@ -80,4 +80,10 @@ namespace stream_quality {
   static_frame_mode_e
   static_frame_mode_for_input_activity(bool input_active, bool cursor_plane_active);
 
+  bool
+  input_activity_is_recent(bool recent_control_input,
+                           bool drag_active,
+                           bool mouse_button_active,
+                           bool gamepad_active);
+
 }  // namespace stream_quality

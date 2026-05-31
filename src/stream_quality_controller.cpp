@@ -3,6 +3,7 @@
 #include "logging.h"
 
 #include <algorithm>
+#include <alkaidlab/rescue_control/rescue_control_contract.h>
 #include <utility>
 
 namespace stream_quality {
@@ -280,6 +281,12 @@ namespace stream_quality {
       if (feedback.user_input_active) {
         result.flags |= ALK_STREAM_QUALITY_FEEDBACK_FLAG_USER_INPUT_ACTIVE;
       }
+      if (feedback.path_lan_direct) {
+        result.flags |= ALK_STREAM_QUALITY_FEEDBACK_FLAG_PATH_LAN_DIRECT;
+      }
+      if (feedback.path_identity_confident) {
+        result.flags |= ALK_STREAM_QUALITY_FEEDBACK_FLAG_PATH_IDENTITY_CONFIDENT;
+      }
       return result;
     }
 
@@ -510,6 +517,75 @@ namespace stream_quality {
       .bitrate_apply_threshold_kbps = alk_plan.bitrate_apply_threshold_kbps,
     };
   }
+
+  bool
+  verified_capacity_rescue_transport_clean(std::uint32_t rtt_us,
+                                           std::uint32_t jitter_us,
+                                           std::uint32_t packet_loss_ppm,
+                                           std::uint32_t reliable_backlog_packets) {
+    return rtt_us <= 80000U &&
+           jitter_us <= 18000U &&
+           packet_loss_ppm <= 3000U &&
+           reliable_backlog_packets <= 3U;
+  }
+
+  bool
+  startup_feedback_is_empty_no_delivery(const feedback_t &feedback) {
+    return feedback.duration_ms >= 250U &&
+           feedback.frames_seen == 0U &&
+           feedback.complete_frames == 0U &&
+           feedback.recovered_frames == 0U &&
+           feedback.unrecoverable_frames == 0U &&
+           feedback.missing_packets == 0U &&
+           feedback.total_packets == 0U &&
+           feedback.received_packets == 0U &&
+           feedback.displayed_frames == 0U &&
+           feedback.video_bytes == 0U &&
+           feedback.rfi_requests == 0U &&
+           feedback.waiting_for_rfi_frames == 0U &&
+           feedback.large_frame_fec_skipped == 0U;
+  }
+
+  bool
+  transport_backlog_should_promote_input_queue(const feedback_t &feedback,
+                                               std::uint32_t reliable_backlog_packets) {
+    if (reliable_backlog_packets == 0U) {
+      return false;
+    }
+
+    const bool input_latency_reported =
+      feedback.input_send_latency_us > 0U ||
+      feedback.input_ack_latency_us > 0U;
+    return input_latency_reported;
+  }
+
+  bool
+  startup_fec_floor_should_block_decrease(bool startup_guard_active,
+                                          int last_applied_fec_percentage,
+                                          int target_fec_percentage) {
+    return startup_guard_active &&
+           last_applied_fec_percentage >= 0 &&
+           target_fec_percentage >= 0 &&
+           target_fec_percentage < last_applied_fec_percentage;
+  }
+
+  bool
+  rescue_request_requests_quality_downgrade(std::uint32_t trigger_flags,
+                                            std::uint32_t max_bitrate_kbps,
+                                            std::uint32_t fec_percent,
+                                            std::uint32_t target_scale_percent,
+                                            bool enable_blurry_upscale) {
+    const bool explicit_quality_fields =
+      max_bitrate_kbps > 0 ||
+      fec_percent > 0 ||
+      (target_scale_percent > 0 && target_scale_percent < 100) ||
+      enable_blurry_upscale;
+    const bool control_path_or_manual =
+      (trigger_flags & (ALK_RESCUE_TRIGGER_CONTROL_STALLING |
+                        ALK_RESCUE_TRIGGER_MANUAL)) != 0;
+    return explicit_quality_fields || control_path_or_manual;
+  }
+
 
   controller_t::controller_t():
       module_(alk_stream_quality_adaptive_controller_module_create()) {

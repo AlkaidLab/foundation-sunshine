@@ -1113,23 +1113,31 @@ namespace platf::dxgi {
     device_ctx->Unmap(texture.get(), 0);
     img_info.pData = nullptr;
 
-    POINT cursor_point {};
-    bool cursor_visible_on_host = false;
-    const bool cursor_probe_available = query_system_cursor_probe_point(cursor_point, cursor_visible_on_host);
-    update_wgc_ram_cursor_probe(*img,
-                                cursor_visible,
-                                cursor_point,
-                                cursor_visible_on_host,
-                                cursor_probe_available,
-                                offset_x,
-                                offset_y,
-                                cursor_probe_last_hash,
-                                cursor_probe_samples);
-    if (img->cursor_probe.active &&
-        img->cursor_probe.pointer_visible &&
-        img->cursor_probe.crop_valid &&
-        img->cursor_probe.w > 0 &&
-        img->cursor_probe.h > 0) {
+	    POINT cursor_point {};
+	    bool cursor_visible_on_host = false;
+	    const bool cursor_probe_available = query_system_cursor_probe_point(cursor_point, cursor_visible_on_host);
+	    const bool cursor_moved =
+	      cursor_probe_available &&
+	      (!cursor_probe_have_last_point ||
+	       cursor_point.x != cursor_probe_last_point.x ||
+	       cursor_point.y != cursor_probe_last_point.y);
+	    if (cursor_probe_available) {
+	      cursor_probe_last_point = cursor_point;
+	      cursor_probe_have_last_point = true;
+	    }
+	    update_wgc_ram_cursor_probe(*img,
+	                                cursor_visible,
+	                                cursor_point,
+	                                cursor_visible_on_host,
+	                                cursor_moved,
+	                                offset_x,
+	                                offset_y,
+	                                cursor_probe_last_hash,
+	                                cursor_probe_samples);
+	    if (frame_interest::cursor_geometry_valid(img->cursor_probe.active,
+	                                              img->cursor_probe.pointer_visible,
+	                                              img->cursor_probe.w,
+	                                              img->cursor_probe.h)) {
       frame_interest::map_t map;
       map.frame_width = img->width;
       map.frame_height = img->height;

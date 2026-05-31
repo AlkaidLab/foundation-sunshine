@@ -147,6 +147,76 @@ namespace frame_interest {
                  100);
   }
 
+  bool
+  cursor_geometry_valid(bool active, bool pointer_visible, int width, int height) {
+    return active && pointer_visible && width > 0 && height > 0;
+  }
+
+  bool
+  add_interaction_dirty_hint(map_t &map, int center_x, int center_y, bool center_valid) {
+    if (map.frame_width <= 0 || map.frame_height <= 0) {
+      return false;
+    }
+
+    /*
+     * WGC does not provide Desktop Duplication dirty/move rects.  During a
+     * drag/interactive window operation, give the encoder a bounded spatial
+     * interest region instead of either sending no metadata or marking the
+     * entire frame dirty.  Keep the area comfortably below
+     * has_full_frame_dirty_region() so dirty-region/ROI QP decisions remain
+     * useful and don't collapse into a full-frame-motion fallback.
+     */
+    const int width = std::max(96, map.frame_width * (center_valid ? 60 : 50) / 100);
+    const int height = std::max(96, map.frame_height * (center_valid ? 60 : 50) / 100);
+    const int cx = center_valid ? center_x : map.frame_width / 2;
+    const int cy = center_valid ? center_y : map.frame_height / 2;
+    const rect_t rect {
+      cx - width / 2,
+      cy - height / 2,
+      width,
+      height,
+    };
+    add_dirty_rect(map, rect);
+    return true;
+  }
+
+  bool
+  ensure_interaction_interest(map_t &map,
+                              int frame_width,
+                              int frame_height,
+                              std::uint64_t sequence,
+                              bool cursor_valid,
+                              int cursor_x,
+                              int cursor_y,
+                              int cursor_w,
+                              int cursor_h,
+                              bool interaction_active) {
+    if (map.frame_width <= 0) {
+      map.frame_width = frame_width;
+    }
+    if (map.frame_height <= 0) {
+      map.frame_height = frame_height;
+    }
+    if (map.frame_width <= 0 || map.frame_height <= 0) {
+      return false;
+    }
+    if (map.sequence == 0 && sequence != 0) {
+      map.sequence = sequence;
+    }
+
+    bool changed = false;
+    if (cursor_valid && map.roi_rects.empty()) {
+      const int radius = std::max(32, std::max(cursor_w, cursor_h));
+      add_cursor_roi(map, cursor_x, cursor_y, radius, -6);
+      changed = true;
+    }
+
+    if (interaction_active && map.dirty_rects.empty() && map.move_rects.empty()) {
+      changed = add_interaction_dirty_hint(map, cursor_x, cursor_y, cursor_valid) || changed;
+    }
+    return changed;
+  }
+
   void
   finalize(map_t &map) {
     auto clamp_dirty = [&](rect_t rect) {
@@ -313,13 +383,8 @@ namespace frame_interest {
       return policy;
     }
 
-    /*
-     * Keep spatial AQ as the default quality floor. QP-map ROI is only useful
-     * once the runtime backend is proven safe and actually applied; disabling
-     * AQ merely because an intent exists creates the worst failure mode: the
-     * encoder falls back, but the stream already lost AQ and turns blurry.
-     */
-    policy.fallback_to_adaptive_quantization = adaptive_quantization_enabled;
+    policy.enabled = true;
+    policy.disable_adaptive_quantization = adaptive_quantization_enabled;
     return policy;
   }
 

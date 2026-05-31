@@ -9,6 +9,16 @@
 
 namespace stream_quality {
   namespace {
+    // Static keepalive frames are duplicates/re-converts, not freshly captured
+    // desktop frames.  They keep VRR clients responsive during drag/held-button
+    // interaction, but flooding them at a 120/150 Hz client target can occupy
+    // the 4K encoder/packet path and make real frames arrive late.  Real new
+    // captured frames still use the requested stream FPS; this cap applies only
+    // to duplicate static keepalives.
+    constexpr int kInteractiveStaticKeepaliveFpsCap = 60;
+    constexpr int kInteractiveStaticKeepaliveWeakFpsCap = 30;
+    constexpr int kInteractiveStaticKeepaliveWeakThresholdFps = 90;
+
     double
     target_bpp_for_codec(int video_format, int chroma_sampling_type, content_type_e content_type) {
       double target = 0.018;
@@ -309,7 +319,10 @@ namespace stream_quality {
 
     if (variable_refresh_rate) {
       if (mode == static_frame_mode_e::interactive_input) {
-        return requested_fps;
+        const auto cap = requested_fps <= kInteractiveStaticKeepaliveWeakThresholdFps ?
+                           kInteractiveStaticKeepaliveWeakFpsCap :
+                           kInteractiveStaticKeepaliveFpsCap;
+        return std::clamp(cap, 1, requested_fps);
       }
       return 1;
     }
@@ -320,9 +333,18 @@ namespace stream_quality {
 
   static_frame_mode_e
   static_frame_mode_for_input_activity(bool input_active, bool cursor_plane_active) {
-    if (!input_active || cursor_plane_active) {
+    (void) cursor_plane_active;
+    if (!input_active) {
       return static_frame_mode_e::idle;
     }
     return static_frame_mode_e::interactive_input;
+  }
+
+  bool
+  input_activity_is_recent(bool recent_control_input,
+                           bool drag_active,
+                           bool mouse_button_active,
+                           bool gamepad_active) {
+    return recent_control_input || drag_active || mouse_button_active || gamepad_active;
   }
 }  // namespace stream_quality

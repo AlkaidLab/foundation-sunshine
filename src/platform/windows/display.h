@@ -219,6 +219,8 @@ namespace platf::dxgi {
     DXGI_FORMAT capture_format;
     std::uint64_t cursor_probe_last_hash = 0;
     std::uint32_t cursor_probe_samples = 0;
+    POINT cursor_probe_last_point {};
+    bool cursor_probe_have_last_point = false;
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.

@@ -964,6 +964,7 @@ namespace video {
     int frame_nr;
     void *channel_data;
     frame_interest_feedback_fn_t frame_interest_feedback;
+    input_activity_fn_t input_activity;
   };
 
   struct sync_session_t {
@@ -2323,7 +2324,8 @@ namespace video {
                                   const platf::img_t &img,
                                   const config_t &config,
                                   void *channel_data,
-                                  frame_interest_feedback_fn_t frame_interest_feedback) {
+                                  frame_interest_feedback_fn_t frame_interest_feedback,
+                                  bool interaction_active) {
     auto map = img.interest_map;
     if (map.frame_width <= 0) {
       map.frame_width = img.width > 0 ? img.width : config.width;
@@ -2331,6 +2333,23 @@ namespace video {
     if (map.frame_height <= 0) {
       map.frame_height = img.height > 0 ? img.height : config.height;
     }
+    const auto &probe = img.cursor_probe;
+    const bool cursor_valid = frame_interest::cursor_geometry_valid(probe.active,
+                                                                    probe.pointer_visible,
+                                                                    probe.w,
+                                                                    probe.h);
+    const bool interaction_or_cursor_motion =
+      interaction_active || (cursor_valid && probe.mouse_update);
+    frame_interest::ensure_interaction_interest(map,
+                                                img.width > 0 ? img.width : config.width,
+                                                img.height > 0 ? img.height : config.height,
+                                                probe.sample_index,
+                                                cursor_valid,
+                                                probe.x + probe.w / 2,
+                                                probe.y + probe.h / 2,
+                                                probe.w,
+                                                probe.h,
+                                                interaction_or_cursor_motion);
     if (config.width > 0 && config.height > 0 &&
         map.frame_width > 0 && map.frame_height > 0 &&
         (map.frame_width != config.width || map.frame_height != config.height)) {
@@ -2343,6 +2362,12 @@ namespace video {
       config.qualityCeilingFramerate > config.framerate ||
       config.lowBitrateClarityIntentFlags != 0;
     intent_flags = frame_interest::encoder_qp_delta_interest_flags(intent_flags, runtime_dynamic_interest);
+    if (!map.roi_rects.empty()) {
+      intent_flags |= stream_quality::clarity_intent_roi;
+    }
+    if (!map.dirty_rects.empty()) {
+      intent_flags |= stream_quality::clarity_intent_dirty_region;
+    }
     if ((intent_flags & stream_quality::clarity_intent_temporal_layers) != 0 &&
         map.temporal_policy == frame_interest::temporal_policy_e::none) {
       map.temporal_policy =
@@ -3628,7 +3653,12 @@ namespace video {
           log_cursor_encoder_input_probe(config, *img, "async");
           add_elapsed_us(cursor_probe_us, cursor_probe_started);
           const auto frame_interest_started = std::chrono::steady_clock::now();
-          apply_frame_interest_to_encoder(*session, *img, config, channel_data, frame_interest_feedback);
+          apply_frame_interest_to_encoder(*session,
+                                          *img,
+                                          config,
+                                          channel_data,
+                                          frame_interest_feedback,
+                                          static_keepalive_input_active);
           add_elapsed_us(frame_interest_us, frame_interest_started);
           last_keepalive_img = img;
           has_new_frame = true;
@@ -3867,7 +3897,12 @@ namespace video {
       return std::nullopt;
     }
     log_cursor_encoder_input_probe(ctx.config, img, "sync-initial");
-    apply_frame_interest_to_encoder(*session, img, ctx.config, ctx.channel_data, ctx.frame_interest_feedback);
+    apply_frame_interest_to_encoder(*session,
+                                    img,
+                                    ctx.config,
+                                    ctx.channel_data,
+                                    ctx.frame_interest_feedback,
+                                    ctx.input_activity && ctx.input_activity(ctx.channel_data));
 
     encode_session.session = std::move(session);
 
@@ -4060,7 +4095,8 @@ namespace video {
                                             *img,
                                             ctx->config,
                                             ctx->channel_data,
-                                            ctx->frame_interest_feedback);
+                                            ctx->frame_interest_feedback,
+                                            ctx->input_activity && ctx->input_activity(ctx->channel_data));
           }
 
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
@@ -4414,6 +4450,7 @@ namespace video {
         1,
         channel_data,
         frame_interest_feedback,
+        input_activity,
       });
 
       // Wait for join signal

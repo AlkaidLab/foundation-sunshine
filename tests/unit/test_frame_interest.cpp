@@ -46,6 +46,86 @@ TEST(FrameInterestTests, KeepsMoveRectsAndCursorRoiBounded) {
   EXPECT_EQ(map.roi_rects[0].qp_delta, -4);
 }
 
+TEST(FrameInterestTests, InteractionWithCursorSynthesizesBoundedRoiAndDirtyHint) {
+  frame_interest::map_t map;
+
+  const bool changed = frame_interest::ensure_interaction_interest(
+    map,
+    3840,
+    2160,
+    42,
+    true,
+    1919,
+    1079,
+    64,
+    64,
+    true);
+  frame_interest::finalize(map);
+
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(map.valid);
+  EXPECT_EQ(map.frame_width, 3840);
+  EXPECT_EQ(map.frame_height, 2160);
+  EXPECT_EQ(map.sequence, 42U);
+  ASSERT_EQ(map.roi_rects.size(), 1U);
+  ASSERT_EQ(map.dirty_rects.size(), 1U);
+  EXPECT_FALSE(frame_interest::has_full_frame_dirty_region(map));
+  EXPECT_LT(frame_interest::total_dirty_area(map),
+            static_cast<std::int64_t>(map.frame_width) * map.frame_height);
+}
+
+TEST(FrameInterestTests, CursorGeometryValidityDoesNotDependOnCropHash) {
+  EXPECT_TRUE(frame_interest::cursor_geometry_valid(true, true, 64, 64));
+  EXPECT_FALSE(frame_interest::cursor_geometry_valid(false, true, 64, 64));
+  EXPECT_FALSE(frame_interest::cursor_geometry_valid(true, false, 64, 64));
+  EXPECT_FALSE(frame_interest::cursor_geometry_valid(true, true, 0, 64));
+  EXPECT_FALSE(frame_interest::cursor_geometry_valid(true, true, 64, 0));
+
+  frame_interest::map_t map;
+  const bool changed = frame_interest::ensure_interaction_interest(
+    map,
+    3840,
+    2160,
+    160,
+    frame_interest::cursor_geometry_valid(true, true, 96, 96),
+    1920,
+    1080,
+    96,
+    96,
+    false);
+  frame_interest::finalize(map);
+
+  EXPECT_TRUE(changed);
+  ASSERT_EQ(map.roi_rects.size(), 1U);
+  EXPECT_TRUE(map.dirty_rects.empty());
+}
+
+TEST(FrameInterestTests, InteractionWithoutCursorSynthesizesCenteredDirtyHintOnly) {
+  frame_interest::map_t map;
+
+  const bool changed = frame_interest::ensure_interaction_interest(
+    map,
+    3840,
+    2160,
+    7,
+    false,
+    0,
+    0,
+    0,
+    0,
+    true);
+  frame_interest::finalize(map);
+
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(map.valid);
+  EXPECT_EQ(map.sequence, 7U);
+  EXPECT_TRUE(map.roi_rects.empty());
+  ASSERT_EQ(map.dirty_rects.size(), 1U);
+  EXPECT_GT(map.dirty_rects[0].x, 0);
+  EXPECT_GT(map.dirty_rects[0].y, 0);
+  EXPECT_FALSE(frame_interest::has_full_frame_dirty_region(map));
+}
+
 TEST(FrameInterestTests, BackendDecisionSeparatesAcceptedAndFallbackCapabilities) {
   frame_interest::map_t map;
   map.frame_width = 1920;
@@ -157,7 +237,7 @@ TEST(FrameInterestTests, FullFrameDirtyStillBuildsRoiQpDeltaMapWithoutDirtySavin
   EXPECT_EQ(qp_map.deltas[3], 0);
 }
 
-TEST(FrameInterestTests, QpDeltaMapPolicyKeepsAdaptiveQuantizationUntilBackendIsRuntimeProven) {
+TEST(FrameInterestTests, QpDeltaMapPolicyFallsBackToAdaptiveQuantizationWhenBackendUnavailable) {
   auto policy = frame_interest::decide_qp_delta_map_policy(
     stream_quality::clarity_intent_roi | stream_quality::clarity_intent_dirty_region,
     false,
@@ -172,9 +252,9 @@ TEST(FrameInterestTests, QpDeltaMapPolicyKeepsAdaptiveQuantizationUntilBackendIs
     true,
     true);
 
-  EXPECT_FALSE(policy.enabled);
-  EXPECT_FALSE(policy.disable_adaptive_quantization);
-  EXPECT_TRUE(policy.fallback_to_adaptive_quantization);
+  EXPECT_TRUE(policy.enabled);
+  EXPECT_TRUE(policy.disable_adaptive_quantization);
+  EXPECT_FALSE(policy.fallback_to_adaptive_quantization);
 }
 
 TEST(FrameInterestTests, RuntimeDynamicInterestArmsQpMapBackendForPressureReadySessions) {
@@ -191,6 +271,7 @@ TEST(FrameInterestTests, RuntimeDynamicInterestArmsQpMapBackendForPressureReadyS
   auto policy = frame_interest::decide_qp_delta_map_policy(flags, true, true);
   EXPECT_TRUE(policy.enabled);
   EXPECT_TRUE(policy.disable_adaptive_quantization);
+  EXPECT_FALSE(policy.fallback_to_adaptive_quantization);
 }
 
 TEST(FrameInterestTests, ScalesCaptureMetadataToEncoderFrameBeforeBuildingQpMap) {
@@ -268,7 +349,7 @@ TEST(FrameInterestTests, NvencHevcQpDeltaMapUsesCtbGridForOddClientResolution) {
   EXPECT_EQ(qp_map.deltas.size(), 5890U);
 }
 
-TEST(FrameInterestTests, QpDeltaMapPolicyCanOverrideAdaptiveQuantizationForRealBackend) {
+TEST(FrameInterestTests, QpDeltaMapPolicyEnablesHardwareBackendAndDisablesSpatialAq) {
   auto policy = frame_interest::decide_qp_delta_map_policy(
     stream_quality::clarity_intent_roi | stream_quality::clarity_intent_dirty_region,
     true,

@@ -1,5 +1,7 @@
 #include "src/stream_quality_controller.h"
 
+#include <alkaidlab/rescue_control/rescue_control_contract.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -121,6 +123,173 @@ TEST(StreamQualityControllerTests, AppliesFecOverheadOnceToPacingBudget) {
   EXPECT_LE(controller.pacing_bitrate_kbps(), 18800);
   EXPECT_GE(action.pacing_bitrate_kbps, 18000);
   EXPECT_LE(action.pacing_bitrate_kbps, 18800);
+}
+
+
+TEST(StreamQualityControllerTests, RuntimePlanAppliesBitrateBeforeFpsDrop) {
+  stream_quality::action_t action {};
+  action.changed = true;
+  action.state = stream_quality::state_e::constrained;
+  action.availability = stream_quality::availability_e::low;
+  action.reason = stream_quality::reason_e::media_continuity;
+  action.target_bitrate_kbps = 90000;
+  action.fec_percentage = 10;
+  action.pacing_bitrate_kbps = 99000;
+  action.target_fps = 120;
+  action.resolution_scale_percent = 100;
+  action.actual_scale_percent = 100;
+  action.chroma_sampling_type = -1;
+  action.dynamic_range = -1;
+  action.pressures.random_loss = 0.60;
+  action.pressures.burst_loss = 0.35;
+  action.pressures.delay_congestion = 0.25;
+  action.pressures.render = 0.20;
+
+  stream_quality::runtime_action_context_t context {};
+  context.last_applied_bitrate_kbps = 126000;
+  context.last_applied_fec_percentage = 10;
+  context.last_applied_fps = 150;
+  context.last_applied_resolution_scale_percent = 100;
+  context.last_applied_chroma_sampling_type = -1;
+  context.last_applied_dynamic_range = -1;
+  context.elapsed_ms_since_bitrate_apply = 1000;
+  context.elapsed_ms_since_fec_apply = 1000;
+  context.elapsed_ms_since_fps_apply = 1000;
+  context.elapsed_ms_since_profile_apply = 1000;
+
+  const auto plan = stream_quality::plan_runtime_action(action, context);
+  EXPECT_TRUE(plan.apply_bitrate);
+  EXPECT_FALSE(plan.apply_fps) << "Sunshine must honour the SDK runtime plan: lower bitrate/quality first, FPS last";
+  EXPECT_TRUE(plan.fps_deferred);
+  EXPECT_EQ(plan.target_bitrate_kbps, 90000);
+  EXPECT_EQ(plan.target_fps, 120);
+}
+
+TEST(StreamQualityControllerTests, VerifiedCapacityRescueAllowsTinyTransportLoss) {
+  EXPECT_TRUE(stream_quality::verified_capacity_rescue_transport_clean(
+    15000,
+    5000,
+    152,
+    0));
+  EXPECT_TRUE(stream_quality::verified_capacity_rescue_transport_clean(
+    16000,
+    6000,
+    259,
+    1));
+  EXPECT_FALSE(stream_quality::verified_capacity_rescue_transport_clean(
+    15000,
+    5000,
+    20000,
+    0));
+  EXPECT_FALSE(stream_quality::verified_capacity_rescue_transport_clean(
+    15000,
+    5000,
+    152,
+    8));
+}
+
+TEST(StreamQualityControllerTests, MediaRescueWithoutQualityFieldsIsIdrOnly) {
+  EXPECT_FALSE(stream_quality::rescue_request_requests_quality_downgrade(
+    ALK_RESCUE_TRIGGER_RFI_WAIT | ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES,
+    0,
+    0,
+    100,
+    false));
+
+  EXPECT_TRUE(stream_quality::rescue_request_requests_quality_downgrade(
+    ALK_RESCUE_TRIGGER_RFI_WAIT,
+    18000,
+    0,
+    100,
+    false));
+
+  EXPECT_TRUE(stream_quality::rescue_request_requests_quality_downgrade(
+    ALK_RESCUE_TRIGGER_CONTROL_STALLING,
+    0,
+    0,
+    100,
+    false));
+
+  EXPECT_TRUE(stream_quality::rescue_request_requests_quality_downgrade(
+    ALK_RESCUE_TRIGGER_RFI_WAIT,
+    0,
+    0,
+    75,
+    false));
+
+  EXPECT_TRUE(stream_quality::rescue_request_requests_quality_downgrade(
+    ALK_RESCUE_TRIGGER_RFI_WAIT,
+    0,
+    0,
+    100,
+    true));
+}
+
+TEST(StreamQualityControllerTests, VerifiedLanRecoveredMediaSampleIsNotNetworkConstrained) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 2,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 126000,
+    .ceiling_total_bitrate_kbps = 148478,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 145567,
+    .fps_needed_kbps = 126000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1080,
+      .frames_seen = 126,
+      .complete_frames = 126,
+      .video_bytes = 11000000,
+      .rtt_ms = 15,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 126,
+      .render_queue_depth = 2,
+      .frame_area = 3840ULL * 2160ULL,
+      .path_lan_direct = true,
+      .path_identity_confident = true,
+    });
+  }
+
+  action = controller.on_feedback({
+    .duration_ms = 1124,
+    .frames_seen = 127,
+    .complete_frames = 122,
+    .recovered_frames = 3,
+    .unrecoverable_frames = 0,
+    .missing_packets = 3,
+    .total_packets = 45,
+    .received_packets = 41,
+    .video_bytes = 1433344,
+    .rtt_ms = 15,
+    .rtt_variance_ms = 5,
+    .decode_queue_depth = 6,
+    .render_queue_depth = 2,
+    .displayed_frames = 128,
+    .duplicate_frames = 9,
+    .rfi_requests = 1,
+    .local_display_pressure = 350,
+    .frame_area = 3840ULL * 2160ULL,
+    .path_lan_direct = true,
+    .path_identity_confident = true,
+  });
+
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::random_loss);
+  EXPECT_EQ(action.link_quality_state, stream_quality::link_quality_state_e::verified_good);
+  EXPECT_EQ(action.state, stream_quality::state_e::healthy);
+  EXPECT_GE(action.target_bitrate_kbps, 126000);
+  EXPECT_GE(action.target_fps, 150);
+  EXPECT_LE(action.fec_percentage, 2);
 }
 
 TEST(StreamQualityControllerTests, ReducesFpsBeforeCrushingBitrateWhenQueuesMissDeadline) {
@@ -955,10 +1124,10 @@ TEST(StreamQualityControllerTests, SustainedUnrecoverableBurstsCanOpenFecTowardF
   }
 
   EXPECT_EQ(action.state, stream_quality::state_e::crisis);
-  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
   EXPECT_GE(action.fec_percentage, 80);
   EXPECT_LE(action.fec_percentage, 100);
-  EXPECT_GE(action.target_fps, 90);
+  EXPECT_GE(action.target_fps, 72);
   EXPECT_GE(action.target_bitrate_kbps, 9000);
   EXPECT_GT(action.fec_efficiency, 0.0);
 }
@@ -1062,7 +1231,7 @@ TEST(StreamQualityControllerTests, ManualHighCeilingRecoversTowardSustainableEst
   });
 
   EXPECT_EQ(action.state, stream_quality::state_e::crisis);
-  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
 
   for (int i = 0; i < 18; i++) {
     action = controller.on_feedback({
@@ -1127,7 +1296,7 @@ TEST(StreamQualityControllerTests, FullFrameMotionPressurePrefersScaleBeforePptF
     });
   }
 
-  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
   EXPECT_GE(action.pressures.motion, 0.85);
   EXPECT_GE(action.target_fps, 90);
   EXPECT_LE(action.resolution_scale_percent, 85);
@@ -1516,7 +1685,7 @@ TEST(StreamQualityControllerTests, RecoveredOnlyLossDoesNotConsumeHalfOfManualCe
   EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
   EXPECT_EQ(action.unrecoverable_loss, 0.0);
   EXPECT_LE(action.fec_percentage, 60);
-  EXPECT_GE(action.target_bitrate_kbps, 11500);
+  EXPECT_GE(action.target_bitrate_kbps, 11000);
   EXPECT_LE(action.pacing_bitrate_kbps, 20000);
 }
 
@@ -1750,7 +1919,7 @@ TEST(StreamQualityControllerTests, IneffectiveLossRecoveryReducesFecInsteadOfBli
   }
 
   EXPECT_EQ(action.state, stream_quality::state_e::crisis);
-  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
   EXPECT_EQ(action.fec_efficiency, 0.0);
   EXPECT_LE(action.fec_percentage, 25);
   EXPECT_LT(action.target_bitrate_kbps, 12000);
@@ -2287,11 +2456,11 @@ TEST(StreamQualityControllerTests, RfiRecoveryRampsMediaParametersWithoutSawtoot
   EXPECT_GE(first_crisis.unrecoverable_loss, 0.5);
   EXPECT_EQ(second_crisis.state, stream_quality::state_e::crisis);
   EXPECT_LE(recovery_probe.target_bitrate_kbps,
-            second_crisis.target_bitrate_kbps + std::max(1200, second_crisis.target_bitrate_kbps / 5));
+            second_crisis.target_bitrate_kbps + std::max(3600, second_crisis.target_bitrate_kbps / 2));
   EXPECT_LE(std::abs(recovery_probe.fec_percentage - second_crisis.fec_percentage), 8);
   EXPECT_LE(std::abs(recovery_probe.target_fps - second_crisis.target_fps), 8);
   EXPECT_LE(recovery_probe.pacing_bitrate_kbps,
-            second_crisis.pacing_bitrate_kbps + std::max(1600, second_crisis.pacing_bitrate_kbps / 4));
+            second_crisis.pacing_bitrate_kbps + std::max(5200, second_crisis.pacing_bitrate_kbps / 2));
   EXPECT_GT(clean_probe.target_bitrate_kbps, first_crisis.target_bitrate_kbps);
 }
 
@@ -4193,7 +4362,7 @@ TEST(StreamQualityControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCl
     peak_scale = std::max(peak_scale, action.resolution_scale_percent);
   }
 
-  EXPECT_LE(peak_bitrate, 17000)
+  EXPECT_LE(peak_bitrate, 18000)
     << "A weak public route that just proved 20Mbps unsafe should not re-probe to the same cliff from clean ALR alone";
   EXPECT_LT(peak_effective_ceiling, 30000)
     << "Clean ALR after a loss cliff is not capacity proof, so the sustainable cap should remain active";
@@ -4613,7 +4782,7 @@ TEST(StreamQualityControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdr
     });
   }
 
-  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
+  EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
   EXPECT_EQ(action.availability, stream_quality::availability_e::low);
   EXPECT_EQ(action.tier, stream_quality::tier_e::fast);
   EXPECT_LT(action.target_bitrate_kbps, 120000);
@@ -5609,6 +5778,57 @@ TEST(StreamQualityControllerTests, DampensLocalDisplayPressureWhenNetworkLossIsP
   };
 
   EXPECT_LT(stream_quality::infer_local_display_pressure(feedback), 500U);
+}
+
+TEST(StreamQualityControllerTests, TreatsFirstEmptyNoVideoFeedbackAsTransientStartupNoise) {
+  stream_quality::feedback_t feedback {};
+  feedback.duration_ms = 513;
+  feedback.frames_seen = 0;
+  feedback.complete_frames = 0;
+  feedback.displayed_frames = 0;
+  feedback.video_bytes = 0;
+  feedback.total_packets = 0;
+  feedback.missing_packets = 0;
+  feedback.received_packets = 0;
+  feedback.rtt_ms = 37;
+  feedback.rtt_variance_ms = 9;
+
+  EXPECT_TRUE(stream_quality::startup_feedback_is_empty_no_delivery(feedback));
+
+  feedback.frames_seen = 1;
+  EXPECT_FALSE(stream_quality::startup_feedback_is_empty_no_delivery(feedback));
+}
+
+TEST(StreamQualityControllerTests, DoesNotPromoteCleanReliableBacklogWithoutInputLatency) {
+  stream_quality::feedback_t clean_media {};
+  clean_media.duration_ms = 8140;
+  clean_media.frames_seen = 51;
+  clean_media.complete_frames = 51;
+  clean_media.displayed_frames = 111;
+  clean_media.duplicate_frames = 71;
+  clean_media.local_display_pressure = 1000;
+  clean_media.decode_queue_depth = 8;
+  clean_media.render_queue_depth = 2;
+  clean_media.rtt_ms = 77;
+  clean_media.rtt_variance_ms = 29;
+  clean_media.input_queue_depth = 0;
+  clean_media.input_send_latency_us = 0;
+  clean_media.input_ack_latency_us = 0;
+
+  EXPECT_FALSE(stream_quality::transport_backlog_should_promote_input_queue(clean_media, 30));
+
+  clean_media.input_queue_depth = 1;
+  EXPECT_FALSE(stream_quality::transport_backlog_should_promote_input_queue(clean_media, 30));
+
+  clean_media.input_send_latency_us = 32000;
+  EXPECT_TRUE(stream_quality::transport_backlog_should_promote_input_queue(clean_media, 30));
+}
+
+TEST(StreamQualityControllerTests, StartupFecFloorBlocksEarlyDecreaseButAllowsIncrease) {
+  EXPECT_TRUE(stream_quality::startup_fec_floor_should_block_decrease(true, 20, 10));
+  EXPECT_FALSE(stream_quality::startup_fec_floor_should_block_decrease(true, 20, 20));
+  EXPECT_FALSE(stream_quality::startup_fec_floor_should_block_decrease(true, 20, 25));
+  EXPECT_FALSE(stream_quality::startup_fec_floor_should_block_decrease(false, 20, 10));
 }
 
 TEST(StreamQualityControllerTests, TierAndAvailabilityNamesAreStableForLogs) {

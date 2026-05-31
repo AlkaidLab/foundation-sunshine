@@ -680,6 +680,11 @@ namespace session_runtime {
     return make_transport_path(transport_route_e::lan_direct);
   }
 
+  inline transport_path_t
+  make_enet_direct_transport_path() {
+    return make_provider_datagram_direct_transport_path();
+  }
+
   inline bool
   path_profile_requests_remote_safe_startup(std::string_view profile) {
     return profile == "remote" ||
@@ -2026,7 +2031,7 @@ namespace session_runtime {
   // Keep risky-route startup conservative, but still align with the 150 Hz
   // high-refresh startup floor used by stream_quality::startup_fps_for_bitrate().
   inline constexpr int kStartupHighRefreshCadenceCap = 120;
-  inline constexpr int kStartupRouterPortForwardCadenceCap = 90;
+  inline constexpr int kStartupRouterPortForwardCadenceCap = 60;
 
   inline startup_ceiling_policy_t
   startup_ceiling_policy_for_path(const startup_path_decision_t &decision,

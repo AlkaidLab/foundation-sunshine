@@ -45,6 +45,12 @@ namespace stream {
   stream_quality_resync_guard_allows_safety_apply(const stream_quality::action_t &action,
                                            int last_applied_bitrate_kbps,
                                            int last_applied_fec_percentage);
+
+  std::pair<bool, bool>
+  video_shard_frame_boundary_flags(std::uint32_t block_index,
+                                   std::uint32_t block_count,
+                                   std::uint32_t shard_index,
+                                   std::uint32_t data_shards);
 }
 
 #include "../tests_common.h"
@@ -146,4 +152,36 @@ TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
 
 TEST(RuntimeProfileTierTests, DisablesRuntimeEncoderResolutionReconfigurationByDefault) {
   EXPECT_FALSE(stream::runtime_profile_resolution_reconfig_enabled());
+}
+
+TEST(VideoShardBoundaryTests, MarksOnlyFirstDataShardAndFinalDataShard) {
+  const auto [first_block_first_start, first_block_first_end] =
+    stream::video_shard_frame_boundary_flags(0, 2, 0, 3);
+  EXPECT_TRUE(first_block_first_start);
+  EXPECT_FALSE(first_block_first_end);
+
+  const auto [first_block_last_data_start, first_block_last_data_end] =
+    stream::video_shard_frame_boundary_flags(0, 2, 2, 3);
+  EXPECT_FALSE(first_block_last_data_start);
+  EXPECT_FALSE(first_block_last_data_end);
+
+  const auto [first_block_parity_start, first_block_parity_end] =
+    stream::video_shard_frame_boundary_flags(0, 2, 3, 3);
+  EXPECT_FALSE(first_block_parity_start);
+  EXPECT_FALSE(first_block_parity_end);
+
+  const auto [second_block_first_start, second_block_first_end] =
+    stream::video_shard_frame_boundary_flags(1, 2, 0, 3);
+  EXPECT_FALSE(second_block_first_start);
+  EXPECT_FALSE(second_block_first_end);
+
+  const auto [second_block_last_data_start, second_block_last_data_end] =
+    stream::video_shard_frame_boundary_flags(1, 2, 2, 3);
+  EXPECT_FALSE(second_block_last_data_start);
+  EXPECT_TRUE(second_block_last_data_end);
+
+  const auto [second_block_parity_start, second_block_parity_end] =
+    stream::video_shard_frame_boundary_flags(1, 2, 3, 3);
+  EXPECT_FALSE(second_block_parity_start);
+  EXPECT_FALSE(second_block_parity_end);
 }

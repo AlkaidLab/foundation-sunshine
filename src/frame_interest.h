@@ -116,6 +116,24 @@ namespace frame_interest {
   void
   add_cursor_roi(map_t &map, int cursor_x, int cursor_y, int radius, int qp_delta);
 
+  bool
+  cursor_geometry_valid(bool active, bool pointer_visible, int width, int height);
+
+  bool
+  add_interaction_dirty_hint(map_t &map, int center_x, int center_y, bool center_valid);
+
+  bool
+  ensure_interaction_interest(map_t &map,
+                              int frame_width,
+                              int frame_height,
+                              std::uint64_t sequence,
+                              bool cursor_valid,
+                              int cursor_x,
+                              int cursor_y,
+                              int cursor_w,
+                              int cursor_h,
+                              bool interaction_active);
+
   void
   finalize(map_t &map);
 

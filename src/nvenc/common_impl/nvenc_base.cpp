@@ -413,6 +413,7 @@ namespace nvenc {
     }
 
     enc_config.rcParams.enableAQ = config.adaptive_quantization;
+    const auto configured_spatial_aq = enc_config.rcParams.enableAQ;
 #ifdef SUNSHINE_ENABLE_NVENC_FRAME_INTEREST_BACKEND
     constexpr bool nvenc_frame_interest_backend_compiled = true;
 #else
@@ -443,7 +444,7 @@ namespace nvenc {
       nvenc_qp_delta_map_backend_enabled,
       enc_config.rcParams.enableAQ != 0);
     if (qp_delta_policy.disable_adaptive_quantization) {
-      BOOST_LOG(info) << "NvEnc: disabling spatial AQ to enable experimental frame interest QP delta map";
+      BOOST_LOG(info) << "NvEnc: disabling spatial AQ to enable hardware frame interest QP delta map";
       enc_config.rcParams.enableAQ = 0;
     }
     
@@ -831,7 +832,9 @@ namespace nvenc {
       qp_delta_map_enabled = false;
       interest_caps.roi_qp_map = false;
       interest_caps.dirty_rects = false;
+      interest_caps.adaptive_quantization = configured_spatial_aq != 0;
       enc_config.rcParams.qpMapMode = NV_ENC_QP_MAP_DISABLED;
+      enc_config.rcParams.enableAQ = configured_spatial_aq;
     };
 
     auto init_status = nvenc->nvEncInitializeEncoder(encoder, &init_params);

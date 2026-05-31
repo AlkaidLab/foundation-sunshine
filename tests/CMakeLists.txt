@@ -116,6 +116,20 @@ target_link_options(stream_controller_unit_tests PRIVATE)
 set_target_properties(stream_controller_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME stream_controller_unit_tests COMMAND stream_controller_unit_tests)
 
+add_executable(frame_interest_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_interest.cpp
+        ${CMAKE_SOURCE_DIR}/src/frame_interest.cpp
+        ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp)
+target_include_directories(frame_interest_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(frame_interest_unit_tests
+        gtest_main)
+target_compile_definitions(frame_interest_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(frame_interest_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+target_link_options(frame_interest_unit_tests PRIVATE)
+set_target_properties(frame_interest_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME frame_interest_unit_tests COMMAND frame_interest_unit_tests)
+
 if (EXISTS "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp" AND
     EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include/alkaidlab/session_core/session_core.h" AND
     EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/include/alkaidlab/session_sdk/session_sdk.h" AND

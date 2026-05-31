@@ -336,33 +336,72 @@ TEST(StreamQualityTests, StaticKeepaliveHonorsExplicitMinimumFpsTarget) {
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30, true, 90), 30);
 }
 
-TEST(StreamQualityTests, StaticKeepaliveRaisesCadenceDuringInteractiveInput) {
+TEST(StreamQualityTests, StaticKeepaliveBoundsCadenceDuringInteractiveInput) {
+  // Interactive static keepalive sends duplicate/re-converted frames. Keep it
+  // above idle so dragging/held buttons do not collapse to 1fps, but when the
+  // adaptive controller has already pulled a weak/recovering stream to <=90fps
+  // duplicate keepalives must not jump it back to a 60fps duplicate-frame storm.
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(120,
                                                        true,
                                                        0,
                                                        stream_quality::static_frame_mode_e::interactive_input),
-            120);
+            60);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(96,
                                                        true,
                                                        0,
                                                        stream_quality::static_frame_mode_e::interactive_input),
-            96);
+            60);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(60,
                                                        true,
                                                        0,
                                                        stream_quality::static_frame_mode_e::interactive_input),
-            60);
+            30);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(90,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::interactive_input),
+            30);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(30,
+                                                       true,
+                                                       0,
+                                                       stream_quality::static_frame_mode_e::interactive_input),
+            30);
 }
 
-TEST(StreamQualityTests, CursorPlaneInputUsesIdleStaticKeepaliveMode) {
-  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(true, true),
+TEST(StreamQualityTests, PointerOnlyCursorPlaneInputUsesIdleStaticKeepaliveMode) {
+  // Cursor-plane pointer-only motion is filtered before this helper by
+  // record_control_input_received()/input_activity_is_recent(), so it reaches
+  // the mode selector as input_active=false and stays bandwidth-friendly.
+  EXPECT_FALSE(stream_quality::input_activity_is_recent(false, false, false, false));
+  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(false, true),
             stream_quality::static_frame_mode_e::idle);
   EXPECT_EQ(stream_quality::static_frame_keepalive_fps(
               150,
               true,
               0,
-              stream_quality::static_frame_mode_for_input_activity(true, true)),
+              stream_quality::static_frame_mode_for_input_activity(false, true)),
             1);
+}
+
+TEST(StreamQualityTests, CursorPlaneDragAndScrollKeepInteractiveStaticKeepaliveMode) {
+  // Cursor-plane sessions must not treat every pointer move as a reason to
+  // raise static keepalive cadence, but non-pointer input, held buttons, drags,
+  // scrolling, and game/controller activity still need bounded higher-cadence
+  // frames.
+  // Otherwise remote window dragging/scrolling can fall back to the VRR idle
+  // 1fps pop timeout and feel like PPT despite a healthy LAN.
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(true, false, false, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, true, false, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, false, true, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, false, false, true));
+  EXPECT_EQ(stream_quality::static_frame_mode_for_input_activity(true, true),
+            stream_quality::static_frame_mode_e::interactive_input);
+  EXPECT_EQ(stream_quality::static_frame_keepalive_fps(
+              150,
+              true,
+              0,
+              stream_quality::static_frame_mode_for_input_activity(true, true)),
+            60);
 }
 
 TEST(StreamQualityTests, NonCursorPlaneInputKeepsInteractiveStaticKeepaliveMode) {
@@ -383,4 +422,12 @@ TEST(StreamQualityTests, StaticKeepaliveDefaultsRemainBandwidthFriendly) {
                                                        0,
                                                        stream_quality::static_frame_mode_e::idle),
             1);
+}
+
+TEST(StreamQualityTests, DragAndHeldButtonsRemainInteractiveWhenCursorPlaneSuppressesPointerMoveKeepalive) {
+  EXPECT_FALSE(stream_quality::input_activity_is_recent(false, false, false, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(true, false, false, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, true, false, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, false, true, false));
+  EXPECT_TRUE(stream_quality::input_activity_is_recent(false, false, false, true));
 }

@@ -189,6 +189,19 @@ namespace stream_quality {
   runtime_action_plan_t
   plan_runtime_action(const action_t &action, const runtime_action_context_t &context);
 
+  bool
+  verified_capacity_rescue_transport_clean(std::uint32_t rtt_us,
+                                           std::uint32_t jitter_us,
+                                           std::uint32_t packet_loss_ppm,
+                                           std::uint32_t reliable_backlog_packets);
+
+  bool
+  rescue_request_requests_quality_downgrade(std::uint32_t trigger_flags,
+                                            std::uint32_t max_bitrate_kbps,
+                                            std::uint32_t fec_percent,
+                                            std::uint32_t target_scale_percent,
+                                            bool enable_blurry_upscale);
+
   AlkStreamQualityDecision
   to_sdk_decision(const action_t &action);
 
@@ -238,7 +251,21 @@ namespace stream_quality {
     std::uint32_t delay_samples = 0;
     bool delay_gradient_valid = false;
     bool user_input_active = false;
+    bool path_lan_direct = false;
+    bool path_identity_confident = false;
   };
+
+  bool
+  startup_feedback_is_empty_no_delivery(const feedback_t &feedback);
+
+  bool
+  transport_backlog_should_promote_input_queue(const feedback_t &feedback,
+                                               std::uint32_t reliable_backlog_packets);
+
+  bool
+  startup_fec_floor_should_block_decrease(bool startup_guard_active,
+                                          int last_applied_fec_percentage,
+                                          int target_fec_percentage);
 
   struct action_t {
     bool changed = false;

@@ -185,6 +185,9 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include/alkaidlab/media_packetization/gamestream_media_packetization.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp/include/alkaidlab/media_packetization/gamestream_rtp.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/media/redundancy/gamestream-rs-fec/include/alkaidlab/media_redundancy/gamestream_rs_fec.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/interaction-cursor/include/alkaidlab/gamestream/interaction_cursor_wire_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/interaction/cursor/interaction-cursor/src/interaction_cursor.cpp" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/session_handshake/session_handshake.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/frame_interest/frame_interest.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/src/gamestream_rtsp_handshake.cpp" AND
@@ -209,6 +212,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/src/gamestream_enet_transport.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/src/gamestream_media_packetization.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/interaction/cursor/interaction-cursor/src/interaction_cursor.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/src/gamestream_rtsp_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/src/alkaid_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/frame-interest/roi-map/src/frame_interest.cpp"
@@ -232,8 +236,10 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/redundancy/gamestream-rs-fec/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/interaction-cursor/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
     if(WIN32)

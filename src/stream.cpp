@@ -57,6 +57,9 @@ extern "C" {
 #include "alkaidlab/session_runtime/transport_monitor.h"
 #include "alkaidlab/session_runtime/continuity_facade.h"
 #include "alkaidlab/session_handshake/session_handshake.h"
+#include "alkaidlab/interaction_cursor/interaction_cursor.h"
+#include "alkaidlab/interaction_cursor/interaction_cursor_backend_provider.h"
+#include "alkaidlab/gamestream/interaction_cursor_wire_adapter.h"
 #include "alkaidlab/frame_interest/frame_interest.h"
 #include "alkaidlab/media_packetization/gamestream_rtp.h"
 #include "alkaidlab/media_packetization/gamestream_media_packetization.h"
@@ -95,6 +98,21 @@ extern "C" {
 #endif
 
 static constexpr const char kSunshineMicrophoneBackendProviderId[] = "windows-wasapi-sink";
+
+#ifndef SS_CURSOR_PLANE_SOURCE_VERSION
+#define SS_CURSOR_PLANE_SOURCE_MAGIC 0x43525353U
+#define SS_CURSOR_PLANE_SOURCE_VERSION 1
+typedef struct _SS_CURSOR_PLANE_SOURCE_V1 {
+  std::uint32_t magic;
+  std::uint16_t version;
+  std::uint16_t size;
+  std::uint32_t sourceWidth;
+  std::uint32_t sourceHeight;
+  std::uint32_t bitmapHash;
+} SS_CURSOR_PLANE_SOURCE_V1, *PSS_CURSOR_PLANE_SOURCE_V1;
+static_assert(sizeof(SS_CURSOR_PLANE_SOURCE_V1) == 20,
+              "SS cursor-plane source tail wire size changed");
+#endif
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -973,14 +991,20 @@ namespace stream {
         std::uint16_t display_hotspot_y { 0 };
         std::uint16_t bitmap_width { 0 };
         std::uint16_t bitmap_height { 0 };
+        std::uint32_t source_width { 0 };
+        std::uint32_t source_height { 0 };
+        std::uint32_t bitmap_hash { 0 };
         std::uint32_t flags { 0 };
         std::uint32_t epoch { 0 };
         std::uint32_t session_cursor_plane_tx { 0 };
         std::chrono::steady_clock::time_point last_sent {};
         std::chrono::steady_clock::time_point last_legacy_sent {};
         std::chrono::steady_clock::time_point last_bitmap_retry {};
+        AlkInteractionCursor alkaid_cursor {};
+        AlkInteractionCursorNativeHostCaptureBackend native_host_capture_backend {};
         bool host_cursor_suppressed { false };
         bool bitmap_sent { false };
+        bool alkaid_cursor_initialized { false };
       } cursor_plane;
       struct {
         std::uint32_t last_host_sequence { 0 };
@@ -1049,6 +1073,12 @@ namespace stream {
     int last_applied_stream_quality_resolution_scale { 100 };
     int last_applied_stream_quality_chroma_sampling_type { -1 };
     int last_applied_stream_quality_dynamic_range { -1 };
+    stream_quality::link_quality_state_e last_stream_quality_link_quality_state {
+      stream_quality::link_quality_state_e::unknown,
+    };
+    stream_quality::scene_class_e last_stream_quality_scene_class {
+      stream_quality::scene_class_e::static_scene,
+    };
     std::uint32_t last_dynamic_clarity_flags { 0 };
     int last_dynamic_clarity_qp { 0 };
     int last_dynamic_clarity_bitrate { 0 };
@@ -1117,6 +1147,8 @@ namespace stream {
       std::uint32_t host_motion_source_mask { 0 };
       std::uint64_t max_host_motion_dirty_area { 0 };
       std::uint32_t user_input_active_windows { 0 };
+      std::uint32_t path_lan_direct_windows { 0 };
+      std::uint32_t path_identity_confident_windows { 0 };
     } stream_quality_diag;
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
@@ -1918,6 +1950,22 @@ namespace stream {
     return session_runtime::runtime_profile_resolution_reconfig_enabled();
   }
 
+  std::pair<bool, bool>
+  video_shard_frame_boundary_flags(std::uint32_t block_index,
+                                   std::uint32_t block_count,
+                                   std::uint32_t shard_index,
+                                   std::uint32_t data_shards) {
+    if (block_count == 0 || data_shards == 0 ||
+        block_index >= block_count || shard_index >= data_shards) {
+      return { false, false };
+    }
+
+    const bool frame_start = block_index == 0 && shard_index == 0;
+    const bool frame_end = block_index + 1 == block_count &&
+                           shard_index + 1 == data_shards;
+    return { frame_start, frame_end };
+  }
+
   static stream_quality::content_type_e
   stream_quality_content_type_from_monitor(int content_type) {
     switch (content_type) {
@@ -2340,12 +2388,30 @@ namespace stream {
   }
 
   static void
+  annotate_feedback_with_path_identity(session_t *session,
+                                       stream_quality::feedback_t &feedback) {
+    if (!session) {
+      return;
+    }
+
+    const auto &path = session->active_transport_path;
+    feedback.path_lan_direct =
+      path.path_identity_kind == LI_SESSION_PATH_IDENTITY_TRUE_LAN &&
+      path.route == session_runtime::transport_route_e::lan_direct &&
+      path.startup_class == LI_SESSION_STARTUP_CLASS_LAN_FAST;
+    feedback.path_identity_confident =
+      path.identity_confidence_ppm >= 700000U ||
+      (feedback.path_lan_direct && session->startup_path_decision.allow_lan_fast_start);
+  }
+
+  static void
   annotate_feedback_with_transport_stats(session_t *session,
                                          stream_quality::feedback_t &feedback,
                                          const char *source) {
     if (!session) {
       return;
     }
+    annotate_feedback_with_path_identity(session, feedback);
 
     AlkTransportStats stats;
     if (!snapshot_transport_stats(session, stats)) {
@@ -2360,14 +2426,18 @@ namespace stream {
     }
     const bool transport_loss_is_media_video =
       stats.channel_kind == ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM;
-    if (transport_loss_is_media_video &&
+    const bool transport_loss_should_drive_continuity =
+      stats.packet_loss_ppm >= 30000U &&
+      (!feedback.path_lan_direct || transport_loss_is_media_video);
+    if ((transport_loss_is_media_video || transport_loss_should_drive_continuity) &&
         stats.packet_loss_ppm != 0 &&
         feedback.total_packets == 0) {
       feedback.total_packets = 1000000U;
       feedback.missing_packets = std::min<std::uint32_t>(stats.packet_loss_ppm, 1000000U);
       feedback.received_packets = 1000000U - feedback.missing_packets;
     }
-    if (stats.reliable_backlog_packets != 0) {
+    if (stream_quality::transport_backlog_should_promote_input_queue(feedback,
+                                                                      stats.reliable_backlog_packets)) {
       feedback.input_queue_depth = std::max(feedback.input_queue_depth,
                                             stats.reliable_backlog_packets);
     }
@@ -2457,6 +2527,8 @@ namespace stream {
       std::max(diag.max_host_motion_dirty_area,
                session->stream_quality_host_motion_dirty_area.exchange(0, std::memory_order_relaxed));
     diag.user_input_active_windows += feedback.user_input_active ? 1U : 0U;
+    diag.path_lan_direct_windows += feedback.path_lan_direct ? 1U : 0U;
+    diag.path_identity_confident_windows += feedback.path_identity_confident ? 1U : 0U;
     if (action.request_idr) {
       diag.idr_requests++;
     }
@@ -2526,6 +2598,8 @@ namespace stream {
             << " hostMotionSource=" << stream_quality_host_motion_source_name(diag.host_motion_source_mask)
             << " hostMotionDirtyMax=" << diag.max_host_motion_dirty_area
             << " userInputActive=" << diag.user_input_active_windows
+            << " pathLan=" << diag.path_lan_direct_windows
+            << " pathConf=" << diag.path_identity_confident_windows
             << " rfiRequests=" << diag.rfi_requests
             << " waitingForRfi=" << diag.waiting_for_rfi_frames
             << " largeFrameFecSkipped=" << diag.large_frame_fec_skipped
@@ -2573,6 +2647,9 @@ namespace stream {
     const bool resync_guard =
       session->stream_quality_resync_guard_until.time_since_epoch().count() != 0 &&
       now < session->stream_quality_resync_guard_until;
+    const bool startup_guard =
+      session->stream_quality_startup_guard_until.time_since_epoch().count() != 0 &&
+      now < session->stream_quality_startup_guard_until;
     const bool startup_settle =
       session->stream_quality_startup_settle_until.time_since_epoch().count() != 0 &&
       now < session->stream_quality_startup_settle_until;
@@ -2607,22 +2684,36 @@ namespace stream {
                                                         &sdk_plan,
                                                         steady_clock_ms());
     refresh_transport_monitor_views(session, true);
+    session->last_stream_quality_link_quality_state = action.link_quality_state;
+    session->last_stream_quality_scene_class = action.scene_class;
     if (!action.changed) {
       return;
     }
 
-    const auto target_fec_percentage = plan.target_fec_percentage;
-    const auto target_encoding_bitrate = plan.target_bitrate_kbps;
-    const auto target_fps = plan.target_fps;
-    const auto target_total_bitrate = plan.target_total_bitrate_kbps;
-    const auto pacing_total_bitrate = plan.pacing_total_bitrate_kbps;
+    int target_fec_percentage = plan.target_fec_percentage;
+    int target_encoding_bitrate = plan.target_bitrate_kbps;
+    int target_fps = plan.target_fps;
+    int target_total_bitrate = plan.target_total_bitrate_kbps;
+    int pacing_total_bitrate = plan.pacing_total_bitrate_kbps;
     const bool dynamic_apply_blocked = plan.dynamic_apply_blocked;
     const bool resync_guard_safety_apply = resync_guard && !dynamic_apply_blocked;
-    const bool apply_bitrate = plan.apply_bitrate;
-    const bool apply_fec = plan.apply_fec;
-    const bool apply_fps = plan.apply_fps;
-    const bool apply_profile = plan.apply_profile;
+    bool apply_bitrate = plan.apply_bitrate;
+    bool apply_fec = plan.apply_fec;
+    bool apply_fps = plan.apply_fps;
+    bool apply_profile = plan.apply_profile;
     const bool profile_deferred = plan.profile_deferred;
+    const bool startup_fec_floor_blocked =
+      apply_fec &&
+      stream_quality::startup_fec_floor_should_block_decrease(startup_guard,
+                                                              session->last_applied_stream_quality_fec,
+                                                              target_fec_percentage);
+    if (startup_fec_floor_blocked) {
+      target_fec_percentage = session->last_applied_stream_quality_fec;
+      target_total_bitrate = total_video_bitrate_from_encoding_bitrate(target_encoding_bitrate,
+                                                                       target_fec_percentage);
+      pacing_total_bitrate = std::max(pacing_total_bitrate, target_total_bitrate);
+      apply_fec = false;
+    }
     const bool profile_quality_down = apply_profile &&
                                       action.resolution_scale_percent <
                                         session->last_applied_stream_quality_resolution_scale;
@@ -2792,8 +2883,9 @@ namespace stream {
                     << ",fps=" << (apply_fps ? 1 : 0)
                     << ",fec=" << (apply_fec ? 1 : 0)
                     << ",profile=" << (apply_profile ? 1 : 0) << ")"
-                    << (startup_settle ? " startupSettle=1" : "")
-                    << (resync_guard ? " resyncGuard=1" : "")
+                      << (startup_settle ? " startupSettle=1" : "")
+                      << (startup_fec_floor_blocked ? " startupFecFloor=1" : "")
+                      << (resync_guard ? " resyncGuard=1" : "")
                     << (resync_guard_safety_apply ? " resyncSafetyApply=1" : "")
                     << (apply_fps ? " fpsApplied=runtime-pacing" : "")
                     << (plan.fps_deferred ? " fpsDeferred=runtime-plan" : "")
@@ -2929,6 +3021,8 @@ namespace stream {
       return false;
     }
 
+    const bool startup_empty_no_delivery =
+      stream_quality::startup_feedback_is_empty_no_delivery(feedback);
     const auto total_packets = feedback.total_packets;
     const auto missing_packets = feedback.missing_packets;
     const auto displayed_ratio =
@@ -2961,7 +3055,8 @@ namespace stream {
       feedback.render_queue_depth >= 6 ||
       (feedback.frames_seen >= 12 &&
        feedback.late_frames >= std::max(6U, feedback.frames_seen / 4U));
-    if (loss_impairs_delivery || visual_stale || startup_no_display || severe_client_backpressure) {
+    if (!startup_empty_no_delivery &&
+        (loss_impairs_delivery || visual_stale || startup_no_display || severe_client_backpressure)) {
       return false;
     }
 
@@ -2977,6 +3072,7 @@ namespace stream {
                       << " late=" << feedback.late_frames
                       << " dq=" << feedback.decode_queue_depth
                       << " rq=" << feedback.render_queue_depth
+                      << " emptyNoDelivery=" << (startup_empty_no_delivery ? 1 : 0)
                       << " audioUnd=" << feedback.audio_underruns
                       << " lateAudioDrop=" << feedback.late_audio_drops
                       << " rtt=" << feedback.rtt_ms << "ms"
@@ -4322,11 +4418,24 @@ namespace stream {
   static bool
   is_control_input_recent(void *channel_data) {
     auto *session = static_cast<session_t *>(channel_data);
-    if (!session || session->last_control_input_received.time_since_epoch().count() == 0) {
+    if (!session) {
       return false;
     }
 
-    return std::chrono::steady_clock::now() - session->last_control_input_received <= 350ms;
+    const auto now_ms = steady_clock_ms();
+    const bool drag_active =
+      session->drag_motion_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
+    const bool mouse_button_active =
+      session->mouse_button_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
+    const bool gamepad_active =
+      session->gamepad_input_active_until_ms.load(std::memory_order_relaxed) >= now_ms;
+    const bool recent_control_input =
+      session->last_control_input_received.time_since_epoch().count() != 0 &&
+      std::chrono::steady_clock::now() - session->last_control_input_received <= 350ms;
+    return stream_quality::input_activity_is_recent(recent_control_input,
+                                                    drag_active,
+                                                    mouse_button_active,
+                                                    gamepad_active);
   }
 
   static std::chrono::duration<double, std::milli>
@@ -4364,12 +4473,16 @@ namespace stream {
   }
 
   void
+  maybe_send_cursor_plane_update(session_t *session, std::chrono::steady_clock::time_point now);
+
+  void
   control_server_t::iterate(std::chrono::milliseconds timeout) {
     constexpr int max_events_per_iter = 256;
 
     if (_transport_native_open) {
       for (int events_processed = 0; events_processed < max_events_per_iter; ++events_processed) {
         AlkTransportDatagram datagram;
+        alk_transport_datagram_init(&datagram);
         if (events_processed == 0) {
           alk_transport_runtime_service_timeout(&_transport_binding, 0);
         }
@@ -4405,6 +4518,7 @@ namespace stream {
           BOOST_LOG(info) << "CLIENT CONNECTED runtime="sv << session->identity.runtime_id
                           << " nativePeerId=" << datagram.peer_id
                           << " connectData=" << datagram.event_code;
+          maybe_send_cursor_plane_update(session, std::chrono::steady_clock::now());
           continue;
         }
         if ((datagram.flags & ALK_TRANSPORT_DATAGRAM_FLAG_EVENT_DISCONNECT) != 0) {
@@ -4709,273 +4823,125 @@ namespace stream {
     std::uint16_t bitmap_width { 0 };
     std::uint16_t bitmap_height { 0 };
     std::uint32_t flags { 0 };
+    std::uint32_t source_width { 0 };
+    std::uint32_t source_height { 0 };
+    std::uint32_t bitmap_hash { 0 };
     std::uint32_t host_dpi_scale_ppm { 1000000 };
     std::uint32_t size_source { LI_SESSION_CURSOR_SIZE_SOURCE_UNKNOWN };
     std::uint32_t confidence_ppm { 0 };
+    std::uint64_t animation_epoch { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
     std::vector<std::uint8_t> bitmap_bgra;
   };
 
+  static std::uint32_t
+  hash_cursor_bitmap(const std::vector<std::uint8_t> &bgra) {
+    std::uint32_t hash = 2166136261u;
+    for (auto byte : bgra) {
+      hash ^= byte;
+      hash *= 16777619u;
+    }
+    return hash != 0 ? hash : 1u;
+  }
+
   cursor_plane_sample_t
-  sample_host_cursor_plane(session_t *session) {
+  cursor_plane_sample_from_cursor_state(session_t *session, const AlkCursorState &state) {
     cursor_plane_sample_t sample {};
-
-#ifdef _WIN32
-    auto semantic_cursor_shape_id = [](HCURSOR cursor) -> std::uint32_t {
-      if (cursor == nullptr) {
-        return SS_CURSOR_PLANE_SHAPE_UNKNOWN;
-      }
-      struct known_cursor_t {
-        LPCSTR name;
-        std::uint32_t shape_id;
-      };
-      static const known_cursor_t known[] {
-        { IDC_ARROW, SS_CURSOR_PLANE_SHAPE_ARROW },
-        { IDC_HAND, SS_CURSOR_PLANE_SHAPE_HAND },
-        { IDC_IBEAM, SS_CURSOR_PLANE_SHAPE_IBEAM },
-        { IDC_WAIT, SS_CURSOR_PLANE_SHAPE_WAIT },
-        { IDC_APPSTARTING, SS_CURSOR_PLANE_SHAPE_WAIT },
-        { IDC_CROSS, SS_CURSOR_PLANE_SHAPE_CROSS },
-        { IDC_SIZEWE, SS_CURSOR_PLANE_SHAPE_SIZE_WE },
-        { IDC_SIZENS, SS_CURSOR_PLANE_SHAPE_SIZE_NS },
-        { IDC_SIZENWSE, SS_CURSOR_PLANE_SHAPE_SIZE_NWSE },
-        { IDC_SIZENESW, SS_CURSOR_PLANE_SHAPE_SIZE_NESW },
-        { IDC_SIZEALL, SS_CURSOR_PLANE_SHAPE_SIZE_ALL },
-        { IDC_NO, SS_CURSOR_PLANE_SHAPE_NO },
-      };
-
-      for (const auto &candidate : known) {
-        if (cursor == LoadCursorA(nullptr, candidate.name)) {
-          return candidate.shape_id;
-        }
-      }
-
-      const auto cursor_handle = reinterpret_cast<std::uintptr_t>(cursor);
-      auto hashed = static_cast<std::uint32_t>((cursor_handle >> 4U) ^ (cursor_handle >> 32U) ^ cursor_handle);
-      if ((hashed & ~SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG) == 0) {
-        hashed = 1;
-      }
-      return SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG | (hashed & ~SS_CURSOR_PLANE_SHAPE_CUSTOM_FLAG);
-    };
-
-    CURSORINFO cursor_info {};
-    cursor_info.cbSize = sizeof(cursor_info);
-    if (!GetCursorInfo(&cursor_info)) {
+    if (state.version != ALK_INTERACTION_CURSOR_VERSION) {
       return sample;
     }
 
-    POINT point = cursor_info.ptScreenPos;
-    if (point.x == 0 && point.y == 0) {
-      GetCursorPos(&point);
+    AlkGamestreamCursorPlaneFields fields;
+    alk_gamestream_cursor_plane_fields_init(&fields);
+    if (!alk_gamestream_cursor_state_to_legacy_cursor_plane(&state, &fields)) {
+      return sample;
     }
 
-    const int origin_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const int origin_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int fallback_width = std::max(1, GetSystemMetrics(SM_CXCURSOR));
-    const int fallback_height = std::max(1, GetSystemMetrics(SM_CYCURSOR));
-    const int stream_width = session ? std::max(1, session->config.monitor.width) : std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
-    const int stream_height = session ? std::max(1, session->config.monitor.height) : std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    int dpi_x = 96;
-    int dpi_y = 96;
-    HDC dpi_dc = GetDC(nullptr);
-    if (dpi_dc != nullptr) {
-      dpi_x = std::max(1, GetDeviceCaps(dpi_dc, LOGPIXELSX));
-      dpi_y = std::max(1, GetDeviceCaps(dpi_dc, LOGPIXELSY));
-      ReleaseDC(nullptr, dpi_dc);
-    }
-    const int dpi_scaled_width =
-      (dpi_x > 110 && fallback_width <= 40) ?
-        std::max(1, (fallback_width * dpi_x + 48) / 96) :
-        fallback_width;
-    const int dpi_scaled_height =
-      (dpi_y > 110 && fallback_height <= 40) ?
-        std::max(1, (fallback_height * dpi_y + 48) / 96) :
-        fallback_height;
-
-    const bool cursor_visible =
-      (cursor_info.flags & CURSOR_SHOWING) != 0 &&
-#ifdef CURSOR_SUPPRESSED
-      (cursor_info.flags & CURSOR_SUPPRESSED) == 0 &&
-#endif
-      cursor_info.hCursor != nullptr;
-    RECT virtual_rect {
-      origin_x,
-      origin_y,
-      origin_x + std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN)),
-      origin_y + std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN)),
-    };
-    RECT clip_rect {};
-    const bool clip_available = GetClipCursor(&clip_rect) != FALSE;
-    const bool cursor_clipped =
-      clip_available &&
-      (clip_rect.left > virtual_rect.left + 1 ||
-       clip_rect.top > virtual_rect.top + 1 ||
-       clip_rect.right < virtual_rect.right - 1 ||
-       clip_rect.bottom < virtual_rect.bottom - 1);
-    const bool cursor_center_locked =
-      cursor_clipped &&
-      (clip_rect.right - clip_rect.left <= 4 ||
-       clip_rect.bottom - clip_rect.top <= 4);
-
+    const int stream_width = session ? std::max(1, session->config.monitor.width) : 1;
+    const int stream_height = session ? std::max(1, session->config.monitor.height) : 1;
     sample.available = true;
-    sample.flags = cursor_visible ? SS_CURSOR_PLANE_FLAG_VISIBLE : 0;
-    if (!cursor_visible) {
-      // Hidden host cursor is the common signal for raw/relative game camera
-      // input. Tell clients not to draw a local cursor plane and to prefer
-      // relative mouse movement while the host remains in this state.
-      sample.flags |= SS_CURSOR_PLANE_FLAG_RELATIVE;
+    sample.cursor_shape_id = fields.cursor_shape_id;
+    sample.x = std::min<std::uint32_t>(fields.x, static_cast<std::uint32_t>(stream_width - 1));
+    sample.y = std::min<std::uint32_t>(fields.y, static_cast<std::uint32_t>(stream_height - 1));
+    sample.hotspot_x = fields.hotspot_x;
+    sample.hotspot_y = fields.hotspot_y;
+    sample.width = fields.width;
+    sample.height = fields.height;
+    sample.source_width = static_cast<std::uint32_t>(stream_width);
+    sample.source_height = static_cast<std::uint32_t>(stream_height);
+    sample.display_width = fields.width;
+    sample.display_height = fields.height;
+    sample.display_hotspot_x = fields.hotspot_x;
+    sample.display_hotspot_y = fields.hotspot_y;
+    sample.bitmap_width = fields.bitmap_pixels != nullptr ? fields.width : 0;
+    sample.bitmap_height = fields.bitmap_pixels != nullptr ? fields.height : 0;
+    sample.flags = 0;
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_VISIBLE) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_VISIBLE;
     }
-    if (!cursor_visible || cursor_center_locked) {
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_LOCKED) != 0) {
       sample.flags |= SS_CURSOR_PLANE_FLAG_LOCKED;
     }
-    const int stream_x = static_cast<int>(point.x - origin_x);
-    const int stream_y = static_cast<int>(point.y - origin_y);
-    sample.x = static_cast<std::uint32_t>(std::clamp(stream_x, 0, stream_width - 1));
-    sample.y = static_cast<std::uint32_t>(std::clamp(stream_y, 0, stream_height - 1));
-    sample.width = static_cast<std::uint16_t>(std::clamp(fallback_width, 1, 512));
-    sample.height = static_cast<std::uint16_t>(std::clamp(fallback_height, 1, 512));
-    sample.display_width = static_cast<std::uint16_t>(std::clamp(std::max(fallback_width, dpi_scaled_width), 1, 512));
-    sample.display_height = static_cast<std::uint16_t>(std::clamp(std::max(fallback_height, dpi_scaled_height), 1, 512));
-    sample.bitmap_width = sample.width;
-    sample.bitmap_height = sample.height;
-    sample.host_dpi_scale_ppm = static_cast<std::uint32_t>(
-      std::clamp<long long>((static_cast<long long>(std::max(dpi_x, dpi_y)) * 1000000LL + 48LL) / 96LL,
-                            250000LL,
-                            8000000LL));
-    sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_SYSTEM_METRIC;
-    sample.confidence_ppm = 750000;
-    sample.cursor_shape_id = cursor_visible ?
-                               semantic_cursor_shape_id(cursor_info.hCursor) :
-                               SS_CURSOR_PLANE_SHAPE_UNKNOWN;
-
-    ICONINFO icon_info {};
-    if (cursor_visible && GetIconInfo(cursor_info.hCursor, &icon_info)) {
-      sample.hotspot_x = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.xHotspot, 0, 512));
-      sample.hotspot_y = static_cast<std::uint16_t>(std::clamp<DWORD>(icon_info.yHotspot, 0, 512));
-
-      BITMAP bitmap {};
-      if (icon_info.hbmColor != nullptr &&
-          GetObject(icon_info.hbmColor, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-        sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
-        sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmHeight, 1, 512));
-        sample.bitmap_width = sample.width;
-        sample.bitmap_height = sample.height;
-
-        // Always prefer the host-provided cursor bitmap when Windows exposes
-        // one. Standard Windows cursors are not visually identical to macOS
-        // NSCursor fallbacks, and game/special cursors must preserve their real
-        // appearance. Semantic shape ids are only a fallback/cache key.
-        {
-          const int bitmap_width = std::clamp<LONG>(bitmap.bmWidth, 1, 512);
-          const int bitmap_height = std::clamp<LONG>(bitmap.bmHeight, 1, 512);
-          const int stride = bitmap_width * 4;
-          std::vector<std::uint8_t> bgra(static_cast<std::size_t>(stride) *
-                                         static_cast<std::size_t>(bitmap_height));
-
-          BITMAPINFO bitmap_info {};
-          bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-          bitmap_info.bmiHeader.biWidth = bitmap_width;
-          bitmap_info.bmiHeader.biHeight = -bitmap_height;  // top-down DIB
-          bitmap_info.bmiHeader.biPlanes = 1;
-          bitmap_info.bmiHeader.biBitCount = 32;
-          bitmap_info.bmiHeader.biCompression = BI_RGB;
-
-          HDC hdc = GetDC(nullptr);
-          const int copied_rows = hdc != nullptr ?
-                                    GetDIBits(hdc,
-                                              icon_info.hbmColor,
-                                              0,
-                                              bitmap_height,
-                                              bgra.data(),
-                                              &bitmap_info,
-                                              DIB_RGB_COLORS) :
-                                    0;
-          if (hdc != nullptr) {
-            ReleaseDC(nullptr, hdc);
-          }
-
-          if (copied_rows == bitmap_height) {
-            bool has_alpha = false;
-            for (std::size_t i = 3; i < bgra.size(); i += 4) {
-              if (bgra[i] != 0) {
-                has_alpha = true;
-                break;
-              }
-            }
-
-            // Some Windows cursor bitmaps use an all-zero alpha channel and
-            // rely on the mask bitmap. Preserve transparency for black empty
-            // pixels, but make colored pixels visible so custom/game cursors do
-            // not disappear on the client.
-            if (!has_alpha) {
-              for (std::size_t i = 0; i + 3 < bgra.size(); i += 4) {
-                const bool has_color = bgra[i] != 0 || bgra[i + 1] != 0 || bgra[i + 2] != 0;
-                bgra[i + 3] = has_color ? 0xFF : 0x00;
-              }
-            }
-
-            sample.bitmap_format = SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA;
-            sample.bitmap_stride = static_cast<std::uint16_t>(stride);
-            sample.bitmap_bgra = std::move(bgra);
-            sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
-            sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP;
-            sample.confidence_ppm = 900000;
-          }
-        }
-      }
-      else if (icon_info.hbmMask != nullptr &&
-               GetObject(icon_info.hbmMask, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-        sample.width = static_cast<std::uint16_t>(std::clamp<LONG>(bitmap.bmWidth, 1, 512));
-        sample.height = static_cast<std::uint16_t>(std::clamp<LONG>(std::max<LONG>(1, bitmap.bmHeight / 2), 1, 512));
-        sample.bitmap_width = sample.width;
-        sample.bitmap_height = sample.height;
-        sample.size_source = LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP;
-        sample.confidence_ppm = 800000;
-      }
-
-      if (icon_info.hbmColor != nullptr) {
-        DeleteObject(icon_info.hbmColor);
-      }
-      if (icon_info.hbmMask != nullptr) {
-        DeleteObject(icon_info.hbmMask);
-      }
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_RELATIVE) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_RELATIVE;
     }
-    sample.display_width = static_cast<std::uint16_t>(
-      std::clamp<int>(std::max({ static_cast<int>(sample.display_width),
-                                 static_cast<int>(sample.bitmap_width),
-                                 dpi_scaled_width }),
-                      1,
-                      512));
-    sample.display_height = static_cast<std::uint16_t>(
-      std::clamp<int>(std::max({ static_cast<int>(sample.display_height),
-                                 static_cast<int>(sample.bitmap_height),
-                                 dpi_scaled_height }),
-                      1,
-                      512));
-    sample.display_hotspot_x = sample.hotspot_x;
-    sample.display_hotspot_y = sample.hotspot_y;
-    if (sample.bitmap_width > 0 && sample.bitmap_height > 0 &&
-        (sample.display_width != sample.bitmap_width ||
-         sample.display_height != sample.bitmap_height)) {
-      sample.display_hotspot_x = static_cast<std::uint16_t>(
-        std::clamp<std::uint32_t>(
-          (static_cast<std::uint32_t>(sample.hotspot_x) * sample.display_width + sample.bitmap_width / 2U) /
-            std::max<std::uint16_t>(1, sample.bitmap_width),
-          0,
-          sample.display_width));
-      sample.display_hotspot_y = static_cast<std::uint16_t>(
-        std::clamp<std::uint32_t>(
-          (static_cast<std::uint32_t>(sample.hotspot_y) * sample.display_height + sample.bitmap_height / 2U) /
-            std::max<std::uint16_t>(1, sample.bitmap_height),
-          0,
-          sample.display_height));
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_SHAPE_BITMAP) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
     }
-#else
-    (void) session;
-#endif
-
+    sample.host_dpi_scale_ppm = fields.host_dpi_scale_ppm;
+    sample.animation_epoch = state.asset.animation_epoch;
+    sample.size_source = fields.bitmap_pixels != nullptr ?
+                           LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP :
+                           LI_SESSION_CURSOR_SIZE_SOURCE_SYSTEM_METRIC;
+    sample.confidence_ppm = fields.bitmap_pixels != nullptr ? 900000 : 750000;
+    sample.bitmap_format = fields.bitmap_format == ALK_GAMESTREAM_CURSOR_PLANE_BITMAP_FORMAT_BGRA ?
+                             SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA :
+                             0;
+    sample.bitmap_stride = fields.bitmap_stride;
+    if (fields.bitmap_pixels != nullptr && fields.bitmap_bytes != 0) {
+      sample.bitmap_bgra.assign(fields.bitmap_pixels, fields.bitmap_pixels + fields.bitmap_bytes);
+      sample.bitmap_hash = hash_cursor_bitmap(sample.bitmap_bgra);
+    }
     return sample;
+  }
+
+  static std::uint64_t
+  steady_time_ms(std::chrono::steady_clock::time_point time) {
+    return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count());
+  }
+
+  static bool
+  ensure_alkaid_host_cursor_initialized(session_t *session) {
+    if (!session) {
+      return false;
+    }
+    auto &cursor_plane = session->control.cursor_plane;
+    if (cursor_plane.alkaid_cursor_initialized) {
+      return true;
+    }
+
+    AlkInteractionCursorConfig config;
+    alk_interaction_cursor_config_init(&config);
+    config.role = ALK_SESSION_ROLE_HOST;
+    config.policy.mode = ALK_SINGLE_CURSOR_POLICY_LOCAL_PRIMARY;
+    config.policy.interaction_mode = ALK_CURSOR_INTERACTION_MODE_SMART_CURSOR_PLANE;
+
+    AlkInteractionCursorBackendProvider provider;
+    alk_interaction_cursor_native_host_capture_backend_init(&cursor_plane.native_host_capture_backend);
+    if (!alk_interaction_cursor_backend_provider_init_native_win32_host_capture(
+          &provider,
+          &cursor_plane.native_host_capture_backend,
+          "foundation-sunshine-native-host-cursor")) {
+      BOOST_LOG(warning) << "interaction.cursor native host Backend Provider unavailable";
+      return false;
+    }
+    alk_interaction_cursor_config_apply_backend_provider(&config, &provider);
+
+    cursor_plane.alkaid_cursor_initialized =
+      alk_interaction_cursor_init(&cursor_plane.alkaid_cursor, &config);
+    return cursor_plane.alkaid_cursor_initialized;
   }
 
   int
@@ -4991,6 +4957,9 @@ namespace stream {
                            std::uint16_t width,
                            std::uint16_t height,
                            std::uint32_t flags,
+                           std::uint32_t source_width = 0,
+                           std::uint32_t source_height = 0,
+                           std::uint32_t bitmap_hash = 0,
                            std::uint16_t bitmap_format = 0,
                            std::uint16_t bitmap_stride = 0,
                            const std::vector<std::uint8_t> *bitmap_bgra = nullptr) {
@@ -5007,9 +4976,11 @@ namespace stream {
                                 bitmap_bgra->size() <= max_cursor_bitmap_bytes &&
                                 bitmap_format == SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA &&
                                 bitmap_stride > 0;
+    const bool include_source = include_bitmap && source_width > 0 && source_height > 0;
     const std::size_t cursor_payload_size =
       sizeof(SS_CURSOR_PLANE_V1) +
-      (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0);
+      (include_bitmap ? sizeof(SS_CURSOR_PLANE_BITMAP_V1) + bitmap_bgra->size() : 0) +
+      (include_source ? sizeof(SS_CURSOR_PLANE_SOURCE_V1) : 0);
     if (cursor_payload_size > 0xFFFFu) {
       BOOST_LOG(warning) << "Skipping cursor bitmap payload: too large bytes=" << cursor_payload_size;
       return send_cursor_plane_update(session,
@@ -5041,6 +5012,7 @@ namespace stream {
     cursor->flags = util::endian::little<std::uint32_t>(
       include_bitmap ? (flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
                        (flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP));
+    const bool first_legacy_cursor_packet = session->control.cursor_plane.epoch == 0;
     cursor->epoch = util::endian::little<std::uint32_t>(++session->control.cursor_plane.epoch);
 
     if (include_bitmap) {
@@ -5054,6 +5026,25 @@ namespace stream {
                     sizeof(SS_CURSOR_PLANE_V1) + sizeof(SS_CURSOR_PLANE_BITMAP_V1),
                   bitmap_bgra->data(),
                   bitmap_bgra->size());
+      if (include_source) {
+        auto *tail = plaintext.data() + sizeof(control_header_v2) +
+                     sizeof(SS_CURSOR_PLANE_V1) + sizeof(SS_CURSOR_PLANE_BITMAP_V1) +
+                     bitmap_bgra->size();
+        auto write_le16 = [](std::uint8_t *dst, std::uint16_t value) {
+          auto le = util::endian::little<std::uint16_t>(value);
+          std::memcpy(dst, &le, sizeof(le));
+        };
+        auto write_le32 = [](std::uint8_t *dst, std::uint32_t value) {
+          auto le = util::endian::little<std::uint32_t>(value);
+          std::memcpy(dst, &le, sizeof(le));
+        };
+        write_le32(tail + 0, SS_CURSOR_PLANE_SOURCE_MAGIC);
+        write_le16(tail + 4, SS_CURSOR_PLANE_SOURCE_VERSION);
+        write_le16(tail + 6, sizeof(SS_CURSOR_PLANE_SOURCE_V1));
+        write_le32(tail + 8, source_width);
+        write_le32(tail + 12, source_height);
+        write_le32(tail + 16, bitmap_hash);
+      }
     }
 
     std::vector<std::uint8_t> encrypted_payload(
@@ -5071,7 +5062,9 @@ namespace stream {
       return -1;
     }
 
-    const auto packet_flags = include_bitmap ? ALK_TRANSPORT_SEND_FLAG_RELIABLE : ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED;
+    const auto packet_flags = (include_bitmap || first_legacy_cursor_packet) ?
+                                ALK_TRANSPORT_SEND_FLAG_RELIABLE :
+                                ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED;
     if (session->broadcast_ref->control_server.send_session(payload,
                                                     session,
                                                     CTRL_CHANNEL_GENERIC,
@@ -5127,70 +5120,60 @@ namespace stream {
 
     update_host_cursor_suppression_for_session(session, true, "cursor-plane-control-loop");
 
-    if (!session->control.session_control_welcome_sent) {
-      static constexpr auto kCursorPlaneDeferLogInterval = 1000ms;
-      auto &last = session->control.cursor_plane;
-      if (last.last_bitmap_retry.time_since_epoch().count() == 0 ||
-          now - last.last_bitmap_retry >= kCursorPlaneDeferLogInterval) {
-        last.last_bitmap_retry = now;
-        BOOST_LOG(info) << "Cursor plane update deferred until Session control welcome runtime="
-                        << session->identity.runtime_id;
-      }
+    if (!ensure_alkaid_host_cursor_initialized(session)) {
       return;
     }
 
-    auto sample = sample_host_cursor_plane(session);
+    AlkInteractionCursorBackendProvider provider;
+    if (!alk_interaction_cursor_backend_provider_init_native_win32_host_capture(
+          &provider,
+          &session->control.cursor_plane.native_host_capture_backend,
+          "foundation-sunshine-native-host-cursor")) {
+      return;
+    }
+    AlkCursorState cursor_state;
+    alk_cursor_state_init(&cursor_state);
+    if (!alk_interaction_cursor_capture_host_state_with_backend(&session->control.cursor_plane.alkaid_cursor,
+                                                                &provider,
+                                                                steady_time_ms(now),
+                                                                &cursor_state)) {
+      return;
+    }
+
+    const auto sample = cursor_plane_sample_from_cursor_state(session, cursor_state);
     if (!sample.available) {
       return;
     }
-
     auto &last = session->control.cursor_plane;
-    const bool sample_visible = (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0;
-    const bool position_changed = sample_visible &&
-                                  (last.x != sample.x ||
-                                   last.y != sample.y);
-    const bool geometry_changed = sample_visible &&
-                                  (last.hotspot_x != sample.hotspot_x ||
-                                   last.hotspot_y != sample.hotspot_y ||
-                                   last.width != sample.width ||
-                                   last.height != sample.height ||
-                                   last.display_width != sample.display_width ||
-                                   last.display_height != sample.display_height ||
-                                   last.display_hotspot_x != sample.display_hotspot_x ||
-                                   last.display_hotspot_y != sample.display_hotspot_y ||
-                                   last.bitmap_width != sample.bitmap_width ||
-                                   last.bitmap_height != sample.bitmap_height);
-    const bool shape_changed = last.cursor_shape_id != sample.cursor_shape_id;
-    const bool flags_changed = last.flags != sample.flags;
-    const bool changed = shape_changed ||
-                         position_changed ||
-                         geometry_changed ||
-                         flags_changed;
-    const bool never_sent = last.last_sent.time_since_epoch().count() == 0;
-    if (!never_sent && now - last.last_sent < 16ms) {
-      return;
-    }
-    if (!changed && !never_sent && now - last.last_sent < 250ms) {
+    AlkCursorHostEmitPlan emit_plan;
+    alk_cursor_host_emit_plan_init(&emit_plan);
+    if (!alk_interaction_cursor_plan_host_emit(&last.alkaid_cursor,
+                                               &cursor_state,
+                                               steady_time_ms(now),
+                                               sample.bitmap_bgra.empty() ? 0u : 1u,
+                                               &emit_plan) ||
+        emit_plan.should_emit == 0u) {
       return;
     }
 
-    const bool first_bitmap_missing = never_sent || !last.bitmap_sent;
-    const bool bitmap_retry_due =
-      first_bitmap_missing &&
-      last.last_bitmap_retry.time_since_epoch().count() != 0 &&
-      now - last.last_bitmap_retry >= 250ms;
-    const bool should_send_bitmap =
-      !sample.bitmap_bgra.empty() &&
-      (first_bitmap_missing ||
-       bitmap_retry_due ||
-       last.cursor_shape_id != sample.cursor_shape_id ||
-       last.width != sample.width ||
-       last.height != sample.height ||
-       last.hotspot_x != sample.hotspot_x ||
-       last.hotspot_y != sample.hotspot_y);
+    const bool should_send_bitmap = emit_plan.should_send_asset != 0u;
+    const bool position_changed =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_POSITION_CHANGED) != 0u;
+    const bool shape_changed =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_SHAPE_CHANGED) != 0u;
+    const bool geometry_changed =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_GEOMETRY_CHANGED) != 0u;
+    const bool flags_changed =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_FLAGS_CHANGED) != 0u;
+    const bool never_sent =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_FIRST) != 0u;
 
-    const bool session_cursor_sent = send_session_control_cursor_plane(session, sample) == 0;
-    const bool session_cursor_ready = client_supports_session_cursor_plane(session) && session_cursor_sent;
+    const bool session_cursor_supported =
+      session->control.session_control_welcome_sent &&
+      client_supports_session_cursor_plane(session);
+    const bool session_cursor_sent =
+      session_cursor_supported && send_session_control_cursor_plane(session, sample) == 0;
+    const bool session_cursor_ready = session_cursor_supported && session_cursor_sent;
     const bool legacy_position_only = session_cursor_ready &&
                                       !should_send_bitmap &&
                                       position_changed &&
@@ -5209,12 +5192,19 @@ namespace stream {
                                              sample.display_height,
                                              should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
                                                                   (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
+                                             should_send_bitmap ? sample.source_width : 0,
+                                             should_send_bitmap ? sample.source_height : 0,
+                                             should_send_bitmap ? sample.bitmap_hash : 0,
                                              should_send_bitmap ? sample.bitmap_format : 0,
                                              should_send_bitmap ? sample.bitmap_stride : 0,
                                              should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0;
     }
 
     if (session_cursor_sent || legacy_sent) {
+      alk_interaction_cursor_mark_host_emitted(&last.alkaid_cursor,
+                                               &cursor_state,
+                                               steady_time_ms(now),
+                                               should_send_bitmap ? 1u : 0u);
       last.cursor_shape_id = sample.cursor_shape_id;
       last.x = sample.x;
       last.y = sample.y;
@@ -5228,6 +5218,9 @@ namespace stream {
       last.display_hotspot_y = sample.display_hotspot_y;
       last.bitmap_width = sample.bitmap_width;
       last.bitmap_height = sample.bitmap_height;
+      last.source_width = sample.source_width;
+      last.source_height = sample.source_height;
+      last.bitmap_hash = sample.bitmap_hash;
       last.flags = sample.flags;
       last.last_sent = now;
       if (legacy_sent) {
@@ -5255,7 +5248,12 @@ namespace stream {
                         << " legacySize=" << sample.width << "x" << sample.height
                         << " dpiPpm=" << sample.host_dpi_scale_ppm
                         << " source=" << sample.size_source
-                        << " bitmap=" << (should_send_bitmap ? sample.bitmap_bgra.size() : 0);
+                        << " sourceDim=" << sample.source_width << "x" << sample.source_height
+                        << " bitmap=" << (should_send_bitmap ? sample.bitmap_bgra.size() : 0)
+                        << " bitmapHash=0x" << util::hex(sample.bitmap_hash).to_string_view()
+                        << " assetEpoch=" << sample.animation_epoch
+                        << " interaction.cursor=platform"
+                        << " emitReason=0x" << util::hex(emit_plan.reason_flags).to_string_view();
       }
     }
   }
@@ -5411,6 +5409,68 @@ namespace stream {
   }
 
   static bool
+  rescue_request_is_media_only(const AlkRescueControlRequest &request) {
+    const auto non_media_triggers =
+      ALK_RESCUE_TRIGGER_CONTROL_STALLING |
+      ALK_RESCUE_TRIGGER_MANUAL;
+    const auto media_triggers =
+      ALK_RESCUE_TRIGGER_RFI_WAIT |
+      ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES |
+      ALK_RESCUE_TRIGGER_LOCAL_DISPLAY_STALL;
+    return (request.trigger_flags & non_media_triggers) == 0 &&
+           (request.trigger_flags & media_triggers) != 0;
+  }
+
+  bool
+  rescue_transport_stats_clean_enough_for_verified_capacity(std::uint32_t rtt_us,
+                                                            std::uint32_t jitter_us,
+                                                            std::uint32_t packet_loss_ppm,
+                                                            std::uint32_t reliable_backlog_packets) {
+    return stream_quality::verified_capacity_rescue_transport_clean(
+      rtt_us,
+      jitter_us,
+      packet_loss_ppm,
+      reliable_backlog_packets);
+  }
+
+  bool
+  rescue_transport_path_clean_enough_for_verified_capacity(const session_runtime::transport_path_t &path) {
+    return path.score.rtt_ms <= 80U &&
+           path.score.jitter_ms <= 18U &&
+           path.score.loss_ppm <= 3000U;
+  }
+
+  static bool
+  verified_capacity_transport_clean_for_rescue(session_t *session,
+                                               AlkTransportStats *snapshot = nullptr) {
+    if (!session) {
+      return false;
+    }
+
+    if (session->last_stream_quality_link_quality_state !=
+        stream_quality::link_quality_state_e::verified_good) {
+      return false;
+    }
+
+    AlkTransportStats stats;
+    alk_transport_stats_init(&stats);
+    const bool have_stats = snapshot_transport_stats(session, stats);
+    if (snapshot) {
+      *snapshot = stats;
+    }
+    if (have_stats) {
+      return rescue_transport_stats_clean_enough_for_verified_capacity(
+        stats.rtt_us,
+        stats.jitter_us,
+        stats.packet_loss_ppm,
+        stats.reliable_backlog_packets);
+    }
+
+    const auto &path = session->active_transport_path;
+    return rescue_transport_path_clean_enough_for_verified_capacity(path);
+  }
+
+  static bool
   apply_rescue_control_request(session_t *session, const AlkRescueControlRequest &request) {
     if (!session || request.version != ALK_RESCUE_CONTROL_VERSION) {
       return false;
@@ -5430,6 +5490,120 @@ namespace stream {
     session->coalesced_rescue_control_requests = 0;
     session->last_rescue_control_request = now;
     session->rescue_control_requests++;
+
+    AlkTransportStats rescue_transport_stats;
+    alk_transport_stats_init(&rescue_transport_stats);
+    const bool media_only_rescue = rescue_request_is_media_only(request);
+    const bool rescue_requests_quality_downgrade =
+      stream_quality::rescue_request_requests_quality_downgrade(
+        request.trigger_flags,
+        request.max_bitrate_kbps,
+        request.fec_percent,
+        request.target_scale_percent,
+        request.enable_blurry_upscale);
+    const bool verified_capacity_clean_rescue =
+      media_only_rescue &&
+      verified_capacity_transport_clean_for_rescue(session, &rescue_transport_stats);
+    if (media_only_rescue && !rescue_requests_quality_downgrade) {
+      const int current_fps = session->last_applied_stream_quality_fps > 0 ?
+                                session->last_applied_stream_quality_fps :
+                                std::max(1, session->config.monitor.framerate);
+      const int current_bitrate = session->last_applied_stream_quality_bitrate > 0 ?
+                                    session->last_applied_stream_quality_bitrate :
+                                    std::max(1, session->config.monitor.bitrate);
+      const bool repeated_media_rescue =
+        coalesced >= 2 ||
+        session->rescue_control_requests >= 3 ||
+        request.hold_ms >= 1000 ||
+        (request.trigger_flags & ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES) != 0;
+      const bool degraded_media_rescue =
+        !verified_capacity_clean_rescue &&
+        ((request.trigger_flags & ALK_RESCUE_TRIGGER_RFI_WAIT) != 0 ||
+         (request.trigger_flags & ALK_RESCUE_TRIGGER_LOCAL_DISPLAY_STALL) != 0 ||
+         rescue_transport_stats.packet_loss_ppm >= 30000 ||
+         rescue_transport_stats.jitter_us >= 18000 ||
+         rescue_transport_stats.reliable_backlog_packets >= 8);
+      if (degraded_media_rescue && repeated_media_rescue) {
+        const int floor_fps = session->config.monitor.framerate >= 90 ? 24 :
+                              session->config.monitor.framerate >= 60 ? 20 :
+                              std::max(10, session->config.monitor.framerate / 2);
+        const int cap_fps = current_bitrate <= 1200 ? floor_fps :
+                            current_bitrate <= 2500 ? std::max(floor_fps, 30) :
+                            std::max(floor_fps, 45);
+        const int target_fps = std::clamp(cap_fps, 1, std::max(1, current_fps));
+        const auto hold_ms = std::clamp<std::uint32_t>(request.hold_ms == 0 ? 1000u : request.hold_ms,
+                                                       650u,
+                                                       2500u);
+        session->rescue_control_hold_until = now + std::chrono::milliseconds(hold_ms);
+        session->stream_quality_resync_guard_until = std::max(session->stream_quality_resync_guard_until,
+                                                              now + std::chrono::milliseconds(hold_ms));
+        if (target_fps > 0 && target_fps < current_fps) {
+          video::dynamic_param_t fps_param;
+          fps_param.type = video::dynamic_param_type_e::FPS;
+          fps_param.value.float_value = static_cast<float>(target_fps);
+          fps_param.valid = true;
+          session->video.dynamic_param_change_events->raise(fps_param);
+          session->last_applied_stream_quality_fps = target_fps;
+          session->last_stream_quality_fps_apply = now;
+        }
+        if (request.request_idr) {
+          session->video.idr_events->raise(true);
+        }
+        BOOST_LOG(info) << "Alkaid rescue-control media recovery drain"
+                        << " runtime=" << session->identity.runtime_id
+                        << " requestId=" << request.request_id
+                        << " triggers=0x" << std::hex << request.trigger_flags << std::dec
+                        << " action=fps-drain-idr"
+                        << " bitrate=" << current_bitrate << " Kbps"
+                        << " fec=" << session->last_applied_stream_quality_fec << "%"
+                        << " fps=" << target_fps
+                        << " previousFps=" << current_fps
+                        << " holdMs=" << hold_ms
+                        << " coalesced=" << coalesced
+                        << " rtt=" << (rescue_transport_stats.rtt_us / 1000U) << "ms"
+                        << " jitter=" << (rescue_transport_stats.jitter_us / 1000U) << "ms"
+                        << " transportLossPpm=" << rescue_transport_stats.packet_loss_ppm
+                        << " backlogPackets=" << rescue_transport_stats.reliable_backlog_packets;
+        return true;
+      }
+      const auto hold_ms = std::clamp<std::uint32_t>(request.hold_ms == 0 ? 350u : request.hold_ms,
+                                                     300u,
+                                                     1000u);
+      session->rescue_control_hold_until = now + std::chrono::milliseconds(hold_ms);
+      if (request.request_idr) {
+        session->video.idr_events->raise(true);
+      }
+      BOOST_LOG(info) << "Alkaid rescue-control media recovery idr-only"
+                      << " runtime=" << session->identity.runtime_id
+                      << " requestId=" << request.request_id
+                      << " triggers=0x" << std::hex << request.trigger_flags << std::dec
+                      << " action=idr-only"
+                      << " bitrate=" << session->last_applied_stream_quality_bitrate << " Kbps"
+                      << " fec=" << session->last_applied_stream_quality_fec << "%"
+                      << " fps=" << session->last_applied_stream_quality_fps
+                      << " holdMs=" << hold_ms
+                      << " coalesced=" << coalesced;
+      return true;
+    }
+    if (verified_capacity_clean_rescue) {
+      session->rescue_control_hold_until = now + 350ms;
+      if (request.request_idr) {
+        session->video.idr_events->raise(true);
+      }
+      BOOST_LOG(info) << "Alkaid rescue-control ignored weak-network downgrade on clean verified path"
+                      << " runtime=" << session->identity.runtime_id
+                      << " requestId=" << request.request_id
+                      << " triggers=0x" << std::hex << request.trigger_flags << std::dec
+                      << " action=idr-only"
+                      << " rtt=" << (rescue_transport_stats.rtt_us / 1000U) << "ms"
+                      << " jitter=" << (rescue_transport_stats.jitter_us / 1000U) << "ms"
+                      << " transportLossPpm=" << rescue_transport_stats.packet_loss_ppm
+                      << " bitrate=" << session->last_applied_stream_quality_bitrate << " Kbps"
+                      << " fec=" << session->last_applied_stream_quality_fec << "%"
+                      << " fps=" << session->last_applied_stream_quality_fps
+                      << " coalesced=" << coalesced;
+      return true;
+    }
 
     const int current_bitrate = session->last_applied_stream_quality_bitrate > 0 ?
                                   session->last_applied_stream_quality_bitrate :
@@ -5646,6 +5820,39 @@ namespace stream {
       return 0;
     }
 
+    AlkCursorState alkaid_cursor_state {};
+    alk_cursor_state_init(&alkaid_cursor_state);
+    alkaid_cursor_state.seq_known = ALK_INTERACTION_CURSOR_SEQ_UNKNOWN;
+    alkaid_cursor_state.visible = (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0 ? 1u : 0u;
+    alkaid_cursor_state.locked = (sample.flags & SS_CURSOR_PLANE_FLAG_LOCKED) != 0 ? 1u : 0u;
+    alkaid_cursor_state.pointer_input_mode =
+      (sample.flags & SS_CURSOR_PLANE_FLAG_RELATIVE) != 0 ?
+        ALK_POINTER_INPUT_MODE_RELATIVE :
+        ALK_POINTER_INPUT_MODE_ABSOLUTE;
+    alkaid_cursor_state.pointer_lock_state = alkaid_cursor_state.locked != 0u ?
+                                              ALK_POINTER_LOCK_STATE_LOCKED :
+                                              ALK_POINTER_LOCK_STATE_FREE;
+    alkaid_cursor_state.asset.asset_id = sample.cursor_shape_id;
+    alkaid_cursor_state.asset.format =
+      sample.bitmap_bgra.empty() ? ALK_CURSOR_ASSET_FORMAT_SYSTEM_CURSOR_ID :
+                                   ALK_CURSOR_ASSET_FORMAT_BGRA_PREMULTIPLIED;
+    alkaid_cursor_state.asset.blend_mode = ALK_CURSOR_BLEND_MODE_ALPHA;
+    alkaid_cursor_state.asset.mask_semantics = ALK_CURSOR_MASK_SEMANTICS_ALPHA;
+    alkaid_cursor_state.asset.width = sample.display_width;
+    alkaid_cursor_state.asset.height = sample.display_height;
+    alkaid_cursor_state.asset.hotspot_x = sample.display_hotspot_x;
+    alkaid_cursor_state.asset.hotspot_y = sample.display_hotspot_y;
+    alkaid_cursor_state.asset.dpi_scale_ppm = sample.host_dpi_scale_ppm;
+    alkaid_cursor_state.asset.size_policy = ALK_CURSOR_SIZE_POLICY_DEVICE_INDEPENDENT;
+    alkaid_cursor_state.asset.fallback_policy =
+      (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0 ?
+        ALK_CURSOR_FALLBACK_POLICY_KEEP_LOCAL :
+        ALK_CURSOR_FALLBACK_POLICY_REQUEST_HOST_BURN_IN;
+    alkaid_cursor_state.asset.pixels = sample.bitmap_bgra.empty() ? nullptr : sample.bitmap_bgra.data();
+    alkaid_cursor_state.asset.pixels_length = sample.bitmap_bgra.size();
+    const bool alkaid_asset_semantics =
+      alk_cursor_asset_has_render_semantics(&alkaid_cursor_state.asset);
+
     refresh_li_session(*session, session::state(*session));
     LI_SESSION_CURSOR_PLANE cursor_plane {};
     LiInitializeSessionCursorPlane(&cursor_plane);
@@ -5699,7 +5906,12 @@ namespace stream {
                        << " hotspot="sv << cursor_plane.hotspotX << ',' << cursor_plane.hotspotY
                        << " dpiPpm="sv << cursor_plane.hostDpiScalePpm
                        << " source="sv << cursor_plane.sizeSource
-                       << " epoch="sv << cursor_plane.epoch;
+                       << " epoch="sv << cursor_plane.epoch
+                       << " assetEpoch="sv << sample.animation_epoch
+                       << " interaction.cursor=platform"
+                       << " assetSemantics="sv << (alkaid_asset_semantics ? 1 : 0)
+                       << " inputMode="sv << alkaid_cursor_state.pointer_input_mode
+                       << " lockState="sv << alkaid_cursor_state.pointer_lock_state;
     }
     return result;
   }
@@ -7179,17 +7391,25 @@ namespace stream {
     });
 
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
-      BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
+      BOOST_LOG(info) << "Control IDR request received"sv
+                      << " runtime="sv << (session ? session->identity.runtime_id : 0)
+                      << " payloadBytes="sv << payload.size()
+                      << " decrypted="sv << (session ? session->control.decrypted_rx_events : 0)
+                      << " rx="sv << (session ? session->control.rx_events : 0);
 
       session->stream_quality_rfi_requests.fetch_add(1, std::memory_order_relaxed);
       if (!should_forward_client_recovery_request(session,
                                                   "idr",
                                                   session->last_client_idr_request,
                                                   450ms)) {
+        BOOST_LOG(info) << "Control IDR request coalesced"sv
+                        << " runtime="sv << session->identity.runtime_id;
         return;
       }
       report_stream_quality_recovery_request(session, "idr");
       session->video.idr_events->raise(true);
+      BOOST_LOG(info) << "Control IDR event raised"sv
+                      << " runtime="sv << session->identity.runtime_id;
     });
 
     // 辅助函数：处理分辨率变更
@@ -7516,6 +7736,16 @@ namespace stream {
       session->control.last_decrypted_type = type;
       session->control.last_payload_size = next_payload.size();
 
+      if (type == packetTypes[IDX_REQUEST_IDR_FRAME] || type == packetTypes[IDX_RESCUE]) {
+        BOOST_LOG(info) << "Control recovery packet decrypted"sv
+                        << " runtime="sv << session->identity.runtime_id
+                        << " seq="sv << seq
+                        << " type="sv << util::hex(type).to_string_view()
+                        << " payloadBytes="sv << next_payload.size()
+                        << " channelEncryptedRx="sv << session->control.encrypted_rx_events
+                        << " decrypted="sv << session->control.decrypted_rx_events;
+      }
+
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_decrypt_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_decrypt_diag_log >= 1000ms) {
@@ -7614,6 +7844,14 @@ namespace stream {
                 now < session->transport_startup_grace_until) {
               has_session_awaiting_startup = true;
             }
+            // Cursor-plane legacy compatibility must not depend on Session Control
+            // welcome. Older/Qt clients can advertise ML_FF2_CURSOR_PLANE and
+            // preferCursorPlane without supporting the Session Control channel.
+            // If we gate this behind session_control_welcome_sent, Sunshine disables
+            // video cursor burn-in for the stream but never sends SS_CURSOR_PLANE,
+            // leaving those clients with only their local OS cursor visible.
+            maybe_send_cursor_plane_update(session, now);
+
             if (!session->control.session_control_welcome_sent) {
               has_session_awaiting_startup = true;
               ++pos;
@@ -7643,7 +7881,6 @@ namespace stream {
               }
             }
 
-            maybe_send_cursor_plane_update(session, now);
             maybe_send_host_clipboard_update(session);
             maybe_apply_control_path_health_rescue(session, now);
           }
@@ -8491,6 +8728,7 @@ namespace stream {
           }
           frame_fec_latency_logger.second_point_now_and_log();
           const auto shard_count = alk_gamestream_video_fec_frame_shard_count(shards.get());
+          const auto data_shards = alk_gamestream_video_fec_frame_data_shards(shards.get());
           const auto shard_block_bytes = alk_gamestream_video_fec_frame_block_bytes(shards.get());
           const auto shard_prefix_bytes = alk_gamestream_video_fec_frame_prefix_bytes(shards.get());
           const auto shard_percentage = alk_gamestream_video_fec_frame_percentage(shards.get());
@@ -8546,11 +8784,16 @@ namespace stream {
             shard_wire.block_index = static_cast<std::uint32_t>(blockIndex);
             shard_wire.block_count = static_cast<std::uint32_t>(fec_blocks_needed);
             shard_wire.shard_index = static_cast<std::uint32_t>(x);
-            shard_wire.data_shards = static_cast<std::uint32_t>(alk_gamestream_video_fec_frame_data_shards(shards.get()));
+            shard_wire.data_shards = static_cast<std::uint32_t>(data_shards);
             shard_wire.fec_percentage = static_cast<std::uint32_t>(shard_percentage);
-            shard_wire.frame_start = x == 0;
-            shard_wire.frame_end = x + 1 == shard_count;
-            alk_gamestream_video_packet_raw_prepare(inspect, &shard_wire);
+            const auto [frame_start, frame_end] = video_shard_frame_boundary_flags(
+              static_cast<std::uint32_t>(blockIndex),
+              static_cast<std::uint32_t>(fec_blocks_needed),
+              static_cast<std::uint32_t>(x),
+              static_cast<std::uint32_t>(data_shards));
+            shard_wire.frame_start = frame_start;
+            shard_wire.frame_end = frame_end;
+            alk_gamestream_video_packet_raw_prepare_post_fec_fields(inspect, &shard_wire);
 
             // Encrypt this shard if video encryption is enabled
             if (session->video.cipher) {
@@ -9431,6 +9674,9 @@ namespace stream {
         alk_gamestream_enet_observer_destroy(session.control.transport_observer);
         session.control.transport_observer = nullptr;
       }
+      alk_interaction_cursor_native_host_capture_backend_destroy(
+        &session.control.cursor_plane.native_host_capture_backend);
+      session.control.cursor_plane.alkaid_cursor_initialized = false;
       abr::cleanup_for_runtime(session.identity.runtime_id);
       abr::cleanup(session.client_name);
       session.state.store(state_e::STOPPED, std::memory_order_relaxed);
