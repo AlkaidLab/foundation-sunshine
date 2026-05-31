@@ -224,6 +224,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
                 "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/src/windows_wasapi_sink_backend.cpp")
     endif()
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_PLATFORM_CORE=1)
+    list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP="${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/legacy/sunshine/rtsp.cpp")
     include_directories(
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"

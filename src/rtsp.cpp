@@ -4,4 +4,7 @@
  * the current build entry point until Foundation Sunshine builds Platform
  * legacy sources directly.
  */
-#include "/Users/skyhua/alkaidlab-platform/modules/session/handshake/gamestream-rtsp/legacy/sunshine/rtsp.cpp"
+#ifndef ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP
+#error "ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP must point to the Platform GameStream RTSP compatibility source"
+#endif
+#include ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP
