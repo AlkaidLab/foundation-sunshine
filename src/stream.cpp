@@ -30,6 +30,11 @@ extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include "rswrapper.h"
+#ifdef ALKAIDLAB_INTERACTION_CURSOR
+#include "alkaidlab/interaction_cursor/interaction_cursor.h"
+#include "alkaidlab/interaction_cursor/interaction_cursor_backend_provider.h"
+#include "alkaidlab/gamestream/interaction_cursor_wire_adapter.h"
+#endif
 // clang-format on
 }
 
@@ -603,6 +608,12 @@ namespace stream {
         std::uint16_t refresh_metric_width { 0 };
         std::uint16_t refresh_metric_height { 0 };
         std::chrono::steady_clock::time_point last_cursor_resource_refresh {};
+#ifdef ALKAIDLAB_INTERACTION_CURSOR
+        AlkInteractionCursor alkaid_cursor {};
+        AlkInteractionCursorNativeHostCaptureBackend native_host_capture_backend {};
+        bool alkaid_cursor_initialized { false };
+        bool bitmap_sent { false };
+#endif
       } cursor_plane;
     } control;
 
@@ -1399,12 +1410,22 @@ namespace stream {
     std::uint16_t hotspot_y { 0 };
     std::uint16_t width { 16 };
     std::uint16_t height { 16 };
+    std::uint16_t display_width { 16 };
+    std::uint16_t display_height { 16 };
+    std::uint16_t display_hotspot_x { 0 };
+    std::uint16_t display_hotspot_y { 0 };
+    std::uint16_t bitmap_width { 0 };
+    std::uint16_t bitmap_height { 0 };
     std::uint32_t flags { 0 };
     std::uint32_t source_width { 0 };
     std::uint32_t source_height { 0 };
     std::uint16_t metric_width { 0 };
     std::uint16_t metric_height { 0 };
     std::uint32_t bitmap_hash { 0 };
+    std::uint32_t host_dpi_scale_ppm { 1000000 };
+    std::uint32_t size_source { 0 };
+    std::uint32_t confidence_ppm { 0 };
+    std::uint64_t animation_epoch { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
     std::vector<std::uint8_t> bitmap_bgra;
@@ -2253,7 +2274,7 @@ namespace stream {
 
 #endif
 
-  static cursor_plane_sample_t
+  [[maybe_unused]] static cursor_plane_sample_t
   sample_host_cursor_plane(session_t *session) {
     cursor_plane_sample_t sample {};
     (void) session;
@@ -2354,6 +2375,119 @@ namespace stream {
 #endif
     return sample;
   }
+
+#ifdef ALKAIDLAB_INTERACTION_CURSOR
+  static std::uint64_t
+  steady_time_ms(std::chrono::steady_clock::time_point time) {
+    return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count());
+  }
+
+  static cursor_plane_sample_t
+  cursor_plane_sample_from_cursor_state(session_t *session, const AlkCursorState &state) {
+    cursor_plane_sample_t sample {};
+    if (state.version != ALK_INTERACTION_CURSOR_VERSION) {
+      return sample;
+    }
+
+    AlkGamestreamCursorPlaneFields fields;
+    alk_gamestream_cursor_plane_fields_init(&fields);
+    if (!alk_gamestream_cursor_state_to_legacy_cursor_plane(&state, &fields)) {
+      return sample;
+    }
+
+    const int stream_width = session ? std::max(1, session->config.monitor.width) : 1;
+    const int stream_height = session ? std::max(1, session->config.monitor.height) : 1;
+    sample.available = true;
+    sample.cursor_shape_id = fields.cursor_shape_id;
+    sample.x = std::min<std::uint32_t>(fields.x, static_cast<std::uint32_t>(stream_width - 1));
+    sample.y = std::min<std::uint32_t>(fields.y, static_cast<std::uint32_t>(stream_height - 1));
+    sample.hotspot_x = fields.hotspot_x;
+    sample.hotspot_y = fields.hotspot_y;
+    sample.width = fields.width;
+    sample.height = fields.height;
+    sample.source_width = static_cast<std::uint32_t>(stream_width);
+    sample.source_height = static_cast<std::uint32_t>(stream_height);
+    sample.display_width = fields.width;
+    sample.display_height = fields.height;
+    sample.display_hotspot_x = fields.hotspot_x;
+    sample.display_hotspot_y = fields.hotspot_y;
+    sample.bitmap_width = fields.bitmap_pixels != nullptr ? fields.width : 0;
+    sample.bitmap_height = fields.bitmap_pixels != nullptr ? fields.height : 0;
+    sample.flags = 0;
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_VISIBLE) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_VISIBLE;
+    }
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_LOCKED) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_LOCKED;
+    }
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_RELATIVE) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_RELATIVE;
+    }
+    if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_SHAPE_BITMAP) != 0) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
+    }
+    sample.host_dpi_scale_ppm = fields.host_dpi_scale_ppm != 0 ? fields.host_dpi_scale_ppm : 1000000u;
+    sample.animation_epoch = state.asset.animation_epoch;
+    sample.size_source = fields.bitmap_pixels != nullptr ? 1u : 0u;
+    sample.confidence_ppm = fields.bitmap_pixels != nullptr ? 900000u : 750000u;
+    sample.bitmap_format = fields.bitmap_format == ALK_GAMESTREAM_CURSOR_PLANE_BITMAP_FORMAT_BGRA ?
+                             SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA :
+                             0;
+    sample.bitmap_stride = fields.bitmap_stride;
+    if (fields.bitmap_pixels != nullptr && fields.bitmap_bytes != 0u) {
+      sample.bitmap_bgra.assign(fields.bitmap_pixels, fields.bitmap_pixels + fields.bitmap_bytes);
+      sample.bitmap_hash = hash_cursor_bitmap(sample.bitmap_bgra);
+    }
+    return sample;
+  }
+
+  static bool
+  ensure_alkaid_host_cursor_initialized(session_t *session) {
+    if (!session) {
+      return false;
+    }
+    auto &cursor_plane = session->control.cursor_plane;
+    if (cursor_plane.alkaid_cursor_initialized) {
+      return true;
+    }
+
+    AlkInteractionCursorConfig config;
+    alk_interaction_cursor_config_init(&config);
+    config.role = ALK_SESSION_ROLE_HOST;
+    config.policy.mode = ALK_SINGLE_CURSOR_POLICY_LOCAL_PRIMARY;
+    config.policy.interaction_mode = ALK_CURSOR_INTERACTION_MODE_SMART_CURSOR_PLANE;
+
+    AlkInteractionCursorBackendProvider provider;
+    alk_interaction_cursor_native_host_capture_backend_init(&cursor_plane.native_host_capture_backend);
+    if (!alk_interaction_cursor_backend_provider_init_native_win32_host_capture(
+          &provider,
+          &cursor_plane.native_host_capture_backend,
+          "black-sunshine-native-host-cursor")) {
+      BOOST_LOG(warning) << "interaction.cursor native host Backend Provider unavailable"sv;
+      return false;
+    }
+    alk_interaction_cursor_config_apply_backend_provider(&config, &provider);
+
+    cursor_plane.alkaid_cursor_initialized =
+      alk_interaction_cursor_init(&cursor_plane.alkaid_cursor, &config);
+    return cursor_plane.alkaid_cursor_initialized;
+  }
+
+  static AlkInteractionCursorBackendProvider
+  alkaid_host_cursor_provider(session_t *session) {
+    AlkInteractionCursorBackendProvider provider;
+    alk_interaction_cursor_backend_provider_init(&provider);
+    if (session == nullptr) {
+      return provider;
+    }
+    (void)alk_interaction_cursor_backend_provider_init_native_win32_host_capture(
+      &provider,
+      &session->control.cursor_plane.native_host_capture_backend,
+      "black-sunshine-native-host-cursor");
+    return provider;
+  }
+#endif
 
   // Forward decl for the recursive fallback path (drop bitmap on oversize).
   static int send_cursor_plane_update(session_t *session,
@@ -2504,6 +2638,99 @@ namespace stream {
       return;
     }
 
+#ifdef ALKAIDLAB_INTERACTION_CURSOR
+    if (!ensure_alkaid_host_cursor_initialized(session)) {
+      return;
+    }
+
+    auto provider = alkaid_host_cursor_provider(session);
+    AlkCursorState cursor_state;
+    alk_cursor_state_init(&cursor_state);
+    if (!alk_interaction_cursor_capture_host_state_with_backend(&session->control.cursor_plane.alkaid_cursor,
+                                                                &provider,
+                                                                steady_time_ms(now),
+                                                                &cursor_state)) {
+      return;
+    }
+    const auto sample = cursor_plane_sample_from_cursor_state(session, cursor_state);
+    if (!sample.available) {
+      return;
+    }
+    auto &last = session->control.cursor_plane;
+    AlkCursorHostEmitPlan emit_plan;
+    alk_cursor_host_emit_plan_init(&emit_plan);
+    if (!alk_interaction_cursor_plan_host_emit(&last.alkaid_cursor,
+                                               &cursor_state,
+                                               steady_time_ms(now),
+                                               sample.bitmap_bgra.empty() ? 0u : 1u,
+                                               &emit_plan) ||
+        emit_plan.should_emit == 0u) {
+      return;
+    }
+
+    const bool metric_changed = last.metric_width != sample.metric_width ||
+                                last.metric_height != sample.metric_height;
+    const bool should_send_bitmap =
+      emit_plan.should_send_asset != 0u &&
+      !sample.bitmap_bgra.empty();
+    const bool shape_changed =
+      (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_SHAPE_CHANGED) != 0u;
+
+    if (send_cursor_plane_update(session,
+                                 sample.cursor_shape_id,
+                                 sample.x,
+                                 sample.y,
+                                 sample.display_hotspot_x,
+                                 sample.display_hotspot_y,
+                                 sample.display_width,
+                                 sample.display_height,
+                                 should_send_bitmap ? (sample.flags | SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP) :
+                                                      (sample.flags & ~SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP),
+                                 should_send_bitmap ? sample.source_width : 0,
+                                 should_send_bitmap ? sample.source_height : 0,
+                                 should_send_bitmap ? sample.bitmap_hash : 0,
+                                 should_send_bitmap ? sample.bitmap_format : 0,
+                                 should_send_bitmap ? sample.bitmap_stride : 0,
+                                 should_send_bitmap ? &sample.bitmap_bgra : nullptr) == 0) {
+      last.cursor_shape_id = sample.cursor_shape_id;
+      last.x = sample.x;
+      last.y = sample.y;
+      last.hotspot_x = sample.hotspot_x;
+      last.hotspot_y = sample.hotspot_y;
+      last.width = sample.width;
+      last.height = sample.height;
+      last.flags = sample.flags;
+      last.source_width = sample.source_width;
+      last.source_height = sample.source_height;
+      last.metric_width = sample.metric_width;
+      last.metric_height = sample.metric_height;
+      last.bitmap_hash = sample.bitmap_hash;
+      last.last_sent = now;
+      last.bitmap_sent = last.bitmap_sent || should_send_bitmap;
+      alk_interaction_cursor_mark_host_emitted(&last.alkaid_cursor,
+                                               &cursor_state,
+                                               steady_time_ms(now),
+                                               should_send_bitmap ? 1u : 0u);
+
+      if (shape_changed || should_send_bitmap || metric_changed ||
+          (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_FIRST) != 0u) {
+        BOOST_LOG(verbose) << "Cursor plane update sent shape="sv << sample.cursor_shape_id
+                           << " flags=0x"sv << std::hex << sample.flags << std::dec
+                           << " pos="sv << sample.x << ","sv << sample.y
+                           << " hotspot="sv << sample.hotspot_x << ","sv << sample.hotspot_y
+                           << " size="sv << sample.width << "x"sv << sample.height
+                           << " display="sv << sample.display_width << "x"sv << sample.display_height
+                           << " metric="sv << sample.metric_width << "x"sv << sample.metric_height
+                           << " source="sv << sample.source_width << "x"sv << sample.source_height
+                           << " bitmap="sv << (should_send_bitmap ? sample.bitmap_bgra.size() : 0)
+                           << " bitmap_hash=0x"sv << std::hex << sample.bitmap_hash << std::dec
+                           << " assetEpoch="sv << sample.animation_epoch
+                           << " interaction.cursor=platform-native"
+                           << " moduleReason=0x"sv << std::hex << emit_plan.reason_flags << std::dec;
+      }
+    }
+    return;
+#else
     auto sample = sample_host_cursor_plane(session);
     if (!sample.available) {
       return;
@@ -2590,6 +2817,7 @@ namespace stream {
                            << " bitmap_hash=0x"sv << std::hex << sample.bitmap_hash << std::dec;
       }
     }
+#endif
   }
 
   /**
@@ -4375,6 +4603,12 @@ namespace stream {
           }
         }
       }
+
+#ifdef ALKAIDLAB_INTERACTION_CURSOR
+      alk_interaction_cursor_native_host_capture_backend_destroy(
+        &session.control.cursor_plane.native_host_capture_backend);
+      session.control.cursor_plane.alkaid_cursor_initialized = false;
+#endif
 
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);

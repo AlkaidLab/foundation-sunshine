@@ -50,6 +50,15 @@ endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")  # required for importing version.h
+set(ALKAIDLAB_PLATFORM_PATH "${CMAKE_SOURCE_DIR}/third-party/alkaidlab-platform" CACHE PATH "Path to AlkaidLab Platform")
+if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h")
+    list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_INTERACTION_CURSOR=1)
+    include_directories(
+            "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/interaction/cursor/interaction-cursor/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/interaction-cursor/include")
+endif()
 
 # Black Mode (embedded defaults / built-in credentials, no state persistence).
 include(${CMAKE_MODULE_PATH}/prep/black_mode.cmake)
@@ -69,9 +78,7 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/display_device/settings.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp"
         "${CMAKE_SOURCE_DIR}/src/display_device/to_string.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_utils.cpp"
         "${CMAKE_SOURCE_DIR}/src/display_device/vdd_utils.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.cpp"
         "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/vdd_control_ioctl.h"
         "${CMAKE_SOURCE_DIR}/src/upnp.cpp"
@@ -145,6 +152,18 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/rswrapper.h"
         "${CMAKE_SOURCE_DIR}/src/rswrapper.c"
         ${PLATFORM_TARGET_FILES})
+
+if(WIN32)
+    list(APPEND SUNSHINE_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/display_device/vdd_utils.cpp"
+            "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.cpp")
+endif()
+
+if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include/alkaidlab/interaction_cursor/interaction_cursor.h")
+    list(APPEND SUNSHINE_TARGET_FILES
+            "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/src/session_core.c"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/interaction/cursor/interaction-cursor/src/interaction_cursor.cpp")
+endif()
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
     set(SUNSHINE_ASSETS_DIR_DEF "${SUNSHINE_ASSETS_DIR}")

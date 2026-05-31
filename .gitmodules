@@ -25,7 +25,7 @@
 [submodule "third-party/moonlight-common-c"]
 	path = third-party/moonlight-common-c
 	url = https://github.com/AlkaidLab/black-common-c.git
-	branch = mic
+	branch = feat/cursor-plane
 [submodule "third-party/nanors"]
 	path = third-party/nanors
 	url = https://github.com/sleepybishop/nanors.git
@@ -85,3 +85,6 @@
 	path = src_assets/common/sunshine-control-panel
 	url = https://github.com/qiin2333/sunshine-control-panel.git
 	branch = master
+[submodule "third-party/alkaidlab-platform"]
+	path = third-party/alkaidlab-platform
+	url = https://github.com/AlkaidLab/alkaidlab-platform.git
