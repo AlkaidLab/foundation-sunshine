@@ -282,6 +282,11 @@ namespace nvhttp::stream_start {
       fill_vdd_recovery_session(recovery_session, launch_session);
 
       display_result = display_device::session_t::get().configure_display(config::video, recovery_session, is_reconfigure);
+      if (display_result.result != display_device::session_t::configure_result_t::result_e::success) {
+        recovery_result.detail = "VDD-backed display recovery was attempted, but the VDD display configuration failed.";
+        return false;
+      }
+
       if (!video::probe_encoders()) {
         commit_vdd_recovery_to_launch_session(launch_session);
         recovery_result.succeeded = true;
@@ -383,6 +388,12 @@ namespace nvhttp::stream_start {
         recover_display_with_vdd(launch_session, is_reconfigure, display_result, recovery_result)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
+    }
+
+    if (should_try_vdd_for_display_config(display_result.result)) {
+      set_auto_recovery_status(tree, recovery_result);
+      set_display_config_error(tree, display_result);
+      return false;
     }
 
     if (!video::probe_encoders()) {
