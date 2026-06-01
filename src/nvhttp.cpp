@@ -34,7 +34,6 @@
 #include "config.h"
 #include "clipboard_http.h"
 #include "confighttp.h"
-#include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "globals.h"
@@ -42,8 +41,11 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvhttp/abr_api.h"
+#include "nvhttp/apps.h"
+#include "nvhttp/display_control.h"
 #include "nvhttp/display_scale.h"
-#include "nvhttp/url_utils.h"
+#include "nvhttp/dynamic_params.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -53,13 +55,8 @@
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
-#include "abr.h"
 #include "video.h"
 #include "webhook.h"
-
-#ifdef _WIN32
-#include "platform/windows/display_device/windows_utils.h"
-#endif
 
 using json = nlohmann::json;
 
@@ -325,7 +322,7 @@ namespace nvhttp {
       }
     }
     catch (const std::exception &e) {
-      BOOST_LOG(debug) << "获取客户端证书UUID失败: " << e.what();
+      BOOST_LOG(debug) << "Failed to get client certificate UUID: " << e.what();
     }
     return "";
   }
@@ -610,7 +607,7 @@ namespace nvhttp {
     sess.cipher_key = std::make_unique<crypto::aes_t>(key);
 
     tree.put("root.paired", 1);
-    // 增加自定义客户端名字告诉客户端
+    // Return the custom client name to the client.
     tree.put("root.pairname", client_name);
     tree.put("root.plaincert", util::hex_vec(conf_intern.servercert, true));
     tree.put("root.<xmlattr>.status_code", 200);
@@ -1192,278 +1189,11 @@ namespace nvhttp {
     return "active";
   }
 
-  // Use keep-alive connection
-  void
-  applist(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-
-      pt::write_xml(data, tree);
-      response->write(data.str());
-    });
-
-    auto &apps = tree.add_child("root", pt::ptree {});
-
-    apps.put("<xmlattr>.status_code", 200);
-
-    for (auto &proc : proc::proc.get_apps()) {
-      pt::ptree app;
-
-      app.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
-      app.put("AppTitle"s, proc.name);
-      app.put("ID"s, proc.id);
-
-      json json_cmds;
-
-      for (auto &cmd : proc.menu_cmds) {
-        json json_cmd;
-        json_cmd["id"] = cmd.id;
-        json_cmd["name"] = cmd.name;
-        // do_cmd and elevated intentionally omitted for security
-
-        json_cmds.push_back(json_cmd);
-      }
-
-      app.put("SuperCmds"s, json_cmds.dump(4));
-
-      apps.push_back(std::make_pair("App", std::move(app)));
-    }
-  }
-
-  void
-  changeBitrate(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    try {
-      auto args = request->parse_query_string();
-      auto bitrate_param = args.find("bitrate");
-      auto clientname_param = args.find("clientname");
-
-      if (bitrate_param == args.end()) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing bitrate parameter");
-        return;
-      }
-
-      if (clientname_param == args.end()) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing clientname parameter");
-        return;
-      }
-
-      int bitrate = std::stoi(bitrate_param->second);
-      std::string client_name = clientname_param->second;
-
-      if (bitrate <= 0 || bitrate > 800000) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Invalid bitrate value. Must be between 1 and 800000 Kbps");
-        return;
-      }
-
-      video::dynamic_param_t param;
-      param.type = video::dynamic_param_type_e::BITRATE;
-      param.value.int_value = bitrate;
-      param.valid = true;
-
-      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
-
-      if (success) {
-        tree.put("root.bitrate", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
-        tree.put("root.<xmlattr>.bitrate", bitrate);
-        tree.put("root.<xmlattr>.clientname", client_name);
-        tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '"
-                        << client_name << "': " << bitrate << " Kbps";
-      }
-      else {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 404);
-        tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
-      }
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "ChangeBitrate: "sv << e.what();
-      tree.put("root.bitrate", 0);
-      tree.put("root.<xmlattr>.status_code", 500);
-      tree.put("root.<xmlattr>.status_message", e.what());
-    }
-  }
-
-  void
-  changeDynamicParam(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    auto set_error = [&tree](int code, const std::string &message) {
-      tree.put("root.success", 0);
-      tree.put("root.<xmlattr>.status_code", code);
-      tree.put("root.<xmlattr>.status_message", message);
-    };
-
-    try {
-      auto args = request->parse_query_string();
-      auto param_type_param = args.find("type");
-      auto param_value_param = args.find("value");
-      auto clientname_param = args.find("clientname");
-
-      if (param_type_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss type");
-        set_error(400, "Missing param_type parameter");
-        return;
-      }
-
-      if (param_value_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss value");
-        set_error(400, "Missing param_value parameter");
-        return;
-      }
-
-      if (clientname_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss clientname");
-        set_error(400, "Missing clientname parameter");
-        return;
-      }
-
-      int param_type = std::stoi(param_type_param->second);
-      std::string param_value = param_value_param->second;
-      std::string client_name = clientname_param->second;
-
-      if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid type");
-        set_error(400, "Invalid param_type value");
-        return;
-      }
-
-      video::dynamic_param_t param;
-      param.type = static_cast<video::dynamic_param_type_e>(param_type);
-      param.valid = true;
-
-      switch (param.type) {
-        case video::dynamic_param_type_e::RESOLUTION: {
-          print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: resolution change should be sent via control stream protocol, not HTTP API");
-          set_error(400, "Resolution change should be sent via control stream protocol, not HTTP API");
-          return;
-        }
-        case video::dynamic_param_type_e::FPS: {
-          float fps = std::stof(param_value);
-          if (fps <= 0.0f || fps > 1000.0f) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FPS value");
-            set_error(400, "Invalid FPS value. Must be between 0 and 1000");
-            return;
-          }
-          param.value.float_value = fps;
-          break;
-        }
-        case video::dynamic_param_type_e::BITRATE: {
-          int bitrate = std::stoi(param_value);
-          if (bitrate <= 0 || bitrate > 800000) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid bitrate value");
-            set_error(400, "Invalid bitrate value. Must be between 1 and 800000 Kbps");
-            return;
-          }
-          param.value.int_value = bitrate;
-          break;
-        }
-        case video::dynamic_param_type_e::QP: {
-          int qp = std::stoi(param_value);
-          if (qp < 0 || qp > 51) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid QP value");
-            set_error(400, "Invalid QP value. Must be between 0 and 51");
-            return;
-          }
-          param.value.int_value = qp;
-          break;
-        }
-        case video::dynamic_param_type_e::FEC_PERCENTAGE: {
-          int fec = std::stoi(param_value);
-          if (fec < 0 || fec > 100) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FEC percentage value");
-            set_error(400, "Invalid FEC percentage. Must be between 0 and 100");
-            return;
-          }
-          param.value.int_value = fec;
-          break;
-        }
-        case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
-          param.value.bool_value = (param_value == "true" || param_value == "1");
-          break;
-        }
-        case video::dynamic_param_type_e::MULTI_PASS: {
-          int multi_pass = std::stoi(param_value);
-          if (multi_pass < 0 || multi_pass > 2) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid multi-pass value");
-            set_error(400, "Invalid multi-pass value. Must be between 0 and 2");
-            return;
-          }
-          param.value.int_value = multi_pass;
-          break;
-        }
-        case video::dynamic_param_type_e::VBV_BUFFER_SIZE: {
-          int vbv = std::stoi(param_value);
-          if (vbv <= 0) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid VBV buffer size value");
-            set_error(400, "Invalid VBV buffer size. Must be greater than 0");
-            return;
-          }
-          param.value.int_value = vbv;
-          break;
-        }
-        default:
-          set_error(400, "Unsupported parameter type");
-          return;
-      }
-
-      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
-
-      if (success) {
-        tree.put("root.success", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
-        tree.put("root.<xmlattr>.param_type", param_type);
-        tree.put("root.<xmlattr>.param_value", param_value);
-        tree.put("root.<xmlattr>.clientname", client_name);
-        tree.put("root.<xmlattr>.status_message", "Dynamic parameter change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '"
-                        << client_name << "': type=" << param_type << ", value=" << param_value;
-      }
-      else {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: no active streaming session found for client");
-        set_error(404, "No active streaming session found for client: " + client_name);
-      }
-    }
-    catch (std::exception &e) {
-      print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: "s + e.what());
-      set_error(500, e.what());
-    }
-  }
-
   void
   getSessionsInfo(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    // 限制只允许 localhost 访问
+    // Only allow localhost access.
     auto client_address = request->remote_endpoint().address();
     auto address = net::addr_to_normalized_string(client_address);
     auto ip_type = net::from_address(address);
@@ -1529,315 +1259,6 @@ namespace nvhttp {
     }
   }
 
-  // ============================================================================
-  // ABR (Adaptive Bitrate) API handlers
-  // ============================================================================
-
-  /**
-   * @brief Resolve the client name from the HTTPS request's source IP.
-   * Matches the connecting client's address against active streaming sessions.
-   * @return {client_name, bitrate, app_name} or empty client_name on failure.
-   */
-  struct resolved_client_t {
-    std::string name;
-    int bitrate = 0;
-    std::string app_name;
-  };
-
-  static resolved_client_t
-  resolve_client(req_https_t request) {
-    auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
-    try {
-      auto sessions_info = stream::session::get_all_sessions_info();
-      for (const auto &si : sessions_info) {
-        if (si.client_address == client_addr && si.state == "RUNNING") {
-          return { si.client_name, si.bitrate, si.app_name };
-        }
-      }
-    }
-    catch (...) {}
-    return {};
-  }
-
-  static int
-  host_max_bitrate_kbps() {
-    return std::max(config::video.max_bitrate, 0);
-  }
-
-  static bool
-  apply_host_bitrate_cap(abr::config_t &cfg) {
-    const auto host_cap = host_max_bitrate_kbps();
-    if (host_cap <= 0) {
-      return false;
-    }
-
-    const auto requested_max = cfg.max_bitrate_kbps;
-    cfg.max_bitrate_kbps = requested_max > 0 ? std::min(requested_max, host_cap) : host_cap;
-    if (cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
-      cfg.min_bitrate_kbps = cfg.max_bitrate_kbps;
-    }
-
-    return requested_max <= 0 || cfg.max_bitrate_kbps != requested_max;
-  }
-
-  static int
-  clamp_bitrate_to_range(int bitrate, const abr::config_t &cfg) {
-    if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0) {
-      return std::clamp(bitrate, cfg.min_bitrate_kbps, cfg.max_bitrate_kbps);
-    }
-    if (cfg.max_bitrate_kbps > 0) {
-      return std::min(bitrate, cfg.max_bitrate_kbps);
-    }
-    if (cfg.min_bitrate_kbps > 0) {
-      return std::max(bitrate, cfg.min_bitrate_kbps);
-    }
-    return bitrate;
-  }
-
-  /**
-   * @brief GET /api/abr/capabilities — Query server ABR support.
-   */
-  void
-  getAbrCapabilities(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    auto caps = abr::get_capabilities();
-
-    json resp_json;
-    resp_json["supported"] = caps.supported;
-    resp_json["version"] = caps.version;
-    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold", "bitrate_cap" });
-    resp_json["llmEnabled"] = confighttp::isAiEnabled();
-    resp_json["hostMaxBitrate"] = host_max_bitrate_kbps();
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-    response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-  }
-
-  /**
-   * @brief POST /api/abr — Enable/disable ABR, set mode and bitrate range.
-   *
-   * Request body (JSON):
-   * {
-   *   "enabled": true,
-   *   "minBitrate": 2000,
-   *   "maxBitrate": 150000,
-   *   "mode": "balanced"
-   * }
-   *
-   * Client identity is resolved from the TLS connection's source IP.
-   */
-  void
-  configureAbr(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-    try {
-      auto client = resolve_client(request);
-      if (client.name.empty()) {
-        json err;
-        err["success"] = false;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
-
-      bool enabled = body.value("enabled", false);
-
-      if (!enabled) {
-        abr::disable(client.name);
-        json resp_json;
-        resp_json["success"] = true;
-        resp_json["enabled"] = false;
-        response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-        return;
-      }
-
-      // Parse and validate mode
-      std::string mode_str = body.value("mode", "balanced");
-      abr::mode_e mode;
-      if (mode_str == "balanced") {
-        mode = abr::mode_e::BALANCED;
-      }
-      else if (mode_str == "quality") {
-        mode = abr::mode_e::QUALITY;
-      }
-      else if (mode_str == "lowLatency") {
-        mode = abr::mode_e::LOW_LATENCY;
-      }
-      else {
-        json err;
-        err["success"] = false;
-        err["error"] = "Invalid mode: must be 'balanced', 'quality', or 'lowLatency'";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      abr::config_t cfg;
-      cfg.enabled = true;
-      cfg.min_bitrate_kbps = body.value("minBitrate", 0);
-      cfg.max_bitrate_kbps = body.value("maxBitrate", 0);
-      cfg.mode = mode;
-      const auto requested_max_bitrate = cfg.max_bitrate_kbps;
-      const auto host_max_bitrate = host_max_bitrate_kbps();
-
-      // Validate bitrate range
-      if (cfg.min_bitrate_kbps < 0 || cfg.max_bitrate_kbps < 0) {
-        json err;
-        err["success"] = false;
-        err["error"] = "minBitrate and maxBitrate must be non-negative";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-      if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0 && cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
-        json err;
-        err["success"] = false;
-        err["error"] = "minBitrate must not exceed maxBitrate";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      apply_host_bitrate_cap(cfg);
-      const auto capped_by_host = host_max_bitrate > 0 && requested_max_bitrate > 0 && cfg.max_bitrate_kbps < requested_max_bitrate;
-      const auto inherited_host_cap = host_max_bitrate > 0 && requested_max_bitrate <= 0;
-
-      int initial_bitrate = client.bitrate > 0 ? client.bitrate
-                            : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
-                            : 20000;
-      initial_bitrate = clamp_bitrate_to_range(initial_bitrate, cfg);
-
-      abr::enable(client.name, cfg, initial_bitrate, client.app_name);
-
-      if (client.bitrate > 0 && cfg.max_bitrate_kbps > 0 && client.bitrate > cfg.max_bitrate_kbps) {
-        video::dynamic_param_t param;
-        param.type = video::dynamic_param_type_e::BITRATE;
-        param.value.int_value = cfg.max_bitrate_kbps;
-        param.valid = true;
-        stream::session::change_dynamic_param_for_client(client.name, param);
-      }
-
-      json resp_json;
-      resp_json["success"] = true;
-      resp_json["enabled"] = true;
-      resp_json["mode"] = mode_str;
-      resp_json["minBitrate"] = cfg.min_bitrate_kbps;
-      resp_json["maxBitrate"] = cfg.max_bitrate_kbps;
-      resp_json["initialBitrate"] = initial_bitrate;
-      resp_json["requestedMaxBitrate"] = requested_max_bitrate;
-      resp_json["hostMaxBitrate"] = host_max_bitrate;
-      resp_json["maxBitrateCapped"] = capped_by_host;
-      resp_json["maxBitrateInheritedFromHost"] = inherited_host_cap;
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-    }
-    catch (const json::exception &e) {
-      BOOST_LOG(warning) << "ABR configure: JSON parse error: " << e.what();
-      json err;
-      err["success"] = false;
-      err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "ABR configure: " << e.what();
-      json err;
-      err["success"] = false;
-      err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
-    }
-  }
-
-  /**
-   * @brief POST /api/abr/feedback — Client sends network metrics, server returns bitrate decision.
-   *
-   * Request body (JSON):
-   * {
-   *   "packetLoss": 1.5,
-   *   "rttMs": 25.0,
-   *   "decodeFps": 59.8,
-   *   "droppedFrames": 2,
-   *   "currentBitrate": 15000
-   * }
-   *
-   * Response (JSON):
-   * {
-   *   "newBitrate": 14000,
-   *   "reason": "moderate_drop: packet_loss=1.5%"
-   * }
-   *
-   * Client identity is resolved from the TLS connection's source IP.
-   */
-  void
-  abrFeedback(resp_https_t response, req_https_t request) {
-    // No verbose logging for per-second feedback to avoid spam
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-    try {
-      auto client_name = resolve_client(request).name;
-      if (client_name.empty()) {
-        json err;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      if (!abr::is_enabled(client_name)) {
-        json err;
-        err["error"] = "ABR not enabled for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
-
-      abr::network_feedback_t feedback;
-      feedback.packet_loss = body.value("packetLoss", 0.0);
-      feedback.rtt_ms = body.value("rttMs", 0.0);
-      feedback.decode_fps = body.value("decodeFps", 0.0);
-      feedback.dropped_frames = body.value("droppedFrames", 0);
-      feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
-
-      auto action = abr::process_feedback(client_name, feedback);
-
-      // If server decided on a new bitrate, apply it to the encoder
-      if (action.new_bitrate_kbps > 0) {
-        video::dynamic_param_t param;
-        param.type = video::dynamic_param_type_e::BITRATE;
-        param.value.int_value = action.new_bitrate_kbps;
-        param.valid = true;
-
-        stream::session::change_dynamic_param_for_client(client_name, param);
-      }
-
-      json resp_json;
-      if (action.new_bitrate_kbps > 0) {
-        resp_json["newBitrate"] = action.new_bitrate_kbps;
-      }
-      resp_json["reason"] = action.reason;
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-    }
-    catch (const json::exception &e) {
-      json err;
-      err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "ABR feedback: " << e.what();
-      json err;
-      err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
-    }
-  }
-
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -1899,7 +1320,7 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
 
-    // 获取客户端证书UUID（稳定的客户端标识符）
+    // Store the stable client certificate UUID in the launch environment.
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
@@ -2147,191 +1568,6 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  void
-  execSuperCmd(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    auto args = request->parse_query_string();
-    auto cmdId = get_arg(args, "cmdId", "");
-    proc::proc.run_menu_cmd(cmdId);
-
-    pt::ptree tree;
-    tree.put("root.supercmd", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
-
-    std::ostringstream data;
-
-    pt::write_xml(data, tree);
-    response->write(data.str());
-    response->close_connection_after_response = true;
-  }
-
-  // Use keep-alive connection
-  void
-  appasset(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    try {
-      auto args = request->parse_query_string();
-      auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
-
-      std::ifstream in(app_image, std::ios::binary);
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "image/png");
-      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
-    } catch (const std::exception &e) {
-      print_request_warning_ip<SunshineHTTPS>(request, "AppAsset error: "s + e.what());
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Missing or invalid parameters");
-    }
-  }
-
-  // Use keep-alive connection
-  void
-  get_displays(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    try {
-      std::vector<std::string> display_names;
-
-#ifdef _WIN32
-      display_names = platf::display_names(platf::mem_type_e::dxgi);
-#elif defined(__linux__)
-      for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
-        display_names = platf::display_names(mem_type);
-        if (!display_names.empty()) break;
-      }
-#elif defined(__APPLE__)
-      display_names = platf::display_names(platf::mem_type_e::videotoolbox);
-#else
-      display_names = platf::display_names(platf::mem_type_e::system);
-#endif
-
-      json displays_array = json::array();
-
-#ifdef _WIN32
-      displays_array = display_scale::build_windows_displays(display_names);
-#else
-      for (size_t i = 0; i < display_names.size(); ++i) {
-        const auto &name = display_names[i];
-        displays_array.push_back({ { "index", static_cast<int>(i) },
-          { "display_name", name },
-          { "device_id", name },
-          { "friendly_name", name },
-          { "is_primary", false },
-          { "current_scale_percent", nullptr },
-          { "recommended_scale_percent", nullptr },
-          { "supported_scale_percents", json::array() },
-          { "scale_set_supported", false } });
-      }
-#endif
-
-      response_json["displays"] = std::move(displays_array);
-      response_json["count"] = static_cast<int>(display_names.size());
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error getting display list: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error";
-      response_json["displays"] = json::array();
-      response_json["count"] = 0;
-    }
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-    response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-  }
-
-  void
-  rotate_display(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    auto send_response = [&](SimpleWeb::StatusCode status_code = SimpleWeb::StatusCode::success_ok) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "application/json");
-      response->write(status_code, response_json.dump(), headers);
-      response->close_connection_after_response = true;
-    };
-
-    try {
-      auto args = request->parse_query_string();
-      auto angle_param = args.find("angle");
-
-      if (angle_param == args.end()) {
-        response_json["status_code"] = 400;
-        response_json["status_message"] = "Missing angle parameter";
-        response_json["success"] = false;
-        BOOST_LOG(warning) << "rotate_display: Missing angle parameter";
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
-        return;
-      }
-
-      int angle = std::stoi(angle_param->second);
-
-      if (angle != 0 && angle != 90 && angle != 180 && angle != 270) {
-        response_json["status_code"] = 400;
-        response_json["status_message"] = "Invalid angle value. Must be 0, 90, 180, or 270";
-        response_json["success"] = false;
-        BOOST_LOG(warning) << "rotate_display: Invalid angle value: " << angle;
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
-        return;
-      }
-
-      auto display_name_param = args.find("display_name");
-      std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
-      if (!display_name.empty()) {
-        display_name = url_utils::decode(std::move(display_name));
-      }
-
-      // 如果没有指定显示器名称，使用当前捕获的显示器
-      if (display_name.empty() && !config::video.output_name.empty()) {
-        display_name = display_device::get_display_name(config::video.output_name);
-        if (display_name.empty()) {
-          // 如果转换失败，尝试直接使用配置值（可能已经是显示器名称）
-          display_name = config::video.output_name;
-        }
-        BOOST_LOG(debug) << "rotate_display: Using current capture display: " << display_name << " (from config: " << config::video.output_name << ")";
-      }
-
-      BOOST_LOG(info) << "rotate_display: Requested angle=" << angle << ", display_name=" << (display_name.empty() ? "(primary)" : display_name);
-
-#ifdef _WIN32
-      bool success = display_device::w_utils::rotate_display(angle, display_name);
-      if (success) {
-        response_json["success"] = true;
-        response_json["angle"] = angle;
-        response_json["message"] = "Display rotation changed successfully";
-        BOOST_LOG(info) << "rotate_display: Display rotation changed to " << angle << " degrees";
-      }
-      else {
-        response_json["status_code"] = 500;
-        response_json["status_message"] = "Failed to change display rotation";
-        response_json["success"] = false;
-        BOOST_LOG(error) << "rotate_display: Failed to change display rotation to " << angle << " degrees";
-      }
-#else
-      response_json["status_code"] = 501;
-      response_json["status_message"] = "Display rotation is not supported on this platform";
-      response_json["success"] = false;
-      BOOST_LOG(warning) << "rotate_display: Display rotation is not supported on this platform";
-#endif
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error rotating display: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error: " + std::string(e.what());
-      response_json["success"] = false;
-    }
-
-    send_response();
-  }
 
   void
   setup(const std::string &pkey, const std::string &cert) {
@@ -2434,19 +1670,19 @@ namespace nvhttp {
     https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
     https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) { pair<SunshineHTTPS>(resp, req); };
-    https_server.resource["^/applist$"]["GET"] = applist;
-    https_server.resource["^/appasset$"]["GET"] = appasset;
-    https_server.resource["^/displays$"]["GET"] = get_displays;
+    https_server.resource["^/applist$"]["GET"] = apps::list;
+    https_server.resource["^/appasset$"]["GET"] = apps::asset;
+    https_server.resource["^/displays$"]["GET"] = display_control::get_displays;
     https_server.resource["^/display-scale-options$"]["GET"] = display_scale::get_options;
     https_server.resource["^/display-scale$"]["POST"] = display_scale::set;
-    https_server.resource["^/rotate-display$"]["GET"] = rotate_display;
+    https_server.resource["^/rotate-display$"]["GET"] = display_control::rotate;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
     https_server.resource["^/cancel$"]["GET"] = cancel;
     https_server.resource["^/pcsleep$"]["GET"] = sleep;
-    https_server.resource["^/supercmd$"]["GET"] = execSuperCmd;
-    https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
-    https_server.resource["^/stream/settings$"]["GET"] = changeDynamicParam;
+    https_server.resource["^/supercmd$"]["GET"] = apps::exec_super_cmd;
+    https_server.resource["^/bitrate$"]["GET"] = dynamic_params::change_bitrate;
+    https_server.resource["^/stream/settings$"]["GET"] = dynamic_params::change;
     https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
 
     // Clipboard blob routes are mirrored onto nvhttp so paired Moonlight
@@ -2463,11 +1699,11 @@ namespace nvhttp {
     };
 
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
-    https_server.resource["^/api/abr/capabilities$"]["GET"] = getAbrCapabilities;
-    https_server.resource["^/api/abr$"]["POST"] = configureAbr;
-    https_server.resource["^/api/abr/feedback$"]["POST"] = abrFeedback;
+    https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
+    https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
+    https_server.resource["^/api/abr/feedback$"]["POST"] = abr_api::feedback;
 
-    // AI LLM proxy route — uses client cert auth from pairing
+    // AI LLM proxy route uses client cert auth from pairing.
     https_server.resource["^/ai/completions$"]["POST"] = [](resp_https_t response, req_https_t request) {
       std::stringstream ss;
       ss << request->content.rdbuf();
