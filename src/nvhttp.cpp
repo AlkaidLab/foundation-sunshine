@@ -42,6 +42,8 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvhttp/display_scale.h"
+#include "nvhttp/url_utils.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -2183,94 +2185,6 @@ namespace nvhttp {
     }
   }
 
-  std::string
-  url_decode(std::string value) {
-    std::string decoded;
-    decoded.reserve(value.size());
-
-    for (size_t i = 0; i < value.size(); ++i) {
-      if (value[i] == '%' && i + 2 < value.size()) {
-        int hex_val;
-        std::istringstream hex_stream(value.substr(i + 1, 2));
-        if (hex_stream >> std::hex >> hex_val) {
-          decoded += static_cast<char>(hex_val);
-          i += 2;
-          continue;
-        }
-      }
-
-      decoded += value[i] == '+' ? ' ' : value[i];
-    }
-
-    return decoded;
-  }
-
-#ifdef _WIN32
-  void
-  add_display_scale_fields(json &node, const display_device::w_utils::display_scale_info_t &scale_info) {
-    node["is_primary"] = scale_info.is_primary;
-    node["current_scale_percent"] = scale_info.current_scale_percent ? json(*scale_info.current_scale_percent) : json(nullptr);
-    node["recommended_scale_percent"] = scale_info.recommended_scale_percent ? json(*scale_info.recommended_scale_percent) : json(nullptr);
-    node["supported_scale_percents"] = scale_info.supported_scale_percents;
-    node["scale_set_supported"] = scale_info.scale_set_supported;
-  }
-
-  void
-  add_unsupported_display_scale_fields(json &node) {
-    node["is_primary"] = false;
-    node["current_scale_percent"] = nullptr;
-    node["recommended_scale_percent"] = nullptr;
-    node["supported_scale_percents"] = json::array();
-    node["scale_set_supported"] = false;
-  }
-
-  json
-  display_scale_info_to_json(const display_device::w_utils::display_scale_info_t &scale_info) {
-    json node {
-      { "display_name", scale_info.display_name },
-      { "device_id", scale_info.device_id },
-      { "friendly_name", scale_info.friendly_name }
-    };
-
-    add_display_scale_fields(node, scale_info);
-    return node;
-  }
-
-  std::string
-  display_scale_error_code(display_device::w_utils::display_scale_error_e error) {
-    switch (error) {
-      case display_device::w_utils::display_scale_error_e::display_not_found:
-        return "display_not_found";
-      case display_device::w_utils::display_scale_error_e::unsupported_scale:
-        return "unsupported_scale";
-      case display_device::w_utils::display_scale_error_e::permission_denied:
-        return "permission_denied";
-      case display_device::w_utils::display_scale_error_e::apply_failed:
-        return "apply_failed";
-      case display_device::w_utils::display_scale_error_e::none:
-      default:
-        return "none";
-    }
-  }
-
-  SimpleWeb::StatusCode
-  display_scale_http_status(display_device::w_utils::display_scale_error_e error) {
-    switch (error) {
-      case display_device::w_utils::display_scale_error_e::display_not_found:
-        return SimpleWeb::StatusCode::client_error_not_found;
-      case display_device::w_utils::display_scale_error_e::unsupported_scale:
-        return SimpleWeb::StatusCode::client_error_bad_request;
-      case display_device::w_utils::display_scale_error_e::permission_denied:
-        return SimpleWeb::StatusCode::client_error_forbidden;
-      case display_device::w_utils::display_scale_error_e::apply_failed:
-        return SimpleWeb::StatusCode::server_error_internal_server_error;
-      case display_device::w_utils::display_scale_error_e::none:
-      default:
-        return SimpleWeb::StatusCode::success_ok;
-    }
-  }
-#endif
-
   // Use keep-alive connection
   void
   get_displays(resp_https_t response, req_https_t request) {
@@ -2299,59 +2213,7 @@ namespace nvhttp {
       json displays_array = json::array();
 
 #ifdef _WIN32
-      // Build GDI name -> (device_id, friendly_name) mapping
-      std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
-      try {
-        for (const auto &[device_id, device_info] : display_device::enum_available_devices()) {
-          if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
-            display_info_map[gdi_name] = { device_id, display_device::get_display_friendly_name(device_id) };
-          }
-        }
-      }
-      catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Failed to get display friendly names: " << e.what();
-      }
-
-      std::unordered_map<std::string, display_device::w_utils::display_scale_info_t> scale_info_by_display_name;
-      std::unordered_map<std::string, display_device::w_utils::display_scale_info_t> scale_info_by_device_id;
-      try {
-        for (auto scale_info : display_device::w_utils::list_display_scale_info()) {
-          if (!scale_info.display_name.empty()) {
-            scale_info_by_display_name[scale_info.display_name] = scale_info;
-          }
-          if (!scale_info.device_id.empty()) {
-            scale_info_by_device_id[scale_info.device_id] = std::move(scale_info);
-          }
-        }
-      }
-      catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Failed to get display scale info: " << e.what();
-      }
-
-      for (size_t i = 0; i < display_names.size(); ++i) {
-        const auto &name = display_names[i];
-        auto it = display_info_map.find(name);
-        bool found = (it != display_info_map.end());
-        const auto device_id = found ? it->second.first : name;
-        json display_node { { "index", static_cast<int>(i) },
-          { "display_name", name },
-          { "device_id", device_id },
-          { "friendly_name", (found && !it->second.second.empty()) ? it->second.second : name } };
-
-        auto scale_by_device = scale_info_by_device_id.find(device_id);
-        auto scale_by_name = scale_info_by_display_name.find(name);
-        if (scale_by_device != std::end(scale_info_by_device_id)) {
-          add_display_scale_fields(display_node, scale_by_device->second);
-        }
-        else if (scale_by_name != std::end(scale_info_by_display_name)) {
-          add_display_scale_fields(display_node, scale_by_name->second);
-        }
-        else {
-          add_unsupported_display_scale_fields(display_node);
-        }
-
-        displays_array.push_back(std::move(display_node));
-      }
+      displays_array = display_scale::build_windows_displays(display_names);
 #else
       for (size_t i = 0; i < display_names.size(); ++i) {
         const auto &name = display_names[i];
@@ -2381,151 +2243,6 @@ namespace nvhttp {
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
     response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-  }
-
-  void
-  get_display_scale_options(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-#ifdef _WIN32
-    try {
-      const auto args = request->parse_query_string();
-      const auto display_name_it = args.find("display_name");
-      const auto device_id_it = args.find("device_id");
-      const std::string display_name = display_name_it != args.end() ? url_decode(display_name_it->second) : std::string {};
-      const std::string device_id = device_id_it != args.end() ? url_decode(device_id_it->second) : std::string {};
-
-      const auto scale_info = display_device::w_utils::get_display_scale_info(display_name, device_id);
-      if (!scale_info) {
-        response_json["status_code"] = 404;
-        response_json["status_message"] = "Display not found";
-        response_json["success"] = false;
-        response_json["error_code"] = "display_not_found";
-        response->write(SimpleWeb::StatusCode::client_error_not_found, response_json.dump(), headers);
-        return;
-      }
-
-      response_json.update(display_scale_info_to_json(*scale_info));
-      response_json["success"] = true;
-      response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error getting display scale options: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error: " + std::string(e.what());
-      response_json["success"] = false;
-      response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
-    }
-#else
-    response_json["status_code"] = 501;
-    response_json["status_message"] = "Display scale is not supported on this platform";
-    response_json["success"] = false;
-    response_json["error_code"] = "unsupported_platform";
-    response_json["current_scale_percent"] = nullptr;
-    response_json["recommended_scale_percent"] = nullptr;
-    response_json["supported_scale_percents"] = json::array();
-    response_json["scale_set_supported"] = false;
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
-#endif
-  }
-
-  void
-  set_display_scale(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-#ifdef _WIN32
-    try {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      const auto body = json::parse(ss.str());
-
-      if (!body.contains("scale_percent") || !body["scale_percent"].is_number_integer()) {
-        response_json["status_code"] = 400;
-        response_json["status_message"] = "Missing or invalid scale_percent";
-        response_json["success"] = false;
-        response_json["error_code"] = "invalid_request";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
-        return;
-      }
-
-      const std::string display_name = body.contains("display_name") && body["display_name"].is_string() ? body["display_name"].get<std::string>() : std::string {};
-      const std::string device_id = body.contains("device_id") && body["device_id"].is_string() ? body["device_id"].get<std::string>() : std::string {};
-      const int scale_percent = body["scale_percent"].get<int>();
-
-      const auto set_result = display_device::w_utils::set_display_scale(display_name, device_id, scale_percent);
-      response_json["success"] = set_result.success;
-      response_json["display_name"] = set_result.display_name;
-      response_json["device_id"] = set_result.device_id;
-      response_json["previous_scale_percent"] = set_result.previous_scale_percent ? json(*set_result.previous_scale_percent) : json(nullptr);
-      response_json["current_scale_percent"] = set_result.current_scale_percent ? json(*set_result.current_scale_percent) : json(nullptr);
-      response_json["supported_scale_percents"] = set_result.supported_scale_percents;
-      response_json["restart_required"] = set_result.restart_required;
-      response_json["effective_immediately"] = set_result.effective_immediately;
-
-      if (set_result.success) {
-        response_json["status_message"] = set_result.message.empty() ? "OK" : set_result.message;
-        response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-        return;
-      }
-
-      response_json["error_code"] = display_scale_error_code(set_result.error);
-      response_json["status_message"] = set_result.message.empty() ? "Failed to set display scale" : set_result.message;
-      switch (set_result.error) {
-        case display_device::w_utils::display_scale_error_e::display_not_found:
-          response_json["status_code"] = 404;
-          break;
-        case display_device::w_utils::display_scale_error_e::permission_denied:
-          response_json["status_code"] = 403;
-          break;
-        case display_device::w_utils::display_scale_error_e::unsupported_scale:
-          response_json["status_code"] = 400;
-          break;
-        case display_device::w_utils::display_scale_error_e::apply_failed:
-        case display_device::w_utils::display_scale_error_e::none:
-        default:
-          response_json["status_code"] = 500;
-          break;
-      }
-
-      response->write(display_scale_http_status(set_result.error), response_json.dump(), headers);
-    }
-    catch (const json::exception &e) {
-      response_json["status_code"] = 400;
-      response_json["status_message"] = "Invalid JSON body: " + std::string(e.what());
-      response_json["success"] = false;
-      response_json["error_code"] = "invalid_request";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error setting display scale: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error: " + std::string(e.what());
-      response_json["success"] = false;
-      response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
-    }
-#else
-    response_json["status_code"] = 501;
-    response_json["status_message"] = "Display scale is not supported on this platform";
-    response_json["success"] = false;
-    response_json["error_code"] = "unsupported_platform";
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
-#endif
   }
 
   void
@@ -2570,7 +2287,7 @@ namespace nvhttp {
       auto display_name_param = args.find("display_name");
       std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
       if (!display_name.empty()) {
-        display_name = url_decode(std::move(display_name));
+        display_name = url_utils::decode(std::move(display_name));
       }
 
       // 如果没有指定显示器名称，使用当前捕获的显示器
@@ -2720,8 +2437,8 @@ namespace nvhttp {
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/displays$"]["GET"] = get_displays;
-    https_server.resource["^/display-scale-options$"]["GET"] = get_display_scale_options;
-    https_server.resource["^/display-scale$"]["POST"] = set_display_scale;
+    https_server.resource["^/display-scale-options$"]["GET"] = display_scale::get_options;
+    https_server.resource["^/display-scale$"]["POST"] = display_scale::set;
     https_server.resource["^/rotate-display$"]["GET"] = rotate_display;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
