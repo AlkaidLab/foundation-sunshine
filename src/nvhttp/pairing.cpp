@@ -120,6 +120,7 @@ namespace nvhttp {
     static std::unordered_map<std::string, pair_session_t> map_id_sess;
     static client_t client_root;
     static std::string last_pair_name;
+    static std::string pending_pin_unique_id;
     static std::mutex map_id_sess_mutex;
     static std::shared_mutex client_state_mutex;
     static pair_rate_limiter_t pair_rate_limit;
@@ -292,6 +293,7 @@ namespace nvhttp {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
               system_tray::update_tray_require_pin(last_pair_name);
 #endif
+              pending_pin_unique_id = ptr->second.client.uniqueID;
               ptr->second.async_insert_pin.response = std::move(response);
 
               fg.disable();
@@ -441,6 +443,9 @@ namespace nvhttp {
 
   void
   remove_session(const pair_session_t &sess) {
+    if (pending_pin_unique_id == sess.client.uniqueID) {
+      pending_pin_unique_id.clear();
+    }
     map_id_sess.erase(sess.client.uniqueID);
   }
 
@@ -618,8 +623,9 @@ namespace nvhttp {
     if (map_id_sess.empty()) {
       return false;
     }
-    if (map_id_sess.size() != 1) {
-      BOOST_LOG(warning) << "Cannot apply PIN while multiple pairing sessions are pending";
+    auto sess_it = map_id_sess.find(pending_pin_unique_id);
+    if (sess_it == std::end(map_id_sess)) {
+      BOOST_LOG(warning) << "Cannot apply PIN because the pending pairing session is no longer available";
       return false;
     }
 
@@ -637,7 +643,7 @@ namespace nvhttp {
       return false;
     }
 
-    auto &sess = std::begin(map_id_sess)->second;
+    auto &sess = sess_it->second;
     getservercert(sess, tree, pin, name);
     sess.client.name = name;
 
