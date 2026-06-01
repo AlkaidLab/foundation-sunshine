@@ -273,9 +273,51 @@ namespace display_device {
 
       return false;
     }
+
+    session_t::configure_result_t
+    make_apply_configure_result(settings_t::apply_result_t apply_result) {
+      using configure_result_e = session_t::configure_result_t::result_e;
+      using apply_result_e = settings_t::apply_result_t::result_e;
+
+      configure_result_e result { configure_result_e::success };
+      std::string hint { "Try setting the display, resolution, refresh rate, HDR, and VDD options to Auto, then start the session again." };
+
+      switch (apply_result.result) {
+        case apply_result_e::success:
+          result = configure_result_e::success;
+          hint = {};
+          break;
+        case apply_result_e::topology_fail:
+          result = configure_result_e::topology_fail;
+          hint = "Check that the target display or virtual display is available, then set display/VDD options to Auto and try again.";
+          break;
+        case apply_result_e::primary_display_fail:
+          result = configure_result_e::primary_display_fail;
+          hint = "Set the target display to Auto or choose a connected display that Windows can make primary.";
+          break;
+        case apply_result_e::modes_fail:
+          result = configure_result_e::modes_fail;
+          hint = "Choose a resolution and refresh rate supported by the display, or set resolution and FPS to Auto.";
+          break;
+        case apply_result_e::hdr_states_fail:
+          result = configure_result_e::hdr_states_fail;
+          hint = "Disable HDR for this session or make sure the selected display supports the requested HDR mode.";
+          break;
+        case apply_result_e::file_save_fail:
+          result = configure_result_e::file_save_fail;
+          hint = "Check Sunshine's app data folder permissions and free disk space, then try again.";
+          break;
+        case apply_result_e::revert_fail:
+          result = configure_result_e::revert_fail;
+          hint = "Restore Windows display settings manually or reset Sunshine display persistence before retrying.";
+          break;
+      }
+
+      return { result, apply_result.get_error_message(), hint };
+    }
   }  // namespace
 
-  void
+  session_t::configure_result_t
   session_t::configure_display(const config::video_t &config,
     const rtsp_stream::launch_session_t &session,
     bool is_reconfigure) {
@@ -356,7 +398,11 @@ namespace display_device {
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
-      return;
+      return {
+        configure_result_t::result_e::parse_fail,
+        "Failed to parse display configuration.",
+        "Set display, VDD, resolution, refresh rate, and HDR options to Auto or valid values, then try again."
+      };
     }
 
     // 保存当前会话的配置模式（可能包含客户端的override）
@@ -381,15 +427,21 @@ namespace display_device {
       });
 
       BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
-      return;
+      return {
+        configure_result_t::result_e::deferred_retry,
+        "Display settings cannot be changed yet; Sunshine will retry while the stream starts.",
+        "Unlock the desktop, make sure Windows display settings are available, and Sunshine will retry automatically."
+      };
     }
 
-    if (settings.apply_config(*parsed_config, session, pre_saved_initial_topology)) {
+    const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology);
+    if (apply_result) {
       timer->setup_timer(nullptr);
+      return make_apply_configure_result(apply_result);
     }
-    else {
-      restore_state_impl(revert_reason_e::config_cleanup);
-    }
+
+    restore_state_impl(revert_reason_e::config_cleanup);
+    return make_apply_configure_result(apply_result);
   }
 
   bool

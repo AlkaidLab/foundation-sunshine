@@ -89,6 +89,11 @@ namespace video {
       }
 
       BOOST_LOG(error) << "No display devices are active at the moment! Cannot probe the encoders.";
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "No active display devices are available for capture.",
+        "Turn on a physical display, enable a virtual display, or set Sunshine display/VDD options to Auto and try again."
+      };
       return false;
     }
   }  // namespace
@@ -1266,6 +1271,11 @@ namespace video {
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
   std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec = {};
+  probe_result_t last_encoder_probe_result {
+    probe_error_e::none,
+    "Encoder probe succeeded.",
+    {}
+  };
 
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
@@ -3687,6 +3697,12 @@ namespace video {
 
   int
   probe_encoders() {
+    last_encoder_probe_result = {
+      probe_error_e::none,
+      "Encoder probe succeeded.",
+      {}
+    };
+
     if (!allow_encoder_probing()) {
       // Error already logged
       return -1;
@@ -3815,6 +3831,27 @@ namespace video {
     if (chosen_encoder == nullptr) {
       const auto output_display_name { display_device::get_display_name(config::video.output_name) };
       BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
+      if (!config::video.encoder.empty()) {
+        last_encoder_probe_result = {
+          probe_error_e::configured_encoder_unavailable,
+          "The configured video encoder is not available on this system.",
+          "Set the video encoder to Auto, update the GPU driver, or choose an encoder supported by the active GPU."
+        };
+      }
+      else if (config::video.hevc_mode >= 2 || config::video.av1_mode >= 2) {
+        last_encoder_probe_result = {
+          probe_error_e::codec_requirements_unmet,
+          "No working encoder satisfies the requested HEVC or AV1 requirements.",
+          "Set HEVC/AV1 support to Auto or Disabled, or use H.264 and try again."
+        };
+      }
+      else {
+        last_encoder_probe_result = {
+          probe_error_e::no_working_encoder,
+          "Sunshine could not find a working display capture path and video encoder.",
+          "Check that a display is connected or VDD is active, set GPU/display/encoder options to Auto, and update the GPU driver."
+        };
+      }
       if (!config::video.adapter_name.empty() || !output_display_name.empty()) {
         BOOST_LOG(error) << "Please ensure your manually chosen GPU and monitor are connected and powered on."sv;
       }

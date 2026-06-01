@@ -2,6 +2,7 @@
 
 // standard includes
 #include <mutex>
+#include <string>
 // lib includes
 #include <boost/atomic.hpp>
 // local includes
@@ -64,6 +65,32 @@ namespace display_device {
     init();
 
     /**
+     * @brief Result of trying to prepare display settings for a stream.
+     */
+    struct configure_result_t {
+      enum class result_e {
+        success,
+        deferred_retry,
+        parse_fail,
+        topology_fail,
+        primary_display_fail,
+        modes_fail,
+        hdr_states_fail,
+        file_save_fail,
+        revert_fail
+      };
+
+      explicit
+      operator bool() const {
+        return result == result_e::success || result == result_e::deferred_retry;
+      }
+
+      result_e result;
+      std::string message;
+      std::string hint;
+    };
+
+    /**
      * @brief Configure the display device based on the user configuration and the session information.
      *
      * Upon failing to completely apply configuration, the applied settings will be reverted.
@@ -72,19 +99,18 @@ namespace display_device {
      *
      * @param config User's video related configuration.
      * @param session Session information.
-     * @note There is no return value as we still want to continue with the stream, so that
-     *       users can do something about it once they are connected. Otherwise, we might
-     *       prevent users from logging in at all...
+     * @returns A result describing whether the display configuration was applied, deferred,
+     *          or failed. Callers may continue with the stream when appropriate.
      *
      * EXAMPLES:
      * ```cpp
      * const std::shared_ptr<rtsp_stream::launch_session_t> launch_session; // Assuming ptr is properly initialized
      * const config::video_t &video_config { config::video };
      *
-     * session_t::get().configure_display(video_config, *launch_session);
+     * const auto result = session_t::get().configure_display(video_config, *launch_session);
      * ```
      */
-    void
+    configure_result_t
     configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure = false);
 
     /**

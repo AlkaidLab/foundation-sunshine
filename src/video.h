@@ -9,6 +9,8 @@
 #include "thread_safe.h"
 #include "video_colorspace.h"
 
+#include <string>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
@@ -425,6 +427,26 @@ namespace video {
   extern int active_av1_mode;
   extern bool last_encoder_probe_supported_ref_frames_invalidation;
   extern std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
+
+  enum class probe_error_e {
+    none,
+    no_active_display,
+    configured_encoder_unavailable,
+    codec_requirements_unmet,
+    no_working_encoder
+  };
+
+  struct probe_result_t {
+    probe_error_e error;
+    std::string message;
+    std::string hint;
+
+    explicit operator bool() const {
+      return error == probe_error_e::none;
+    }
+  };
+
+  extern probe_result_t last_encoder_probe_result;
 
   void
   capture(

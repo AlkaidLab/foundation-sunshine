@@ -98,6 +98,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/webhook.h"
         "${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
         "${CMAKE_SOURCE_DIR}/src/nvhttp.h"
+        "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.cpp"
+        "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.h"
         "${CMAKE_SOURCE_DIR}/src/abr.cpp"
         "${CMAKE_SOURCE_DIR}/src/abr.h"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"

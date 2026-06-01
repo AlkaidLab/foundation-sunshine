@@ -7,6 +7,7 @@
 
 // standard includes
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -41,6 +42,7 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "process.h"
@@ -1905,18 +1907,10 @@ namespace nvhttp {
       // We want to prepare display only if there are no active sessions at
       // the moment. This should to be done before probing encoders as it could
       // change display device's state.
-      display_device::session_t::get().configure_display(config::video, *launch_session, true);
-
       // The display should be restored by the fail guard in case something happens.
       need_to_restore_display_state = true;
 
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+      if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, true)) {
         tree.put("root.gamesession", 0);
 
         return;
@@ -2001,8 +1995,16 @@ namespace nvhttp {
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 503);
-      tree.put("root.<xmlattr>.status_message", "No running app to resume");
+      stream_start::set_sunshine_error(
+        tree,
+        503,
+        "There is no running app to resume. Start the app again from the client.",
+        "NO_APP_TO_RESUME",
+        "The previous session is no longer active or was already stopped.",
+        "relaunch_app_from_client",
+        "session",
+        "resume",
+        true);
 
       return;
     }
@@ -2037,16 +2039,8 @@ namespace nvhttp {
       // We want to prepare display only if there are no active sessions at
       // the moment. This should be done before probing encoders as it could
       // change the active displays.
-      display_device::session_t::get().configure_display(config::video, *launch_session, false);
-
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
+      if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, false)) {
         tree.put("root.resume", 0);
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
 
         return;
       }
