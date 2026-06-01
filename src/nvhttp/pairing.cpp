@@ -227,19 +227,6 @@ namespace nvhttp {
       log_request<T>(request);
 
       auto client_ip = request->remote_endpoint().address().to_string();
-      if (!pair_rate_limit.check_and_record(client_ip)) {
-        BOOST_LOG(warning) << "Pairing rate limited for IP: " << client_ip;
-        pt::ptree rate_tree;
-        rate_tree.put("root.<xmlattr>.status_code", 429);
-        rate_tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
-        rate_tree.put("root.paired", 0);
-        std::ostringstream data;
-        pt::write_xml(data, rate_tree);
-        response->write(data.str());
-        response->close_connection_after_response = true;
-        return;
-      }
-
       pair_rate_limit.cleanup();
 
       pt::ptree tree;
@@ -265,9 +252,17 @@ namespace nvhttp {
       args_t::const_iterator it;
       if (it = args.find("phrase"); it != std::end(args)) {
         if (it->second == "getservercert"sv) {
+          if (!pair_rate_limit.check_and_record(client_ip)) {
+            BOOST_LOG(warning) << "Pairing rate limited for IP: " << client_ip;
+            tree.put("root.<xmlattr>.status_code", 429);
+            tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
+            tree.put("root.paired", 0);
+            return;
+          }
+
           pair_session_t sess;
 
-          sess.client.uniqueID = std::move(uniqID);
+          sess.client.uniqueID = uniqID;
           sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
           last_pair_name = get_arg(args, "clientname", "Named Zako");
 
@@ -360,6 +355,10 @@ namespace nvhttp {
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
+        http::unique_id = uuid_util::uuid_t::generate().string();
+        std::unique_lock<std::shared_mutex> ul(client_state_mutex);
+        cert_chain.clear();
+        client_root = client_t {};
         return;
       }
 
@@ -617,6 +616,10 @@ namespace nvhttp {
     pt::ptree tree;
     std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
     if (map_id_sess.empty()) {
+      return false;
+    }
+    if (map_id_sess.size() != 1) {
+      BOOST_LOG(warning) << "Cannot apply PIN while multiple pairing sessions are pending";
       return false;
     }
 

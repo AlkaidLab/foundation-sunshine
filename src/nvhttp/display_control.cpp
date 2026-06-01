@@ -40,6 +40,22 @@ namespace nvhttp::display_control {
       return headers;
     }
 
+    SimpleWeb::StatusCode
+    http_status_from_json(const json &response_json) {
+      switch (response_json.value("status_code", 200)) {
+        case 400:
+          return SimpleWeb::StatusCode::client_error_bad_request;
+        case 404:
+          return SimpleWeb::StatusCode::client_error_not_found;
+        case 500:
+          return SimpleWeb::StatusCode::server_error_internal_server_error;
+        case 501:
+          return SimpleWeb::StatusCode::server_error_not_implemented;
+        default:
+          return SimpleWeb::StatusCode::success_ok;
+      }
+    }
+
   }  // namespace
 
   void
@@ -49,6 +65,7 @@ namespace nvhttp::display_control {
     json response_json;
     response_json["status_code"] = 200;
     response_json["status_message"] = "OK";
+    auto response_status = SimpleWeb::StatusCode::success_ok;
 
     try {
       std::vector<std::string> display_names;
@@ -94,9 +111,10 @@ namespace nvhttp::display_control {
       response_json["status_message"] = "Internal server error";
       response_json["displays"] = json::array();
       response_json["count"] = 0;
+      response_status = SimpleWeb::StatusCode::server_error_internal_server_error;
     }
 
-    response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), json_headers());
+    response->write(response_status, response_json.dump(), json_headers());
   }
 
   void
@@ -107,7 +125,7 @@ namespace nvhttp::display_control {
     response_json["status_code"] = 200;
     response_json["status_message"] = "OK";
 
-    auto send_response = [&](SimpleWeb::StatusCode status_code = SimpleWeb::StatusCode::success_ok) {
+    auto send_response = [&](SimpleWeb::StatusCode status_code) {
       response->write(status_code, response_json.dump(), json_headers());
       response->close_connection_after_response = true;
     };
@@ -180,7 +198,7 @@ namespace nvhttp::display_control {
       response_json["success"] = false;
     }
 
-    send_response();
+    send_response(http_status_from_json(response_json));
   }
 
 }  // namespace nvhttp::display_control

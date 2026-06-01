@@ -1,6 +1,6 @@
 #include "url_utils.h"
 
-#include <sstream>
+#include <cctype>
 
 namespace nvhttp::url_utils {
 
@@ -11,10 +11,15 @@ namespace nvhttp::url_utils {
 
     for (size_t i = 0; i < value.size(); ++i) {
       if (value[i] == '%' && i + 2 < value.size()) {
-        int hex_val;
-        std::istringstream hex_stream(value.substr(i + 1, 2));
-        if (hex_stream >> std::hex >> hex_val) {
-          decoded += static_cast<char>(hex_val);
+        auto hi = static_cast<unsigned char>(value[i + 1]);
+        auto lo = static_cast<unsigned char>(value[i + 2]);
+        if (std::isxdigit(hi) && std::isxdigit(lo)) {
+          auto hex_value = [](char c) {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return c - 'A' + 10;
+          };
+          decoded += static_cast<char>((hex_value(value[i + 1]) << 4) | hex_value(value[i + 2]));
           i += 2;
           continue;
         }

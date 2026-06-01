@@ -98,6 +98,11 @@ namespace nvhttp::apps {
       auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
 
       std::ifstream in(app_image, std::ios::binary);
+      if (!in.is_open()) {
+        response->write(SimpleWeb::StatusCode::client_error_not_found, "App asset not found");
+        return;
+      }
+
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "image/png");
       response->write(SimpleWeb::StatusCode::success_ok, in, headers);

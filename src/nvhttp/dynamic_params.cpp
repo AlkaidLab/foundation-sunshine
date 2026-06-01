@@ -1,6 +1,7 @@
 #include "dynamic_params.h"
 
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include <Simple-Web-Server/server_http.hpp>
@@ -107,11 +108,21 @@ namespace nvhttp::dynamic_params {
         tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
       }
     }
+    catch (const std::invalid_argument &) {
+      tree.put("root.bitrate", 0);
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Invalid bitrate parameter");
+    }
+    catch (const std::out_of_range &) {
+      tree.put("root.bitrate", 0);
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Bitrate parameter out of range");
+    }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "ChangeBitrate: "sv << e.what();
       tree.put("root.bitrate", 0);
       tree.put("root.<xmlattr>.status_code", 500);
-      tree.put("root.<xmlattr>.status_message", e.what());
+      tree.put("root.<xmlattr>.status_message", "Internal server error");
     }
   }
 
@@ -209,7 +220,17 @@ namespace nvhttp::dynamic_params {
           break;
         }
         case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
-          param.value.bool_value = param_value == "true" || param_value == "1";
+          if (param_value == "true" || param_value == "1") {
+            param.value.bool_value = true;
+          }
+          else if (param_value == "false" || param_value == "0") {
+            param.value.bool_value = false;
+          }
+          else {
+            BOOST_LOG(warning) << "Change dynamic param error: invalid adaptive quantization value";
+            set_error(tree, 400, "Invalid adaptive quantization value. Must be true/false or 1/0");
+            return;
+          }
           break;
         }
         case video::dynamic_param_type_e::MULTI_PASS: {
@@ -254,9 +275,15 @@ namespace nvhttp::dynamic_params {
         set_error(tree, 404, "No active streaming session found for client: " + client_name);
       }
     }
+    catch (const std::invalid_argument &) {
+      set_error(tree, 400, "Invalid numeric parameter");
+    }
+    catch (const std::out_of_range &) {
+      set_error(tree, 400, "Numeric parameter out of range");
+    }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "Change dynamic param error: "s << e.what();
-      set_error(tree, 500, e.what());
+      set_error(tree, 500, "Internal server error");
     }
   }
 

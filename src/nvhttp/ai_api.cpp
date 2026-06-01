@@ -10,6 +10,18 @@
 
 namespace nvhttp::ai_api {
 
+  namespace {
+
+    const char *
+    status_line_for_ai_result(int http_code) {
+      if (http_code == 400) return "400 Bad Request";
+      if (http_code == 403) return "403 Forbidden";
+      if (http_code >= 500) return "502 Bad Gateway";
+      return "500 Internal Server Error";
+    }
+
+  }  // namespace
+
   void
   completions(resp_https_t response, req_https_t request) {
     std::stringstream ss;
@@ -42,7 +54,7 @@ namespace nvhttp::ai_api {
 
       if (result.httpCode != 200 && !headerSent) {
         std::string errorResp = result.body;
-        *response << "HTTP/1.1 502 Bad Gateway\r\n";
+        *response << "HTTP/1.1 " << status_line_for_ai_result(result.httpCode) << "\r\n";
         *response << "Content-Type: application/json\r\n";
         *response << "Content-Length: " << errorResp.size() << "\r\n";
         *response << "\r\n";

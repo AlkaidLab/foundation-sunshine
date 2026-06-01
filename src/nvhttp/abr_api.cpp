@@ -196,12 +196,13 @@ namespace nvhttp::abr_api {
 
       abr::enable(client.name, cfg, initial_bitrate, client.app_name);
 
+      bool bitrate_applied = true;
       if (client.bitrate > 0 && cfg.max_bitrate_kbps > 0 && client.bitrate > cfg.max_bitrate_kbps) {
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::BITRATE;
         param.value.int_value = cfg.max_bitrate_kbps;
         param.valid = true;
-        stream::session::change_dynamic_param_for_client(client.name, param);
+        bitrate_applied = stream::session::change_dynamic_param_for_client(client.name, param);
       }
 
       json resp_json;
@@ -215,6 +216,10 @@ namespace nvhttp::abr_api {
       resp_json["hostMaxBitrate"] = host_max_bitrate;
       resp_json["maxBitrateCapped"] = capped_by_host;
       resp_json["maxBitrateInheritedFromHost"] = inherited_host_cap;
+      resp_json["bitrateApplied"] = bitrate_applied;
+      if (!bitrate_applied) {
+        resp_json["bitrateApplyError"] = "ABR configured, but failed to apply bitrate to the active session";
+      }
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
     }
     catch (const json::exception &e) {
@@ -265,18 +270,23 @@ namespace nvhttp::abr_api {
       feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
 
       auto action = abr::process_feedback(client_name, feedback);
+      bool bitrate_applied = true;
       if (action.new_bitrate_kbps > 0) {
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::BITRATE;
         param.value.int_value = action.new_bitrate_kbps;
         param.valid = true;
 
-        stream::session::change_dynamic_param_for_client(client_name, param);
+        bitrate_applied = stream::session::change_dynamic_param_for_client(client_name, param);
       }
 
       json resp_json;
-      if (action.new_bitrate_kbps > 0) {
+      if (action.new_bitrate_kbps > 0 && bitrate_applied) {
         resp_json["newBitrate"] = action.new_bitrate_kbps;
+      }
+      resp_json["bitrateApplied"] = bitrate_applied;
+      if (!bitrate_applied) {
+        resp_json["bitrateApplyError"] = "Failed to apply ABR bitrate update to the active session";
       }
       resp_json["reason"] = action.reason;
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);

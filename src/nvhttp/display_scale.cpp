@@ -153,7 +153,7 @@ namespace nvhttp::display_scale {
       const auto &name = display_names[i];
       auto it = display_info_map.find(name);
       const bool found = it != display_info_map.end();
-      const auto device_id = found ? it->second.first : name;
+      const auto device_id = found ? it->second.first : std::string {};
       json display_node { { "index", static_cast<int>(i) },
         { "display_name", name },
         { "device_id", device_id },

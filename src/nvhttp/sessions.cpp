@@ -32,6 +32,9 @@ namespace nvhttp::sessions {
   get(resp_https_t response, req_https_t request) {
     log_request(request);
 
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+
     auto client_address = request->remote_endpoint().address();
     auto address = net::addr_to_normalized_string(client_address);
     auto ip_type = net::from_address(address);
@@ -43,7 +46,7 @@ namespace nvhttp::sessions {
       msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
       response_json["status_message"] = msg_stream.str();
 
-      response->write(response_json.dump());
+      response->write(SimpleWeb::StatusCode::client_error_forbidden, response_json.dump(), headers);
       response->close_connection_after_response = true;
       return;
     }
@@ -81,7 +84,7 @@ namespace nvhttp::sessions {
 
       BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
 
-      response->write(response_json.dump());
+      response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
       response->close_connection_after_response = true;
     }
     catch (std::exception &e) {
@@ -92,7 +95,7 @@ namespace nvhttp::sessions {
       error_json["status_code"] = 500;
       error_json["status_message"] = e.what();
 
-      response->write(error_json.dump());
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, error_json.dump(), headers);
       response->close_connection_after_response = true;
     }
   }
