@@ -398,6 +398,7 @@ namespace display_device {
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
+      restore_state_impl(revert_reason_e::config_cleanup);
       return {
         configure_result_t::result_e::parse_fail,
         "Failed to parse display configuration.",
@@ -411,13 +412,15 @@ namespace display_device {
     current_use_vdd = parsed_config->use_vdd;
 
     if (settings.is_changing_settings_going_to_fail()) {
-      timer->setup_timer([this, config_copy = *parsed_config, &session, pre_saved_initial_topology]() {
+      timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name, pre_saved_initial_topology]() {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
           return false;
         }
 
-        if (!settings.apply_config(config_copy, session, pre_saved_initial_topology)) {
+        auto retry_session = rtsp_stream::launch_session_t {};
+        retry_session.client_name = client_name;
+        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!

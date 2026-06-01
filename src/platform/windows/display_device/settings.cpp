@@ -983,7 +983,7 @@ namespace display_device {
       }
 
       if (config.change_hdr_state) {
-        std::thread { [&client_name = session.client_name]() {
+        std::thread { [client_name = session.client_name]() {
           if (!display_device::apply_hdr_profile(client_name)) {
             BOOST_LOG(warning) << "Failed to apply HDR profile for client: " << client_name << "retrying later...";
             std::this_thread::sleep_for(2s);

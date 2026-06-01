@@ -33,6 +33,8 @@ namespace nvhttp::stream_start {
 
     class temporary_video_config_t {
     public:
+      // This is only used while preparing a launch when no active RTSP session is
+      // running, so the temporary global config swap cannot race stream encoding.
       explicit temporary_video_config_t(config::video_t replacement):
           original_config { config::video } {
         config::video = std::move(replacement);
@@ -210,6 +212,8 @@ namespace nvhttp::stream_start {
     void
     fill_vdd_recovery_session(rtsp_stream::launch_session_t &recovery_session,
       const rtsp_stream::launch_session_t &launch_session) {
+      // launch_session_t is not copy-assignable because RTSP cipher state is
+      // move-only, so copy only the launch fields needed for display probing.
       recovery_session.id = launch_session.id;
       recovery_session.gcm_key = launch_session.gcm_key;
       recovery_session.iv = launch_session.iv;
@@ -387,6 +391,8 @@ namespace nvhttp::stream_start {
     }
 
     if (recovery_result.attempted) {
+      // A failed display-level recovery already tried the strongest display
+      // fallback. Keep that result instead of masking it with encoder-only fixes.
       set_auto_recovery_status(tree, recovery_result);
     }
     else if (retry_deferred_display_config(launch_session, is_reconfigure, display_result, recovery_result) ||
