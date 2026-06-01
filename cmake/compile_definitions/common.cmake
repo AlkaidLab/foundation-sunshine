@@ -112,6 +112,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/nvhttp/display_scale.h"
         "${CMAKE_SOURCE_DIR}/src/nvhttp/dynamic_params.cpp"
         "${CMAKE_SOURCE_DIR}/src/nvhttp/dynamic_params.h"
+        "${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.cpp"
+        "${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.h"
         "${CMAKE_SOURCE_DIR}/src/nvhttp/sessions.cpp"
         "${CMAKE_SOURCE_DIR}/src/nvhttp/sessions.h"
         "${CMAKE_SOURCE_DIR}/src/nvhttp/url_utils.cpp"
