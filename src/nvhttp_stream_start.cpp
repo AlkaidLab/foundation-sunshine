@@ -383,14 +383,15 @@ namespace nvhttp::stream_start {
     // encoders only after the display stack has settled.
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto_recovery_result_t recovery_result;
+    const auto should_try_vdd = should_try_vdd_for_display_config(display_result.result);
 
-    if (should_try_vdd_for_display_config(display_result.result) &&
+    if (should_try_vdd &&
         recover_display_with_vdd(launch_session, is_reconfigure, display_result, recovery_result)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
     }
 
-    if (should_try_vdd_for_display_config(display_result.result)) {
+    if (should_try_vdd) {
       set_auto_recovery_status(tree, recovery_result);
       set_display_config_error(tree, display_result);
       return false;
