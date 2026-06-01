@@ -32,7 +32,6 @@
 
 // local includes
 #include "config.h"
-#include "clipboard_http.h"
 #include "confighttp.h"
 #include "display_device/session.h"
 #include "file_handler.h"
@@ -42,10 +41,13 @@
 #include "network.h"
 #include "nvhttp.h"
 #include "nvhttp/abr_api.h"
+#include "nvhttp/ai_api.h"
 #include "nvhttp/apps.h"
+#include "nvhttp/clipboard_api.h"
 #include "nvhttp/display_control.h"
 #include "nvhttp/display_scale.h"
 #include "nvhttp/dynamic_params.h"
+#include "nvhttp/sessions.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -1190,76 +1192,6 @@ namespace nvhttp {
   }
 
   void
-  getSessionsInfo(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    // Only allow localhost access.
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    if (ip_type != net::PC) {
-      json response_json;
-      response_json["success"] = false;
-      response_json["status_code"] = 403;
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      response_json["status_message"] = msg_stream.str();
-
-      response->write(response_json.dump());
-      response->close_connection_after_response = true;
-      return;
-    }
-
-    try {
-      auto sessions_info = stream::session::get_all_sessions_info();
-
-      json response_json;
-      response_json["success"] = true;
-      response_json["status_code"] = 200;
-      response_json["status_message"] = "Success";
-      response_json["total_sessions"] = sessions_info.size();
-
-      json sessions_array = json::array();
-
-      for (const auto &session_info : sessions_info) {
-        json session_obj;
-        session_obj["client_name"] = session_info.client_name;
-        session_obj["client_address"] = session_info.client_address;
-        session_obj["state"] = session_info.state;
-        session_obj["session_id"] = session_info.session_id;
-        session_obj["width"] = session_info.width;
-        session_obj["height"] = session_info.height;
-        session_obj["fps"] = session_info.fps;
-        session_obj["host_audio"] = session_info.host_audio;
-        session_obj["enable_hdr"] = session_info.enable_hdr;
-        session_obj["enable_mic"] = session_info.enable_mic;
-        session_obj["app_name"] = session_info.app_name;
-        session_obj["app_id"] = session_info.app_id;
-
-        sessions_array.push_back(session_obj);
-      }
-
-      response_json["sessions"] = sessions_array;
-
-      BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
-
-      response->write(response_json.dump());
-      response->close_connection_after_response = true;
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "GetSessionsInfo: "sv << e.what();
-
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = e.what();
-
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
-    }
-  }
-
-  void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
@@ -1683,20 +1615,14 @@ namespace nvhttp {
     https_server.resource["^/supercmd$"]["GET"] = apps::exec_super_cmd;
     https_server.resource["^/bitrate$"]["GET"] = dynamic_params::change_bitrate;
     https_server.resource["^/stream/settings$"]["GET"] = dynamic_params::change;
-    https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
+    https_server.resource["^/sessions$"]["GET"] = sessions::get;
 
     // Clipboard blob routes are mirrored onto nvhttp so paired Moonlight
     // clients can reuse their existing certificate-authenticated GameStream
     // channel for large clipboard payloads. The local GUI agent continues to
     // use the confighttp /api/v1/clipboard/* endpoints on loopback.
-    https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = [](resp_https_t response, req_https_t request) {
-      auto out = clipboard_http::process_blob_upload(request);
-      response->write(out.status, out.body, out.headers);
-    };
-    https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = [](resp_https_t response, req_https_t request) {
-      auto out = clipboard_http::process_blob_get(request);
-      response->write(out.status, out.body, out.headers);
-    };
+    https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = clipboard_api::upload_blob;
+    https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = clipboard_api::get_blob;
 
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
@@ -1704,57 +1630,7 @@ namespace nvhttp {
     https_server.resource["^/api/abr/feedback$"]["POST"] = abr_api::feedback;
 
     // AI LLM proxy route uses client cert auth from pairing.
-    https_server.resource["^/ai/completions$"]["POST"] = [](resp_https_t response, req_https_t request) {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      std::string requestBody = ss.str();
-
-      bool isStream = false;
-      try {
-        auto reqJson = nlohmann::json::parse(requestBody);
-        isStream = reqJson.value("stream", false);
-      } catch (...) {}
-
-      if (isStream) {
-        bool headerSent = false;
-        auto result = confighttp::processAiChatStream(requestBody, [&](const char *data, size_t len) {
-          if (!headerSent) {
-            *response << "HTTP/1.1 200 OK\r\n";
-            *response << "Content-Type: text/event-stream\r\n";
-            *response << "Cache-Control: no-cache\r\n";
-            *response << "Connection: keep-alive\r\n";
-            *response << "\r\n";
-            response->send();
-            headerSent = true;
-          }
-          std::string chunk(data, len);
-          *response << chunk;
-          response->send();
-        });
-
-        if (result.httpCode != 200 && !headerSent) {
-          std::string errorResp = result.body;
-          *response << "HTTP/1.1 502 Bad Gateway\r\n";
-          *response << "Content-Type: application/json\r\n";
-          *response << "Content-Length: " << errorResp.size() << "\r\n";
-          *response << "\r\n";
-          *response << errorResp;
-          response->send();
-        }
-      } else {
-        auto result = confighttp::processAiChat(requestBody);
-
-        SimpleWeb::CaseInsensitiveMultimap headers;
-        headers.emplace("Content-Type", result.contentType);
-
-        auto statusCode = SimpleWeb::StatusCode::success_ok;
-        if (result.httpCode == 403) statusCode = SimpleWeb::StatusCode::client_error_forbidden;
-        else if (result.httpCode == 400) statusCode = SimpleWeb::StatusCode::client_error_bad_request;
-        else if (result.httpCode >= 500) statusCode = SimpleWeb::StatusCode::server_error_bad_gateway;
-
-        response->write(statusCode, result.body, headers);
-      }
-    };
+    https_server.resource["^/ai/completions$"]["POST"] = ai_api::completions;
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);
