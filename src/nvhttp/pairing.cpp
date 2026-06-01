@@ -37,8 +37,8 @@ namespace nvhttp {
   void
   remove_session(const pair_session_t &sess);
 
-  void
-  getservercert(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &pin, const std::string &client_name);
+  bool
+  getservercert_checked(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &pin, const std::string &client_name);
 
   void
   clientchallenge(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &challenge);
@@ -168,10 +168,10 @@ namespace nvhttp {
     }
 
     void
-    save_state() {
+    save_state(bool preserve_existing = true) {
       pt::ptree root;
 
-      if (fs::exists(config::nvhttp.file_state)) {
+      if (preserve_existing && fs::exists(config::nvhttp.file_state)) {
         try {
           pt::read_json(config::nvhttp.file_state, root);
         }
@@ -277,7 +277,9 @@ namespace nvhttp {
             std::cout << "Please insert pin: "sv;
             std::getline(std::cin, pin);
 
-            getservercert(ptr->second, tree, pin, last_pair_name);
+            if (!getservercert_checked(ptr->second, tree, pin, last_pair_name)) {
+              return;
+            }
           }
           else {
             auto remote_addr = request->remote_endpoint().address();
@@ -287,9 +289,19 @@ namespace nvhttp {
               BOOST_LOG(info) << "Using preset PIN for QR code pairing with " << last_pair_name
                               << " from " << remote_addr.to_string();
               ptr->second.client.name = last_pair_name;
-              getservercert(ptr->second, tree, preset, last_pair_name);
+              if (!getservercert_checked(ptr->second, tree, preset, last_pair_name)) {
+                return;
+              }
             }
             else {
+              if (!pending_pin_unique_id.empty() && map_id_sess.find(pending_pin_unique_id) != std::end(map_id_sess)) {
+                BOOST_LOG(warning) << "Rejecting pairing request while another client is waiting for PIN entry";
+                tree.put("root.<xmlattr>.status_code", 409);
+                tree.put("root.<xmlattr>.status_message", "Another pairing request is waiting for PIN entry");
+                tree.put("root.paired", 0);
+                remove_session(ptr->second);
+                return;
+              }
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
               system_tray::update_tray_require_pin(last_pair_name);
 #endif
@@ -358,9 +370,12 @@ namespace nvhttp {
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
         http::unique_id = uuid_util::uuid_t::generate().string();
-        std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-        cert_chain.clear();
-        client_root = client_t {};
+        {
+          std::unique_lock<std::shared_mutex> ul(client_state_mutex);
+          cert_chain.clear();
+          client_root = client_t {};
+        }
+        save_state(false);
         return;
       }
 
@@ -457,17 +472,17 @@ namespace nvhttp {
     remove_session(sess);
   }
 
-  void
-  getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
+  bool
+  getservercert_checked(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
     if (sess.last_phase != PAIR_PHASE::NONE) {
       fail_pair(sess, tree, "Out of order call to getservercert");
-      return;
+      return false;
     }
     sess.last_phase = PAIR_PHASE::GETSERVERCERT;
 
     if (sess.async_insert_pin.salt.size() < 32) {
       fail_pair(sess, tree, "Salt too short");
-      return;
+      return false;
     }
 
     std::string_view salt_view { sess.async_insert_pin.salt.data(), 32 };
@@ -481,6 +496,12 @@ namespace nvhttp {
     tree.put("root.pairname", client_name);
     tree.put("root.plaincert", util::hex_vec(conf_intern.servercert, true));
     tree.put("root.<xmlattr>.status_code", 200);
+    return true;
+  }
+
+  void
+  getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
+    (void) getservercert_checked(sess, tree, pin, client_name);
   }
 
   void
@@ -644,8 +665,10 @@ namespace nvhttp {
     }
 
     auto &sess = sess_it->second;
-    getservercert(sess, tree, pin, name);
     sess.client.name = name;
+    if (!getservercert_checked(sess, tree, pin, name)) {
+      return false;
+    }
 
     std::ostringstream data;
     pt::write_xml(data, tree);
