@@ -1945,7 +1945,17 @@ namespace video {
         [](const auto &capture_ctx) {
           return capture_ctx.config.preferCursorPlane;
         });
-      return display_cursor && !config.preferCursorPlane && !any_cursor_plane_session;
+      const bool cursor_burn_in_required =
+        config.cursor_host_burn_in_required() ||
+        std::any_of(
+          std::begin(capture_ctxs),
+          std::end(capture_ctxs),
+          [](const auto &capture_ctx) {
+            return capture_ctx.config.cursor_host_burn_in_required();
+          });
+      return display_cursor &&
+             (cursor_burn_in_required ||
+              (!config.preferCursorPlane && !any_cursor_plane_session));
     };
     auto refresh_capture_cursor = [&](bool &capture_cursor) {
       const bool next_capture_cursor = should_capture_cursor();
@@ -4003,7 +4013,15 @@ namespace video {
         [](const auto &synced_ctx) {
           return synced_ctx && synced_ctx->config.preferCursorPlane;
         });
-      bool capture_cursor = display_cursor && !any_session_prefers_cursor_plane;
+      const bool any_session_requires_cursor_burn_in = std::any_of(
+        std::begin(synced_session_ctxs),
+        std::end(synced_session_ctxs),
+        [](const auto &synced_ctx) {
+          return synced_ctx && synced_ctx->config.cursor_host_burn_in_required();
+        });
+      bool capture_cursor = display_cursor &&
+                            (any_session_requires_cursor_burn_in ||
+                             !any_session_prefers_cursor_plane);
       if (!last_capture_cursor || *last_capture_cursor != capture_cursor) {
         const auto cursor_plane_sessions = std::count_if(
           std::begin(synced_session_ctxs),
@@ -4047,8 +4065,16 @@ namespace video {
           [](const auto &synced_ctx) {
             return synced_ctx && synced_ctx->config.preferCursorPlane;
           });
+        const bool any_session_requires_cursor_burn_in_after_sync = std::any_of(
+          std::begin(synced_session_ctxs),
+          std::end(synced_session_ctxs),
+          [](const auto &synced_ctx) {
+            return synced_ctx && synced_ctx->config.cursor_host_burn_in_required();
+          });
         const bool drop_burned_cursor_frame_for_cursor_plane =
-          frame_captured && frame_captured_with_cursor && any_session_prefers_cursor_plane_after_sync;
+          frame_captured && frame_captured_with_cursor &&
+          any_session_prefers_cursor_plane_after_sync &&
+          !any_session_requires_cursor_burn_in_after_sync;
         static bool logged_cursor_plane_sync_burn_drop = false;
 
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {

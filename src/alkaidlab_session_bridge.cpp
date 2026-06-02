@@ -405,6 +405,14 @@ namespace stream::alkaidlab_session_bridge {
     context.snapshot.cursor_plane.user_scale_ppm = session.cursorPlane.userScalePpm;
     context.snapshot.cursor_plane.min_client_point_size = session.cursorPlane.minClientPointSize;
     context.snapshot.cursor_plane.max_client_point_size = session.cursorPlane.maxClientPointSize;
+    context.snapshot.cursor_plane.asset_format = session.cursorPlane.assetFormat;
+    context.snapshot.cursor_plane.asset_blend_mode = session.cursorPlane.assetBlendMode;
+    context.snapshot.cursor_plane.asset_mask_semantics = session.cursorPlane.assetMaskSemantics;
+    context.snapshot.cursor_plane.asset_fallback_policy = session.cursorPlane.assetFallbackPolicy;
+    context.snapshot.cursor_plane.animation_epoch = session.cursorPlane.animationEpoch;
+    context.snapshot.cursor_plane.frame_index = session.cursorPlane.frameIndex;
+    context.snapshot.cursor_plane.frame_count = session.cursorPlane.frameCount;
+    context.snapshot.cursor_plane.frame_duration_ms = session.cursorPlane.frameDurationMs;
 
     if (session.transportPath.pathId != 0) {
       AlkSunshineTransportPathDetails details;
@@ -540,6 +548,14 @@ namespace stream::alkaidlab_session_bridge {
       session.cursorPlane.userScalePpm = snapshot.cursor_plane.user_scale_ppm;
       session.cursorPlane.minClientPointSize = snapshot.cursor_plane.min_client_point_size;
       session.cursorPlane.maxClientPointSize = snapshot.cursor_plane.max_client_point_size;
+      session.cursorPlane.assetFormat = snapshot.cursor_plane.asset_format;
+      session.cursorPlane.assetBlendMode = snapshot.cursor_plane.asset_blend_mode;
+      session.cursorPlane.assetMaskSemantics = snapshot.cursor_plane.asset_mask_semantics;
+      session.cursorPlane.assetFallbackPolicy = snapshot.cursor_plane.asset_fallback_policy;
+      session.cursorPlane.animationEpoch = snapshot.cursor_plane.animation_epoch;
+      session.cursorPlane.frameIndex = snapshot.cursor_plane.frame_index;
+      session.cursorPlane.frameCount = snapshot.cursor_plane.frame_count;
+      session.cursorPlane.frameDurationMs = snapshot.cursor_plane.frame_duration_ms;
     }
 
     if (snapshot.transport_path_count > 0) {
@@ -642,6 +658,14 @@ namespace stream::alkaidlab_session_bridge {
     context.snapshot.cursor_plane.user_scale_ppm = cursor_plane.userScalePpm;
     context.snapshot.cursor_plane.min_client_point_size = cursor_plane.minClientPointSize;
     context.snapshot.cursor_plane.max_client_point_size = cursor_plane.maxClientPointSize;
+    context.snapshot.cursor_plane.asset_format = cursor_plane.assetFormat;
+    context.snapshot.cursor_plane.asset_blend_mode = cursor_plane.assetBlendMode;
+    context.snapshot.cursor_plane.asset_mask_semantics = cursor_plane.assetMaskSemantics;
+    context.snapshot.cursor_plane.asset_fallback_policy = cursor_plane.assetFallbackPolicy;
+    context.snapshot.cursor_plane.animation_epoch = cursor_plane.animationEpoch;
+    context.snapshot.cursor_plane.frame_index = cursor_plane.frameIndex;
+    context.snapshot.cursor_plane.frame_count = cursor_plane.frameCount;
+    context.snapshot.cursor_plane.frame_duration_ms = cursor_plane.frameDurationMs;
     return true;
   }
 

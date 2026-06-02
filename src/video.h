@@ -55,6 +55,7 @@ namespace video {
 
   // 动态参数调节事件类型
   using dynamic_param_change_event_t = safe::mail_raw_t::queue_t<dynamic_param_t>;
+  using cursor_burn_in_required_fn_t = bool (*)(void *);
 
   /* Encoding configuration requested by remote client */
   struct config_t {
@@ -97,6 +98,13 @@ namespace video {
     // Moonlight local cursor plane creates a duplicate cursor.
     bool preferCursorPlane = false;
     std::uint64_t cursorProbeRuntimeId = 0;
+    cursor_burn_in_required_fn_t cursorBurnInRequired = nullptr;
+    void *cursorBurnInUserData = nullptr;
+
+    bool cursor_host_burn_in_required() const {
+      return cursorBurnInRequired != nullptr &&
+             cursorBurnInRequired(cursorBurnInUserData);
+    }
 
     // NTSC framerate support: use frameRateNum/frameRateDen for precise framerate
     // e.g., 120000/1001 = 119.88fps (NTSC), 60000/1001 = 59.94fps

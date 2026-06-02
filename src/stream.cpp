@@ -113,6 +113,12 @@ typedef struct _SS_CURSOR_PLANE_SOURCE_V1 {
 static_assert(sizeof(SS_CURSOR_PLANE_SOURCE_V1) == 20,
               "SS cursor-plane source tail wire size changed");
 #endif
+#ifndef SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED
+#define SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED 0x00000010u
+#endif
+#ifndef LI_SESSION_CURSOR_FLAG_BITMAP_INVALIDATED
+#define LI_SESSION_CURSOR_FLAG_BITMAP_INVALIDATED 0x00000100u
+#endif
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -1002,6 +1008,7 @@ namespace stream {
         std::chrono::steady_clock::time_point last_bitmap_retry {};
         AlkInteractionCursor alkaid_cursor {};
         AlkInteractionCursorNativeHostCaptureBackend native_host_capture_backend {};
+        std::atomic_bool host_burn_in_required { false };
         bool host_cursor_suppressed { false };
         bool bitmap_sent { false };
         bool alkaid_cursor_initialized { false };
@@ -4827,9 +4834,17 @@ namespace stream {
     std::uint32_t source_height { 0 };
     std::uint32_t bitmap_hash { 0 };
     std::uint32_t host_dpi_scale_ppm { 1000000 };
+    std::uint32_t render_policy { LI_SESSION_CURSOR_RENDER_POLICY_CONTENT_SCALED };
     std::uint32_t size_source { LI_SESSION_CURSOR_SIZE_SOURCE_UNKNOWN };
     std::uint32_t confidence_ppm { 0 };
+    std::uint32_t asset_format { 0 };
+    std::uint32_t asset_blend_mode { 0 };
+    std::uint32_t asset_mask_semantics { 0 };
+    std::uint32_t asset_fallback_policy { 0 };
     std::uint64_t animation_epoch { 0 };
+    std::uint32_t frame_index { 0 };
+    std::uint32_t frame_count { 0 };
+    std::uint32_t frame_duration_ms { 0 };
     std::uint16_t bitmap_format { 0 };
     std::uint16_t bitmap_stride { 0 };
     std::vector<std::uint8_t> bitmap_bgra;
@@ -4889,12 +4904,32 @@ namespace stream {
     if ((fields.flags & ALK_GAMESTREAM_CURSOR_PLANE_FLAG_SHAPE_BITMAP) != 0) {
       sample.flags |= SS_CURSOR_PLANE_FLAG_SHAPE_BITMAP;
     }
+    const bool has_bitmap = fields.bitmap_pixels != nullptr && fields.bitmap_bytes != 0;
+    const bool host_burn_in =
+      state.asset.fallback_policy == ALK_CURSOR_FALLBACK_POLICY_REQUEST_HOST_BURN_IN;
+    if (!has_bitmap || host_burn_in) {
+      sample.flags |= SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED;
+    }
     sample.host_dpi_scale_ppm = fields.host_dpi_scale_ppm;
+    sample.asset_format = state.asset.format;
+    sample.asset_blend_mode = state.asset.blend_mode;
+    sample.asset_mask_semantics = state.asset.mask_semantics;
+    sample.asset_fallback_policy = state.asset.fallback_policy;
     sample.animation_epoch = state.asset.animation_epoch;
-    sample.size_source = fields.bitmap_pixels != nullptr ?
+    sample.frame_index = state.asset.frame_index;
+    sample.frame_count = state.asset.frame_count;
+    sample.frame_duration_ms = state.asset.frame_duration_ms;
+    sample.render_policy = host_burn_in ?
+                             LI_SESSION_CURSOR_RENDER_POLICY_HOST_BURN_IN :
+                             (has_bitmap ?
+                                LI_SESSION_CURSOR_RENDER_POLICY_CONTENT_SCALED :
+                                LI_SESSION_CURSOR_RENDER_POLICY_CLIENT_NATIVE);
+    sample.size_source = host_burn_in ?
+                           LI_SESSION_CURSOR_SIZE_SOURCE_COMPOSITOR_PLANE :
+                           (fields.bitmap_pixels != nullptr ?
                            LI_SESSION_CURSOR_SIZE_SOURCE_ICON_BITMAP :
-                           LI_SESSION_CURSOR_SIZE_SOURCE_SYSTEM_METRIC;
-    sample.confidence_ppm = fields.bitmap_pixels != nullptr ? 900000 : 750000;
+                           LI_SESSION_CURSOR_SIZE_SOURCE_SYSTEM_METRIC);
+    sample.confidence_ppm = has_bitmap ? 900000 : (host_burn_in ? 850000 : 750000);
     sample.bitmap_format = fields.bitmap_format == ALK_GAMESTREAM_CURSOR_PLANE_BITMAP_FORMAT_BGRA ?
                              SS_CURSOR_PLANE_BITMAP_FORMAT_BGRA :
                              0;
@@ -5062,7 +5097,9 @@ namespace stream {
       return -1;
     }
 
-    const auto packet_flags = (include_bitmap || first_legacy_cursor_packet) ?
+    const bool bitmap_invalidated =
+      (flags & SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED) != 0;
+    const auto packet_flags = (include_bitmap || first_legacy_cursor_packet || bitmap_invalidated) ?
                                 ALK_TRANSPORT_SEND_FLAG_RELIABLE :
                                 ALK_TRANSPORT_SEND_FLAG_UNSEQUENCED;
     if (session->broadcast_ref->control_server.send_session(payload,
@@ -5080,6 +5117,9 @@ namespace stream {
   update_host_cursor_suppression_for_session(session_t *session, bool active, const char *reason) {
     if (!session || !session->broadcast_ref) {
       return;
+    }
+    if (!active) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
     }
 
     const bool should_suppress = active &&
@@ -5109,11 +5149,15 @@ namespace stream {
   void
   maybe_send_cursor_plane_update(session_t *session, std::chrono::steady_clock::time_point now) {
     if (!session || !control_transport_ready(session) || !client_supports_cursor_plane(session)) {
+      if (session) {
+        session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
+      }
       update_host_cursor_suppression_for_session(session, false, "cursor-plane-unavailable");
       return;
     }
 
     if (!session->config.monitor.preferCursorPlane) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
       update_host_cursor_suppression_for_session(session, false, "cursor-plane-not-active");
       return;
     }
@@ -5121,6 +5165,7 @@ namespace stream {
     update_host_cursor_suppression_for_session(session, true, "cursor-plane-control-loop");
 
     if (!ensure_alkaid_host_cursor_initialized(session)) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
       return;
     }
 
@@ -5129,6 +5174,7 @@ namespace stream {
           &provider,
           &session->control.cursor_plane.native_host_capture_backend,
           "foundation-sunshine-native-host-cursor")) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
       return;
     }
     AlkCursorState cursor_state;
@@ -5137,26 +5183,45 @@ namespace stream {
                                                                 &provider,
                                                                 steady_time_ms(now),
                                                                 &cursor_state)) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
       return;
     }
 
     const auto sample = cursor_plane_sample_from_cursor_state(session, cursor_state);
     if (!sample.available) {
+      session->control.cursor_plane.host_burn_in_required.store(false, std::memory_order_relaxed);
       return;
     }
     auto &last = session->control.cursor_plane;
+    const bool host_burn_in_required =
+      sample.render_policy == LI_SESSION_CURSOR_RENDER_POLICY_HOST_BURN_IN &&
+      (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0 &&
+      (sample.flags & SS_CURSOR_PLANE_FLAG_RELATIVE) == 0 &&
+      (sample.flags & SS_CURSOR_PLANE_FLAG_LOCKED) == 0;
+    last.host_burn_in_required.store(host_burn_in_required, std::memory_order_relaxed);
     AlkCursorHostEmitPlan emit_plan;
     alk_cursor_host_emit_plan_init(&emit_plan);
     if (!alk_interaction_cursor_plan_host_emit(&last.alkaid_cursor,
                                                &cursor_state,
                                                steady_time_ms(now),
                                                sample.bitmap_bgra.empty() ? 0u : 1u,
-                                               &emit_plan) ||
-        emit_plan.should_emit == 0u) {
+                                               &emit_plan)) {
       return;
     }
 
-    const bool should_send_bitmap = emit_plan.should_send_asset != 0u;
+    const bool session_cursor_supported =
+      session->control.session_control_welcome_sent &&
+      client_supports_session_cursor_plane(session);
+    const bool session_cursor_needs_initial_replay =
+      session_cursor_supported &&
+      last.session_cursor_plane_tx == 0;
+    if (emit_plan.should_emit == 0u && !session_cursor_needs_initial_replay) {
+      return;
+    }
+
+    const bool should_send_bitmap =
+      emit_plan.should_send_asset != 0u ||
+      (session_cursor_needs_initial_replay && !sample.bitmap_bgra.empty());
     const bool position_changed =
       (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_POSITION_CHANGED) != 0u;
     const bool shape_changed =
@@ -5168,13 +5233,11 @@ namespace stream {
     const bool never_sent =
       (emit_plan.reason_flags & ALK_CURSOR_HOST_EMIT_REASON_FIRST) != 0u;
 
-    const bool session_cursor_supported =
-      session->control.session_control_welcome_sent &&
-      client_supports_session_cursor_plane(session);
     const bool session_cursor_sent =
       session_cursor_supported && send_session_control_cursor_plane(session, sample) == 0;
     const bool session_cursor_ready = session_cursor_supported && session_cursor_sent;
     const bool legacy_position_only = session_cursor_ready &&
+                                      !session_cursor_needs_initial_replay &&
                                       !should_send_bitmap &&
                                       position_changed &&
                                       !shape_changed &&
@@ -5234,12 +5297,13 @@ namespace stream {
         last.last_bitmap_retry = now;
       }
 
-      if (never_sent || shape_changed || should_send_bitmap) {
+      if (never_sent || shape_changed || should_send_bitmap || session_cursor_needs_initial_replay) {
         BOOST_LOG(info) << "Cursor plane update sent runtime=" << session->identity.runtime_id
                         << " shape=" << sample.cursor_shape_id
                         << " session=" << (session_cursor_sent ? 1 : 0)
                         << " legacy=" << (legacy_sent ? 1 : 0)
                         << " legacySkipped=" << (legacy_position_only ? 1 : 0)
+                        << " sessionReplay=" << (session_cursor_needs_initial_replay ? 1 : 0)
                         << " flags=0x" << util::hex(sample.flags).to_string_view()
                         << " pos=" << sample.x << "," << sample.y
                         << " hotspot=" << sample.display_hotspot_x << "," << sample.display_hotspot_y
@@ -5808,6 +5872,9 @@ namespace stream {
     if ((ss_flags & SS_CURSOR_PLANE_FLAG_RELATIVE) != 0) {
       flags |= LI_SESSION_CURSOR_FLAG_RELATIVE_RAW_INPUT;
     }
+    if ((ss_flags & SS_CURSOR_PLANE_FLAG_BITMAP_INVALIDATED) != 0) {
+      flags |= LI_SESSION_CURSOR_FLAG_BITMAP_INVALIDATED;
+    }
     return flags;
   }
 
@@ -5844,10 +5911,31 @@ namespace stream {
     alkaid_cursor_state.asset.hotspot_y = sample.display_hotspot_y;
     alkaid_cursor_state.asset.dpi_scale_ppm = sample.host_dpi_scale_ppm;
     alkaid_cursor_state.asset.size_policy = ALK_CURSOR_SIZE_POLICY_DEVICE_INDEPENDENT;
-    alkaid_cursor_state.asset.fallback_policy =
-      (sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0 ?
+    alkaid_cursor_state.asset.fallback_policy = sample.asset_fallback_policy != 0 ?
+      sample.asset_fallback_policy :
+      ((sample.flags & SS_CURSOR_PLANE_FLAG_VISIBLE) != 0 ?
         ALK_CURSOR_FALLBACK_POLICY_KEEP_LOCAL :
+        ALK_CURSOR_FALLBACK_POLICY_REQUEST_HOST_BURN_IN);
+    if (sample.render_policy == LI_SESSION_CURSOR_RENDER_POLICY_HOST_BURN_IN) {
+      alkaid_cursor_state.asset.format = ALK_CURSOR_ASSET_FORMAT_SYSTEM_CURSOR_ID;
+      alkaid_cursor_state.asset.blend_mode = ALK_CURSOR_BLEND_MODE_SYSTEM_COMPOSITED;
+      alkaid_cursor_state.asset.mask_semantics = ALK_CURSOR_MASK_SEMANTICS_BACKGROUND_DEPENDENT;
+      alkaid_cursor_state.asset.fallback_policy =
         ALK_CURSOR_FALLBACK_POLICY_REQUEST_HOST_BURN_IN;
+    }
+    if (sample.asset_format != 0) {
+      alkaid_cursor_state.asset.format = sample.asset_format;
+    }
+    if (sample.asset_blend_mode != 0) {
+      alkaid_cursor_state.asset.blend_mode = sample.asset_blend_mode;
+    }
+    if (sample.asset_mask_semantics != 0) {
+      alkaid_cursor_state.asset.mask_semantics = sample.asset_mask_semantics;
+    }
+    alkaid_cursor_state.asset.animation_epoch = sample.animation_epoch;
+    alkaid_cursor_state.asset.frame_index = sample.frame_index;
+    alkaid_cursor_state.asset.frame_count = sample.frame_count;
+    alkaid_cursor_state.asset.frame_duration_ms = sample.frame_duration_ms;
     alkaid_cursor_state.asset.pixels = sample.bitmap_bgra.empty() ? nullptr : sample.bitmap_bgra.data();
     alkaid_cursor_state.asset.pixels_length = sample.bitmap_bgra.size();
     const bool alkaid_asset_semantics =
@@ -5858,7 +5946,9 @@ namespace stream {
     LiInitializeSessionCursorPlane(&cursor_plane);
     cursor_plane.flags = session_cursor_flags_from_sample(sample.flags);
     cursor_plane.cursorShapeId = sample.cursor_shape_id;
-    cursor_plane.renderPolicy = LI_SESSION_CURSOR_RENDER_POLICY_CONTENT_SCALED;
+    cursor_plane.renderPolicy = sample.render_policy != LI_SESSION_CURSOR_RENDER_POLICY_UNKNOWN ?
+                                  sample.render_policy :
+                                  LI_SESSION_CURSOR_RENDER_POLICY_CONTENT_SCALED;
     cursor_plane.sizeSource = sample.size_source != LI_SESSION_CURSOR_SIZE_SOURCE_UNKNOWN ?
                                 sample.size_source :
                                 LI_SESSION_CURSOR_SIZE_SOURCE_FALLBACK;
@@ -5881,6 +5971,14 @@ namespace stream {
     cursor_plane.userScalePpm = 1000000;
     cursor_plane.minClientPointSize = 8;
     cursor_plane.maxClientPointSize = 128;
+    cursor_plane.assetFormat = sample.asset_format;
+    cursor_plane.assetBlendMode = sample.asset_blend_mode;
+    cursor_plane.assetMaskSemantics = sample.asset_mask_semantics;
+    cursor_plane.assetFallbackPolicy = sample.asset_fallback_policy;
+    cursor_plane.animationEpoch = sample.animation_epoch;
+    cursor_plane.frameIndex = sample.frame_index;
+    cursor_plane.frameCount = sample.frame_count;
+    cursor_plane.frameDurationMs = sample.frame_duration_ms;
     cursor_plane.epoch = session->control.cursor_plane.epoch + 1U;
 
     alkaidlab_session_bridge::update_cursor_plane(session->alkaidlab_session_context,
@@ -5906,7 +6004,12 @@ namespace stream {
                        << " hotspot="sv << cursor_plane.hotspotX << ',' << cursor_plane.hotspotY
                        << " dpiPpm="sv << cursor_plane.hostDpiScalePpm
                        << " source="sv << cursor_plane.sizeSource
+                       << " renderPolicy="sv << cursor_plane.renderPolicy
                        << " epoch="sv << cursor_plane.epoch
+                       << " assetFormat="sv << cursor_plane.assetFormat
+                       << " blend="sv << cursor_plane.assetBlendMode
+                       << " mask="sv << cursor_plane.assetMaskSemantics
+                       << " fallback="sv << cursor_plane.assetFallbackPolicy
                        << " assetEpoch="sv << sample.animation_epoch
                        << " interaction.cursor=platform"
                        << " assetSemantics="sv << (alkaid_asset_semantics ? 1 : 0)
@@ -9343,6 +9446,13 @@ namespace stream {
     return -1;
   }
 
+  bool
+  cursor_host_burn_in_required_for_video_callback(void *user_data) {
+    auto *session = static_cast<session_t *>(user_data);
+    return session != nullptr &&
+           session->control.cursor_plane.host_burn_in_required.load(std::memory_order_relaxed);
+  }
+
   void
   videoThread(session_t *session) {
     auto fg = util::fail_guard([&]() {
@@ -9390,6 +9500,9 @@ namespace stream {
                     << '@' << session->config.monitor.framerate
                     << " startupFps=" << session->config.monitor.startupFramerate
                     << " totalMs=" << startup_elapsed_ms(*session);
+    session->config.monitor.cursorBurnInRequired =
+      cursor_host_burn_in_required_for_video_callback;
+    session->config.monitor.cursorBurnInUserData = session;
     video::capture(session->mail,
                    session->config.monitor,
                    session,
