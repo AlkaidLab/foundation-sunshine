@@ -2735,6 +2735,83 @@ namespace stream {
                                                                        &gated_sdk_plan,
                                                                        diagnosis,
                                                                        &continuity_action_frame);
+    const bool valid_diagnosis =
+      diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION;
+    const bool raw_applies_any =
+      raw_plan.apply_bitrate ||
+      raw_plan.apply_fec ||
+      raw_plan.apply_fps ||
+      raw_plan.apply_profile ||
+      raw_plan.apply_idr;
+    const bool gated_applies_any =
+      plan.apply_bitrate ||
+      plan.apply_fec ||
+      plan.apply_fps ||
+      plan.apply_profile ||
+      plan.apply_idr;
+    const bool restricted_diagnosis_domain =
+      valid_diagnosis &&
+      (diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_AUDIO ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_SOURCE ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_RENDER ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_DECODE ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_INPUT ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_RUNTIME_PERFORMANCE ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_UNKNOWN ||
+       diagnosis->primary_domain == ALK_CONTINUITY_DOMAIN_MIXED);
+    if (domain_gate_suppressed ||
+        action.changed ||
+        (restricted_diagnosis_domain && (raw_applies_any || gated_applies_any))) {
+      BOOST_LOG(info) << "Stream-quality domain gate probe [" << source << "] runtime="
+                      << session->identity.runtime_id
+                      << " diagnosisDomain="
+                      << (valid_diagnosis ?
+                            stream_quality::continuity_domain_name(diagnosis->primary_domain) :
+                            "unknown")
+                      << " secondaryDomain="
+                      << (valid_diagnosis ?
+                            stream_quality::continuity_domain_name(diagnosis->secondary_domain) :
+                            "unknown")
+                      << " confidence="
+                      << (valid_diagnosis ? diagnosis->confidence_ppm : 0U)
+                      << " evidenceBits=0x" << std::hex
+                      << (valid_diagnosis ? diagnosis->evidence_bits : 0U)
+                      << " allowedActions=0x"
+                      << (valid_diagnosis ? diagnosis->allowed_action_mask : 0U)
+                      << " forbiddenActions=0x"
+                      << (valid_diagnosis ? diagnosis->forbidden_action_mask : 0U)
+                      << std::dec
+                      << " rawApply(bitrate=" << (raw_plan.apply_bitrate ? 1 : 0)
+                      << ",fps=" << (raw_plan.apply_fps ? 1 : 0)
+                      << ",fec=" << (raw_plan.apply_fec ? 1 : 0)
+                      << ",profile=" << (raw_plan.apply_profile ? 1 : 0)
+                      << ",idr=" << (raw_plan.apply_idr ? 1 : 0) << ")"
+                      << " gatedApply(bitrate=" << (plan.apply_bitrate ? 1 : 0)
+                      << ",fps=" << (plan.apply_fps ? 1 : 0)
+                      << ",fec=" << (plan.apply_fec ? 1 : 0)
+                      << ",profile=" << (plan.apply_profile ? 1 : 0)
+                      << ",idr=" << (plan.apply_idr ? 1 : 0) << ")"
+                      << " actionFrame(mediaFlags=0x" << std::hex
+                      << (continuity_action_frame_valid ? continuity_action_frame.media.flags : 0U)
+                      << ",encoderFlags=0x"
+                      << (continuity_action_frame_valid ? continuity_action_frame.encoder.flags : 0U)
+                      << std::dec
+                      << ",mediaRescueRequest="
+                      << (continuity_action_frame_valid ? continuity_action_frame.media.request_rescue : 0U)
+                      << ",mediaIdrRequest="
+                      << (continuity_action_frame_valid ? continuity_action_frame.media.request_idr : 0U)
+                      << ",runtimePerformanceFlags=0x" << std::hex
+                      << (continuity_action_frame_valid ? continuity_action_frame.runtime_performance.flags : 0U)
+                      << std::dec
+                      << ",runtimePerformanceDeferVideo="
+                      << (continuity_action_frame_valid ?
+                            continuity_action_frame.runtime_performance.defer_video_quality : 0U)
+                      << ")"
+                      << " domainGate=" << (domain_gate_suppressed ? 1 : 0)
+                      << " changed=" << (action.changed ? 1 : 0)
+                      << " scenario=" << stream_quality::scenario_name(action.scenario)
+                      << " decisionReason=" << stream_quality_decision_reason_name(action);
+    }
     refresh_transport_monitor_views(session, true);
     session->last_stream_quality_link_quality_state = action.link_quality_state;
     session->last_stream_quality_scene_class = action.scene_class;
