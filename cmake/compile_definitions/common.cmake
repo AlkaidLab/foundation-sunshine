@@ -228,7 +228,6 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
                 "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/src/windows_wasapi_sink_backend.cpp")
     endif()
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_PLATFORM_CORE=1)
-    list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_LEGACY_HOST_RTSP_CPP="${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/legacy/host/rtsp.cpp")
     include_directories(
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"
@@ -241,7 +240,6 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp-fec/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/packetization/gamestream-rtp/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/redundancy/gamestream-rs-fec/include"
-            "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/interaction-cursor/include"
