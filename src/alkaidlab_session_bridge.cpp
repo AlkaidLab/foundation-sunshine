@@ -348,8 +348,8 @@ namespace stream::alkaidlab_session_bridge {
 
   bool
   update_from_li_session(AlkSessionAdapterContext &context, const LI_SESSION &session) {
-    AlkSunshineLegacyLaunch launch;
-    alk_sunshine_legacy_launch_init(&launch);
+    AlkGameStreamHostLegacyLaunch launch;
+    alk_gamestream_host_legacy_launch_init(&launch);
     launch.logical_session_key = session.logicalSessionKey;
     launch.runtime_id = session.runtimeId;
     launch.launch_session_id = session.launchSessionId;
@@ -365,8 +365,8 @@ namespace stream::alkaidlab_session_bridge {
     alk_session_copy_string(launch.app_id, sizeof(launch.app_id), session.appId);
     alk_session_copy_string(launch.app_name, sizeof(launch.app_name), session.appName);
 
-    alk_sunshine_adapter_context_init(&context);
-    if (!alk_sunshine_adapter_apply_launch(&context, &launch)) {
+    alk_gamestream_host_adapter_context_init(&context);
+    if (!alk_gamestream_host_adapter_apply_launch(&context, &launch)) {
       return false;
     }
 
@@ -415,8 +415,8 @@ namespace stream::alkaidlab_session_bridge {
     context.snapshot.cursor_plane.frame_duration_ms = session.cursorPlane.frameDurationMs;
 
     if (session.transportPath.pathId != 0) {
-      AlkSunshineTransportPathDetails details;
-      alk_sunshine_transport_path_details_init(&details);
+      AlkGameStreamHostTransportPathDetails details;
+      alk_gamestream_host_transport_path_details_init(&details);
       details.path_id = session.transportPath.pathId;
       details.protocol_family = map_transport_protocol_family(session.transportPath.protocol);
       details.identity_kind = map_transport_identity(session.transportPath.pathIdentityKind);
@@ -460,13 +460,13 @@ namespace stream::alkaidlab_session_bridge {
       alk_session_copy_string(details.host_local_endpoint, sizeof(details.host_local_endpoint), session.transportPath.hostLocalEndpoint);
       alk_session_copy_string(details.explanation_code, sizeof(details.explanation_code), session.transportPath.explanationCode);
       alk_session_copy_string(details.relay_name, sizeof(details.relay_name), session.transportPath.relayName);
-      alk_sunshine_adapter_set_active_path_details(&context, &details);
+      alk_gamestream_host_adapter_set_active_path_details(&context, &details);
     }
 
     if (session.lease.valid) {
       const auto resource_kind = map_resource_kind(session.lease.feature);
       if (resource_kind != ALK_RESOURCE_UNKNOWN) {
-        alk_sunshine_adapter_grant_resource(&context,
+        alk_gamestream_host_adapter_grant_resource(&context,
                                             resource_kind,
                                             session.lease.ownerParticipantKey);
       }

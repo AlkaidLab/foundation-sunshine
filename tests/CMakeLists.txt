@@ -100,8 +100,11 @@ add_executable(stream_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/src/stream_quality.cpp
         ${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp
         ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/src/session_core.c
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/src/continuity_facade.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/media/packetization/gamestream-rtp-fec/src/gamestream_media_packetization.cpp
         ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_control.cpp
         ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_control_internal.cpp
+        ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_domain_policy.cpp
         ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/src/stream_quality_adaptive_module.cpp)
 target_include_directories(stream_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
@@ -115,6 +118,24 @@ target_compile_options(stream_controller_unit_tests PRIVATE $<$<COMPILE_LANGUAGE
 target_link_options(stream_controller_unit_tests PRIVATE)
 set_target_properties(stream_controller_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME stream_controller_unit_tests COMMAND stream_controller_unit_tests)
+
+
+add_executable(stream_transport_feedback_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_transport_feedback.cpp
+        ${CMAKE_SOURCE_DIR}/src/stream_transport_feedback.cpp)
+target_include_directories(stream_transport_feedback_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/network/transport/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/adaptive-controller/include"
+        "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/modules/streaming/continuity/include")
+target_link_libraries(stream_transport_feedback_unit_tests
+        gtest_main)
+target_compile_definitions(stream_transport_feedback_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(stream_transport_feedback_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+target_link_options(stream_transport_feedback_unit_tests PRIVATE)
+set_target_properties(stream_transport_feedback_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME stream_transport_feedback_unit_tests COMMAND stream_transport_feedback_unit_tests)
 
 add_executable(frame_interest_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_interest.cpp
@@ -133,18 +154,18 @@ add_test(NAME frame_interest_unit_tests COMMAND frame_interest_unit_tests)
 if (EXISTS "${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp" AND
     EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include/alkaidlab/session_core/session_core.h" AND
     EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/include/alkaidlab/session_sdk/session_sdk.h" AND
-    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h")
+    EXISTS "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/host/include/alkaidlab/gamestream_host_adapter/gamestream_host_session_adapter.h")
     add_executable(alkaid_session_bridge_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_alkaidlab_session_bridge.cpp
             ${CMAKE_SOURCE_DIR}/src/alkaidlab_session_bridge.cpp
             ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/src/session_core.c
-            ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/src/sunshine_session_adapter.c
+            ${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/host/src/gamestream_host_session_adapter.c
             ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Session.c)
     target_include_directories(alkaid_session_bridge_unit_tests PRIVATE
             "${CMAKE_SOURCE_DIR}"
             "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/core/kernel/include"
             "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/sdk/c/include"
-            "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/sunshine/include")
+            "${CMAKE_SOURCE_DIR}/../alkaidlab-platform/adapters/gamestream/host/include")
     target_link_libraries(alkaid_session_bridge_unit_tests
             gtest_main)
     target_compile_definitions(alkaid_session_bridge_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})

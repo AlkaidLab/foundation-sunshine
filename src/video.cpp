@@ -1819,6 +1819,16 @@ namespace video {
     if (!disp) {
       return;
     }
+    const bool has_active_context = std::any_of(capture_ctxs.begin(), capture_ctxs.end(), [](const auto &capture_ctx) {
+      return capture_ctx.images && capture_ctx.images->running();
+    });
+    if (!capture_ctx_queue->running() || !has_active_context) {
+      BOOST_LOG(warning) << "[Display] Capture display init completed after session shutdown; dropping stale display"
+                         << " target=" << target_display_name
+                         << " queueRunning=" << (capture_ctx_queue->running() ? 1 : 0)
+                         << " activeContexts=" << (has_active_context ? 1 : 0);
+      return;
+    }
     BOOST_LOG(info) << "[Display] Capture display created"
                     << " target=" << target_display_name
                     << " actual=" << disp->width << 'x' << disp->height
@@ -4269,7 +4279,7 @@ namespace video {
     int last_display_height = 0;
     auto display_wait_started = std::chrono::steady_clock::now();
     auto last_display_wait_log = display_wait_started;
-    constexpr auto capture_display_startup_timeout = 3500ms;
+    constexpr auto capture_display_startup_timeout = 8000ms;
 
     // Track initial scale ratio (encoding resolution / display resolution)
     // Used to maintain consistent scaling when display resolution changes
@@ -4317,7 +4327,6 @@ namespace video {
                            << " displayName=" << (config.display_name.empty() ? "<default>" : config.display_name);
           images->stop();
           shutdown_event->raise(true);
-          state->capture_ctx_queue->stop();
           return;
         }
 

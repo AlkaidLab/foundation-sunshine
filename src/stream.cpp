@@ -45,14 +45,14 @@ extern "C" {
 #include "alkaidlab_session_bridge.h"
 #include "alkaidlab/clipboard_sync/clipboard_sync.h"
 #include "alkaidlab/microphone_uplink/microphone_uplink.h"
-#include "alkaidlab/sunshine_adapter/clipboard_wire_codec.h"
-#include "alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h"
-#define ALK_SUNSHINE_GAMESTREAM_MEDIA_UDP_PRODUCT_PLATFORM_OPS 1
-#include "alkaidlab/sunshine_adapter/gamestream_media_udp_transport_adapter.hpp"
-#undef ALK_SUNSHINE_GAMESTREAM_MEDIA_UDP_PRODUCT_PLATFORM_OPS
-#include "alkaidlab/sunshine_adapter/microphone_wire_codec.h"
-#include "alkaidlab/sunshine_adapter/rescue_wire_codec.h"
-#include "alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h"
+#include "alkaidlab/gamestream_host_adapter/clipboard_wire_codec.h"
+#include "alkaidlab/gamestream_host_adapter/gamestream_enet_control_transport_adapter.h"
+#define ALK_GAMESTREAM_HOST_MEDIA_UDP_PRODUCT_PLATFORM_OPS 1
+#include "alkaidlab/gamestream_host_adapter/gamestream_media_udp_transport_adapter.hpp"
+#undef ALK_GAMESTREAM_HOST_MEDIA_UDP_PRODUCT_PLATFORM_OPS
+#include "alkaidlab/gamestream_host_adapter/microphone_wire_codec.h"
+#include "alkaidlab/gamestream_host_adapter/rescue_wire_codec.h"
+#include "alkaidlab/gamestream_host_adapter/gamestream_rtsp_handshake_adapter.h"
 #include "alkaidlab/session_runtime/transport_runtime.h"
 #include "alkaidlab/session_runtime/transport_monitor.h"
 #include "alkaidlab/session_runtime/continuity_facade.h"
@@ -75,6 +75,7 @@ extern "C" {
 #include "network.h"
 #include "stream.h"
 #include "stream_quality.h"
+#include "stream_transport_feedback.h"
 #include "sync.h"
 #include "system_tray.h"
 #include "thread_safe.h"
@@ -168,7 +169,7 @@ static constexpr std::uint32_t STREAM_QUALITY_HOST_MOTION_SOURCE_ENCODED_SIZE = 
 #endif
 
 #ifndef SS_RESCUE_PTYPE
-  #define SS_RESCUE_PTYPE ALK_SUNSHINE_RESCUE_PTYPE
+  #define SS_RESCUE_PTYPE ALK_GAMESTREAM_HOST_RESCUE_PTYPE
 #endif
 
 static const short packetTypes[] = {
@@ -275,10 +276,10 @@ namespace stream {
   using video_packet_enc_prefix_t = AlkGamestreamVideoEncryptionPrefix;
   using audio_packet_t = AlkGamestreamAudioPacket;
 
-  struct control_header_v2: AlkSunshineGamestreamControlHeader {
+  struct control_header_v2: AlkGameStreamHostControlHeader {
     uint8_t *
     payload() {
-      return alk_sunshine_gamestream_control_payload(this);
+      return alk_gamestream_host_control_payload(this);
     }
   };
 
@@ -370,10 +371,10 @@ namespace stream {
     std::uint32_t epoch;
   };
 
-  typedef struct control_encrypted_t: AlkSunshineGamestreamEncryptedControlHeader {
+  typedef struct control_encrypted_t: AlkGameStreamHostEncryptedControlHeader {
     uint8_t *
     payload() {
-      return alk_sunshine_gamestream_encrypted_control_payload(this);
+      return alk_gamestream_host_encrypted_control_payload(this);
     }
     // encrypted control_header_v2 and payload data follow
   } *control_encrypted_p;
@@ -948,7 +949,7 @@ namespace stream {
       AlkRuntime *transport_runtime { nullptr };
       AlkGamestreamEnetObserver *transport_observer { nullptr };
       AlkTransportRuntimeBinding transport_binding {};
-      std::uint32_t transport_compatibility_mode { ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_NATIVE_PRIMARY };
+      std::uint32_t transport_compatibility_mode { ALK_GAMESTREAM_HOST_ENET_CONTROL_TRANSPORT_COMPAT_NATIVE_PRIMARY };
       bool transport_native_primary { false };
       std::uint64_t transport_peer_id { 0 };
       std::uint32_t transport_connect_data { 0 };
@@ -1230,6 +1231,11 @@ namespace stream {
       .host_observed_local_endpoint = launch_session.rtsp_route_local_endpoint,
       .client_target_address_candidates = launch_session.client_target_address_candidates,
       .host_public_candidates = launch_session.host_public_candidates,
+      .preflight_available = launch_session.path_preflight_available,
+      .preflight_observed_peer_endpoint = launch_session.path_preflight_observed_peer_endpoint,
+      .preflight_host_local_endpoint = launch_session.path_preflight_host_local_endpoint,
+      .preflight_rtt_ms = launch_session.path_preflight_rtt_ms,
+      .preflight_age_ms = launch_session.path_preflight_age_ms,
     };
   }
 
@@ -1270,6 +1276,11 @@ namespace stream {
                     << " tunnel=" << (evidence.client_route_tunnel ? 1 : 0)
                     << " vpn=" << (evidence.client_vpn_active ? 1 : 0)
                     << " peerLan=" << (evidence.peer_is_lan_or_pc ? 1 : 0)
+                    << " preflight=" << (session_runtime::startup_path_preflight_is_fresh(evidence) ? 1 : 0)
+                    << " preflightPeer=" << evidence.preflight_observed_peer_endpoint
+                    << " preflightHostLocal=" << evidence.preflight_host_local_endpoint
+                    << " preflightRttMs=" << evidence.preflight_rtt_ms
+                    << " preflightAgeMs=" << evidence.preflight_age_ms
                     << " targets=" << join_path_values(evidence.client_target_address_candidates)
                     << " hostPublic=" << join_path_values(evidence.host_public_candidates);
     BOOST_LOG(info) << "[session:path] classify runtime=" << runtime_id
@@ -2130,10 +2141,10 @@ namespace stream {
   }
 
 
-  static AlkSunshineGamestreamEnetControlTransportCompatibilityMode
+  static AlkGameStreamHostEnetControlTransportCompatibilityMode
   select_network_transport_compatibility_mode(const session_t *session) {
-    AlkSunshineGamestreamEnetControlTransportCompatibilityRequest request;
-    alk_sunshine_gamestream_enet_control_transport_compatibility_request_init(&request);
+    AlkGameStreamHostEnetControlTransportCompatibilityRequest request;
+    alk_gamestream_host_enet_control_transport_compatibility_request_init(&request);
     request.role = ALK_SESSION_ROLE_HOST;
     // Foundation Sunshine currently accepts GameStream ENet control clients on
     // this path. Old-version and future native/fallback policy lives in the
@@ -2144,16 +2155,16 @@ namespace stream {
       request.remote_feature_flags2 = session->config.mlFeatureFlags2;
     }
 #if ALKAID_TRANSPORT_NATIVE_PRIMARY_ENABLED
-    request.flags |= ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_NATIVE_PRIMARY |
-                     ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
+    request.flags |= ALK_GAMESTREAM_HOST_ENET_CONTROL_TRANSPORT_COMPAT_ALLOW_NATIVE_PRIMARY |
+                     ALK_GAMESTREAM_HOST_ENET_CONTROL_TRANSPORT_COMPAT_ROLLBACK_GUARD_AVAILABLE;
 #endif
-    return alk_sunshine_gamestream_enet_control_transport_compatibility_mode(&request);
+    return alk_gamestream_host_enet_control_transport_compatibility_mode(&request);
   }
 
   static bool
   transport_uses_native_primary(const session_t *session) {
-    return session && alk_sunshine_gamestream_enet_control_should_use_native(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
+    return session && alk_gamestream_host_enet_control_should_use_native(
+      static_cast<AlkGameStreamHostEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
   static const char *
@@ -2161,8 +2172,8 @@ namespace stream {
     if (!session) {
       return "unknown";
     }
-    return alk_sunshine_gamestream_enet_control_transport_compatibility_mode_name(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
+    return alk_gamestream_host_enet_control_transport_compatibility_mode_name(
+      static_cast<AlkGameStreamHostEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
   static const char *
@@ -2170,8 +2181,8 @@ namespace stream {
     if (!session) {
       return "missing-session";
     }
-    return alk_sunshine_gamestream_enet_control_transport_fallback_reason_name(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
+    return alk_gamestream_host_enet_control_transport_fallback_reason_name(
+      static_cast<AlkGameStreamHostEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
   static const char *
@@ -2179,8 +2190,8 @@ namespace stream {
     if (!session) {
       return "observe-only";
     }
-    return alk_sunshine_gamestream_enet_control_transport_phase_name(
-      static_cast<AlkSunshineGamestreamEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
+    return alk_gamestream_host_enet_control_transport_phase_name(
+      static_cast<AlkGameStreamHostEnetControlTransportCompatibilityMode>(session->control.transport_compatibility_mode));
   }
 
   static bool
@@ -2425,29 +2436,7 @@ namespace stream {
       return;
     }
 
-    if (stats.rtt_us != 0) {
-      feedback.rtt_ms = stats.rtt_us / 1000U;
-    }
-    if (stats.jitter_us != 0) {
-      feedback.rtt_variance_ms = stats.jitter_us / 1000U;
-    }
-    const bool transport_loss_is_media_video =
-      stats.channel_kind == ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM;
-    const bool transport_loss_should_drive_continuity =
-      stats.packet_loss_ppm >= 30000U &&
-      (!feedback.path_lan_direct || transport_loss_is_media_video);
-    if ((transport_loss_is_media_video || transport_loss_should_drive_continuity) &&
-        stats.packet_loss_ppm != 0 &&
-        feedback.total_packets == 0) {
-      feedback.total_packets = 1000000U;
-      feedback.missing_packets = std::min<std::uint32_t>(stats.packet_loss_ppm, 1000000U);
-      feedback.received_packets = 1000000U - feedback.missing_packets;
-    }
-    if (stream_quality::transport_backlog_should_promote_input_queue(feedback,
-                                                                      stats.reliable_backlog_packets)) {
-      feedback.input_queue_depth = std::max(feedback.input_queue_depth,
-                                            stats.reliable_backlog_packets);
-    }
+    apply_transport_stats_to_quality_feedback(stats, feedback);
     update_active_path_score_from_transport_stats(session, stats);
 
     const auto now = std::chrono::steady_clock::now();
@@ -2473,10 +2462,15 @@ namespace stream {
   record_stream_quality_feedback_diag(session_t *session,
                                 const stream_quality::feedback_t &feedback,
                                 const stream_quality::action_t &action,
-                                const char *source) {
+                                const char *source,
+                                const AlkContinuityDiagnosisFrame *diagnosis) {
     if (!session) {
       return;
     }
+    const auto continuity_diagnosis =
+      diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+        *diagnosis :
+        stream_quality::diagnose_feedback(feedback);
 
     const auto now = std::chrono::steady_clock::now();
     auto &diag = session->stream_quality_diag;
@@ -2625,6 +2619,12 @@ namespace stream {
             << " tier=" << stream_quality::tier_name(action.tier)
             << " scenario=" << stream_quality::scenario_name(action.scenario)
             << " decisionReason=" << stream_quality_decision_reason_name(action)
+            << " diagnosisDomain=" << stream_quality::continuity_domain_name(continuity_diagnosis.primary_domain)
+            << " secondaryDomain=" << stream_quality::continuity_domain_name(continuity_diagnosis.secondary_domain)
+            << " confidence=" << continuity_diagnosis.confidence_ppm
+            << " evidenceBits=0x" << std::hex << continuity_diagnosis.evidence_bits << std::dec
+            << " allowedActions=0x" << std::hex << continuity_diagnosis.allowed_action_mask << std::dec
+            << " forbiddenActions=0x" << std::hex << continuity_diagnosis.forbidden_action_mask << std::dec
             << " continuity=" << (media_continuity ? "media-continuity" : "normal")
             << " requestedScale=" << action.resolution_scale_percent << "%"
             << " actualScale=" << action.actual_scale_percent << "%"
@@ -2642,7 +2642,10 @@ namespace stream {
   }
 
   static void
-  apply_stream_quality_action(session_t *session, const stream_quality::action_t &action, const char *source) {
+  apply_stream_quality_action(session_t *session,
+                              const stream_quality::action_t &action,
+                              const char *source,
+                              const AlkContinuityDiagnosisFrame *diagnosis) {
     if (!session) {
       return;
     }
@@ -2683,13 +2686,55 @@ namespace stream {
       .elapsed_ms_since_fps_apply = elapsed_since_ms(session->last_stream_quality_fps_apply),
       .elapsed_ms_since_profile_apply = elapsed_since_ms(session->last_stream_quality_profile_apply),
     };
-    const auto plan = stream_quality::plan_runtime_action(action, runtime_action_context);
+    const auto raw_plan = stream_quality::plan_runtime_action(action, runtime_action_context);
+    const auto plan =
+      diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+        stream_quality::plan_runtime_action_with_diagnosis(action, runtime_action_context, *diagnosis) :
+        raw_plan;
+    const bool domain_gate_suppressed =
+      (raw_plan.apply_bitrate && !plan.apply_bitrate) ||
+      (raw_plan.apply_fec && !plan.apply_fec) ||
+      (raw_plan.apply_fps && !plan.apply_fps) ||
+      (raw_plan.apply_profile && !plan.apply_profile) ||
+      (raw_plan.apply_idr && !plan.apply_idr);
     const auto sdk_decision = stream_quality::to_sdk_decision(action);
     const auto sdk_plan = stream_quality::plan_runtime_action_sdk(action, runtime_action_context);
+    auto gated_sdk_plan = sdk_plan;
+    if (gated_sdk_plan.version == ALK_STREAM_QUALITY_CONTROL_VERSION) {
+      if (!plan.apply_bitrate) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_BITRATE;
+      }
+      if (!plan.apply_fec) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_FEC;
+      }
+      if (!plan.apply_fps) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_FPS;
+      }
+      if (!plan.apply_profile) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_PROFILE;
+      }
+      if (!plan.apply_idr) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_APPLY_IDR;
+      }
+      if (!plan.update_runtime_totals) {
+        gated_sdk_plan.flags &= ~ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_UPDATE_RUNTIME_TOTALS;
+      }
+      if (plan.dynamic_apply_blocked) {
+        gated_sdk_plan.flags |= ALK_STREAM_QUALITY_RUNTIME_ACTION_FLAG_DYNAMIC_APPLY_BLOCKED;
+      }
+    }
     alk_transport_monitor_observe_weak_network_decision(&session->transport_monitor,
                                                         &sdk_decision,
-                                                        &sdk_plan,
+                                                        &gated_sdk_plan,
                                                         steady_clock_ms());
+    AlkContinuityActionFrame continuity_action_frame;
+    alk_continuity_action_frame_init(&continuity_action_frame);
+    const bool continuity_action_frame_valid =
+      diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION &&
+      alk_continuity_action_frame_from_quality_decision_with_diagnosis(&sdk_decision,
+                                                                       &gated_sdk_plan,
+                                                                       diagnosis,
+                                                                       &continuity_action_frame);
     refresh_transport_monitor_views(session, true);
     session->last_stream_quality_link_quality_state = action.link_quality_state;
     session->last_stream_quality_scene_class = action.scene_class;
@@ -2729,7 +2774,7 @@ namespace stream {
     const auto fps_cooldown_suffix = plan.fps_apply_cooldown_ms > 0 ?
                                        std::string {" fpsCooldownMs="} + std::to_string(plan.fps_apply_cooldown_ms) :
                                        std::string {};
-    if (!dynamic_apply_blocked) {
+    if (!dynamic_apply_blocked && plan.update_runtime_totals) {
       update_dynamic_clarity_intent(session, target_encoding_bitrate, target_fps);
       session->current_total_bitrate.store(target_total_bitrate, std::memory_order_relaxed);
       session->current_fec_percentage.store(target_fec_percentage, std::memory_order_relaxed);
@@ -2849,6 +2894,24 @@ namespace stream {
                     << " reason=" << stream_quality::reason_name(action.reason)
                     << " scenario=" << stream_quality::scenario_name(action.scenario)
                     << " decisionReason=" << stream_quality_decision_reason_name(action)
+                    << " diagnosisDomain="
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          stream_quality::continuity_domain_name(diagnosis->primary_domain) : "unknown")
+                    << " secondaryDomain="
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          stream_quality::continuity_domain_name(diagnosis->secondary_domain) : "unknown")
+                    << " confidence="
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          diagnosis->confidence_ppm : 0U)
+                    << " evidenceBits=0x" << std::hex
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          diagnosis->evidence_bits : 0U) << std::dec
+                    << " allowedActions=0x" << std::hex
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          diagnosis->allowed_action_mask : 0U) << std::dec
+                    << " forbiddenActions=0x" << std::hex
+                    << (diagnosis && diagnosis->version == ALK_CONTINUITY_FACADE_VERSION ?
+                          diagnosis->forbidden_action_mask : 0U) << std::dec
                     << " requestedCeiling=" << action.requested_ceiling_kbps << " Kbps"
                     << " effectiveCeiling=" << action.effective_ceiling_kbps << " Kbps"
                     << " sustainableEstimate=" << action.sustainable_estimate_kbps << " Kbps"
@@ -2886,6 +2949,22 @@ namespace stream {
                     << action.pointer_unsafe_ceiling_kbps << "Kbps/" << action.pointer_unsafe_fps_ceiling << "fps,"
                     << action.high_motion_unsafe_ceiling_kbps << "Kbps/" << action.high_motion_unsafe_fps_ceiling << "fps"
                     << " pacing=" << pacing_total_bitrate << " Kbps"
+                    << " actionFrame(mediaFlags=0x" << std::hex
+                    << (continuity_action_frame_valid ? continuity_action_frame.media.flags : 0U)
+                    << ",encoderFlags=0x"
+                    << (continuity_action_frame_valid ? continuity_action_frame.encoder.flags : 0U)
+                    << std::dec
+                    << ",mediaRescueRequest="
+                    << (continuity_action_frame_valid ? continuity_action_frame.media.request_rescue : 0U)
+                    << ",mediaIdrRequest="
+                    << (continuity_action_frame_valid ? continuity_action_frame.media.request_idr : 0U)
+                    << ",runtimePerformanceFlags=0x" << std::hex
+                    << (continuity_action_frame_valid ? continuity_action_frame.runtime_performance.flags : 0U)
+                    << std::dec
+                    << ",runtimePerformanceDeferVideo="
+                    << (continuity_action_frame_valid ?
+                          continuity_action_frame.runtime_performance.defer_video_quality : 0U)
+                    << ")"
                     << " apply(bitrate=" << (apply_bitrate ? 1 : 0)
                     << ",fps=" << (apply_fps ? 1 : 0)
                     << ",fec=" << (apply_fec ? 1 : 0)
@@ -2908,12 +2987,24 @@ namespace stream {
                     << (action.rfi_limited ? " rfiLimited=1" : "")
                     << (action.congestion_anti_spiral ? " congestionAntiSpiral=1" : "")
                     << (action.burst_safe_mode ? " burstSafe=1" : "")
+                    << (domain_gate_suppressed ? " domainGate=1" : "")
                     << (action.unsafe_ceiling_active ? " unsafeCeiling=1" : "")
                     << (action.unsafe_fps_ceiling_active ? " unsafeFpsCeiling=1" : "")
                     << " recoveryHold=" << action.recovery_hold_remaining
                     << " rttGradientUs=" << action.rtt_gradient_us
                     << " owdGradientUs=" << action.owd_gradient_us
                     << " owdPressure=" << action.owd_pressure;
+  }
+
+  static stream_quality::action_t
+  process_stream_quality_feedback(session_t *session,
+                                  const stream_quality::feedback_t &feedback,
+                                  const char *source) {
+    const auto diagnosis = stream_quality::diagnose_feedback(feedback);
+    auto action = session->stream_quality_controller.on_feedback(feedback);
+    apply_stream_quality_action(session, action, source, &diagnosis);
+    record_stream_quality_feedback_diag(session, feedback, action, source, &diagnosis);
+    return action;
   }
 
   static void
@@ -2963,9 +3054,7 @@ namespace stream {
     };
     annotate_feedback_with_host_motion(session, feedback);
     annotate_feedback_with_transport_stats(session, feedback, source);
-    auto action = session->stream_quality_controller.on_feedback(feedback);
-    apply_stream_quality_action(session, action, source);
-    record_stream_quality_feedback_diag(session, feedback, action, source);
+    process_stream_quality_feedback(session, feedback, source);
   }
 
   static bool
@@ -3201,10 +3290,10 @@ namespace stream {
                      std::uint32_t total_length,
                      const std::string_view &mime_type,
                      const std::string_view &name) {
-      const auto payload_size = alk_sunshine_clipboard_item_start_size(mime_type.size(), name.size());
+      const auto payload_size = alk_gamestream_host_clipboard_item_start_size(mime_type.size(), name.size());
       std::vector<uint8_t> payload(payload_size);
       std::size_t payload_length = 0;
-      if (!alk_sunshine_clipboard_build_item_start(transfer_flags,
+      if (!alk_gamestream_host_clipboard_build_item_start(transfer_flags,
                                                    item_type,
                                                    item_id,
                                                    content_hash,
@@ -3228,7 +3317,7 @@ namespace stream {
                      const std::string_view &chunk) {
       std::vector<uint8_t> payload(16u + chunk.size());
       std::size_t payload_length = 0;
-      if (!alk_sunshine_clipboard_build_item_chunk(item_id,
+      if (!alk_gamestream_host_clipboard_build_item_chunk(item_id,
                                                    chunk_offset,
                                                    reinterpret_cast<const std::uint8_t *>(chunk.data()),
                                                    chunk.size(),
@@ -3245,7 +3334,7 @@ namespace stream {
     build_item_end(std::uint64_t item_id) {
       std::array<std::uint8_t, 1 + sizeof(std::uint64_t)> payload {};
       std::size_t payload_length = 0;
-      (void) alk_sunshine_clipboard_build_item_end(item_id,
+      (void) alk_gamestream_host_clipboard_build_item_end(item_id,
                                                    payload.data(),
                                                    payload.size(),
                                                    &payload_length);
@@ -3613,12 +3702,12 @@ namespace stream {
                      << " connectData=" << connect_data
                      << " remote=" << remote_endpoint_str
                      << " local=" << local_endpoint_str;
-    BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
+    BOOST_LOG(info) << "Alkaid adapter boundary: " << ALK_GAMESTREAM_HOST_ENET_CONTROL_TRANSPORT_ADAPTER_ID << " active"
                     << " runtime=" << session->identity.runtime_id
                     << " launchSession=" << session->launch_session_id
                     << " nativePeerId=" << peer_id
                     << " peer=" << (remote_endpoint_str.empty() ? "unknown" : remote_endpoint_str)
-                    << " rtspLaunchAdapter=" << ALK_SUNSHINE_GAMESTREAM_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
+                    << " rtspLaunchAdapter=" << ALK_GAMESTREAM_HOST_RTSP_HANDSHAKE_ADAPTER_ID << "-detached"
                     << " clipboardBackendProvider=" << kSunshineClipboardBackendProviderId
                     << " clipboardCodec=gamestream-clipboard-payload-codec"
                     << " microphoneCodec=gamestream-microphone-payload-codec"
@@ -3658,7 +3747,7 @@ namespace stream {
 
   static std::uint32_t
   alk_transport_protocol_family(const session_runtime::transport_protocol_e protocol) {
-    return alk_sunshine_gamestream_legacy_transport_protocol_family(
+    return alk_gamestream_host_legacy_transport_protocol_family(
       session_runtime::li_transport_protocol(protocol));
   }
 
@@ -3686,6 +3775,7 @@ namespace stream {
       case session_runtime::transport_route_e::relay_tcp_tls:
         return ALK_TRANSPORT_CANDIDATE_RELAY;
       case session_runtime::transport_route_e::lan_direct:
+      case session_runtime::transport_route_e::overlay_route:
       case session_runtime::transport_route_e::manual_public_port_forward:
       case session_runtime::transport_route_e::upnp_public_mapping:
         return ALK_TRANSPORT_CANDIDATE_HOST;
@@ -3700,6 +3790,7 @@ namespace stream {
     switch (route) {
       case session_runtime::transport_route_e::lan_direct:
         return ALK_TRANSPORT_DISCOVERY_LAN_DISCOVERY;
+      case session_runtime::transport_route_e::overlay_route:
       case session_runtime::transport_route_e::manual_public_port_forward:
         return ALK_TRANSPORT_DISCOVERY_USER_CONFIG;
       case session_runtime::transport_route_e::upnp_public_mapping:
@@ -3755,7 +3846,7 @@ namespace stream {
 
   static std::uint32_t
   alk_transport_stack_flags(const session_runtime::transport_path_t &path) {
-    return alk_sunshine_gamestream_legacy_transport_stack_traits(
+    return alk_gamestream_host_legacy_transport_stack_traits(
       session_runtime::li_transport_stack_flags(path));
   }
 
@@ -3960,7 +4051,7 @@ namespace stream {
     }
 
     AlkTransportDatagram datagram;
-    alk_sunshine_gamestream_enet_control_datagram_init(&datagram,
+    alk_gamestream_host_enet_control_datagram_init(&datagram,
                                                        channel,
                                                        flags,
                                                        false,
@@ -3998,7 +4089,7 @@ namespace stream {
       return;
     }
     alk_transport_runtime_record_datagram(&session->control.transport_binding,
-                                          alk_sunshine_gamestream_enet_control_channel_kind(channel, flags),
+                                          alk_gamestream_host_enet_control_channel_kind(channel, flags),
                                           length,
                                           tx);
   }
@@ -4038,7 +4129,7 @@ namespace stream {
     }
 
     AlkTransportOpenParams params;
-    alk_sunshine_gamestream_enet_control_transport_open_params_init(&params,
+    alk_gamestream_host_enet_control_transport_open_params_init(&params,
                                                                     ALK_SESSION_ROLE_HOST,
                                                                     net::map_port(CONTROL_PORT),
                                                                     net::map_port(VIDEO_STREAM_PORT),
@@ -4542,8 +4633,8 @@ namespace stream {
           }
           continue;
         }
-        AlkSunshineGamestreamControlMessage control_message;
-        if (!alk_sunshine_gamestream_control_message_from_transport(&datagram, &control_message)) {
+        AlkGameStreamHostControlMessage control_message;
+        if (!alk_gamestream_host_control_message_from_transport(&datagram, &control_message)) {
           continue;
         }
         std::string_view payload {
@@ -5426,15 +5517,15 @@ namespace stream {
 
   int
   send_rescue_control_ack(session_t *session,
-                          const AlkSunshineRescueWireAck &ack,
+                          const AlkGameStreamHostRescueWireAck &ack,
                           std::uint32_t packet_flags = ALK_TRANSPORT_SEND_FLAG_RELIABLE) {
     if (!session || !control_transport_ready(session)) {
       BOOST_LOG(warning) << "Couldn't send rescue-control ack, control peer is unavailable";
       return -1;
     }
 
-    ALK_SUNSHINE_RESCUE_ACK ack_payload;
-    if (!alk_sunshine_rescue_build_ack(&ack, &ack_payload)) {
+    ALK_GAMESTREAM_HOST_RESCUE_ACK ack_payload;
+    if (!alk_gamestream_host_rescue_build_ack(&ack, &ack_payload)) {
       BOOST_LOG(warning) << "Couldn't build rescue-control ack payload";
       return -1;
     }
@@ -5483,6 +5574,11 @@ namespace stream {
       ALK_RESCUE_TRIGGER_LOCAL_DISPLAY_STALL;
     return (request.trigger_flags & non_media_triggers) == 0 &&
            (request.trigger_flags & media_triggers) != 0;
+  }
+
+  bool
+  rescue_control_media_only_request_allows_runtime_fps_drain() {
+    return false;
   }
 
   bool
@@ -5565,63 +5661,58 @@ namespace stream {
         request.fec_percent,
         request.target_scale_percent,
         request.enable_blurry_upscale);
+    const bool media_quality_downgrade_allowed =
+      !media_only_rescue ||
+      stream_quality::media_rescue_quality_downgrade_allowed(
+        request.trigger_flags,
+        rescue_requests_quality_downgrade,
+        session->stream_quality_diag.missing_packets,
+        session->stream_quality_diag.total_packets,
+        session->stream_quality_diag.unrecoverable_frames,
+        session->stream_quality_diag.waiting_for_rfi_frames,
+        session->stream_quality_diag.large_frame_fec_skipped,
+        session->active_transport_path.score.loss_ppm);
+    const bool media_quality_gate =
+      media_only_rescue && rescue_requests_quality_downgrade && !media_quality_downgrade_allowed;
     const bool verified_capacity_clean_rescue =
       media_only_rescue &&
       verified_capacity_transport_clean_for_rescue(session, &rescue_transport_stats);
-    if (media_only_rescue && !rescue_requests_quality_downgrade) {
-      const int current_fps = session->last_applied_stream_quality_fps > 0 ?
-                                session->last_applied_stream_quality_fps :
-                                std::max(1, session->config.monitor.framerate);
-      const int current_bitrate = session->last_applied_stream_quality_bitrate > 0 ?
-                                    session->last_applied_stream_quality_bitrate :
-                                    std::max(1, session->config.monitor.bitrate);
+    if (media_only_rescue && (!rescue_requests_quality_downgrade || media_quality_gate)) {
       const bool repeated_media_rescue =
         coalesced >= 2 ||
         session->rescue_control_requests >= 3 ||
         request.hold_ms >= 1000 ||
         (request.trigger_flags & ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES) != 0;
       const bool degraded_media_rescue =
+        !media_quality_gate &&
         !verified_capacity_clean_rescue &&
         ((request.trigger_flags & ALK_RESCUE_TRIGGER_RFI_WAIT) != 0 ||
          (request.trigger_flags & ALK_RESCUE_TRIGGER_LOCAL_DISPLAY_STALL) != 0 ||
          rescue_transport_stats.packet_loss_ppm >= 30000 ||
          rescue_transport_stats.jitter_us >= 18000 ||
          rescue_transport_stats.reliable_backlog_packets >= 8);
-      if (degraded_media_rescue && repeated_media_rescue) {
-        const int floor_fps = session->config.monitor.framerate >= 90 ? 24 :
-                              session->config.monitor.framerate >= 60 ? 20 :
-                              std::max(10, session->config.monitor.framerate / 2);
-        const int cap_fps = current_bitrate <= 1200 ? floor_fps :
-                            current_bitrate <= 2500 ? std::max(floor_fps, 30) :
-                            std::max(floor_fps, 45);
-        const int target_fps = std::clamp(cap_fps, 1, std::max(1, current_fps));
+      const bool extended_media_resync =
+        degraded_media_rescue &&
+        repeated_media_rescue &&
+        !rescue_control_media_only_request_allows_runtime_fps_drain();
+      if (extended_media_resync) {
         const auto hold_ms = std::clamp<std::uint32_t>(request.hold_ms == 0 ? 1000u : request.hold_ms,
                                                        650u,
                                                        2500u);
         session->rescue_control_hold_until = now + std::chrono::milliseconds(hold_ms);
         session->stream_quality_resync_guard_until = std::max(session->stream_quality_resync_guard_until,
                                                               now + std::chrono::milliseconds(hold_ms));
-        if (target_fps > 0 && target_fps < current_fps) {
-          video::dynamic_param_t fps_param;
-          fps_param.type = video::dynamic_param_type_e::FPS;
-          fps_param.value.float_value = static_cast<float>(target_fps);
-          fps_param.valid = true;
-          session->video.dynamic_param_change_events->raise(fps_param);
-          session->last_applied_stream_quality_fps = target_fps;
-          session->last_stream_quality_fps_apply = now;
-        }
         if (request.request_idr) {
           session->video.idr_events->raise(true);
         }
-        BOOST_LOG(info) << "Alkaid rescue-control media recovery drain"
+        BOOST_LOG(info) << "Alkaid rescue-control media recovery resync"
                         << " runtime=" << session->identity.runtime_id
                         << " requestId=" << request.request_id
                         << " triggers=0x" << std::hex << request.trigger_flags << std::dec
-                        << " action=fps-drain-idr"
-                        << " bitrate=" << current_bitrate << " Kbps"
+                        << " action=idr-only-extended-hold"
+                        << " bitrate=" << session->last_applied_stream_quality_bitrate << " Kbps"
                         << " fec=" << session->last_applied_stream_quality_fec << "%"
-                        << " fps=" << target_fps
-                        << " previousFps=" << current_fps
+                        << " fps=" << session->last_applied_stream_quality_fps
                         << " holdMs=" << hold_ms
                         << " coalesced=" << coalesced
                         << " rtt=" << (rescue_transport_stats.rtt_us / 1000U) << "ms"
@@ -5646,7 +5737,12 @@ namespace stream {
                       << " fec=" << session->last_applied_stream_quality_fec << "%"
                       << " fps=" << session->last_applied_stream_quality_fps
                       << " holdMs=" << hold_ms
-                      << " coalesced=" << coalesced;
+                      << " coalesced=" << coalesced
+                      << " qualityGate=" << (media_quality_gate ? 1 : 0)
+                      << " hostVideoPackets=" << session->stream_quality_diag.missing_packets
+                      << "/" << session->stream_quality_diag.total_packets
+                      << " hostUnrecoverable=" << session->stream_quality_diag.unrecoverable_frames
+                      << " hostWaitingForRfi=" << session->stream_quality_diag.waiting_for_rfi_frames;
       return true;
     }
     if (verified_capacity_clean_rescue) {
@@ -5696,10 +5792,14 @@ namespace stream {
                               session->last_applied_stream_quality_fps :
                               std::max(1, session->config.monitor.framerate);
     const int target_rescue_fps = severe_media_rescue && current_fps > 60 ? 60 : current_fps;
-    // Keep rescue on soft quality tiers for the main stream.  The request may
-    // carry an advisory scale for future/dedicated rescue streams, but applying
-    // it to the active encoder caused visible resolution reinit/RFI storms.
-    const int target_scale = 100;
+    int target_scale = 100;
+    if (request.target_scale_percent > 0 && request.target_scale_percent < 100) {
+      target_scale = static_cast<int>(request.target_scale_percent);
+    }
+    if (session->last_applied_stream_quality_resolution_scale > 0 &&
+        session->last_applied_stream_quality_resolution_scale < target_scale) {
+      target_scale = session->last_applied_stream_quality_resolution_scale;
+    }
 
     video::dynamic_param_t bitrate_param;
     bitrate_param.type = video::dynamic_param_type_e::BITRATE;
@@ -6531,10 +6631,10 @@ namespace stream {
       std::uint64_t invalid {};
     };
     std::unordered_map<std::uint64_t, control_mic_stats_t> control_mic_stats;
-    constexpr std::uint32_t control_mic_magic = ALK_SUNSHINE_MICROPHONE_CONTROL_DATA_MAGIC;
-    constexpr std::uint16_t control_mic_version = ALK_SUNSHINE_MICROPHONE_CONTROL_VERSION;
-    constexpr std::uint16_t control_mic_flag_session_token = ALK_SUNSHINE_MICROPHONE_CONTROL_FLAG_SESSION_TOKEN;
-    constexpr std::size_t control_mic_token_size = ALK_SUNSHINE_MICROPHONE_SESSION_TOKEN_LENGTH;
+    constexpr std::uint32_t control_mic_magic = ALK_GAMESTREAM_HOST_MICROPHONE_CONTROL_DATA_MAGIC;
+    constexpr std::uint16_t control_mic_version = ALK_GAMESTREAM_HOST_MICROPHONE_CONTROL_VERSION;
+    constexpr std::uint16_t control_mic_flag_session_token = ALK_GAMESTREAM_HOST_MICROPHONE_CONTROL_FLAG_SESSION_TOKEN;
+    constexpr std::size_t control_mic_token_size = ALK_GAMESTREAM_HOST_MICROPHONE_SESSION_TOKEN_LENGTH;
     auto log_control_mic_stats = [&](session_t *session,
                                      control_mic_stats_t &stats,
                                      const char *event) {
@@ -6593,8 +6693,8 @@ namespace stream {
       stats.packets++;
       stats.bytes += payload.size();
 
-      AlkSunshineMicrophoneControlPacket mic_packet;
-      if (!alk_sunshine_microphone_parse_control_packet(payload.data(), payload.size(), &mic_packet) ||
+      AlkGameStreamHostMicrophoneControlPacket mic_packet;
+      if (!alk_gamestream_host_microphone_parse_control_packet(payload.data(), payload.size(), &mic_packet) ||
           mic_packet.payload.length == 0 ||
           mic_packet.magic != control_mic_magic ||
           mic_packet.control_version != control_mic_version) {
@@ -6975,7 +7075,7 @@ namespace stream {
       }
 
       AlkRescueControlRequest request;
-      if (!alk_sunshine_rescue_parse_request(payload.data(), payload.size(), &request)) {
+      if (!alk_gamestream_host_rescue_parse_request(payload.data(), payload.size(), &request)) {
         BOOST_LOG(warning) << "Ignoring malformed rescue-control payload"
                            << " runtime=" << (session ? session->identity.runtime_id : 0)
                            << " payloadBytes=" << payload.size();
@@ -7005,8 +7105,8 @@ namespace stream {
         return;
       }
 
-      AlkSunshineRescueWireAck ack;
-      alk_sunshine_rescue_ack_init(&ack);
+      AlkGameStreamHostRescueWireAck ack;
+      alk_gamestream_host_rescue_ack_init(&ack);
       ack.request_id = request.request_id;
       ack.accepted = accepted;
       ack.applied_scale_percent = std::clamp<std::uint32_t>(
@@ -7090,9 +7190,7 @@ namespace stream {
       };
       annotate_feedback_with_host_motion(session, feedback);
       annotate_feedback_with_transport_stats(session, feedback, "fec");
-      auto action = session->stream_quality_controller.on_feedback(feedback);
-      apply_stream_quality_action(session, action, "fec");
-      record_stream_quality_feedback_diag(session, feedback, action, "fec");
+      process_stream_quality_feedback(session, feedback, "fec");
     });
 
     server->map(SS_NETWORK_FEEDBACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
@@ -7142,9 +7240,7 @@ namespace stream {
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->stream_quality_controller.on_feedback(network_feedback);
-      apply_stream_quality_action(session, action, "feedback");
-      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
+      process_stream_quality_feedback(session, network_feedback, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -7212,9 +7308,7 @@ namespace stream {
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->stream_quality_controller.on_feedback(network_feedback);
-      apply_stream_quality_action(session, action, "feedback");
-      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
+      process_stream_quality_feedback(session, network_feedback, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -7291,9 +7385,7 @@ namespace stream {
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->stream_quality_controller.on_feedback(network_feedback);
-      apply_stream_quality_action(session, action, "feedback");
-      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
+      process_stream_quality_feedback(session, network_feedback, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -7375,9 +7467,7 @@ namespace stream {
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->stream_quality_controller.on_feedback(network_feedback);
-      apply_stream_quality_action(session, action, "feedback");
-      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
+      process_stream_quality_feedback(session, network_feedback, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -7474,9 +7564,7 @@ namespace stream {
       if (should_hold_startup_stream_quality_feedback(session, network_feedback, "feedback")) {
         return;
       }
-      auto action = session->stream_quality_controller.on_feedback(network_feedback);
-      apply_stream_quality_action(session, action, "feedback");
-      record_stream_quality_feedback_diag(session, network_feedback, action, "feedback");
+      process_stream_quality_feedback(session, network_feedback, "feedback");
       const auto now = std::chrono::steady_clock::now();
       if (session->control.last_feedback_diag_log.time_since_epoch().count() == 0 ||
           now - session->control.last_feedback_diag_log >= 1000ms) {
@@ -8587,7 +8675,7 @@ namespace stream {
 
         // 只有在成功接收数据后才重新调度
         try {
-          alk_sunshine_gamestream_media_udp_async_receive_from(channel_kind,
+          alk_gamestream_host_media_udp_async_receive_from(channel_kind,
                                                                sock,
                                                                asio::buffer(buffers[buf_idx]),
                                                                peer,
@@ -8603,12 +8691,12 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO", ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM);
       init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO", ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM);
 
-      alk_sunshine_gamestream_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
+      alk_gamestream_host_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
                                                            video_sock,
                                                            asio::buffer(buffers[0]),
                                                            peer,
                                                            recv_funcs[0]);
-      alk_sunshine_gamestream_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
+      alk_gamestream_host_media_udp_async_receive_from(ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
                                                            audio_sock,
                                                            asio::buffer(buffers[1]),
                                                            peer,
@@ -8930,16 +9018,16 @@ namespace stream {
 
               size_t current_batch_size = x - next_shard_to_send + 1;
               frame_send_batch_latency_logger.first_point_now();
-              const auto send_result = alk_sunshine_gamestream_media_udp_send_batch_or_each(
+              const auto send_result = alk_gamestream_host_media_udp_send_batch_or_each(
                 ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM,
                 batch_info,
                 next_shard_to_send,
                 current_batch_size,
                 [](platf::batched_send_info_t &info) {
-                  return alk_sunshine_gamestream_media_udp_product_send_batch(info);
+                  return alk_gamestream_host_media_udp_product_send_batch(info);
                 },
                 [&](std::size_t shard_index) {
-                  return alk_sunshine_gamestream_media_udp_product_send_fragments(
+                  return alk_gamestream_host_media_udp_product_send_fragments(
                     static_cast<const char *>(alk_gamestream_video_fec_frame_prefix_data(shards.get(), shard_index)),
                     shard_prefix_bytes,
                     static_cast<const char *>(alk_gamestream_video_fec_frame_shard_data(shards.get(), shard_index)),
@@ -9120,10 +9208,10 @@ namespace stream {
 
       auto peer_address = session->audio.peer.address();
       try {
-        const auto audio_send_result = alk_sunshine_gamestream_media_udp_send_one(
+        const auto audio_send_result = alk_gamestream_host_media_udp_send_one(
           ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
           [&]() {
-            return alk_sunshine_gamestream_media_udp_product_send_fragments(
+            return alk_gamestream_host_media_udp_product_send_fragments(
               (const char *) &audio_packet,
               sizeof(audio_packet),
               (const char *) shards_p[sequenceNumber % ALK_GAMESTREAM_AUDIO_DATA_SHARDS],
@@ -9180,10 +9268,10 @@ namespace stream {
               break;
             }
 
-            const auto audio_fec_send_result = alk_sunshine_gamestream_media_udp_send_one(
+            const auto audio_fec_send_result = alk_gamestream_host_media_udp_send_one(
               ALK_TRANSPORT_CHANNEL_AUDIO_DATAGRAM,
               [&]() {
-                return alk_sunshine_gamestream_media_udp_product_send_fragments(
+                return alk_gamestream_host_media_udp_product_send_fragments(
                   (const char *) &fec_packet,
                   sizeof(fec_packet),
                   (const char *) shards_p[ALK_GAMESTREAM_AUDIO_DATA_SHARDS + x],
@@ -9663,9 +9751,22 @@ namespace stream {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
       // GPU scheduling enabled. If this happens, we will terminate ourselves and the service can restart.
       // The alternative is that Sunshine can never start another session until it's manually restarted.
-      auto task = []() {
-        BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in 10 seconds."sv;
+      auto task = [&session]() {
+        BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in 10 seconds."
+                         << " runtime=" << session.identity.runtime_id
+                         << " userMode=" << (!is_running_as_system_user ? 1 : 0);
         logging::log_flush();
+        if (!is_running_as_system_user) {
+          BOOST_LOG(error) << "Suppressing session teardown debug trap in user-mode runtime="
+                           << session.identity.runtime_id
+                           << "; leaving process alive so later launches can recover";
+          if (session.shutdown_event) {
+            session.shutdown_event->raise(true);
+          }
+          session.controlEnd.raise(true);
+          logging::log_flush();
+          return;
+        }
         lifetime::debug_trap();
       };
       auto force_kill = task_pool.pushDelayed(task, 10s).task_id;
@@ -9717,6 +9818,13 @@ namespace stream {
             session.broadcast_ref->mic_sock.close();
             reset_mic_encryption(*session.broadcast_ref.get());
             BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
+          }
+
+          if (proc::proc.is_placebo_running()) {
+            BOOST_LOG(info) << "Clearing placeholder app session after last runtime stopped"
+                            << " runtime=" << session.identity.runtime_id
+                            << " app=" << proc::proc.get_last_run_app_name();
+            proc::proc.terminate();
           }
 
           bool restore_display_state { true };
@@ -9830,6 +9938,7 @@ namespace stream {
 
 	      session.startup_path_evidence.peer_is_lan_or_pc = is_lan_or_pc_peer(addr_string);
 	      session.startup_path_evidence.host_observed_peer_endpoint = addr_string;
+	      session_runtime::apply_startup_path_preflight_snapshot(session.startup_path_evidence);
 	      session.startup_path_decision = session_runtime::classify_startup_path(session.startup_path_evidence);
       session.active_transport_path = session_runtime::make_transport_path(session.startup_path_decision,
                                                                            session.startup_path_evidence);
@@ -10030,6 +10139,7 @@ namespace stream {
       alk_transport_monitor_tuning_snapshot_init(&session->transport_tuning);
       alk_frame_interest_observation_init(&session->frame_interest_observation);
       session->startup_path_evidence = startup_path_evidence_for_launch_session(launch_session);
+      session_runtime::apply_startup_path_preflight_snapshot(session->startup_path_evidence);
       session->startup_path_decision = session_runtime::classify_startup_path(session->startup_path_evidence);
       session->active_transport_path = session_runtime::make_transport_path(session->startup_path_decision,
                                                                             session->startup_path_evidence);
@@ -10043,9 +10153,9 @@ namespace stream {
         handshake_params.local_identity.role = ALK_SESSION_ROLE_HOST;
         handshake_params.peer_identity.role = ALK_SESSION_ROLE_CLIENT;
         handshake_params.local_identity.supported_handshake_modules =
-          alk_sunshine_gamestream_handshake_supported_modules(true);
+          alk_gamestream_host_handshake_supported_modules(true);
         handshake_params.peer_identity.supported_handshake_modules =
-          alk_sunshine_gamestream_handshake_supported_modules(false);
+          alk_gamestream_host_handshake_supported_modules(false);
         handshake_params.media_profile.width = static_cast<std::uint32_t>(std::max(config.monitor.width, 0));
         handshake_params.media_profile.height = static_cast<std::uint32_t>(std::max(config.monitor.height, 0));
         handshake_params.media_profile.fps = static_cast<std::uint32_t>(std::max(config.monitor.framerate, 0));
@@ -10061,7 +10171,7 @@ namespace stream {
         handshake_params.legacy_rtsp.video_port = net::map_port(VIDEO_STREAM_PORT);
         handshake_params.legacy_rtsp.audio_port = net::map_port(AUDIO_STREAM_PORT);
         transport_candidate.priority = 100;
-        transport_candidate.channel_mask = alk_sunshine_gamestream_enet_control_channel_mask();
+        transport_candidate.channel_mask = alk_gamestream_host_enet_control_channel_mask();
         transport_candidate.control_port = net::map_port(CONTROL_PORT);
         transport_candidate.video_port = net::map_port(VIDEO_STREAM_PORT);
         transport_candidate.audio_port = net::map_port(AUDIO_STREAM_PORT);
@@ -10079,7 +10189,7 @@ namespace stream {
                                   launch_session.rtsp_route_host.c_str());
         }
         alk_handshake_open_params_add_transport_candidate(&handshake_params, &transport_candidate);
-        alk_sunshine_gamestream_handshake_select(&handshake_params, true, &session->handshake_selection);
+        alk_gamestream_host_handshake_select(&handshake_params, true, &session->handshake_selection);
       }
       log_startup_path_decision(session->identity.runtime_id,
                                 "launch",
@@ -10147,7 +10257,7 @@ namespace stream {
                       << " phase=" << transport_phase_name(session.get())
                       << " compat=" << transport_compatibility_mode_name(session.get())
                       << " fallbackReason=" << transport_fallback_reason_name(session.get())
-                      << " adapter=" << ALK_SUNSHINE_GAMESTREAM_ENET_CONTROL_TRANSPORT_ADAPTER_ID
+                      << " adapter=" << ALK_GAMESTREAM_HOST_ENET_CONTROL_TRANSPORT_ADAPTER_ID
                       << " observer=" << (session->control.transport_observer ? 1 : 0)
                       << " nativePrimary=" << (session->control.transport_native_primary ? 1 : 0)
                       << " mediaObserve=" << (ALKAID_TRANSPORT_MEDIA_DATAGRAM_OBSERVE_ENABLED ? 1 : 0)
@@ -10158,6 +10268,12 @@ namespace stream {
                       << " transport=" << session->handshake_selection.selected_transport_module_id
                       << " packetization=" << session->handshake_selection.selected_packetization_module_id
                       << " redundancy=" << session->handshake_selection.selected_redundancy_module_id
+                      << " path=" << session_runtime::transport_route_name(session->active_transport_path.route)
+                      << " identity=" << session_runtime::li_path_identity_kind_name(session->active_transport_path.path_identity_kind)
+                      << " startup=" << session_runtime::li_startup_class_name(session->active_transport_path.startup_class)
+                      << " preflight=" << (session_runtime::startup_path_preflight_is_fresh(session->startup_path_evidence) ? 1 : 0)
+                      << " preflightRttMs=" << session->startup_path_evidence.preflight_rtt_ms
+                      << " preflightAgeMs=" << session->startup_path_evidence.preflight_age_ms
                       << " fallback="
                       << alk_handshake_fallback_code_name(session->handshake_selection.fallback_reason.code)
                       << " status=" << session->handshake_selection.status;
@@ -10243,13 +10359,16 @@ namespace stream {
       if (enhanced_feedback_client && !strong_lan_fast_start) {
         const auto startup_policy =
           session_runtime::startup_ceiling_policy_for_path(session->startup_path_decision,
-                                                           ceiling_fps);
+                                                           ceiling_fps,
+                                                           &session->startup_path_evidence);
         const int startup_encoding_limit = encoding_bitrate_from_total_video_budget(ceiling_total_bitrate,
                                                                                     fec_percentage);
         const int rtsp_seeded_bitrate = encoding_bitrate;
         const int computed_startup_bitrate = stream_quality::startup_bitrate_for_ceiling(startup_quality_stream);
         const int startup_encoding_bitrate =
-          stream_quality::startup_bitrate_preserving_seed(startup_quality_stream, rtsp_seeded_bitrate);
+          startup_policy.allow_preflight_startup_lift ?
+            computed_startup_bitrate :
+            stream_quality::startup_bitrate_preserving_seed(startup_quality_stream, rtsp_seeded_bitrate);
         encoding_bitrate = std::clamp(startup_encoding_bitrate,
                                       1,
                                       std::max(1, std::min(ceiling_encoding_bitrate, startup_encoding_limit)));
@@ -10281,6 +10400,18 @@ namespace stream {
                           << " rtspSeed=" << rtsp_seeded_bitrate << " Kbps"
                           << " startup=" << encoding_bitrate << " Kbps"
                           << " fps=" << current_stream_fps
+                          << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps";
+        }
+        else if (startup_policy.allow_preflight_startup_lift &&
+                 rtsp_seeded_bitrate > 0 &&
+                 startup_encoding_bitrate > rtsp_seeded_bitrate) {
+          BOOST_LOG(info) << "Remote-safe startup preflight lift runtime=" << session->identity.runtime_id
+                          << " rtspSeed=" << rtsp_seeded_bitrate << " Kbps"
+                          << " startup=" << encoding_bitrate << " Kbps"
+                          << " fps=" << current_stream_fps
+                          << " policy=" << startup_policy.reason
+                          << " preflightRttMs=" << session->startup_path_evidence.preflight_rtt_ms
+                          << " preflightAgeMs=" << session->startup_path_evidence.preflight_age_ms
                           << " ceilingEncoding=" << ceiling_encoding_bitrate << " Kbps";
         }
         if (max_fec_percentage > fec_percentage) {

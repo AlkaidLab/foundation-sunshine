@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <alkaidlab/modules/stream_quality/adaptive_controller.h>
+#include <alkaidlab/session_runtime/continuity_facade.h>
 
 namespace stream_quality {
   enum class state_e {
@@ -117,6 +118,7 @@ namespace stream_quality {
   };
 
   struct action_t;
+  struct feedback_t;
 
   struct runtime_action_context_t {
     bool resync_guard_active = false;
@@ -202,6 +204,16 @@ namespace stream_quality {
                                             std::uint32_t target_scale_percent,
                                             bool enable_blurry_upscale);
 
+  bool
+  media_rescue_quality_downgrade_allowed(std::uint32_t trigger_flags,
+                                         bool requests_quality_downgrade,
+                                         std::uint64_t host_missing_packets,
+                                         std::uint64_t host_total_packets,
+                                         std::uint32_t host_unrecoverable_frames,
+                                         std::uint32_t host_waiting_for_rfi_frames,
+                                         std::uint32_t host_large_frame_fec_skipped,
+                                         std::uint32_t host_video_loss_ppm);
+
   AlkStreamQualityDecision
   to_sdk_decision(const action_t &action);
 
@@ -210,6 +222,20 @@ namespace stream_quality {
 
   AlkStreamQualityRuntimeActionPlan
   plan_runtime_action_sdk(const action_t &action, const runtime_action_context_t &context);
+
+  runtime_action_plan_t
+  plan_runtime_action_with_diagnosis(const action_t &action,
+                                     const runtime_action_context_t &context,
+                                     const AlkContinuityDiagnosisFrame &diagnosis);
+
+  AlkContinuityEvidenceFrame
+  to_continuity_evidence_frame(const feedback_t &feedback);
+
+  AlkContinuityDiagnosisFrame
+  diagnose_feedback(const feedback_t &feedback);
+
+  const char *
+  continuity_domain_name(std::uint32_t domain);
 
   struct feedback_t {
     std::uint32_t duration_ms = 0;
@@ -221,6 +247,17 @@ namespace stream_quality {
     std::uint32_t total_packets = 0;
     std::uint32_t received_packets = 0;
     std::uint32_t video_bytes = 0;
+    std::uint32_t transport_throughput_kbps = 0;
+    std::uint32_t transport_packet_loss_ppm = 0;
+    std::uint32_t transport_reliable_backlog_bytes = 0;
+    std::uint32_t decoded_frames = 0;
+    std::uint32_t rendered_frames = 0;
+    std::uint32_t decode_time_us = 0;
+    std::uint32_t render_time_us = 0;
+    std::uint32_t capture_latency_us = 0;
+    std::uint32_t capture_timeout_frames = 0;
+    std::uint32_t encode_latency_us = 0;
+    std::uint32_t encoder_pacing_drop_frames = 0;
     std::uint32_t rtt_ms = 0;
     std::uint32_t rtt_variance_ms = 0;
     std::uint32_t audio_underruns = 0;

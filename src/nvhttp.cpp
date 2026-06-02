@@ -903,6 +903,13 @@ namespace nvhttp {
     launch_session->client_route_host = get_arg(args, "mlRouteHost", "");
     launch_session->client_route_path_kind = get_arg(args, "mlRoutePathKind", "");
     launch_session->client_target_address_candidates = split_candidate_list(get_arg(args, "mlRouteResolved", ""));
+    launch_session->path_preflight_available = util::from_view(get_arg(args, "mlPathProbe", "0")) != 0;
+    launch_session->path_preflight_observed_peer_endpoint = get_arg(args, "mlPathProbeObservedPeer", "");
+    launch_session->path_preflight_host_local_endpoint = get_arg(args, "mlPathProbeHostLocal", "");
+    launch_session->path_preflight_rtt_ms = static_cast<std::uint32_t>(
+      std::max<std::int64_t>(0, util::from_view(get_arg(args, "mlPathProbeRttMs", "0"))));
+    launch_session->path_preflight_age_ms = static_cast<std::uint32_t>(
+      std::max<std::int64_t>(0, util::from_view(get_arg(args, "mlPathProbeAgeMs", "0"))));
 
     // Get display_name from query parameter if provided
     std::string display_name = get_arg(args, "display_name", "");
@@ -1369,8 +1376,8 @@ namespace nvhttp {
   }
 
   static std::optional<std::string>
-  probe_stun_public_ipv4(std::string_view host = "stun.moonlight-stream.org"sv,
-                         std::string_view service = "3478"sv) {
+  probe_stun_public_ipv4(std::string_view host = "stun.l.google.com"sv,
+                         std::string_view service = "19302"sv) {
     static constexpr std::uint32_t stun_cookie = 0x2112A442U;
     static constexpr std::chrono::milliseconds receive_budget { 500 };
 
@@ -1469,22 +1476,7 @@ namespace nvhttp {
   }
 
   static std::vector<std::string>
-  host_public_identity_candidates() {
-    struct cache_t {
-      std::mutex mutex;
-      std::chrono::steady_clock::time_point last_probe {};
-      std::vector<std::string> candidates;
-    };
-    static cache_t cache;
-
-    std::lock_guard lock(cache.mutex);
-    const auto now = std::chrono::steady_clock::now();
-    const auto ttl = cache.candidates.empty() ? 10s : 60s;
-    if (cache.last_probe.time_since_epoch().count() != 0 &&
-        now - cache.last_probe < ttl) {
-      return cache.candidates;
-    }
-
+  probe_host_public_identity_candidates_slow() {
     std::vector<std::string> candidates;
     if (!config::nvhttp.external_ip.empty()) {
       append_unique(candidates, config::nvhttp.external_ip);
@@ -1498,8 +1490,10 @@ namespace nvhttp {
     }
 
     static constexpr std::array stun_servers {
-      std::pair { "stun.moonlight-stream.org"sv, "3478"sv },
       std::pair { "stun.l.google.com"sv, "19302"sv },
+      std::pair { "stun1.l.google.com"sv, "19302"sv },
+      std::pair { "stun.cloudflare.com"sv, "3478"sv },
+      std::pair { "stun.miwifi.com"sv, "3478"sv },
     };
     for (const auto &[host, service] : stun_servers) {
       if (const auto stun_address = probe_stun_public_ipv4(host, service)) {
@@ -1511,9 +1505,82 @@ namespace nvhttp {
       BOOST_LOG(info) << "Host public identity candidates empty after config, UPnP IGD, and STUN probes";
     }
 
-    cache.last_probe = now;
-    cache.candidates = candidates;
-    return cache.candidates;
+    return candidates;
+  }
+
+  struct host_public_identity_cache_t {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point last_probe {};
+    std::chrono::steady_clock::time_point last_schedule {};
+    bool refresh_in_flight { false };
+    std::vector<std::string> candidates;
+  };
+
+  static constexpr auto host_public_identity_empty_retry_interval = 30s;
+  static constexpr auto host_public_identity_fresh_interval = 10min;
+  static constexpr auto host_public_identity_schedule_floor = 5min;
+
+  static host_public_identity_cache_t &
+  host_public_identity_cache() {
+    static auto *cache = new host_public_identity_cache_t();
+    return *cache;
+  }
+
+  static void
+  schedule_host_public_identity_refresh(std::string reason) {
+    auto &cache = host_public_identity_cache();
+    const auto now = std::chrono::steady_clock::now();
+    {
+      std::lock_guard lock(cache.mutex);
+      if (cache.refresh_in_flight ||
+          (cache.last_schedule.time_since_epoch().count() != 0 && now - cache.last_schedule < host_public_identity_schedule_floor)) {
+        return;
+      }
+      cache.refresh_in_flight = true;
+      cache.last_schedule = now;
+    }
+
+    std::thread {
+      [reason = std::move(reason)]() {
+        const auto started = std::chrono::steady_clock::now();
+        auto candidates = probe_host_public_identity_candidates_slow();
+        auto &cache = host_public_identity_cache();
+        {
+          std::lock_guard lock(cache.mutex);
+          cache.candidates = std::move(candidates);
+          cache.last_probe = std::chrono::steady_clock::now();
+          cache.refresh_in_flight = false;
+        }
+        BOOST_LOG(info) << "Host public identity refresh finished"
+                        << " reason=" << reason
+                        << " elapsedMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - started).count();
+      }
+    }.detach();
+  }
+
+  static std::vector<std::string>
+  host_public_identity_candidates() {
+    auto &cache = host_public_identity_cache();
+    std::vector<std::string> candidates;
+    bool should_refresh = false;
+    {
+      std::lock_guard lock(cache.mutex);
+      candidates = cache.candidates;
+      const auto now = std::chrono::steady_clock::now();
+      const auto ttl = candidates.empty() ? host_public_identity_empty_retry_interval :
+                                            host_public_identity_fresh_interval;
+      should_refresh = cache.last_probe.time_since_epoch().count() == 0 ||
+                       now - cache.last_probe >= ttl;
+    }
+
+    if (!config::nvhttp.external_ip.empty()) {
+      session_runtime::append_public_ipv4_identity_candidate(candidates, config::nvhttp.external_ip);
+    }
+    if (should_refresh) {
+      schedule_host_public_identity_refresh("path-identity-cache");
+    }
+    return candidates;
   }
 
   static void
@@ -1617,6 +1684,40 @@ namespace nvhttp {
                     << " url=" << session_url;
 
     return session_url;
+  }
+
+  template <class T>
+  void
+  pathprobe(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response,
+            std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+    print_req<T>(request);
+    schedule_host_public_identity_refresh("pathprobe");
+
+    pt::ptree tree;
+    auto g = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_xml(data, tree);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+    });
+
+    const auto observed_peer = request->remote_endpoint().address().to_string() +
+                               ":" + std::to_string(request->remote_endpoint().port());
+    const auto host_local = request->local_endpoint().address().to_string() +
+                            ":" + std::to_string(request->local_endpoint().port());
+    const auto public_candidates = host_public_identity_candidates();
+
+    tree.put("root.<xmlattr>.status_code", 200);
+    tree.put("root.observedPeer", observed_peer);
+    tree.put("root.hostLocalEndpoint", host_local);
+    tree.put("root.hostPublicCandidates", join_values(public_candidates));
+    tree.put("root.serverTimeMs", std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count());
+
+    BOOST_LOG(info) << "NVHTTP path preflight echo"
+                    << " observedPeer=" << observed_peer
+                    << " hostLocal=" << host_local
+                    << " publicCandidates=" << join_values(public_candidates);
   }
 
   template <class T>
@@ -1827,6 +1928,7 @@ namespace nvhttp {
   void
   serverinfo(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     print_req<T>(request);
+    schedule_host_public_identity_refresh("serverinfo");
 
     int pair_status = 0;
     if constexpr (std::is_same_v<SunshineHTTPS, T>) {
@@ -3192,6 +3294,12 @@ namespace nvhttp {
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
+    const auto pending_before = rtsp_stream::pending_launch_session_count();
+    const auto active_before = rtsp_stream::session_count();
+    BOOST_LOG(info) << "NVHTTP cancel terminating sessions"
+                    << " pending=" << pending_before
+                    << " active=" << active_before
+                    << " pendingLaunch=" << get_arg(request->parse_query_string(), "mlPendingLaunch", "0");
     rtsp_stream::terminate_sessions();
 
     if (proc::proc.running() > 0) {
@@ -3560,6 +3668,7 @@ namespace nvhttp {
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/displays$"]["GET"] = get_displays;
+    https_server.resource["^/pathprobe$"]["GET"] = pathprobe<SunshineHTTPS>;
     https_server.resource["^/rotate-display$"]["GET"] = rotate_display;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };

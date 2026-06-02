@@ -19,7 +19,7 @@
 
 extern "C" {
 #include <moonlight-common-c/src/Session.h>
-#include <alkaidlab/sunshine_adapter/session_control_wire_codec.h>
+#include <alkaidlab/gamestream_host_adapter/session_control_wire_codec.h>
 #include <alkaidlab/route_control/route_control.h>
 }
 
@@ -523,6 +523,7 @@ namespace session_runtime {
 
   enum class transport_route_e : std::uint8_t {
     lan_direct,
+    overlay_route,
     manual_public_port_forward,
     upnp_public_mapping,
     ice_stun_p2p,
@@ -586,6 +587,13 @@ namespace session_runtime {
     std::string host_observed_local_endpoint;
     std::vector<std::string> client_target_address_candidates;
     std::vector<std::string> host_public_candidates;
+    bool preflight_available {};
+    std::string preflight_observed_peer_endpoint;
+    std::string preflight_host_local_endpoint;
+    std::string preflight_client_source_endpoint;
+    std::string preflight_target_endpoint;
+    std::uint32_t preflight_rtt_ms {};
+    std::uint32_t preflight_age_ms {};
   };
 
   struct startup_path_decision_t {
@@ -607,6 +615,8 @@ namespace session_runtime {
     switch (route) {
       case transport_route_e::lan_direct:
         return "lan-direct";
+      case transport_route_e::overlay_route:
+        return "overlay-route";
       case transport_route_e::manual_public_port_forward:
         return "manual-public-port-forward";
       case transport_route_e::upnp_public_mapping:
@@ -629,6 +639,7 @@ namespace session_runtime {
       case transport_route_e::relay_tcp_tls:
         return transport_protocol_e::tcp_tls;
       case transport_route_e::lan_direct:
+      case transport_route_e::overlay_route:
       case transport_route_e::manual_public_port_forward:
       case transport_route_e::upnp_public_mapping:
         return transport_protocol_e::provider_datagram;
@@ -658,6 +669,7 @@ namespace session_runtime {
         caps.enable(capability_e::relay_tcp_tls);
         break;
       case transport_route_e::lan_direct:
+      case transport_route_e::overlay_route:
         break;
     }
     return caps;
@@ -897,6 +909,48 @@ namespace session_runtime {
   }
 
   inline bool
+  append_unique_path_candidate(std::vector<std::string> &candidates,
+                               std::string_view raw_value) {
+    const auto candidate = canonical_endpoint_host(raw_value);
+    if (candidate.empty()) {
+      return false;
+    }
+    if (std::ranges::find(candidates, candidate) != candidates.end()) {
+      return false;
+    }
+    candidates.push_back(candidate);
+    return true;
+  }
+
+  inline bool
+  startup_path_preflight_is_fresh(const startup_path_evidence_t &evidence) {
+    return evidence.preflight_available &&
+           evidence.preflight_age_ms <= 5000U;
+  }
+
+  inline void
+  apply_startup_path_preflight_snapshot(startup_path_evidence_t &evidence) {
+    if (!startup_path_preflight_is_fresh(evidence)) {
+      return;
+    }
+
+    if (!evidence.preflight_observed_peer_endpoint.empty()) {
+      evidence.host_observed_peer_endpoint = evidence.preflight_observed_peer_endpoint;
+      evidence.peer_is_lan_or_pc = is_lan_or_pc_ipv4_literal(evidence.preflight_observed_peer_endpoint);
+    }
+    if (!evidence.preflight_host_local_endpoint.empty()) {
+      evidence.host_observed_local_endpoint = evidence.preflight_host_local_endpoint;
+    }
+    if (!evidence.preflight_client_source_endpoint.empty()) {
+      evidence.client_source_endpoint = evidence.preflight_client_source_endpoint;
+    }
+    if (!evidence.preflight_target_endpoint.empty()) {
+      append_unique_path_candidate(evidence.client_target_address_candidates,
+                                   evidence.preflight_target_endpoint);
+    }
+  }
+
+  inline bool
   has_public_target_address_candidate(const startup_path_evidence_t &evidence) {
     if (is_public_ipv4_literal(evidence.client_route_host) ||
         is_public_ipv4_literal(evidence.rtsp_route_host)) {
@@ -1108,6 +1162,47 @@ namespace session_runtime {
            path_kind == "private-overlay-direct";
   }
 
+  inline bool
+  client_route_path_is_tunnel_overlay(std::string_view path_kind) {
+    return path_kind == "tunnel-overlay" ||
+           path_kind == "tunnel_overlay" ||
+           path_kind == "overlay-route";
+  }
+
+  inline startup_path_decision_t
+  virtual_overlay_startup_path_decision(const startup_path_evidence_t &evidence) {
+    const auto egress_kind = li_path_egress_kind_for_client_hint(evidence.client_egress_kind);
+    std::uint32_t reason_flags = LI_SESSION_PATH_REASON_CLIENT_ROUTE_OBSERVED |
+                                 LI_SESSION_PATH_REASON_REMOTE_HINT;
+    if (evidence.client_route_tunnel) {
+      reason_flags |= LI_SESSION_PATH_REASON_TUNNEL;
+    }
+    if (evidence.peer_is_lan_or_pc || !evidence.host_observed_peer_endpoint.empty()) {
+      reason_flags |= LI_SESSION_PATH_REASON_HOST_PEER_OBSERVED;
+    }
+
+    return {
+      .route = transport_route_e::overlay_route,
+      .allow_lan_fast_start = false,
+      .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                       LI_SESSION_PATH_EGRESS_VIRTUAL :
+                       egress_kind,
+      .encapsulation = virtual_overlay_encapsulation_for_egress(egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
+                                                                  LI_SESSION_PATH_EGRESS_VIRTUAL :
+                                                                  egress_kind),
+      .evidence_flags = LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED |
+                        LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED |
+                        LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED |
+                        LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED,
+      .identity_confidence_ppm = 760000U,
+      .path_identity_kind = LI_SESSION_PATH_IDENTITY_VPN_OVERLAY,
+      .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+      .reason_flags = reason_flags,
+      .risk_flags = LI_SESSION_PATH_RISK_TUNNEL,
+      .reason = "client-virtual-overlay",
+    };
+  }
+
   inline startup_path_decision_t
   private_overlay_startup_path_decision(const startup_path_evidence_t &evidence) {
     const auto egress_kind = li_path_egress_kind_for_client_hint(evidence.client_egress_kind);
@@ -1118,12 +1213,14 @@ namespace session_runtime {
     }
 
     return {
-      .route = transport_route_e::manual_public_port_forward,
+      .route = transport_route_e::overlay_route,
       .allow_lan_fast_start = false,
       .egress_kind = egress_kind == LI_SESSION_PATH_EGRESS_UNKNOWN ?
                        LI_SESSION_PATH_EGRESS_PHYSICAL :
                        egress_kind,
-      .encapsulation = LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP,
+      .encapsulation = static_cast<std::uint32_t>(egress_kind == LI_SESSION_PATH_EGRESS_VIRTUAL || egress_kind == LI_SESSION_PATH_EGRESS_TUNNEL ?
+                         LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL :
+                         LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP),
       .evidence_flags = LI_SESSION_PATH_EVIDENCE_QUALITY_SAMPLED |
                         LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED |
                         LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED |
@@ -1139,8 +1236,12 @@ namespace session_runtime {
 
   inline startup_path_decision_t
   classify_startup_path(const startup_path_evidence_t &evidence) {
+    if (client_route_path_is_tunnel_overlay(evidence.client_route_path_kind) ||
+        evidence.client_egress_kind == "virtual" ||
+        evidence.client_egress_kind == "proxy") {
+      return virtual_overlay_startup_path_decision(evidence);
+    }
     if (client_route_path_is_private_overlay(evidence.client_route_path_kind) &&
-        !evidence.client_route_tunnel &&
         evidence.client_egress_kind != "tunnel" &&
         evidence.client_egress_kind != "vpn") {
       return private_overlay_startup_path_decision(evidence);
@@ -1194,6 +1295,7 @@ namespace session_runtime {
     switch (route) {
       case transport_route_e::lan_direct:
         return LI_SESSION_TRANSPORT_LOCAL;
+      case transport_route_e::overlay_route:
       case transport_route_e::manual_public_port_forward:
       case transport_route_e::upnp_public_mapping:
       case transport_route_e::ice_stun_p2p:
@@ -1294,6 +1396,7 @@ namespace session_runtime {
       case transport_route_e::relay_tcp_tls:
         return LI_SESSION_PATH_CANDIDATE_RELAY;
       case transport_route_e::lan_direct:
+      case transport_route_e::overlay_route:
       case transport_route_e::manual_public_port_forward:
       case transport_route_e::upnp_public_mapping:
         return LI_SESSION_PATH_CANDIDATE_HOST;
@@ -1308,6 +1411,8 @@ namespace session_runtime {
     switch (route) {
       case transport_route_e::lan_direct:
         return LI_SESSION_PATH_DISCOVERY_LAN_DISCOVERY;
+      case transport_route_e::overlay_route:
+        return LI_SESSION_PATH_DISCOVERY_USER_CONFIG;
       case transport_route_e::manual_public_port_forward:
         return LI_SESSION_PATH_DISCOVERY_USER_CONFIG;
       case transport_route_e::upnp_public_mapping:
@@ -1351,6 +1456,11 @@ namespace session_runtime {
     switch (path.route) {
       case transport_route_e::lan_direct:
         flags |= LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED;
+        break;
+      case transport_route_e::overlay_route:
+        flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED |
+                 LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED |
+                 LI_SESSION_PATH_EVIDENCE_HOST_PEER_OBSERVED;
         break;
       case transport_route_e::manual_public_port_forward:
         flags |= LI_SESSION_PATH_EVIDENCE_CLIENT_CONFIGURED;
@@ -2025,23 +2135,62 @@ namespace session_runtime {
   struct startup_ceiling_policy_t {
     int bitrate_seed_kbps {};
     int fps_cap {};
+    bool allow_preflight_startup_lift {};
     const char *reason { "default" };
   };
 
-  // Keep risky-route startup conservative, but still align with the 150 Hz
-  // high-refresh startup floor used by stream_quality::startup_fps_for_bitrate().
+  inline bool
+  startup_preflight_is_low_latency(const startup_path_evidence_t &evidence) {
+    return startup_path_preflight_is_fresh(evidence) &&
+           evidence.preflight_rtt_ms > 0 &&
+           evidence.preflight_rtt_ms <= 35U;
+  }
+
+  inline bool
+  startup_preflight_is_usable_high_refresh(const startup_path_evidence_t &evidence) {
+    return startup_path_preflight_is_fresh(evidence) &&
+           evidence.preflight_rtt_ms > 0 &&
+           evidence.preflight_rtt_ms <= 70U;
+  }
+
+  inline int
+  probed_startup_fps_cap(const startup_path_evidence_t &evidence, int requested_fps) {
+    if (requested_fps <= 60 || !startup_preflight_is_usable_high_refresh(evidence)) {
+      return 0;
+    }
+    if (startup_preflight_is_low_latency(evidence)) {
+      return requested_fps;
+    }
+    return std::min(requested_fps, std::max(90, requested_fps * 4 / 5));
+  }
+
+  // Risky-route startup remains conservative until a fresh path preflight gives
+  // route-specific timing evidence. The cap is therefore derived from the probe
+  // sample, not from the route label alone.
   inline constexpr int kStartupHighRefreshCadenceCap = 120;
   inline constexpr int kStartupRouterPortForwardCadenceCap = 60;
 
   inline startup_ceiling_policy_t
   startup_ceiling_policy_for_path(const startup_path_decision_t &decision,
-                                  int requested_fps) {
-    (void) requested_fps;
+                                  int requested_fps,
+                                  const startup_path_evidence_t *evidence = nullptr) {
     if (decision.startup_class == LI_SESSION_STARTUP_CLASS_LAN_FAST) {
       return {};
     }
 
     if (decision.path_identity_kind == LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD) {
+      if (evidence) {
+        const auto probed_cap = probed_startup_fps_cap(*evidence, requested_fps);
+        if (probed_cap > 0) {
+          return {
+            .fps_cap = probed_cap,
+            .allow_preflight_startup_lift = true,
+            .reason = startup_preflight_is_low_latency(*evidence) ?
+                        "router-port-forward-preflight-fast" :
+                        "router-port-forward-preflight-usable",
+          };
+        }
+      }
       return {
         .bitrate_seed_kbps = 12000,
         .fps_cap = std::min(std::max(requested_fps, 1), kStartupRouterPortForwardCadenceCap),
@@ -2066,13 +2215,7 @@ namespace session_runtime {
 
   inline bool
   runtime_profile_resolution_reconfig_enabled() {
-    // Keep runtime encoder-size reconfiguration disabled by default. The 11:00
-    // baseline only used bitrate/FEC/IDR safety actions; enabling runtime scale
-    // caused rescue/profile decisions to oscillate encoder resolution and force
-    // repeated encoder restarts, which is far more visible than a short quality
-    // dip. Runtime scale can be reintroduced later behind a stronger hold/hysteresis
-    // gate or a true secondary rescue stream.
-    return false;
+    return true;
   }
 
   struct pacer_probe_plan_t {

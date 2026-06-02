@@ -46,6 +46,9 @@ namespace stream {
                                            int last_applied_bitrate_kbps,
                                            int last_applied_fec_percentage);
 
+  bool
+  rescue_control_media_only_request_allows_runtime_fps_drain();
+
   std::pair<bool, bool>
   video_shard_frame_boundary_flags(std::uint32_t block_index,
                                    std::uint32_t block_count,
@@ -120,6 +123,11 @@ TEST(StreamQualityRecoveryFeedbackTests, UsesNetworkFeedbackInsteadOfPerFrameFec
   EXPECT_TRUE(stream::should_apply_frame_fec_stream_quality_feedback(0));
 }
 
+TEST(StreamQualityRecoveryFeedbackTests, MediaOnlyRescueDoesNotOwnRuntimeFpsDrain) {
+  EXPECT_FALSE(stream::rescue_control_media_only_request_allows_runtime_fps_drain())
+    << "media-only rescue is an IDR/resync hint; FPS changes require continuity-domain evidence";
+}
+
 TEST(StreamQualityRecoveryFeedbackTests, ResyncGuardAllowsCongestionAntiSpiralDownshift) {
   stream_quality::action_t action {};
   action.changed = true;
@@ -150,8 +158,8 @@ TEST(RuntimeProfileTierTests, ScalesBaseDimensionsToEvenTargets) {
   EXPECT_EQ(full.height, 2160);
 }
 
-TEST(RuntimeProfileTierTests, DisablesRuntimeEncoderResolutionReconfigurationByDefault) {
-  EXPECT_FALSE(stream::runtime_profile_resolution_reconfig_enabled());
+TEST(RuntimeProfileTierTests, EnablesRuntimeEncoderResolutionReconfigurationByDefault) {
+  EXPECT_TRUE(stream::runtime_profile_resolution_reconfig_enabled());
 }
 
 TEST(VideoShardBoundaryTests, MarksOnlyFirstDataShardAndFinalDataShard) {

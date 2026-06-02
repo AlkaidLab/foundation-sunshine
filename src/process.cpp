@@ -342,6 +342,11 @@ namespace proc {
     return 0;
   }
 
+  bool
+  proc_t::is_placebo_running() const {
+    return placebo && _app_id > 0;
+  }
+
   void
   proc_t::terminate() {
     std::error_code ec;

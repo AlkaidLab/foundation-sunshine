@@ -245,6 +245,17 @@ namespace stream_quality {
       result.total_packets = feedback.total_packets;
       result.received_packets = feedback.received_packets;
       result.video_bytes = feedback.video_bytes;
+      result.transport_throughput_kbps = feedback.transport_throughput_kbps;
+      result.transport_packet_loss_ppm = feedback.transport_packet_loss_ppm;
+      result.transport_reliable_backlog_bytes = feedback.transport_reliable_backlog_bytes;
+      result.decoded_frames = feedback.decoded_frames;
+      result.rendered_frames = feedback.rendered_frames;
+      result.decode_time_us = feedback.decode_time_us;
+      result.render_time_us = feedback.render_time_us;
+      result.capture_latency_us = feedback.capture_latency_us;
+      result.capture_timeout_frames = feedback.capture_timeout_frames;
+      result.encode_latency_us = feedback.encode_latency_us;
+      result.encoder_pacing_drop_frames = feedback.encoder_pacing_drop_frames;
       result.rtt_ms = feedback.rtt_ms;
       result.rtt_variance_ms = feedback.rtt_variance_ms;
       result.audio_underruns = feedback.audio_underruns;
@@ -490,8 +501,7 @@ namespace stream_quality {
   }
 
   runtime_action_plan_t
-  plan_runtime_action(const action_t &action, const runtime_action_context_t &context) {
-    const auto alk_plan = plan_runtime_action_sdk(action, context);
+  from_sdk_runtime_action_plan(const AlkStreamQualityRuntimeActionPlan &alk_plan) {
     if (alk_plan.version != ALK_STREAM_QUALITY_CONTROL_VERSION) {
       return {};
     }
@@ -516,6 +526,185 @@ namespace stream_quality {
       .profile_apply_cooldown_ms = alk_plan.profile_apply_cooldown_ms,
       .bitrate_apply_threshold_kbps = alk_plan.bitrate_apply_threshold_kbps,
     };
+  }
+
+  AlkContinuityEvidenceFrame
+  to_continuity_evidence_frame(const feedback_t &feedback) {
+    AlkContinuityEvidenceFrame evidence;
+    alk_continuity_evidence_frame_init(&evidence);
+    evidence.flags = ALK_CONTINUITY_EVIDENCE_FRAME_HAS_TRANSPORT |
+                     ALK_CONTINUITY_EVIDENCE_FRAME_HAS_MEDIA |
+                     ALK_CONTINUITY_EVIDENCE_FRAME_HAS_RENDER |
+                     ALK_CONTINUITY_EVIDENCE_FRAME_HAS_INPUT |
+                     ALK_CONTINUITY_EVIDENCE_FRAME_HAS_CAPTURE |
+                     ALK_CONTINUITY_EVIDENCE_FRAME_HAS_ENCODER;
+
+    evidence.transport.flags = ALK_CONTINUITY_TRANSPORT_EVIDENCE_HAS_STATS;
+    evidence.transport.stats.channel_kind = ALK_TRANSPORT_CHANNEL_VIDEO_DATAGRAM;
+    evidence.transport.stats.rtt_us = feedback.rtt_ms * 1000U;
+    evidence.transport.stats.jitter_us =
+      feedback.interarrival_jitter_us > 0 ? feedback.interarrival_jitter_us : feedback.rtt_variance_ms * 1000U;
+    evidence.transport.stats.throughput_kbps = feedback.transport_throughput_kbps;
+    evidence.transport.stats.packet_loss_ppm = feedback.transport_packet_loss_ppm;
+    if (evidence.transport.stats.packet_loss_ppm == 0U && feedback.total_packets > 0U) {
+      evidence.transport.stats.packet_loss_ppm = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(1000000ULL,
+                                static_cast<std::uint64_t>(feedback.missing_packets) * 1000000ULL /
+                                  feedback.total_packets));
+    }
+    evidence.transport.stats.reliable_backlog_bytes = feedback.transport_reliable_backlog_bytes;
+    if (feedback.path_lan_direct || feedback.path_identity_confident) {
+      evidence.transport.flags |= ALK_CONTINUITY_TRANSPORT_EVIDENCE_HAS_ACTIVE_PATH;
+      evidence.transport.active_path.identity_confidence_ppm =
+        feedback.path_identity_confident ? 900000U : 0U;
+      if (feedback.path_lan_direct) {
+        evidence.transport.active_path.identity_kind = ALK_TRANSPORT_IDENTITY_TRUE_LAN;
+        evidence.transport.active_path.startup_class = ALK_STARTUP_CLASS_LAN_FAST;
+      }
+    }
+
+    evidence.media.flags = ALK_CONTINUITY_MEDIA_EVIDENCE_HAS_VIDEO_PACKET_STATS |
+                           ALK_CONTINUITY_MEDIA_EVIDENCE_HAS_AUDIO_PACKET_STATS |
+                           ALK_CONTINUITY_MEDIA_EVIDENCE_HAS_FEC_STATS;
+    evidence.media.duration_ms = feedback.duration_ms;
+    evidence.media.frames_seen = feedback.frames_seen;
+    evidence.media.complete_frames = feedback.complete_frames;
+    evidence.media.recovered_frames = feedback.recovered_frames;
+    evidence.media.unrecoverable_frames = feedback.unrecoverable_frames;
+    evidence.media.missing_packets = feedback.missing_packets;
+    evidence.media.total_packets = feedback.total_packets;
+    evidence.media.received_packets = feedback.received_packets;
+    evidence.media.video_bytes = feedback.video_bytes;
+    evidence.media.audio_concealed_ms = feedback.audio_concealed_ms;
+    evidence.media.late_audio_drops = feedback.late_audio_drops;
+    evidence.media.audio_plc_ms = feedback.audio_plc_ms;
+    evidence.media.audio_fade_ms = feedback.audio_fade_ms;
+    evidence.media.audio_buffer_depth_ms = feedback.audio_buffer_depth_ms;
+    evidence.media.audio_drift_ppm = feedback.audio_drift_ppm;
+    evidence.media.rfi_requests = feedback.rfi_requests;
+    evidence.media.waiting_for_rfi_frames = feedback.waiting_for_rfi_frames;
+    evidence.media.large_frame_fec_skipped = feedback.large_frame_fec_skipped;
+    if (feedback.rfi_requests > 0U || feedback.waiting_for_rfi_frames > 0U) {
+      evidence.media.flags |= ALK_CONTINUITY_MEDIA_EVIDENCE_HAS_RFI_WAIT;
+    }
+
+    evidence.render.flags = ALK_CONTINUITY_RENDER_EVIDENCE_HAS_VIDEO_RENDER |
+                            ALK_CONTINUITY_RENDER_EVIDENCE_HAS_AUDIO_RENDER |
+                            ALK_CONTINUITY_RENDER_EVIDENCE_HAS_LOCAL_DISPLAY_PRESSURE;
+    evidence.render.decode_queue_depth = feedback.decode_queue_depth;
+    evidence.render.render_queue_depth = feedback.render_queue_depth;
+    evidence.render.late_frames = feedback.late_frames;
+    evidence.render.displayed_frames = feedback.displayed_frames;
+    evidence.render.decoded_frames = feedback.decoded_frames > 0U ? feedback.decoded_frames : feedback.complete_frames;
+    evidence.render.rendered_frames = feedback.rendered_frames > 0U ? feedback.rendered_frames : feedback.displayed_frames;
+    evidence.render.decode_time_us = feedback.decode_time_us;
+    evidence.render.render_time_us = feedback.render_time_us;
+    evidence.render.visual_stale_frames = feedback.visual_stale_frames;
+    evidence.render.duplicate_frames = feedback.duplicate_frames;
+    evidence.render.audio_underruns = feedback.audio_underruns;
+    evidence.render.local_display_pressure = feedback.local_display_pressure;
+
+    evidence.input.flags = 0;
+    evidence.input.input_queue_depth = feedback.input_queue_depth;
+    evidence.input.input_send_latency_us = feedback.input_send_latency_us;
+    evidence.input.input_ack_latency_us = feedback.input_ack_latency_us;
+    evidence.input.pointer_active = feedback.user_input_active ? 1U : 0U;
+    if (feedback.user_input_active) {
+      evidence.input.flags |= ALK_CONTINUITY_INPUT_EVIDENCE_HAS_POINTER;
+    }
+
+    evidence.capture.flags = 0;
+    evidence.capture.frame_area = feedback.frame_area;
+    evidence.capture.dirty_area = feedback.dirty_area;
+    evidence.capture.capture_latency_us = feedback.capture_latency_us;
+    evidence.capture.capture_timeout_frames = feedback.capture_timeout_frames;
+    if (feedback.frame_area > 0U || feedback.dirty_area > 0U) {
+      evidence.capture.flags |= ALK_CONTINUITY_CAPTURE_EVIDENCE_HAS_DIRTY_AREA;
+    }
+    if (feedback.full_frame_dirty) {
+      evidence.capture.flags |= ALK_CONTINUITY_CAPTURE_EVIDENCE_FULL_FRAME_DIRTY;
+    }
+    if (feedback.capture_timeout_frames > 0U) {
+      evidence.capture.flags |= ALK_CONTINUITY_CAPTURE_EVIDENCE_HAS_STALL;
+    }
+
+    evidence.encoder.flags = ALK_CONTINUITY_ENCODER_EVIDENCE_HAS_RATE_CONTROL;
+    evidence.encoder.encode_latency_us = feedback.encode_latency_us;
+    evidence.encoder.pacing_drop_frames = feedback.encoder_pacing_drop_frames;
+    evidence.encoder.rfi_requests = feedback.rfi_requests;
+    evidence.encoder.waiting_for_rfi_frames = feedback.waiting_for_rfi_frames;
+    evidence.encoder.large_frame_fec_skipped = feedback.large_frame_fec_skipped;
+    if (feedback.rfi_requests > 0U || feedback.waiting_for_rfi_frames > 0U) {
+      evidence.encoder.flags |= ALK_CONTINUITY_ENCODER_EVIDENCE_HAS_IDR_WAIT;
+    }
+
+    return evidence;
+  }
+
+  AlkContinuityDiagnosisFrame
+  diagnose_feedback(const feedback_t &feedback) {
+    const auto evidence = to_continuity_evidence_frame(feedback);
+    AlkContinuityDiagnosisFrame diagnosis;
+    alk_continuity_diagnosis_frame_init(&diagnosis);
+    alk_continuity_diagnose_evidence(&evidence, &diagnosis);
+    return diagnosis;
+  }
+
+  const char *
+  continuity_domain_name(std::uint32_t domain) {
+    switch (domain) {
+      case ALK_CONTINUITY_DOMAIN_NETWORK_TRANSPORT:
+        return "network.transport";
+      case ALK_CONTINUITY_DOMAIN_VIDEO_MEDIA:
+        return "media.video";
+      case ALK_CONTINUITY_DOMAIN_AUDIO:
+        return "media.audio";
+      case ALK_CONTINUITY_DOMAIN_CAPTURE:
+        return "media.video.capture";
+      case ALK_CONTINUITY_DOMAIN_ENCODER:
+        return "media.video.encoder";
+      case ALK_CONTINUITY_DOMAIN_DECODE:
+        return "media.video.decode";
+      case ALK_CONTINUITY_DOMAIN_RENDER:
+        return "media.video.render";
+      case ALK_CONTINUITY_DOMAIN_INPUT:
+        return "interaction.input";
+      case ALK_CONTINUITY_DOMAIN_SOURCE:
+        return "source";
+      case ALK_CONTINUITY_DOMAIN_MIXED:
+        return "mixed";
+      case ALK_CONTINUITY_DOMAIN_RUNTIME_PERFORMANCE:
+        return "runtime-performance";
+      case ALK_CONTINUITY_DOMAIN_UNKNOWN:
+      default:
+        return "unknown";
+    }
+  }
+
+  runtime_action_plan_t
+  plan_runtime_action(const action_t &action, const runtime_action_context_t &context) {
+    const auto alk_plan = plan_runtime_action_sdk(action, context);
+    return from_sdk_runtime_action_plan(alk_plan);
+  }
+
+  runtime_action_plan_t
+  plan_runtime_action_with_diagnosis(const action_t &action,
+                                     const runtime_action_context_t &context,
+                                     const AlkContinuityDiagnosisFrame &diagnosis) {
+    const auto sdk_decision = to_sdk_decision(action);
+    const auto sdk_context = to_sdk_runtime_action_context(context);
+    auto sdk_plan = plan_runtime_action_sdk(action, context);
+    if (sdk_plan.version != ALK_STREAM_QUALITY_CONTROL_VERSION ||
+        diagnosis.version != ALK_CONTINUITY_FACADE_VERSION) {
+      return from_sdk_runtime_action_plan(sdk_plan);
+    }
+    if (!alk_continuity_gate_runtime_action_plan_with_diagnosis(&sdk_decision,
+                                                                &sdk_context,
+                                                                &diagnosis,
+                                                                &sdk_plan)) {
+      return from_sdk_runtime_action_plan(sdk_plan);
+    }
+    return from_sdk_runtime_action_plan(sdk_plan);
   }
 
   bool
@@ -584,6 +773,46 @@ namespace stream_quality {
       (trigger_flags & (ALK_RESCUE_TRIGGER_CONTROL_STALLING |
                         ALK_RESCUE_TRIGGER_MANUAL)) != 0;
     return explicit_quality_fields || control_path_or_manual;
+  }
+
+  bool
+  media_rescue_quality_downgrade_allowed(std::uint32_t trigger_flags,
+                                         bool requests_quality_downgrade,
+                                         std::uint64_t host_missing_packets,
+                                         std::uint64_t host_total_packets,
+                                         std::uint32_t host_unrecoverable_frames,
+                                         std::uint32_t host_waiting_for_rfi_frames,
+                                         std::uint32_t host_large_frame_fec_skipped,
+                                         std::uint32_t host_video_loss_ppm) {
+    if (!requests_quality_downgrade) {
+      return false;
+    }
+
+    if ((trigger_flags & (ALK_RESCUE_TRIGGER_CONTROL_STALLING |
+                          ALK_RESCUE_TRIGGER_MANUAL)) != 0U) {
+      return true;
+    }
+
+    const bool media_trigger =
+      (trigger_flags & (ALK_RESCUE_TRIGGER_RFI_WAIT |
+                        ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES |
+                        ALK_RESCUE_TRIGGER_LOCAL_DISPLAY_STALL)) != 0U;
+    if (!media_trigger) {
+      return false;
+    }
+
+    (void)host_video_loss_ppm;
+    std::uint64_t packet_loss_ppm = 0U;
+    if (host_total_packets > 0U) {
+      packet_loss_ppm =
+        std::min<std::uint64_t>(1000000ULL,
+                                host_missing_packets * 1000000ULL / host_total_packets);
+    }
+
+    return host_unrecoverable_frames > 0U ||
+           host_waiting_for_rfi_frames >= 4U ||
+           host_large_frame_fec_skipped > 0U ||
+           packet_loss_ppm >= 30000ULL;
   }
 
 

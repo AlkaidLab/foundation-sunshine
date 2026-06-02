@@ -1,5 +1,5 @@
 #pragma once
-/* Alkaid P4 boundary shim: GameStream RTSP compatibility server contract is
- * owned by session.handshake/gamestream-rtsp/legacy/sunshine.
+/* Compatibility shim. The RTSP compatibility contract is provided by the
+ * Platform session.handshake module.
  */
-#include "legacy/sunshine/rtsp.h"
+#include "legacy/host/rtsp.h"

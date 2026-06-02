@@ -117,6 +117,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/frame_interest.h"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.cpp"
         "${CMAKE_SOURCE_DIR}/src/stream_quality.h"
+        "${CMAKE_SOURCE_DIR}/src/stream_transport_feedback.cpp"
+        "${CMAKE_SOURCE_DIR}/src/stream_transport_feedback.h"
         "${CMAKE_SOURCE_DIR}/src/stream_quality_controller.cpp"
         "${CMAKE_SOURCE_DIR}/src/stream_quality_controller.h"
         "${CMAKE_SOURCE_DIR}/src/video.cpp"
@@ -172,10 +174,10 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/modules/stream_quality/adaptive_controller.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/control_path_health/control_path_health.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/include/alkaidlab/rescue_control/rescue_control.h" AND
-   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/sunshine_session_adapter.h" AND
-   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/gamestream_rtsp_handshake_adapter.h" AND
-   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/gamestream_enet_control_transport_adapter.h" AND
-   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include/alkaidlab/sunshine_adapter/rescue_wire_codec.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/include/alkaidlab/gamestream_host_adapter/gamestream_host_session_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/include/alkaidlab/gamestream_host_adapter/gamestream_rtsp_handshake_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/include/alkaidlab/gamestream_host_adapter/gamestream_enet_control_transport_adapter.h" AND
+   EXISTS "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/include/alkaidlab/gamestream_host_adapter/rescue_wire_codec.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/include/alkaidlab/clipboard_sync/clipboard_sync.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/data/clipboard-sync/platform-clipboard-sync/backends/win32/include/alkaidlab/clipboard_sync/win32_clipboard_backend.h" AND
    EXISTS "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/include/alkaidlab/microphone_uplink/microphone_uplink.h" AND
@@ -200,6 +202,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/src/session_core.c"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_control.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_control_internal.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_domain_policy.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/stream_quality_adaptive_module.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/control_path_health.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/streaming/continuity/adaptive-controller/src/rescue_control.cpp"
@@ -208,6 +211,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/module_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_runtime.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/transport_monitor.cpp"
+            "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/continuity_facade.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/src/session_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/src/microphone_uplink.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/network/transport/gamestream-enet/src/gamestream_enet_transport.cpp"
@@ -216,7 +220,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/src/gamestream_rtsp_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/src/alkaid_handshake.cpp"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/media/frame-interest/roi-map/src/frame_interest.cpp"
-            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/src/sunshine_session_adapter.c"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/src/gamestream_host_session_adapter.c"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/src/zako_input.c")
     if(WIN32)
         list(APPEND SUNSHINE_TARGET_FILES
@@ -224,7 +228,7 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
                 "${ALKAIDLAB_PLATFORM_PATH}/modules/audio/microphone-uplink/opus-uplink/backends/windows-wasapi-sink/src/windows_wasapi_sink_backend.cpp")
     endif()
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ALKAIDLAB_PLATFORM_CORE=1)
-    list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP="${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/legacy/sunshine/rtsp.cpp")
+    list(APPEND SUNSHINE_DEFINITIONS ALKAIDLAB_LEGACY_HOST_RTSP_CPP="${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/legacy/host/rtsp.cpp")
     include_directories(
             "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include"
             "${ALKAIDLAB_PLATFORM_PATH}/sdk/c/include"
@@ -241,7 +245,8 @@ if(EXISTS "${ALKAIDLAB_PLATFORM_PATH}/core/kernel/include/alkaidlab/session_core
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/gamestream-rtsp/include"
             "${ALKAIDLAB_PLATFORM_PATH}/modules/session/handshake/alkaid-handshake/include"
             "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/interaction-cursor/include"
-            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/sunshine/include"
+            "${ALKAIDLAB_PLATFORM_PATH}/adapters/gamestream/host/include"
+            "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src"
             "${ALKAIDLAB_ZAKO_INPUT_PATH}/include")
     if(WIN32)
         include_directories(

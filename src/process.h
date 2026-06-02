@@ -92,6 +92,8 @@ namespace proc {
      */
     int
     running();
+    bool
+    is_placebo_running() const;
 
     ~proc_t();
 

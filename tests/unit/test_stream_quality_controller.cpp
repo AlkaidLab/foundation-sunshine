@@ -33,6 +33,249 @@ TEST(StreamQualityControllerTests, DropsBitrateAndRaisesFecWhenFramesAreUnrecove
   EXPECT_TRUE(action.request_idr);
 }
 
+TEST(StreamQualityControllerTests, DiagnosesAudioOnlyAsAudioDomain) {
+  auto diagnosis = stream_quality::diagnose_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .video_bytes = 8 * 1024 * 1024,
+    .rtt_ms = 18,
+    .rtt_variance_ms = 4,
+    .audio_underruns = 24,
+    .displayed_frames = 120,
+    .audio_plc_ms = 360,
+  });
+
+  EXPECT_EQ(diagnosis.primary_domain, ALK_CONTINUITY_DOMAIN_AUDIO);
+  EXPECT_NE(diagnosis.allowed_action_mask & ALK_CONTINUITY_ACTION_AUDIO_RECOVER, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_VIDEO_QUALITY_DESTRUCTIVE, 0u);
+}
+
+TEST(StreamQualityControllerTests, DiagnosesSourceLimitedLoadingWithoutNetworkLearning) {
+  auto diagnosis = stream_quality::diagnose_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 15,
+    .complete_frames = 15,
+    .video_bytes = 1200 * 1024,
+    .rtt_ms = 22,
+    .rtt_variance_ms = 3,
+    .displayed_frames = 15,
+  });
+
+  EXPECT_EQ(diagnosis.primary_domain, ALK_CONTINUITY_DOMAIN_SOURCE);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_VIDEO_QUALITY_DESTRUCTIVE, 0u);
+}
+
+TEST(StreamQualityControllerTests, DiagnosesRecoverableLossAsNonDestructiveMedia) {
+  auto diagnosis = stream_quality::diagnose_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 120,
+    .complete_frames = 120,
+    .recovered_frames = 6,
+    .unrecoverable_frames = 0,
+    .missing_packets = 48,
+    .total_packets = 3000,
+    .received_packets = 2952,
+    .video_bytes = 9 * 1024 * 1024,
+    .rtt_ms = 31,
+    .rtt_variance_ms = 5,
+    .displayed_frames = 118,
+  });
+
+  EXPECT_EQ(diagnosis.primary_domain, ALK_CONTINUITY_DOMAIN_VIDEO_MEDIA);
+  EXPECT_NE(diagnosis.allowed_action_mask & ALK_CONTINUITY_ACTION_VIDEO_FEC, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_VIDEO_BITRATE, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_VIDEO_FPS, 0u);
+  EXPECT_NE(diagnosis.forbidden_action_mask & ALK_CONTINUITY_ACTION_VIDEO_SCALE, 0u);
+}
+
+
+TEST(StreamQualityControllerTests, DiagnosisGatesDestructiveRuntimeVideoApply) {
+  stream_quality::action_t action {};
+  action.changed = true;
+  action.state = stream_quality::state_e::crisis;
+  action.availability = stream_quality::availability_e::low;
+  action.reason = stream_quality::reason_e::random_loss;
+  action.scenario = stream_quality::scenario_e::random_loss;
+  action.target_bitrate_kbps = 12000;
+  action.fec_percentage = 60;
+  action.pacing_bitrate_kbps = 19200;
+  action.target_fps = 30;
+  action.resolution_scale_percent = 75;
+  action.chroma_sampling_type = 1;
+  action.dynamic_range = 0;
+  action.profile_tier_supported = true;
+  action.profile_tier_changed = true;
+  action.request_idr = true;
+
+  const stream_quality::runtime_action_context_t context {
+    .last_applied_bitrate_kbps = 80000,
+    .last_applied_fec_percentage = 20,
+    .last_applied_fps = 150,
+    .last_applied_resolution_scale_percent = 100,
+    .last_applied_chroma_sampling_type = 0,
+    .last_applied_dynamic_range = 1,
+    .elapsed_ms_since_bitrate_apply = 2000,
+    .elapsed_ms_since_fec_apply = 2000,
+    .elapsed_ms_since_fps_apply = 2000,
+    .elapsed_ms_since_profile_apply = 2000,
+  };
+
+  AlkContinuityDiagnosisFrame diagnosis;
+  alk_continuity_diagnosis_frame_init(&diagnosis);
+  diagnosis.primary_domain = ALK_CONTINUITY_DOMAIN_SOURCE;
+  diagnosis.confidence_ppm = 900000;
+  diagnosis.allowed_action_mask = ALK_CONTINUITY_ACTION_OBSERVE;
+  diagnosis.forbidden_action_mask = ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY |
+                                    ALK_CONTINUITY_ACTION_VIDEO_QUALITY_DESTRUCTIVE;
+
+  const auto plan = stream_quality::plan_runtime_action_with_diagnosis(action, context, diagnosis);
+
+  EXPECT_FALSE(plan.apply_bitrate);
+  EXPECT_FALSE(plan.apply_fec);
+  EXPECT_FALSE(plan.apply_fps);
+  EXPECT_FALSE(plan.apply_profile);
+  EXPECT_FALSE(plan.apply_idr);
+  EXPECT_FALSE(plan.update_runtime_totals);
+}
+
+TEST(StreamQualityControllerTests, DiagnosisAllowsRecoverableLossFecAndIdrOnly) {
+  stream_quality::action_t action {};
+  action.changed = true;
+  action.state = stream_quality::state_e::recovering;
+  action.availability = stream_quality::availability_e::recovering;
+  action.reason = stream_quality::reason_e::media_continuity;
+  action.scenario = stream_quality::scenario_e::media_continuity;
+  action.target_bitrate_kbps = 80000;
+  action.fec_percentage = 28;
+  action.pacing_bitrate_kbps = 102400;
+  action.target_fps = 150;
+  action.resolution_scale_percent = 100;
+  action.chroma_sampling_type = 0;
+  action.dynamic_range = 1;
+  action.request_idr = true;
+
+  const stream_quality::runtime_action_context_t context {
+    .last_applied_bitrate_kbps = 80000,
+    .last_applied_fec_percentage = 20,
+    .last_applied_fps = 150,
+    .last_applied_resolution_scale_percent = 100,
+    .last_applied_chroma_sampling_type = 0,
+    .last_applied_dynamic_range = 1,
+    .elapsed_ms_since_bitrate_apply = 2000,
+    .elapsed_ms_since_fec_apply = 2000,
+    .elapsed_ms_since_fps_apply = 2000,
+    .elapsed_ms_since_profile_apply = 2000,
+  };
+
+  AlkContinuityDiagnosisFrame diagnosis;
+  alk_continuity_diagnosis_frame_init(&diagnosis);
+  diagnosis.primary_domain = ALK_CONTINUITY_DOMAIN_VIDEO_MEDIA;
+  diagnosis.secondary_domain = ALK_CONTINUITY_DOMAIN_NETWORK_TRANSPORT;
+  diagnosis.confidence_ppm = 780000;
+  diagnosis.allowed_action_mask = ALK_CONTINUITY_ACTION_OBSERVE |
+                                  ALK_CONTINUITY_ACTION_VIDEO_FEC |
+                                  ALK_CONTINUITY_ACTION_VIDEO_IDR;
+  diagnosis.forbidden_action_mask = ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY |
+                                    ALK_CONTINUITY_ACTION_VIDEO_BITRATE |
+                                    ALK_CONTINUITY_ACTION_VIDEO_FPS |
+                                    ALK_CONTINUITY_ACTION_VIDEO_SCALE;
+
+  const auto plan = stream_quality::plan_runtime_action_with_diagnosis(action, context, diagnosis);
+
+  EXPECT_FALSE(plan.apply_bitrate);
+  EXPECT_TRUE(plan.apply_fec);
+  EXPECT_FALSE(plan.apply_fps);
+  EXPECT_FALSE(plan.apply_profile);
+  EXPECT_TRUE(plan.apply_idr);
+  EXPECT_TRUE(plan.update_runtime_totals);
+}
+
+TEST(StreamQualityControllerTests, RestrictedDiagnosisKeepsRuntimePlanAsPureActionProjection) {
+  stream_quality::action_t action {};
+  action.changed = true;
+  action.state = stream_quality::state_e::recovering;
+  action.availability = stream_quality::availability_e::recovering;
+  action.reason = stream_quality::reason_e::recovering;
+  action.scenario = stream_quality::scenario_e::recovering;
+  action.target_bitrate_kbps = 500;
+  action.fec_percentage = 35;
+  action.pacing_bitrate_kbps = 700;
+  action.target_fps = 90;
+  action.resolution_scale_percent = 100;
+  action.chroma_sampling_type = 0;
+  action.dynamic_range = 0;
+  action.profile_tier_supported = true;
+
+  const stream_quality::runtime_action_context_t context {
+    .last_applied_bitrate_kbps = 11000,
+    .last_applied_fec_percentage = 35,
+    .last_applied_fps = 45,
+    .last_applied_resolution_scale_percent = 100,
+    .last_applied_chroma_sampling_type = 0,
+    .last_applied_dynamic_range = 0,
+    .elapsed_ms_since_bitrate_apply = 2000,
+    .elapsed_ms_since_fec_apply = 2000,
+    .elapsed_ms_since_fps_apply = 2000,
+    .elapsed_ms_since_profile_apply = 2000,
+  };
+
+  AlkContinuityDiagnosisFrame diagnosis;
+  alk_continuity_diagnosis_frame_init(&diagnosis);
+  diagnosis.primary_domain = ALK_CONTINUITY_DOMAIN_MIXED;
+  diagnosis.confidence_ppm = 350000;
+  diagnosis.allowed_action_mask = ALK_CONTINUITY_ACTION_OBSERVE;
+  diagnosis.forbidden_action_mask = ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY |
+                                    ALK_CONTINUITY_ACTION_VIDEO_QUALITY_DESTRUCTIVE;
+
+  const auto plan = stream_quality::plan_runtime_action_with_diagnosis(action, context, diagnosis);
+
+  EXPECT_FALSE(plan.apply_bitrate);
+  EXPECT_FALSE(plan.apply_fec);
+  EXPECT_FALSE(plan.apply_fps);
+  EXPECT_FALSE(plan.apply_profile);
+  EXPECT_FALSE(plan.update_runtime_totals);
+}
+
+TEST(StreamQualityControllerTests, DiagnosisStillBlocksFpsDropsWithoutDomainEvidence) {
+  stream_quality::action_t action {};
+  action.changed = true;
+  action.state = stream_quality::state_e::crisis;
+  action.availability = stream_quality::availability_e::low;
+  action.reason = stream_quality::reason_e::random_loss;
+  action.scenario = stream_quality::scenario_e::random_loss;
+  action.target_bitrate_kbps = 500;
+  action.fec_percentage = 35;
+  action.pacing_bitrate_kbps = 700;
+  action.target_fps = 30;
+  action.resolution_scale_percent = 100;
+
+  const stream_quality::runtime_action_context_t context {
+    .last_applied_bitrate_kbps = 11000,
+    .last_applied_fec_percentage = 35,
+    .last_applied_fps = 60,
+    .last_applied_resolution_scale_percent = 100,
+    .elapsed_ms_since_bitrate_apply = 2000,
+    .elapsed_ms_since_fec_apply = 2000,
+    .elapsed_ms_since_fps_apply = 2000,
+    .elapsed_ms_since_profile_apply = 2000,
+  };
+
+  AlkContinuityDiagnosisFrame diagnosis;
+  alk_continuity_diagnosis_frame_init(&diagnosis);
+  diagnosis.primary_domain = ALK_CONTINUITY_DOMAIN_MIXED;
+  diagnosis.confidence_ppm = 350000;
+  diagnosis.allowed_action_mask = ALK_CONTINUITY_ACTION_OBSERVE;
+  diagnosis.forbidden_action_mask = ALK_CONTINUITY_ACTION_NETWORK_LONG_TERM_MEMORY |
+                                    ALK_CONTINUITY_ACTION_VIDEO_QUALITY_DESTRUCTIVE;
+
+  const auto plan = stream_quality::plan_runtime_action_with_diagnosis(action, context, diagnosis);
+
+  EXPECT_FALSE(plan.apply_fps);
+}
+
 TEST(StreamQualityControllerTests, RecoversTowardBaselineWithoutExceedingUserSpec) {
   stream_quality::controller_t controller;
   controller.configure({ .baseline_bitrate_kbps = 50000, .baseline_fec_percentage = 20 });
@@ -223,6 +466,58 @@ TEST(StreamQualityControllerTests, MediaRescueWithoutQualityFieldsIsIdrOnly) {
     0,
     100,
     true));
+}
+
+TEST(StreamQualityControllerTests, MediaRescueQualityDowngradeRequiresHostVideoEvidence) {
+  EXPECT_FALSE(stream_quality::media_rescue_quality_downgrade_allowed(
+    ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES,
+    true,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0));
+
+  EXPECT_FALSE(stream_quality::media_rescue_quality_downgrade_allowed(
+    ALK_RESCUE_TRIGGER_RFI_WAIT,
+    true,
+    0,
+    0,
+    0,
+    0,
+    0,
+    65000));
+
+  EXPECT_TRUE(stream_quality::media_rescue_quality_downgrade_allowed(
+    ALK_RESCUE_TRIGGER_RFI_WAIT,
+    true,
+    4,
+    100,
+    0,
+    0,
+    0,
+    0));
+
+  EXPECT_TRUE(stream_quality::media_rescue_quality_downgrade_allowed(
+    ALK_RESCUE_TRIGGER_UNRECOVERABLE_FRAMES,
+    true,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0));
+
+  EXPECT_TRUE(stream_quality::media_rescue_quality_downgrade_allowed(
+    ALK_RESCUE_TRIGGER_CONTROL_STALLING,
+    true,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0));
 }
 
 TEST(StreamQualityControllerTests, VerifiedLanRecoveredMediaSampleIsNotNetworkConstrained) {
@@ -939,7 +1234,7 @@ TEST(StreamQualityControllerTests, AudioOnlyPressureDoesNotBlockVisualRecoveryAf
   }
   ASSERT_EQ(action.state, stream_quality::state_e::crisis);
   ASSERT_LT(action.target_bitrate_kbps, 10000);
-  ASSERT_LT(action.resolution_scale_percent, 100);
+  ASSERT_GE(action.resolution_scale_percent, 90);
 
   for (int i = 0; i < 8; i++) {
     action = controller.on_feedback({
@@ -1299,14 +1594,14 @@ TEST(StreamQualityControllerTests, FullFrameMotionPressurePrefersScaleBeforePptF
   EXPECT_EQ(action.reason, stream_quality::reason_e::media_continuity);
   EXPECT_GE(action.pressures.motion, 0.85);
   EXPECT_GE(action.target_fps, 90);
-  EXPECT_LE(action.resolution_scale_percent, 85);
+  EXPECT_GE(action.resolution_scale_percent, 90);
   EXPECT_EQ(action.chroma_sampling_type, 0);
   EXPECT_TRUE(action.profile_tier_changed);
   EXPECT_TRUE(action.profile_tier_deferred);
   EXPECT_FALSE(action.profile_tier_supported);
 }
 
-TEST(StreamQualityControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRuntimeScaleCannotApply) {
+TEST(StreamQualityControllerTests, ProfileTierFallbackDoesNotForceDestructiveActionWhenRuntimeScaleCannotApply) {
   stream_quality::controller_t controller;
   controller.configure({
     .baseline_bitrate_kbps = 12000,
@@ -1344,12 +1639,12 @@ TEST(StreamQualityControllerTests, ProfileTierFallbackLowersFpsSmoothlyWhenRunti
     });
   }
 
-  EXPECT_EQ(action.reason, stream_quality::reason_e::motion_pressure);
-  EXPECT_TRUE(action.profile_tier_changed);
-  EXPECT_TRUE(action.profile_tier_deferred);
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_NE(action.reason, stream_quality::reason_e::delay_congestion);
+  EXPECT_FALSE(action.profile_tier_changed);
+  EXPECT_FALSE(action.profile_tier_deferred);
   EXPECT_FALSE(action.profile_tier_supported);
-  EXPECT_LT(action.target_fps, 120);
-  EXPECT_GE(action.target_fps, 72);
+  EXPECT_EQ(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
 }
 
@@ -1544,7 +1839,7 @@ TEST(StreamQualityControllerTests, RfiStormIsCooledDownAndForcesCrisisTier) {
   EXPECT_EQ(second.state, stream_quality::state_e::crisis);
   EXPECT_FALSE(second.request_idr);
   EXPECT_GE(second.pressures.burst_loss, 0.95);
-  EXPECT_LE(second.resolution_scale_percent, 75);
+  EXPECT_GE(second.resolution_scale_percent, 90);
 }
 
 TEST(StreamQualityControllerTests, IsolatedRfiWithoutLossDoesNotTriggerRandomLossCrisis) {
@@ -2028,6 +2323,100 @@ TEST(StreamQualityControllerTests, CongestionAntiSpiralFiresWhenElevatedFecCanno
        "the controller must bleed FEC instead of re-opening parity every window";
   EXPECT_LE(action.fec_percentage, 25);
   EXPECT_LE(action.pacing_bitrate_kbps, 16000);
+}
+
+TEST(StreamQualityControllerTests, RemoteHighMotionWithPersistentTransportLossPrefersStableCadence) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 2,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 35000,
+    .ceiling_total_bitrate_kbps = 148478,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 145567,
+    .fps_needed_kbps = 126000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 90,
+      .complete_frames = 90,
+      .video_bytes = 6500 * 1024,
+      .transport_packet_loss_ppm = 44860,
+      .rtt_ms = 45,
+      .rtt_variance_ms = 10,
+      .displayed_frames = 104,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .local_display_pressure = 180,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_identity_confident = true,
+    });
+  }
+
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 90,
+      .complete_frames = 72,
+      .recovered_frames = static_cast<std::uint32_t>(i % 2 == 0 ? 4 : 3),
+      .unrecoverable_frames = 0,
+      .missing_packets = static_cast<std::uint32_t>(i % 2 == 0 ? 36 : 30),
+      .total_packets = static_cast<std::uint32_t>(i % 2 == 0 ? 760 : 650),
+      .received_packets = static_cast<std::uint32_t>(i % 2 == 0 ? 724 : 620),
+      .video_bytes = 6500 * 1024,
+      .transport_packet_loss_ppm = 44860,
+      .rtt_ms = 52,
+      .rtt_variance_ms = 8,
+      .displayed_frames = 106,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .local_display_pressure = 180,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_identity_confident = true,
+    });
+  }
+
+  for (int i = 0; i < 6; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 90,
+      .complete_frames = 90,
+      .video_bytes = 6500 * 1024,
+      .transport_packet_loss_ppm = 44860,
+      .rtt_ms = 45,
+      .rtt_variance_ms = 10,
+      .displayed_frames = 104,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .local_display_pressure = 180,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_LE(action.target_fps, 72);
+  EXPECT_GE(action.target_bitrate_kbps, 24000);
+  EXPECT_LE(action.fec_percentage, 18);
+  EXPECT_LE(action.pacing_bitrate_kbps, 45000);
+  EXPECT_EQ(action.resolution_scale_percent, 100);
 }
 
 TEST(StreamQualityControllerTests, GoodNetworkRecoversTowardCeilingWithoutQualityPenalty) {
@@ -2589,7 +2978,63 @@ TEST(StreamQualityControllerTests, FullResFallbackDoesNotStayAtMosaicBitrateWhen
 
   EXPECT_GE(action.target_bitrate_kbps, 5000);
   EXPECT_GE(action.target_fps, 72);
-  EXPECT_TRUE(action.profile_tier_deferred);
+  EXPECT_FALSE(action.profile_tier_deferred);
+}
+
+TEST(StreamQualityControllerTests, PublicForwardHighMotionLossKeepsPlayableFloor) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 126000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 150,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 18; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1060,
+      .frames_seen = 26,
+      .complete_frames = 25,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 350000,
+      .total_packets = 2000000,
+      .received_packets = 1650000,
+      .video_bytes = 38 * 1024,
+      .rtt_ms = 31,
+      .rtt_variance_ms = 21,
+      .displayed_frames = 62,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 36,
+      .local_display_pressure = i % 4 == 0 ? 1000U : 0U,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 1479168,
+      .full_frame_dirty = false,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_EQ(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_EQ(action.scene_class, stream_quality::scene_class_e::high_motion);
+  EXPECT_GE(action.target_bitrate_kbps, 5000)
+    << "Sustained delivered cadence must not collapse to an unreadable 500 Kbps floor";
+  EXPECT_GE(action.target_fps, 45)
+    << "Public-forward loss should reduce cadence, not stick a high-refresh game at 24 FPS";
+  EXPECT_GE(action.resolution_scale_percent, 90);
 }
 
 TEST(StreamQualityControllerTests, LowRefreshStreamsAreNeverPromotedToSeventyTwoFpsByInteractivePressure) {
@@ -2751,7 +3196,10 @@ TEST(StreamQualityControllerTests, AudioOnlyRecoveryStillRaisesFpsOneStepToAvoid
   });
 
   EXPECT_NE(action.state, stream_quality::state_e::crisis);
-  EXPECT_LE(action.target_fps, 81);
+  EXPECT_GE(action.target_fps, 80);
+  EXPECT_LE(action.target_fps, 120);
+  EXPECT_LE(action.fec_percentage, 10);
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
 }
 
 
@@ -3091,7 +3539,8 @@ TEST(StreamQualityControllerTests, MildAudioOnlyPressureKeepsFpsAndFecStableWhil
 
   EXPECT_NE(action.reason, stream_quality::reason_e::audio_pressure);
   EXPECT_NE(action.state, stream_quality::state_e::crisis);
-  EXPECT_EQ(action.target_fps, 96);
+  EXPECT_GE(action.target_fps, 96);
+  EXPECT_LE(action.target_fps, 120);
   EXPECT_LE(action.fec_percentage, 10);
   EXPECT_GT(action.target_bitrate_kbps, 18000);
 }
@@ -4366,8 +4815,8 @@ TEST(StreamQualityControllerTests, RemoteSafeRecoveryKeepsSustainableCapAcrossCl
     << "A weak public route that just proved 20Mbps unsafe should not re-probe to the same cliff from clean ALR alone";
   EXPECT_LT(peak_effective_ceiling, 30000)
     << "Clean ALR after a loss cliff is not capacity proof, so the sustainable cap should remain active";
-  EXPECT_LE(peak_scale, 75)
-    << "Weak-route recovery should stay in a low/mid visual tier instead of reconfiguring straight back to clear tiers";
+  EXPECT_LE(peak_scale, 90)
+    << "Weak-route recovery may use a readable intermediate tier, but must not reconfigure straight back to full scale from clean ALR alone";
   EXPECT_NE(action.state, stream_quality::state_e::healthy);
 }
 
@@ -4786,7 +5235,7 @@ TEST(StreamQualityControllerTests, HighMotionFecSkipEntersFastTierAndRequestsIdr
   EXPECT_EQ(action.availability, stream_quality::availability_e::low);
   EXPECT_EQ(action.tier, stream_quality::tier_e::fast);
   EXPECT_LT(action.target_bitrate_kbps, 120000);
-  EXPECT_LT(action.actual_scale_percent, 100);
+  EXPECT_GE(action.actual_scale_percent, 90);
   EXPECT_TRUE(action.request_idr);
 }
 
@@ -5844,4 +6293,462 @@ TEST(StreamQualityControllerTests, TierAndAvailabilityNamesAreStableForLogs) {
   EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::low), "low");
   EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::probing), "probing");
   EXPECT_STREQ(stream_quality::availability_name(stream_quality::availability_e::recovering), "recovering");
+}
+
+TEST(StreamQualityControllerTests, UuComparableCleanP2pMotionKeepsHighQualityEvidence) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 70000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 0,
+      .received_packets = 0,
+      .video_bytes = 1400 * 1024,
+      .rtt_ms = 16,
+      .rtt_variance_ms = 2,
+      .displayed_frames = 60,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 0,
+      .local_display_pressure = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::random_loss);
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::local_render);
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_NE(action.reason, stream_quality::reason_e::render_deadline);
+  EXPECT_GE(action.target_bitrate_kbps, 12000)
+    << "Clean P2P-like evidence must not collapse to mosaic bitrate";
+  EXPECT_GE(action.target_fps, 60)
+    << "Clean P2P-like evidence must keep an interactive cadence";
+  EXPECT_LE(action.fec_percentage, 10)
+    << "Clean P2P-like evidence must not raise FEC as if media packets were missing";
+  EXPECT_EQ(action.resolution_scale_percent, 100)
+    << "Clean P2P-like evidence should keep native resolution unless real pressure appears";
+}
+
+TEST(StreamQualityControllerTests, CleanHighMotionDemandRaisesReadableFloorWithoutUnsafeLearning) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 30000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 12000,
+    .ceiling_total_bitrate_kbps = 50000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 60,
+    .startup_fps = 60,
+    .min_fps = 30,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 30000,
+    .ideal_demand_kbps = 30000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 2000,
+      .received_packets = 2000,
+      .video_bytes = 1100 * 1024,
+      .rtt_ms = 45,
+      .rtt_variance_ms = 4,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 2,
+      .displayed_frames = 60,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::random_loss);
+  EXPECT_GE(action.target_bitrate_kbps, 24000)
+    << "Clean high-motion cadence needs readable 4K60 bitrate instead of staying at the startup floor";
+  EXPECT_GE(action.target_fps, 60);
+  EXPECT_EQ(action.resolution_scale_percent, 100);
+  EXPECT_FALSE(action.unsafe_ceiling_active)
+    << "Clean app-limited high-motion samples are demand evidence, not capacity proof";
+  EXPECT_EQ(action.high_motion_unsafe_ceiling_kbps, 0);
+}
+
+TEST(StreamQualityControllerTests, PublicForwardNonDestructivePacketAccountingKeepsVideoReadable) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 70000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 10; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1060,
+      .frames_seen = 62,
+      .complete_frames = 62,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 64086,
+      .total_packets = 2000000,
+      .received_packets = 1935914,
+      .video_bytes = 150 * 1024,
+      .rtt_ms = 21,
+      .rtt_variance_ms = 8,
+      .displayed_frames = 69,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 8,
+      .local_display_pressure = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 1166400,
+      .full_frame_dirty = false,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::random_loss)
+    << "Packet accounting conflicts with complete/displayed video must stay diagnostic";
+  EXPECT_NE(action.reason, stream_quality::reason_e::random_loss);
+  EXPECT_GE(action.target_bitrate_kbps, 8000)
+    << "Clean visible cadence must not collapse into mosaic bitrate";
+  EXPECT_GE(action.target_fps, 60);
+  EXPECT_LE(action.fec_percentage, 10)
+    << "Non-destructive packet accounting must not open a long FEC floor";
+  EXPECT_EQ(action.resolution_scale_percent, 100);
+}
+
+TEST(StreamQualityControllerTests, PublicForwardAudioLateDropsWithoutConcealmentDoNotCrushVideo) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 70000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 10; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1060,
+      .frames_seen = 62,
+      .complete_frames = 62,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 2000000,
+      .received_packets = 2000000,
+      .video_bytes = 150 * 1024,
+      .rtt_ms = 21,
+      .rtt_variance_ms = 8,
+      .displayed_frames = 69,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 8,
+      .local_display_pressure = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 1166400,
+      .full_frame_dirty = false,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+      .late_audio_drops = 216,
+      .audio_buffer_depth_ms = 140,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::audio_pressure)
+    << "Late-drop-only audio accounting is not video congestion when audio has no underrun/conceal/PLC/fade";
+  EXPECT_NE(action.reason, stream_quality::reason_e::audio_pressure);
+  EXPECT_GE(action.target_bitrate_kbps, 8000);
+  EXPECT_GE(action.target_fps, 60);
+  EXPECT_LE(action.fec_percentage, 10);
+  EXPECT_EQ(action.resolution_scale_percent, 100);
+}
+
+TEST(StreamQualityControllerTests, LowFpsLoadingScreenDoesNotPoisonFollowingGameCadence) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 70000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 90,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  for (int i = 0; i < 3; ++i) {
+    controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 90,
+      .complete_frames = 90,
+      .video_bytes = 1500 * 1024,
+      .rtt_ms = 18,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 90,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  stream_quality::action_t loading_action {};
+  for (int i = 0; i < 6; ++i) {
+    loading_action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 1,
+      .complete_frames = 1,
+      .video_bytes = 64 * 1024,
+      .rtt_ms = 18,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 1,
+      .duplicate_frames = 89,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 0,
+      .full_frame_dirty = false,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+  EXPECT_GE(loading_action.target_fps, 60)
+    << "A source-limited loading screen must not be turned into a 1fps transport target";
+
+  stream_quality::action_t action {};
+  for (int i = 0; i < 4; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1000,
+      .frames_seen = 90,
+      .complete_frames = 90,
+      .video_bytes = 1800 * 1024,
+      .rtt_ms = 18,
+      .rtt_variance_ms = 4,
+      .displayed_frames = 90,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 3840ULL * 2160ULL,
+      .full_frame_dirty = true,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::no_video_delivery);
+  EXPECT_GE(action.target_bitrate_kbps, 12000)
+    << "Clean game motion after loading must recover without requiring reconnect";
+  EXPECT_GE(action.target_fps, 90);
+  EXPECT_GE(action.resolution_scale_percent, 90);
+}
+
+TEST(StreamQualityControllerTests, PublicForwardMotionBurstDoesNotStayAtMosaicFloorAfterCleanRecovery) {
+  stream_quality::controller_t controller;
+  controller.configure({
+    .baseline_bitrate_kbps = 126000,
+    .baseline_fec_percentage = 10,
+    .max_fec_percentage = 35,
+    .startup_bitrate_kbps = 11000,
+    .ceiling_total_bitrate_kbps = 150000,
+    .min_bitrate_kbps = 500,
+    .baseline_fps = 150,
+    .startup_fps = 60,
+    .min_fps = 60,
+    .frame_width = 3840,
+    .frame_height = 2160,
+    .chroma_sampling_type = 0,
+    .runtime_profile_tier_supported = true,
+    .user_quality_kbps = 126000,
+    .ideal_demand_kbps = 126000,
+    .fps_needed_kbps = 30000,
+  });
+
+  stream_quality::action_t action {};
+  action = controller.on_feedback({
+    .duration_ms = 1000,
+    .frames_seen = 60,
+    .complete_frames = 60,
+    .video_bytes = 1200 * 1024,
+    .rtt_ms = 54,
+    .rtt_variance_ms = 9,
+    .displayed_frames = 60,
+    .duplicate_frames = 4,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 3840ULL * 2160ULL,
+    .full_frame_dirty = true,
+    .user_input_active = true,
+    .path_lan_direct = false,
+    .path_identity_confident = true,
+  });
+
+  for (int i = 0; i < 5; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1075,
+      .frames_seen = 45,
+      .complete_frames = 45,
+      .recovered_frames = 18,
+      .unrecoverable_frames = 0,
+      .missing_packets = 22,
+      .total_packets = 190,
+      .received_packets = 168,
+      .video_bytes = 260 * 1024,
+      .rtt_ms = 52,
+      .rtt_variance_ms = 12,
+      .displayed_frames = 52,
+      .duplicate_frames = 30,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 0,
+      .local_display_pressure = 350,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 1600000,
+      .full_frame_dirty = false,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  action = controller.on_feedback({
+    .duration_ms = 1060,
+    .frames_seen = 44,
+    .complete_frames = 40,
+    .recovered_frames = 15,
+    .unrecoverable_frames = 2,
+    .missing_packets = 24,
+    .total_packets = 172,
+    .received_packets = 148,
+    .video_bytes = 120 * 1024,
+    .rtt_ms = 45,
+    .rtt_variance_ms = 8,
+    .displayed_frames = 52,
+    .duplicate_frames = 29,
+    .decode_queue_depth = 1,
+    .render_queue_depth = 0,
+    .rfi_requests = 1,
+    .local_display_pressure = 350,
+    .frame_area = 3840ULL * 2160ULL,
+    .dirty_area = 1679616,
+    .full_frame_dirty = false,
+    .user_input_active = true,
+    .path_lan_direct = false,
+    .path_identity_confident = true,
+  });
+
+  EXPECT_GE(action.target_bitrate_kbps, 7000)
+    << "A short public-forward media burst should rescue into a readable floor, not a 500 Kbps mosaic floor";
+  EXPECT_GE(action.resolution_scale_percent, 90)
+    << "Transient media damage should not immediately churn the encoder down to a visibly different cursor scale";
+
+  for (int i = 0; i < 8; ++i) {
+    action = controller.on_feedback({
+      .duration_ms = 1075,
+      .frames_seen = 60,
+      .complete_frames = 60,
+      .recovered_frames = 0,
+      .unrecoverable_frames = 0,
+      .missing_packets = 0,
+      .total_packets = 320,
+      .received_packets = 320,
+      .video_bytes = 820 * 1024,
+      .rtt_ms = 52,
+      .rtt_variance_ms = 10,
+      .displayed_frames = 60,
+      .visual_stale_frames = 0,
+      .duplicate_frames = 0,
+      .decode_queue_depth = 1,
+      .render_queue_depth = 0,
+      .frame_area = 3840ULL * 2160ULL,
+      .dirty_area = 1600000,
+      .full_frame_dirty = false,
+      .user_input_active = true,
+      .path_lan_direct = false,
+      .path_identity_confident = true,
+    });
+  }
+
+  EXPECT_NE(action.scenario, stream_quality::scenario_e::random_loss);
+  EXPECT_GE(action.target_bitrate_kbps, 12000)
+    << "After clean motion cadence returns, the controller must climb out of mosaic bitrate without reconnecting";
+  EXPECT_EQ(action.resolution_scale_percent, 100);
+  EXPECT_FALSE(action.unsafe_ceiling_active)
+    << "Clean post-burst cadence should release the stale unsafe ceiling instead of pinning dynamic scenes blurry";
 }

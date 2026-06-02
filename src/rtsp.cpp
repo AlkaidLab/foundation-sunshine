@@ -1,10 +1,8 @@
-/* Alkaid P4 boundary shim.
- * GameStream RTSP compatibility server implementation lives in
- * session.handshake/gamestream-rtsp/legacy/sunshine. Keep this Product file as
- * the current build entry point until Foundation Sunshine builds Platform
- * legacy sources directly.
+/* Compatibility shim. The implementation is compiled from the Platform
+ * GameStream RTSP compatibility module path. Product code keeps only this
+ * build entry point while build files converge on direct module sources.
  */
-#ifndef ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP
-#error "ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP must point to the Platform GameStream RTSP compatibility source"
+#ifndef ALKAIDLAB_LEGACY_HOST_RTSP_CPP
+#error "ALKAIDLAB_LEGACY_HOST_RTSP_CPP must point to the Platform GameStream RTSP compatibility source"
 #endif
-#include ALKAIDLAB_LEGACY_SUNSHINE_RTSP_CPP
+#include ALKAIDLAB_LEGACY_HOST_RTSP_CPP

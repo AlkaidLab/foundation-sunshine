@@ -4,7 +4,7 @@ extern "C" {
 #include <moonlight-common-c/src/Session.h>
 }
 
-#include <alkaidlab/sunshine_adapter/sunshine_session_adapter.h>
+#include <alkaidlab/gamestream_host_adapter/gamestream_host_session_adapter.h>
 
 #include <cstdint>
 

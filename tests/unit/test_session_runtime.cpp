@@ -248,6 +248,33 @@ TEST(SessionRuntimeTests, RtspPrivatePeerChangeDoesNotRequireRemoteHint) {
                                                                            "192.168.100.182"));
 }
 
+TEST(SessionRuntimeTests, FreshEndpointPreflightConfirmsLanWithoutPublicIdentity) {
+  session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = false,
+    .rtsp_route_remote_hint = true,
+    .client_egress_kind = "physical",
+    .client_route_host = "192.168.100.133",
+    .rtsp_route_host = "192.168.100.133",
+    .preflight_available = true,
+    .preflight_observed_peer_endpoint = "192.168.100.182:53000",
+    .preflight_host_local_endpoint = "192.168.100.133:47989",
+    .preflight_rtt_ms = 3,
+    .preflight_age_ms = 80,
+  };
+
+  session_runtime::apply_startup_path_preflight_snapshot(evidence);
+  const auto decision = session_runtime::classify_startup_path(evidence);
+
+  EXPECT_TRUE(evidence.peer_is_lan_or_pc);
+  EXPECT_EQ(evidence.host_observed_peer_endpoint, "192.168.100.182:53000");
+  EXPECT_EQ(evidence.host_observed_local_endpoint, "192.168.100.133:47989");
+  EXPECT_TRUE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::lan_direct);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_TRUE_LAN);
+  EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_LAN_FAST);
+}
+
+
 TEST(SessionRuntimeTests, StartupPathTunnelEvidenceDisablesLanFastStart) {
   const session_runtime::startup_path_evidence_t evidence {
     .peer_is_lan_or_pc = true,
@@ -466,14 +493,45 @@ TEST(SessionRuntimeTests, StartupPathVirtualProxyEgressDoesNotBecomeTrueLan) {
   const auto decision = session_runtime::classify_startup_path(evidence);
 
   EXPECT_FALSE(decision.allow_lan_fast_start);
-  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::overlay_route);
   EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_VIRTUAL);
   EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL);
-  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_UNKNOWN);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_VPN_OVERLAY);
   EXPECT_EQ(decision.startup_class, LI_SESSION_STARTUP_CLASS_REMOTE_SAFE);
   EXPECT_NE(decision.evidence_flags & LI_SESSION_PATH_EVIDENCE_CLIENT_ROUTE_OBSERVED, 0U);
-  EXPECT_NE(decision.risk_flags & LI_SESSION_PATH_RISK_UNKNOWN_IDENTITY, 0U);
+  EXPECT_NE(decision.risk_flags & LI_SESSION_PATH_RISK_TUNNEL, 0U);
   EXPECT_STREQ(decision.reason, "client-virtual-overlay");
+}
+
+TEST(SessionRuntimeTests, StartupPathTunnelOverlayUsesOverlayRouteIdentity) {
+  const session_runtime::startup_path_evidence_t evidence {
+    .peer_is_lan_or_pc = true,
+    .remote_streaming_hint = true,
+    .client_route_remote_hint = true,
+    .client_route_tunnel = true,
+    .startup_profile = "tunnel",
+    .client_egress_kind = "virtual",
+    .client_route_host = "192.168.100.133:57989",
+    .client_route_path_kind = "tunnel-overlay",
+    .rtsp_route_host = "192.168.100.133:58010",
+    .client_source_endpoint = "198.18.0.1",
+    .host_observed_peer_endpoint = "192.168.100.220:55137",
+    .host_observed_local_endpoint = "192.168.100.133:57984",
+    .client_target_address_candidates = { "192.168.100.133" },
+    .host_public_candidates = { "180.173.123.199" },
+  };
+
+  const auto decision = session_runtime::classify_startup_path(evidence);
+  const auto path = session_runtime::make_transport_path(decision, evidence);
+
+  EXPECT_FALSE(decision.allow_lan_fast_start);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::overlay_route);
+  EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_VIRTUAL);
+  EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_UDP_TUNNEL);
+  EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_VPN_OVERLAY);
+  EXPECT_STREQ(decision.reason, "client-virtual-overlay");
+  EXPECT_EQ(session_runtime::transport_route_name(path.route), "overlay-route");
+  EXPECT_EQ(path.observed_egress_kind, LI_SESSION_PATH_EGRESS_VIRTUAL);
 }
 
 TEST(SessionRuntimeTests, HostPublicIdentityCandidatesAcceptOnlyUniquePublicIpv4) {
@@ -1053,8 +1111,58 @@ TEST(SessionRuntimeTests, HairpinPortForwardUsesElevenOClockRouterBaseline) {
   EXPECT_STREQ(policy.reason, "router-port-forward-safe");
 }
 
-TEST(SessionRuntimeTests, RuntimeProfileResolutionReconfigDisabledForStreamQualityRecovery) {
-  EXPECT_FALSE(session_runtime::runtime_profile_resolution_reconfig_enabled());
+TEST(SessionRuntimeTests, RouterPortForwardFreshLowLatencyPreflightAllowsRequestedHighRefreshStartup) {
+  session_runtime::startup_path_decision_t decision {
+    .route = session_runtime::transport_route_e::manual_public_port_forward,
+    .allow_lan_fast_start = false,
+    .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+    .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+    .reason = "router-snat-port-forward",
+  };
+  session_runtime::startup_path_evidence_t evidence {
+    .preflight_available = true,
+    .preflight_observed_peer_endpoint = "192.168.100.1:53000",
+    .preflight_host_local_endpoint = "192.168.100.133:57989",
+    .preflight_target_endpoint = "home.example.net:57989",
+    .preflight_rtt_ms = 18,
+    .preflight_age_ms = 250,
+  };
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150, &evidence);
+
+  EXPECT_EQ(policy.bitrate_seed_kbps, 0);
+  EXPECT_EQ(policy.fps_cap, 150);
+  EXPECT_TRUE(policy.allow_preflight_startup_lift);
+  EXPECT_STREQ(policy.reason, "router-port-forward-preflight-fast");
+}
+
+TEST(SessionRuntimeTests, RouterPortForwardFreshUsablePreflightStartsAboveLegacySixty) {
+  session_runtime::startup_path_decision_t decision {
+    .route = session_runtime::transport_route_e::manual_public_port_forward,
+    .allow_lan_fast_start = false,
+    .path_identity_kind = LI_SESSION_PATH_IDENTITY_ROUTER_PORT_FORWARD,
+    .startup_class = LI_SESSION_STARTUP_CLASS_REMOTE_SAFE,
+    .reason = "router-snat-port-forward",
+  };
+  session_runtime::startup_path_evidence_t evidence {
+    .preflight_available = true,
+    .preflight_observed_peer_endpoint = "203.0.113.7:53000",
+    .preflight_host_local_endpoint = "192.168.100.133:57989",
+    .preflight_target_endpoint = "home.example.net:57989",
+    .preflight_rtt_ms = 52,
+    .preflight_age_ms = 1000,
+  };
+
+  const auto policy = session_runtime::startup_ceiling_policy_for_path(decision, 150, &evidence);
+
+  EXPECT_EQ(policy.bitrate_seed_kbps, 0);
+  EXPECT_EQ(policy.fps_cap, 120);
+  EXPECT_TRUE(policy.allow_preflight_startup_lift);
+  EXPECT_STREQ(policy.reason, "router-port-forward-preflight-usable");
+}
+
+TEST(SessionRuntimeTests, RuntimeProfileResolutionReconfigEnabledForConstrainedHighMotionRecovery) {
+  EXPECT_TRUE(session_runtime::runtime_profile_resolution_reconfig_enabled());
 }
 
 TEST(SessionRuntimeTests, NackRtxHistorySelectsOnlyUsefulMissingPackets) {
@@ -1235,7 +1343,7 @@ TEST(SessionRuntimeTests, StartupPathPrivateOverlayUsesRemoteSafeWithoutTunnelRi
   const auto decision = session_runtime::classify_startup_path(evidence);
 
   EXPECT_FALSE(decision.allow_lan_fast_start);
-  EXPECT_EQ(decision.route, session_runtime::transport_route_e::manual_public_port_forward);
+  EXPECT_EQ(decision.route, session_runtime::transport_route_e::overlay_route);
   EXPECT_EQ(decision.egress_kind, LI_SESSION_PATH_EGRESS_PHYSICAL);
   EXPECT_EQ(decision.encapsulation, LI_SESSION_PATH_ENCAPSULATION_NATIVE_IP);
   EXPECT_EQ(decision.path_identity_kind, LI_SESSION_PATH_IDENTITY_VPN_OVERLAY);
