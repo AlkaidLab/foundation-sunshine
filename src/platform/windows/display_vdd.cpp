@@ -266,18 +266,18 @@ namespace platf::dxgi {
   // against the DXGI output's reported size. Then opens the shared texture
   // on the same D3D11 device as display_base_t to avoid cross-device copies.
 
-  // Probes Global\ZakoVDD_Meta_<i> for valid producers and returns:
-  //   1) the index whose Width/Height exactly match target, or
-  //   2) if no exact match exists but exactly one valid producer is present,
-  //      that single producer's index (lets us start streaming and rely on
-  //      vdd_capture_t::next_frame() to issue capture_e::reinit once the
-  //      producer publishes new dimensions matching the requested mode), or
-  //   3) -1 when no producer is reachable.
-  static int
-  resolve_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe = 16) {
+  struct vdd_probe_result_t {
     int exact = -1;
     int only_valid = -1;
     int valid_count = 0;
+    unsigned int only_valid_width = 0;
+    unsigned int only_valid_height = 0;
+  };
+
+  static vdd_probe_result_t
+  probe_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe) {
+    vdd_probe_result_t result;
+
     for (unsigned int i = 0; i < max_probe; ++i) {
       std::wstring meta_name = L"Global\\ZakoVDD_Meta_" + std::to_wstring(i);
       HANDLE h = OpenFileMappingW(FILE_MAP_READ, FALSE, meta_name.c_str());
@@ -296,34 +296,64 @@ namespace platf::dxgi {
       UnmapViewOfFile(p);
       CloseHandle(h);
       if (!valid) continue;
-      BOOST_LOG(info) << "[vdd] probe meta_"sv << i
-                      << ": "sv << mw << "x"sv << mh
-                      << " fmt="sv << mfmt << " hdr="sv << mhdr;
-      ++valid_count;
-      only_valid = static_cast<int>(i);
-      if (exact < 0 && mw == target_w && mh == target_h) {
-        exact = static_cast<int>(i);
+      BOOST_LOG(debug) << "[vdd] probe meta_"sv << i
+                       << ": "sv << mw << "x"sv << mh
+                       << " fmt="sv << mfmt << " hdr="sv << mhdr;
+      ++result.valid_count;
+      result.only_valid = static_cast<int>(i);
+      result.only_valid_width = mw;
+      result.only_valid_height = mh;
+      if (result.exact < 0 && mw == target_w && mh == target_h) {
+        result.exact = static_cast<int>(i);
       }
     }
-    if (exact >= 0) {
-      BOOST_LOG(info) << "[vdd] resolved monitor index "sv << exact
-                      << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
-      return exact;
+
+    return result;
+  }
+
+  // Probes Global\ZakoVDD_Meta_<i> for valid producers and returns the index
+  // whose Width/Height exactly match target. A stale sole producer is not safe:
+  // the encoder and capture surfaces are already sized for the requested mode,
+  // so opening a mismatched producer can spin the stream in a reinit loop.
+  static int
+  resolve_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe = 16) {
+    constexpr auto retry_window = 2500ms;
+    constexpr auto retry_delay = 100ms;
+
+    vdd_probe_result_t last_result;
+    const auto deadline = std::chrono::steady_clock::now() + retry_window;
+
+    for (;;) {
+      last_result = probe_vdd_monitor_index(target_w, target_h, max_probe);
+      if (last_result.exact >= 0) {
+        BOOST_LOG(info) << "[vdd] resolved monitor index "sv << last_result.exact
+                        << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
+        return last_result.exact;
+      }
+
+      if (std::chrono::steady_clock::now() >= deadline) {
+        break;
+      }
+
+      std::this_thread::sleep_for(retry_delay);
     }
-    if (valid_count == 1 && only_valid >= 0) {
-      BOOST_LOG(info) << "[vdd] no exact match for "sv << target_w << "x"sv << target_h
-                      << "; falling back to sole producer monitor "sv << only_valid
-                      << " (will reinit when producer publishes target mode)"sv;
-      return only_valid;
-    }
-    if (valid_count == 0) {
+
+    if (last_result.valid_count == 0) {
       BOOST_LOG(warning) << "[vdd] no valid VDD producer found (no Meta_* mappings). "sv
                          << "Is the ZakoVDD driver installed and running?"sv;
-    } else {
-      BOOST_LOG(warning) << "[vdd] "sv << valid_count
+    }
+    else if (last_result.valid_count == 1 && last_result.only_valid >= 0) {
+      BOOST_LOG(warning) << "[vdd] sole VDD producer monitor "sv << last_result.only_valid
+                         << " is "sv << last_result.only_valid_width
+                         << "x"sv << last_result.only_valid_height
+                         << ", but requested "sv << target_w << "x"sv << target_h
+                         << "; refusing stale producer to avoid black screen/reinit loop."sv;
+    }
+    else {
+      BOOST_LOG(warning) << "[vdd] "sv << last_result.valid_count
                          << " VDD producers present but none match "sv
                          << target_w << "x"sv << target_h
-                         << " and ambiguity prevents fallback."sv;
+                         << "."sv;
     }
     return -1;
   }
