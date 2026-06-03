@@ -353,7 +353,20 @@ namespace display_device {
         return false;
       }
 
-      persist_hardware_cursor_setting(false);
+      bool persisted = false;
+      for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
+        if (persist_hardware_cursor_setting(false)) {
+          persisted = true;
+          break;
+        }
+
+        std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
+      }
+
+      if (!persisted) {
+        BOOST_LOG(error) << "VDD HardwareCursor disabled in driver, but failed to persist vdd_settings.xml";
+        return false;
+      }
 
       if (changed) {
         *changed = true;
