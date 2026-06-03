@@ -417,18 +417,18 @@ namespace config {
     },  // qsv
 
     {
-      (int) amd::usage_h264_e::ultralowlatency,  // usage (h264)
-      (int) amd::usage_hevc_e::ultralowlatency,  // usage (hevc)
-      (int) amd::usage_av1_e::ultralowlatency,  // usage (av1)
-      (int) amd::rc_h264_e::vbr_latency,  // rate control (h264)
-      (int) amd::rc_hevc_e::vbr_latency,  // rate control (hevc)
-      (int) amd::rc_av1_e::vbr_latency,  // rate control (av1)
-      0,  // enforce_hrd
-      (int) amd::quality_h264_e::balanced,  // quality (h264)
-      (int) amd::quality_hevc_e::balanced,  // quality (hevc)
-      (int) amd::quality_av1_e::balanced,  // quality (av1)
-      0,  // preanalysis
-      1,  // vbaq
+      std::nullopt,  // usage (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (h264): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (hevc): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (av1): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // enforce_hrd: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // quality (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // preanalysis: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // vbaq: unset by default, matching FFmpeg amfenc
       (int) amd::coder_e::_auto,  // coder
       23,  // qvbr_quality (1-51, default 23)
     },  // amd
@@ -1210,9 +1210,18 @@ namespace config {
     adjust_usage_for_hq_rc(video.amd.amd_rc_hevc, video.amd.amd_usage_hevc, 1, 5, "HEVC");
     adjust_usage_for_hq_rc(video.amd.amd_rc_av1, video.amd.amd_usage_av1, 2, 5, "AV1");
 
-    bool_f(vars, "amd_preanalysis", (bool &) video.amd.amd_preanalysis);
-    bool_f(vars, "amd_vbaq", (bool &) video.amd.amd_vbaq);
-    bool_f(vars, "amd_enforce_hrd", (bool &) video.amd.amd_enforce_hrd);
+    int_f(vars, "amd_preanalysis", video.amd.amd_preanalysis, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_vbaq", video.amd.amd_vbaq, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_enforce_hrd", video.amd.amd_enforce_hrd, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });

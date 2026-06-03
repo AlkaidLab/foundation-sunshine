@@ -130,6 +130,10 @@ namespace amf {
     const video::sunshine_colorspace_t &colorspace) {
     auto bitrate = static_cast<int64_t>(client_config.bitrate) * 1000;
     auto framerate = AMFConstructRate(client_config.framerate, 1);
+    // Match FFmpeg's default AMF path: set only target bitrate unless the user
+    // explicitly selects a rate-control mode. In that opt-in path, keep the
+    // legacy Sunshine peak/VBV constraints paired with the selected RC mode.
+    user_configured_rate_control = config.rc_mode.has_value();
 
     if (video_format == 0) {
       // H.264
@@ -137,10 +141,11 @@ namespace amf {
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_FILLER_DATA_ENABLE, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, (amf_int64) 0);
       encoder->SetProperty(AMF_VIDEO_ENCODER_DE_BLOCKING_FILTER, true);
@@ -216,10 +221,11 @@ namespace amf {
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FILLER_DATA_ENABLE, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
       // Match FFmpeg hevc_amf default behavior (-g -1 -> AMF default GOP size 60).
@@ -287,10 +293,11 @@ namespace amf {
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FILLER_DATA, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) 0);
@@ -1042,18 +1049,24 @@ namespace amf {
 
     if (video_format == 0) {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      }
     }
     else if (video_format == 1) {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      }
     }
     else {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      }
     }
 
     if (res == AMF_OK) {

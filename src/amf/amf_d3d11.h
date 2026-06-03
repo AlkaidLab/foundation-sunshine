@@ -118,6 +118,7 @@ namespace amf {
     // below that to leave headroom for VCN stalls and DXGI scheduling jitter.
     int hwsurfaces_in_queue = 0;
     static constexpr int HWSURFACES_IN_QUEUE_MAX = 16;
+    bool user_configured_rate_control = false;
 
     // Statistics feedback state
     bool statistics_enabled = false;

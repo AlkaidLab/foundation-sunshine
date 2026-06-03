@@ -3,6 +3,7 @@
  * @brief Definitions for handling video ram.
  */
 #include <cmath>
+#include <optional>
 
 #include <d3dcompiler.h>
 #include <directxmath.h>
@@ -41,6 +42,15 @@ free_frame(AVFrame *frame) {
 using frame_t = util::safe_ptr<AVFrame, free_frame>;
 
 namespace platf::dxgi {
+  namespace {
+    // AMF QUALITY_VBR is 4 for H.264, HEVC, and AV1 in the bundled SDK.
+    constexpr auto quality_vbr_rate_control = 4;
+
+    bool
+    is_quality_vbr_rate_control(const std::optional<int> &rc_mode) {
+      return rc_mode && *rc_mode == quality_vbr_rate_control;
+    }
+  }  // namespace
 
   template <class T>
   buf_t
@@ -2079,16 +2089,25 @@ namespace platf::dxgi {
         amf_cfg.usage = config::video.amd.amd_usage_h264;
         amf_cfg.quality_preset = config::video.amd.amd_quality_h264;
         amf_cfg.rc_mode = config::video.amd.amd_rc_h264;
+        if (is_quality_vbr_rate_control(amf_cfg.rc_mode)) {
+          amf_cfg.qvbr_quality_level = config::video.amd.amd_qvbr_quality;
+        }
       }
       else if (client_config.videoFormat == 1) {
         amf_cfg.usage = config::video.amd.amd_usage_hevc;
         amf_cfg.quality_preset = config::video.amd.amd_quality_hevc;
         amf_cfg.rc_mode = config::video.amd.amd_rc_hevc;
+        if (is_quality_vbr_rate_control(amf_cfg.rc_mode)) {
+          amf_cfg.qvbr_quality_level = config::video.amd.amd_qvbr_quality;
+        }
       }
       else {
         amf_cfg.usage = config::video.amd.amd_usage_av1;
         amf_cfg.quality_preset = config::video.amd.amd_quality_av1;
         amf_cfg.rc_mode = config::video.amd.amd_rc_av1;
+        if (is_quality_vbr_rate_control(amf_cfg.rc_mode)) {
+          amf_cfg.qvbr_quality_level = config::video.amd.amd_qvbr_quality;
+        }
       }
 
       amf_cfg.preanalysis = config::video.amd.amd_preanalysis;
@@ -2096,7 +2115,6 @@ namespace platf::dxgi {
       amf_cfg.enforce_hrd = config::video.amd.amd_enforce_hrd;
       amf_cfg.h264_cabac = (config::video.amd.amd_coder != 2);  // 2 = CAVLC
       amf_cfg.max_ltr_frames = config::video.amd.amd_ltr_frames;
-      amf_cfg.qvbr_quality_level = config::video.amd.amd_qvbr_quality;
 
       // Pre-Analysis sub-system defaults: enable PAQ + TAQ for better quality at same bitrate
       if (amf_cfg.preanalysis && *amf_cfg.preanalysis) {

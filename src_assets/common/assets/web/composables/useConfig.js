@@ -162,12 +162,12 @@ const DEFAULT_TABS = [
         id: 'amd',
         name: 'AMD AMF Encoder',
         options: {
-          amd_usage: 'ultralowlatency',
-          amd_rc: 'vbr_latency',
-          amd_enforce_hrd: 'disabled',
-          amd_quality: 'balanced',
-          amd_preanalysis: 'disabled',
-          amd_vbaq: 'enabled',
+          amd_usage: '',
+          amd_rc: '',
+          amd_enforce_hrd: '',
+          amd_quality: '',
+          amd_preanalysis: '',
+          amd_vbaq: '',
           amd_coder: 'auto',
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting

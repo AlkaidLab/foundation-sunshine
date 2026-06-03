@@ -12,6 +12,7 @@ const config = ref(props.config)
     <div class="mb-3">
       <label for="amd_usage" class="form-label">{{ $t('config.amd_usage') }}</label>
       <select id="amd_usage" class="form-select" v-model="config.amd_usage">
+        <option value="">{{ $t('config.amd_driver_default') }}</option>
         <option value="transcoding">{{ $t('config.amd_usage_transcoding') }}</option>
         <option value="webcam">{{ $t('config.amd_usage_webcam') }}</option>
         <option value="lowlatency_high_quality">{{ $t('config.amd_usage_lowlatency_high_quality') }}</option>
@@ -44,6 +45,7 @@ const config = ref(props.config)
             <div class="mb-3">
               <label for="amd_rc" class="form-label">{{ $t('config.amd_rc') }}</label>
               <select id="amd_rc" class="form-select" v-model="config.amd_rc">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
                 <option value="cbr">{{ $t('config.amd_rc_cbr') }}</option>
                 <option value="cqp">{{ $t('config.amd_rc_cqp') }}</option>
                 <option value="vbr_latency">{{ $t('config.amd_rc_vbr_latency') }}</option>
@@ -59,8 +61,9 @@ const config = ref(props.config)
             <div class="mb-3">
               <label for="amd_enforce_hrd" class="form-label">{{ $t('config.amd_enforce_hrd') }}</label>
               <select id="amd_enforce_hrd" class="form-select" v-model="config.amd_enforce_hrd">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
                 <option value="enabled">{{ $t('_common.enabled') }}</option>
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_enforce_hrd_desc') }}</div>
             </div>
@@ -109,6 +112,7 @@ const config = ref(props.config)
             <div class="mb-3">
               <label for="amd_quality" class="form-label">{{ $t('config.amd_quality') }}</label>
               <select id="amd_quality" class="form-select" v-model="config.amd_quality">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
                 <option value="speed">{{ $t('config.amd_quality_speed') }}</option>
                 <option value="balanced">{{ $t('config.amd_quality_balanced') }}</option>
                 <option value="quality">{{ $t('config.amd_quality_quality') }}</option>
@@ -120,7 +124,8 @@ const config = ref(props.config)
             <div class="mb-3">
               <label for="amd_preanalysis" class="form-label">{{ $t('config.amd_preanalysis') }}</label>
               <select id="amd_preanalysis" class="form-select" v-model="config.amd_preanalysis">
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
                 <option value="enabled">{{ $t('_common.enabled') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_preanalysis_desc') }}</div>
@@ -130,8 +135,9 @@ const config = ref(props.config)
             <div class="mb-3">
               <label for="amd_vbaq" class="form-label">{{ $t('config.amd_vbaq') }}</label>
               <select id="amd_vbaq" class="form-select" v-model="config.amd_vbaq">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
                 <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_vbaq_desc') }}</div>
             </div>
