@@ -4,10 +4,13 @@
  */
 // standard includes
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bitset>
 #include <functional>
 #include <list>
+#include <limits>
+#include <optional>
 #include <thread>
 
 #include <boost/pointer_cast.hpp>
@@ -348,6 +351,34 @@ namespace video {
     ASYNC_TEARDOWN = 1 << 11,  ///< Encoder supports async teardown on a different thread
   };
 
+  class frame_timestamp_ring_t {
+  public:
+    void
+    store(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> timestamp) {
+      auto &entry = entries[frame_index % entries.size()];
+      entry.frame_index = frame_index;
+      entry.timestamp = timestamp;
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    lookup(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      if (entry.frame_index != frame_index) {
+        return std::nullopt;
+      }
+      return entry.timestamp;
+    }
+
+  private:
+    // Encoder output can lag submission; keep recent capture timestamps without heap churn.
+    struct entry_t {
+      uint64_t frame_index = std::numeric_limits<uint64_t>::max();
+      std::optional<std::chrono::steady_clock::time_point> timestamp;
+    };
+
+    std::array<entry_t, 256> entries {};
+  };
+
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
@@ -373,6 +404,7 @@ namespace video {
       device = std::move(other.device);
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
+      frame_timestamps = std::move(other.frame_timestamps);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -486,6 +518,7 @@ namespace video {
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
     std::vector<packet_raw_t::replace_t> replacements;
+    frame_timestamp_ring_t frame_timestamps;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -602,8 +635,19 @@ namespace video {
       return result;
     }
 
+    void
+    track_frame_timestamp(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+      frame_timestamps.store(frame_index, frame_timestamp);
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    resolve_frame_timestamp(uint64_t frame_index) const {
+      return frame_timestamps.lookup(frame_index);
+    }
+
   private:
     std::unique_ptr<platf::nvenc_encode_device_t> device;
+    frame_timestamp_ring_t frame_timestamps;
     bool force_idr = false;
   };
 
@@ -675,8 +719,19 @@ namespace video {
       return result;
     }
 
+    void
+    track_frame_timestamp(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+      frame_timestamps.store(frame_index, frame_timestamp);
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    resolve_frame_timestamp(uint64_t frame_index) const {
+      return frame_timestamps.lookup(frame_index);
+    }
+
   private:
     std::unique_ptr<platf::amf_encode_device_t> device;
+    frame_timestamp_ring_t frame_timestamps;
     bool force_idr = false;
   };
 
@@ -1793,6 +1848,9 @@ namespace video {
 
   int
   encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    session.frame_timestamps.store(submitted_frame_index, frame_timestamp);
+
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
 
@@ -1873,8 +1931,8 @@ namespace video {
           std::string_view((char *) std::begin(sps._new), sps._new.size()));
       }
 
-      if (av_packet && av_packet->pts == frame_nr) {
-        packet->frame_timestamp = frame_timestamp;
+      if (av_packet && av_packet->pts >= 0) {
+        packet->frame_timestamp = session.frame_timestamps.lookup(static_cast<uint64_t>(av_packet->pts));
       }
 
       packet->replacements = &session.replacements;
@@ -1887,6 +1945,9 @@ namespace video {
 
   int
   encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp);
+
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
       // Empty data with valid frame_index means encoder needs more input (NV_ENC_ERR_NEED_MORE_INPUT).
@@ -1906,7 +1967,7 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
-    packet->frame_timestamp = frame_timestamp;
+    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
     packets->raise(std::move(packet));
 
     return 0;
@@ -1914,6 +1975,9 @@ namespace video {
 
   int
   encode_amf(int64_t frame_nr, amf_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp);
+
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.fatal) {
       // Encoder is in unrecoverable state (device lost or repeated failures);
@@ -1943,7 +2007,7 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
-    packet->frame_timestamp = frame_timestamp;
+    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
     packets->raise(std::move(packet));
 
     return 0;
