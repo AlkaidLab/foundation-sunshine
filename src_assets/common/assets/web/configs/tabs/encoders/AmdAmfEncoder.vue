@@ -196,6 +196,7 @@ const config = ref(props.config)
               @click="
                 config.amd_high_motion_qb = '';
                 config.amd_lowlatency_mode = '';
+                config.amd_multi_hw_instance = '';
                 config.amd_input_queue_size = '';
                 config.amd_av1_latency_mode = '';
               "
@@ -223,6 +224,17 @@ const config = ref(props.config)
                 <option value="disabled">{{ $t('_common.disabled') }}</option>
               </select>
               <div class="form-text">{{ $t('config.amd_lowlatency_mode_desc') }}</div>
+            </div>
+
+            <!-- Multi-HW Instance Encode -->
+            <div class="mb-3">
+              <label for="amd_multi_hw_instance" class="form-label">{{ $t('config.amd_multi_hw_instance') }}</label>
+              <select id="amd_multi_hw_instance" class="form-select" v-model="config.amd_multi_hw_instance">
+                <option value="">{{ $t('config.amd_driver_default') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.amd_multi_hw_instance_desc') }}</div>
             </div>
 
             <!-- Input Queue Size -->

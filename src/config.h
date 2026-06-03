@@ -75,6 +75,7 @@ namespace config {
       int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
       int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
+      std::optional<bool> amd_multi_hw_instance;
       // The properties below historically had aggressive hardcoded defaults that
       // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
       // INPUT_QUEUE_SIZE=1, LOWLATENCY_MODE=on, AV1 LOWEST_LATENCY). Those paths

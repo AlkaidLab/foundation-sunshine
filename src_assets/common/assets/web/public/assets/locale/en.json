@@ -198,6 +198,8 @@
     "amd_input_queue_size_desc": "Frames the encoder may buffer internally (1-16). Leave blank for driver default (FFmpeg uses 16). Sunshine's legacy value was 1 for minimum latency. Lower = lower latency, higher = more stable.",
     "amd_lowlatency_mode": "AMF Low Latency Mode",
     "amd_lowlatency_mode_desc": "AMD VCN low-latency code path. Leave blank to use the driver default. 'Enabled' was the legacy Sunshine behavior and minimizes latency; 'Disabled' if you hit driver freezes (RX 9070 / RDNA4 H.264/HEVC).",
+    "amd_multi_hw_instance": "AMF Multi-HW Instance Encode",
+    "amd_multi_hw_instance_desc": "Opt-in AMD multi hardware encoder path. Leave blank for driver default. On HEVC/AV1 this enables multi-HW instance encode and Smart Access Video when supported; on H.264 only Smart Access Video is available.",
     "amd_preanalysis": "AMF Preanalysis",
     "amd_preanalysis_desc": "This enables rate-control preanalysis, which may increase quality at the expense of increased encoding latency.",
     "amd_quality": "AMF Quality",

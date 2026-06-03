@@ -135,6 +135,41 @@ namespace amf {
     // legacy Sunshine peak/VBV constraints paired with the selected RC mode.
     user_configured_rate_control = config.rc_mode.has_value();
 
+    auto configure_multi_hw_instance = [&](const wchar_t *multi_hw_property,
+                                           const wchar_t *sav_property,
+                                           const wchar_t *hw_instances_cap,
+                                           const wchar_t *sav_support_cap) {
+      if (!config.multi_hw_instance_encode) return;
+
+      const bool enabled = *config.multi_hw_instance_encode;
+      amf_int64 hw_instances = 0;
+      const bool hw_cap_known = hw_instances_cap && encoder->GetProperty(hw_instances_cap, &hw_instances) == AMF_OK;
+      amf_bool sav_supported = false;
+      const bool sav_cap_known = sav_support_cap && encoder->GetProperty(sav_support_cap, &sav_supported) == AMF_OK;
+
+      auto set_optional_property = [&](const wchar_t *property, bool value, const char *label) {
+        if (!property) return;
+        auto property_res = encoder->SetProperty(property, value);
+        if (property_res != AMF_OK) {
+          BOOST_LOG(warning) << "AMF: failed to " << (value ? "enable " : "disable ")
+                             << label << ", error: " << property_res;
+        }
+      };
+
+      if (enabled && hw_cap_known && hw_instances <= 1 && (!sav_property || (sav_cap_known && !sav_supported))) {
+        BOOST_LOG(info) << "AMF: multi-HW instance encode requested, but this codec reports "
+                        << hw_instances << " hardware encoder instance(s)";
+        return;
+      }
+
+      if (!enabled || !hw_cap_known || hw_instances > 1) {
+        set_optional_property(multi_hw_property, enabled, "multi-HW instance encode");
+      }
+      if (!enabled || !sav_cap_known || sav_supported) {
+        set_optional_property(sav_property, enabled, "Smart Access Video");
+      }
+    };
+
     if (video_format == 0) {
       // H.264
       if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_USAGE, (amf_int64) *config.usage);
@@ -159,6 +194,11 @@ namespace amf {
       // bugs (see AlkaidLab/foundation-sunshine#666 freeze on RDNA4 26.5.x).
       if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        nullptr,
+        AMF_VIDEO_ENCODER_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1);
 
       // LTR for RFI (Reference Frame Invalidation, weak-network recovery).
@@ -239,6 +279,11 @@ namespace amf {
       // See H.264 block above for rationale (FFmpeg-aligned default behavior).
       if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        AMF_VIDEO_ENCODER_HEVC_MULTI_HW_INSTANCE_ENCODE,
+        AMF_VIDEO_ENCODER_HEVC_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_HEVC_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_HEVC_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 1);
 
       if (colorspace.bit_depth == 10) {
@@ -307,6 +352,11 @@ namespace amf {
       // See AlkaidLab/foundation-sunshine#666 for the RDNA4 freeze that
       // motivated stopping aggressive defaults.
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        AMF_VIDEO_ENCODER_AV1_MULTI_HW_INSTANCE_ENCODE,
+        AMF_VIDEO_ENCODER_AV1_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_AV1_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_AV1_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 1);
       if (config.av1_encoding_latency_mode) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode);
@@ -575,6 +625,9 @@ namespace amf {
       res = encoder->Init(amf_format, client_config.width, client_config.height);
     };
 
+    if (config.multi_hw_instance_encode && *config.multi_hw_instance_encode) {
+      try_with_fallback("multi-HW instance encode", [](amf_config &c) { c.multi_hw_instance_encode = std::nullopt; });
+    }
     if (config.preanalysis && *config.preanalysis) {
       try_with_fallback("PreAnalysis", [](amf_config &c) { c.preanalysis = false; });
     }

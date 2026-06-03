@@ -83,6 +83,12 @@ namespace amf {
     // For QVBR rate control mode: quality level 1-51 (lower=better)
     std::optional<int> qvbr_quality_level;
 
+    // --- Multi-HW instance encode / Smart Access Video ---
+    // Default nullopt = do not set the property, let the driver decide.
+    // H.264 exposes only Smart Access Video; HEVC/AV1 expose both SAV and
+    // explicit multi-HW instance encode properties.
+    std::optional<bool> multi_hw_instance_encode;
+
     // --- AV1 Encoding Latency Mode ---
     // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_ENUM: 0=none, 1=power saving RT, 2=RT, 3=lowest latency
     std::optional<int> av1_encoding_latency_mode;

@@ -198,6 +198,8 @@
     "amd_input_queue_size_desc": "编码器内部可缓冲的帧数（1-16）。留空使用驱动默认（FFmpeg 为 16）。Sunshine 旧值为 1 以最小化延迟。值越小延迟越低，值越大越稳定。",
     "amd_lowlatency_mode": "AMF 低延迟模式",
     "amd_lowlatency_mode_desc": "AMD VCN 低延迟代码路径。留空使用驱动默认。'启用' 为 Sunshine 旧行为，能将延迟降至最低；遇到驱动卡死（RX 9070 / RDNA4 H.264/HEVC）可选 '禁用'。",
+    "amd_multi_hw_instance": "AMF 多硬件实例编码",
+    "amd_multi_hw_instance_desc": "可选启用 AMD 多硬件编码器路径。留空使用驱动默认。HEVC/AV1 会在支持时启用 multi-HW instance encode 和 Smart Access Video；H.264 仅支持 Smart Access Video。",
     "amd_preanalysis": "AMF 预分析",
     "amd_preanalysis_desc": "启用码率控制预分析，可能会以增加编码延迟为代价提高质量。",
     "amd_quality": "AMF 质量",

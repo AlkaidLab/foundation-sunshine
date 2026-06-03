@@ -174,6 +174,7 @@ const DEFAULT_TABS = [
           // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).
           amd_high_motion_qb: '',
           amd_lowlatency_mode: '',
+          amd_multi_hw_instance: '',
           amd_input_queue_size: '',
           amd_av1_latency_mode: '',
         },

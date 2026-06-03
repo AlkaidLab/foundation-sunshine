@@ -2136,6 +2136,7 @@ namespace platf::dxgi {
       // do not SetProperty, driver picks the default code path.
       amf_cfg.lowlatency_mode = config::video.amd.amd_lowlatency_mode;
       amf_cfg.input_queue_size = config::video.amd.amd_input_queue_size;
+      amf_cfg.multi_hw_instance_encode = config::video.amd.amd_multi_hw_instance;
       amf_cfg.av1_encoding_latency_mode = config::video.amd.amd_av1_latency_mode;
 
       // Apply server-side slices per frame override if configured
