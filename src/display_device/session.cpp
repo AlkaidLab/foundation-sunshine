@@ -201,6 +201,23 @@ namespace display_device {
       return {};
     }
 
+    parsed_config_t::device_prep_e
+    get_effective_device_prep(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+      const auto configured_device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
+      const auto custom_screen_mode = static_cast<parsed_config_t::device_prep_e>(session.custom_screen_mode);
+
+      switch (custom_screen_mode) {
+        case parsed_config_t::device_prep_e::no_operation:
+        case parsed_config_t::device_prep_e::ensure_active:
+        case parsed_config_t::device_prep_e::ensure_primary:
+        case parsed_config_t::device_prep_e::ensure_only_display:
+        case parsed_config_t::device_prep_e::ensure_secondary:
+          return custom_screen_mode;
+        default:
+          return configured_device_prep;
+      }
+    }
+
     /**
      * @brief Wait for VDD device to be available (active or inactive).
      * @param device_zako Output parameter for the device ID.
@@ -361,6 +378,14 @@ namespace display_device {
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+    const auto effective_device_prep = get_effective_device_prep(config, session);
+    const bool vdd_will_turn_off_physical_displays =
+      will_use_vdd &&
+      parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
+
+    if (vdd_will_turn_off_physical_displays) {
+      settings.capture_audio_sink();
+    }
 
     if (will_use_vdd && !vdd_already_exists) {
 
@@ -393,6 +418,10 @@ namespace display_device {
 
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
+      if (vdd_will_turn_off_physical_displays) {
+        settings.release_audio_sink();
+      }
+
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
       return {
@@ -808,6 +837,7 @@ namespace display_device {
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
+      settings.release_audio_sink();
       stop_timer_and_clear_vdd_state();
       return;
     }

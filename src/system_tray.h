@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <string>
+
 /**
  * @brief Handles the system tray icon and notification system.
  */
@@ -102,6 +104,14 @@ namespace system_tray {
    */
   void
   update_tray_require_pin(std::string pin_name);
+
+  /**
+   * @brief Spawns a generic system tray notification.
+   * @param title Notification title
+   * @param message Notification body
+   */
+  void
+  show_notification(const std::string &title, const std::string &message);
   
   /**
    * @brief Initializes and runs the system tray in a separate thread.

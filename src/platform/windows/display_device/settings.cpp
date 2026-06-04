@@ -786,6 +786,26 @@ namespace display_device {
 
   settings_t::~settings_t() = default;
 
+  void
+  settings_t::capture_audio_sink() {
+    if (audio_data) {
+      return;
+    }
+
+    BOOST_LOG(debug) << "Capturing audio sink before changing display";
+    audio_data = std::make_unique<audio_data_t>();
+  }
+
+  void
+  settings_t::release_audio_sink() {
+    if (!audio_data) {
+      return;
+    }
+
+    BOOST_LOG(debug) << "Releasing captured audio sink";
+    audio_data = nullptr;
+  }
+
   bool
   settings_t::is_changing_settings_going_to_fail() const {
     const bool session_locked = w_utils::is_user_session_locked();
@@ -854,7 +874,7 @@ namespace display_device {
           }
 
           if (audio_sink_was_captured && !audio_data) {
-            audio_data = std::make_unique<audio_data_t>();
+            capture_audio_sink();
           }
           return true;
         }, pre_saved_initial_topology);
@@ -967,8 +987,7 @@ namespace display_device {
     if (display_may_change && !audio_data) {
       // It is very likely that in this situation our "current" audio device will be gone, so we
       // want to capture the audio sink immediately and extend the audio session until we revert our changes.
-      BOOST_LOG(debug) << "Capturing audio sink before changing display";
-      audio_data = std::make_unique<audio_data_t>();
+      capture_audio_sink();
     }
 
     const auto result { do_apply_config(config) };
@@ -978,8 +997,7 @@ namespace display_device {
         // without Sunshine restarting, we should clean up, because in this situation
         // we have had to revert the changes that turned off other displays. Thus, extending
         // the session for a display that again exist is pointless.
-        BOOST_LOG(debug) << "Releasing captured audio sink";
-        audio_data = nullptr;
+        release_audio_sink();
       }
 
       if (config.change_hdr_state) {
@@ -1034,10 +1052,7 @@ namespace display_device {
 
       // 释放音频数据
       if (reason != revert_reason_e::topology_switch) {
-        if (audio_data) {
-          BOOST_LOG(debug) << "释放捕获的音频接收器";
-          audio_data = nullptr;
-        }
+        release_audio_sink();
       }
 
       if (success) {
@@ -1057,10 +1072,7 @@ namespace display_device {
     remove_file(filepath);
     persistent_data = nullptr;
 
-    if (audio_data) {
-      BOOST_LOG(debug) << "Releasing captured audio sink";
-      audio_data = nullptr;
-    }
+    release_audio_sink();
   }
 
   bool
