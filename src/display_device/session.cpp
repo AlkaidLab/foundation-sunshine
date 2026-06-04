@@ -342,10 +342,12 @@ namespace display_device {
     
     // 检查是否会使用VDD
     std::string device_id_to_use = config.output_name;
+    bool client_selected_physical_display = false;
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       const std::string client_display_name = it->to_string();
       if (!client_display_name.empty()) {
         device_id_to_use = client_display_name;
+        client_selected_physical_display = !session.use_vdd;
       }
     }
     
@@ -358,7 +360,7 @@ namespace display_device {
     const auto requested_device_id = display_device::find_one_of_the_available_devices(device_id_to_use);
     const bool is_vdd_device = (display_device::get_display_friendly_name(device_id_to_use) == ZAKO_NAME);
     
-    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    const bool needs_vdd = session.use_vdd || (!client_selected_physical_display && requested_device_id.empty()) || is_vdd_device;
     
     // - 如果不需要 VDD：跳过 VDD 相关逻辑
     // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD

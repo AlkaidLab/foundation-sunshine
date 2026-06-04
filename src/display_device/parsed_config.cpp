@@ -605,10 +605,12 @@ namespace display_device {
     
     // 优先使用客户端指定的显示器名称，如果没有则使用全局配置
     std::string device_id_to_use = config.output_name;
+    bool client_selected_physical_display = false;
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       const std::string client_display_name = it->to_string();
       if (!client_display_name.empty()) {
         device_id_to_use = client_display_name;
+        client_selected_physical_display = !session.use_vdd;
         BOOST_LOG(debug) << "使用客户端指定的显示器: " << device_id_to_use;
       }
     }
@@ -659,7 +661,12 @@ namespace display_device {
     // 检查是否需要使用VDD
     const auto requested_device_id = display_device::find_one_of_the_available_devices(parsed_config.device_id);
     const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
-    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    if (client_selected_physical_display && requested_device_id.empty()) {
+      BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到VDD: " << parsed_config.device_id;
+      return boost::none;
+    }
+
+    const bool needs_vdd = session.use_vdd || (!client_selected_physical_display && requested_device_id.empty()) || is_vdd_device;
 
     // 不需要VDD时，使用物理模式映射
     if (!needs_vdd) {
@@ -667,6 +674,13 @@ namespace display_device {
       parsed_config.use_vdd = false;
       parsed_config.device_prep = parsed_config_t::to_physical_device_prep(parsed_config.device_prep);
       parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::no_operation;
+      if (client_selected_physical_display) {
+        BOOST_LOG(info) << "客户端选择物理显示器，保持主机显示设置不变";
+        parsed_config.device_prep = parsed_config_t::device_prep_e::no_operation;
+        parsed_config.resolution = boost::none;
+        parsed_config.refresh_rate = boost::none;
+        parsed_config.change_hdr_state = boost::none;
+      }
       return parsed_config;
     }
 
