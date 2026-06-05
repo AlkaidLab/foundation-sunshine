@@ -206,6 +206,11 @@ namespace display_device {
     }
 
     bool
+    is_exact_refresh_rate(const refresh_rate_t &refresh_rate, unsigned int numerator, unsigned int denominator) {
+      return refresh_rate.numerator == numerator && refresh_rate.denominator == denominator;
+    }
+
+    bool
     all_modes_target_vdd(const device_display_mode_map_t &modes) {
       if (modes.empty()) {
         return false;
@@ -255,7 +260,8 @@ namespace display_device {
       auto candidate_modes = requested_modes;
       bool changed = false;
       for (auto &[_, mode] : candidate_modes) {
-        if (refresh_rate_hz(mode.refresh_rate) > 121.0) {
+        if (!is_exact_refresh_rate(mode.refresh_rate, 120, 1) &&
+            refresh_rate_hz(mode.refresh_rate) >= 119.5) {
           mode.refresh_rate = refresh_rate_t { 120, 1 };
           changed = true;
         }
@@ -267,7 +273,8 @@ namespace display_device {
       candidate_modes = requested_modes;
       changed = false;
       for (auto &[_, mode] : candidate_modes) {
-        if (refresh_rate_hz(mode.refresh_rate) > 61.0) {
+        if (!is_exact_refresh_rate(mode.refresh_rate, 60, 1) &&
+            refresh_rate_hz(mode.refresh_rate) >= 59.5) {
           mode.refresh_rate = refresh_rate_t { 60, 1 };
           changed = true;
         }
