@@ -216,41 +216,72 @@ namespace display_device {
       });
     }
 
-    device_display_mode_map_t
-    with_display_mode(const device_display_mode_map_t &base_modes, const display_mode_t &mode) {
-      device_display_mode_map_t fallback_modes { base_modes };
-      for (auto &[_, fallback_mode] : fallback_modes) {
-        fallback_mode = mode;
+    bool
+    same_display_mode_map(const device_display_mode_map_t &a, const device_display_mode_map_t &b) {
+      if (a.size() != b.size()) {
+        return false;
       }
-      return fallback_modes;
+
+      for (const auto &[device_id, mode] : a) {
+        const auto b_mode = b.find(device_id);
+        if (b_mode == std::end(b) || !same_mode(mode, b_mode->second)) {
+          return false;
+        }
+      }
+
+      return true;
     }
 
-    std::vector<display_mode_t>
+    std::vector<device_display_mode_map_t>
     make_vdd_fallback_modes(const device_display_mode_map_t &requested_modes) {
-      std::vector<display_mode_t> fallback_modes;
+      std::vector<device_display_mode_map_t> fallback_modes;
       if (requested_modes.empty()) {
         return fallback_modes;
       }
 
-      const auto requested_mode = std::begin(requested_modes)->second;
-      const auto add_candidate = [&fallback_modes](const display_mode_t &mode) {
-        const auto existing = std::find_if(std::begin(fallback_modes), std::end(fallback_modes), [&mode](const auto &candidate) {
-          return same_mode(candidate, mode);
+      const auto add_candidate = [&fallback_modes, &requested_modes](const device_display_mode_map_t &modes) {
+        if (same_display_mode_map(modes, requested_modes)) {
+          return;
+        }
+
+        const auto existing = std::find_if(std::begin(fallback_modes), std::end(fallback_modes), [&modes](const auto &candidate) {
+          return same_display_mode_map(candidate, modes);
         });
         if (existing == std::end(fallback_modes)) {
-          fallback_modes.push_back(mode);
+          fallback_modes.push_back(modes);
         }
       };
 
-      const double requested_hz = refresh_rate_hz(requested_mode.refresh_rate);
-      if (requested_hz > 121.0) {
-        add_candidate(display_mode_t { requested_mode.resolution, refresh_rate_t { 120, 1 } });
+      auto candidate_modes = requested_modes;
+      bool changed = false;
+      for (auto &[_, mode] : candidate_modes) {
+        if (refresh_rate_hz(mode.refresh_rate) > 121.0) {
+          mode.refresh_rate = refresh_rate_t { 120, 1 };
+          changed = true;
+        }
       }
-      if (requested_hz > 61.0) {
-        add_candidate(display_mode_t { requested_mode.resolution, refresh_rate_t { 60, 1 } });
+      if (changed) {
+        add_candidate(candidate_modes);
       }
 
-      add_candidate(display_mode_t { resolution_t { 1920, 1080 }, refresh_rate_t { 60, 1 } });
+      candidate_modes = requested_modes;
+      changed = false;
+      for (auto &[_, mode] : candidate_modes) {
+        if (refresh_rate_hz(mode.refresh_rate) > 61.0) {
+          mode.refresh_rate = refresh_rate_t { 60, 1 };
+          changed = true;
+        }
+      }
+      if (changed) {
+        add_candidate(candidate_modes);
+      }
+
+      candidate_modes = requested_modes;
+      for (auto &[_, mode] : candidate_modes) {
+        mode = display_mode_t { resolution_t { 1920, 1080 }, refresh_rate_t { 60, 1 } };
+      }
+      add_candidate(candidate_modes);
+
       return fallback_modes;
     }
 
@@ -279,8 +310,7 @@ namespace display_device {
         }
       }
 
-      for (const auto &fallback_mode : make_vdd_fallback_modes(requested_modes)) {
-        const auto fallback_modes = with_display_mode(requested_modes, fallback_mode);
+      for (const auto &fallback_modes : make_vdd_fallback_modes(requested_modes)) {
         BOOST_LOG(warning) << "Trying VDD display mode fallback: " << to_string(fallback_modes);
         if (set_display_modes(fallback_modes)) {
           BOOST_LOG(warning) << "VDD display mode fallback succeeded. Requested: "
