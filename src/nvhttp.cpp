@@ -934,6 +934,7 @@ namespace nvhttp {
     https_server.resource["^/display-scale-options$"]["GET"] = display_scale::get_options;
     https_server.resource["^/display-scale$"]["POST"] = display_scale::set;
     https_server.resource["^/rotate-display$"]["GET"] = display_control::rotate;
+    https_server.resource["^/set-output$"]["GET"] = display_control::set_output;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
     https_server.resource["^/cancel$"]["GET"] = cancel;

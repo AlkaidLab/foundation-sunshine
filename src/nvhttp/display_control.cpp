@@ -201,4 +201,53 @@ namespace nvhttp::display_control {
     send_response(http_status_from_json(response_json));
   }
 
+  void
+  set_output(resp_https_t response, req_https_t request) {
+    log_request(request);
+
+    json response_json;
+    response_json["status_code"] = 200;
+    response_json["status_message"] = "OK";
+
+    auto send_response = [&](SimpleWeb::StatusCode status_code) {
+      response->write(status_code, response_json.dump(), json_headers());
+      response->close_connection_after_response = true;
+    };
+
+    try {
+      auto args = request->parse_query_string();
+      auto device_id_it = args.find("device_id");
+      std::string device_id = device_id_it != args.end() ? url_utils::decode(device_id_it->second) : std::string {};
+
+      if (device_id.empty()) {
+        response_json["status_code"] = 400;
+        response_json["status_message"] = "Missing device_id parameter";
+        response_json["success"] = false;
+        BOOST_LOG(warning) << "set_output: Missing device_id parameter";
+        send_response(SimpleWeb::StatusCode::client_error_bad_request);
+        return;
+      }
+
+      // Apply in memory so the next stream session captures this display without a
+      // Sunshine restart. display_device::session reads config::video.output_name at
+      // launch (see src/display_device/session.cpp). We intentionally do NOT rewrite
+      // the config file: the selection is per-connection and Moonlight sets it again
+      // each time, which also keeps this patch isolated for easy upstream rebasing.
+      config::video.output_name = device_id;
+      BOOST_LOG(info) << "set_output: capture display set to " << device_id;
+
+      response_json["success"] = true;
+      response_json["output_name"] = device_id;
+      response_json["message"] = "Capture display updated";
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Error setting output display: " << e.what();
+      response_json["status_code"] = 500;
+      response_json["status_message"] = "Internal server error: " + std::string(e.what());
+      response_json["success"] = false;
+    }
+
+    send_response(http_status_from_json(response_json));
+  }
+
 }  // namespace nvhttp::display_control
