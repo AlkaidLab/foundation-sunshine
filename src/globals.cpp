@@ -9,7 +9,6 @@ thread_pool_util::ThreadPool task_pool;
 bool display_cursor = true;
 
 #ifdef _WIN32
-nvprefs::nvprefs_interface nvprefs_instance;
 const std::string VDD_NAME = "ZakoHDR";
 const std::string ZAKO_NAME = "Zako HDR";
 std::string zako_device_id;

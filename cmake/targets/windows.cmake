@@ -6,6 +6,31 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         Windowsapp.lib
         Wtsapi32.lib)
 
+set(NVPREFS_PLUGIN_ID "com.alkaidlab.nvidia-control-panel-optimizer")
+
+add_executable(sunshine-plugin-nvprefs
+        "${CMAKE_SOURCE_DIR}/src/plugins/nvprefs/nvprefs_plugin.cpp"
+        ${NVPREFS_FILES})
+target_link_libraries(sunshine-plugin-nvprefs PRIVATE
+        advapi32
+        nlohmann_json::nlohmann_json
+        libstdc++.a
+        libwinpthread.a)
+target_compile_definitions(sunshine-plugin-nvprefs PRIVATE
+        ${SUNSHINE_DEFINITIONS}
+        SUNSHINE_NVPREFS_STANDALONE)
+target_compile_options(sunshine-plugin-nvprefs PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(sunshine-plugin-nvprefs PROPERTIES
+        CXX_STANDARD 23
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR})
+add_custom_command(TARGET sunshine-plugin-nvprefs POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:sunshine>/assets/plugins/${NVPREFS_PLUGIN_ID}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:sunshine-plugin-nvprefs>" "$<TARGET_FILE_DIR:sunshine>/assets/plugins/${NVPREFS_PLUGIN_ID}/$<TARGET_FILE_NAME:sunshine-plugin-nvprefs>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/src_assets/windows/assets/plugins/${NVPREFS_PLUGIN_ID}/plugin.json" "$<TARGET_FILE_DIR:sunshine>/assets/plugins/${NVPREFS_PLUGIN_ID}/plugin.json"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/src_assets/windows/assets/plugins/${NVPREFS_PLUGIN_ID}/config.schema.json" "$<TARGET_FILE_DIR:sunshine>/assets/plugins/${NVPREFS_PLUGIN_ID}/config.schema.json"
+        VERBATIM)
+
 # GUI build (optional — CI uses pre-built binary from GUI repo releases)
 # For local development: ninja -C build sunshine-control-panel
 find_program(NPM npm)

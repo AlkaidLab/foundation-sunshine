@@ -4,6 +4,9 @@
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+install(TARGETS sunshine-plugin-nvprefs
+        RUNTIME DESTINATION "${SUNSHINE_ASSETS_DIR}/plugins/com.alkaidlab.nvidia-control-panel-optimizer"
+        COMPONENT assets)
 
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
 install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)

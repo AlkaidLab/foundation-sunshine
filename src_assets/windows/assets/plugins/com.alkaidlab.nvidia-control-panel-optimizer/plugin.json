@@ -1,0 +1,59 @@
+{
+  "api_version": 1,
+  "id": "com.alkaidlab.nvidia-control-panel-optimizer",
+  "name": "NVIDIA Control Panel Optimizer",
+  "version": "0.1.0",
+  "min_host_version": "2026.0.0",
+  "package": {
+    "publisher": "AlkaidLab",
+    "channel": "stable",
+    "trust": "official"
+  },
+  "description": "Official Windows lifecycle plugin for NVIDIA Control Panel profile recovery and stream tuning.",
+  "enabled": true,
+  "platforms": ["windows"],
+  "entry": "sunshine-plugin-nvprefs.exe",
+  "slots": [
+    "sunshine.startup.recover",
+    "stream.first_session.starting",
+    "stream.dynamic_params.changed",
+    "stream.last_session.stopping",
+    "sunshine.shutdown.restoring"
+  ],
+  "permissions": [
+    "driver.nvidia-profile",
+    "filesystem.programdata",
+    "stream.context.read"
+  ],
+  "capabilities": [
+    "stream.lifecycle.read",
+    "driver.nvidia-profile.write",
+    "filesystem.programdata.write",
+    "filesystem.plugin-state.write"
+  ],
+  "actions": [
+    {
+      "id": "recover",
+      "title": "Run recovery",
+      "description": "Restore NVIDIA Control Panel profiles from the plugin undo file if one is pending.",
+      "event": "sunshine.startup.recover",
+      "icon": "fa-history",
+      "danger": false
+    }
+  ],
+  "config_schema": "config.schema.json",
+  "default_config": {
+    "opengl_vulkan_on_dxgi": true,
+    "sunshine_high_power_mode": true,
+    "nv_optimize_game": false,
+    "nv_force_vsync": true,
+    "nv_lock_frame_rate": true,
+    "nv_frl_fps_offset": -2,
+    "nv_frl_fps_override": 0,
+    "nv_prefer_max_performance": false,
+    "nv_low_latency_mode": false,
+    "nv_apply_to_base_profile": false,
+    "dynamic_stream_params": false
+  },
+  "timeout_ms": 5000
+}

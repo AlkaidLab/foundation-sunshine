@@ -5,6 +5,8 @@
 #include "process.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <future>
 #include <iomanip>
 #include <queue>
@@ -16,6 +18,7 @@
 #include <boost/atomic.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/endian/arithmetic.hpp>
+#include <boost/endian/conversion.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/mutex.hpp>
@@ -41,6 +44,7 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "plugin.h"
 #include "stream.h"
 #include "sync.h"
 #include "system_tray.h"
@@ -560,6 +564,67 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  nlohmann::json
+  lifecycle_session_context(const session_t &session, bool first_non_control_session, bool last_non_control_session) {
+    nlohmann::json context = {
+      {"session", {
+        {"client_name", session.client_name},
+        {"control_only", session.control_only},
+        {"launch_session_id", session.launch_session_id},
+        {"first_non_control_session", first_non_control_session},
+        {"last_non_control_session", last_non_control_session},
+        {"client_fps", session.config.monitor.framerate},
+      }},
+    };
+
+    if (const auto app_id = proc::proc.running()) {
+      context["app"] = {
+        {"id", app_id},
+        {"name", proc::proc.get_app_name(app_id)},
+        {"cmd", proc::proc.get_app_cmd(app_id)},
+      };
+    }
+    else {
+      context["app"] = nullptr;
+    }
+
+    return context;
+  }
+
+  nlohmann::json
+  dynamic_param_lifecycle_context(const session_t &session, const video::dynamic_param_t &param) {
+    auto context = lifecycle_session_context(session, false, false);
+    context["dynamic_param"] = {
+      {"type", static_cast<int>(param.type)},
+      {"valid", param.valid},
+    };
+
+    if (param.type == video::dynamic_param_type_e::FPS && param.valid) {
+      context["dynamic_param"]["name"] = "fps";
+      context["dynamic_param"]["value"] = param.value.float_value;
+    }
+
+    return context;
+  }
+
+  std::int32_t
+  read_le_i32(std::string_view payload, std::size_t offset = 0) {
+    std::int32_t value = 0;
+    std::memcpy(&value, payload.data() + offset, sizeof(value));
+    return boost::endian::little_to_native(value);
+  }
+
+  float
+  read_le_f32(std::string_view payload, std::size_t offset = 0) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, payload.data() + offset, sizeof(bits));
+    bits = boost::endian::little_to_native(bits);
+
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+  }
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -1466,7 +1531,7 @@ namespace stream {
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      const int param_type = read_le_i32(payload);
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1484,8 +1549,9 @@ namespace stream {
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const auto width = read_le_i32(payload, sizeof(std::int32_t));
+        const auto height = read_le_i32(payload, sizeof(std::int32_t) * 2);
+        handle_resolution_change(session, width, height);
         return;
       }
 
@@ -1498,7 +1564,7 @@ namespace stream {
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        const float new_fps = read_le_f32(payload, sizeof(std::int32_t));
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -1512,6 +1578,8 @@ namespace stream {
         param.value.float_value = new_fps;
         param.valid = true;
         session->video.dynamic_param_change_events->raise(param);
+        plugin::fire_lifecycle_event(plugin::lifecycle_event_e::stream_dynamic_params_changed,
+          dynamic_param_lifecycle_context(*session, param));
         
         BOOST_LOG(info) << "Dynamic FPS change: " << new_fps << " fps";
         return;
@@ -1525,7 +1593,7 @@ namespace stream {
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const int param_value = read_le_i32(payload, sizeof(std::int32_t));
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
@@ -3040,6 +3108,8 @@ namespace stream {
             display_device::session_t::get().restore_state();
           }
 
+          plugin::fire_lifecycle_event(plugin::lifecycle_event_e::stream_last_session_stopping,
+            lifecycle_session_context(session, false, true));
           platf::streaming_will_stop();
         }
         else {
@@ -3136,6 +3206,8 @@ namespace stream {
             BOOST_LOG(info) << "Client " << session.client_name << ": Microphone socket closed (session doesn't require it)";
           }
 
+          plugin::fire_lifecycle_event(plugin::lifecycle_event_e::stream_first_session_starting,
+            lifecycle_session_context(session, true, false));
           platf::streaming_will_start();
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
@@ -3286,8 +3358,15 @@ namespace stream {
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
                             << "': " << effective_param.value.int_value << " Kbps (including FEC)";
           }
+          else if (effective_param.type == video::dynamic_param_type_e::FPS && effective_param.valid) {
+            session_p->config.monitor.framerate = static_cast<int>(effective_param.value.float_value);
+          }
 
           session_p->video.dynamic_param_change_events->raise(effective_param);
+          if (effective_param.type == video::dynamic_param_type_e::FPS && effective_param.valid) {
+            plugin::fire_lifecycle_event(plugin::lifecycle_event_e::stream_dynamic_params_changed,
+              dynamic_param_lifecycle_context(*session_p, effective_param));
+          }
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
                           << "': type=" << (int) effective_param.type;
           return true;

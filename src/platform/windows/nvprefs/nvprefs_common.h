@@ -52,7 +52,18 @@ namespace nvprefs {
   struct nvprefs_options {
     bool opengl_vulkan_on_dxgi = true;
     bool sunshine_high_power_mode = true;
+    bool nv_optimize_game = false;
+    bool nv_force_vsync = true;
+    bool nv_lock_frame_rate = true;
+    int nv_frl_fps_offset = -2;
+    int nv_frl_fps_override = 0;
+    bool nv_prefer_max_performance = false;
+    bool nv_low_latency_mode = false;
+    bool nv_apply_to_base_profile = false;
   };
+
+  void
+  set_nvprefs_options(nvprefs_options options);
 
   nvprefs_options
   get_nvprefs_options();

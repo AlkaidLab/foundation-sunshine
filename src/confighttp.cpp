@@ -51,6 +51,7 @@
 #include "nvhttp.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
+#include "plugin_http.h"
 #include "rtsp.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/to_string.h"
@@ -349,6 +350,11 @@ namespace confighttp {
   void
   getPasswordPage(resp_https_t response, req_https_t request) {
     getHtmlPage(response, request, "password.html");
+  }
+
+  void
+  getPluginsPage(resp_https_t response, req_https_t request) {
+    getHtmlPage(response, request, "plugins.html");
   }
 
   void
@@ -2963,6 +2969,7 @@ namespace confighttp {
     server.resource["^/clients/?$"]["GET"] = getClientsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;
+    server.resource["^/plugins/?$"]["GET"] = getPluginsPage;
     server.resource["^/welcome/?$"]["GET"] = getWelcomePage;
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/pin$"]["POST"] = savePin;
@@ -3011,6 +3018,12 @@ namespace confighttp {
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
+
+    plugin_http::register_routes(server,
+      [](plugin_http::resp_https_t resp, plugin_http::req_https_t req) {
+        return authenticate(std::move(resp), std::move(req));
+      });
+
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
