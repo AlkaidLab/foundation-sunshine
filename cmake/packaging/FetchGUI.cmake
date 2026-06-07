@@ -18,7 +18,8 @@ if(NOT WIN32)
   return()
 endif()
 
-option(FETCH_GUI "Download pre-built GUI from GitHub Releases" ON)
+# Daimhim distribution: web-only management, do not bundle the desktop GUI (sunshine-gui.exe).
+option(FETCH_GUI "Download pre-built GUI from GitHub Releases" OFF)
 
 set(GUI_VERSION "latest" CACHE STRING "Sunshine GUI release tag (or 'latest')")
 set(GUI_REPO "qiin2333/sunshine-control-panel" CACHE STRING "GUI GitHub repository")
