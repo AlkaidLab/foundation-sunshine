@@ -218,7 +218,8 @@ export function useBackground(options = {}) {
     }
   }
 
-  const loadBackground = () => setBackground(getCurrentBackground())
+  // Daimhim distribution: plain web UI, no custom background image (default white).
+  const loadBackground = () => { document.body.style.background = '' }
 
   const saveBackground = async (imageData) => {
     try {

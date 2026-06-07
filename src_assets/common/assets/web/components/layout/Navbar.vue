@@ -22,9 +22,6 @@
               <i :class="['fas', 'fa-fw', item.icon]"></i> {{ $t(item.label) }}
             </a>
           </li>
-          <li class="nav-item">
-            <ThemeToggle />
-          </li>
         </ul>
       </div>
     </div>
@@ -33,7 +30,6 @@
 
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
-import ThemeToggle from '../common/ThemeToggle.vue'
 import { useBackground } from '../../composables/useBackground.js'
 
 // 导航项配置

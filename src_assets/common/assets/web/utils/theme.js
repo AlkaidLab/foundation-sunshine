@@ -1,24 +1,11 @@
 const getStoredTheme = () => localStorage.getItem('theme')
 export const setStoredTheme = (theme) => localStorage.setItem('theme', theme)
 
-export const getPreferredTheme = () => {
-  const storedTheme = getStoredTheme()
-  if (storedTheme) {
-    return storedTheme
-  }
-
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
+// Daimhim distribution: plain web UI with no theme switching — always light (white).
+export const getPreferredTheme = () => 'light'
 
 export const setTheme = (theme) => {
-  if (theme === 'auto') {
-    document.documentElement.setAttribute(
-      'data-bs-theme',
-      window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    )
-  } else {
-    document.documentElement.setAttribute('data-bs-theme', theme)
-  }
+  document.documentElement.setAttribute('data-bs-theme', 'light')
 }
 
 export const showActiveTheme = (theme, focus = false) => {
