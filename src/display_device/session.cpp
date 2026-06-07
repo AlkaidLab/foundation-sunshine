@@ -455,6 +455,7 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
+    last_vdd_setting.clear();
     current_vdd_client_id.clear();
     return vdd_utils::destroy_vdd_monitor();
   }
