@@ -119,6 +119,7 @@
                 <span class="small">{{ formatTime(run.finished_at_ms || run.started_at_ms) }}</span>
                 <span class="small text-muted">{{ run.action_id || run.event }}</span>
                 <span class="small text-muted">{{ formatDuration(run) }}</span>
+                <div v-if="runDetail(run)" class="history-detail small text-muted">{{ runDetail(run) }}</div>
               </div>
             </details>
 
@@ -380,6 +381,18 @@ const formatDuration = (run) => {
   return `${run.duration_ms} ms`
 }
 
+const runDetail = (run) => {
+  if (!run) return ''
+  const parts = []
+  if (run.result?.stage) parts.push(`stage: ${run.result.stage}`)
+  if (Number.isFinite(run.exit_code)) parts.push(`exit: ${run.exit_code}`)
+  if (run.message) parts.push(run.message)
+  else if (run.error) parts.push(run.error)
+  else if (run.result_error) parts.push(run.result_error)
+  if (run.output) parts.push(String(run.output).replace(/\s+/g, ' ').trim())
+  return parts.filter(Boolean).join(' | ')
+}
+
 const releaseUrl = (plugin) => plugin.latest_release?.release_url || plugin.homepage || plugin.repo || ''
 
 const openRelease = (plugin) => {
@@ -540,6 +553,11 @@ onMounted(loadPlugins)
   gap: 8px;
   align-items: center;
   padding: 4px 0;
+}
+
+.history-detail {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
 }
 
 .plugin-config {

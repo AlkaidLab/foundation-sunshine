@@ -46,6 +46,22 @@ namespace {
     std::cerr << "sunshine-plugin-nvprefs: " << message << '\n';
   }
 
+  std::string result_stage;
+  std::string result_message;
+
+  void
+  set_result(std::string_view stage, std::string_view message) {
+    result_stage = std::string { stage };
+    result_message = std::string { message };
+  }
+
+  int
+  fail_step(std::string_view stage, std::string_view message) {
+    set_result(stage, message);
+    log_message(message);
+    return plugin_error;
+  }
+
   std::optional<std::string>
   next_value(int &index, int argc, char **argv, std::string_view option) {
     if (index + 1 >= argc) {
@@ -98,10 +114,14 @@ namespace {
       nlohmann::json result {
         {"status", exit_code == success ? "success" : "failed"},
         {"event", std::string { event }},
-        {"message", exit_code == success ?
+        {"message", !result_message.empty() ? result_message :
+                      exit_code == success ?
                       "NVIDIA Control Panel optimizer completed." :
                       "NVIDIA Control Panel optimizer failed."},
       };
+      if (!result_stage.empty()) {
+        result["stage"] = result_stage;
+      }
 
       std::ofstream file(*path, std::ios::out | std::ios::trunc);
       if (!file.is_open()) {
@@ -335,10 +355,12 @@ namespace {
   bool
   load_or_skip(nvprefs::nvprefs_interface &preferences) {
     if (preferences.load()) {
+      set_result("load", "NvAPI loaded.");
       return true;
     }
 
-    log_message("NvAPI is not available; skipping NVIDIA profile work");
+    set_result("load", "NvAPI is not available; NVIDIA profile work was skipped.");
+    log_message(result_message);
     return false;
   }
 
@@ -353,7 +375,12 @@ namespace {
 
     const auto restored = preferences.restore_from_and_delete_undo_file_if_exists();
     preferences.unload();
-    return restored ? success : plugin_error;
+    if (!restored) {
+      return fail_step("restore_undo", "Failed to restore NVIDIA driver settings from the undo file.");
+    }
+
+    set_result("restore_undo", "NVIDIA driver settings recovery completed.");
+    return success;
   }
 
   int
@@ -367,22 +394,22 @@ namespace {
 
     if (!preferences.restore_from_and_delete_undo_file_if_exists()) {
       preferences.unload();
-      return plugin_error;
+      return fail_step("restore_undo", "Failed to restore pending NVIDIA driver settings before applying stream optimization.");
     }
 
     if (!preferences.modify_application_profile()) {
       preferences.unload();
-      return plugin_error;
+      return fail_step("modify_sunshine_profile", "Failed to update the Sunshine NVIDIA application profile.");
     }
 
     if (!preferences.apply_stream_optimizations(app_exe_name_from_payload(payload), client_fps_from_payload(payload))) {
       preferences.unload();
-      return plugin_error;
+      return fail_step("apply_stream_profile", "Failed to apply NVIDIA stream optimization to the game profile.");
     }
 
     if (!preferences.modify_global_profile()) {
       preferences.unload();
-      return plugin_error;
+      return fail_step("modify_global_profile", "Failed to update the NVIDIA global profile.");
     }
 
     if (preferences.owning_undo_file()) {
@@ -390,6 +417,7 @@ namespace {
     }
 
     preferences.unload();
+    set_result("apply_stream_profile", "NVIDIA stream optimization was applied.");
     return success;
   }
 

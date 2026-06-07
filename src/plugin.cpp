@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
@@ -515,6 +516,26 @@ namespace {
     }
   }
 
+  std::optional<fs::path>
+  reserve_output_file(std::string_view event_name) {
+    try {
+      const auto temp_dir = fs::temp_directory_path() / "Sunshine" / "plugins";
+      std::error_code ec;
+      fs::create_directories(temp_dir, ec);
+      if (ec) {
+        BOOST_LOG(warning) << "Could not create plugin output directory " << temp_dir << ": " << ec.message();
+        return std::nullopt;
+      }
+
+      const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+      return temp_dir / ("output-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".log");
+    }
+    catch (const std::exception &err) {
+      BOOST_LOG(warning) << "Could not reserve plugin output path: " << err.what();
+      return std::nullopt;
+    }
+  }
+
   plugin_config_t
   load_plugin_config(const manifest_t &manifest) {
     plugin_config_t result {
@@ -613,6 +634,28 @@ namespace {
     catch (const std::exception &err) {
       BOOST_LOG(warning) << "JSON file parse failed for " << path << ": " << err.what();
       return std::nullopt;
+    }
+  }
+
+  std::string
+  read_text_file_limited(const fs::path &path, std::size_t limit) {
+    try {
+      std::ifstream file(path, std::ios::in | std::ios::binary);
+      if (!file.is_open()) {
+        return {};
+      }
+
+      std::string buffer(limit + 1, '\0');
+      file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+      buffer.resize(static_cast<std::size_t>(file.gcount()));
+      while (!buffer.empty() && (buffer.back() == '\0' || buffer.back() == '\r' || buffer.back() == '\n')) {
+        buffer.pop_back();
+      }
+      return buffer;
+    }
+    catch (const std::exception &err) {
+      BOOST_LOG(warning) << "Text file read failed for " << path << ": " << err.what();
+      return {};
     }
   }
 
@@ -762,6 +805,31 @@ namespace {
         fs::remove(*result_path, remove_ec);
       }
     });
+    const auto output_path = reserve_output_file(event_name);
+    FILE *output_file = nullptr;
+    if (output_path) {
+#ifdef _WIN32
+      output_file = _wfopen(output_path->c_str(), L"w+b");
+#else
+      output_file = std::fopen(output_path->string().c_str(), "w+b");
+#endif
+      if (!output_file) {
+        BOOST_LOG(warning) << "Could not open plugin output file: " << *output_path;
+      }
+    }
+    auto close_output = [&]() {
+      if (output_file) {
+        std::fclose(output_file);
+        output_file = nullptr;
+      }
+    };
+    auto cleanup_output = util::fail_guard([&]() {
+      close_output();
+      if (output_path) {
+        std::error_code remove_ec;
+        fs::remove(*output_path, remove_ec);
+      }
+    });
 
     const auto merge_plugin_result = [&]() {
       if (!result_path) {
@@ -782,6 +850,16 @@ namespace {
         record["message"] = plugin_result->at("message").get<std::string>();
       }
     };
+    const auto merge_plugin_output = [&]() {
+      if (!output_path) {
+        return;
+      }
+      close_output();
+      auto output = read_text_file_limited(*output_path, 8192);
+      if (!output.empty()) {
+        record["output"] = std::move(output);
+      }
+    };
 
     auto cmd = quote_command_arg(manifest.entry_path.string()) +
                " --event " + quote_command_arg(std::string { event_name }) +
@@ -791,7 +869,7 @@ namespace {
     }
 
     BOOST_LOG(debug) << "Invoking lifecycle plugin '" << manifest.id << "' for " << event_name;
-    auto child = platf::run_command(false, false, cmd, working_dir, env, nullptr, ec, &group);
+    auto child = platf::run_command(false, false, cmd, working_dir, env, output_file, ec, &group);
     if (ec || !child.valid()) {
       BOOST_LOG(warning) << "Lifecycle plugin '" << manifest.id << "' failed to start for "
                          << event_name << ": " << ec.message();
@@ -813,12 +891,14 @@ namespace {
       }
       record["exit_code"] = nullptr;
       record["timed_out"] = true;
+      merge_plugin_output();
       return finish_record("timeout"sv, false);
     }
 
     const auto exit_code = child.exit_code();
     record["exit_code"] = exit_code;
     merge_plugin_result();
+    merge_plugin_output();
     if (exit_code != 0) {
       BOOST_LOG(warning) << "Lifecycle plugin '" << manifest.id << "' returned exit code "
                          << exit_code << " for " << event_name;
