@@ -28,6 +28,9 @@ namespace plugin {
   nlohmann::json
   list_installed_plugins();
 
+  nlohmann::json
+  list_marketplace_plugins(std::string &error);
+
   bool
   set_plugin_enabled(std::string_view id, bool enabled, std::string &error);
 

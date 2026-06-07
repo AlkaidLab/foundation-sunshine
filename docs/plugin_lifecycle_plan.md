@@ -224,5 +224,6 @@ This keeps the core change reviewable and gives the NVIDIA optimizer a clean plu
 - Phase 1 is implemented in `src/plugin.cpp` and wired into startup, shutdown, first-session start, and last-session stop.
 - Phase 2 is implemented for Windows with `sunshine-plugin-nvprefs.exe`, packaged manifest/schema assets, plugin-owned undo-file lifetime, and opt-in stream-time NVIDIA profile optimization.
 - Phase 3 has an installed-plugin API and Web UI page for listing plugins, enabling/disabling them, editing schema-backed config, running declared actions, and showing recent invocation history.
+- Phase 4 has a first marketplace scaffold: `plugin-registry/`, listing schema, registry index generator, GitHub issue template, registry CI, marketplace documentation, and a browse-only Sunshine marketplace endpoint/UI path.
 - External plugin author guidance lives in `docs/plugin_development.md`.
-- Remaining work is stdout/stderr log visibility, signature enforcement, and the remote marketplace/update channel.
+- Remaining work is stdout/stderr log visibility, one-click install/update, signature or attestation enforcement, publisher verification, and rollback-aware plugin package management.

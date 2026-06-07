@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@
 #include <boost/process/v1.hpp>
 
 #include "config.h"
+#include "httpcommon.h"
 #include "logging.h"
 #include "platform/run_command.h"
 #include "utility.h"
@@ -38,6 +40,7 @@ namespace {
   constexpr int default_timeout_ms = 5000;
   constexpr std::size_t max_history_entries = 20;
   constexpr std::size_t ui_history_entries = 8;
+  constexpr std::string_view default_marketplace_index_url = "https://alkaidlab.github.io/sunshine-plugin-registry/index.json";
 
   struct plugin_action_t {
     std::string id;
@@ -154,6 +157,29 @@ namespace {
   bool
   platform_supported(const manifest_t &manifest) {
     return manifest.platforms.empty() || manifest.platforms.contains(std::string { current_platform() });
+  }
+
+  bool
+  platform_supported(const nlohmann::json &platforms) {
+    if (!platforms.is_array() || platforms.empty()) {
+      return true;
+    }
+
+    const auto platform = current_platform();
+    return std::any_of(platforms.begin(), platforms.end(), [platform](const auto &item) {
+      return item.is_string() && item.template get<std::string>() == platform;
+    });
+  }
+
+  std::string
+  marketplace_index_url() {
+    if (const auto *override_url = std::getenv("SUNSHINE_PLUGIN_MARKETPLACE_INDEX_URL")) {
+      if (override_url[0] != '\0') {
+        return override_url;
+      }
+    }
+
+    return std::string { default_marketplace_index_url };
   }
 
   std::optional<fs::path>
@@ -673,6 +699,15 @@ namespace {
     return std::nullopt;
   }
 
+  std::map<std::string, manifest_t>
+  installed_plugin_map() {
+    std::map<std::string, manifest_t> result;
+    for (auto &manifest : load_installed_plugins()) {
+      result[manifest.id] = std::move(manifest);
+    }
+    return result;
+  }
+
   bool
   wait_for_plugin(bp::child &child, const std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -927,6 +962,55 @@ namespace plugin {
       }
 
       result["plugins"].push_back(std::move(item));
+    }
+
+    return result;
+  }
+
+  nlohmann::json
+  list_marketplace_plugins(std::string &error) {
+    const auto index_url = marketplace_index_url();
+    std::string content;
+    if (!http::fetch_url(index_url, content)) {
+      error = "could not fetch plugin marketplace index";
+      return {};
+    }
+
+    nlohmann::json index;
+    try {
+      index = nlohmann::json::parse(content);
+    }
+    catch (const std::exception &err) {
+      error = std::string { "plugin marketplace index is not valid JSON: " } + err.what();
+      return {};
+    }
+
+    if (!index.is_object() || !index.contains("plugins") || !index.at("plugins").is_array()) {
+      error = "plugin marketplace index must be an object with a plugins array";
+      return {};
+    }
+
+    const auto installed = installed_plugin_map();
+
+    nlohmann::json result = index;
+    result["registry_url"] = index_url;
+    result["platform"] = std::string { current_platform() };
+
+    for (auto &entry : result["plugins"]) {
+      if (!entry.is_object()) {
+        continue;
+      }
+
+      const auto id = entry.contains("id") && entry.at("id").is_string() ? entry.at("id").get<std::string>() : std::string {};
+      const auto installed_it = installed.find(id);
+      const auto is_installed = installed_it != installed.end();
+
+      entry["installed"] = is_installed;
+      entry["installed_version"] = is_installed ? nlohmann::json(installed_it->second.version) : nlohmann::json(nullptr);
+      entry["platform_supported"] = platform_supported(entry.value("platforms", nlohmann::json::array()));
+
+      const auto status = entry.value("status", "listed");
+      entry["installable"] = !is_installed && status == "listed" && entry.value("platform_supported", false);
     }
 
     return result;

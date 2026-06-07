@@ -15,7 +15,9 @@
     "i18n:reverse-sync": "node scripts/reverse-sync-i18n.js --sync",
     "i18n:reverse-check": "node scripts/reverse-sync-i18n.js",
     "i18n:format": "node scripts/format-i18n.js",
-    "i18n:format:check": "node scripts/format-i18n.js --check"
+    "i18n:format:check": "node scripts/format-i18n.js --check",
+    "plugin-registry:build": "node scripts/plugin-registry/build-index.js",
+    "plugin-registry:check": "node scripts/plugin-registry/build-index.js --check"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "6.6.0",

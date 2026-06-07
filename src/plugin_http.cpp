@@ -64,6 +64,23 @@ namespace plugin_http {
     }
 
     void
+    list_marketplace(const auth_fn &auth, resp_https_t response, req_https_t request) {
+      if (!auth(response, request)) {
+        return;
+      }
+
+      std::string error;
+      auto marketplace = plugin::list_marketplace_plugins(error);
+      if (!error.empty()) {
+        write_json(response, SimpleWeb::StatusCode::server_error_bad_gateway,
+          { { "status", false }, { "error", error } });
+        return;
+      }
+
+      write_json(response, SimpleWeb::StatusCode::success_ok, marketplace);
+    }
+
+    void
     set_enabled(const auth_fn &auth, resp_https_t response, req_https_t request) {
       if (!auth(response, request)) {
         return;
@@ -162,6 +179,10 @@ namespace plugin_http {
   register_routes(https_server_t &server, auth_fn auth) {
     server.resource["^/api/plugins$"]["GET"] = [auth](resp_https_t response, req_https_t request) {
       list_plugins(auth, std::move(response), std::move(request));
+    };
+
+    server.resource["^/api/plugins/marketplace$"]["GET"] = [auth](resp_https_t response, req_https_t request) {
+      list_marketplace(auth, std::move(response), std::move(request));
     };
 
     server.resource["^/api/plugins/([^/]+)/enabled$"]["POST"] = [auth](resp_https_t response, req_https_t request) {

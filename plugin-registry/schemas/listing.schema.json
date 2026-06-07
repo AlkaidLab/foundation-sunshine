@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alkaidlab.github.io/sunshine-plugin-registry/schemas/listing.schema.json",
+  "title": "Sunshine Plugin Marketplace Listing",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "summary",
+    "publisher",
+    "status",
+    "repo",
+    "platforms",
+    "capabilities"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9][a-z0-9-]*){2,}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "description": {
+      "type": "string"
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "listed",
+        "deprecated",
+        "unlisted",
+        "blocked"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "repo": {
+      "type": "string",
+      "format": "uri"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri"
+    },
+    "support_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "license": {
+      "type": "string"
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "windows",
+          "linux",
+          "macos"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9.-]*$"
+      },
+      "uniqueItems": true
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "releases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "channel",
+          "assets"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "channel": {
+            "enum": [
+              "stable",
+              "beta",
+              "nightly"
+            ]
+          },
+          "min_host_version": {
+            "type": "string"
+          },
+          "release_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "attestation_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "platform",
+                "arch",
+                "url",
+                "sha256"
+              ],
+              "properties": {
+                "platform": {
+                  "enum": [
+                    "windows",
+                    "linux",
+                    "macos"
+                  ]
+                },
+                "arch": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{64}$"
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

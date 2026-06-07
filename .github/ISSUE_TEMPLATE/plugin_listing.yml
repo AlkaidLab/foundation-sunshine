@@ -1,0 +1,72 @@
+name: Plugin marketplace listing
+description: Request a Sunshine plugin marketplace listing or listing update.
+title: "[Plugin Listing]: "
+labels:
+  - plugin-marketplace
+  - listing-request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to request a marketplace listing, update, deprecation, or delisting.
+        Security-sensitive reports should use the project's private security advisory flow instead of a public issue.
+  - type: input
+    id: plugin_id
+    attributes:
+      label: Plugin ID
+      description: Reverse-DNS id from plugin.json.
+      placeholder: com.example.sunshine-plugin
+    validations:
+      required: true
+  - type: input
+    id: repository
+    attributes:
+      label: Plugin repository
+      description: GitHub repository that owns the plugin source and releases.
+      placeholder: https://github.com/example/sunshine-plugin
+    validations:
+      required: true
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request type
+      options:
+        - New listing
+        - Listing update
+        - Deprecation
+        - Delisting
+        - Blocklist review
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What does this plugin do, and why should it be listed?
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Capabilities
+      description: List every capability the plugin requires.
+      placeholder: |
+        - filesystem.plugin-state.write
+        - driver.nvidia.profile.write
+    validations:
+      required: true
+  - type: input
+    id: release
+    attributes:
+      label: Release URL
+      description: GitHub Release URL containing the plugin package.
+      placeholder: https://github.com/example/sunshine-plugin/releases/tag/v1.0.0
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Maintainer notes
+      description: Compatibility notes, review context, or migration guidance.
+    validations:
+      required: false
