@@ -498,13 +498,8 @@ namespace display_device {
         BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
         return;
       case vdd_utils::set_vdd_result::interface_missing:
-        // Old driver without IOCTL: fall through to persistent XML + reload path below.
+        // Old driver without IOCTL: XML + reload is the only way to refresh the runtime mode list.
         break;
-    }
-
-    if (!vdd_settings.needs_update) {
-      BOOST_LOG(debug) << "VDD SETMODES unavailable and persistent config already contains session mode: " << new_setting;
-      return;
     }
 
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
@@ -584,7 +579,8 @@ namespace display_device {
       }
     }
 
-    // Update VDD resolution configuration
+    // Always push the session mode first. vdd_settings.needs_update only describes
+    // whether the legacy persistent mode list needs new entries.
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution) {
       update_vdd_resolution(config, vdd_settings);
