@@ -24,6 +24,14 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/process/v1.hpp>
 
+#ifdef _WIN32
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+  #include <aclapi.h>
+#endif
+
 #include "config.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -231,6 +239,118 @@ namespace {
     }
 
     return std::nullopt;
+  }
+
+  std::optional<fs::path>
+  config_plugin_runtime_root(std::string_view id) {
+    if (auto root = config_plugin_root(id)) {
+      return *root / "runtime";
+    }
+
+    return std::nullopt;
+  }
+
+  bool
+  relax_runtime_permissions(const fs::path &path) {
+#ifdef _WIN32
+    const auto wide_path = path.wstring();
+    PACL old_dacl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    DWORD status = GetNamedSecurityInfoW(
+      const_cast<LPWSTR>(wide_path.c_str()),
+      SE_FILE_OBJECT,
+      DACL_SECURITY_INFORMATION,
+      nullptr,
+      nullptr,
+      &old_dacl,
+      nullptr,
+      &descriptor);
+    if (status != ERROR_SUCCESS) {
+      BOOST_LOG(warning) << "Could not read plugin runtime ACL for " << path << ": " << status;
+      return false;
+    }
+
+    SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
+    PSID users_sid = nullptr;
+    if (!AllocateAndInitializeSid(
+          &nt_authority,
+          2,
+          SECURITY_BUILTIN_DOMAIN_RID,
+          DOMAIN_ALIAS_RID_USERS,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          &users_sid)) {
+      if (descriptor) {
+        LocalFree(descriptor);
+      }
+      BOOST_LOG(warning) << "Could not allocate Users SID for plugin runtime ACL";
+      return false;
+    }
+
+    std::error_code ec;
+    const bool is_dir = fs::is_directory(path, ec);
+
+    EXPLICIT_ACCESSW access = {};
+    access.grfAccessPermissions = GENERIC_READ | GENERIC_WRITE | DELETE;
+    access.grfAccessMode = GRANT_ACCESS;
+    access.grfInheritance = is_dir ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+    access.Trustee.ptstrName = static_cast<LPWSTR>(users_sid);
+
+    PACL new_dacl = nullptr;
+    status = SetEntriesInAclW(1, &access, old_dacl, &new_dacl);
+    if (status == ERROR_SUCCESS) {
+      status = SetNamedSecurityInfoW(
+        const_cast<LPWSTR>(wide_path.c_str()),
+        SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION,
+        nullptr,
+        nullptr,
+        new_dacl,
+        nullptr);
+    }
+
+    if (new_dacl) {
+      LocalFree(new_dacl);
+    }
+    if (users_sid) {
+      FreeSid(users_sid);
+    }
+    if (descriptor) {
+      LocalFree(descriptor);
+    }
+
+    if (status != ERROR_SUCCESS) {
+      BOOST_LOG(warning) << "Could not update plugin runtime ACL for " << path << ": " << status;
+      return false;
+    }
+#else
+    (void) path;
+#endif
+    return true;
+  }
+
+  std::optional<fs::path>
+  ensure_plugin_runtime_root(std::string_view id) {
+    const auto root = config_plugin_runtime_root(id);
+    if (!root) {
+      return std::nullopt;
+    }
+
+    std::error_code ec;
+    fs::create_directories(*root, ec);
+    if (ec) {
+      BOOST_LOG(warning) << "Could not create plugin runtime directory " << *root << ": " << ec.message();
+      return std::nullopt;
+    }
+
+    relax_runtime_permissions(*root);
+    return root;
   }
 
   std::optional<manifest_t>
@@ -468,18 +588,15 @@ namespace {
   }
 
   std::optional<fs::path>
-  write_payload_file(std::string_view event_name, const nlohmann::json &payload) {
+  write_payload_file(std::string_view plugin_id, std::string_view event_name, const nlohmann::json &payload) {
     try {
-      const auto temp_dir = fs::temp_directory_path() / "Sunshine" / "plugins";
-      std::error_code ec;
-      fs::create_directories(temp_dir, ec);
-      if (ec) {
-        BOOST_LOG(warning) << "Could not create plugin payload directory " << temp_dir << ": " << ec.message();
+      const auto runtime_dir = ensure_plugin_runtime_root(plugin_id);
+      if (!runtime_dir) {
         return std::nullopt;
       }
 
       const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-      const auto payload_path = temp_dir / ("payload-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".json");
+      const auto payload_path = *runtime_dir / ("payload-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".json");
 
       std::ofstream file(payload_path, std::ios::out | std::ios::trunc);
       if (!file.is_open()) {
@@ -488,6 +605,8 @@ namespace {
       }
 
       file << payload.dump(2);
+      file.close();
+      relax_runtime_permissions(payload_path);
       return payload_path;
     }
     catch (const std::exception &err) {
@@ -497,18 +616,24 @@ namespace {
   }
 
   std::optional<fs::path>
-  reserve_result_file(std::string_view event_name) {
+  reserve_result_file(std::string_view plugin_id, std::string_view event_name) {
     try {
-      const auto temp_dir = fs::temp_directory_path() / "Sunshine" / "plugins";
-      std::error_code ec;
-      fs::create_directories(temp_dir, ec);
-      if (ec) {
-        BOOST_LOG(warning) << "Could not create plugin result directory " << temp_dir << ": " << ec.message();
+      const auto runtime_dir = ensure_plugin_runtime_root(plugin_id);
+      if (!runtime_dir) {
         return std::nullopt;
       }
 
       const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-      return temp_dir / ("result-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".json");
+      const auto result_path = *runtime_dir / ("result-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".json");
+      {
+        std::ofstream file(result_path, std::ios::out | std::ios::trunc);
+        if (!file.is_open()) {
+          BOOST_LOG(warning) << "Could not reserve plugin result file: " << result_path;
+          return std::nullopt;
+        }
+      }
+      relax_runtime_permissions(result_path);
+      return result_path;
     }
     catch (const std::exception &err) {
       BOOST_LOG(warning) << "Could not reserve plugin result path: " << err.what();
@@ -517,18 +642,15 @@ namespace {
   }
 
   std::optional<fs::path>
-  reserve_output_file(std::string_view event_name) {
+  reserve_output_file(std::string_view plugin_id, std::string_view event_name) {
     try {
-      const auto temp_dir = fs::temp_directory_path() / "Sunshine" / "plugins";
-      std::error_code ec;
-      fs::create_directories(temp_dir, ec);
-      if (ec) {
-        BOOST_LOG(warning) << "Could not create plugin output directory " << temp_dir << ": " << ec.message();
+      const auto runtime_dir = ensure_plugin_runtime_root(plugin_id);
+      if (!runtime_dir) {
         return std::nullopt;
       }
 
       const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-      return temp_dir / ("output-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".log");
+      return *runtime_dir / ("output-" + sanitize_filename_part(event_name) + "-" + std::to_string(ticks) + ".log");
     }
     catch (const std::exception &err) {
       BOOST_LOG(warning) << "Could not reserve plugin output path: " << err.what();
@@ -798,14 +920,14 @@ namespace {
       return record;
     };
 
-    const auto result_path = reserve_result_file(event_name);
+    const auto result_path = reserve_result_file(manifest.id, event_name);
     auto cleanup_result = util::fail_guard([&]() {
       if (result_path) {
         std::error_code remove_ec;
         fs::remove(*result_path, remove_ec);
       }
     });
-    const auto output_path = reserve_output_file(event_name);
+    const auto output_path = reserve_output_file(manifest.id, event_name);
     FILE *output_file = nullptr;
     if (output_path) {
 #ifdef _WIN32
@@ -974,7 +1096,7 @@ namespace plugin {
       auto payload = build_payload(event, context);
       add_plugin_payload(payload, manifest);
 
-      auto payload_path = write_payload_file(event_name, payload);
+      auto payload_path = write_payload_file(manifest.id, event_name, payload);
       if (!payload_path) {
         continue;
       }
@@ -1221,7 +1343,7 @@ namespace plugin {
     payload = build_payload(action->event, payload);
     add_plugin_payload(payload, *manifest);
 
-    auto payload_path = write_payload_file(action->event, payload);
+    auto payload_path = write_payload_file(manifest->id, action->event, payload);
     if (!payload_path) {
       error = "could not write plugin payload";
       return false;
