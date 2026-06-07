@@ -501,6 +501,11 @@ namespace display_device {
         break;
     }
 
+    if (!vdd_settings.needs_update) {
+      BOOST_LOG(debug) << "VDD SETMODES unavailable and persistent config already contains session mode: " << new_setting;
+      return;
+    }
+
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
       BOOST_LOG(error) << "VDD配置保存失败 [resolutions: " << vdd_settings.resolutions
                        << " fps: " << vdd_settings.fps << "]";
@@ -580,7 +585,7 @@ namespace display_device {
 
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-      vdd_settings.needs_update && config.resolution) {
+      config.resolution) {
       update_vdd_resolution(config, vdd_settings);
     }
 
