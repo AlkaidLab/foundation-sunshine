@@ -3,7 +3,9 @@ import { marked } from 'marked'
 import SunshineVersion from '../sunshine_version.js'
 import { trackEvents } from '../config/firebase.js'
 
-const GITHUB_API_BASE = 'https://api.github.com/repos/qiin2333/Sunshine/releases'
+// Daimhim distribution: check updates against our own fork, not upstream, so our custom
+// build is never nagged to "update" to the official release (which would revert our changes).
+const GITHUB_API_BASE = 'https://api.github.com/repos/Daimhim/foundation-sunshine/releases'
 
 /**
  * 解析 Markdown 内容

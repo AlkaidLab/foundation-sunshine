@@ -46,7 +46,7 @@ else()
                 MESSAGE("Sunshine Version: ${GIT_DESCRIBE_VERSION}")
             endif()
             if(GIT_IS_DIRTY)
-                set(PROJECT_VERSION ${PROJECT_VERSION}.杂鱼)
+                set(PROJECT_VERSION ${PROJECT_VERSION}.dirty)
                 MESSAGE("Git tree is dirty!")
             endif()
         else()
@@ -56,3 +56,17 @@ else()
         MESSAGE(WARNING ": Git not found, cannot find git version")
     endif()
 endif()
+
+# === Daimhim distribution versioning ===
+# Our build carries its own version, independent of the upstream (AlkaidLab) release tags.
+# Format: <UPSTREAM_BASE_VERSION>-daimhim
+#   - The prefix is the upstream Foundation version this build is currently based on,
+#     so you can always tell which official version it was developed from.
+#   - The "-daimhim" suffix marks it as our custom build.
+# When you rebase this fork onto upstream master, bump UPSTREAM_BASE_VERSION below.
+# The web UI update check is pointed at our own fork (see useVersion.js), so this version
+# is compared only against Daimhim/foundation-sunshine releases — never the upstream nag.
+set(UPSTREAM_BASE_VERSION "2026.605.170308")
+set(PROJECT_VERSION "${UPSTREAM_BASE_VERSION}-daimhim")
+set(CMAKE_PROJECT_VERSION "${PROJECT_VERSION}")
+MESSAGE("Daimhim distribution version: ${PROJECT_VERSION}")
