@@ -1,10 +1,8 @@
 // standard includes
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <fstream>
 #include <thread>
-#include <vector>
 
 // local includes
 #include "settings_topology.h"
@@ -188,147 +186,6 @@ namespace display_device {
       return new_modes;
     }
 
-    double
-    refresh_rate_hz(const refresh_rate_t &refresh_rate) {
-      if (refresh_rate.denominator == 0) {
-        return 0.0;
-      }
-
-      return static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
-    }
-
-    bool
-    same_mode(const display_mode_t &a, const display_mode_t &b) {
-      return a.resolution.width == b.resolution.width &&
-             a.resolution.height == b.resolution.height &&
-             a.refresh_rate.numerator == b.refresh_rate.numerator &&
-             a.refresh_rate.denominator == b.refresh_rate.denominator;
-    }
-
-    bool
-    is_exact_refresh_rate(const refresh_rate_t &refresh_rate, unsigned int numerator, unsigned int denominator) {
-      return refresh_rate.numerator == numerator && refresh_rate.denominator == denominator;
-    }
-
-    bool
-    all_modes_target_vdd(const device_display_mode_map_t &modes) {
-      if (modes.empty()) {
-        return false;
-      }
-
-      return std::all_of(std::begin(modes), std::end(modes), [](const auto &entry) {
-        return get_display_friendly_name(entry.first) == ZAKO_NAME;
-      });
-    }
-
-    bool
-    same_display_mode_map(const device_display_mode_map_t &a, const device_display_mode_map_t &b) {
-      if (a.size() != b.size()) {
-        return false;
-      }
-
-      for (const auto &[device_id, mode] : a) {
-        const auto b_mode = b.find(device_id);
-        if (b_mode == std::end(b) || !same_mode(mode, b_mode->second)) {
-          return false;
-        }
-      }
-
-      return true;
-    }
-
-    std::vector<device_display_mode_map_t>
-    make_vdd_fallback_modes(const device_display_mode_map_t &requested_modes) {
-      std::vector<device_display_mode_map_t> fallback_modes;
-      if (requested_modes.empty()) {
-        return fallback_modes;
-      }
-
-      const auto add_candidate = [&fallback_modes, &requested_modes](const device_display_mode_map_t &modes) {
-        if (same_display_mode_map(modes, requested_modes)) {
-          return;
-        }
-
-        const auto existing = std::find_if(std::begin(fallback_modes), std::end(fallback_modes), [&modes](const auto &candidate) {
-          return same_display_mode_map(candidate, modes);
-        });
-        if (existing == std::end(fallback_modes)) {
-          fallback_modes.push_back(modes);
-        }
-      };
-
-      auto candidate_modes = requested_modes;
-      bool changed = false;
-      for (auto &[_, mode] : candidate_modes) {
-        if (!is_exact_refresh_rate(mode.refresh_rate, 120, 1) &&
-            refresh_rate_hz(mode.refresh_rate) >= 119.5) {
-          mode.refresh_rate = refresh_rate_t { 120, 1 };
-          changed = true;
-        }
-      }
-      if (changed) {
-        add_candidate(candidate_modes);
-      }
-
-      candidate_modes = requested_modes;
-      changed = false;
-      for (auto &[_, mode] : candidate_modes) {
-        if (!is_exact_refresh_rate(mode.refresh_rate, 60, 1) &&
-            refresh_rate_hz(mode.refresh_rate) >= 59.5) {
-          mode.refresh_rate = refresh_rate_t { 60, 1 };
-          changed = true;
-        }
-      }
-      if (changed) {
-        add_candidate(candidate_modes);
-      }
-
-      candidate_modes = requested_modes;
-      for (auto &[_, mode] : candidate_modes) {
-        mode = display_mode_t { resolution_t { 1920, 1080 }, refresh_rate_t { 60, 1 } };
-      }
-      add_candidate(candidate_modes);
-
-      return fallback_modes;
-    }
-
-    bool
-    set_vdd_display_modes_with_fallback(const device_display_mode_map_t &requested_modes) {
-      if (set_display_modes(requested_modes)) {
-        return true;
-      }
-
-      if (!all_modes_target_vdd(requested_modes)) {
-        return false;
-      }
-
-      BOOST_LOG(warning) << "VDD display mode apply failed; waiting briefly for Windows display mode state to settle before retrying.";
-      constexpr std::array retry_delays {
-        std::chrono::milliseconds { 250 },
-        std::chrono::milliseconds { 500 },
-        std::chrono::milliseconds { 1000 }
-      };
-
-      for (const auto delay : retry_delays) {
-        std::this_thread::sleep_for(delay);
-        if (set_display_modes(requested_modes)) {
-          BOOST_LOG(info) << "VDD display mode apply succeeded after waiting for Windows display mode state.";
-          return true;
-        }
-      }
-
-      for (const auto &fallback_modes : make_vdd_fallback_modes(requested_modes)) {
-        BOOST_LOG(warning) << "Trying VDD display mode fallback: " << to_string(fallback_modes);
-        if (set_display_modes(fallback_modes)) {
-          BOOST_LOG(warning) << "VDD display mode fallback succeeded. Requested: "
-                             << to_string(requested_modes) << " Actual: " << to_string(fallback_modes);
-          return true;
-        }
-      }
-
-      return false;
-    }
-
     /**
      * @brief Remove entries from a device_id-keyed map whose keys are not in the valid set.
      */
@@ -393,7 +250,7 @@ namespace display_device {
         filter_stale_devices(new_display_modes, valid_ids_set, "display modes");
 
         BOOST_LOG(info) << "Changing display modes to: " << to_string(new_display_modes);
-        if (!set_vdd_display_modes_with_fallback(new_display_modes)) {
+        if (!set_display_modes(new_display_modes)) {
           // Error already logged
           return boost::none;
         }

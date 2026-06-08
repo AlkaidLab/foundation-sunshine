@@ -455,7 +455,6 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
-    last_vdd_setting.clear();
     current_vdd_client_id.clear();
     return vdd_utils::destroy_vdd_monitor();
   }
@@ -498,7 +497,7 @@ namespace display_device {
         BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
         return;
       case vdd_utils::set_vdd_result::interface_missing:
-        // Old driver without IOCTL: XML + reload is the only way to refresh the runtime mode list.
+        // Old driver without IOCTL: fall through to persistent XML + reload path below.
         break;
     }
 
@@ -579,10 +578,9 @@ namespace display_device {
       }
     }
 
-    // Always push the session mode first. vdd_settings.needs_update only describes
-    // whether the legacy persistent mode list needs new entries.
+    // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-      config.resolution) {
+      vdd_settings.needs_update && config.resolution) {
       update_vdd_resolution(config, vdd_settings);
     }
 
