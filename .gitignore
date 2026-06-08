@@ -65,8 +65,10 @@ venv/
 
 # Dev notes (analysis docs, guide generation, images)
 _dev_notes/
+_draft/
 instructions/
 skills/
+.codex/
 
 # Temp HID trace files
 temphidtrace*
