@@ -88,7 +88,7 @@ for %%I in ("%installer%") do if %%~zI LEQ 0 (
 )
 
 rem Install Virtual Gamepad
-"%installer%" /passive /promptrestart
+"%installer%" /passive /norestart
 set "INSTALL_RESULT=%ERRORLEVEL%"
 
 rem Delete temp directory

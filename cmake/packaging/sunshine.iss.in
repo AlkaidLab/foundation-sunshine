@@ -62,6 +62,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; 重启管理器
 CloseApplications=yes
 RestartApplications=yes
+; Driver/helper installers may return a reboot-required exit code. Do not show
+; Inno's final reboot prompt; users can reboot later if a driver needs it.
+RestartIfNeededByRun=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
