@@ -1538,6 +1538,49 @@ namespace input {
     return batch_result_e::batched;
   }
 
+  bool
+  touchpad_frame_is_move_only(PSS_TOUCHPAD_FRAME_PACKET packet) {
+    if (packet->contactCount == 0 || packet->contactCount > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      return false;
+    }
+
+    for (std::uint8_t i = 0; i < packet->contactCount; i++) {
+      if (packet->contacts[i].eventType != LI_TOUCH_EVENT_MOVE) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  batch_result_e
+  batch(PSS_TOUCHPAD_FRAME_PACKET dest, PSS_TOUCHPAD_FRAME_PACKET src) {
+    if (!touchpad_frame_is_move_only(dest)) {
+      return batch_result_e::terminate_batch;
+    }
+
+    if (!touchpad_frame_is_move_only(src)) {
+      return batch_result_e::terminate_batch;
+    }
+
+    if (dest->contactCount != src->contactCount ||
+        dest->buttonState != src->buttonState ||
+        dest->rotation != src->rotation ||
+        dest->deviceWidthMm != src->deviceWidthMm ||
+        dest->deviceHeightMm != src->deviceHeightMm) {
+      return batch_result_e::terminate_batch;
+    }
+
+    for (std::uint8_t i = 0; i < dest->contactCount; i++) {
+      if (dest->contacts[i].pointerId != src->contacts[i].pointerId) {
+        return batch_result_e::not_batchable;
+      }
+    }
+
+    *dest = *src;
+    return batch_result_e::batched;
+  }
+
   /**
    * @brief Batch two pen messages.
    * @param dest The original packet to batch into.
@@ -1666,6 +1709,8 @@ namespace input {
         return batch((PSS_TOUCH_PACKET) dest, (PSS_TOUCH_PACKET) src);
       case SS_TOUCHPAD_MAGIC:
         return batch((PSS_TOUCHPAD_PACKET) dest, (PSS_TOUCHPAD_PACKET) src);
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        return batch((PSS_TOUCHPAD_FRAME_PACKET) dest, (PSS_TOUCHPAD_FRAME_PACKET) src);
       case SS_PEN_MAGIC:
         return batch((PSS_PEN_PACKET) dest, (PSS_PEN_PACKET) src);
       case SS_CONTROLLER_TOUCH_MAGIC:

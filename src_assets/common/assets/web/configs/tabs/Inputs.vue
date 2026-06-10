@@ -389,6 +389,18 @@ onBeforeUnmount(() => {
       <div class="form-text">{{ $t('config.native_pen_touch_desc') }}</div>
     </div>
 
+    <!-- Native touchpad optimization -->
+    <div class="mb-3" v-if="config.mouse === 'enabled' && platform === 'windows'">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="native_touchpad_optimization"
+               v-model="config.native_touchpad_optimization" true-value="enabled" false-value="disabled">
+        <label class="form-check-label" for="native_touchpad_optimization">
+          {{ $t('config.native_touchpad_optimization') }}
+        </label>
+      </div>
+      <div class="form-text">{{ $t('config.native_touchpad_optimization_desc') }}</div>
+    </div>
+
     <!-- Virtual mouse driver -->
     <div class="mb-3" v-if="config.mouse === 'enabled' && platform === 'windows'">
       <div class="form-check form-switch">

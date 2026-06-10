@@ -2463,7 +2463,10 @@ namespace platf {
     }
 
     if (get_create_synthetic_pointer_device2_proc() != nullptr) {
-      caps |= platform_caps::touchpad | platform_caps::touchpad_frame;
+      caps |= platform_caps::touchpad;
+      if (config::input.native_touchpad_optimization) {
+        caps |= platform_caps::touchpad_frame;
+      }
     }
     else {
       BOOST_LOG(warning) << "Touchpad input requires Windows 11 CreateSyntheticPointerDevice2 support"sv;

@@ -42,6 +42,7 @@ const DEFAULT_TABS = [
       mouse: 'enabled',
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
+      native_touchpad_optimization: 'enabled',
       virtual_mouse: 'enabled',
       capture_cursor: true,
       amf_draw_mouse_cursor: false,

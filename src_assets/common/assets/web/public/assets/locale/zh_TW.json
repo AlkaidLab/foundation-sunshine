@@ -379,6 +379,8 @@
     "mouse_desc": "允許訪客使用滑鼠控制主機系統",
     "native_pen_touch": "原生筆/觸控支援",
     "native_pen_touch_desc": "啟用後，Sunshine 將從 Moonlight 用戶端傳遞本機筆觸事件。對於沒有原生筆/觸控支援的舊版應用程式來說，停用此功能可能很有用。",
+    "native_touchpad_optimization": "適配小米平板觸控板",
+    "native_touchpad_optimization_desc": "啟用後，Sunshine 會為小米平板鍵盤觸控板宣告原生觸控板幀支援。停用後會回退到舊版觸控板事件。",
     "no_fps": "未添加幀率值",
     "no_resolutions": "未添加解析度",
     "notify_pre_releases": "發佈前通知",

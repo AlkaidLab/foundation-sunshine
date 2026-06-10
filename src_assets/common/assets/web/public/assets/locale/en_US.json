@@ -379,6 +379,8 @@
     "mouse_desc": "Allows guests to control the host system with the mouse",
     "native_pen_touch": "Native Pen/Touch Support",
     "native_pen_touch_desc": "When enabled, Sunshine will pass through native pen/touch events from Moonlight clients. This can be useful to disable for older applications without native pen/touch support.",
+    "native_touchpad_optimization": "Xiaomi Tablet Touchpad Support",
+    "native_touchpad_optimization_desc": "When enabled, Sunshine will advertise native touchpad frame support for Xiaomi tablet keyboard touchpads. Disable this to fall back to legacy touchpad events.",
     "no_fps": "No FPS values added",
     "no_resolutions": "No resolutions added",
     "notify_pre_releases": "PreRelease Notifications",
