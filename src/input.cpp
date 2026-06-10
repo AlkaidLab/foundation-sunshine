@@ -19,6 +19,7 @@ extern "C" {
 #include "config.h"
 #include "globals.h"
 #include "input.h"
+#include "input_activity.h"
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
@@ -149,17 +150,6 @@ namespace input {
     button_state_e back_button_state;
   };
 
-  struct controller_activity_state_t {
-    bool initialized {};
-    std::uint32_t button_flags {};
-    std::uint8_t left_trigger {};
-    std::uint8_t right_trigger {};
-    std::int16_t left_stick_x {};
-    std::int16_t left_stick_y {};
-    std::int16_t right_stick_x {};
-    std::int16_t right_stick_y {};
-  };
-
   struct input_t {
     enum shortkey_e {
       CTRL = 0x1,  ///< Control key
@@ -174,7 +164,6 @@ namespace input {
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
-        controller_activity_states(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
@@ -188,7 +177,7 @@ namespace input {
     int shortcutFlags;
 
     std::vector<gamepad_t> gamepads;
-    std::vector<controller_activity_state_t> controller_activity_states;
+    activity::tracker_t activity_tracker;
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
@@ -1542,128 +1531,6 @@ namespace input {
     }
   }
 
-  // Ignore analog jitter/drift unless the input crosses a small deadzone or changes meaningfully
-  // while active. This matches the common "edge + deadzone + hysteresis" pattern used by input systems.
-  constexpr std::int16_t CONTROLLER_ACTIVITY_STICK_DEADZONE = 2048;
-  constexpr std::int16_t CONTROLLER_ACTIVITY_STICK_DELTA = 1024;
-  constexpr std::uint8_t CONTROLLER_ACTIVITY_TRIGGER_THRESHOLD = 8;
-  constexpr std::uint8_t CONTROLLER_ACTIVITY_TRIGGER_DELTA = 4;
-
-  bool
-  stick_outside_activity_deadzone(std::int16_t value) {
-    return std::abs(static_cast<int>(value)) >= CONTROLLER_ACTIVITY_STICK_DEADZONE;
-  }
-
-  bool
-  trigger_has_meaningful_change(std::uint8_t previous, std::uint8_t current) {
-    const auto previous_active = previous >= CONTROLLER_ACTIVITY_TRIGGER_THRESHOLD;
-    const auto current_active = current >= CONTROLLER_ACTIVITY_TRIGGER_THRESHOLD;
-    if (previous_active != current_active) {
-      return true;
-    }
-
-    return (previous_active || current_active) &&
-           std::abs(static_cast<int>(current) - static_cast<int>(previous)) >= CONTROLLER_ACTIVITY_TRIGGER_DELTA;
-  }
-
-  bool
-  stick_has_meaningful_change(std::int16_t previous, std::int16_t current) {
-    const auto previous_active = stick_outside_activity_deadzone(previous);
-    const auto current_active = stick_outside_activity_deadzone(current);
-    if (previous_active != current_active) {
-      return true;
-    }
-
-    return (previous_active || current_active) &&
-           std::abs(static_cast<int>(current) - static_cast<int>(previous)) >= CONTROLLER_ACTIVITY_STICK_DELTA;
-  }
-
-  bool
-  should_trigger_controller_input_activity(std::shared_ptr<input_t> &input, PNV_MULTI_CONTROLLER_PACKET packet) {
-    const auto controller_number = util::endian::little(packet->controllerNumber);
-    if (controller_number < 0 || controller_number >= static_cast<int>(input->controller_activity_states.size())) {
-      return false;
-    }
-
-    const auto button_flags =
-      static_cast<std::uint32_t>(util::endian::little(static_cast<std::uint16_t>(packet->buttonFlags))) |
-      (static_cast<std::uint32_t>(util::endian::little(static_cast<std::uint16_t>(packet->buttonFlags2))) << 16);
-    const auto left_trigger = packet->leftTrigger;
-    const auto right_trigger = packet->rightTrigger;
-    const auto left_stick_x = util::endian::little(packet->leftStickX);
-    const auto left_stick_y = util::endian::little(packet->leftStickY);
-    const auto right_stick_x = util::endian::little(packet->rightStickX);
-    const auto right_stick_y = util::endian::little(packet->rightStickY);
-
-    auto &state = input->controller_activity_states[controller_number];
-    bool should_trigger = false;
-
-    if (!state.initialized) {
-      should_trigger =
-        button_flags != 0 ||
-        left_trigger >= CONTROLLER_ACTIVITY_TRIGGER_THRESHOLD ||
-        right_trigger >= CONTROLLER_ACTIVITY_TRIGGER_THRESHOLD ||
-        stick_outside_activity_deadzone(left_stick_x) ||
-        stick_outside_activity_deadzone(left_stick_y) ||
-        stick_outside_activity_deadzone(right_stick_x) ||
-        stick_outside_activity_deadzone(right_stick_y);
-    }
-    else {
-      should_trigger =
-        button_flags != state.button_flags ||
-        trigger_has_meaningful_change(state.left_trigger, left_trigger) ||
-        trigger_has_meaningful_change(state.right_trigger, right_trigger) ||
-        stick_has_meaningful_change(state.left_stick_x, left_stick_x) ||
-        stick_has_meaningful_change(state.left_stick_y, left_stick_y) ||
-        stick_has_meaningful_change(state.right_stick_x, right_stick_x) ||
-        stick_has_meaningful_change(state.right_stick_y, right_stick_y);
-    }
-
-    state.initialized = true;
-    state.button_flags = button_flags;
-    state.left_trigger = left_trigger;
-    state.right_trigger = right_trigger;
-    state.left_stick_x = left_stick_x;
-    state.left_stick_y = left_stick_y;
-    state.right_stick_x = right_stick_x;
-    state.right_stick_y = right_stick_y;
-
-    return should_trigger;
-  }
-
-  bool
-  should_trigger_input_activity(std::shared_ptr<input_t> &input, PNV_INPUT_HEADER payload) {
-    switch (util::endian::little(payload->magic)) {
-      case MOUSE_MOVE_REL_MAGIC_GEN5:
-        return config::input.mouse &&
-               (util::endian::big(reinterpret_cast<PNV_REL_MOUSE_MOVE_PACKET>(payload)->deltaX) != 0 ||
-                util::endian::big(reinterpret_cast<PNV_REL_MOUSE_MOVE_PACKET>(payload)->deltaY) != 0);
-      case MOUSE_MOVE_ABS_MAGIC:
-      case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
-      case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
-        return config::input.mouse;
-      case KEY_DOWN_EVENT_MAGIC:
-      case KEY_UP_EVENT_MAGIC:
-      case UTF8_TEXT_EVENT_MAGIC:
-        return config::input.keyboard;
-      case SS_TOUCH_MAGIC:
-      case SS_PEN_MAGIC:
-        return config::input.mouse;
-      case SS_CONTROLLER_TOUCH_MAGIC:
-        return config::input.controller;
-      case SCROLL_MAGIC_GEN5:
-        return config::input.mouse &&
-               (util::endian::big(reinterpret_cast<PNV_SCROLL_PACKET>(payload)->scrollAmt1) != 0 ||
-                util::endian::big(reinterpret_cast<PNV_SCROLL_PACKET>(payload)->scrollAmt2) != 0);
-      case SS_HSCROLL_MAGIC:
-        return config::input.mouse && util::endian::big(reinterpret_cast<PSS_HSCROLL_PACKET>(payload)->scrollAmount) != 0;
-      case MULTI_CONTROLLER_MAGIC_GEN5:
-        return config::input.controller && should_trigger_controller_input_activity(input, reinterpret_cast<PNV_MULTI_CONTROLLER_PACKET>(payload));
-      default:
-        return false;
-    }
-  }
-
   /**
    * @brief Called on a thread pool thread to process an input message.
    * @param input The input context pointer.
@@ -1772,7 +1639,7 @@ namespace input {
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
     auto payload = input_data.empty() ? nullptr : reinterpret_cast<PNV_INPUT_HEADER>(input_data.data());
-    if (config::video.input_activity_boost && payload != nullptr && should_trigger_input_activity(input, payload)) {
+    if (config::video.input_activity_boost && payload != nullptr && input->activity_tracker.evaluate(payload)) {
       input->input_activity_event->raise(std::chrono::steady_clock::now());
     }
 
@@ -1788,9 +1655,7 @@ namespace input {
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
 
-    for (auto &state : input->controller_activity_states) {
-      state = {};
-    }
+    input->activity_tracker.reset();
 
     // Ensure input is synchronous, by using the task_pool
     task_pool.push([]() {
