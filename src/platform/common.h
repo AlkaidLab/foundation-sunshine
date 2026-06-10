@@ -298,6 +298,7 @@ namespace platf {
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
     constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync (negotiated only when GUI agent is alive)
     constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
+    constexpr caps_t touchpad = 0x10;  // Native precision touchpad events
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -360,6 +361,20 @@ namespace platf {
     float x;
     float y;
     float pressureOrDistance;  // Distance for hover and pressure for contact
+    float contactAreaMajor;
+    float contactAreaMinor;
+  };
+
+  struct touchpad_input_t {
+    std::uint8_t eventType;
+    std::uint8_t buttonState;
+    std::uint16_t rotation;  // Degrees (0..360) or LI_ROT_UNKNOWN
+    std::uint16_t deviceWidthMm;
+    std::uint16_t deviceHeightMm;
+    std::uint32_t pointerId;
+    float x;
+    float y;
+    float pressure;
     float contactAreaMajor;
     float contactAreaMinor;
   };
@@ -974,6 +989,14 @@ namespace platf {
    */
   void
   touch_update(client_input_t *input, const touch_port_t &touch_port, const touch_input_t &touch);
+
+  /**
+   * @brief Send a native touchpad event to the OS.
+   * @param input The client-specific input context.
+   * @param touchpad The touchpad event in normalized physical surface coordinates.
+   */
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad);
 
   /**
    * @brief Send a pen event to the OS.

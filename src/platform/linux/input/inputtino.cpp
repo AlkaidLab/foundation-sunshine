@@ -90,6 +90,11 @@ namespace platf {
   }
 
   void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad
+  }
+
+  void
   pen_update(client_input_t *input, const touch_port_t &touch_port, const pen_input_t &pen) {
     auto raw = (client_input_raw_t *) input;
     platf::pen::update(raw, touch_port, pen);

@@ -1911,6 +1911,11 @@ namespace platf {
     }
   }
 
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad
+  }
+
   /**
    * @brief Sends a pen event to the OS.
    * @param input The client-specific input context.
