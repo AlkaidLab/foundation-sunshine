@@ -460,6 +460,9 @@ namespace config {
     {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
+    true,  // input_activity_boost
+    60,  // input_activity_boost_fps
+    150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
     false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
     "auto"s,  // capture_compute_shader (default: auto -> off until validated)
@@ -1306,6 +1309,9 @@ namespace config {
     int_f(vars, "max_bitrate", video.max_bitrate);
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
+    bool_f(vars, "input_activity_boost", video.input_activity_boost);
+    int_between_f(vars, "input_activity_boost_fps", video.input_activity_boost_fps, { 0, 1000 });
+    int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
     bool_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);

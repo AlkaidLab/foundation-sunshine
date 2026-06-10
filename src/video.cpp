@@ -2685,17 +2685,35 @@ namespace video {
       }
     });
 
-    // set minimum frame time based on client-requested target framerate or minimum_fps_target
-    std::chrono::duration<double, std::milli> minimum_frame_time;
+    // Set the base minimum frame time based on client-requested target framerate or minimum_fps_target.
+    // This can be temporarily reduced later if VRR input activity boost is active.
+    std::chrono::duration<double, std::milli> base_minimum_frame_time;
     if (config::video.minimum_fps_target > 0) {
       // Use minimum_fps_target if specified
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
-      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
+      base_minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
+      BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
     }
     else {
       // Default behavior: about half the stream FPS
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
-      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+      base_minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
+      BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+    }
+
+    const bool input_activity_boost_enabled =
+      config::video.variable_refresh_rate &&
+      config::video.input_activity_boost &&
+      config::video.input_activity_boost_fps > 0 &&
+      config::video.input_activity_boost_window_ms > 0;
+
+    const auto input_activity_boost_frame_time = input_activity_boost_enabled ?
+      std::chrono::duration<double, std::milli> { 1000.0 / config::video.input_activity_boost_fps } :
+      base_minimum_frame_time;
+    const auto input_activity_boost_window = std::chrono::milliseconds { config::video.input_activity_boost_window_ms };
+
+    if (input_activity_boost_enabled) {
+      BOOST_LOG(info) << "Input activity boost enabled: floor="sv
+                      << config::video.input_activity_boost_fps
+                      << " fps, window="sv << config::video.input_activity_boost_window_ms << " ms"sv;
     }
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -2703,6 +2721,16 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->event<dynamic_param_t>(mail::dynamic_param_change));
+    auto input_activity_event = mail->event<std::chrono::steady_clock::time_point>(mail::input_activity);
+    auto input_boost_until = std::chrono::steady_clock::time_point::min();
+
+    auto consume_input_activity = [&]() {
+      while (input_activity_event->peek()) {
+        if (auto activity = input_activity_event->pop(0ms)) {
+          input_boost_until = std::max(input_boost_until, *activity + input_activity_boost_window);
+        }
+      }
+    };
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2752,13 +2780,19 @@ namespace video {
         session->request_idr_frame();
       }
 
+      consume_input_activity();
+      auto input_boost_active = input_activity_boost_enabled && std::chrono::steady_clock::now() < input_boost_until;
+      auto effective_minimum_frame_time = input_boost_active ?
+        std::min(base_minimum_frame_time, input_activity_boost_frame_time) :
+        base_minimum_frame_time;
+
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       bool has_new_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(minimum_frame_time)) {
+        if (auto img = images->pop(effective_minimum_frame_time)) {
           frame_timestamp = img->frame_timestamp;
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
@@ -2772,6 +2806,9 @@ namespace video {
         }
       }
 
+      consume_input_activity();
+      input_boost_active = input_activity_boost_enabled && std::chrono::steady_clock::now() < input_boost_until;
+
       // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
       // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
       // even when no new frame would be encoded.
@@ -2779,13 +2816,14 @@ namespace video {
 
       // If variable refresh rate is enabled, skip encoding when no new frame is available
       // This allows the stream framerate to match the render framerate for VRR support
-      // However, if minimum_fps_target is set, we still encode to maintain minimum FPS
+      // However, if minimum_fps_target is set, or input activity boost is active, we still encode
+      // to maintain a temporary minimum FPS floor for better visual input feedback.
       if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
-        // Only skip if minimum_fps_target is 0 (disabled) or we've already met the minimum
-        if (config::video.minimum_fps_target == 0) {
+        // Only skip if minimum_fps_target is 0 (disabled) and input activity boost is inactive.
+        if (config::video.minimum_fps_target == 0 && !input_boost_active) {
           continue;
         }
-        // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
+        // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {

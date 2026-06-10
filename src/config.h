@@ -125,6 +125,9 @@ namespace config {
     std::vector<display_mode_remapping_t> display_mode_remapping;
     bool variable_refresh_rate;  // Allow video stream framerate to match render framerate for VRR support
     int minimum_fps_target;  // Minimum FPS target (0 = auto, 1-1000 = minimum FPS to maintain)
+    bool input_activity_boost;  // Temporarily raise encoding cadence after local input while VRR is active
+    int input_activity_boost_fps;  // Minimum FPS floor to maintain during the input activity boost window
+    int input_activity_boost_window_ms;  // Duration of the input activity boost window in milliseconds
     std::string downscaling_quality;  // Downscaling quality: "fast" (bilinear+8pt), "balanced" (bicubic), "high_quality" (future: lanczos)
     bool hdr_luminance_analysis;  // Enable per-frame HDR luminance analysis for dynamic metadata
     std::string capture_compute_shader;  // Use compute shader for HDR RGB->P010 conversion: "auto" (off for now), "on", "off"

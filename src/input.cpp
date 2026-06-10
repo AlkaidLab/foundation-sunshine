@@ -159,12 +159,14 @@ namespace input {
 
     input_t(
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
-      platf::feedback_queue_t feedback_queue):
+      platf::feedback_queue_t feedback_queue,
+      safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
+        input_activity_event { std::move(input_activity_event) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
         accumulated_vscroll_delta {},
@@ -178,6 +180,7 @@ namespace input {
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
     platf::feedback_queue_t feedback_queue;
+    safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -1526,6 +1529,28 @@ namespace input {
     }
   }
 
+  bool
+  should_trigger_input_activity(PNV_INPUT_HEADER payload) {
+    switch (util::endian::little(payload->magic)) {
+      case MOUSE_MOVE_REL_MAGIC_GEN5:
+      case MOUSE_MOVE_ABS_MAGIC:
+      case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
+      case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
+      case SCROLL_MAGIC_GEN5:
+      case SS_HSCROLL_MAGIC:
+      case KEY_DOWN_EVENT_MAGIC:
+      case KEY_UP_EVENT_MAGIC:
+      case UTF8_TEXT_EVENT_MAGIC:
+      case MULTI_CONTROLLER_MAGIC_GEN5:
+      case SS_TOUCH_MAGIC:
+      case SS_PEN_MAGIC:
+      case SS_CONTROLLER_TOUCH_MAGIC:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   /**
    * @brief Called on a thread pool thread to process an input message.
    * @param input The input context pointer.
@@ -1633,6 +1658,11 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    auto payload = input_data.empty() ? nullptr : reinterpret_cast<PNV_INPUT_HEADER>(input_data.data());
+    if (config::video.input_activity_boost && payload != nullptr && should_trigger_input_activity(payload)) {
+      input->input_activity_event->raise(std::chrono::steady_clock::now());
+    }
+
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       input->input_queue.push_back(std::move(input_data));
@@ -1695,7 +1725,8 @@ namespace input {
   alloc(safe::mail_t mail) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
-      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback));
+      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
+      mail->event<std::chrono::steady_clock::time_point>(mail::input_activity));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {
