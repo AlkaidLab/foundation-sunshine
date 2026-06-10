@@ -2732,6 +2732,31 @@ namespace video {
       }
     };
 
+    using image_pop_result_t = decltype(images->pop(0ms));
+    const auto input_activity_poll_interval = std::chrono::duration<double, std::milli> { 5ms };
+    auto pop_image_interruptible = [&](const std::chrono::duration<double, std::milli> &wait_time, bool allow_input_preemption) -> image_pop_result_t {
+      if (!allow_input_preemption || wait_time <= input_activity_poll_interval) {
+        return images->pop(wait_time);
+      }
+
+      auto remaining_wait = wait_time;
+      while (images->running() && remaining_wait > 0ms) {
+        auto slice_wait = std::min(remaining_wait, input_activity_poll_interval);
+        if (auto img = images->pop(slice_wait)) {
+          return img;
+        }
+
+        consume_input_activity();
+        if (std::chrono::steady_clock::now() < input_boost_until) {
+          return {};
+        }
+
+        remaining_wait -= slice_wait;
+      }
+
+      return {};
+    };
+
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
       // even if we timeout waiting on the first frame. This is a relatively large
@@ -2792,7 +2817,7 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(effective_minimum_frame_time)) {
+        if (auto img = pop_image_interruptible(effective_minimum_frame_time, input_activity_boost_enabled && !input_boost_active)) {
           frame_timestamp = img->frame_timestamp;
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
