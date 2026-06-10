@@ -5,6 +5,7 @@
 #pragma once
 
 // standard includes
+#include <array>
 #include <bitset>
 #include <filesystem>
 #include <functional>
@@ -299,6 +300,7 @@ namespace platf {
     constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync (negotiated only when GUI agent is alive)
     constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
     constexpr caps_t touchpad = 0x10;  // Native precision touchpad events
+    constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -377,6 +379,25 @@ namespace platf {
     float pressure;
     float contactAreaMajor;
     float contactAreaMinor;
+  };
+
+  constexpr std::size_t MAX_TOUCHPAD_FRAME_CONTACTS = 5;
+
+  struct touchpad_frame_contact_t {
+    std::uint8_t eventType;
+    std::uint32_t pointerId;
+    float x;
+    float y;
+    float pressure;
+  };
+
+  struct touchpad_frame_t {
+    std::uint8_t contactCount;
+    std::uint8_t buttonState;
+    std::uint16_t rotation;  // Degrees (0..360) or LI_ROT_UNKNOWN
+    std::uint16_t deviceWidthMm;
+    std::uint16_t deviceHeightMm;
+    std::array<touchpad_frame_contact_t, MAX_TOUCHPAD_FRAME_CONTACTS> contacts;
   };
 
   struct pen_input_t {
@@ -997,6 +1018,14 @@ namespace platf {
    */
   void
   touchpad_update(client_input_t *input, const touchpad_input_t &touchpad);
+
+  /**
+   * @brief Send one native touchpad hardware frame to the OS.
+   * @param input The client-specific input context.
+   * @param touchpad The touchpad frame in normalized physical surface coordinates.
+   */
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad);
 
   /**
    * @brief Send a pen event to the OS.

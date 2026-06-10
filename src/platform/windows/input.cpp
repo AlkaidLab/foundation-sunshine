@@ -7,6 +7,7 @@
 #define WINVER 0x0A00
 #include <windows.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -1314,24 +1315,95 @@ namespace platf {
     raw->touchpadTimestampMs = 0;
   }
 
-  void
-  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
-    auto raw = (client_input_raw_t *) input;
+  POINTER_TYPE_INFO *
+  touchpad_contact_update(
+    client_input_raw_t *raw,
+    std::uint8_t eventType,
+    std::uint8_t buttonState,
+    std::uint16_t rotation,
+    std::uint32_t pointerId,
+    float x,
+    float y,
+    float pressure,
+    float contactAreaMajor,
+    float contactAreaMinor) {
+    auto pointer = touchpad_pointer_by_id(raw, pointerId, eventType);
+    if (!pointer) {
+      BOOST_LOG(error) << "No unused touchpad pointer entries! Cancelling all active touchpad contacts!"sv;
+      cancel_all_active_touchpad(raw);
+      pointer = touchpad_pointer_by_id(raw, pointerId, eventType);
+    }
 
+    if (!pointer) {
+      return pointer;
+    }
+
+    pointer->type = PT_TOUCHPAD;
+
+    auto &touchInfo = pointer->touchInfo;
+    touchInfo.pointerInfo.pointerType = PT_TOUCHPAD;
+
+    populate_touchpad_pointer_info(
+      touchInfo.pointerInfo,
+      eventType,
+      x,
+      y,
+      raw->touchpadWidthHimetric,
+      raw->touchpadHeightHimetric);
+    update_touchpad_button_state(touchInfo.pointerInfo, buttonState);
+
+    touchInfo.touchMask = TOUCH_MASK_NONE;
+
+    if (touchInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) {
+      if (pressure != 0.0f) {
+        touchInfo.touchMask |= TOUCH_MASK_PRESSURE;
+        touchInfo.pressure = (UINT32) (pressure * 1024);
+      }
+      else {
+        touchInfo.pressure = 512;
+      }
+
+      if (contactAreaMajor != 0.0f && contactAreaMinor != 0.0f) {
+        LONG contactWidth = std::max<LONG>(1, std::lround(contactAreaMajor * raw->touchpadWidthHimetric));
+        LONG contactHeight = std::max<LONG>(1, std::lround(contactAreaMinor * raw->touchpadHeightHimetric));
+
+        touchInfo.rcContact.left = std::max<LONG>(0, touchInfo.pointerInfo.ptHimetricLocation.x - contactWidth / 2);
+        touchInfo.rcContact.right = std::min<LONG>((LONG) raw->touchpadWidthHimetric, touchInfo.pointerInfo.ptHimetricLocation.x + (contactWidth + 1) / 2);
+        touchInfo.rcContact.top = std::max<LONG>(0, touchInfo.pointerInfo.ptHimetricLocation.y - contactHeight / 2);
+        touchInfo.rcContact.bottom = std::min<LONG>((LONG) raw->touchpadHeightHimetric, touchInfo.pointerInfo.ptHimetricLocation.y + (contactHeight + 1) / 2);
+        touchInfo.touchMask |= TOUCH_MASK_CONTACTAREA;
+      }
+    }
+    else {
+      touchInfo.pressure = 0;
+      touchInfo.rcContact = {};
+    }
+
+    if (rotation != LI_ROT_UNKNOWN) {
+      touchInfo.touchMask |= TOUCH_MASK_ORIENTATION;
+      touchInfo.orientation = rotation;
+    }
+    else {
+      touchInfo.orientation = 0;
+    }
+
+    return pointer;
+  }
+
+  bool
+  ensure_touchpad_device(client_input_raw_t *raw, std::uint16_t deviceWidthMm, std::uint16_t deviceHeightMm, std::uint8_t eventType) {
     if (!raw->global->fnCreateSyntheticPointerDevice2 ||
         !raw->global->fnInjectSyntheticPointerInput ||
         !raw->global->fnDestroySyntheticPointerDevice) {
       BOOST_LOG(warning) << "Touchpad input requires Windows 11 CreateSyntheticPointerDevice2 support"sv;
-      return;
+      return false;
     }
 
-    std::lock_guard lock(raw->touchpadMutex);
-
-    auto widthHimetric = touchpad_size_to_himetric(touchpad.deviceWidthMm, DEFAULT_TOUCHPAD_WIDTH_HIMETRIC);
-    auto heightHimetric = touchpad_size_to_himetric(touchpad.deviceHeightMm, DEFAULT_TOUCHPAD_HEIGHT_HIMETRIC);
+    auto widthHimetric = touchpad_size_to_himetric(deviceWidthMm, DEFAULT_TOUCHPAD_WIDTH_HIMETRIC);
+    auto heightHimetric = touchpad_size_to_himetric(deviceHeightMm, DEFAULT_TOUCHPAD_HEIGHT_HIMETRIC);
 
     if (!raw->touchpad) {
-      if (touchpad.eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
+      if (eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
         BOOST_LOG(info) << "Creating virtual touchpad input device"sv;
         synthetic_device_creation_params_t params {};
         params.pointerType = PT_TOUCHPAD;
@@ -1346,15 +1418,65 @@ namespace platf {
         if (!raw->touchpad) {
           auto err = GetLastError();
           BOOST_LOG(warning) << "Failed to create virtual touchpad device: "sv << err;
-          return;
+          return false;
         }
 
         raw->touchpadWidthHimetric = widthHimetric;
         raw->touchpadHeightHimetric = heightHimetric;
       }
       else {
-        return;
+        return false;
       }
+    }
+
+    return true;
+  }
+
+  void
+  finish_touchpad_contact(client_input_raw_t *raw, POINTER_TYPE_INFO *pointer, std::uint8_t eventType) {
+    if (!pointer) {
+      return;
+    }
+
+    pointer->touchInfo.pointerInfo.pointerFlags &= ~EDGE_TRIGGERED_POINTER_FLAGS;
+    pointer->touchInfo.pointerInfo.ButtonChangeType = POINTER_CHANGE_NONE;
+
+    if (touchpad_event_ends_pointer(eventType)) {
+      auto pointerIndex = (UINT32) (pointer - raw->touchpadInfo);
+      raw->touchpadClientPointerIds[pointerIndex] = 0;
+      *pointer = {};
+    }
+  }
+
+  bool
+  inject_touchpad_frame(client_input_raw_t *raw) {
+    update_touchpad_frame_timestamps(raw);
+    if (!inject_synthetic_pointer_input(raw->global, raw->touchpad, raw->touchpadInfo, raw->activeTouchpadSlots)) {
+      auto err = GetLastError();
+      BOOST_LOG(warning) << "Failed to inject virtual touchpad input: "sv << err;
+      return false;
+    }
+
+    return true;
+  }
+
+  void
+  schedule_touchpad_repeat(client_input_raw_t *raw) {
+    perform_touchpad_compaction(raw);
+
+    if (raw->activeTouchpadSlots > 0) {
+      raw->touchpadRepeatTask = task_pool.pushDelayed(repeat_touchpad, ISPI_REPEAT_INTERVAL, raw, raw->touchpadRepeatGeneration).task_id;
+    }
+  }
+
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    auto raw = (client_input_raw_t *) input;
+
+    std::lock_guard lock(raw->touchpadMutex);
+
+    if (!ensure_touchpad_device(raw, touchpad.deviceWidthMm, touchpad.deviceHeightMm, touchpad.eventType)) {
+      return;
     }
 
     if (touchpad.eventType == LI_TOUCH_EVENT_CANCEL_ALL) {
@@ -1364,87 +1486,73 @@ namespace platf {
 
     cancel_pending_touchpad_repeat(raw);
 
-    auto pointer = touchpad_pointer_by_id(raw, touchpad.pointerId, touchpad.eventType);
-    if (!pointer) {
-      BOOST_LOG(error) << "No unused touchpad pointer entries! Cancelling all active touchpad contacts!"sv;
-      cancel_all_active_touchpad(raw);
-      pointer = touchpad_pointer_by_id(raw, touchpad.pointerId, touchpad.eventType);
-    }
-
-    if (!pointer) {
-      return;
-    }
-
-    pointer->type = PT_TOUCHPAD;
-
-    auto &touchInfo = pointer->touchInfo;
-    touchInfo.pointerInfo.pointerType = PT_TOUCHPAD;
-
-    populate_touchpad_pointer_info(
-      touchInfo.pointerInfo,
+    auto pointer = touchpad_contact_update(
+      raw,
       touchpad.eventType,
+      touchpad.buttonState,
+      touchpad.rotation,
+      touchpad.pointerId,
       touchpad.x,
       touchpad.y,
-      raw->touchpadWidthHimetric,
-      raw->touchpadHeightHimetric);
-    update_touchpad_button_state(touchInfo.pointerInfo, touchpad.buttonState);
+      touchpad.pressure,
+      touchpad.contactAreaMajor,
+      touchpad.contactAreaMinor);
 
-    touchInfo.touchMask = TOUCH_MASK_NONE;
-
-    if (touchInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) {
-      if (touchpad.pressure != 0.0f) {
-        touchInfo.touchMask |= TOUCH_MASK_PRESSURE;
-        touchInfo.pressure = (UINT32) (touchpad.pressure * 1024);
-      }
-      else {
-        touchInfo.pressure = 512;
-      }
-
-      if (touchpad.contactAreaMajor != 0.0f && touchpad.contactAreaMinor != 0.0f) {
-        LONG contactWidth = std::max<LONG>(1, std::lround(touchpad.contactAreaMajor * raw->touchpadWidthHimetric));
-        LONG contactHeight = std::max<LONG>(1, std::lround(touchpad.contactAreaMinor * raw->touchpadHeightHimetric));
-
-        touchInfo.rcContact.left = std::max<LONG>(0, touchInfo.pointerInfo.ptHimetricLocation.x - contactWidth / 2);
-        touchInfo.rcContact.right = std::min<LONG>((LONG) raw->touchpadWidthHimetric, touchInfo.pointerInfo.ptHimetricLocation.x + (contactWidth + 1) / 2);
-        touchInfo.rcContact.top = std::max<LONG>(0, touchInfo.pointerInfo.ptHimetricLocation.y - contactHeight / 2);
-        touchInfo.rcContact.bottom = std::min<LONG>((LONG) raw->touchpadHeightHimetric, touchInfo.pointerInfo.ptHimetricLocation.y + (contactHeight + 1) / 2);
-        touchInfo.touchMask |= TOUCH_MASK_CONTACTAREA;
-      }
-    }
-    else {
-      touchInfo.pressure = 0;
-      touchInfo.rcContact = {};
-    }
-
-    if (touchpad.rotation != LI_ROT_UNKNOWN) {
-      touchInfo.touchMask |= TOUCH_MASK_ORIENTATION;
-      touchInfo.orientation = touchpad.rotation;
-    }
-    else {
-      touchInfo.orientation = 0;
-    }
-
-    update_touchpad_frame_timestamps(raw);
-    if (!inject_synthetic_pointer_input(raw->global, raw->touchpad, raw->touchpadInfo, raw->activeTouchpadSlots)) {
-      auto err = GetLastError();
-      BOOST_LOG(warning) << "Failed to inject virtual touchpad input: "sv << err;
+    if (!pointer || !inject_touchpad_frame(raw)) {
       return;
     }
 
-    touchInfo.pointerInfo.pointerFlags &= ~EDGE_TRIGGERED_POINTER_FLAGS;
-    touchInfo.pointerInfo.ButtonChangeType = POINTER_CHANGE_NONE;
+    finish_touchpad_contact(raw, pointer, touchpad.eventType);
+    schedule_touchpad_repeat(raw);
+  }
 
-    if (touchpad_event_ends_pointer(touchpad.eventType)) {
-      auto pointerIndex = (UINT32) (pointer - raw->touchpadInfo);
-      raw->touchpadClientPointerIds[pointerIndex] = 0;
-      *pointer = {};
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad) {
+    auto raw = (client_input_raw_t *) input;
+
+    if (touchpad.contactCount > MAX_TOUCHPAD_FRAME_CONTACTS) {
+      BOOST_LOG(warning) << "Touchpad frame contact count out of range ["sv << (uint32_t) touchpad.contactCount << ']';
+      return;
     }
 
-    perform_touchpad_compaction(raw);
-
-    if (raw->activeTouchpadSlots > 0) {
-      raw->touchpadRepeatTask = task_pool.pushDelayed(repeat_touchpad, ISPI_REPEAT_INTERVAL, raw, raw->touchpadRepeatGeneration).task_id;
+    if (touchpad.contactCount == 0) {
+      return;
     }
+
+    std::lock_guard lock(raw->touchpadMutex);
+
+    if (!ensure_touchpad_device(raw, touchpad.deviceWidthMm, touchpad.deviceHeightMm, touchpad.contacts[0].eventType)) {
+      return;
+    }
+
+    cancel_pending_touchpad_repeat(raw);
+
+    std::array<POINTER_TYPE_INFO *, MAX_TOUCHPAD_FRAME_CONTACTS> updatedPointers {};
+
+    for (std::uint8_t i = 0; i < touchpad.contactCount; i++) {
+      auto &contact = touchpad.contacts[i];
+      updatedPointers[i] = touchpad_contact_update(
+        raw,
+        contact.eventType,
+        touchpad.buttonState,
+        touchpad.rotation,
+        contact.pointerId,
+        contact.x,
+        contact.y,
+        contact.pressure,
+        0.0f,
+        0.0f);
+    }
+
+    if (!inject_touchpad_frame(raw)) {
+      return;
+    }
+
+    for (std::uint8_t i = 0; i < touchpad.contactCount; i++) {
+      finish_touchpad_contact(raw, updatedPointers[i], touchpad.contacts[i].eventType);
+    }
+
+    schedule_touchpad_repeat(raw);
   }
 
   /**
@@ -2355,7 +2463,7 @@ namespace platf {
     }
 
     if (get_create_synthetic_pointer_device2_proc() != nullptr) {
-      caps |= platform_caps::touchpad;
+      caps |= platform_caps::touchpad | platform_caps::touchpad_frame;
     }
     else {
       BOOST_LOG(warning) << "Touchpad input requires Windows 11 CreateSyntheticPointerDevice2 support"sv;

@@ -338,6 +338,38 @@ namespace input {
       << "--end touchpad packet--"sv;
   }
 
+  float
+  from_touchpad_frame_uint16(std::uint16_t value) {
+    return util::endian::little(value) / 65535.0f;
+  }
+
+  void
+  print(PSS_TOUCHPAD_FRAME_PACKET packet) {
+    auto contact_count = packet->contactCount;
+    if (contact_count > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      contact_count = SS_TOUCHPAD_FRAME_MAX_CONTACTS;
+    }
+
+    BOOST_LOG(debug)
+      << "--begin touchpad frame packet--"sv << std::endl
+      << "contactCount ["sv << (uint32_t) packet->contactCount << ']' << std::endl
+      << "buttonState ["sv << util::hex(packet->buttonState).to_string_view() << ']' << std::endl
+      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
+      << "deviceWidthMm ["sv << util::endian::little(packet->deviceWidthMm) << ']' << std::endl
+      << "deviceHeightMm ["sv << util::endian::little(packet->deviceHeightMm) << ']';
+
+    for (std::uint8_t i = 0; i < contact_count; i++) {
+      BOOST_LOG(debug)
+        << "contact ["sv << (uint32_t) i << "] eventType ["sv << util::hex(packet->contacts[i].eventType).to_string_view() << ']'
+        << " pointerId ["sv << util::hex(packet->contacts[i].pointerId).to_string_view() << ']'
+        << " x ["sv << from_touchpad_frame_uint16(packet->contacts[i].x) << ']'
+        << " y ["sv << from_touchpad_frame_uint16(packet->contacts[i].y) << ']'
+        << " pressure ["sv << from_touchpad_frame_uint16(packet->contacts[i].pressure) << ']';
+    }
+
+    BOOST_LOG(debug) << "--end touchpad frame packet--"sv;
+  }
+
   /**
    * @brief Prints a pen packet.
    * @param packet The pen packet.
@@ -457,6 +489,9 @@ namespace input {
         break;
       case SS_TOUCHPAD_MAGIC:
         print((PSS_TOUCHPAD_PACKET) payload);
+        break;
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        print((PSS_TOUCHPAD_FRAME_PACKET) payload);
         break;
       case SS_PEN_MAGIC:
         print((PSS_PEN_PACKET) payload);
@@ -1007,6 +1042,43 @@ namespace input {
     };
 
     platf::touchpad_update(input->client_context.get(), touchpad);
+  }
+
+  void
+  passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_FRAME_PACKET packet) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    auto rotation = util::endian::little(packet->rotation);
+    if (rotation != LI_ROT_UNKNOWN) {
+      rotation %= 360;
+    }
+
+    auto contact_count = packet->contactCount;
+    if (contact_count > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      BOOST_LOG(warning) << "Touchpad frame contact count out of range ["sv << (uint32_t) contact_count << ']';
+      contact_count = SS_TOUCHPAD_FRAME_MAX_CONTACTS;
+    }
+
+    platf::touchpad_frame_t touchpad {};
+    touchpad.contactCount = contact_count;
+    touchpad.buttonState = packet->buttonState;
+    touchpad.rotation = rotation;
+    touchpad.deviceWidthMm = util::endian::little(packet->deviceWidthMm);
+    touchpad.deviceHeightMm = util::endian::little(packet->deviceHeightMm);
+
+    for (std::uint8_t i = 0; i < contact_count; i++) {
+      touchpad.contacts[i] = {
+        packet->contacts[i].eventType,
+        util::endian::little(packet->contacts[i].pointerId),
+        from_touchpad_frame_uint16(packet->contacts[i].x),
+        from_touchpad_frame_uint16(packet->contacts[i].y),
+        from_touchpad_frame_uint16(packet->contacts[i].pressure),
+      };
+    }
+
+    platf::touchpad_frame_update(input->client_context.get(), touchpad);
   }
 
   /**
@@ -1690,6 +1762,9 @@ namespace input {
         break;
       case SS_TOUCHPAD_MAGIC:
         passthrough(input, (PSS_TOUCHPAD_PACKET) payload);
+        break;
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        passthrough(input, (PSS_TOUCHPAD_FRAME_PACKET) payload);
         break;
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);
