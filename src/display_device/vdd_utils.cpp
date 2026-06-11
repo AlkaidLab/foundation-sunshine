@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <future>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <thread>
@@ -418,18 +419,30 @@ namespace display_device {
     }
 
     boost::optional<unsigned int>
+    rounded_vdd_refresh_hz(double refresh_hz) {
+      constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
+      constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
+
+      if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
+        return {};
+      }
+
+      const auto rounded = std::lround(refresh_hz);
+      if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
+        return {};
+      }
+
+      return static_cast<unsigned int>(rounded);
+    }
+
+    boost::optional<unsigned int>
     rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
       if (refresh_rate.denominator == 0) {
         return {};
       }
 
       const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
-      const auto rounded = static_cast<unsigned int>(std::lround(refresh_hz));
-      if (rounded == 0) {
-        return {};
-      }
-
-      return rounded;
+      return rounded_vdd_refresh_hz(refresh_hz);
     }
 
     boost::optional<unsigned int>
@@ -443,18 +456,18 @@ namespace display_device {
       try {
         std::size_t parsed_len = 0;
         const double refresh_hz = std::stod(trimmed, &parsed_len);
-        if (parsed_len != trimmed.size() || refresh_hz <= 0.0) {
+        if (parsed_len != trimmed.size()) {
           BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
           return {};
         }
 
-        const auto rounded = static_cast<unsigned int>(std::lround(refresh_hz));
-        if (rounded == 0) {
+        const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
+        if (!rounded) {
           BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
           return {};
         }
 
-        return rounded;
+        return *rounded;
       }
       catch (const std::exception &) {
         BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
