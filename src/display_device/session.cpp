@@ -480,19 +480,18 @@ namespace display_device {
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
     if (last_vdd_setting == new_setting) {
-      BOOST_LOG(debug) << "VDD配置未变更: " << new_setting;
-      return;
+      BOOST_LOG(debug) << "VDD session mode unchanged; resyncing full driver mode list: " << new_setting;
     }
 
-    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config);
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok:
         last_vdd_setting = new_setting;
-        BOOST_LOG(info) << "VDD会话模式更新完成（未写入XML）: " << new_setting;
+        BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
         return;
       case vdd_utils::set_vdd_result::failed:
-        BOOST_LOG(error) << "VDD SETMODES 被驱动拒绝，跳过 XML 回退以避免运行态/持久态不一致: " << new_setting;
-        return;
+        BOOST_LOG(warning) << "VDD SETMODES 更新失败，回退 XML+reload 路径: " << new_setting;
+        break;
       case vdd_utils::set_vdd_result::invalid_config:
         BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
         return;
@@ -580,7 +579,7 @@ namespace display_device {
 
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-      vdd_settings.needs_update && config.resolution) {
+      config.resolution && config.refresh_rate) {
       update_vdd_resolution(config, vdd_settings);
     }
 
