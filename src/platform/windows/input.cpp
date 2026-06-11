@@ -1004,6 +1004,14 @@ namespace platf {
 
     if (eventType != LI_TOUCH_EVENT_HOVER && eventType != LI_TOUCH_EVENT_DOWN) {
       BOOST_LOG(warning) << "Unexpected new touchpad pointer "sv << pointerId << " for event "sv << (uint32_t) eventType << ". Did the client drop a down/hover event?"sv;
+
+      // A button-only event carries no contact state, so it can only update an
+      // already-active pointer. Allocating a new slot here would leave a phantom
+      // contact that never gets an end event and is replayed forever by the
+      // repeat task, sticking the button down.
+      if (eventType == LI_TOUCH_EVENT_BUTTON_ONLY) {
+        return nullptr;
+      }
     }
 
     for (UINT32 i = 0; i < ARRAYSIZE(raw->touchpadInfo); i++) {
@@ -1220,6 +1228,13 @@ namespace platf {
 
   void
   update_touchpad_button_state(POINTER_INFO &pointerInfo, std::uint8_t buttonState) {
+    // Never set a button flag on an empty slot, otherwise the contact becomes
+    // permanently active without an end event.
+    if (pointerInfo.pointerFlags == POINTER_FLAG_NONE) {
+      pointerInfo.ButtonChangeType = POINTER_CHANGE_NONE;
+      return;
+    }
+
     bool wasDown = !!(pointerInfo.pointerFlags & POINTER_FLAG_FIRSTBUTTON);
     bool isDown = !!(buttonState & TOUCHPAD_BUTTON_PRIMARY);
 

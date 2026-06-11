@@ -1046,9 +1046,15 @@ namespace input {
 
   void
   passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_FRAME_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !config::input.native_touchpad_optimization) {
       return;
     }
+
+    // The platform-side contact array (platf::MAX_TOUCHPAD_FRAME_CONTACTS) must hold at
+    // least as many contacts as the wire protocol can carry, otherwise the copy loop
+    // below would write out of bounds.
+    static_assert(platf::MAX_TOUCHPAD_FRAME_CONTACTS >= SS_TOUCHPAD_FRAME_MAX_CONTACTS,
+                  "platform touchpad frame capacity must cover the protocol maximum");
 
     auto rotation = util::endian::little(packet->rotation);
     if (rotation != LI_ROT_UNKNOWN) {
