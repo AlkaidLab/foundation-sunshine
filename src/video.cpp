@@ -98,6 +98,52 @@ namespace video {
     }
   }  // namespace
 
+  std::chrono::duration<double, std::milli>
+  minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target) {
+    if (minimum_fps_target > 0) {
+      return std::chrono::duration<double, std::milli> { 1000.0 / minimum_fps_target };
+    }
+
+    return std::chrono::duration<double, std::milli> { 2000.0 / std::max(stream_fps, 1) };
+  }
+
+  input_activity_boost_policy_t
+  make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
+    input_activity_boost_policy_t policy {};
+    policy.configured =
+      config.variable_refresh_rate &&
+      config.enabled &&
+      config.boost_fps > 0 &&
+      config.window_ms > 0;
+
+    if (!policy.configured) {
+      return policy;
+    }
+
+    policy.fps = std::min(config.boost_fps, std::max(config.stream_fps, 1));
+    policy.frame_time = std::chrono::duration<double, std::milli> { 1000.0 / policy.fps };
+    policy.useful = config.minimum_fps_target == 0 || policy.fps > config.minimum_fps_target;
+
+    return policy;
+  }
+
+  std::chrono::duration<double, std::milli>
+  effective_minimum_frame_time(
+    const std::chrono::duration<double, std::milli> &base_minimum_frame_time,
+    const input_activity_boost_policy_t &input_activity_boost_policy,
+    bool input_boost_active,
+    int minimum_fps_target) {
+    if (!input_boost_active || !input_activity_boost_policy.useful) {
+      return base_minimum_frame_time;
+    }
+
+    if (minimum_fps_target > 0) {
+      return std::min(base_minimum_frame_time, input_activity_boost_policy.frame_time);
+    }
+
+    return input_activity_boost_policy.frame_time;
+  }
+
   void
   free_ctx(AVCodecContext *ctx) {
     avcodec_free_context(&ctx);
@@ -2687,33 +2733,31 @@ namespace video {
 
     // Set the base minimum frame time based on client-requested target framerate or minimum_fps_target.
     // This can be temporarily reduced later if VRR input activity boost is active.
-    std::chrono::duration<double, std::milli> base_minimum_frame_time;
+    const auto base_minimum_frame_time = minimum_frame_time_for_vrr(config.framerate, config::video.minimum_fps_target);
     if (config::video.minimum_fps_target > 0) {
-      // Use minimum_fps_target if specified
-      base_minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
       BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
     }
     else {
-      // Default behavior: about half the stream FPS
-      base_minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
       BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
     }
 
-    const bool input_activity_boost_enabled =
-      config::video.variable_refresh_rate &&
-      config::video.input_activity_boost &&
-      config::video.input_activity_boost_fps > 0 &&
-      config::video.input_activity_boost_window_ms > 0;
-
-    const auto input_activity_boost_frame_time = input_activity_boost_enabled ?
-      std::chrono::duration<double, std::milli> { 1000.0 / config::video.input_activity_boost_fps } :
-      base_minimum_frame_time;
+    const auto input_activity_boost_policy = make_input_activity_boost_policy({
+      config::video.variable_refresh_rate,
+      config::video.input_activity_boost,
+      config.framerate,
+      config::video.minimum_fps_target,
+      config::video.input_activity_boost_fps,
+      config::video.input_activity_boost_window_ms,
+    });
     const auto input_activity_boost_window = std::chrono::milliseconds { config::video.input_activity_boost_window_ms };
 
-    if (input_activity_boost_enabled) {
+    if (input_activity_boost_policy.useful) {
       BOOST_LOG(info) << "Input activity boost enabled: floor="sv
-                      << config::video.input_activity_boost_fps
+                      << input_activity_boost_policy.fps
                       << " fps, window="sv << config::video.input_activity_boost_window_ms << " ms"sv;
+    }
+    else if (input_activity_boost_policy.configured) {
+      BOOST_LOG(info) << "Input activity boost configured but not enabled because it would not raise the current VRR minimum cadence."sv;
     }
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -2806,10 +2850,12 @@ namespace video {
       }
 
       consume_input_activity();
-      auto input_boost_active = input_activity_boost_enabled && std::chrono::steady_clock::now() < input_boost_until;
-      auto effective_minimum_frame_time = input_boost_active ?
-        std::min(base_minimum_frame_time, input_activity_boost_frame_time) :
-        base_minimum_frame_time;
+      auto input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
+      auto effective_frame_time = effective_minimum_frame_time(
+        base_minimum_frame_time,
+        input_activity_boost_policy,
+        input_boost_active,
+        config::video.minimum_fps_target);
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       bool has_new_frame = false;
@@ -2817,7 +2863,7 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = pop_image_interruptible(effective_minimum_frame_time, input_activity_boost_enabled && !input_boost_active)) {
+        if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           frame_timestamp = img->frame_timestamp;
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
@@ -2832,7 +2878,7 @@ namespace video {
       }
 
       consume_input_activity();
-      input_boost_active = input_activity_boost_enabled && std::chrono::steady_clock::now() < input_boost_until;
+      input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
 
       // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
       // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
