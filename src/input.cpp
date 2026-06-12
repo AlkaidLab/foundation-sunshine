@@ -1582,6 +1582,10 @@ namespace input {
     // Print the final input packet
     input::print((void *) payload);
 
+    const bool should_raise_input_activity =
+      config::video.input_activity_boost &&
+      input->activity_tracker.evaluate(payload);
+
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5:
@@ -1629,6 +1633,10 @@ namespace input {
         passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
         break;
     }
+
+    if (should_raise_input_activity) {
+      input->input_activity_event->raise(std::chrono::steady_clock::now());
+    }
   }
 
   /**
@@ -1638,11 +1646,6 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
-    auto payload = input_data.empty() ? nullptr : reinterpret_cast<PNV_INPUT_HEADER>(input_data.data());
-    if (config::video.input_activity_boost && payload != nullptr && input->activity_tracker.evaluate(payload)) {
-      input->input_activity_event->raise(std::chrono::steady_clock::now());
-    }
-
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       input->input_queue.push_back(std::move(input_data));
@@ -1654,8 +1657,6 @@ namespace input {
   reset(std::shared_ptr<input_t> &input) {
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
-
-    input->activity_tracker.reset();
 
     // Ensure input is synchronous, by using the task_pool
     task_pool.push([]() {

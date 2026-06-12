@@ -4,11 +4,7 @@
  */
 #pragma once
 
-#include <array>
-#include <cstdint>
-
 struct _NV_INPUT_HEADER;
-struct _NV_MULTI_CONTROLLER_PACKET;
 
 namespace input::activity {
 
@@ -27,30 +23,6 @@ namespace input::activity {
      */
     bool
     evaluate(_NV_INPUT_HEADER *payload);
-
-    /**
-     * @brief Reset all per-controller tracking state (e.g. on session reset).
-     */
-    void
-    reset();
-
-  private:
-    struct controller_state_t {
-      bool initialized {};
-      std::uint32_t button_flags {};
-      std::uint8_t left_trigger {};
-      std::uint8_t right_trigger {};
-      std::int16_t left_stick_x {};
-      std::int16_t left_stick_y {};
-      std::int16_t right_stick_x {};
-      std::int16_t right_stick_y {};
-    };
-
-    bool
-    evaluate_controller(_NV_MULTI_CONTROLLER_PACKET *packet);
-
-    // activeGamepadMask is 16 bits wide, so controller numbers are bounded by 16.
-    std::array<controller_state_t, 16> controllers_ {};
   };
 
 }  // namespace input::activity
