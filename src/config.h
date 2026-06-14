@@ -133,6 +133,7 @@ namespace config {
     std::string capture_compute_shader;  // Use compute shader for HDR RGB->P010 conversion: "auto" (off for now), "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
+    bool allow_client_resolution_change;  // If true, accept client-requested resolution changes via 0x5506 RESOLUTION (IDX_DYNAMIC_PARAM_CHANGE); default false for safety
   };
 
   struct audio_t {

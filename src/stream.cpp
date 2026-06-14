@@ -559,6 +559,12 @@ namespace stream {
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
+
+    // Rate-limit state for client-driven resolution changes (allow_client_resolution_change).
+    // Leading-edge: the first request for a new size applies immediately; subsequent requests
+    // within 250 ms are dropped (the clients already debounce ~400 ms before sending one packet).
+    // Protected by the control-stream handler being single-threaded per session.
+    std::chrono::steady_clock::time_point client_res_last_apply {};
   };
 
   /**
@@ -1380,12 +1386,24 @@ namespace stream {
       session->video.idr_events->raise(true);
     });
 
-    // 辅助函数：处理分辨率变更
+    // 辅助函数：处理客户端请求的分辨率变更
+    // Gated on config::video.allow_client_resolution_change; leading-edge rate-limited to
+    // suppress rapid resize floods (clients debounce ~400 ms before sending one settled packet,
+    // so the first request for a new size always applies immediately).
+    // On disconnect, dd_config_revert_on_disconnect in display_device/session restores the
+    // original display mode automatically.
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
+      // Gate: must be explicitly enabled — client-driven resolution changes are off by default
+      if (!config::video.allow_client_resolution_change) {
+        BOOST_LOG(info) << "Client requested resolution change to " << new_width << "x" << new_height
+                        << " but allow_client_resolution_change is disabled; ignoring";
+        return;
+      }
+
       int old_width = session->config.monitor.width;
       int old_height = session->config.monitor.height;
-      
-      BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height 
+
+      BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height
                       << " -> " << new_width << "x" << new_height;
 
       // 验证分辨率范围
@@ -1395,11 +1413,32 @@ namespace stream {
         return;
       }
 
+      // Clamp to even values: most encoders (H.264 baseline, HEVC) require even dimensions.
+      // Use bitwise AND to round down — safe for all positive integers.
+      new_width  &= ~1;
+      new_height &= ~1;
+      if (new_width <= 0 || new_height <= 0) {
+        BOOST_LOG(warning) << "Resolution too small after even-clamping: " << new_width << "x" << new_height;
+        return;
+      }
+
       // 检查分辨率是否真的改变了
       if (old_width == new_width && old_height == new_height) {
         BOOST_LOG(debug) << "Resolution unchanged, ignoring request";
         return;
       }
+
+      // Rate-limit: apply immediately on the first request for a new size; drop subsequent
+      // requests within 250 ms.  Clients already debounce ~400 ms before sending one settled
+      // packet, so leading-edge is correct — a single request must always apply.
+      constexpr auto RESOLUTION_RATE_LIMIT = std::chrono::milliseconds(250);
+      auto now = std::chrono::steady_clock::now();
+      if ((now - session->client_res_last_apply) < RESOLUTION_RATE_LIMIT) {
+        BOOST_LOG(debug) << "Client resolution rate-limit: dropping " << new_width << "x" << new_height
+                         << " (< " << RESOLUTION_RATE_LIMIT.count() << " ms since last apply)";
+        return;
+      }
+      session->client_res_last_apply = now;
 
       // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
       bool is_rotation = (old_width == new_height && old_height == new_width);
@@ -1428,14 +1467,14 @@ namespace stream {
       // 更新显示设备配置（重新配置模式）
       // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
       if (is_rotation) {
-        BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height 
+        BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height
                         << " -> " << new_width << "x" << new_height;
       }
       else {
-        BOOST_LOG(info) << "Reconfiguring display device for new resolution: " << old_width << "x" << old_height 
+        BOOST_LOG(info) << "Reconfiguring display device for new resolution: " << old_width << "x" << old_height
                         << " -> " << new_width << "x" << new_height;
       }
-      
+
       display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
 
       // 请求 IDR 帧以确保客户端能正确显示新分辨率
@@ -1445,7 +1484,7 @@ namespace stream {
       // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
       // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
       // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
-      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height 
+      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
 

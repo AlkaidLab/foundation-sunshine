@@ -524,6 +524,12 @@ namespace nvhttp {
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
 
+    // Client-driven resolution change capability: advertise to the client that it may send
+    // 0x5506 RESOLUTION (IDX_DYNAMIC_PARAM_CHANGE / paramType=0) requests and the host will
+    // act on them.  Clients (moonlight-qt, moonlight-vplus) MUST check this field before
+    // sending resolution-change packets; absent or 0 means requests will be silently ignored.
+    tree.put("root.ClientResolutionChange", config::video.allow_client_resolution_change ? 1 : 0);
+
     std::ostringstream data;
 
     pt::write_xml(data, tree);
