@@ -1517,8 +1517,16 @@ namespace stream {
         return;
       }
 
-      // Protocol: all 0x5506 fields are little-endian 32-bit integers.
-      const auto param_type = util::endian::little(*(const std::int32_t *) payload.data());
+      // Protocol: all 0x5506 fields are little-endian 32-bit integers. Copy
+      // from the byte buffer before endian conversion to avoid unaligned/aliasing
+      // reads from std::string_view storage.
+      auto read_le_i32 = [&](size_t offset) {
+        std::int32_t value;
+        std::memcpy(&value, payload.data() + offset, sizeof(value));
+        return util::endian::little(value);
+      };
+
+      const auto param_type = read_le_i32(0);
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1536,8 +1544,8 @@ namespace stream {
           return;
         }
 
-        const auto w = util::endian::little(*(const std::int32_t *) (payload.data() + 4));
-        const auto h = util::endian::little(*(const std::int32_t *) (payload.data() + 8));
+        const auto w = read_le_i32(4);
+        const auto h = read_le_i32(8);
         handle_resolution_change(session, w, h);
         return;
       }
@@ -1552,7 +1560,9 @@ namespace stream {
         }
 
         // FPS is transmitted as a LE float; read via bit-cast through LE u32.
-        std::uint32_t fps_bits = util::endian::little(*(const std::uint32_t *) (payload.data() + sizeof(std::int32_t)));
+        std::uint32_t fps_bits;
+        std::memcpy(&fps_bits, payload.data() + sizeof(std::int32_t), sizeof(fps_bits));
+        fps_bits = util::endian::little(fps_bits);
         float new_fps;
         std::memcpy(&new_fps, &fps_bits, sizeof(new_fps));
         
@@ -1581,7 +1591,7 @@ namespace stream {
         return;
       }
 
-      const auto param_value = util::endian::little(*(const std::int32_t *) (payload.data() + sizeof(std::int32_t)));
+      const auto param_value = read_le_i32(sizeof(std::int32_t));
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
