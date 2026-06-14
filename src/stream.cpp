@@ -565,6 +565,12 @@ namespace stream {
     // custom_screen_mode defaults to -1 (no override) matching launch-time nvhttp default.
     bool launch_use_vdd { false };
     int  launch_custom_screen_mode { -1 };
+    // Environment variables from the original launch session (e.g. SUNSHINE_CLIENT_DISPLAY_NAME,
+    // SUNSHINE_CLIENT_CERT_UUID) needed by configure_display / parsed_config routing.
+    boost::process::v1::environment launch_env;
+    // Leading-edge rate-limit for client-driven resolution changes (Fix #6).
+    // Zero-initialised: the epoch is before any real request, so the first request is always accepted.
+    std::chrono::steady_clock::time_point client_res_last_apply {};
   };
 
   /**
@@ -1388,10 +1394,8 @@ namespace stream {
 
     // 辅助函数：处理客户端请求的分辨率变更
     // Gated on config::video.allow_client_resolution_change (default off).
-    // No host-side rate-limit: clients (moonlight-qt, moonlight-vplus) already debounce
-    // ~400 ms before emitting one settled packet, so host-side dropping is both redundant
-    // and harmful — it would swallow the final settled size if it arrived within a brief
-    // window of a prior request.
+    // Leading-edge rate-limit: drops requests arriving within 250 ms of a prior accepted
+    // one to shed burst storms while still applying a single settled packet immediately.
     // On disconnect, dd_config_revert_on_disconnect in display_device/session restores the
     // original display mode automatically.
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
@@ -1430,6 +1434,21 @@ namespace stream {
         return;
       }
 
+      // Fix #6: leading-edge rate-limit — drop requests arriving within 250 ms of the last
+      // accepted one.  Clients debounce to one settled packet so a single request still
+      // applies immediately; this only sheds storms.
+      // Residual: a sub-250 ms burst of DISTINCT sizes may drop intermediate sizes.
+      {
+        auto now = std::chrono::steady_clock::now();
+        constexpr auto RATE_LIMIT = std::chrono::milliseconds(250);
+        if (now - session->client_res_last_apply < RATE_LIMIT) {
+          BOOST_LOG(info) << "Rate-limiting client resolution change to " << new_width << "x" << new_height
+                          << " (< 250 ms since last apply); dropping";
+          return;
+        }
+        session->client_res_last_apply = now;
+      }
+
       // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
       bool is_rotation = (old_width == new_height && old_height == new_width);
       if (is_rotation) {
@@ -1456,15 +1475,25 @@ namespace stream {
       // Preserve VDD and display routing from the original launch session.
       temp_launch_session.use_vdd = session->launch_use_vdd;
       temp_launch_session.custom_screen_mode = session->launch_custom_screen_mode;
+      // Fix #4: restore env so configure_display can read SUNSHINE_CLIENT_DISPLAY_NAME
+      // (parsed_config.cpp:535) and SUNSHINE_CLIENT_CERT_UUID (session.cpp:189/548).
+      // Without this a zero-init env silently routes to the wrong display or skips VDD
+      // client-id matching.
+      temp_launch_session.env = session->launch_env;
 
       // Build a local video config copy with resolution_change forced to automatic so that
       // configure_display uses the width/height from the temp session regardless of the
       // host's global video.resolution_change setting.  Client-driven resolution requests
       // are independent of the host's passive-follow setting (dynamic_resolution_follow_display)
       // and must not be a no-op when resolution_change == no_operation.
+      // Fix #7: also force refresh_rate_change to automatic so VDD custom-mode injection
+      // picks up temp_launch_session.fps and updates the VDD mode list; without this a
+      // host refresh_rate_change=no_operation would skip the VDD mode refresh entirely.
       config::video_t client_driven_video_cfg = config::video;
       client_driven_video_cfg.resolution_change =
         static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
+      client_driven_video_cfg.refresh_rate_change =
+        static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::automatic);
 
       if (is_rotation) {
         BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height
@@ -1477,19 +1506,28 @@ namespace stream {
 
       const auto display_result = display_device::session_t::get().configure_display(client_driven_video_cfg, temp_launch_session, true);
 
-      if (!display_result) {
-        // configure_display returned a hard failure; keep old session config and do not IDR
-        // so the encoder and capture side remain consistent.  The client may retry — not
-        // suppressing future attempts (no dedupe timestamp updated here).
-        BOOST_LOG(error) << "configure_display failed for client-requested resolution change to "
-                         << new_width << "x" << new_height
-                         << ": result=" << static_cast<int>(display_result.result)
-                         << " msg=" << display_result.message
-                         << (display_result.hint.empty() ? "" : (" hint: " + display_result.hint));
+      // Fix #5: operator bool() is true for both success AND deferred_retry; gate monitor
+      // mutation + IDR on success only.  On deferred_retry the mode has not yet applied, so
+      // mutating session->config.monitor + raising IDR would be premature.  On hard failure
+      // we also keep the old config so the encoder and capture side remain consistent.
+      if (display_result.result != display_device::session_t::configure_result_t::result_e::success) {
+        if (display_result.result == display_device::session_t::configure_result_t::result_e::deferred_retry) {
+          BOOST_LOG(info) << "configure_display deferred retry for client-requested resolution change to "
+                           << new_width << "x" << new_height << "; keeping old config, no IDR";
+        }
+        else {
+          BOOST_LOG(error) << "configure_display failed for client-requested resolution change to "
+                           << new_width << "x" << new_height
+                           << ": result=" << static_cast<int>(display_result.result)
+                           << " msg=" << display_result.message
+                           << (display_result.hint.empty() ? "" : (" hint: " + display_result.hint));
+        }
+        // Do not update dedupe state (client_res_last_apply was already set above).
+        // The client may retry once the deferred mode settles or after a failure.
         return;
       }
 
-      // Only update session config and raise IDR after a successful (or deferred-but-acceptable) apply.
+      // Only update session config and raise IDR after a confirmed successful apply.
       session->config.monitor.width = new_width;
       session->config.monitor.height = new_height;
 
@@ -3238,6 +3276,10 @@ namespace stream {
       session->max_full_nits = launch_session.max_full_nits;
       session->launch_use_vdd = launch_session.use_vdd;
       session->launch_custom_screen_mode = launch_session.custom_screen_mode;
+      // Preserve launch-time env for client-driven configure_display calls (Fix #4).
+      // parsed_config reads SUNSHINE_CLIENT_DISPLAY_NAME and session.cpp reads
+      // SUNSHINE_CLIENT_CERT_UUID; without these the wrong display may be targeted.
+      session->launch_env = launch_session.env;
 
       session->config = config;
 
