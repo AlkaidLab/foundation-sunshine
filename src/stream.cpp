@@ -560,11 +560,11 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
 
-    // Rate-limit state for client-driven resolution changes (allow_client_resolution_change).
-    // Leading-edge: the first request for a new size applies immediately; subsequent requests
-    // within 250 ms are dropped (the clients already debounce ~400 ms before sending one packet).
-    // Protected by the control-stream handler being single-threaded per session.
-    std::chrono::steady_clock::time_point client_res_last_apply {};
+    // Display-routing fields saved from the launch session, needed when building the
+    // temp launch_session_t for a client-driven configure_display reconfigure call.
+    // custom_screen_mode defaults to -1 (no override) matching launch-time nvhttp default.
+    bool launch_use_vdd { false };
+    int  launch_custom_screen_mode { -1 };
   };
 
   /**
@@ -1387,9 +1387,11 @@ namespace stream {
     });
 
     // 辅助函数：处理客户端请求的分辨率变更
-    // Gated on config::video.allow_client_resolution_change; leading-edge rate-limited to
-    // suppress rapid resize floods (clients debounce ~400 ms before sending one settled packet,
-    // so the first request for a new size always applies immediately).
+    // Gated on config::video.allow_client_resolution_change (default off).
+    // No host-side rate-limit: clients (moonlight-qt, moonlight-vplus) already debounce
+    // ~400 ms before emitting one settled packet, so host-side dropping is both redundant
+    // and harmful — it would swallow the final settled size if it arrived within a brief
+    // window of a prior request.
     // On disconnect, dd_config_revert_on_disconnect in display_device/session restores the
     // original display mode automatically.
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
@@ -1428,30 +1430,15 @@ namespace stream {
         return;
       }
 
-      // Rate-limit: apply immediately on the first request for a new size; drop subsequent
-      // requests within 250 ms.  Clients already debounce ~400 ms before sending one settled
-      // packet, so leading-edge is correct — a single request must always apply.
-      constexpr auto RESOLUTION_RATE_LIMIT = std::chrono::milliseconds(250);
-      auto now = std::chrono::steady_clock::now();
-      if ((now - session->client_res_last_apply) < RESOLUTION_RATE_LIMIT) {
-        BOOST_LOG(debug) << "Client resolution rate-limit: dropping " << new_width << "x" << new_height
-                         << " (< " << RESOLUTION_RATE_LIMIT.count() << " ms since last apply)";
-        return;
-      }
-      session->client_res_last_apply = now;
-
       // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
       bool is_rotation = (old_width == new_height && old_height == new_width);
       if (is_rotation) {
         BOOST_LOG(info) << "Detected display rotation: width and height swapped";
       }
 
-      // 更新会话配置
-      session->config.monitor.width = new_width;
-      session->config.monitor.height = new_height;
-
-      // 创建临时的 launch_session_t 来更新显示设备配置
-      // 注意：必须按照结构体声明顺序初始化字段
+      // Build a temp launch session that mirrors the original display-routing fields so
+      // configure_display targets the correct device (physical vs VDD, custom screen mode).
+      // DO NOT mutate session->config.monitor here — only do that after a successful apply.
       rtsp_stream::launch_session_t temp_launch_session {};
       temp_launch_session.id = session->launch_session_id;
       temp_launch_session.client_name = session->client_name;
@@ -1459,13 +1446,26 @@ namespace stream {
       temp_launch_session.height = new_height;
       temp_launch_session.fps = session->config.monitor.framerate;
       temp_launch_session.enable_hdr = session->enable_hdr;
-      temp_launch_session.enable_sops = session->enable_sops;
+      // Always treat this as an SOPS-enabled request: the client is explicitly requesting a
+      // resolution change, which must not be silently suppressed by the enable_sops gate inside
+      // the automatic resolution-change path.
+      temp_launch_session.enable_sops = true;
       temp_launch_session.max_nits = session->max_nits;
       temp_launch_session.min_nits = session->min_nits;
       temp_launch_session.max_full_nits = session->max_full_nits;
+      // Preserve VDD and display routing from the original launch session.
+      temp_launch_session.use_vdd = session->launch_use_vdd;
+      temp_launch_session.custom_screen_mode = session->launch_custom_screen_mode;
 
-      // 更新显示设备配置（重新配置模式）
-      // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
+      // Build a local video config copy with resolution_change forced to automatic so that
+      // configure_display uses the width/height from the temp session regardless of the
+      // host's global video.resolution_change setting.  Client-driven resolution requests
+      // are independent of the host's passive-follow setting (dynamic_resolution_follow_display)
+      // and must not be a no-op when resolution_change == no_operation.
+      config::video_t client_driven_video_cfg = config::video;
+      client_driven_video_cfg.resolution_change =
+        static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
+
       if (is_rotation) {
         BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height
                         << " -> " << new_width << "x" << new_height;
@@ -1475,15 +1475,27 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
 
-      display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+      const auto display_result = display_device::session_t::get().configure_display(client_driven_video_cfg, temp_launch_session, true);
+
+      if (!display_result) {
+        // configure_display returned a hard failure; keep old session config and do not IDR
+        // so the encoder and capture side remain consistent.  The client may retry — not
+        // suppressing future attempts (no dedupe timestamp updated here).
+        BOOST_LOG(error) << "configure_display failed for client-requested resolution change to "
+                         << new_width << "x" << new_height
+                         << ": result=" << static_cast<int>(display_result.result)
+                         << " msg=" << display_result.message
+                         << (display_result.hint.empty() ? "" : (" hint: " + display_result.hint));
+        return;
+      }
+
+      // Only update session config and raise IDR after a successful (or deferred-but-acceptable) apply.
+      session->config.monitor.width = new_width;
+      session->config.monitor.height = new_height;
 
       // 请求 IDR 帧以确保客户端能正确显示新分辨率
-      // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
       session->video.idr_events->raise(true);
 
-      // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
-      // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
-      // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
       BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
@@ -1505,7 +1517,8 @@ namespace stream {
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      // Protocol: all 0x5506 fields are little-endian 32-bit integers.
+      const auto param_type = util::endian::little(*(const std::int32_t *) payload.data());
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1523,8 +1536,9 @@ namespace stream {
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const auto w = util::endian::little(*(const std::int32_t *) (payload.data() + 4));
+        const auto h = util::endian::little(*(const std::int32_t *) (payload.data() + 8));
+        handle_resolution_change(session, w, h);
         return;
       }
 
@@ -1537,7 +1551,10 @@ namespace stream {
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        // FPS is transmitted as a LE float; read via bit-cast through LE u32.
+        std::uint32_t fps_bits = util::endian::little(*(const std::uint32_t *) (payload.data() + sizeof(std::int32_t)));
+        float new_fps;
+        std::memcpy(&new_fps, &fps_bits, sizeof(new_fps));
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -1564,7 +1581,7 @@ namespace stream {
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const auto param_value = util::endian::little(*(const std::int32_t *) (payload.data() + sizeof(std::int32_t)));
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
@@ -3209,6 +3226,8 @@ namespace stream {
       session->max_nits = launch_session.max_nits;
       session->min_nits = launch_session.min_nits;
       session->max_full_nits = launch_session.max_full_nits;
+      session->launch_use_vdd = launch_session.use_vdd;
+      session->launch_custom_screen_mode = launch_session.custom_screen_mode;
 
       session->config = config;
 
