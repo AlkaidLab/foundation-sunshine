@@ -1399,10 +1399,16 @@ namespace stream {
     // On disconnect, dd_config_revert_on_disconnect in display_device/session restores the
     // original display mode automatically.
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
-      // Gate: must be explicitly enabled — client-driven resolution changes are off by default
-      if (!config::video.allow_client_resolution_change) {
+      // Gate: must be explicitly enabled — client-driven resolution changes are off by default.
+      // Both flags are required, matching the serverinfo capability (nvhttp.cpp advertises
+      // ClientResolutionChange only when allow_client_resolution_change && dynamic_resolution_follow_display).
+      // Without the follow_display flag the capture loop keeps the original stream resolution and
+      // never notifies the client (video.cpp), so applying the display change here would leave the
+      // host in a half-changed state that a client ignoring/caching the capability bit could trigger.
+      if (!config::video.allow_client_resolution_change ||
+          !config::video.dynamic_resolution_follow_display) {
         BOOST_LOG(info) << "Client requested resolution change to " << new_width << "x" << new_height
-                        << " but allow_client_resolution_change is disabled; ignoring";
+                        << " but client-driven resolution change is not enabled; ignoring";
         return;
       }
 
