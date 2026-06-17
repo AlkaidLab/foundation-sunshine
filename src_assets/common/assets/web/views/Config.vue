@@ -6,6 +6,7 @@
         class="cute-btn cute-btn-primary"
         :class="{ 'has-unsaved': hasUnsaved }"
         @click="requestConfigAction('save')"
+        :disabled="riskActionRunning"
         :title="hasUnsaved ? $t('config.unsaved_changes_tooltip') : $t('_common.save')"
       >
         <i class="fas fa-save"></i>
@@ -14,6 +15,7 @@
         v-if="saved && !restarted"
         class="cute-btn cute-btn-success"
         @click="requestConfigAction('apply')"
+        :disabled="riskActionRunning"
         :title="$t('_common.apply')"
       >
         <i class="fas fa-check"></i>
@@ -69,7 +71,16 @@
     <Teleport to="body">
       <Transition name="risk-modal">
         <div v-if="showRiskConfirm" class="risk-confirm-overlay" @click.self="cancelRiskConfirm">
-          <div class="risk-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="risk-confirm-title">
+          <div
+            ref="riskDialogRef"
+            class="risk-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="risk-confirm-title"
+            tabindex="-1"
+            @keydown.esc.prevent="cancelRiskConfirm"
+            @keydown.tab="trapRiskFocus"
+          >
             <div class="risk-confirm-header">
               <div>
                 <h5 id="risk-confirm-title">
@@ -223,7 +234,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, provide, computed, onUnmounted } from 'vue'
+import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
 import General from '../configs/tabs/General.vue'
 import Inputs from '../configs/tabs/Inputs.vue'
@@ -264,6 +275,8 @@ const showRiskConfirm = ref(false)
 const riskAction = ref('save')
 const riskItems = ref([])
 const riskActionRunning = ref(false)
+const riskDialogRef = ref(null)
+const lastFocusedElement = ref(null)
 
 const hasUnsaved = computed(() => {
   if (!config.value) return false
@@ -308,7 +321,65 @@ const showToast = (toastRef, duration = 5000) => {
   }, duration)
 }
 
+const getRiskFocusableElements = () => {
+  const root = riskDialogRef.value
+  if (!root) return []
+
+  return Array.from(
+    root.querySelectorAll(
+      [
+        'button:not([disabled])',
+        '[href]',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(','),
+    ),
+  ).filter((element) => element.offsetParent !== null)
+}
+
+const focusRiskDialog = async () => {
+  await nextTick()
+  const focusable = getRiskFocusableElements()
+  const target = focusable[0] || riskDialogRef.value
+  target?.focus?.()
+}
+
+const restoreRiskFocus = () => {
+  const target = lastFocusedElement.value
+  lastFocusedElement.value = null
+
+  if (target && document.contains(target)) {
+    target.focus?.()
+  }
+}
+
+const trapRiskFocus = (event) => {
+  const focusable = getRiskFocusableElements()
+  if (!focusable.length) {
+    event.preventDefault()
+    riskDialogRef.value?.focus?.()
+    return
+  }
+
+  const currentIndex = focusable.indexOf(document.activeElement)
+  const lastIndex = focusable.length - 1
+  let nextIndex = currentIndex + 1
+
+  if (event.shiftKey) {
+    nextIndex = currentIndex <= 0 ? lastIndex : currentIndex - 1
+  } else if (currentIndex === -1 || currentIndex >= lastIndex) {
+    nextIndex = 0
+  }
+
+  event.preventDefault()
+  focusable[nextIndex].focus()
+}
+
 const runConfigAction = async (action) => {
+  if (riskActionRunning.value) return
+
   riskActionRunning.value = true
   try {
     if (action === 'apply') {
@@ -322,8 +393,11 @@ const runConfigAction = async (action) => {
 }
 
 const requestConfigAction = async (action) => {
+  if (riskActionRunning.value || showRiskConfirm.value) return
+
   const risks = getRiskyChanges(action)
   if (risks.length > 0) {
+    lastFocusedElement.value = document.activeElement
     riskAction.value = action
     riskItems.value = risks
     showRiskConfirm.value = true
@@ -340,11 +414,22 @@ const cancelRiskConfirm = () => {
 }
 
 const confirmRiskAction = async () => {
+  if (riskActionRunning.value) return
+
   const action = riskAction.value
   showRiskConfirm.value = false
   await runConfigAction(action)
   riskItems.value = []
 }
+
+watch(showRiskConfirm, async (isOpen) => {
+  if (isOpen) {
+    await focusRiskDialog()
+    return
+  }
+
+  restoreRiskFocus()
+})
 
 watch(saved, (newVal) => {
   if (newVal && !restarted.value) {
@@ -383,6 +468,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('hashchange', handleHash)
   document.removeEventListener('click', handleOutsideClick)
+  lastFocusedElement.value = null
 })
 </script>
 
@@ -1048,6 +1134,22 @@ onUnmounted(() => {
 
     &:hover i {
       transform: scale(1.2) rotate(5deg);
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+      transform: none;
+      box-shadow: none;
+      animation: none;
+
+      &::before {
+        opacity: 0;
+      }
+
+      i {
+        transform: none;
+      }
     }
   }
 
