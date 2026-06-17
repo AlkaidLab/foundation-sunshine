@@ -5,12 +5,17 @@
       <button
         class="cute-btn cute-btn-primary"
         :class="{ 'has-unsaved': hasUnsaved }"
-        @click="save"
+        @click="requestConfigAction('save')"
         :title="hasUnsaved ? $t('config.unsaved_changes_tooltip') : $t('_common.save')"
       >
         <i class="fas fa-save"></i>
       </button>
-      <button v-if="saved && !restarted" class="cute-btn cute-btn-success" @click="apply" :title="$t('_common.apply')">
+      <button
+        v-if="saved && !restarted"
+        class="cute-btn cute-btn-success"
+        @click="requestConfigAction('apply')"
+        :title="$t('_common.apply')"
+      >
         <i class="fas fa-check"></i>
       </button>
       <div class="floating-toast-container">
@@ -60,6 +65,68 @@
         </Transition>
       </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="risk-modal">
+        <div v-if="showRiskConfirm" class="risk-confirm-overlay" @click.self="cancelRiskConfirm">
+          <div class="risk-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="risk-confirm-title">
+            <div class="risk-confirm-header">
+              <div>
+                <h5 id="risk-confirm-title">
+                  <i class="fas fa-exclamation-triangle me-2"></i>
+                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.title_apply' : 'config.risk_confirm.title_save') }}
+                </h5>
+                <p>
+                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.intro_apply' : 'config.risk_confirm.intro_save') }}
+                </p>
+              </div>
+              <button type="button" class="btn-close" @click="cancelRiskConfirm" :aria-label="$t('_common.close')"></button>
+            </div>
+
+            <div class="risk-confirm-body">
+              <div
+                v-for="risk in riskItems"
+                :key="risk.id"
+                class="risk-item"
+                :class="risk.severity"
+              >
+                <div class="risk-item-header">
+                  <span class="risk-badge" :class="risk.severity">
+                    {{ $t(`config.risk_confirm.severity_${risk.severity}`) }}
+                  </span>
+                  <strong>{{ $t(risk.titleKey) }}</strong>
+                </div>
+                <p>{{ $t(risk.descriptionKey) }}</p>
+                <div v-if="risk.currentValue" class="risk-detail">
+                  <span>{{ $t('config.risk_confirm.value_label') }}</span>
+                  <code>{{ risk.currentValue }}</code>
+                </div>
+                <div v-if="risk.recoveryKey" class="risk-recovery">
+                  <span>{{ $t('config.risk_confirm.recovery_label') }}</span>
+                  <p>{{ $t(risk.recoveryKey) }}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="risk-confirm-footer">
+              <button type="button" class="btn btn-secondary" @click="cancelRiskConfirm" :disabled="riskActionRunning">
+                {{ $t('_common.cancel') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                @click="confirmRiskAction"
+                :disabled="riskActionRunning"
+              >
+                <i v-if="riskActionRunning" class="fas fa-spinner fa-spin me-1"></i>
+                {{ $t(riskAction === 'apply' ? 'config.risk_confirm.confirm_apply' : 'config.risk_confirm.confirm_save') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <div class="container">
       <h1 class="my-4 page-title">{{ $t('config.configuration') }}</h1>
 
@@ -183,8 +250,9 @@ const {
   tabs,
   initTabs,
   loadConfig,
-  save,
-  apply,
+  save: saveConfig,
+  apply: applyConfig,
+  getRiskyChanges,
   handleHash,
   hasUnsavedChanges,
 } = useConfig()
@@ -192,6 +260,10 @@ const {
 const showSaveToast = ref(false)
 const showRestartToast = ref(false)
 const expandedDropdown = ref(null)
+const showRiskConfirm = ref(false)
+const riskAction = ref('save')
+const riskItems = ref([])
+const riskActionRunning = ref(false)
 
 const hasUnsaved = computed(() => {
   if (!config.value) return false
@@ -234,6 +306,44 @@ const showToast = (toastRef, duration = 5000) => {
   setTimeout(() => {
     toastRef.value = false
   }, duration)
+}
+
+const runConfigAction = async (action) => {
+  riskActionRunning.value = true
+  try {
+    if (action === 'apply') {
+      await applyConfig()
+    } else {
+      await saveConfig()
+    }
+  } finally {
+    riskActionRunning.value = false
+  }
+}
+
+const requestConfigAction = async (action) => {
+  const risks = getRiskyChanges(action)
+  if (risks.length > 0) {
+    riskAction.value = action
+    riskItems.value = risks
+    showRiskConfirm.value = true
+    return
+  }
+
+  await runConfigAction(action)
+}
+
+const cancelRiskConfirm = () => {
+  if (riskActionRunning.value) return
+  showRiskConfirm.value = false
+  riskItems.value = []
+}
+
+const confirmRiskAction = async () => {
+  const action = riskAction.value
+  showRiskConfirm.value = false
+  await runConfigAction(action)
+  riskItems.value = []
 }
 
 watch(saved, (newVal) => {
@@ -560,6 +670,260 @@ onUnmounted(() => {
 
 .toast.show {
   opacity: 1;
+}
+
+.risk-modal-enter-active,
+.risk-modal-leave-active {
+  transition: opacity @transition-fast ease;
+
+  .risk-confirm-modal {
+    transition: transform @transition-fast @cubic-smooth, opacity @transition-fast ease;
+  }
+}
+
+.risk-modal-enter-from,
+.risk-modal-leave-to {
+  opacity: 0;
+
+  .risk-confirm-modal {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+}
+
+.risk-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg, 1.5rem);
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+.risk-confirm-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--border-radius-xl, 1.5rem);
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  color: var(--text-primary, #fff);
+
+  [data-bs-theme='light'] & {
+    border-color: rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+    color: #000;
+  }
+}
+
+.risk-confirm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  h5 {
+    margin: 0 0 0.35rem;
+    font-size: var(--font-size-lg, 1.25rem);
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+
+    i {
+      color: var(--bs-danger);
+    }
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+    line-height: 1.5;
+  }
+
+  .btn-close {
+    flex: 0 0 auto;
+  }
+
+  [data-bs-theme='light'] & {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+
+    h5 {
+      color: #000;
+    }
+
+    p {
+      color: #4b5563;
+    }
+  }
+}
+
+.risk-confirm-body {
+  overflow-y: auto;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+}
+
+.risk-item {
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: @border-radius-md;
+  background: rgba(255, 255, 255, 0.06);
+
+  & + & {
+    margin-top: 0.75rem;
+  }
+
+  &.critical {
+    border-color: rgba(var(--bs-danger-rgb), 0.38);
+    background: rgba(var(--bs-danger-rgb), 0.1);
+  }
+
+  &.high {
+    border-color: rgba(var(--bs-warning-rgb), 0.36);
+  }
+
+  &.medium {
+    border-color: rgba(var(--bs-info-rgb), 0.32);
+  }
+
+  p {
+    margin: 0.5rem 0 0;
+    color: var(--text-primary, #fff);
+    line-height: 1.5;
+  }
+
+  [data-bs-theme='light'] & {
+    border-color: rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.75);
+
+    &.critical {
+      border-color: rgba(var(--bs-danger-rgb), 0.34);
+      background: rgba(var(--bs-danger-rgb), 0.08);
+    }
+
+    &.high {
+      border-color: rgba(var(--bs-warning-rgb), 0.4);
+      background: rgba(var(--bs-warning-rgb), 0.08);
+    }
+
+    &.medium {
+      border-color: rgba(var(--bs-info-rgb), 0.32);
+      background: rgba(var(--bs-info-rgb), 0.06);
+    }
+
+    p {
+      color: #000;
+    }
+  }
+}
+
+.risk-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+
+  strong {
+    font-size: 0.98rem;
+  }
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+
+  &.critical {
+    color: #fff;
+    background: var(--bs-danger);
+  }
+
+  &.high {
+    color: #231f20;
+    background: var(--bs-warning);
+  }
+
+  &.medium {
+    color: #fff;
+    background: var(--bs-info);
+  }
+}
+
+.risk-detail,
+.risk-recovery {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+
+  span {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 0.2rem 0.4rem;
+    border-radius: @border-radius-sm;
+    color: var(--text-primary, #fff);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  [data-bs-theme='light'] & {
+    border-top-color: rgba(0, 0, 0, 0.1);
+
+    span {
+      color: #4b5563;
+    }
+
+    code {
+      color: #000;
+      background: rgba(0, 0, 0, 0.06);
+    }
+  }
+}
+
+.risk-recovery p {
+  margin: 0;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+
+  [data-bs-theme='light'] & {
+    color: #4b5563;
+  }
+}
+
+.risk-confirm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  [data-bs-theme='light'] & {
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
 }
 
 .config-floating-buttons {

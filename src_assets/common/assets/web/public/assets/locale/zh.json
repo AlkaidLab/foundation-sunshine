@@ -517,6 +517,96 @@
     "resolution_change_windows": "分辨率调整",
     "resolutions": "基地显示器支持的分辨率",
     "restart_note": "正在重启 Sunshine 以应用更改。",
+    "risk_confirm": {
+      "confirm_apply": "仍要应用并重启",
+      "confirm_save": "仍要保存",
+      "intro_apply": "这些变更可能影响安全性、当前会话或主机显示状态。Sunshine 重启前请先确认。",
+      "intro_save": "这些设置会影响安全性、主机状态，或 Sunshine 执行的系统命令。保存前请先确认。",
+      "items": {
+        "display_device_prep": {
+          "description": "串流开始时 Sunshine 会改动主机显示器拓扑，可能影响本机显示布局。",
+          "only_display_description": "Sunshine 会停用其他显示器，只保留指定显示器。如果目标显示器不可用，本机画面可能变黑。",
+          "recovery": "如果显示状态异常，请改回“禁用”，或到故障排除页面重置显示设备记忆。",
+          "title": "将改动显示器拓扑"
+        },
+        "display_mode_change": {
+          "description": "Sunshine 会在串流期间自动或手动切换分辨率/刷新率。",
+          "recovery": "如果显示器没有恢复到预期状态，请把分辨率变更和 FPS 变更改回“禁用”。",
+          "title": "显示模式自动化已变更"
+        },
+        "display_mode_remapping": {
+          "description": "客户端请求的显示模式会先被重映射，然后再由 Sunshine 应用。",
+          "recovery": "如果客户端拿到异常分辨率或刷新率，请删除对应重映射规则。",
+          "title": "显示模式重映射已变更"
+        },
+        "elevated_global_commands": {
+          "description": "全局准备命令包含管理员命令。它们会在任意应用启动前/后执行，可能改动系统状态。",
+          "title": "存在管理员全局命令"
+        },
+        "experimental_capture": {
+          "description": "当前捕获后端仍属实验功能，或在部分系统上存在兼容性限制。",
+          "recovery": "如果捕获失败，请改回自动检测、WGC 或 Desktop Duplication API。",
+          "title": "使用实验捕获后端"
+        },
+        "global_prep_commands": {
+          "description": "全局准备命令会在任意应用启动前/后执行。命令失败会中止应用启动。",
+          "recovery": "如果应用启动行为异常，请删除或禁用这些全局命令。",
+          "title": "全局命令将随应用执行"
+        },
+        "pair_limit_disabled": {
+          "description": "配对尝试次数设为 0 会取消每个 IP 的配对速率限制。",
+          "recovery": "建议把配对尝试次数恢复为有限值，例如 10。",
+          "title": "配对尝试限制已关闭"
+        },
+        "restart": {
+          "description": "应用配置会重启 Sunshine，并断开所有正在进行的串流会话。",
+          "recovery": "如果当前有人连接，请先只保存，稍后再手动应用。",
+          "title": "Sunshine 将重启"
+        },
+        "sensitive_files_changed": {
+          "description": "修改凭据、证书、私钥或状态文件路径，可能影响登录、配对和已保存客户端状态。",
+          "recovery": "如果认证、配对或客户端状态异常，请恢复之前的文件路径。",
+          "title": "敏感文件路径已变更"
+        },
+        "upnp_enabled": {
+          "description": "UPnP 可能自动在路由器上开放公网串流端口。",
+          "recovery": "如果不希望 Sunshine 请求路由器端口映射，请关闭 UPnP。",
+          "title": "已启用 UPnP 端口映射"
+        },
+        "wan_encryption_disabled": {
+          "description": "公网串流流量可能不再使用 Sunshine 的串流加密。",
+          "recovery": "除非有明确兼容性需求，公网串流建议使用“为支持的客户端启用”或“强制所有客户端使用”。",
+          "title": "公网加密已关闭"
+        },
+        "web_ui_wan": {
+          "description": "Web UI 将允许来自公网来源的访问。仍需要密码，但暴露面会明显增加。",
+          "recovery": "除非你已经通过可信网络路径保护它，否则建议使用“局域网”或“本机”。",
+          "title": "Web UI 将暴露到公网"
+        },
+        "webhook_enabled": {
+          "description": "Sunshine 会把事件数据发送到配置的 Webhook 地址。",
+          "recovery": "如果该地址不应接收 Sunshine 事件，请关闭 Webhook 或移除 URL。",
+          "title": "Webhook 通知已启用"
+        },
+        "webhook_skip_ssl_verify": {
+          "description": "HTTPS Webhook 的证书将不再校验，可能被不可信端点拦截。",
+          "recovery": "测试结束后请关闭此选项，或改用主机信任的证书。",
+          "title": "Webhook 跳过 SSL 校验"
+        },
+        "wgc_disable_secure_desktop": {
+          "description": "WGC 串流期间，管理员权限请求可能在没有可见确认的情况下自动通过。",
+          "recovery": "除非你明确需要在可信会话中无人值守提权，否则请关闭此选项。",
+          "title": "已启用 UAC 安全桌面绕过"
+        }
+      },
+      "recovery_label": "恢复办法",
+      "severity_critical": "高危",
+      "severity_high": "风险",
+      "severity_medium": "注意",
+      "title_apply": "应用前确认风险",
+      "title_save": "保存前确认高风险变更",
+      "value_label": "新值"
+    },
     "sleep_mode": "睡眠模式",
     "sleep_mode_away": "离开模式（关闭显示器，即时唤醒）",
     "sleep_mode_desc": "控制客户端发送睡眠命令时的行为。挂起(S3)：传统睡眠，低功耗但需要 WOL 唤醒。休眠(S4)：保存到磁盘，极低功耗。离开模式：关闭显示器但系统保持运行，可即时唤醒 - 非常适合游戏串流服务器。",

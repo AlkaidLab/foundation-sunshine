@@ -517,6 +517,96 @@
     "resolution_change_windows": "Resolution change",
     "resolutions": "Advertised Resolutions",
     "restart_note": "Sunshine is restarting to apply changes.",
+    "risk_confirm": {
+      "confirm_apply": "Apply and Restart",
+      "confirm_save": "Save Anyway",
+      "intro_apply": "These changes may affect security, active sessions, or host display state. Review them before Sunshine restarts.",
+      "intro_save": "These settings can affect security, host state, or commands executed by Sunshine. Review them before saving.",
+      "items": {
+        "display_device_prep": {
+          "description": "Sunshine will change the host display topology when a stream starts. This can affect the local monitor layout.",
+          "only_display_description": "Sunshine will disable other displays and keep only the selected display active. If the selected display is unavailable, the host may appear blank locally.",
+          "recovery": "If the display state is wrong, restore this option to Disabled or use the Troubleshooting page to reset display device persistence.",
+          "title": "Display topology will be changed"
+        },
+        "display_mode_change": {
+          "description": "Sunshine will change resolution or refresh rate for streaming sessions.",
+          "recovery": "Restore Resolution change and FPS change to Disabled if the monitor does not return to the expected mode.",
+          "title": "Display mode automation changed"
+        },
+        "display_mode_remapping": {
+          "description": "Client-requested display modes will be remapped before Sunshine applies them.",
+          "recovery": "Remove the remapping rules if clients receive an unexpected resolution or refresh rate.",
+          "title": "Display mode remapping changed"
+        },
+        "elevated_global_commands": {
+          "description": "Global preparation commands include elevated commands. They can change system state before or after any app launch.",
+          "title": "Elevated global commands"
+        },
+        "experimental_capture": {
+          "description": "This capture backend is experimental or has known compatibility limits on some systems.",
+          "recovery": "Switch Capture back to Autodetect, WGC, or Desktop Duplication API if capture fails.",
+          "title": "Experimental capture backend"
+        },
+        "global_prep_commands": {
+          "description": "Global preparation commands run before or after any app launch. A failed command can abort app startup.",
+          "recovery": "Remove or disable the global commands if app launch behavior becomes unexpected.",
+          "title": "Global commands will run for apps"
+        },
+        "pair_limit_disabled": {
+          "description": "Setting the pairing attempt limit to 0 removes the per-IP rate limit for pairing attempts.",
+          "recovery": "Set Pair max attempts back to a finite value such as 10.",
+          "title": "Pairing attempt limit disabled"
+        },
+        "restart": {
+          "description": "Applying configuration restarts Sunshine and terminates any active streaming sessions.",
+          "recovery": "Save without applying if you want to restart later when nobody is connected.",
+          "title": "Sunshine will restart"
+        },
+        "sensitive_files_changed": {
+          "description": "Changing credential, certificate, key, or state file paths can affect login, pairing, and stored client state.",
+          "recovery": "Restore the previous file paths if authentication, pairing, or client state behaves unexpectedly.",
+          "title": "Sensitive file paths changed"
+        },
+        "upnp_enabled": {
+          "description": "UPnP can automatically open router ports for Internet streaming.",
+          "recovery": "Disable UPnP if you do not want Sunshine to request router port mappings.",
+          "title": "UPnP port mapping enabled"
+        },
+        "wan_encryption_disabled": {
+          "description": "WAN streaming traffic may be sent without Sunshine's stream encryption.",
+          "recovery": "Use Supported clients or Force encryption for WAN streaming unless you have a specific compatibility need.",
+          "title": "WAN encryption disabled"
+        },
+        "web_ui_wan": {
+          "description": "The Web UI will be reachable from Internet-origin requests. Password protection still applies, but exposure increases attack surface.",
+          "recovery": "Use LAN or Local PC access unless you intentionally expose the Web UI through a secured network path.",
+          "title": "Web UI exposed to WAN"
+        },
+        "webhook_enabled": {
+          "description": "Sunshine will send event data to the configured webhook endpoint.",
+          "recovery": "Disable webhook notifications or remove the URL if this endpoint should not receive Sunshine events.",
+          "title": "Webhook notifications enabled"
+        },
+        "webhook_skip_ssl_verify": {
+          "description": "HTTPS webhook certificates will not be verified, which can allow interception by an untrusted endpoint.",
+          "recovery": "Disable this option after testing or use a certificate trusted by the host.",
+          "title": "Webhook SSL verification skipped"
+        },
+        "wgc_disable_secure_desktop": {
+          "description": "During WGC streaming, administrator elevation prompts can be auto-approved without a visible confirmation.",
+          "recovery": "Disable this option unless you specifically need unattended remote elevation during a trusted session.",
+          "title": "UAC secure desktop bypass enabled"
+        }
+      },
+      "recovery_label": "Recovery",
+      "severity_critical": "Critical",
+      "severity_high": "High",
+      "severity_medium": "Medium",
+      "title_apply": "Review Before Applying",
+      "title_save": "Review High-Risk Changes",
+      "value_label": "New value"
+    },
     "sleep_mode": "Sleep Mode",
     "sleep_mode_away": "Away Mode (Display Off, Instant Wake)",
     "sleep_mode_desc": "Controls what happens when the client sends a sleep command. Suspend (S3): traditional sleep, low power but requires WOL to wake. Hibernate (S4): saves to disk, very low power. Away Mode: display turns off but system stays running for instant wake - ideal for game streaming servers.",

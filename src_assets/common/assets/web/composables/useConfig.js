@@ -274,6 +274,53 @@ const parseResolutions = (resStr) => {
  */
 const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
 
+const RISK_SEVERITY_WEIGHT = {
+  critical: 3,
+  high: 2,
+  medium: 1,
+}
+
+const isEnabledValue = (value) => value === true || value === 'true' || value === 'enabled' || value === 1 || value === '1'
+
+const hasCommandText = (cmd) => {
+  if (!cmd) return false
+  if (typeof cmd === 'string') return cmd.trim().length > 0
+  return Boolean(String(cmd.do || cmd.cmd || cmd.undo || '').trim())
+}
+
+const hasElevatedCommand = (commands) => commands.some((cmd) => isEnabledValue(cmd?.elevated))
+
+const compactValue = (value) => {
+  if (Array.isArray(value)) return `${value.length}`
+  if (value === undefined || value === null || value === '') return ''
+  return String(value)
+}
+
+const riskLocaleKey = (id, field) => `config.risk_confirm.items.${id}.${field}`
+
+const createRisk = (
+  id,
+  severity,
+  { descriptionField = 'description', recoveryField = 'recovery', recoveryId = id, currentValue } = {},
+) => {
+  const risk = {
+    id,
+    severity,
+    titleKey: riskLocaleKey(id, 'title'),
+    descriptionKey: riskLocaleKey(id, descriptionField),
+  }
+
+  if (recoveryField) {
+    risk.recoveryKey = riskLocaleKey(recoveryId, recoveryField)
+  }
+
+  if (currentValue !== undefined && currentValue !== null && currentValue !== '') {
+    risk.currentValue = currentValue
+  }
+
+  return risk
+}
+
 /**
  * 配置管理组合式函数
  */
@@ -392,6 +439,172 @@ export function useConfig() {
     config.value.fps = serializeFps(fps.value)
     config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
     config.value.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
+  }
+
+  /**
+   * 构建当前配置的序列化快照，不修改响应式状态。
+   */
+  const buildCurrentSnapshot = () => {
+    const currentConfig = deepClone(config.value || {})
+    currentConfig.resolutions = serializeResolutions(resolutions.value)
+    currentConfig.fps = serializeFps(filterValidFps([...fps.value]))
+    currentConfig.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
+    currentConfig.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
+
+    return {
+      config: currentConfig,
+      global_prep_cmd: deepClone(global_prep_cmd.value),
+      display_mode_remapping: deepClone(display_mode_remapping.value),
+    }
+  }
+
+  const addRisk = (risks, risk) => {
+    if (risks.some((item) => item.id === risk.id)) return
+    risks.push(risk)
+  }
+
+  const valueChanged = (currentConfig, key) => !isEqual(currentConfig[key], snapshots.value.config?.[key])
+
+  const listChanged = (currentList, originalList) =>
+    !isEqual(JSON.stringify(currentList), JSON.stringify(originalList || []))
+
+  /**
+   * 返回保存/应用前需要用户二次确认的风险项。
+   */
+  const getRiskyChanges = (action = 'save') => {
+    if (!config.value || !snapshots.value.config) {
+      return []
+    }
+
+    const current = buildCurrentSnapshot()
+    const currentConfig = current.config
+    const risks = []
+
+    if (action === 'apply') {
+      addRisk(risks, createRisk('restart', 'high'))
+    }
+
+    if (valueChanged(currentConfig, 'origin_web_ui_allowed') && currentConfig.origin_web_ui_allowed === 'wan') {
+      addRisk(risks, createRisk('web_ui_wan', 'critical', { currentValue: currentConfig.origin_web_ui_allowed }))
+    }
+
+    if (valueChanged(currentConfig, 'upnp') && isEnabledValue(currentConfig.upnp)) {
+      addRisk(risks, createRisk('upnp_enabled', 'high', { currentValue: currentConfig.upnp }))
+    }
+
+    if (valueChanged(currentConfig, 'wan_encryption_mode') && String(currentConfig.wan_encryption_mode) === '0') {
+      addRisk(
+        risks,
+        createRisk('wan_encryption_disabled', 'critical', { currentValue: currentConfig.wan_encryption_mode }),
+      )
+    }
+
+    if (
+      valueChanged(currentConfig, 'webhook_skip_ssl_verify') &&
+      isEnabledValue(currentConfig.webhook_skip_ssl_verify)
+    ) {
+      addRisk(
+        risks,
+        createRisk('webhook_skip_ssl_verify', 'high', { currentValue: currentConfig.webhook_skip_ssl_verify }),
+      )
+    }
+
+    if (
+      (valueChanged(currentConfig, 'webhook_enabled') || valueChanged(currentConfig, 'webhook_url')) &&
+      isEnabledValue(currentConfig.webhook_enabled) &&
+      currentConfig.webhook_url
+    ) {
+      addRisk(risks, createRisk('webhook_enabled', 'medium', { currentValue: currentConfig.webhook_url }))
+    }
+
+    if (valueChanged(currentConfig, 'pair_max_attempts') && Number(currentConfig.pair_max_attempts) === 0) {
+      addRisk(risks, createRisk('pair_limit_disabled', 'high', { currentValue: currentConfig.pair_max_attempts }))
+    }
+
+    if (listChanged(current.global_prep_cmd, snapshots.value.global_prep_cmd)) {
+      const commands = current.global_prep_cmd.filter(hasCommandText)
+      if (commands.length > 0) {
+        const elevated = hasElevatedCommand(commands)
+        addRisk(
+          risks,
+          createRisk(elevated ? 'elevated_global_commands' : 'global_prep_commands', elevated ? 'critical' : 'high', {
+            recoveryId: 'global_prep_commands',
+            currentValue: String(commands.length),
+          }),
+        )
+      }
+    }
+
+    const sensitiveFileKeys = ['credentials_file', 'pkey', 'cert', 'file_state']
+    const changedSensitiveFiles = sensitiveFileKeys.filter((key) => valueChanged(currentConfig, key))
+    if (changedSensitiveFiles.length > 0) {
+      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.join(', ') }))
+    }
+
+    if (
+      valueChanged(currentConfig, 'display_device_prep') &&
+      currentConfig.display_device_prep &&
+      currentConfig.display_device_prep !== 'no_operation'
+    ) {
+      const onlyDisplay = currentConfig.display_device_prep === 'ensure_only_display'
+      addRisk(
+        risks,
+        createRisk('display_device_prep', onlyDisplay ? 'critical' : 'high', {
+          descriptionField: onlyDisplay ? 'only_display_description' : 'description',
+          currentValue: currentConfig.display_device_prep,
+        }),
+      )
+    }
+
+    const displayModeKeys = ['resolution_change', 'manual_resolution', 'refresh_rate_change', 'manual_refresh_rate']
+    if (displayModeKeys.some((key) => valueChanged(currentConfig, key))) {
+      const resolutionActive = currentConfig.resolution_change && currentConfig.resolution_change !== 'no_operation'
+      const refreshActive = currentConfig.refresh_rate_change && currentConfig.refresh_rate_change !== 'no_operation'
+
+      if (resolutionActive || refreshActive) {
+        addRisk(
+          risks,
+          createRisk('display_mode_change', 'medium', {
+            currentValue: [
+              compactValue(currentConfig.resolution_change),
+              compactValue(currentConfig.manual_resolution),
+              compactValue(currentConfig.refresh_rate_change),
+              compactValue(currentConfig.manual_refresh_rate),
+            ].filter(Boolean).join(' / '),
+          }),
+        )
+      }
+    }
+
+    if (
+      listChanged(current.display_mode_remapping, snapshots.value.display_mode_remapping) &&
+      current.display_mode_remapping.length > 0
+    ) {
+      addRisk(
+        risks,
+        createRisk('display_mode_remapping', 'medium', {
+          currentValue: String(current.display_mode_remapping.length),
+        }),
+      )
+    }
+
+    if (
+      valueChanged(currentConfig, 'wgc_disable_secure_desktop') &&
+      isEnabledValue(currentConfig.wgc_disable_secure_desktop)
+    ) {
+      addRisk(
+        risks,
+        createRisk('wgc_disable_secure_desktop', 'high', {
+          currentValue: compactValue(currentConfig.wgc_disable_secure_desktop),
+        }),
+      )
+    }
+
+    if (valueChanged(currentConfig, 'capture') && ['amd', 'vdd'].includes(currentConfig.capture)) {
+      addRisk(risks, createRisk('experimental_capture', 'medium', { currentValue: currentConfig.capture }))
+    }
+
+    return risks.sort((a, b) => RISK_SEVERITY_WEIGHT[b.severity] - RISK_SEVERITY_WEIGHT[a.severity])
   }
 
   /**
@@ -560,6 +773,7 @@ export function useConfig() {
     loadConfig,
     save,
     apply,
+    getRiskyChanges,
     handleHash,
     hasUnsavedChanges,
   }
