@@ -250,18 +250,18 @@ const forEachTabOption = (tabs, callback) => {
 /**
  * 序列化分辨率数组
  */
-const serializeResolutions = (resolutions) =>
+export const serializeResolutions = (resolutions) =>
   JSON.stringify(resolutions).replace(/","/g, ',').replace(/^\["/, '[').replace(/"\]$/, ']')
 
 /**
  * 序列化 FPS 数组
  */
-const serializeFps = (fps) => JSON.stringify(fps).replace(/"/g, '')
+export const serializeFps = (fps) => JSON.stringify(fps).replace(/"/g, '')
 
 /**
  * 解析分辨率字符串
  */
-const parseResolutions = (resStr) => {
+export const parseResolutions = (resStr) => {
   try {
     return JSON.parse((resStr || '').replace(/(\d+)x(\d+)/g, '"$1x$2"'))
   } catch {
@@ -272,7 +272,7 @@ const parseResolutions = (resStr) => {
 /**
  * 过滤有效的 FPS 值
  */
-const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
+export const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
 
 const RISK_SEVERITY_WEIGHT = {
   critical: 3,

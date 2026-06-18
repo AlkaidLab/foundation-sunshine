@@ -227,26 +227,34 @@
         <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
         <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
         <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
-        <ContainerEncoders :current-tab="currentTab" :config="config" :platform="platform" />
+        <ContainerEncoders
+          v-if="isEncoderCurrentTab"
+          :current-tab="currentTab"
+          :config="config"
+          :platform="platform"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
-import General from '../configs/tabs/General.vue'
-import Inputs from '../configs/tabs/Inputs.vue'
-import Network from '../configs/tabs/Network.vue'
-import Files from '../configs/tabs/Files.vue'
-import Advanced from '../configs/tabs/Advanced.vue'
-import AudioVideo from '../configs/tabs/AudioVideo.vue'
-import ContainerEncoders from '../configs/tabs/ContainerEncoders.vue'
 import { useConfig } from '../composables/useConfig.js'
 import { initFirebase, trackEvents } from '../config/firebase.js'
 
 initFirebase()
+
+const General = defineAsyncComponent(() => import('../configs/tabs/General.vue'))
+const Inputs = defineAsyncComponent(() => import('../configs/tabs/Inputs.vue'))
+const Network = defineAsyncComponent(() => import('../configs/tabs/Network.vue'))
+const Files = defineAsyncComponent(() => import('../configs/tabs/Files.vue'))
+const Advanced = defineAsyncComponent(() => import('../configs/tabs/Advanced.vue'))
+const AudioVideo = defineAsyncComponent(() => import('../configs/tabs/AudioVideo.vue'))
+const ContainerEncoders = defineAsyncComponent(() => import('../configs/tabs/ContainerEncoders.vue'))
+
+const ENCODER_TAB_IDS = new Set(['nv', 'qsv', 'amd', 'vt', 'sw'])
 
 const {
   platform,
@@ -287,6 +295,8 @@ const hasUnsaved = computed(() => {
   void display_mode_remapping.value
   return hasUnsavedChanges()
 })
+
+const isEncoderCurrentTab = computed(() => ENCODER_TAB_IDS.has(currentTab.value))
 
 const isEncoderTabActive = (tab) => tab.type === 'group' && tab.children?.some((child) => child.id === currentTab.value)
 
