@@ -57,6 +57,30 @@ namespace display_device::vdd_utils {
     bool needs_update = false;
   };
 
+  /**
+   * @brief Result of probing ZakoVDD shared-frame producer metadata.
+   */
+  enum class vdd_producer_status_e {
+    exact_match,
+    no_valid_producer,
+    stale_sole_producer,
+    no_matching_producer
+  };
+
+  struct vdd_producer_probe_t {
+    vdd_producer_status_e status = vdd_producer_status_e::no_valid_producer;
+    int exact = -1;
+    int only_valid = -1;
+    int valid_count = 0;
+    unsigned int only_valid_width = 0;
+    unsigned int only_valid_height = 0;
+
+    bool
+    exact_match() const {
+      return status == vdd_producer_status_e::exact_match && exact >= 0;
+    }
+  };
+
   // 指数退避计算
   std::chrono::milliseconds
   calculate_exponential_backoff(int attempt);
@@ -109,6 +133,21 @@ namespace display_device::vdd_utils {
    */
   set_vdd_result
   set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);
+
+  /**
+   * @brief Probe ZakoVDD shared-frame metadata and match a producer by size.
+   */
+  vdd_producer_probe_t
+  probe_vdd_producer(unsigned int target_w, unsigned int target_h, unsigned int max_probe = 16);
+
+  /**
+   * @brief Wait until ZakoVDD publishes a producer matching the requested size.
+   */
+  vdd_producer_probe_t
+  wait_for_vdd_producer(unsigned int target_w, unsigned int target_h,
+    std::chrono::milliseconds retry_window = 2500ms,
+    std::chrono::milliseconds retry_delay = 100ms,
+    unsigned int max_probe = 16);
 
   /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）

@@ -73,10 +73,110 @@ namespace display_device {
     // 上一次使用的客户端UUID，用于在没有提供UUID时使用
     static std::string last_used_client_uuid;
 
+    // Must stay binary-compatible with the producer-side struct in ZakoVDD.
+    struct SharedFrameMetadata {
+      UINT32 Magic;
+      UINT32 Version;
+      UINT32 Width;
+      UINT32 Height;
+      UINT32 DxgiFormat;
+      UINT32 IsHdr;
+      float MaxNits;
+      float MinNits;
+      float MaxFALL;
+      UINT64 FrameCounter;
+      UINT64 LastPresentQpc;
+    };
+
+    static constexpr UINT32 VDD_META_MAGIC = 0x5A564446;  // 'ZVDF'
+
     std::chrono::milliseconds
     calculate_exponential_backoff(int attempt) {
       auto delay = kInitialRetryDelay * (1 << attempt);
       return std::min(delay, kMaxRetryDelay);
+    }
+
+    vdd_producer_probe_t
+    probe_vdd_producer(unsigned int target_w, unsigned int target_h, unsigned int max_probe) {
+      vdd_producer_probe_t result;
+
+      for (unsigned int i = 0; i < max_probe; ++i) {
+        std::wstring meta_name = L"Global\\ZakoVDD_Meta_" + std::to_wstring(i);
+        HANDLE h = OpenFileMappingW(FILE_MAP_READ, FALSE, meta_name.c_str());
+        if (!h) {
+          continue;
+        }
+
+        void *p = MapViewOfFile(h, FILE_MAP_READ, 0, 0, sizeof(SharedFrameMetadata));
+        if (!p) {
+          CloseHandle(h);
+          continue;
+        }
+
+        auto *meta = static_cast<const SharedFrameMetadata *>(p);
+        const bool valid = meta->Magic == VDD_META_MAGIC;
+        const unsigned int mw = valid ? meta->Width : 0;
+        const unsigned int mh = valid ? meta->Height : 0;
+        const unsigned int mfmt = valid ? meta->DxgiFormat : 0;
+        const bool mhdr = valid && meta->IsHdr != 0;
+        UnmapViewOfFile(p);
+        CloseHandle(h);
+
+        if (!valid) {
+          continue;
+        }
+
+        BOOST_LOG(debug) << "[vdd] probe meta_" << i
+                         << ": " << mw << "x" << mh
+                         << " fmt=" << mfmt << " hdr=" << mhdr;
+
+        ++result.valid_count;
+        result.only_valid = static_cast<int>(i);
+        result.only_valid_width = mw;
+        result.only_valid_height = mh;
+        if (result.exact < 0 && mw == target_w && mh == target_h) {
+          result.exact = static_cast<int>(i);
+        }
+      }
+
+      if (result.exact >= 0) {
+        result.status = vdd_producer_status_e::exact_match;
+      }
+      else if (result.valid_count == 0) {
+        result.status = vdd_producer_status_e::no_valid_producer;
+      }
+      else if (result.valid_count == 1 && result.only_valid >= 0) {
+        result.status = vdd_producer_status_e::stale_sole_producer;
+      }
+      else {
+        result.status = vdd_producer_status_e::no_matching_producer;
+      }
+
+      return result;
+    }
+
+    vdd_producer_probe_t
+    wait_for_vdd_producer(unsigned int target_w, unsigned int target_h,
+      std::chrono::milliseconds retry_window,
+      std::chrono::milliseconds retry_delay,
+      unsigned int max_probe) {
+      vdd_producer_probe_t last_result;
+      const auto deadline = std::chrono::steady_clock::now() + retry_window;
+
+      for (;;) {
+        last_result = probe_vdd_producer(target_w, target_h, max_probe);
+        if (last_result.exact_match()) {
+          return last_result;
+        }
+
+        if (std::chrono::steady_clock::now() >= deadline) {
+          break;
+        }
+
+        std::this_thread::sleep_for(retry_delay);
+      }
+
+      return last_result;
     }
 
     /**

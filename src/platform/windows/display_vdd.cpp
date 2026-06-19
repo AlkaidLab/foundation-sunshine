@@ -15,6 +15,7 @@
 
 #include "display.h"
 #include "misc.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/main.h"
 
 #include <d3d11_1.h>
@@ -266,51 +267,6 @@ namespace platf::dxgi {
   // against the DXGI output's reported size. Then opens the shared texture
   // on the same D3D11 device as display_base_t to avoid cross-device copies.
 
-  struct vdd_probe_result_t {
-    int exact = -1;
-    int only_valid = -1;
-    int valid_count = 0;
-    unsigned int only_valid_width = 0;
-    unsigned int only_valid_height = 0;
-  };
-
-  static vdd_probe_result_t
-  probe_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe) {
-    vdd_probe_result_t result;
-
-    for (unsigned int i = 0; i < max_probe; ++i) {
-      std::wstring meta_name = L"Global\\ZakoVDD_Meta_" + std::to_wstring(i);
-      HANDLE h = OpenFileMappingW(FILE_MAP_READ, FALSE, meta_name.c_str());
-      if (!h) continue;
-      void *p = MapViewOfFile(h, FILE_MAP_READ, 0, 0, sizeof(SharedFrameMetadata));
-      if (!p) {
-        CloseHandle(h);
-        continue;
-      }
-      auto *meta = static_cast<const SharedFrameMetadata *>(p);
-      bool valid = (meta->Magic == VDD_META_MAGIC);
-      unsigned mw = valid ? meta->Width : 0;
-      unsigned mh = valid ? meta->Height : 0;
-      unsigned mfmt = valid ? meta->DxgiFormat : 0;
-      bool mhdr = valid && (meta->IsHdr != 0);
-      UnmapViewOfFile(p);
-      CloseHandle(h);
-      if (!valid) continue;
-      BOOST_LOG(debug) << "[vdd] probe meta_"sv << i
-                       << ": "sv << mw << "x"sv << mh
-                       << " fmt="sv << mfmt << " hdr="sv << mhdr;
-      ++result.valid_count;
-      result.only_valid = static_cast<int>(i);
-      result.only_valid_width = mw;
-      result.only_valid_height = mh;
-      if (result.exact < 0 && mw == target_w && mh == target_h) {
-        result.exact = static_cast<int>(i);
-      }
-    }
-
-    return result;
-  }
-
   // Probes Global\ZakoVDD_Meta_<i> for valid producers and returns the index
   // whose Width/Height exactly match target. A stale sole producer is not safe:
   // the encoder and capture surfaces are already sized for the requested mode,
@@ -320,22 +276,16 @@ namespace platf::dxgi {
     constexpr auto retry_window = 2500ms;
     constexpr auto retry_delay = 100ms;
 
-    vdd_probe_result_t last_result;
-    const auto deadline = std::chrono::steady_clock::now() + retry_window;
-
-    for (;;) {
-      last_result = probe_vdd_monitor_index(target_w, target_h, max_probe);
-      if (last_result.exact >= 0) {
-        BOOST_LOG(info) << "[vdd] resolved monitor index "sv << last_result.exact
-                        << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
-        return last_result.exact;
-      }
-
-      if (std::chrono::steady_clock::now() >= deadline) {
-        break;
-      }
-
-      std::this_thread::sleep_for(retry_delay);
+    const auto last_result = display_device::vdd_utils::wait_for_vdd_producer(
+      target_w,
+      target_h,
+      retry_window,
+      retry_delay,
+      max_probe);
+    if (last_result.exact_match()) {
+      BOOST_LOG(info) << "[vdd] resolved monitor index "sv << last_result.exact
+                      << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
+      return last_result.exact;
     }
 
     if (last_result.valid_count == 0) {
@@ -368,10 +318,8 @@ namespace platf::dxgi {
     // Try to identify which VDD monitor backs this DXGI output by matching
     // dimensions. width/height come from DXGI DesktopCoordinates / orientation.
     // NOTE: We intentionally do NOT trigger CREATEMONITOR here. Sunshine's
-    // display-device layer (prepare_vdd) already manages monitor lifecycle, and
-    // adding a 3s NamedPipe round-trip per encoder probe wastes ~20s on every
-    // startup with no real benefit. If no producer is reachable, we just fail
-    // and let the upper layer try a different backend.
+    // display-device session layer owns VDD lifecycle. If no matching producer
+    // is reachable here, opening it would still be unsafe, so this backend fails.
     int idx = resolve_vdd_monitor_index(static_cast<unsigned>(width_before_rotation),
                                         static_cast<unsigned>(height_before_rotation));
     if (idx < 0) {
