@@ -15,12 +15,14 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <future>
 #include <limits>
 #include <locale>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -89,6 +91,17 @@ namespace display_device {
     };
 
     static constexpr UINT32 VDD_META_MAGIC = 0x5A564446;  // 'ZVDF'
+    static constexpr UINT32 VDD_META_VERSION = 1;
+
+    static_assert(std::is_standard_layout_v<SharedFrameMetadata>, "SharedFrameMetadata must stay standard layout");
+    static_assert(sizeof(SharedFrameMetadata) == 56, "SharedFrameMetadata layout must stay producer-compatible");
+    static_assert(offsetof(SharedFrameMetadata, Magic) == 0, "SharedFrameMetadata::Magic offset changed");
+    static_assert(offsetof(SharedFrameMetadata, Version) == 4, "SharedFrameMetadata::Version offset changed");
+    static_assert(offsetof(SharedFrameMetadata, Width) == 8, "SharedFrameMetadata::Width offset changed");
+    static_assert(offsetof(SharedFrameMetadata, Height) == 12, "SharedFrameMetadata::Height offset changed");
+    static_assert(offsetof(SharedFrameMetadata, DxgiFormat) == 16, "SharedFrameMetadata::DxgiFormat offset changed");
+    static_assert(offsetof(SharedFrameMetadata, FrameCounter) == 40, "SharedFrameMetadata::FrameCounter offset changed");
+    static_assert(offsetof(SharedFrameMetadata, LastPresentQpc) == 48, "SharedFrameMetadata::LastPresentQpc offset changed");
 
     std::chrono::milliseconds
     calculate_exponential_backoff(int attempt) {
@@ -114,7 +127,7 @@ namespace display_device {
         }
 
         auto *meta = static_cast<const SharedFrameMetadata *>(p);
-        const bool valid = meta->Magic == VDD_META_MAGIC;
+        const bool valid = meta->Magic == VDD_META_MAGIC && meta->Version == VDD_META_VERSION;
         const unsigned int mw = valid ? meta->Width : 0;
         const unsigned int mh = valid ? meta->Height : 0;
         const unsigned int mfmt = valid ? meta->DxgiFormat : 0;
