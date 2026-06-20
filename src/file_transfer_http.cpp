@@ -95,7 +95,7 @@ namespace file_transfer_http {
       headers.emplace("X-Content-Type-Options", "nosniff");
       headers.emplace("Cache-Control", "no-store");
       headers.emplace("Content-Length", std::to_string(size));
-      headers.emplace("X-Sunshine-File-Name", name);
+      headers.emplace("X-Sunshine-File-Name", ascii_fallback_filename(name));
       headers.emplace("Content-Disposition",
         "attachment; filename=\"" + ascii_fallback_filename(name) + "\"; filename*=UTF-8''" + percent_encode(name));
       return headers;

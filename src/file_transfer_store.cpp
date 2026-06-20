@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <deque>
+#include <exception>
 #include <mutex>
 #include <stdexcept>
 #include <system_error>
@@ -110,9 +111,13 @@ namespace file_transfer_store {
     std::lock_guard<std::mutex> lk(g_mu);
     sweep_locked(clock_t::now());
 
-    offer.id = make_id();
-    while (g_offers.find(offer.id) != g_offers.end()) {
+    try {
       offer.id = make_id();
+      while (g_offers.find(offer.id) != g_offers.end()) {
+        offer.id = make_id();
+      }
+    } catch (const std::exception &) {
+      return { false, "rng_failed", {} };
     }
 
     const auto id = offer.id;

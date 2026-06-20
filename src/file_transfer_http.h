@@ -58,8 +58,11 @@ namespace file_transfer_http {
 
     std::ifstream in(out.path, std::ios::binary);
     if (!in) {
+      SimpleWeb::CaseInsensitiveMultimap err_headers;
+      err_headers.emplace("Content-Type", "application/json");
+      err_headers.emplace("Cache-Control", "no-store");
       resp->write(SimpleWeb::StatusCode::client_error_not_found,
-        R"({"error":"not_found"})", out.headers);
+        R"({"error":"not_found"})", err_headers);
       return;
     }
     resp->write(out.status, in, out.headers);
