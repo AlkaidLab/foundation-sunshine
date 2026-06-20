@@ -219,6 +219,7 @@ namespace config {
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
     bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). On by default; effective only when the user-session GUI agent is alive. Set to false to force-disable.
+    bool file_transfer;  ///< Host-to-client file transfer offers. Uses clipboard sync only as the control channel; file bytes stream over HTTPS.
   };
 
   namespace flag {

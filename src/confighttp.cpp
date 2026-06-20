@@ -41,6 +41,7 @@
 #include "config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
+#include "file_transfer_http.h"
 #include "crypto.h"
 #include "display_device/session.h"
 #include "file_handler.h"
@@ -3010,6 +3011,31 @@ namespace confighttp {
     clipboard_http::register_routes(server,
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
+      });
+
+    // Host-to-client file transfer offers. Offer creation is local-GUI-facing
+    // through confighttp; the paired client download endpoint is also mirrored
+    // onto nvhttp so clients can fetch bytes over their certificate-authenticated
+    // GameStream HTTPS channel.
+    file_transfer_http::register_routes(server,
+      [](file_transfer_http::resp_https_t resp, file_transfer_http::req_https_t req) {
+        if (!authenticate(resp, req)) {
+          return false;
+        }
+
+        const auto client_address = req->remote_endpoint().address();
+        const auto address = net::addr_to_normalized_string(client_address);
+        if (net::from_address(address) != net::PC) {
+          SimpleWeb::CaseInsensitiveMultimap headers;
+          headers.emplace("Content-Type", "application/json");
+          headers.emplace("Cache-Control", "no-store");
+          resp->write(SimpleWeb::StatusCode::client_error_forbidden,
+            R"({"error":"local_only"})", headers);
+          BOOST_LOG(warning) << "FileTransfer: local-only endpoint denied for " << client_address.to_string();
+          return false;
+        }
+
+        return true;
       });
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
