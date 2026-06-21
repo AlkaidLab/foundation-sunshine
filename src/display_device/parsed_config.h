@@ -25,7 +25,7 @@ namespace display_device {
      * @brief Enum detailing how to prepare the display device.
      */
     enum class device_prep_e : int {
-      no_operation, /**< User has to make sure the display device is active, we will only verify. */
+      no_operation, /**< Do not change display topology; resolution, refresh rate, and HDR are controlled by their own options. */
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
       ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */

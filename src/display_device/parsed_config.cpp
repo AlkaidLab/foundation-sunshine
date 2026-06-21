@@ -695,7 +695,16 @@ namespace display_device {
       return boost::none;
     }
 
-    const bool needs_vdd = display_request.requires_vdd(requested_device_exists, is_vdd_device);
+    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
+    const bool automatic_vdd_fallback =
+      !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+    if (parsed_config.device_prep == parsed_config_t::device_prep_e::no_operation &&
+        automatic_vdd_fallback) {
+      BOOST_LOG(error) << "Requested display is unavailable and no_operation forbids automatic VDD fallback: " << parsed_config.device_id;
+      return boost::none;
+    }
+
+    const bool needs_vdd = explicit_vdd_request || automatic_vdd_fallback;
 
     // 不需要VDD时，使用物理模式映射
     if (!needs_vdd) {

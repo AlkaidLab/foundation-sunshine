@@ -107,6 +107,33 @@ namespace display_device {
       return new_primary_device;
     }
 
+    bool
+    is_physical_primary_candidate(const std::string &device_id, const std::string &vdd_device_id) {
+      return !device_id.empty() &&
+             device_id != vdd_device_id &&
+             get_display_friendly_name(device_id) != ZAKO_NAME;
+    }
+
+    std::string
+    find_physical_primary_candidate(const active_topology_t &topology, const std::string &vdd_device_id) {
+      for (const auto &group : topology) {
+        for (const auto &device_id : group) {
+          if (is_physical_primary_candidate(device_id, vdd_device_id)) {
+            return device_id;
+          }
+        }
+      }
+
+      return std::string {};
+    }
+
+    bool
+    should_restore_physical_primary_for_vdd_secondary(const parsed_config_t &config) {
+      return config.use_vdd &&
+             *config.use_vdd &&
+             config.vdd_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary;
+    }
+
     /**
      * @brief Change the primary display based on the configuration and previously configured primary display.
      *
@@ -120,8 +147,8 @@ namespace display_device {
      * @return Device id to be used when reverting all settings (can be empty string), or an empty optional if the function fails.
      */
     boost::optional<std::string>
-    handle_primary_display_configuration(const parsed_config_t::device_prep_e &device_prep, const std::string &previous_primary_display, const topology_metadata_t &metadata) {
-      if (device_prep == parsed_config_t::device_prep_e::ensure_primary) {
+    handle_primary_display_configuration(const parsed_config_t &config, const std::string &previous_primary_display, const topology_metadata_t &metadata, const active_topology_t &initial_topology) {
+      if (config.device_prep == parsed_config_t::device_prep_e::ensure_primary) {
         const auto original_primary_display { previous_primary_display.empty() ? get_current_primary_display(metadata) : previous_primary_display };
         const auto new_primary_display { determine_new_primary_display(original_primary_display, metadata) };
 
@@ -133,6 +160,26 @@ namespace display_device {
 
         // Here we preserve the data from persistence (unless there's none) as in the end that is what we want to go back to.
         return original_primary_display;
+      }
+
+      if (should_restore_physical_primary_for_vdd_secondary(config)) {
+        const auto physical_primary_display =
+          is_physical_primary_candidate(previous_primary_display, config.device_id) ?
+            previous_primary_display :
+            find_physical_primary_candidate(initial_topology, config.device_id);
+
+        if (physical_primary_display.empty()) {
+          BOOST_LOG(error) << "Failed to find a physical display to use as primary for VDD secondary mode.";
+          return boost::none;
+        }
+
+        BOOST_LOG(info) << "Changing primary display to physical display for VDD secondary mode: " << physical_primary_display;
+        if (!set_as_primary_device(physical_primary_display)) {
+          // Error already logged
+          return boost::none;
+        }
+
+        return std::string {};
       }
 
       if (!previous_primary_display.empty()) {
@@ -947,7 +994,7 @@ namespace display_device {
       // are responsible for the resolution, then hands off! Initial settings
       // will be re-applied when the paused session is resumed.
 
-      const auto original_primary_display { handle_primary_display_configuration(config.device_prep, current_settings.original_primary_display, topology_result->metadata) };
+      const auto original_primary_display { handle_primary_display_configuration(config, current_settings.original_primary_display, topology_result->metadata, topology_result->pair.initial) };
       if (!original_primary_display) {
         // Error already logged
         return { apply_result_t::result_e::primary_display_fail };

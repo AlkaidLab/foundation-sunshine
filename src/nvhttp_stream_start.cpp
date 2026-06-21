@@ -14,7 +14,9 @@
 #include "nvhttp_stream_start.h"
 
 #include "config.h"
+#include "display_device/parsed_config.h"
 #include "display_device/session.h"
+#include "globals.h"
 #include "logging.h"
 #include "video.h"
 
@@ -209,6 +211,64 @@ namespace nvhttp::stream_start {
       }
     }
 
+    display_device::parsed_config_t::device_prep_e
+    effective_device_prep_for_launch(const rtsp_stream::launch_session_t &launch_session) {
+      using device_prep_e = display_device::parsed_config_t::device_prep_e;
+
+      const auto configured_device_prep = static_cast<device_prep_e>(config::video.display_device_prep);
+      if (launch_session.custom_screen_mode < 0) {
+        return configured_device_prep;
+      }
+
+      const auto custom_screen_mode = static_cast<device_prep_e>(launch_session.custom_screen_mode);
+      switch (custom_screen_mode) {
+        case device_prep_e::no_operation:
+        case device_prep_e::ensure_active:
+        case device_prep_e::ensure_primary:
+        case device_prep_e::ensure_only_display:
+        case device_prep_e::ensure_secondary:
+          return custom_screen_mode;
+        default:
+          return configured_device_prep;
+      }
+    }
+
+    bool
+    display_no_operation_requested(const rtsp_stream::launch_session_t &launch_session) {
+      return effective_device_prep_for_launch(launch_session) == display_device::parsed_config_t::device_prep_e::no_operation;
+    }
+
+    bool
+    explicit_vdd_requested_for_launch(const rtsp_stream::launch_session_t &launch_session) {
+      const auto display_request = display_device::resolve_display_request(config::video, launch_session);
+      const bool is_vdd_device = display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME;
+      return display_request.use_vdd || is_vdd_device;
+    }
+
+    bool
+    no_operation_blocks_automatic_vdd_recovery(const rtsp_stream::launch_session_t &launch_session) {
+      return display_no_operation_requested(launch_session) && !explicit_vdd_requested_for_launch(launch_session);
+    }
+
+    bool
+    display_config_failure_can_continue_with_current_display(display_device::session_t::configure_result_t::result_e result) {
+      using result_e = display_device::session_t::configure_result_t::result_e;
+      switch (result) {
+        case result_e::modes_fail:
+        case result_e::hdr_states_fail:
+          return true;
+        case result_e::topology_fail:
+        case result_e::primary_display_fail:
+        case result_e::success:
+        case result_e::deferred_retry:
+        case result_e::parse_fail:
+        case result_e::file_save_fail:
+        case result_e::revert_fail:
+        default:
+          return false;
+      }
+    }
+
     void
     fill_vdd_recovery_session(rtsp_stream::launch_session_t &recovery_session,
       const rtsp_stream::launch_session_t &launch_session) {
@@ -265,6 +325,17 @@ namespace nvhttp::stream_start {
       const bool no_active_display = video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
       const bool display_config_mismatch = should_try_vdd_for_display_config(display_result.result);
       if (!no_active_display && !display_config_mismatch) {
+        return false;
+      }
+
+      if (no_operation_blocks_automatic_vdd_recovery(launch_session)) {
+        recovery_result = {
+          true,
+          false,
+          "vdd_display_recovery_skipped",
+          "Display preparation is no_operation; skipping automatic VDD recovery to avoid switching display targets."
+        };
+        BOOST_LOG(info) << "Skipping automatic VDD recovery because display preparation is no_operation";
         return false;
       }
 
@@ -384,6 +455,29 @@ namespace nvhttp::stream_start {
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto_recovery_result_t recovery_result;
     const auto should_try_vdd = should_try_vdd_for_display_config(display_result.result);
+
+    if (should_try_vdd &&
+        display_config_failure_can_continue_with_current_display(display_result.result)) {
+      recovery_result = {
+        true,
+        false,
+        "current_display_settings_fallback",
+        "Display mode or HDR configuration failed; probing the current display state before using fallback recovery."
+      };
+
+      BOOST_LOG(warning) << "Display mode/HDR configuration failed; continuing with current display settings if encoder probing succeeds";
+      if (!video::probe_encoders()) {
+        recovery_result.succeeded = true;
+        recovery_result.detail = "Encoder probing succeeded with the current display settings.";
+        set_auto_recovery_status(tree, recovery_result);
+        return true;
+      }
+
+      recovery_result.detail = "The current display settings were kept, but encoder probing still failed.";
+      if (display_result.cleanup_on_failure) {
+        display_device::session_t::get().restore_state();
+      }
+    }
 
     if (should_try_vdd &&
         recover_display_with_vdd(launch_session, is_reconfigure, display_result, recovery_result)) {

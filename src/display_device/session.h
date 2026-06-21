@@ -88,6 +88,7 @@ namespace display_device {
       result_e result;
       std::string message;
       std::string hint;
+      bool cleanup_on_failure { false };
     };
 
     /**

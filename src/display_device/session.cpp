@@ -370,15 +370,18 @@ namespace display_device {
     const auto requested_device_id = display_device::find_one_of_the_available_devices(display_request.device_id);
     const bool requested_device_exists = !requested_device_id.empty();
     const bool is_vdd_device = (display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME);
-    
-    const bool needs_vdd = display_request.requires_vdd(requested_device_exists, is_vdd_device);
-    
+    const auto effective_device_prep = get_effective_device_prep(config, session);
+    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
+    const bool automatic_vdd_fallback = !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+
+    const bool needs_vdd = explicit_vdd_request ||
+      (automatic_vdd_fallback && effective_device_prep != parsed_config_t::device_prep_e::no_operation);
+
     // - 如果不需要 VDD：跳过 VDD 相关逻辑
     // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
-    const auto effective_device_prep = get_effective_device_prep(config, session);
     const bool vdd_will_turn_off_physical_displays =
       will_use_vdd &&
       parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
@@ -468,8 +471,16 @@ namespace display_device {
       return make_apply_configure_result(apply_result);
     }
 
+    auto configure_result = make_apply_configure_result(apply_result);
+    if (apply_result.result == settings_t::apply_result_t::result_e::modes_fail ||
+        apply_result.result == settings_t::apply_result_t::result_e::hdr_states_fail) {
+      configure_result.cleanup_on_failure = true;
+      BOOST_LOG(warning) << "Display mode/HDR configuration failed; deferring cleanup so startup can probe the current display state";
+      return configure_result;
+    }
+
     restore_state_impl(revert_reason_e::config_cleanup);
-    return make_apply_configure_result(apply_result);
+    return configure_result;
   }
 
   bool
