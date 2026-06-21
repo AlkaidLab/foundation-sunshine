@@ -1372,6 +1372,26 @@ namespace system_tray {
 
     clear_tray_notification();
   }
+
+  void
+  show_notification(const std::string &title, const std::string &message) {
+    if (!tray_initialized) {
+      return;
+    }
+
+    static std::string notification_title;
+    static std::string notification_message;
+    notification_title = title;
+    notification_message = message;
+
+    clear_tray_notification();
+    tray.notification_title = notification_title.c_str();
+    tray.notification_text = notification_message.c_str();
+    tray.notification_icon = TRAY_ICON;
+    tray_update(&tray);
+
+    clear_tray_notification();
+  }
  
   void
   update_vdd_menu() {

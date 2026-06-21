@@ -126,6 +126,20 @@ namespace display_device {
     is_changing_settings_going_to_fail() const;
 
     /**
+     * @brief Capture and hold the current audio sink until display settings are reverted.
+     * @note This is useful before display topology changes that may make the current
+     *       Windows playback endpoint disappear.
+     */
+    void
+    capture_audio_sink();
+
+    /**
+     * @brief Release the captured audio sink, restoring it if Sunshine changed it.
+     */
+    void
+    release_audio_sink();
+
+    /**
      * @brief Set the file path for persistent data.
      *
      * EXAMPLES:

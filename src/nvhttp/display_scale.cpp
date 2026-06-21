@@ -51,6 +51,7 @@ namespace nvhttp::display_scale {
       node["scale_set_supported"] = false;
     }
 
+#ifndef _WIN32
     void
     add_unsupported_scale_options_fields(json &node) {
       node["current_scale_percent"] = nullptr;
@@ -58,6 +59,7 @@ namespace nvhttp::display_scale {
       node["supported_scale_percents"] = json::array();
       node["scale_set_supported"] = false;
     }
+#endif
 
 #ifdef _WIN32
     json

@@ -16,7 +16,6 @@
             class="form-control search-input"
             :placeholder="$t('apps.search_placeholder')"
             v-model="searchQuery"
-            @input="debouncedSearch"
           />
           <button v-if="searchQuery" class="btn-clear-search" @click="clearSearch">
             <i class="fas fa-times"></i>

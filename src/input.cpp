@@ -19,6 +19,7 @@ extern "C" {
 #include "config.h"
 #include "globals.h"
 #include "input.h"
+#include "input_activity.h"
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
@@ -159,12 +160,14 @@ namespace input {
 
     input_t(
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
-      platf::feedback_queue_t feedback_queue):
+      platf::feedback_queue_t feedback_queue,
+      safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
+        input_activity_event { std::move(input_activity_event) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
         accumulated_vscroll_delta {},
@@ -174,10 +177,12 @@ namespace input {
     int shortcutFlags;
 
     std::vector<gamepad_t> gamepads;
+    activity::tracker_t activity_tracker;
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
     platf::feedback_queue_t feedback_queue;
+    safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -1780,6 +1785,10 @@ namespace input {
     // Print the final input packet
     input::print((void *) payload);
 
+    const bool should_raise_input_activity =
+      config::video.input_activity_boost &&
+      input->activity_tracker.evaluate(payload);
+
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5:
@@ -1832,6 +1841,10 @@ namespace input {
       case SS_CONTROLLER_BATTERY_MAGIC:
         passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
         break;
+    }
+
+    if (should_raise_input_activity) {
+      input->input_activity_event->raise(std::chrono::steady_clock::now());
     }
   }
 
@@ -1904,7 +1917,8 @@ namespace input {
   alloc(safe::mail_t mail) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
-      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback));
+      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
+      mail->event<std::chrono::steady_clock::time_point>(mail::input_activity));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

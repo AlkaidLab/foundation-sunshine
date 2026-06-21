@@ -14,8 +14,8 @@ export function useApps() {
   // 状态
   const apps = ref([])
   const originalApps = ref([])
-  const filteredApps = ref([])
   const searchQuery = ref('')
+  const committedSearchQuery = ref('')
   const editingApp = ref(null)
   const platform = ref('')
   const isSaving = ref(false)
@@ -45,6 +45,8 @@ export function useApps() {
   const messageClass = computed(() => ({
     [`alert-${messageType.value}`]: true,
   }))
+
+  const filteredApps = computed(() => AppService.searchApps(apps.value, committedSearchQuery.value))
 
   // 消息图标映射
   const MESSAGE_ICONS = {
@@ -86,7 +88,6 @@ export function useApps() {
     try {
       apps.value = await AppService.getApps()
       originalApps.value = deepClone(apps.value)
-      filteredApps.value = [...apps.value]
     } catch (error) {
       console.error('加载应用失败:', error)
       showMessage('加载应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
@@ -104,11 +105,12 @@ export function useApps() {
 
   // 搜索
   const performSearch = () => {
-    filteredApps.value = AppService.searchApps(apps.value, searchQuery.value)
+    committedSearchQuery.value = searchQuery.value
   }
 
   const clearSearch = () => {
     searchQuery.value = ''
+    committedSearchQuery.value = ''
     performSearch()
   }
 

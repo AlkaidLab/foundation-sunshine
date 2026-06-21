@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <future>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <thread>
@@ -374,38 +375,157 @@ namespace display_device {
       return true;
     }
 
+    bool
+    same_resolution(const resolution_t &a, const resolution_t &b) {
+      return a.width == b.width && a.height == b.height;
+    }
+
+    void
+    append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
+      if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
+            return same_resolution(cached, resolution);
+          }) == resolutions.end()) {
+        resolutions.push_back(resolution);
+      }
+    }
+
+    void
+    append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
+      if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
+        refresh_rates_hz.push_back(refresh_hz);
+      }
+    }
+
+    boost::optional<resolution_t>
+    parse_vdd_resolution(const std::string &value) {
+      std::string trimmed = value;
+      boost::algorithm::trim(trimmed);
+      if (trimmed.empty()) {
+        return {};
+      }
+
+      std::stringstream input(trimmed);
+      unsigned int width = 0;
+      unsigned int height = 0;
+      char separator = '\0';
+      input >> width >> separator >> height;
+
+      if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
+        BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
+        return {};
+      }
+
+      return resolution_t { width, height };
+    }
+
+    boost::optional<unsigned int>
+    rounded_vdd_refresh_hz(double refresh_hz) {
+      constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
+      constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
+
+      if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
+        return {};
+      }
+
+      const auto rounded = std::lround(refresh_hz);
+      if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
+        return {};
+      }
+
+      return static_cast<unsigned int>(rounded);
+    }
+
+    boost::optional<unsigned int>
+    rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
+      if (refresh_rate.denominator == 0) {
+        return {};
+      }
+
+      const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
+      return rounded_vdd_refresh_hz(refresh_hz);
+    }
+
+    boost::optional<unsigned int>
+    parse_vdd_refresh_hz(const std::string &value) {
+      std::string trimmed = value;
+      boost::algorithm::trim(trimmed);
+      if (trimmed.empty()) {
+        return {};
+      }
+
+      try {
+        std::size_t parsed_len = 0;
+        const double refresh_hz = std::stod(trimmed, &parsed_len);
+        if (parsed_len != trimmed.size()) {
+          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+          return {};
+        }
+
+        const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
+        if (!rounded) {
+          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+          return {};
+        }
+
+        return *rounded;
+      }
+      catch (const std::exception &) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+    }
+
     set_vdd_result
-    set_vdd_session_mode(const parsed_config_t &config) {
+    set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
       if (!config.resolution || !config.refresh_rate) {
         BOOST_LOG(debug) << "SETMODES skipped: session resolution or refresh rate is not set";
         return set_vdd_result::invalid_config;
       }
 
-      if (config.refresh_rate->denominator == 0) {
-        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate denominator";
+      auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate);
+      if (!session_refresh_hz) {
+        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate " << to_string(*config.refresh_rate);
         return set_vdd_result::invalid_config;
       }
 
-      const double refresh_hz = static_cast<double>(config.refresh_rate->numerator) / config.refresh_rate->denominator;
-      const auto rounded_refresh_hz = static_cast<unsigned int>(std::lround(refresh_hz));
-      if (rounded_refresh_hz == 0) {
-        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate " << refresh_hz;
+      auto resolutions = settings.resolution_modes;
+      auto refresh_rates_hz = settings.refresh_rates_hz;
+      append_unique_resolution(resolutions, *config.resolution);
+      append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
+
+      if (resolutions.empty() || refresh_rates_hz.empty()) {
+        BOOST_LOG(warning) << "SETMODES skipped: full VDD mode list is empty";
         return set_vdd_result::invalid_config;
       }
 
       std::wstringstream command;
-      command << L"SETMODES "
-              << config.resolution->width << L"x"
-              << config.resolution->height << L"x"
-              << rounded_refresh_hz;
+      command << L"SETMODES ";
+      std::size_t mode_count = 0;
+      for (const auto &resolution : resolutions) {
+        for (const auto refresh_hz : refresh_rates_hz) {
+          if (mode_count > 0) {
+            command << L",";
+          }
+          command << resolution.width << L"x" << resolution.height << L"x" << refresh_hz;
+          ++mode_count;
+        }
+      }
 
-      switch (vdd_ioctl::send_command(command.str())) {
+      const auto command_string = command.str();
+      if (command_string.size() >= 2048) {
+        BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
+                           << " wchar_t); XML fallback will be used";
+        return set_vdd_result::failed;
+      }
+
+      switch (vdd_ioctl::send_command(command_string)) {
         case vdd_ioctl::result::success:
-          BOOST_LOG(info) << "VDD live session mode updated via SETMODES: "
-                          << to_string(*config.resolution) << "@" << rounded_refresh_hz << "Hz";
+          BOOST_LOG(info) << "VDD live mode list updated via SETMODES: " << mode_count
+                          << " modes; requested " << to_string(*config.resolution)
+                          << "@" << *session_refresh_hz << "Hz";
           return set_vdd_result::ok;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(warning) << "VDD SETMODES IOCTL rejected by driver; not falling back to XML to avoid partial state";
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; XML fallback will be used";
           return set_vdd_result::failed;
         case vdd_ioctl::result::interface_missing:
           BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing; XML fallback will be used";
@@ -766,6 +886,8 @@ namespace display_device {
       auto is_res_cached = false;
       auto is_fps_cached = false;
       std::ostringstream res_stream, fps_stream;
+      std::vector<resolution_t> resolution_modes;
+      std::vector<unsigned int> refresh_rates_hz;
 
       res_stream << '[';
       fps_stream << '[';
@@ -773,6 +895,9 @@ namespace display_device {
       // 检查分辨率是否已缓存
       for (const auto &res : config::nvhttp.resolutions) {
         res_stream << res << ',';
+        if (const auto parsed_resolution = parse_vdd_resolution(res)) {
+          append_unique_resolution(resolution_modes, *parsed_resolution);
+        }
         if (config.resolution && res == to_string(*config.resolution)) {
           is_res_cached = true;
         }
@@ -781,19 +906,31 @@ namespace display_device {
       // 检查帧率是否已缓存
       for (const auto &fps : config::nvhttp.fps) {
         fps_stream << fps << ',';
+        if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
+          append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
+        }
         if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
           is_fps_cached = true;
         }
       }
 
       // 如果需要更新设置
-      bool needs_update = (!is_res_cached || !is_fps_cached) && config.resolution;
+      bool needs_update = config.resolution && (!is_res_cached || (config.refresh_rate && !is_fps_cached));
       if (needs_update) {
         if (!is_res_cached) {
           res_stream << to_string(*config.resolution);
         }
         if (!is_fps_cached && config.refresh_rate) {
           fps_stream << to_string(*config.refresh_rate);
+        }
+      }
+
+      if (config.resolution) {
+        append_unique_resolution(resolution_modes, *config.resolution);
+      }
+      if (config.refresh_rate) {
+        if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
+          append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
         }
       }
 
@@ -805,7 +942,7 @@ namespace display_device {
       res_str += ']';
       fps_str += ']';
 
-      return { res_str, fps_str, needs_update };
+      return { res_str, fps_str, resolution_modes, refresh_rates_hz, needs_update };
     }
 
     bool

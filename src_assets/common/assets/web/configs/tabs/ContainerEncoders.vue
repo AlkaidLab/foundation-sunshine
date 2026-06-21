@@ -1,10 +1,11 @@
 <script setup>
-import { ref } from 'vue'
-import NvidiaNvencEncoder from './encoders/NvidiaNvencEncoder.vue'
-import IntelQuickSyncEncoder from './encoders/IntelQuickSyncEncoder.vue'
-import AmdAmfEncoder from './encoders/AmdAmfEncoder.vue'
-import VideotoolboxEncoder from './encoders/VideotoolboxEncoder.vue'
-import SoftwareEncoder from './encoders/SoftwareEncoder.vue'
+import { defineAsyncComponent, ref } from 'vue'
+
+const NvidiaNvencEncoder = defineAsyncComponent(() => import('./encoders/NvidiaNvencEncoder.vue'))
+const IntelQuickSyncEncoder = defineAsyncComponent(() => import('./encoders/IntelQuickSyncEncoder.vue'))
+const AmdAmfEncoder = defineAsyncComponent(() => import('./encoders/AmdAmfEncoder.vue'))
+const VideotoolboxEncoder = defineAsyncComponent(() => import('./encoders/VideotoolboxEncoder.vue'))
+const SoftwareEncoder = defineAsyncComponent(() => import('./encoders/SoftwareEncoder.vue'))
 
 const props = defineProps([
   'platform',

@@ -201,6 +201,23 @@ namespace display_device {
       return {};
     }
 
+    parsed_config_t::device_prep_e
+    get_effective_device_prep(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+      const auto configured_device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
+      const auto custom_screen_mode = static_cast<parsed_config_t::device_prep_e>(session.custom_screen_mode);
+
+      switch (custom_screen_mode) {
+        case parsed_config_t::device_prep_e::no_operation:
+        case parsed_config_t::device_prep_e::ensure_active:
+        case parsed_config_t::device_prep_e::ensure_primary:
+        case parsed_config_t::device_prep_e::ensure_only_display:
+        case parsed_config_t::device_prep_e::ensure_secondary:
+          return custom_screen_mode;
+        default:
+          return configured_device_prep;
+      }
+    }
+
     /**
      * @brief Wait for VDD device to be available (active or inactive).
      * @param device_zako Output parameter for the device ID.
@@ -361,6 +378,14 @@ namespace display_device {
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+    const auto effective_device_prep = get_effective_device_prep(config, session);
+    const bool vdd_will_turn_off_physical_displays =
+      will_use_vdd &&
+      parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
+
+    if (vdd_will_turn_off_physical_displays) {
+      settings.capture_audio_sink();
+    }
 
     if (will_use_vdd && !vdd_already_exists) {
 
@@ -393,6 +418,10 @@ namespace display_device {
 
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
+      if (vdd_will_turn_off_physical_displays) {
+        settings.release_audio_sink();
+      }
+
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
       return {
@@ -480,19 +509,18 @@ namespace display_device {
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
     if (last_vdd_setting == new_setting) {
-      BOOST_LOG(debug) << "VDD配置未变更: " << new_setting;
-      return;
+      BOOST_LOG(debug) << "VDD session mode unchanged; resyncing full driver mode list: " << new_setting;
     }
 
-    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config);
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok:
         last_vdd_setting = new_setting;
-        BOOST_LOG(info) << "VDD会话模式更新完成（未写入XML）: " << new_setting;
+        BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
         return;
       case vdd_utils::set_vdd_result::failed:
-        BOOST_LOG(error) << "VDD SETMODES 被驱动拒绝，跳过 XML 回退以避免运行态/持久态不一致: " << new_setting;
-        return;
+        BOOST_LOG(warning) << "VDD SETMODES 更新失败，回退 XML+reload 路径: " << new_setting;
+        break;
       case vdd_utils::set_vdd_result::invalid_config:
         BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
         return;
@@ -580,7 +608,7 @@ namespace display_device {
 
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-      vdd_settings.needs_update && config.resolution) {
+      config.resolution && config.refresh_rate) {
       update_vdd_resolution(config, vdd_settings);
     }
 
@@ -808,6 +836,7 @@ namespace display_device {
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
+      settings.release_audio_sink();
       stop_timer_and_clear_vdd_state();
       return;
     }

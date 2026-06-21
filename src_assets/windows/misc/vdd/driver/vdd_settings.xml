@@ -56,16 +56,6 @@
     Any invalid colour formats which are used will default to use RGB
     -->
   </colour>
-  <logging>
-    <SendLogsThroughPipe>true</SendLogsThroughPipe> <!-- Can only send logs through pipe if logging is enabled-->
-    <logging>false</logging>
-    <!-- DEBUG LOGGING FOR EXPERTS ONLY!-->
-    <debuglogging>false</debuglogging>
-    <!-- DEBUG LOGS CAN GENERATE 1000+ LINES-->
-    <!-- Warning: Leaving logging on too long can lead to excessive filesize. Especially DebugLogging, which should only be used for short periods to log errors. -->
-    <!-- Logging: Useful to troubleshoot and determine which GPUs are being used, and if displays are working as intended.-->
-    <!-- Debug Logging: Logs local system information with every driver function/event/process. Useful for GitHub Help Tickets.-->
-  </logging>
   <cursor>
     <HardwareCursor>false</HardwareCursor>
     <!--Whether to display a hardware cursor in the buffer (If disabled streaming apps will use client cursor)-->

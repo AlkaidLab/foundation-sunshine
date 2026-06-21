@@ -21,7 +21,7 @@
 ### ░▒▓ 核心特性
 
 - **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・完整静态元数据透传
-- **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・5 种屏幕模式・Named Pipe 通信・多客户端 GUID 会话
+- **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・5 种屏幕模式・IOCTL 通信・多客户端 GUID 会话
 - **音频增强** — 7.1.4 环绕声 (12ch)・Opus DRED 丢包恢复・持续音频流・远程麦克风・虚拟扬声器位深匹配
 - **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR・编码器结果缓存 (260x)・自适应下采样・Vulkan 编码器
 - **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控
@@ -66,7 +66,7 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd) 虚拟显示器驱动：
 - 自定义分辨率和刷新率支持，10-bit HDR 色深
 - **5 种屏幕组合模式**：仅虚拟屏、仅物理屏、混合模式、镜像模式、扩展模式
-- Named Pipe 实时通信，串流开始/结束时自动创建/销毁虚拟显示器
+- IOCTL 实时通信，串流开始/结束时自动创建/销毁虚拟显示器
 - 每个客户端独立绑定 VDD 会话（GUID），支持多客户端快速切换
 - 无需重启的实时配置更改
 

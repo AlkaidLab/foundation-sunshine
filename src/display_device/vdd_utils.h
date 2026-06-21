@@ -8,6 +8,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 #include <windows.h>
 
 #include "parsed_config.h"
@@ -51,6 +52,8 @@ namespace display_device::vdd_utils {
   struct VddSettings {
     std::string resolutions;
     std::string fps;
+    std::vector<resolution_t> resolution_modes;
+    std::vector<unsigned int> refresh_rates_hz;
     bool needs_update = false;
   };
 
@@ -87,8 +90,7 @@ namespace display_device::vdd_utils {
    * @brief Outcome of attempting a live SETMODES update.
    * @details Lets callers distinguish "driver accepted" / "driver rejected" /
    *          "feature not present" / "config is unusable" so the persistent
-   *          XML fallback only triggers when the driver genuinely lacks the
-   *          IOCTL interface.
+   *          XML fallback can be used when the live path is not available.
    */
   enum class set_vdd_result {
     ok,                 ///< Driver accepted the live mode update.
@@ -98,14 +100,15 @@ namespace display_device::vdd_utils {
   };
 
   /**
-   * @brief Push the current session mode to ZakoVDD in-memory mode list.
+   * @brief Push the complete session mode list to ZakoVDD in-memory mode list.
    * @details Uses the SETMODES IOCTL command exposed by newer ZakoVDD builds.
    *          This does not persist the session resolution to vdd_settings.xml.
-   * @param config Parsed display configuration containing resolution + refresh rate.
-   * @return Typed outcome; only ::interface_missing should trigger XML fallback.
+   * @param config Parsed display configuration containing the requested session mode.
+   * @param settings Full standard mode list plus the requested session mode.
+   * @return Typed outcome; callers can XML-fallback when the live path is unavailable.
    */
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &config);
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);
 
   /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）

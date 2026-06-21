@@ -9,6 +9,7 @@
 #include "thread_safe.h"
 #include "video_colorspace.h"
 
+#include <chrono>
 #include <string>
 
 extern "C" {
@@ -101,6 +102,35 @@ namespace video {
       return static_cast<double>(framerate);
     }
   };
+
+  struct input_activity_boost_policy_t {
+    bool configured {};
+    bool useful {};
+    int fps {};
+    std::chrono::duration<double, std::milli> frame_time {};
+  };
+
+  struct input_activity_boost_config_t {
+    bool variable_refresh_rate {};
+    bool enabled {};
+    int stream_fps {};
+    int minimum_fps_target {};
+    int boost_fps {};
+    int window_ms {};
+  };
+
+  std::chrono::duration<double, std::milli>
+  minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target);
+
+  input_activity_boost_policy_t
+  make_input_activity_boost_policy(const input_activity_boost_config_t &config);
+
+  std::chrono::duration<double, std::milli>
+  effective_minimum_frame_time(
+    const std::chrono::duration<double, std::milli> &base_minimum_frame_time,
+    const input_activity_boost_policy_t &input_activity_boost_policy,
+    bool input_boost_active,
+    int minimum_fps_target);
 
   platf::mem_type_e
   map_base_dev_type(AVHWDeviceType type);
