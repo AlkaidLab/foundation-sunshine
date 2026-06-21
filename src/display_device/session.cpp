@@ -371,11 +371,13 @@ namespace display_device {
     const bool requested_device_exists = !requested_device_id.empty();
     const bool is_vdd_device = (display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME);
     const auto effective_device_prep = get_effective_device_prep(config, session);
-    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
-    const bool automatic_vdd_fallback = !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
 
-    const bool needs_vdd = explicit_vdd_request ||
-      (automatic_vdd_fallback && effective_device_prep != parsed_config_t::device_prep_e::no_operation);
+    const bool needs_vdd = resolve_vdd_request(
+      display_request,
+      requested_device_exists,
+      is_vdd_device,
+      effective_device_prep
+    ) == vdd_request_decision_e::use_vdd;
 
     // - 如果不需要 VDD：跳过 VDD 相关逻辑
     // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD
@@ -415,7 +417,31 @@ namespace display_device {
         timer->setup_timer(nullptr);
       }
       else {
-        BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
+        if (vdd_will_turn_off_physical_displays) {
+          const auto current_devices = display_device::enum_available_devices();
+          if (vdd_utils::has_active_physical_display_snapshot(current_devices)) {
+            const auto current_topology = get_current_topology();
+            if (is_topology_valid(current_topology)) {
+              pre_saved_initial_topology = current_topology;
+              BOOST_LOG(debug) << "VDD already exists, but active physical displays are present; saved current topology before display_off prep: "
+                               << to_string(*pre_saved_initial_topology);
+            }
+            else {
+              BOOST_LOG(error) << "VDD already exists and physical displays are active, but current topology is invalid; refusing display_off prep.";
+              return {
+                configure_result_t::result_e::topology_fail,
+                "Current display topology is not safe for VDD display-off prep.",
+                "Disable VDD display-off prep or restore a valid physical display topology, then try again."
+              };
+            }
+          }
+          else {
+            BOOST_LOG(debug) << "VDD already exists and no active physical display baseline is available; skipping initial topology save.";
+          }
+        }
+        else {
+          BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
+        }
       }
     }
 
@@ -554,7 +580,7 @@ namespace display_device {
     std::this_thread::sleep_for(1200ms);
   }
 
-  void
+  bool
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
@@ -575,9 +601,11 @@ namespace display_device {
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
-    // pre_vdd_devices: 在 VDD 创建前一刻保存的物理显示器快照
-    // 延迟到 VDD 创建前才捕获，确保无论是新建还是重建都能拿到正确状态
+    // pre_vdd_devices: 在 VDD prep 前保存的显示器基线快照
+    // 延迟到 VDD 创建或 prep 前才捕获，确保能拿到可恢复的正确状态
     device_info_map_t pre_vdd_devices;
+    bool pre_vdd_devices_captured = false;
+    const bool vdd_prep_needs_snapshot = vdd_utils::vdd_prep_requires_pre_vdd_snapshot(config.vdd_prep);
 
     // Rebuild VDD device on client switch
     if (!device_zako.empty() && !current_vdd_client_id.empty() &&
@@ -628,7 +656,8 @@ namespace display_device {
       // 在创建 VDD 之前捕获物理显示器快照
       // 此时无 VDD 存在（新建 or 重建后已销毁），物理屏应处于正常状态
       pre_vdd_devices = display_device::enum_available_devices();
-      BOOST_LOG(info) << "已保存pre-VDD设备列表: " << display_device::to_string(pre_vdd_devices);
+      pre_vdd_devices_captured = true;
+      BOOST_LOG(info) << "已保存VDD prep基线设备列表: " << display_device::to_string(pre_vdd_devices);
 
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 复用模式使用固定标识符，否则使用客户端ID生成唯一GUID
@@ -637,6 +666,12 @@ namespace display_device {
         : current_client_id;  // 为每个客户端生成不同GUID
       vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size);
       std::this_thread::sleep_for(200ms);
+    }
+    else if (vdd_prep_needs_snapshot) {
+      pre_vdd_devices = display_device::enum_available_devices();
+      pre_vdd_devices_captured = true;
+      BOOST_LOG(info) << "VDD already exists; captured current display list as VDD prep baseline: "
+                      << display_device::to_string(pre_vdd_devices);
     }
 
     // Wait for device to be ready
@@ -663,12 +698,12 @@ namespace display_device {
         else {
           BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
         }
-        return;
+        return false;
       }
     }
 
     if (device_zako.empty()) {
-      return;
+      return false;
     }
 
     if (original_output_name.empty()) {
@@ -695,9 +730,17 @@ namespace display_device {
     // VDD模式下的拓扑控制与普通模式分开处理
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
       // User has specified a display configuration, apply it
-      if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
+      const auto vdd_prep_result = vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices, pre_vdd_devices_captured);
+      if (vdd_prep_result == vdd_utils::vdd_prep_result_e::success) {
         BOOST_LOG(info) << "已应用VDD屏幕布局设置";
         std::this_thread::sleep_for(200ms);
+      }
+      else if (vdd_prep_result == vdd_utils::vdd_prep_result_e::topology_failed && settings.is_changing_settings_going_to_fail()) {
+        BOOST_LOG(warning) << "VDD prep topology change failed while Windows display settings are unavailable; allowing the stream to continue without applying VDD prep.";
+      }
+      else {
+        BOOST_LOG(error) << "Failed to apply VDD prep safely; aborting display configuration.";
+        return false;
       }
     }
     else {
@@ -714,6 +757,8 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
       vdd_utils::set_hdr_state(false);
     }
+
+    return true;
   }
 
   void

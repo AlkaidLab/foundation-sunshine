@@ -189,6 +189,22 @@ namespace display_device {
     requires_vdd(bool requested_device_exists, bool is_vdd_device) const;
   };
 
+  enum class vdd_request_decision_e {
+    use_requested_display,
+    use_vdd,
+    blocked_automatic_fallback
+  };
+
+  bool
+  is_explicit_vdd_request(const display_request_t &request, bool is_vdd_device);
+
+  vdd_request_decision_e
+  resolve_vdd_request(
+    const display_request_t &request,
+    bool requested_device_exists,
+    bool is_vdd_device,
+    parsed_config_t::device_prep_e device_prep);
+
   display_request_t
   resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
