@@ -325,6 +325,10 @@ namespace input {
       << "--end touch packet--"sv;
   }
 
+  /**
+   * @brief Prints a touchpad packet.
+   * @param packet The touchpad packet.
+   */
   void
   print(PSS_TOUCHPAD_PACKET packet) {
     BOOST_LOG(debug)
@@ -343,11 +347,20 @@ namespace input {
       << "--end touchpad packet--"sv;
   }
 
+  /**
+   * @brief Converts a little-endian uint16 touchpad frame coordinate to a normalized float.
+   * @param value The little-endian uint16 value carried in a touchpad frame contact.
+   * @return The normalized value in the range [0.0, 1.0].
+   */
   float
   from_touchpad_frame_uint16(std::uint16_t value) {
     return util::endian::little(value) / 65535.0f;
   }
 
+  /**
+   * @brief Prints a touchpad frame packet.
+   * @param packet The touchpad frame packet.
+   */
   void
   print(PSS_TOUCHPAD_FRAME_PACKET packet) {
     auto contact_count = packet->contactCount;
@@ -1021,6 +1034,11 @@ namespace input {
     platf::touch_update(input->client_context.get(), abs_port, touch);
   }
 
+  /**
+   * @brief Called to pass a touchpad message to the platform backend.
+   * @param input The input context pointer.
+   * @param packet The touchpad packet.
+   */
   void
   passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_PACKET packet) {
     if (!config::input.mouse) {
@@ -1049,6 +1067,14 @@ namespace input {
     platf::touchpad_update(input->client_context.get(), touchpad);
   }
 
+  /**
+   * @brief Called to pass a batched touchpad frame message to the platform backend.
+   * @details Forwards a full hardware touchpad frame (all simultaneous contacts) to the
+   *          platform backend. Frame passthrough is gated on native touchpad optimization
+   *          so the toggle can fall back to per-contact updates for mixed/old clients.
+   * @param input The input context pointer.
+   * @param packet The touchpad frame packet.
+   */
   void
   passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_FRAME_PACKET packet) {
     if (!config::input.mouse || !config::input.native_touchpad_optimization) {
@@ -1520,6 +1546,12 @@ namespace input {
     return batch_result_e::batched;
   }
 
+  /**
+   * @brief Batch two touchpad messages.
+   * @param dest The original packet to batch into.
+   * @param src A later packet to attempt to batch.
+   * @return The status of the batching operation.
+   */
   batch_result_e
   batch(PSS_TOUCHPAD_PACKET dest, PSS_TOUCHPAD_PACKET src) {
     // Only batch hover or move events
@@ -1549,6 +1581,13 @@ namespace input {
     return batch_result_e::batched;
   }
 
+  /**
+   * @brief Checks whether every contact in a touchpad frame is a move-only event.
+   * @details Only move-only frames are eligible for batching, since state-changing
+   *          events (down/up/hover transitions) must be delivered without coalescing.
+   * @param packet The touchpad frame packet.
+   * @return `true` if the frame has at least one contact and all contacts are move events, `false` otherwise.
+   */
   bool
   touchpad_frame_is_move_only(PSS_TOUCHPAD_FRAME_PACKET packet) {
     if (packet->contactCount == 0 || packet->contactCount > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
@@ -1564,6 +1603,14 @@ namespace input {
     return true;
   }
 
+  /**
+   * @brief Batch two touchpad frame messages.
+   * @details Frames are only batchable when both are move-only and share identical
+   *          contact count, button state, rotation, device dimensions, and pointer IDs.
+   * @param dest The original packet to batch into.
+   * @param src A later packet to attempt to batch.
+   * @return The status of the batching operation.
+   */
   batch_result_e
   batch(PSS_TOUCHPAD_FRAME_PACKET dest, PSS_TOUCHPAD_FRAME_PACKET src) {
     if (!touchpad_frame_is_move_only(dest)) {
