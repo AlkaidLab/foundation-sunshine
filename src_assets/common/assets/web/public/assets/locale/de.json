@@ -367,6 +367,8 @@
     "mouse_desc": "Erlaubt Gästen das Host-System mit der Maus zu steuern",
     "native_pen_touch": "Native Pen/Touch Unterstützung",
     "native_pen_touch_desc": "Wenn aktiviert, durchläuft Sunshine natives Pen / Berühren von Moonlight-Clients. Dies kann nützlich sein, um ältere Anwendungen ohne nativen Stift-/Berührungs-Support zu deaktivieren.",
+    "native_touchpad_optimization": "Native Touchpad-Anpassung",
+    "native_touchpad_optimization_desc": "Wenn aktiviert, aktiviert Sunshine annähernd native Touchpad-Unterstützung für native Touchpads. Wenn deaktiviert, wird auf ältere Touchpad-Ereignisse zurückgegriffen.",
     "no_fps": "Keine FPS-Werte hinzugefügt",
     "no_resolutions": "Keine Auflösungen hinzugefügt",
     "notify_pre_releases": "Pre-Release-Benachrichtigungen",

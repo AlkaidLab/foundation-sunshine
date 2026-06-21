@@ -367,6 +367,8 @@
     "mouse_desc": "Permite que os convidados controlem o sistema host com o mouse",
     "native_pen_touch": "Suporte nativo a caneta/toque",
     "native_pen_touch_desc": "Quando ativado, o Sunshine transmitirá os eventos nativos de caneta/toque dos clientes Moonlight. Isso pode ser útil para desativar aplicativos mais antigos sem suporte nativo a caneta/toque.",
+    "native_touchpad_optimization": "Adaptação ao touchpad nativo",
+    "native_touchpad_optimization_desc": "Quando ativado, o Sunshine ativará suporte quase nativo ao touchpad para touchpads nativos. Quando desativado, voltará aos eventos de touchpad legados.",
     "no_fps": "Nenhum valor de FPS adicionado",
     "no_resolutions": "Nenhuma resolução adicionada",
     "notify_pre_releases": "Notificações de pré-lançamento",

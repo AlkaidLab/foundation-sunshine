@@ -367,6 +367,8 @@
     "mouse_desc": "Permite aos convidados controlar o sistema de host com o mouse",
     "native_pen_touch": "Suporte nativo para Pen/Toque",
     "native_pen_touch_desc": "Quando ativado, o Sunshine irá passar por eventos nativos de caneta/toque de clientes de lua. Isto pode ser útil para desativar aplicações mais antigas sem o suporte nativo ao canal/toque.",
+    "native_touchpad_optimization": "Adaptação ao touchpad nativo",
+    "native_touchpad_optimization_desc": "Quando ativado, o Sunshine ativará suporte quase nativo ao touchpad para touchpads nativos. Quando desativado, voltará aos eventos de touchpad legados.",
     "no_fps": "Nenhum valor de FPS adicionado",
     "no_resolutions": "Nenhuma resolução adicionada",
     "notify_pre_releases": "Pré-Lançar notificações",

@@ -367,6 +367,8 @@
     "mouse_desc": "Permet aux invités de contrôler le système hôte avec la souris",
     "native_pen_touch": "Prise en charge stylo/écran tactile native",
     "native_pen_touch_desc": "Lorsque cette option est activée, Sunshine transmet les événements stylo/touche natifs des clients Moonlight. Il peut être utile de désactiver cette fonction pour les applications plus anciennes qui ne prennent pas en charge le stylet et le tactile.",
+    "native_touchpad_optimization": "Adaptation du pavé tactile natif",
+    "native_touchpad_optimization_desc": "Lorsque cette option est activée, Sunshine active une prise en charge du pavé tactile proche du natif pour les pavés tactiles natifs. Lorsqu'elle est désactivée, Sunshine revient aux anciens événements de pavé tactile.",
     "no_fps": "Aucune valeur FPS ajoutée",
     "no_resolutions": "Aucune résolution ajoutée",
     "notify_pre_releases": "Notifications de pré-publication",

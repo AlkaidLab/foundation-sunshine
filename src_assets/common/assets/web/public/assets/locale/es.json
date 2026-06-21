@@ -367,6 +367,8 @@
     "mouse_desc": "Permite a los huéspedes controlar el sistema de host con el ratón",
     "native_pen_touch": "Soporte de lápiz/táctil nativo",
     "native_pen_touch_desc": "Cuando está activado, Sunshine pasará a través de eventos nativos de pluma/táctil de clientes de Sunshine. Esto puede ser útil para deshabilitar para aplicaciones antiguas sin soporte nativo de pluma/táctil.",
+    "native_touchpad_optimization": "Adaptación del panel táctil nativo",
+    "native_touchpad_optimization_desc": "Cuando está activado, Sunshine habilitará compatibilidad de panel táctil casi nativa para paneles táctiles nativos. Al desactivarlo, se volverá a los eventos de panel táctil heredados.",
     "no_fps": "No se agregaron valores de FPS",
     "no_resolutions": "No se agregaron resoluciones",
     "notify_pre_releases": "Notificaciones de pre-lanzamiento",

@@ -367,6 +367,8 @@
     "mouse_desc": "Umożliwia gościom kontrolowanie systemu hosta za pomocą myszy",
     "native_pen_touch": "Natywna obsługa pióra/dotyku",
     "native_pen_touch_desc": "Po włączeniu Sunshine będzie przekazywać natywne zdarzenia pióra/dotyku z klienta Moonlight. Może to być przydatne do wyłączenia w starszych aplikacjach bez natywnej obsługi pióra/dotyku.",
+    "native_touchpad_optimization": "Optymalizacja natywnego touchpada",
+    "native_touchpad_optimization_desc": "Po włączeniu Sunshine włączy niemal natywną obsługę touchpada dla natywnych touchpadów. Po wyłączeniu nastąpi powrót do starszych zdarzeń touchpada.",
     "no_fps": "Nie dodano wartości FPS",
     "no_resolutions": "Nie dodano rozdzielczości",
     "notify_pre_releases": "Powiadomienia o wydaniu wstępnym",

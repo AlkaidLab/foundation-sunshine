@@ -367,6 +367,8 @@
     "mouse_desc": "Tillåter gäster att styra värdsystemet med musen",
     "native_pen_touch": "Stöd för infödda pen/tryck",
     "native_pen_touch_desc": "När aktiverad, kommer Sunshine att passera genom infödda penn/touch händelser från Moonlight klienter. Detta kan vara användbart för att inaktivera för äldre applikationer utan inbyggt penn/touch stöd.",
+    "native_touchpad_optimization": "Anpassning för inbyggd pekplatta",
+    "native_touchpad_optimization_desc": "När aktiverad aktiverar Sunshine nästan inbyggt stöd för inbyggda pekplattor. När den är inaktiverad återgår Sunshine till äldre pekplattehändelser.",
     "no_fps": "Inga FPS-värden tillagda",
     "no_resolutions": "Inga upplösningar tillagda",
     "notify_pre_releases": "PreRelease Notiser",

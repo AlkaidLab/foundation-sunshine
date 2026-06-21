@@ -367,6 +367,8 @@
     "mouse_desc": "Umožňuje hostům ovládat systém pomocí myši",
     "native_pen_touch": "Nativní Peněžení/Dotkněte se podpory",
     "native_pen_touch_desc": "Pokud je povoleno, Sunshine projde nativní per/dotyk od klientů Moonlight událostí. To může být užitečné pro vypnutí starších aplikací bez nativní podpory pen/dotyku.",
+    "native_touchpad_optimization": "Optimalizace nativního touchpadu",
+    "native_touchpad_optimization_desc": "Pokud je povoleno, Sunshine zapne téměř nativní podporu touchpadu pro nativní touchpady. Po vypnutí se vrátí ke starším událostem touchpadu.",
     "no_fps": "Nebyly přidány žádné hodnoty FPS",
     "no_resolutions": "Nebyla přidána žádná rozlišení",
     "notify_pre_releases": "Oznámení před vydáním",

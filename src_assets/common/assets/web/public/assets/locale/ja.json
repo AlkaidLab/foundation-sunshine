@@ -367,6 +367,8 @@
     "mouse_desc": "ゲストがマウスでホストシステムを制御できるようにします",
     "native_pen_touch": "Native Pen/Touch サポート",
     "native_pen_touch_desc": "有効にすると、SunshineはMoonlightクライアントからネイティブのペン/タッチイベントを通過します。これはネイティブのペン/タッチサポートがない古いアプリケーションでは無効にするのに便利です。",
+    "native_touchpad_optimization": "ネイティブタッチパッドへの適応",
+    "native_touchpad_optimization_desc": "有効にすると、Sunshine はネイティブタッチパッド向けにほぼネイティブなタッチパッドサポートを有効にします。無効にすると、従来のタッチパッドイベントに戻ります。",
     "no_fps": "FPS値が追加されていません",
     "no_resolutions": "解像度が追加されていません",
     "notify_pre_releases": "プレリリース通知",

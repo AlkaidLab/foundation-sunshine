@@ -367,6 +367,8 @@
     "mouse_desc": "Konukların ana sistemi fare ile kontrol etmesini sağlar",
     "native_pen_touch": "Kalem/Dokunma Desteği",
     "native_pen_touch_desc": "Etkinleştirildiğinde Sunshine, Moonlight istemcilerinden gelen yerel kalem/dokunma olaylarını aktarır. Bu, yerel kalem/dokunmatik desteği olmayan eski uygulamalar için devre dışı bırakmak için yararlı olabilir.",
+    "native_touchpad_optimization": "Yerel dokunmatik yüzey uyarlaması",
+    "native_touchpad_optimization_desc": "Etkinleştirildiğinde Sunshine, yerel dokunmatik yüzeyler için yerel kullanıma yakın dokunmatik yüzey desteğini etkinleştirir. Kapatıldığında eski dokunmatik yüzey olaylarına geri döner.",
     "no_fps": "FPS değeri eklenmedi",
     "no_resolutions": "Çözünürlük eklenmedi",
     "notify_pre_releases": "Yayın Öncesi Bildirimler",
