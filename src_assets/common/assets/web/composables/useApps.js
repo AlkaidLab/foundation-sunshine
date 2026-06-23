@@ -550,33 +550,40 @@ export function useApps() {
 
   const asyncEnhanceAndUpdateCovers = async (appList, enabledSkillIds = enabledGameLibrarySkillIds.value) => {
     const enabled = normalizeGameLibrarySkillIds(enabledSkillIds)
+    let result
 
-    const result = await runGameLibraryCuratorAgent(appList, {
-      enabledSkills: enabled,
-      onTitlesEnhanced(enhanced, { changed }) {
-        applyEnhancedScannedApps(appList, enhanced)
-        if (changed > 0) {
-          showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
-        }
-      },
-      onCoverResolved(next, { key }) {
-        const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === key)
-        if (currentIndex !== -1) {
-          scannedApps.value[currentIndex] = {
-            ...scannedApps.value[currentIndex],
-            ...next,
+    try {
+      result = await runGameLibraryCuratorAgent(appList, {
+        enabledSkills: enabled,
+        onTitlesEnhanced(enhanced, { changed }) {
+          applyEnhancedScannedApps(appList, enhanced)
+          if (changed > 0) {
+            showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
           }
-        }
-      },
-      onSkillError(skillId, error) {
-        if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
-          console.warn('AI name cleanup failed; falling back to original names:', error)
-          showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
-        } else if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
-          console.warn('AI cover selection failed:', error)
-        }
-      },
-    })
+        },
+        onCoverResolved(next, { key }) {
+          const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === key)
+          if (currentIndex !== -1) {
+            scannedApps.value[currentIndex] = {
+              ...scannedApps.value[currentIndex],
+              ...next,
+            }
+          }
+        },
+        onSkillError(skillId, error) {
+          if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
+            console.warn('AI name cleanup failed; falling back to original names:', error)
+            showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+          } else if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
+            console.warn('AI cover selection failed:', error)
+          }
+        },
+      })
+    } catch (error) {
+      console.warn('Game library enrichment failed:', error)
+      showMessage('游戏资源增强不可用，已保留原始扫描结果', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      return
+    }
 
     if (enabled.includes(GAME_LIBRARY_SKILL_IDS.coverSelection)) {
       const coversFound = result.stats?.coversFound || 0

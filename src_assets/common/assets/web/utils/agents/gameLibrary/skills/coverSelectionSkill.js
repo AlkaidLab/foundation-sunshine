@@ -1,6 +1,7 @@
 import { findBestCoverForApp } from '../../../coverSelectionAi.js'
 
 export const COVER_SELECTION_SKILL_ID = 'game.cover.select'
+const DEFAULT_COVER_CONCURRENCY = 4
 
 export function getGameResourceKey(app, index) {
   if (app?.['__scan-key']) return app['__scan-key']
@@ -28,6 +29,7 @@ export function applyCoverToGameResource(app, cover) {
 
 export function createCoverSelectionSkill(options = {}) {
   const findCover = options.findCover || findBestCoverForApp
+  const defaultConcurrency = Math.max(1, Number(options.concurrency) || DEFAULT_COVER_CONCURRENCY)
 
   return {
     id: COVER_SELECTION_SKILL_ID,
@@ -41,8 +43,14 @@ export function createCoverSelectionSkill(options = {}) {
     async run(context) {
       const apps = [...(context.apps || [])]
       let coversFound = 0
+      let cursor = 0
+      const results = []
+      const concurrency = Math.min(
+        Math.max(1, Number(context.options?.coverConcurrency) || defaultConcurrency),
+        apps.length || 1
+      )
 
-      const results = await Promise.allSettled(apps.map(async (app, index) => {
+      const processApp = async (app, index) => {
         const key = getGameResourceKey(app, index)
 
         if (app?.['user-override'] === true && app?.['image-path']) {
@@ -63,7 +71,24 @@ export function createCoverSelectionSkill(options = {}) {
           })
         }
         return { key, cover, app: next }
-      }))
+      }
+
+      const runWorker = async () => {
+        while (cursor < apps.length) {
+          const index = cursor
+          cursor += 1
+          try {
+            results[index] = {
+              status: 'fulfilled',
+              value: await processApp(apps[index], index),
+            }
+          } catch (reason) {
+            results[index] = { status: 'rejected', reason }
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: concurrency }, runWorker))
 
       const failures = results.filter((result) => result.status === 'rejected')
       for (const failure of failures) {

@@ -24,13 +24,13 @@
             <div v-if="showConfig" class="config-form mt-2">
               <div class="alert alert-info py-2 mb-2">
                 <i class="fas fa-circle-info me-1"></i>
-                AI configuration is managed in the Mita AI Assistant control panel. This dialog only uses the shared Sunshine AI proxy.
+                {{ diagnosisText('managedConfig') }}
               </div>
               <div class="row g-2">
                 <div class="col-md-3">
-                  <label class="form-label form-label-sm">Status</label>
+                  <label class="form-label form-label-sm">{{ diagnosisText('status') }}</label>
                   <div class="form-control form-control-sm bg-body-secondary">
-                    {{ config?.enabled ? 'Enabled' : 'Disabled' }}
+                    {{ config?.enabled ? diagnosisText('enabled') : diagnosisText('disabled') }}
                   </div>
                 </div>
                 <div class="col-md-3">
@@ -38,7 +38,7 @@
                   <div class="form-control form-control-sm bg-body-secondary">{{ config?.provider || '-' }}</div>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label form-label-sm">Compatibility</label>
+                  <label class="form-label form-label-sm">{{ diagnosisText('compatibility') }}</label>
                   <div class="form-control form-control-sm bg-body-secondary">{{ config?.compatibility || '-' }}</div>
                 </div>
                 <div class="col-md-3">
@@ -48,9 +48,10 @@
               </div>
               <div class="text-muted small mt-2">
                 <i class="fas fa-lock me-1"></i>
-                API keys stay in Sunshine's local config and are not edited here.
-                <span v-if="isConfigLoading || isSavingConfig" class="ms-1">
+                {{ diagnosisText('keysLocal') }}
+                <span v-if="isConfigLoading || isSavingConfig" class="ms-1" role="status" aria-live="polite">
                   <span class="spinner-border spinner-border-sm"></span>
+                  <span class="visually-hidden">{{ loadingStatusText }}</span>
                 </span>
               </div>
             </div>
@@ -59,7 +60,7 @@
           <div v-if="localFindings?.length" class="local-diagnostics mb-3">
             <div class="local-diagnostics-header">
               <i class="fas fa-magnifying-glass-chart me-1"></i>
-              <strong>Local pre-diagnosis</strong>
+              <strong>{{ diagnosisText('localPreDiagnosis') }}</strong>
             </div>
             <div class="local-finding-list">
               <div
@@ -82,7 +83,7 @@
           <div v-if="localSuggestions?.length" class="local-suggestions mb-3">
             <div class="local-diagnostics-header">
               <i class="fas fa-screwdriver-wrench me-1"></i>
-              <strong>Suggested fixes</strong>
+              <strong>{{ diagnosisText('suggestedFixes') }}</strong>
             </div>
             <div class="local-suggestion-list">
               <div
@@ -93,7 +94,7 @@
               >
                 <div class="local-finding-title">{{ getSuggestionTitle(suggestion) }}</div>
                 <ul class="local-suggestion-actions">
-                  <li v-for="action in getSuggestionActions(suggestion)" :key="action">{{ action }}</li>
+                  <li v-for="(action, index) in getSuggestionActions(suggestion)" :key="`${index}-${action}`">{{ action }}</li>
                 </ul>
               </div>
             </div>
@@ -154,12 +155,12 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { locale } = useI18n()
 
-defineProps({
+const props = defineProps({
   show: Boolean,
   config: Object,
   isConfigLoading: Boolean,
@@ -181,6 +182,49 @@ defineEmits(['close', 'diagnose'])
 
 const showConfig = ref(false)
 
+const DIAGNOSIS_TEXT = {
+  en: {
+    managedConfig: 'AI configuration is managed in the Mita AI Assistant control panel. This dialog only uses the shared Sunshine AI proxy.',
+    status: 'Status',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    compatibility: 'Compatibility',
+    keysLocal: "API keys stay in Sunshine's local config and are not edited here.",
+    localPreDiagnosis: 'Local pre-diagnosis',
+    suggestedFixes: 'Suggested fixes',
+    loadingConfig: 'Loading AI configuration...',
+    savingConfig: 'Saving AI configuration...',
+  },
+  zh: {
+    managedConfig: 'AI \u914d\u7f6e\u7531\u7c73\u5854 AI \u52a9\u624b\u63a7\u5236\u9762\u677f\u7edf\u4e00\u7ba1\u7406\u3002\u6b64\u5f39\u7a97\u53ea\u4f7f\u7528 Sunshine \u5171\u4eab AI \u4ee3\u7406\u3002',
+    status: '\u72b6\u6001',
+    enabled: '\u5df2\u542f\u7528',
+    disabled: '\u5df2\u7981\u7528',
+    compatibility: '\u517c\u5bb9\u6a21\u5f0f',
+    keysLocal: 'API \u5bc6\u94a5\u4fdd\u5b58\u5728 Sunshine \u672c\u5730\u914d\u7f6e\u4e2d\uff0c\u6b64\u5904\u4e0d\u4f1a\u7f16\u8f91\u3002',
+    localPreDiagnosis: '\u672c\u5730\u9884\u8bca\u65ad',
+    suggestedFixes: '\u5efa\u8bae\u4fee\u590d',
+    loadingConfig: '\u6b63\u5728\u52a0\u8f7d AI \u914d\u7f6e...',
+    savingConfig: '\u6b63\u5728\u4fdd\u5b58 AI \u914d\u7f6e...',
+  },
+}
+
+function getCurrentLocale() {
+  const documentLocale = typeof document !== 'undefined'
+    ? document.documentElement?.getAttribute?.('lang')
+    : ''
+  return String(locale.value || documentLocale || '').toLowerCase()
+}
+
+function diagnosisText(key) {
+  const bucket = getCurrentLocale().startsWith('zh') ? DIAGNOSIS_TEXT.zh : DIAGNOSIS_TEXT.en
+  return bucket[key] || DIAGNOSIS_TEXT.en[key] || key
+}
+
+const loadingStatusText = computed(() => (
+  props.isSavingConfig ? diagnosisText('savingConfig') : diagnosisText('loadingConfig')
+))
+
 function copyResult() {
   const el = document.querySelector('.result-content')
   if (el) {
@@ -189,24 +233,21 @@ function copyResult() {
 }
 
 function getFindingLabel(finding) {
-  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
-  if (locale.startsWith('zh') && finding?.labels?.zh) {
+  if (getCurrentLocale().startsWith('zh') && finding?.labels?.zh) {
     return finding.labels.zh
   }
   return finding?.message || finding?.type || ''
 }
 
 function getSuggestionTitle(suggestion) {
-  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
-  if (locale.startsWith('zh') && suggestion?.labels?.zh) {
+  if (getCurrentLocale().startsWith('zh') && suggestion?.labels?.zh) {
     return suggestion.labels.zh
   }
   return suggestion?.title || suggestion?.findingType || ''
 }
 
 function getSuggestionActions(suggestion) {
-  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
-  if (locale.startsWith('zh') && Array.isArray(suggestion?.actionLabels?.zh)) {
+  if (getCurrentLocale().startsWith('zh') && Array.isArray(suggestion?.actionLabels?.zh)) {
     return suggestion.actionLabels.zh
   }
   return Array.isArray(suggestion?.actions) ? suggestion.actions : []

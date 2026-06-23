@@ -20,7 +20,6 @@ export function createAgentSkill(definition = {}, options = {}) {
 
 export function createCapabilityFromSkill(skill, capability = {}) {
   return {
-    skillId: skill.id,
     stage: capability.stage || skill.type || 'extension',
     icon: capability.icon || 'fa-bolt',
     label: capability.label || skill.label || skill.id,
@@ -132,6 +131,22 @@ function filterAgentSkills(skills, enabledSkills) {
   return skills.filter((skill) => enabled.has(skill.id))
 }
 
+function normalizeAgentContext(context, input, runOptions) {
+  const normalized = {
+    input,
+    events: [],
+    stats: {},
+    options: runOptions,
+    ...(context && typeof context === 'object' ? context : {}),
+  }
+
+  normalized.events = Array.isArray(normalized.events) ? normalized.events : []
+  normalized.stats = normalized.stats && typeof normalized.stats === 'object' ? normalized.stats : {}
+  normalized.options = normalized.options && typeof normalized.options === 'object' ? normalized.options : runOptions
+
+  return normalized
+}
+
 export function createAgent(options = {}) {
   const id = options.id || 'agent'
   const skills = options.skills || []
@@ -151,11 +166,15 @@ export function createAgent(options = {}) {
     },
 
     async run(input, runOptions = {}) {
-      let context = createContext(input, runOptions)
+      let context = normalizeAgentContext(createContext(input, runOptions), input, runOptions)
 
       for (const skill of filterAgentSkills(skills, runOptions.enabledSkills)) {
         try {
-          context = await skill.run(context)
+          const nextContext = await skill.run(context)
+          if (!nextContext || typeof nextContext !== 'object') {
+            throw new Error(`Agent skill returned an invalid context: ${skill.id}`)
+          }
+          context = normalizeAgentContext(nextContext, input, runOptions)
         } catch (error) {
           context.options?.onSkillError?.(skill.id, error)
           context.events?.push({

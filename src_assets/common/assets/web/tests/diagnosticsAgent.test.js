@@ -14,6 +14,7 @@ import {
   registerDiagnosticsSkillExtension,
   runDiagnosticsAgent,
 } from '../utils/agents/diagnostics/diagnosticsAgent.js'
+import { findLogPatternFindings } from '../utils/agents/diagnostics/skills/logPatternSkill.js'
 
 test('diagnostics agent summarizes severity, detects patterns, and suggests fixes', async () => {
   const logs = [
@@ -51,6 +52,14 @@ test('diagnostics agent can run a selected skill subset', async () => {
   assert.equal(agent.id, DIAGNOSTICS_AGENT_ID)
   assert.equal(result.severitySummary, null)
   assert.equal(result.stats.logPatternFindings, 1)
+})
+
+test('log pattern detection only flags explicit port bind failures', () => {
+  const informational = findLogPatternFindings('Info: Streaming server is using port 47990')
+  assert.ok(!informational.some((finding) => finding.type === 'port-bind-failure'))
+
+  const failure = findLogPatternFindings('Error: failed to bind port 47990 because address already in use')
+  assert.ok(failure.some((finding) => finding.type === 'port-bind-failure'))
 })
 
 test('diagnostics capabilities expose selectable skills', () => {

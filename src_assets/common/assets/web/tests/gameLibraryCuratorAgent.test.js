@@ -116,6 +116,41 @@ test('game library curator agent can run a selected skill subset', async () => {
   assert.deepEqual(calls, ['title'])
 })
 
+test('cover selection skill limits concurrent cover lookups', async () => {
+  let active = 0
+  let maxActive = 0
+  const agent = createGameLibraryCuratorAgent({
+    skills: [
+      createCoverSelectionSkill({
+        concurrency: 2,
+        async findCover(app) {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          active -= 1
+          return {
+            saveUrl: `${app.name}.jpg`,
+            source: 'steam',
+            name: app.name,
+          }
+        },
+      }),
+    ],
+  })
+
+  const result = await agent.run(Array.from({ length: 5 }, (_, index) => ({ name: `Game ${index}` })))
+
+  assert.equal(maxActive, 2)
+  assert.equal(result.stats.coversFound, 5)
+  assert.deepEqual(result.apps.map((app) => app['image-path']), [
+    'Game 0.jpg',
+    'Game 1.jpg',
+    'Game 2.jpg',
+    'Game 3.jpg',
+    'Game 4.jpg',
+  ])
+})
+
 test('game library curator agent continues after a skill failure', async () => {
   const errors = []
   const calls = []
@@ -260,4 +295,19 @@ test('game resource review policy flags low confidence and missing cover', () =>
     '\u7f3a\u5c11\u89c4\u8303\u540d\u79f0',
     '\u7f3a\u5c11\u5c01\u9762',
   ])
+})
+
+test('game resource review policy ignores blank numeric confidence fields', () => {
+  const app = {
+    name: 'Known Game',
+    'is-game': true,
+    'canonical-name': 'Known Game',
+    'image-path': 'known.jpg',
+    'ai-confidence': '',
+    'ai-cover-confidence': '',
+    'cover-match-confidence': '',
+  }
+
+  assert.deepEqual(getGameResourceReviewReasons(app, { locale: 'en' }), [])
+  assert.equal(needsGameResourceReview(app), false)
 })

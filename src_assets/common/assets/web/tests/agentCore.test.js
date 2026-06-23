@@ -111,3 +111,43 @@ test('createAgent runs selected skills and continues after failures', async () =
   assert.equal(result.stats.skillFailures, 1)
   assert.equal(result.events[0].type, 'skill:error')
 })
+
+test('createAgent treats invalid skill context as a recoverable skill failure', async () => {
+  const errors = []
+  const calls = []
+  const agent = createAgent({
+    skills: [
+      createAgentSkill({
+        id: 'demo.invalid',
+        async run() {
+          calls.push('invalid')
+          return null
+        },
+      }),
+      createAgentSkill({
+        id: 'demo.recover',
+        async run(context) {
+          calls.push('recover')
+          context.events.push({ skillId: 'demo.recover', type: 'skill:recovered' })
+          return {
+            ...context,
+            input: [...context.input, 'recovered'],
+          }
+        },
+      }),
+    ],
+  })
+
+  const result = await agent.run([], {
+    onSkillError(skillId, error) {
+      errors.push([skillId, error.message])
+    },
+  })
+
+  assert.deepEqual(calls, ['invalid', 'recover'])
+  assert.equal(result.stats.skillFailures, 1)
+  assert.deepEqual(result.input, ['recovered'])
+  assert.equal(result.events[0].type, 'skill:error')
+  assert.equal(result.events[1].type, 'skill:recovered')
+  assert.deepEqual(errors, [['demo.invalid', 'Agent skill returned an invalid context: demo.invalid']])
+})

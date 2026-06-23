@@ -53,6 +53,24 @@ function isApiKeyRequired(cfg) {
     !apiBase.includes('[::1]')
 }
 
+function sanitizeSensitiveText(value) {
+  return String(value || '')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[REDACTED]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, '[REDACTED_API_KEY]')
+    .replace(/\b(api[_-]?key|token|secret|password|authorization)(\s*[:=]\s*)(['"]?)[^\s'",;]+/gi, '$1$2$3[REDACTED]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
+    .replace(/\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g, '[REDACTED_IP]')
+    .replace(/\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/gi, '[REDACTED_MAC]')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[REDACTED_ID]')
+}
+
+function sanitizeEvidence(evidence) {
+  return (evidence || []).slice(0, 3).map((entry) => ({
+    ...entry,
+    text: sanitizeSensitiveText(entry?.text),
+  }))
+}
+
 function buildLocalDiagnosticsSummary(diagnostics) {
   const findings = diagnostics?.findings || []
   const suggestions = diagnostics?.suggestions || []
@@ -66,7 +84,7 @@ function buildLocalDiagnosticsSummary(diagnostics) {
       severity: finding.severity,
       message: finding.message,
       count: finding.count,
-      evidence: (finding.evidence || []).slice(0, 3),
+      evidence: sanitizeEvidence(finding.evidence),
     })),
     suggestions: suggestions.map((suggestion) => ({
       findingType: suggestion.findingType,
@@ -162,7 +180,7 @@ export function useAiDiagnosis() {
     error.value = ''
 
     const lines = logs.split('\n')
-    const truncated = lines.slice(-200).join('\n')
+    const truncated = sanitizeSensitiveText(lines.slice(-200).join('\n'))
     const localSummary = buildLocalDiagnosticsSummary({
       findings: localFindings.value,
       suggestions: localSuggestions.value,

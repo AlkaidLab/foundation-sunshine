@@ -29,7 +29,7 @@ const LOG_PATTERNS = [
     id: 'port-bind-failure',
     severity: 'error',
     category: 'network',
-    pattern: /\b(bind|listen|port|address already in use|permission denied)\b/i,
+    pattern: /\b(address already in use|permission denied|port\b.*\b(bind|listen|failed|error|unable|cannot)|\b(bind|listen)\b.*\b(port|failed|error|unable|cannot))\b/i,
     message: 'Port binding or listening failure detected',
     labels: { zh: '检测到端口绑定或监听失败' },
   },

@@ -7,6 +7,7 @@ import { createAiCache } from './aiCache.js'
 const MAX_SEARCH_TERMS = 3
 const MAX_COVERS_PER_TERM = 6
 const MAX_AI_CANDIDATES = 12
+const AI_COVER_SELECTION_TIMEOUT_MS = 30000
 const coverCache = createAiCache('cover-selection', { version: 'v1' })
 
 function clamp01(value) {
@@ -53,8 +54,14 @@ export function assessCoverMatch(app, candidate) {
     reason: candidate?.source === 'igdb' ? 'IGDB source prior' : 'Steam source prior',
   }
 
+  if (!title) {
+    return best
+  }
+
   for (const name of names) {
     let evidence = null
+    if (!name) continue
+
     if (title === name) {
       evidence = { confidence: 0.96, relation: 'exact-title', reason: 'Exact title match' }
     } else if (title.startsWith(name) || name.startsWith(title)) {
@@ -206,37 +213,46 @@ export function calibrateCoverConfidence(app, candidate, aiConfidence = 0, aiRea
 
 async function askAiToPickCover(app, candidates) {
   const locale = getCurrentLocale()
-  const response = await fetch(API_ENDPOINTS.AI_CHAT_COMPLETIONS, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: [
-        { role: 'system', content: buildCoverSelectionPrompt(locale) },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            task: 'select_best_cover',
-            locale,
-            target: {
-              name: app?.name || '',
-              originalName: app?.['original-name'] || '',
-              canonicalName: app?.['canonical-name'] || '',
-              searchTerms: getCoverSearchCandidates(app),
-              platform: app?.['app-type'] || '',
-            },
-            candidates: candidates.map(compactCandidate),
-            outputSchema: {
-              selectedId: 'id string from candidates',
-              confidence: 0.0,
-              reason: 'short user-facing reason',
-            },
-          }),
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 1024,
-    }),
-  })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), AI_COVER_SELECTION_TIMEOUT_MS)
+  let response
+
+  try {
+    response = await fetch(API_ENDPOINTS.AI_CHAT_COMPLETIONS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: buildCoverSelectionPrompt(locale) },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              task: 'select_best_cover',
+              locale,
+              target: {
+                name: app?.name || '',
+                originalName: app?.['original-name'] || '',
+                canonicalName: app?.['canonical-name'] || '',
+                searchTerms: getCoverSearchCandidates(app),
+                platform: app?.['app-type'] || '',
+              },
+              candidates: candidates.map(compactCandidate),
+              outputSchema: {
+                selectedId: 'id string from candidates',
+                confidence: 0.0,
+                reason: 'short user-facing reason',
+              },
+            }),
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 1024,
+      }),
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {

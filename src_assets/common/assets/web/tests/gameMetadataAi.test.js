@@ -37,6 +37,24 @@ test('assessCoverMatch rewards exact search-term cover evidence', () => {
   assert.ok(evidence.confidence >= 0.9)
 })
 
+test('assessCoverMatch keeps empty candidate names at source-prior confidence', () => {
+  const evidence = assessCoverMatch(
+    {
+      name: 'Portal 2',
+      'canonical-name': 'Portal 2',
+      'cover-search-terms': ['Portal 2'],
+    },
+    {
+      name: '',
+      source: 'igdb',
+      searchTerm: 'Portal 2',
+    }
+  )
+
+  assert.equal(evidence.relation, 'source-prior')
+  assert.equal(evidence.confidence, 0.42)
+})
+
 test('calibrateCoverConfidence caps high AI confidence when local evidence is weak', () => {
   const selected = calibrateCoverConfidence(
     {

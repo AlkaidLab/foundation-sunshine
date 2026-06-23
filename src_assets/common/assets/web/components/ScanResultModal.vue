@@ -141,6 +141,7 @@
                 v-if="stats.review > 0"
                 class="btn btn-sm"
                 :class="reviewOnly ? 'btn-danger' : 'btn-outline-danger'"
+                :aria-pressed="reviewOnly ? 'true' : 'false'"
                 @click="reviewOnly = !reviewOnly"
                 type="button"
               >
@@ -410,6 +411,8 @@ const filteredApps = computed(() => {
 
 // 应用类型标签
 function hasNumericValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string' && value.trim() === '') return false
   return Number.isFinite(Number(value))
 }
 
