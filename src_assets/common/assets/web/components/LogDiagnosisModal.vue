@@ -56,6 +56,29 @@
             </div>
           </div>
 
+          <div v-if="localFindings?.length" class="local-diagnostics mb-3">
+            <div class="local-diagnostics-header">
+              <i class="fas fa-magnifying-glass-chart me-1"></i>
+              <strong>Local pre-diagnosis</strong>
+            </div>
+            <div class="local-finding-list">
+              <div
+                v-for="finding in localFindings"
+                :key="finding.id"
+                class="local-finding"
+                :class="`local-finding--${finding.severity || 'info'}`"
+              >
+                <div class="local-finding-title">
+                  {{ getFindingLabel(finding) }}
+                  <span v-if="finding.count > 1" class="badge bg-secondary ms-1">x{{ finding.count }}</span>
+                </div>
+                <code v-if="finding.evidence?.[0]?.text" class="local-finding-evidence">
+                  {{ finding.evidence[0].text }}
+                </code>
+              </div>
+            </div>
+          </div>
+
           <!-- Diagnose Button -->
           <div class="text-center mb-3" v-if="!result && !error">
             <button class="btn btn-primary" :disabled="isLoading" @click="$emit('diagnose')">
@@ -124,6 +147,10 @@ defineProps({
   isLoading: Boolean,
   result: String,
   error: String,
+  localFindings: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 defineEmits(['close', 'diagnose'])
@@ -135,6 +162,14 @@ function copyResult() {
   if (el) {
     navigator.clipboard.writeText(el.innerText)
   }
+}
+
+function getFindingLabel(finding) {
+  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
+  if (locale.startsWith('zh') && finding?.labels?.zh) {
+    return finding.labels.zh
+  }
+  return finding?.message || finding?.type || ''
 }
 
 function renderMarkdown(text) {
@@ -204,6 +239,58 @@ function renderMarkdown(text) {
   background: var(--bs-tertiary-bg, #f8f9fa);
   border-radius: 8px;
   padding: 1rem;
+}
+
+.local-diagnostics {
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.local-diagnostics-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.local-finding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.local-finding {
+  border-left: 4px solid #0dcaf0;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  background: var(--bs-body-bg, #fff);
+}
+
+.local-finding--error,
+.local-finding--fatal {
+  border-left-color: #dc3545;
+}
+
+.local-finding--warning {
+  border-left-color: #ffc107;
+}
+
+.local-finding-title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.local-finding-evidence {
+  display: block;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bs-secondary-color, #6c757d);
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
 }
 
 .result-header {

@@ -1,6 +1,7 @@
 import { ref, reactive } from 'vue'
 import { API_ENDPOINTS } from '../utils/constants.js'
 import { buildLocalizedInstruction, getCurrentLocale, getPromptLanguageName } from '../utils/aiLocale.js'
+import { runDiagnosticsAgent } from '../utils/agents/diagnostics/diagnosticsAgent.js'
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -52,6 +53,23 @@ function isApiKeyRequired(cfg) {
     !apiBase.includes('[::1]')
 }
 
+function buildLocalDiagnosticsSummary(diagnostics) {
+  const findings = diagnostics?.findings || []
+  const severity = diagnostics?.severitySummary?.counts || {}
+
+  return JSON.stringify({
+    severity,
+    findings: findings.map((finding) => ({
+      type: finding.type,
+      category: finding.category,
+      severity: finding.severity,
+      message: finding.message,
+      count: finding.count,
+      evidence: (finding.evidence || []).slice(0, 3),
+    })),
+  }, null, 2)
+}
+
 async function fetchJson(url, options = {}) {
   const resp = await fetch(url, options)
   const data = await resp.json().catch(() => ({}))
@@ -69,6 +87,8 @@ export function useAiDiagnosis() {
   const isLoading = ref(false)
   const result = ref('')
   const error = ref('')
+  const localFindings = ref([])
+  const localSeveritySummary = ref(null)
 
   async function loadConfig() {
     isConfigLoading.value = true
@@ -118,6 +138,10 @@ export function useAiDiagnosis() {
       return
     }
 
+    const diagnostics = await runDiagnosticsAgent(logs)
+    localFindings.value = diagnostics.findings || []
+    localSeveritySummary.value = diagnostics.severitySummary || null
+
     const validationError = validateConfig()
     if (validationError) {
       error.value = validationError
@@ -130,6 +154,10 @@ export function useAiDiagnosis() {
 
     const lines = logs.split('\n')
     const truncated = lines.slice(-200).join('\n')
+    const localSummary = buildLocalDiagnosticsSummary({
+      findings: localFindings.value,
+      severitySummary: localSeveritySummary.value,
+    })
 
     try {
       const data = await fetchJson(API_ENDPOINTS.AI_CHAT_COMPLETIONS, {
@@ -139,7 +167,20 @@ export function useAiDiagnosis() {
           model: config.model,
           messages: [
             { role: 'system', content: buildSystemPrompt() },
-            { role: 'user', content: `Please analyze these Sunshine logs:\n\n\`\`\`\n${truncated}\n\`\`\`` },
+            {
+              role: 'user',
+              content: [
+                'Local rule-based pre-diagnosis:',
+                '```json',
+                localSummary,
+                '```',
+                '',
+                'Please analyze these Sunshine logs:',
+                '```',
+                truncated,
+                '```',
+              ].join('\n'),
+            },
           ],
           temperature: Number(config.temperature) || 0.3,
           max_tokens: Number(config.max_tokens) || 2048,
@@ -163,6 +204,8 @@ export function useAiDiagnosis() {
     isLoading,
     result,
     error,
+    localFindings,
+    localSeveritySummary,
     diagnose,
     loadConfig,
   }

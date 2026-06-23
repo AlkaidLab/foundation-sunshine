@@ -163,6 +163,7 @@
       :isLoading="aiLoading"
       :result="aiResult"
       :error="aiError"
+      :localFindings="aiLocalFindings"
       @close="showDiagnosisModal = false"
       @diagnose="handleDiagnose"
     />
@@ -262,6 +263,7 @@ const {
   isLoading: aiLoading,
   result: aiResult,
   error: aiError,
+  localFindings: aiLocalFindings,
   diagnose: aiDiagnose,
 } = useAiDiagnosis()
 
