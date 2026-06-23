@@ -6,12 +6,14 @@ import {
   GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
   getDefaultEnabledGameLibrarySkillIds,
+  getGameLibraryCapabilities,
   getGameLibraryCapabilityIcon,
   getGameLibraryCapabilityLabel,
   getGameLibrarySelectableCapabilities,
   getGameResourceReviewReasons,
   normalizeGameLibrarySkillIds,
   needsGameResourceReview,
+  registerGameLibrarySkillExtension,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 import { createCoverSelectionSkill } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
 import { createGameTitleNormalizeSkill } from '../utils/agents/gameLibrary/skills/gameTitleNormalizeSkill.js'
@@ -152,6 +154,61 @@ test('game library curator skill id helpers keep required skills enabled', () =>
     GAME_LIBRARY_SKILL_IDS.scanOverrideMemory,
     GAME_LIBRARY_SKILL_IDS.coverSelection,
   ])
+})
+
+test('game library curator supports registering extension skills', async () => {
+  const calls = []
+  const unregister = registerGameLibrarySkillExtension({
+    skill: {
+      id: 'game.test.annotate',
+      type: 'metadata',
+      label: 'Test annotation',
+      async run(context) {
+        calls.push('extension')
+        return {
+          ...context,
+          apps: context.apps.map((app) => ({ ...app, 'test-extension': true })),
+        }
+      },
+    },
+    capability: {
+      icon: 'fa-vial',
+      defaultEnabled: false,
+      labels: { zh: '\u6d4b\u8bd5\u6807\u6ce8' },
+    },
+  })
+
+  try {
+    assert.equal(getGameLibraryCapabilityIcon('game.test.annotate'), 'fa-vial')
+    assert.equal(getGameLibraryCapabilityLabel('game.test.annotate', { locale: 'zh-CN' }), '\u6d4b\u8bd5\u6807\u6ce8')
+    assert.ok(getGameLibrarySelectableCapabilities().some((capability) => capability.skillId === 'game.test.annotate'))
+    assert.ok(!getDefaultEnabledGameLibrarySkillIds().includes('game.test.annotate'))
+
+    const result = await createGameLibraryCuratorAgent().run([{ name: 'Raw Game' }], {
+      enabledSkills: ['game.test.annotate'],
+    })
+
+    assert.deepEqual(calls, ['extension'])
+    assert.equal(result.apps[0]['test-extension'], true)
+  } finally {
+    unregister()
+  }
+
+  assert.ok(!getGameLibraryCapabilities().some((capability) => capability.skillId === 'game.test.annotate'))
+})
+
+test('game library curator rejects duplicate extension skills', () => {
+  assert.throws(
+    () => registerGameLibrarySkillExtension({
+      skill: {
+        id: GAME_LIBRARY_SKILL_IDS.coverSelection,
+        async run(context) {
+          return context
+        },
+      },
+    }),
+    /already registered/
+  )
 })
 
 test('game resource review policy flags low confidence and missing cover', () => {

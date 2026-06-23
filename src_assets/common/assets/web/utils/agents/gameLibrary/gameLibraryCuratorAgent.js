@@ -57,21 +57,77 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
   },
 ]
 
-export function getGameLibraryCapability(skillId, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+const gameLibrarySkillExtensions = []
+
+function assertValidSkill(skill) {
+  if (!skill || typeof skill.id !== 'string' || !skill.id.trim() || typeof skill.run !== 'function') {
+    throw new Error('Game library skill extensions require a skill with id and run(context)')
+  }
+}
+
+function createExtensionCapability(skill, capability = {}) {
+  return {
+    skillId: skill.id,
+    stage: capability.stage || skill.type || 'extension',
+    icon: capability.icon || 'fa-bolt',
+    label: capability.label || skill.label || skill.id,
+    labels: capability.labels || {},
+    required: capability.required === true,
+    defaultEnabled: capability.defaultEnabled === true,
+    userSelectable: capability.userSelectable !== false,
+    ...capability,
+    skillId: skill.id,
+  }
+}
+
+function hasCapability(skillId, capabilities = getGameLibraryCapabilities()) {
+  return capabilities.some((capability) => capability.skillId === skillId)
+}
+
+export function registerGameLibrarySkillExtension(extension = {}) {
+  const skill = extension.skill
+  assertValidSkill(skill)
+
+  if (hasCapability(skill.id)) {
+    throw new Error(`Game library skill already registered: ${skill.id}`)
+  }
+
+  const entry = {
+    skill,
+    capability: createExtensionCapability(skill, extension.capability),
+  }
+  gameLibrarySkillExtensions.push(entry)
+
+  return () => {
+    const index = gameLibrarySkillExtensions.indexOf(entry)
+    if (index !== -1) {
+      gameLibrarySkillExtensions.splice(index, 1)
+    }
+  }
+}
+
+export function getGameLibraryCapabilities() {
+  return [
+    ...GAME_LIBRARY_AGENT_CAPABILITIES,
+    ...gameLibrarySkillExtensions.map((extension) => extension.capability),
+  ]
+}
+
+export function getGameLibraryCapability(skillId, capabilities = getGameLibraryCapabilities()) {
   return capabilities.find((capability) => capability.skillId === skillId) || null
 }
 
-export function getGameLibrarySelectableCapabilities(capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+export function getGameLibrarySelectableCapabilities(capabilities = getGameLibraryCapabilities()) {
   return capabilities.filter((capability) => capability.userSelectable)
 }
 
-export function getDefaultEnabledGameLibrarySkillIds(capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+export function getDefaultEnabledGameLibrarySkillIds(capabilities = getGameLibraryCapabilities()) {
   return capabilities
     .filter((capability) => capability.defaultEnabled || capability.required)
     .map((capability) => capability.skillId)
 }
 
-export function normalizeGameLibrarySkillIds(skillIds, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+export function normalizeGameLibrarySkillIds(skillIds, capabilities = getGameLibraryCapabilities()) {
   const known = new Set(capabilities.map((capability) => capability.skillId))
   const enabled = Array.isArray(skillIds) ? skillIds.filter((skillId) => known.has(skillId)) : []
   const required = capabilities
@@ -81,7 +137,7 @@ export function normalizeGameLibrarySkillIds(skillIds, capabilities = GAME_LIBRA
   return Array.from(new Set([...required, ...enabled]))
 }
 
-export function getGameLibraryCapabilityIcon(skillId, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+export function getGameLibraryCapabilityIcon(skillId, capabilities = getGameLibraryCapabilities()) {
   return getGameLibraryCapability(skillId, capabilities)?.icon || 'fa-bolt'
 }
 
@@ -102,6 +158,7 @@ export function createDefaultGameLibrarySkills(options = {}) {
     createScanOverrideMemorySkill(options.memory),
     createGameTitleNormalizeSkill(options.titleNormalize),
     createCoverSelectionSkill(options.coverSelection),
+    ...gameLibrarySkillExtensions.map((extension) => extension.skill),
   ]
 }
 
