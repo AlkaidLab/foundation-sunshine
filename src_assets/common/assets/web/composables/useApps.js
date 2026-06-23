@@ -3,7 +3,9 @@ import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
 import { trackEvents } from '../config/firebase.js'
-import { searchCoverImage, batchSearchCoverImages } from '../utils/coverSearch.js'
+import { enhanceScannedGameNames } from '../utils/gameMetadataAi.js'
+import { findBestCoverForApp } from '../utils/coverSelectionAi.js'
+import { applyScanOverrides, learnScanOverride } from '../utils/scanOverrides.js'
 
 const MESSAGE_DURATION = 3000
 
@@ -27,6 +29,7 @@ export function useApps() {
   const debouncedSearch = ref(null)
   const isScanning = ref(false)
   const scannedApps = ref([])
+  const scannedEditSource = ref(null)
   const showScanResult = ref(false)
   const scannedAppsSearchQuery = ref('')
   const showGamesOnly = ref(false)
@@ -119,22 +122,30 @@ export function useApps() {
 
   const newApp = () => {
     trackEvents.userAction('new_app_clicked')
+    scannedEditSource.value = null
     editingApp.value = createDefaultApp()
   }
 
   const editApp = (index) => {
+    scannedEditSource.value = null
     editingApp.value = { ...deepClone(apps.value[index]), index }
   }
 
   const closeAppEditor = () => {
+    scannedEditSource.value = null
     editingApp.value = null
   }
 
   const handleSaveApp = async (appData) => {
     try {
       isSaving.value = true
+
       await AppService.saveApps(apps.value, appData)
+      if (scannedEditSource.value) {
+        learnScanOverride(scannedEditSource.value, appData)
+      }
       await loadApps()
+      scannedEditSource.value = null
       editingApp.value = null
       showMessage('应用保存成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
     } catch (error) {
@@ -328,12 +339,13 @@ export function useApps() {
         showMessage('未找到可添加的应用程序', APP_CONSTANTS.MESSAGE_TYPES.INFO)
       } else {
         // 先显示扫描结果（无封面）
-        scannedApps.value = foundApps
+        const overriddenApps = applyScanOverrides(foundApps)
+        scannedApps.value = overriddenApps
         showScanResult.value = true
         showMessage(`找到 ${foundApps.length} 个应用程序，正在搜索封面...`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
         // 异步更新封面图片
-        asyncUpdateCovers(foundApps)
+        asyncEnhanceAndUpdateCovers(overriddenApps)
       }
 
       trackEvents.userAction('directory_scanned', { count: foundApps.length, extractIcons })
@@ -380,7 +392,8 @@ export function useApps() {
           'is-game': true,
         }))
 
-        scannedApps.value = mapped
+        const overriddenApps = applyScanOverrides(mapped)
+        scannedApps.value = overriddenApps
         showScanResult.value = true
 
         const parts = []
@@ -391,6 +404,7 @@ export function useApps() {
           `找到 ${result.total ?? allGames.length} 个游戏 (${parts.join(', ')})，耗时 ${result.scan_time_ms ?? 0}ms`,
           APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
         )
+        asyncEnhanceAndUpdateCovers(overriddenApps)
       }
 
       trackEvents.userAction('game_libraries_scanned', {
@@ -408,6 +422,44 @@ export function useApps() {
   }
 
   // 异步更新封面图片
+  const getScannedAppKey = (app, index) => app.source_path || app.cmd || `${app.name || 'app'}-${index}`
+
+  const applyEnhancedScannedApps = (baseList, enhancedList) => {
+    const enhancedByKey = new Map(baseList.map((app, index) => [getScannedAppKey(app, index), enhancedList[index]]))
+    let changed = 0
+
+    scannedApps.value = scannedApps.value.map((current, index) => {
+      const next = enhancedByKey.get(getScannedAppKey(current, index))
+      if (!next) return current
+
+      if (next.name !== current.name || next['canonical-name'] !== current['canonical-name']) {
+        changed++
+      }
+
+      return { ...current, ...next }
+    })
+
+    return changed
+  }
+
+  const asyncEnhanceAndUpdateCovers = async (appList) => {
+    let coverList = appList
+
+    try {
+      const enhanced = await enhanceScannedGameNames(appList)
+      const changed = applyEnhancedScannedApps(appList, enhanced)
+      coverList = enhanced
+      if (changed > 0) {
+        showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      }
+    } catch (error) {
+      console.warn('AI name cleanup failed; falling back to original names:', error)
+      showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+    }
+
+    await asyncUpdateCovers(coverList)
+  }
+
   const asyncUpdateCovers = async (appList) => {
     let coversFound = 0
     const total = appList.length
@@ -415,10 +467,27 @@ export function useApps() {
     // 并行搜索所有封面，但逐个更新UI
     const promises = appList.map(async (app, index) => {
       try {
-        const imagePath = await searchCoverImage(encodeURIComponent(app.name))
-        if (imagePath && scannedApps.value[index]) {
+        const appKey = getScannedAppKey(app, index)
+
+        if (app?.['user-override'] === true && app?.['image-path']) {
+          coversFound++
+          return
+        }
+
+        const cover = await findBestCoverForApp(app)
+        const imagePath = cover?.saveUrl || cover?.url || ''
+        const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === appKey)
+        if (imagePath && currentIndex !== -1) {
           // 更新对应位置的应用封面
-          scannedApps.value[index] = { ...scannedApps.value[index], 'image-path': imagePath }
+          scannedApps.value[currentIndex] = {
+            ...scannedApps.value[currentIndex],
+            'image-path': imagePath,
+            'cover-source': cover.source || '',
+            'cover-match-name': cover.name || '',
+            'cover-search-term': cover.searchTerm || '',
+            'ai-cover-confidence': cover.aiCoverConfidence || 0,
+            'ai-cover-reason': cover.aiCoverReason || '',
+          }
           coversFound++
         }
       } catch (error) {
@@ -465,6 +534,7 @@ export function useApps() {
       'working-dir': getScannedAppField(scannedApp, 'working-dir'),
       'image-path': getScannedAppField(scannedApp, 'image-path'),
     })
+    scannedEditSource.value = { ...scannedApp }
 
     removeFromScannedList(scannedApp.source_path)
     showMessage(`正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
@@ -475,6 +545,7 @@ export function useApps() {
     try {
       apps.value.push(createAppFromScanned(scannedApp))
       await AppService.saveApps(apps.value, null)
+      learnScanOverride(scannedApp, scannedApp)
       await loadApps()
 
       scannedApps.value.splice(index, 1)
@@ -499,6 +570,7 @@ export function useApps() {
 
       apps.value.push(...appsToAdd)
       await AppService.saveApps(apps.value, null)
+      scannedApps.value.forEach((scannedApp, index) => learnScanOverride(scannedApp, appsToAdd[index]))
       await loadApps()
 
       showMessage(`已添加 ${appsToAdd.length} 个应用`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
@@ -577,10 +649,19 @@ export function useApps() {
 
     try {
       showMessage(`正在搜索封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
-      const imagePath = await searchCoverImage(app.name)
+      const cover = await findBestCoverForApp(app)
+      const imagePath = cover?.saveUrl || cover?.url || ''
 
       if (imagePath) {
-        scannedApps.value[index] = { ...app, 'image-path': imagePath }
+        scannedApps.value[index] = {
+          ...app,
+          'image-path': imagePath,
+          'cover-source': cover.source || '',
+          'cover-match-name': cover.name || '',
+          'cover-search-term': cover.searchTerm || '',
+          'ai-cover-confidence': cover.aiCoverConfidence || 0,
+          'ai-cover-reason': cover.aiCoverReason || '',
+        }
         showMessage(`已找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       } else {
         showMessage(`未找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.WARNING)

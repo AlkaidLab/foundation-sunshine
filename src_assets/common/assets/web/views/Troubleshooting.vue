@@ -159,6 +159,9 @@
       :show="showDiagnosisModal"
       :config="aiConfig"
       :providers="aiProviders"
+      :compatibilityOptions="aiCompatibilityOptions"
+      :isConfigLoading="aiConfigLoading"
+      :isSavingConfig="aiSavingConfig"
       :isLoading="aiLoading"
       :result="aiResult"
       :error="aiError"
@@ -259,6 +262,9 @@ const { logout } = useLogout()
 const {
   config: aiConfig,
   providers: aiProviders,
+  compatibilityOptions: aiCompatibilityOptions,
+  isConfigLoading: aiConfigLoading,
+  isSavingConfig: aiSavingConfig,
   isLoading: aiLoading,
   result: aiResult,
   error: aiError,

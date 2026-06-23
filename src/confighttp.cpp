@@ -2277,7 +2277,10 @@ namespace confighttp {
       {"provider", "openai"},
       {"apiBase", "https://api.openai.com/v1"},
       {"apiKey", ""},
-      {"model", "gpt-4o-mini"}
+      {"model", "gpt-4.1-mini"},
+      {"compatibility", "openai-chat"},
+      {"temperature", 0.3},
+      {"max_tokens", 2048}
     };
     ai_config_loaded = true;
     return ai_config_cache;
@@ -2317,9 +2320,48 @@ namespace confighttp {
    */
   static bool
   isAnthropicProvider(const nlohmann::json &cfg) {
+    std::string compatibility = cfg.value("compatibility", "");
     std::string provider = cfg.value("provider", "");
     std::string apiBase = cfg.value("apiBase", "");
-    return provider == "anthropic" || apiBase.find("anthropic.com") != std::string::npos;
+    return compatibility == "anthropic-messages" || provider == "anthropic" || apiBase.find("anthropic.com") != std::string::npos;
+  }
+
+  static bool
+  isApiKeyRequired(const nlohmann::json &cfg) {
+    std::string provider = cfg.value("provider", "");
+    std::string apiBase = cfg.value("apiBase", "");
+    return provider != "ollama" &&
+           apiBase.find("localhost") == std::string::npos &&
+           apiBase.find("127.0.0.1") == std::string::npos &&
+           apiBase.find("[::1]") == std::string::npos;
+  }
+
+  static bool
+  hasSuffix(const std::string &value, const std::string &suffix) {
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+  }
+
+  static std::string
+  buildAiEndpoint(std::string apiBase, bool isAnthropic) {
+    while (!apiBase.empty() && apiBase.back() == '/') {
+      apiBase.pop_back();
+    }
+
+    if (isAnthropic) {
+      if (hasSuffix(apiBase, "/v1/messages") || hasSuffix(apiBase, "/messages")) {
+        return apiBase;
+      }
+      if (hasSuffix(apiBase, "/v1")) {
+        return apiBase + "/messages";
+      }
+      return apiBase + "/v1/messages";
+    }
+
+    if (hasSuffix(apiBase, "/chat/completions")) {
+      return apiBase;
+    }
+    return apiBase + "/chat/completions";
   }
 
   /**
@@ -2450,6 +2492,10 @@ namespace confighttp {
       if (input.contains("provider")) current["provider"] = input["provider"].get<std::string>();
       if (input.contains("apiBase")) current["apiBase"] = input["apiBase"].get<std::string>();
       if (input.contains("model")) current["model"] = input["model"].get<std::string>();
+      if (input.contains("compatibility")) current["compatibility"] = input["compatibility"].get<std::string>();
+      if (input.contains("system_prompt")) current["system_prompt"] = input["system_prompt"].get<std::string>();
+      if (input.contains("temperature")) current["temperature"] = input["temperature"].get<double>();
+      if (input.contains("max_tokens")) current["max_tokens"] = input["max_tokens"].get<int>();
       if (input.contains("apiKey")) {
         std::string key = input["apiKey"].get<std::string>();
         // 如果前端发来的是掩码（包含****），不覆盖
@@ -2553,7 +2599,7 @@ namespace confighttp {
   isAiEnabled() {
     auto cfg = loadAiConfig();
     return cfg.value("enabled", false) &&
-           !cfg.value("apiKey", "").empty() &&
+           (!isApiKeyRequired(cfg) || !cfg.value("apiKey", "").empty()) &&
            !cfg.value("apiBase", "").empty();
   }
 
@@ -2582,7 +2628,7 @@ namespace confighttp {
     std::string apiKey = cfg.value("apiKey", "");
     std::string defaultModel = cfg.value("model", "");
 
-    if (apiBase.empty() || apiKey.empty()) {
+    if (apiBase.empty() || (apiKey.empty() && isApiKeyRequired(cfg))) {
       result = {400, R"({"error":{"message":"AI proxy not configured: missing apiBase or apiKey","type":"invalid_request_error"}})", "application/json"};
       return false;
     }
@@ -2606,12 +2652,7 @@ namespace confighttp {
 
     isAnthropic = isAnthropicProvider(cfg);
 
-    while (!apiBase.empty() && apiBase.back() == '/') {
-      apiBase.pop_back();
-    }
-    targetUrl = isAnthropic
-      ? apiBase + "/v1/messages"
-      : apiBase + "/chat/completions";
+    targetUrl = buildAiEndpoint(apiBase, isAnthropic);
 
     if (isAnthropic) {
       // Anthropic 流式 SSE 格式与 OpenAI 不兼容，强制走非流式以保证响应格式一致
@@ -2627,7 +2668,9 @@ namespace confighttp {
       proxyHeaders["x-api-key"] = apiKey;
       proxyHeaders["anthropic-version"] = "2023-06-01";
     } else {
-      proxyHeaders["Authorization"] = "Bearer " + apiKey;
+      if (!apiKey.empty()) {
+        proxyHeaders["Authorization"] = "Bearer " + apiKey;
+      }
     }
 
     BOOST_LOG(info) << "AI proxy forwarding to: " << targetUrl << (isStream ? " (stream)" : "");

@@ -1,60 +1,199 @@
 import { ref, reactive } from 'vue'
+import { API_ENDPOINTS } from '../utils/constants.js'
+import { buildLocalizedInstruction, getCurrentLocale, getPromptLanguageName } from '../utils/aiLocale.js'
 
-const STORAGE_KEY = 'sunshine-ai-diagnosis-config'
+const LEGACY_STORAGE_KEY = 'sunshine-ai-diagnosis-config'
 
 const PROVIDERS = [
-  { label: 'OpenAI', value: 'openai', base: 'https://api.openai.com/v1', models: ['gpt-4o-mini', 'gpt-4o'] },
-  { label: 'DeepSeek', value: 'deepseek', base: 'https://api.deepseek.com/v1', models: ['deepseek-chat'] },
-  { label: '通义千问', value: 'qwen', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-plus', 'qwen-turbo'] },
-  { label: '智谱 (GLM)', value: 'glm', base: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4'] },
-  { label: 'OpenRouter', value: 'openrouter', base: 'https://openrouter.ai/api/v1', models: ['deepseek/deepseek-chat-v3-0324', 'google/gemini-2.0-flash-001'] },
-  { label: 'Ollama (本地)', value: 'ollama', base: 'http://localhost:11434/v1', models: ['llama3', 'qwen2'] },
-  { label: '自定义', value: 'custom', base: '', models: [] },
+  {
+    label: 'OpenAI',
+    value: 'openai',
+    base: 'https://api.openai.com/v1',
+    compatibility: 'openai-chat',
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'],
+  },
+  {
+    label: 'DeepSeek',
+    value: 'deepseek',
+    base: 'https://api.deepseek.com/v1',
+    compatibility: 'openai-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+  },
+  {
+    label: 'Qwen',
+    value: 'qwen',
+    base: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    compatibility: 'openai-chat',
+    models: ['qwen-plus', 'qwen-turbo', 'qwen-max'],
+  },
+  {
+    label: 'Gemini',
+    value: 'gemini',
+    base: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    compatibility: 'openai-chat',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  },
+  {
+    label: 'Anthropic',
+    value: 'anthropic',
+    base: 'https://api.anthropic.com',
+    compatibility: 'anthropic-messages',
+    models: ['claude-3-5-haiku-latest', 'claude-sonnet-4-5'],
+  },
+  {
+    label: 'OpenRouter',
+    value: 'openrouter',
+    base: 'https://openrouter.ai/api/v1',
+    compatibility: 'openai-chat',
+    models: ['openai/gpt-4.1-mini', 'anthropic/claude-sonnet-4.5', 'deepseek/deepseek-chat-v3.1'],
+  },
+  {
+    label: 'Ollama',
+    value: 'ollama',
+    base: 'http://localhost:11434/v1',
+    compatibility: 'openai-chat',
+    models: ['llama3.1', 'qwen2.5', 'gemma3'],
+  },
+  {
+    label: 'Mita / Custom',
+    value: 'custom',
+    base: '',
+    compatibility: 'openai-chat',
+    models: [],
+  },
 ]
 
-const SYSTEM_PROMPT = `你是 Sunshine 串流软件的日志诊断助手。用户会提供 Sunshine 的运行日志，请分析日志内容并给出诊断结果。
+const COMPATIBILITY_OPTIONS = [
+  { label: 'OpenAI Chat Completions', value: 'openai-chat' },
+  { label: 'Anthropic Messages', value: 'anthropic-messages' },
+]
 
-请关注以下内容：
-- **Fatal/Error 级别日志**：通常是问题的直接原因
-- **Warning 日志**：可能暗示潜在问题
-- **编码器相关**：NVENC/AMF/软件编码的错误或回退
-- **网络/连接**：Moonlight 客户端连接失败、超时、配对问题
-- **音视频管道**：音频设备问题、视频捕获失败
-- **配置加载**：配置项无效或冲突
+const DEFAULT_CONFIG = {
+  enabled: false,
+  provider: 'openai',
+  apiBase: 'https://api.openai.com/v1',
+  apiKey: '',
+  model: 'gpt-4.1-mini',
+  compatibility: 'openai-chat',
+  temperature: 0.3,
+  max_tokens: 2048,
+}
 
-诊断格式要求：
-1. **问题摘要**：一句话概括发现的问题
-2. **详细分析**：解释问题原因（引用具体日志行）
-3. **解决建议**：给出具体可操作的建议
-4. 如果日志中没有明显错误，告知用户当前运行正常
+function buildSystemPrompt(locale = getCurrentLocale()) {
+  const languageName = getPromptLanguageName(locale)
 
-请用中文回复，语言简洁清晰。`
+  return `You are a Sunshine game streaming log diagnosis assistant.
 
-function loadConfig() {
+Analyze the provided Sunshine logs and reply in concise ${languageName}.
+${buildLocalizedInstruction(locale)}
+
+Focus on:
+- Fatal/Error lines as likely direct causes.
+- Warning lines as useful symptoms.
+- Encoder issues involving NVENC, AMF, QuickSync, VideoToolbox, or software encoding.
+- Network, pairing, timeout, and Moonlight client connection problems.
+- Audio/video capture pipeline failures.
+- Invalid or conflicting configuration.
+
+Use this structure:
+1. Problem summary
+2. Detailed analysis with concrete log evidence
+3. Actionable fixes
+4. If no obvious error is present, say the current logs look normal.`
+}
+
+function normalizeConfig(input = {}) {
+  const cfg = { ...DEFAULT_CONFIG, ...input }
+  const provider = PROVIDERS.find((p) => p.value === cfg.provider)
+  if (!cfg.compatibility) {
+    cfg.compatibility = provider?.compatibility || 'openai-chat'
+  }
+  return cfg
+}
+
+function isMaskedKey(key) {
+  return typeof key === 'string' && key.includes('****')
+}
+
+function isApiKeyRequired(cfg) {
+  const apiBase = cfg.apiBase || ''
+  return cfg.provider !== 'ollama' &&
+    !apiBase.includes('localhost') &&
+    !apiBase.includes('127.0.0.1') &&
+    !apiBase.includes('[::1]')
+}
+
+async function fetchJson(url, options = {}) {
+  const resp = await fetch(url, options)
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok || data.status === 'error') {
+    const message = typeof data.error === 'string' ? data.error : data.error?.message
+    throw new Error(message || `Request failed: ${resp.status}`)
+  }
+  return data
+}
+
+function loadLegacyConfig() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      return { provider: 'openai', apiKey: '', apiBase: 'https://api.openai.com/v1', model: 'gpt-4o-mini', ...parsed }
-    }
-  } catch { /* ignore */ }
-  return { provider: 'openai', apiKey: '', apiBase: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
+    const saved = localStorage.getItem(LEGACY_STORAGE_KEY)
+    return saved ? JSON.parse(saved) : null
+  } catch {
+    return null
+  }
 }
 
 export function useAiDiagnosis() {
-  const config = reactive(loadConfig())
+  const config = reactive({ ...DEFAULT_CONFIG })
+  const isConfigLoading = ref(false)
+  const isSavingConfig = ref(false)
   const isLoading = ref(false)
   const result = ref('')
   const error = ref('')
 
-  function saveConfig() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+  async function loadConfig() {
+    isConfigLoading.value = true
+    error.value = ''
+
+    try {
+      const remote = await fetchJson(API_ENDPOINTS.AI_CONFIG)
+      Object.assign(config, normalizeConfig(remote))
+
+      const legacy = loadLegacyConfig()
+      if (legacy && !remote.enabled && legacy.apiBase && legacy.model) {
+        Object.assign(config, normalizeConfig({ ...config, ...legacy, enabled: true }))
+        await saveConfig()
+        localStorage.removeItem(LEGACY_STORAGE_KEY)
+      }
+    } catch (e) {
+      Object.assign(config, normalizeConfig(loadLegacyConfig() || DEFAULT_CONFIG))
+      error.value = e.message
+    } finally {
+      isConfigLoading.value = false
+    }
+  }
+
+  async function saveConfig() {
+    isSavingConfig.value = true
+    try {
+      const body = { ...config }
+      if (isMaskedKey(body.apiKey)) {
+        delete body.apiKey
+      }
+      await fetchJson(API_ENDPOINTS.AI_CONFIG, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } finally {
+      isSavingConfig.value = false
+    }
   }
 
   function onProviderChange(value) {
     const p = PROVIDERS.find((x) => x.value === value)
     if (p) {
       config.apiBase = p.base
+      config.compatibility = p.compatibility
       if (p.models.length > 0) config.model = p.models[0]
     }
   }
@@ -64,62 +203,69 @@ export function useAiDiagnosis() {
     return p?.models || []
   }
 
-  async function diagnose(logs) {
-    if (!logs) {
-      error.value = '没有可用的日志内容'
-      return
+  function validateConfig() {
+    if (!config.enabled) {
+      return 'Please enable the local AI proxy first.'
     }
-    if (!config.apiKey && config.provider !== 'ollama') {
-      error.value = '请先配置 API Key'
-      return
+    if (!config.apiBase) {
+      return 'Please configure an API Base first.'
     }
-    if (config.provider === 'custom') {
+    if (!config.model) {
+      return 'Please configure a model first.'
+    }
+    if (!config.apiKey && isApiKeyRequired(config)) {
+      return 'Please configure an API key first.'
+    }
+    if (config.provider === 'custom' || config.provider === 'ollama') {
       try {
         const url = new URL(config.apiBase)
         if (!['http:', 'https:'].includes(url.protocol)) {
           throw new Error('invalid protocol')
         }
       } catch {
-        error.value = '自定义提供商需要完整的 API 地址（以 http:// 或 https:// 开头）'
-        return
+        return 'Custom providers need a complete API Base that starts with http:// or https://.'
       }
     }
+    return ''
+  }
 
-    saveConfig()
+  async function diagnose(logs) {
+    if (!logs) {
+      error.value = 'No log content is available.'
+      return
+    }
+
+    const validationError = validateConfig()
+    if (validationError) {
+      error.value = validationError
+      return
+    }
+
     isLoading.value = true
     result.value = ''
     error.value = ''
 
-    // Truncate logs to last 200 lines to fit token limits
     const lines = logs.split('\n')
     const truncated = lines.slice(-200).join('\n')
 
     try {
-      const base = config.apiBase.replace(/\/+$/, '')
-      const headers = { 'Content-Type': 'application/json' }
-      if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`
+      await saveConfig()
 
-      const resp = await fetch(`${base}/chat/completions`, {
+      const data = await fetchJson(API_ENDPOINTS.AI_CHAT_COMPLETIONS, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: config.model,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `请分析以下 Sunshine 日志：\n\n\`\`\`\n${truncated}\n\`\`\`` },
+            { role: 'system', content: buildSystemPrompt() },
+            { role: 'user', content: `Please analyze these Sunshine logs:\n\n\`\`\`\n${truncated}\n\`\`\`` },
           ],
-          temperature: 0.3,
-          max_tokens: 2048,
+          temperature: Number(config.temperature) || 0.3,
+          max_tokens: Number(config.max_tokens) || 2048,
         }),
       })
 
-      if (!resp.ok) {
-        const text = await resp.text()
-        throw new Error(`API 请求失败 (${resp.status}): ${text.substring(0, 200)}`)
-      }
-
-      const data = await resp.json()
-      result.value = data.choices?.[0]?.message?.content || '无法获取分析结果'
+      result.value = data.choices?.[0]?.message?.content || 'Unable to read the analysis result.'
     } catch (e) {
       error.value = e.message
     } finally {
@@ -127,9 +273,14 @@ export function useAiDiagnosis() {
     }
   }
 
+  loadConfig()
+
   return {
     config,
     providers: PROVIDERS,
+    compatibilityOptions: COMPATIBILITY_OPTIONS,
+    isConfigLoading,
+    isSavingConfig,
     isLoading,
     result,
     error,
@@ -137,5 +288,6 @@ export function useAiDiagnosis() {
     getAvailableModels,
     diagnose,
     saveConfig,
+    loadConfig,
   }
 }

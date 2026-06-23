@@ -82,6 +82,8 @@ export const ENV_VARS_CONFIG = {
 export const API_ENDPOINTS = {
   APPS: '/api/apps',
   CONFIG: '/api/config',
+  AI_CONFIG: '/api/ai/config',
+  AI_CHAT_COMPLETIONS: '/api/ai/chat/completions',
   APP_DELETE: (index) => `/api/apps/${index}`,
   APPS_BATCH_DELETE: '/api/apps/batch-delete'
-}; 
+};

@@ -137,6 +137,17 @@
                 {{ gamesOnly ? t('apps.scan_result_show_all') : t('apps.scan_result_games_only') }}
                 <span class="badge bg-dark ms-1">{{ stats.games }}</span>
               </button>
+              <button
+                v-if="stats.review > 0"
+                class="btn btn-sm"
+                :class="reviewOnly ? 'btn-danger' : 'btn-outline-danger'"
+                @click="reviewOnly = !reviewOnly"
+                type="button"
+              >
+                <i class="fas fa-triangle-exclamation me-1"></i>
+                {{ reviewLabel }}
+                <span class="badge bg-dark ms-1">{{ stats.review }}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -153,7 +164,12 @@
             <p class="small">{{ t('apps.scan_result_try_different_keywords') }}</p>
           </div>
           <div v-else class="scan-result-list">
-            <div v-for="app in filteredApps" :key="app.source_path" class="scan-result-item">
+            <div
+              v-for="app in filteredApps"
+              :key="app.source_path"
+              class="scan-result-item"
+              :class="{ 'scan-result-item--review': needsReview(app) }"
+            >
               <!-- 应用图标 -->
               <div class="scan-app-icon">
                 <img
@@ -189,6 +205,31 @@
                   <span v-if="app['is-game']" class="badge bg-warning text-dark ms-2">
                     <i class="fas fa-gamepad me-1"></i>{{ t('apps.scan_result_game') }}
                   </span>
+                  <span v-if="needsReview(app)" class="badge bg-danger ms-2">
+                    <i class="fas fa-triangle-exclamation me-1"></i>{{ reviewLabel }}
+                  </span>
+                </div>
+                <div v-if="app['original-name'] && app['original-name'] !== app.name" class="scan-app-cmd small">
+                  Original: {{ app['original-name'] }}
+                </div>
+                <div v-if="app['canonical-name'] || app['ai-confidence']" class="scan-app-cmd small">
+                  <i class="fas fa-wand-magic-sparkles me-1"></i>
+                  {{ app['canonical-name'] || app.name }}
+                  <span v-if="app['ai-confidence']" class="badge bg-info ms-1">
+                    {{ Math.round(app['ai-confidence'] * 100) }}%
+                  </span>
+                </div>
+                <div v-if="app['cover-source'] || app['cover-match-name']" class="scan-app-cmd small">
+                  <i class="fas fa-image me-1"></i>
+                  {{ app['cover-source'] || 'cover' }}
+                  <span v-if="app['cover-match-name']">: {{ app['cover-match-name'] }}</span>
+                  <span v-if="app['ai-cover-confidence']" class="badge bg-info ms-1">
+                    {{ Math.round(app['ai-cover-confidence'] * 100) }}%
+                  </span>
+                </div>
+                <div v-if="needsReview(app)" class="scan-app-review small">
+                  <i class="fas fa-triangle-exclamation me-1"></i>
+                  {{ getReviewReasons(app).join(' / ') }}
                 </div>
                 <div class="scan-app-cmd small">{{ app.cmd }}</div>
                 <div class="scan-app-path small"><i class="fas fa-folder-open me-1"></i>{{ app.source_path }}</div>
@@ -235,7 +276,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps({
   show: {
@@ -258,6 +299,12 @@ defineEmits(['close', 'edit', 'quick-add', 'remove', 'add-all'])
 const searchQuery = ref('')
 const selectedType = ref('all')
 const gamesOnly = ref(false)
+const reviewOnly = ref(false)
+
+const NAME_REVIEW_THRESHOLD = 0.82
+const COVER_REVIEW_THRESHOLD = 0.7
+const isChineseLocale = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
+const reviewLabel = computed(() => (isChineseLocale.value ? '需要审核' : 'Review'))
 
 // 重置过滤器
 watch(
@@ -267,6 +314,7 @@ watch(
       searchQuery.value = ''
       selectedType.value = 'all'
       gamesOnly.value = false
+      reviewOnly.value = false
     }
   }
 )
@@ -279,6 +327,7 @@ watch(
     gamesOnly.value = hasGames
     selectedType.value = 'all'
     searchQuery.value = ''
+    reviewOnly.value = false
   }
 )
 
@@ -297,6 +346,9 @@ watch(
     if (gamesOnly.value && !props.apps.some((app) => app['is-game'] === true)) {
       gamesOnly.value = false
     }
+    if (reviewOnly.value && !props.apps.some(needsReview)) {
+      reviewOnly.value = false
+    }
   }
 )
 
@@ -312,10 +364,11 @@ const stats = computed(() => ({
   steam: props.apps.filter((app) => app['app-type'] === 'steam').length,
   epic: props.apps.filter((app) => app['app-type'] === 'epic').length,
   gog: props.apps.filter((app) => app['app-type'] === 'gog').length,
+  review: props.apps.filter(needsReview).length,
 }))
 
 // 是否有激活的过滤器
-const hasActiveFilter = computed(() => searchQuery.value || gamesOnly.value || selectedType.value !== 'all')
+const hasActiveFilter = computed(() => searchQuery.value || gamesOnly.value || reviewOnly.value || selectedType.value !== 'all')
 
 // 过滤后的应用列表
 const filteredApps = computed(() => {
@@ -329,6 +382,10 @@ const filteredApps = computed(() => {
   // 按游戏过滤
   if (gamesOnly.value) {
     filtered = filtered.filter((app) => app['is-game'] === true)
+  }
+
+  if (reviewOnly.value) {
+    filtered = filtered.filter(needsReview)
   }
 
   // 按搜索关键词过滤
@@ -346,6 +403,40 @@ const filteredApps = computed(() => {
 })
 
 // 应用类型标签
+function hasNumericValue(value) {
+  return Number.isFinite(Number(value))
+}
+
+function needsReview(app) {
+  return getReviewReasons(app).length > 0
+}
+
+function getReviewReasons(app) {
+  const reasons = []
+  const nameConfidence = Number(app['ai-confidence'])
+  const coverConfidence = Number(app['ai-cover-confidence'])
+
+  if (hasNumericValue(app['ai-confidence']) && nameConfidence < NAME_REVIEW_THRESHOLD) {
+    const percent = Math.round(nameConfidence * 100)
+    reasons.push(isChineseLocale.value ? `名称置信度 ${percent}%` : `Low name confidence ${percent}%`)
+  }
+
+  if (app['is-game'] === true && !app['canonical-name']) {
+    reasons.push(isChineseLocale.value ? '缺少规范名称' : 'Missing canonical name')
+  }
+
+  if (app['is-game'] === true && !app['image-path']) {
+    reasons.push(isChineseLocale.value ? '缺少封面' : 'Missing cover')
+  }
+
+  if (hasNumericValue(app['ai-cover-confidence']) && coverConfidence < COVER_REVIEW_THRESHOLD) {
+    const percent = Math.round(coverConfidence * 100)
+    reasons.push(isChineseLocale.value ? `封面置信度 ${percent}%` : `Low cover confidence ${percent}%`)
+  }
+
+  return reasons
+}
+
 const getAppTypeLabel = (appType) => {
   const typeMap = {
     executable: t('apps.scan_result_type_executable'),

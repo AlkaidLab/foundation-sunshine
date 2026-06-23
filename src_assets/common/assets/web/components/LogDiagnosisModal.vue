@@ -23,17 +23,25 @@
 
             <div v-if="showConfig" class="config-form mt-2">
               <div class="row g-2">
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label form-label-sm">{{ $t('troubleshooting.ai_provider') }}</label>
                   <select class="form-select form-select-sm" v-model="config.provider" @change="onProviderChange(config.provider)">
                     <option v-for="p in providers" :key="p.value" :value="p.value">{{ p.label }}</option>
                   </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
+                  <label class="form-label form-label-sm">Compatibility</label>
+                  <select class="form-select form-select-sm" v-model="config.compatibility">
+                    <option v-for="option in compatibilityOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+                <div class="col-md-3">
                   <label class="form-label form-label-sm">API Key</label>
                   <input type="password" class="form-control form-control-sm" v-model="config.apiKey" placeholder="sk-..." />
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label form-label-sm">{{ $t('troubleshooting.ai_model') }}</label>
                   <input type="text" class="form-control form-control-sm" v-model="config.model" :placeholder="getAvailableModels()[0] || 'model'" list="ai-models" />
                   <datalist id="ai-models">
@@ -41,14 +49,29 @@
                   </datalist>
                 </div>
               </div>
-              <div class="row g-2 mt-1" v-if="config.provider === 'custom'">
+              <div class="row g-2 mt-1">
                 <div class="col-12">
                   <label class="form-label form-label-sm">API Base</label>
                   <input type="text" class="form-control form-control-sm" v-model="config.apiBase" placeholder="https://api.example.com/v1" />
                 </div>
               </div>
+              <div class="form-check form-switch mt-2">
+                <input
+                  id="aiProxyEnabled"
+                  class="form-check-input"
+                  type="checkbox"
+                  v-model="config.enabled"
+                />
+                <label class="form-check-label small" for="aiProxyEnabled">
+                  Enable local AI proxy
+                </label>
+              </div>
               <div class="text-muted small mt-1">
-                <i class="fas fa-lock me-1"></i>{{ $t('troubleshooting.ai_key_local') }}
+                <i class="fas fa-lock me-1"></i>
+                API key is saved in Sunshine's local config and requests go through the local AI proxy.
+                <span v-if="isConfigLoading || isSavingConfig" class="ms-1">
+                  <span class="spinner-border spinner-border-sm"></span>
+                </span>
               </div>
             </div>
           </div>
@@ -117,6 +140,9 @@ defineProps({
   show: Boolean,
   config: Object,
   providers: Array,
+  compatibilityOptions: Array,
+  isConfigLoading: Boolean,
+  isSavingConfig: Boolean,
   isLoading: Boolean,
   result: String,
   error: String,
