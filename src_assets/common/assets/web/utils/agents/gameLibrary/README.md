@@ -40,6 +40,17 @@
 
 必选能力用 `required: true` 标记。`normalizeGameLibrarySkillIds()` 会保证 required skill 始终启用，并过滤未知 id。
 
+### 封面证据校准
+
+`game.cover.select` 不直接信任模型给出的封面置信度。`coverSelectionAi.js` 会先计算候选封面与规范名、显示名、原始名、搜索词之间的本地匹配证据：
+
+- `exact-title`：候选标题与已知名称完全一致。
+- `prefix-title` / `contains-title`：候选标题与已知名称存在强前缀或包含关系。
+- `token-overlap`：标题 token 高度重合。
+- `source-prior`：只有来源先验，没有足够标题证据。
+
+AI 选择封面后，`calibrateCoverConfidence()` 会用这份证据校准 `ai-cover-confidence`，并写入 `cover-match-confidence`、`cover-match-relation`、`cover-match-reason`。这样模型理解语义，本地证据负责防止同名游戏、DLC、工具、原声带等弱匹配以高置信度通过。审核队列会优先使用 `ai-cover-confidence`，缺失时回退到 `cover-match-confidence`。
+
 ## Skill 契约
 
 每个 skill 至少需要：

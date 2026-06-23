@@ -9,6 +9,10 @@ const MAX_COVERS_PER_TERM = 6
 const MAX_AI_CANDIDATES = 12
 const coverCache = createAiCache('cover-selection', { version: 'v1' })
 
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0))
+}
+
 function normalizeTitle(value) {
   return String(value || '')
     .toLowerCase()
@@ -17,22 +21,81 @@ function normalizeTitle(value) {
     .trim()
 }
 
-function scoreCandidate(app, candidate) {
-  const title = normalizeTitle(candidate.name)
-  const names = [
+function getCandidateNames(app) {
+  return Array.from(new Set([
     app?.['canonical-name'],
     app?.name,
     app?.['original-name'],
     ...(Array.isArray(app?.['cover-search-terms']) ? app['cover-search-terms'] : []),
-  ].map(normalizeTitle).filter(Boolean)
+  ].map(normalizeTitle).filter(Boolean)))
+}
 
-  let score = candidate.source === 'igdb' ? 3 : 2
-  for (const name of names) {
-    if (title === name) score += 20
-    else if (title.startsWith(name) || name.startsWith(title)) score += 12
-    else if (title.includes(name) || name.includes(title)) score += 8
+function getTokenOverlap(first, second) {
+  const firstTokens = new Set(first.split(' ').filter((token) => token.length > 1))
+  const secondTokens = new Set(second.split(' ').filter((token) => token.length > 1))
+  if (firstTokens.size === 0 || secondTokens.size === 0) return 0
+
+  let shared = 0
+  for (const token of firstTokens) {
+    if (secondTokens.has(token)) shared += 1
   }
-  return score
+  return shared / Math.max(firstTokens.size, secondTokens.size)
+}
+
+export function assessCoverMatch(app, candidate) {
+  const title = normalizeTitle(candidate?.name)
+  const names = getCandidateNames(app)
+
+  let best = {
+    confidence: candidate?.source === 'igdb' ? 0.42 : 0.36,
+    relation: 'source-prior',
+    matchedName: '',
+    reason: candidate?.source === 'igdb' ? 'IGDB source prior' : 'Steam source prior',
+  }
+
+  for (const name of names) {
+    let evidence = null
+    if (title === name) {
+      evidence = { confidence: 0.96, relation: 'exact-title', reason: 'Exact title match' }
+    } else if (title.startsWith(name) || name.startsWith(title)) {
+      evidence = { confidence: 0.84, relation: 'prefix-title', reason: 'Prefix title match' }
+    } else if (title.includes(name) || name.includes(title)) {
+      evidence = { confidence: 0.74, relation: 'contains-title', reason: 'Partial title match' }
+    } else {
+      const overlap = getTokenOverlap(title, name)
+      if (overlap >= 0.72) {
+        evidence = { confidence: 0.66, relation: 'token-overlap', reason: 'Strong token overlap' }
+      }
+    }
+
+    if (evidence && evidence.confidence > best.confidence) {
+      best = {
+        ...evidence,
+        matchedName: name,
+      }
+    }
+  }
+
+  const searchTerm = normalizeTitle(candidate?.searchTerm)
+  if (searchTerm && names.includes(searchTerm) && best.confidence >= 0.66 && best.confidence < 0.88) {
+    best = {
+      confidence: Math.max(best.confidence, 0.88),
+      relation: 'search-term',
+      matchedName: searchTerm,
+      reason: 'Selected from an exact search term',
+    }
+  }
+
+  return best
+}
+
+function scoreFromEvidence(source, evidence) {
+  const sourceScore = source === 'igdb' ? 3 : 2
+  return sourceScore + Math.round(evidence.confidence * 100)
+}
+
+function scoreCandidate(app, candidate) {
+  return scoreFromEvidence(candidate?.source, assessCoverMatch(app, candidate))
 }
 
 function dedupeCandidates(candidates) {
@@ -104,9 +167,41 @@ async function collectCoverCandidates(app) {
   }
 
   return dedupeCandidates(candidates)
-    .map((candidate, index) => ({ ...candidate, fallbackScore: scoreCandidate(app, candidate), originalIndex: index }))
+    .map((candidate, index) => {
+      const evidence = assessCoverMatch(app, candidate)
+      return {
+        ...candidate,
+        matchConfidence: evidence.confidence,
+        matchRelation: evidence.relation,
+        matchReason: evidence.reason,
+        fallbackScore: scoreFromEvidence(candidate.source, evidence),
+        originalIndex: index,
+      }
+    })
     .sort((a, b) => b.fallbackScore - a.fallbackScore)
     .slice(0, MAX_AI_CANDIDATES)
+}
+
+export function calibrateCoverConfidence(app, candidate, aiConfidence = 0, aiReason = '') {
+  const evidence = assessCoverMatch(app, candidate)
+  const modelConfidence = clamp01(aiConfidence)
+  const evidenceConfidence = evidence.confidence
+
+  let confidence = modelConfidence || evidenceConfidence
+  if (evidenceConfidence >= 0.9) {
+    confidence = Math.max(confidence, evidenceConfidence)
+  } else if (modelConfidence > 0) {
+    confidence = Math.min(modelConfidence, evidenceConfidence + 0.18)
+  }
+
+  return {
+    ...candidate,
+    aiCoverConfidence: clamp01(confidence),
+    aiCoverReason: aiReason || evidence.reason,
+    coverMatchConfidence: evidenceConfidence,
+    coverMatchRelation: evidence.relation,
+    coverMatchReason: evidence.reason,
+  }
 }
 
 async function askAiToPickCover(app, candidates) {
@@ -158,7 +253,7 @@ async function askAiToPickCover(app, candidates) {
 
   const parsed = JSON.parse(content.slice(start, end + 1))
   const selected = candidates[Number(parsed.selectedId)]
-  return selected ? { ...selected, aiCoverConfidence: Number(parsed.confidence) || 0, aiCoverReason: parsed.reason || '' } : null
+  return selected ? calibrateCoverConfidence(app, selected, parsed.confidence, parsed.reason || '') : null
 }
 
 export async function findBestCoverForApp(app) {
@@ -181,17 +276,21 @@ export async function findBestCoverForApp(app) {
     return null
   }
   if (candidates.length === 1) {
-    coverCache.set(cacheKey, candidates[0])
-    return candidates[0]
+    const selected = calibrateCoverConfidence(app, candidates[0])
+    coverCache.set(cacheKey, selected)
+    return selected
   }
 
   try {
-    const selected = (await askAiToPickCover(app, candidates)) || pickFallbackCoverCandidate(app, candidates)
+    const aiSelected = await askAiToPickCover(app, candidates)
+    const fallback = aiSelected ? null : pickFallbackCoverCandidate(app, candidates)
+    const selected = aiSelected || (fallback ? calibrateCoverConfidence(app, fallback) : null)
     coverCache.set(cacheKey, selected)
     return selected
   } catch (error) {
     console.warn('AI cover selection failed; using fallback cover candidate:', error)
-    const selected = pickFallbackCoverCandidate(app, candidates)
+    const fallback = pickFallbackCoverCandidate(app, candidates)
+    const selected = fallback ? calibrateCoverConfidence(app, fallback) : null
     coverCache.set(cacheKey, selected)
     return selected
   }

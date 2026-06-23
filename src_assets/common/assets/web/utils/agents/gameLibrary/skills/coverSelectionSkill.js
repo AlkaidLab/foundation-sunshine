@@ -20,6 +20,9 @@ export function applyCoverToGameResource(app, cover) {
     'cover-search-term': cover.searchTerm || '',
     'ai-cover-confidence': cover.aiCoverConfidence || 0,
     'ai-cover-reason': cover.aiCoverReason || '',
+    'cover-match-confidence': cover.coverMatchConfidence ?? cover.matchConfidence ?? 0,
+    'cover-match-relation': cover.coverMatchRelation ?? cover.matchRelation ?? '',
+    'cover-match-reason': cover.coverMatchReason ?? cover.matchReason ?? '',
   }
 }
 

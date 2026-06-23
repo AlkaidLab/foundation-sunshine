@@ -33,7 +33,9 @@ export function getGameResourceReviewReasons(app, options = {}) {
   const messages = getReviewMessages(options.locale)
   const reasons = []
   const nameConfidence = Number(app?.['ai-confidence'])
-  const coverConfidence = Number(app?.['ai-cover-confidence'])
+  const coverConfidence = hasNumericValue(app?.['ai-cover-confidence'])
+    ? Number(app?.['ai-cover-confidence'])
+    : Number(app?.['cover-match-confidence'])
 
   if (hasNumericValue(app?.['ai-confidence']) && nameConfidence < thresholds.nameConfidence) {
     reasons.push(messages.lowNameConfidence(Math.round(nameConfidence * 100)))
@@ -47,7 +49,8 @@ export function getGameResourceReviewReasons(app, options = {}) {
     reasons.push(messages.missingCover)
   }
 
-  if (hasNumericValue(app?.['ai-cover-confidence']) && coverConfidence < thresholds.coverConfidence) {
+  const hasCoverConfidence = hasNumericValue(app?.['ai-cover-confidence']) || hasNumericValue(app?.['cover-match-confidence'])
+  if (hasCoverConfidence && coverConfidence < thresholds.coverConfidence) {
     reasons.push(messages.lowCoverConfidence(Math.round(coverConfidence * 100)))
   }
 

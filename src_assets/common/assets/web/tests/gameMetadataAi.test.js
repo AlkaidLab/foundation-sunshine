@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { assessCoverMatch, calibrateCoverConfidence } from '../utils/coverSelectionAi.js'
 import { enhanceScannedGameNames, getCoverSearchCandidates } from '../utils/gameMetadataAi.js'
 import { __aiCacheTestUtils } from '../utils/aiCache.js'
 
@@ -19,6 +20,44 @@ test('getCoverSearchCandidates orders AI terms before fallback names', () => {
   ])
 })
 
+test('assessCoverMatch rewards exact search-term cover evidence', () => {
+  const app = {
+    name: '赛博朋克 2077',
+    'canonical-name': 'Cyberpunk 2077',
+    'cover-search-terms': ['Cyberpunk 2077', '赛博朋克 2077'],
+  }
+
+  const evidence = assessCoverMatch(app, {
+    name: 'Cyberpunk 2077',
+    source: 'igdb',
+    searchTerm: 'Cyberpunk 2077',
+  })
+
+  assert.equal(evidence.relation, 'exact-title')
+  assert.ok(evidence.confidence >= 0.9)
+})
+
+test('calibrateCoverConfidence caps high AI confidence when local evidence is weak', () => {
+  const selected = calibrateCoverConfidence(
+    {
+      name: 'Portal 2',
+      'canonical-name': 'Portal 2',
+      'cover-search-terms': ['Portal 2'],
+    },
+    {
+      name: 'Portal Knights',
+      source: 'steam',
+      searchTerm: 'Portal 2',
+    },
+    0.95,
+    'Looks related'
+  )
+
+  assert.ok(selected.aiCoverConfidence < 0.8)
+  assert.ok(selected.coverMatchConfidence < 0.7)
+  assert.equal(selected.aiCoverReason, 'Looks related')
+})
+
 test('enhanceScannedGameNames renames only high-confidence results', async () => {
   __aiCacheTestUtils.clearMemoryStores()
   const originalFetch = globalThis.fetch
@@ -35,39 +74,39 @@ test('enhanceScannedGameNames renames only high-confidence results', async () =>
   globalThis.fetch = async (_url, options = {}) => {
     fetchCalls += 1
     requestBody = JSON.parse(options.body)
-    return ({
-    ok: true,
-    async json() {
-      return {
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                items: [
-                  {
-                    id: '0',
-                    displayName: 'Cyberpunk 2077',
-                    canonicalName: 'Cyberpunk 2077',
-                    searchTerms: ['Cyberpunk 2077'],
-                    isGame: true,
-                    confidence: 0.95,
-                  },
-                  {
-                    id: '1',
-                    displayName: 'Unknown Game',
-                    canonicalName: 'Unknown Game',
-                    searchTerms: ['Unknown Game'],
-                    isGame: true,
-                    confidence: 0.4,
-                  },
-                ],
-              }),
+    return {
+      ok: true,
+      async json() {
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  items: [
+                    {
+                      id: '0',
+                      displayName: 'Cyberpunk 2077',
+                      canonicalName: 'Cyberpunk 2077',
+                      searchTerms: ['Cyberpunk 2077'],
+                      isGame: true,
+                      confidence: 0.95,
+                    },
+                    {
+                      id: '1',
+                      displayName: 'Unknown Game',
+                      canonicalName: 'Unknown Game',
+                      searchTerms: ['Unknown Game'],
+                      isGame: true,
+                      confidence: 0.4,
+                    },
+                  ],
+                }),
+              },
             },
-          },
-        ],
-      }
-    },
-    })
+          ],
+        }
+      },
+    }
   }
 
   try {
