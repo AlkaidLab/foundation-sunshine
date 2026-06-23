@@ -17,7 +17,6 @@ import {
   rememberGameLibraryApp,
   runGameLibraryCuratorAgent,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
-import { runLibraryMaintenanceAgent } from '../utils/agents/libraryMaintenance/libraryMaintenanceAgent.js'
 
 const MESSAGE_DURATION = 3000
 const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
@@ -83,10 +82,6 @@ export function useApps() {
   const scannedApps = ref([])
   const scannedEditSource = ref(null)
   const showScanResult = ref(false)
-  const isCheckingLibraryMaintenance = ref(false)
-  const showLibraryMaintenance = ref(false)
-  const libraryMaintenanceIssues = ref([])
-  const libraryMaintenanceStats = ref({})
   const scannedAppsSearchQuery = ref('')
   const showGamesOnly = ref(false)
   const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
@@ -108,13 +103,6 @@ export function useApps() {
 
   const filteredApps = computed(() => AppService.searchApps(apps.value, committedSearchQuery.value))
   const selectableGameLibrarySkills = computed(() => getGameLibrarySelectableCapabilities())
-  const libraryMaintenanceIssueCounts = computed(() => libraryMaintenanceIssues.value.reduce(
-    (counts, issue) => ({
-      ...counts,
-      [issue.severity || 'info']: (counts[issue.severity || 'info'] || 0) + 1,
-    }),
-    {}
-  ))
 
   // 消息图标映射
   const MESSAGE_ICONS = {
@@ -760,52 +748,6 @@ export function useApps() {
     }
   }
 
-  const runLibraryMaintenanceCheck = async () => {
-    try {
-      isCheckingLibraryMaintenance.value = true
-      const result = await runLibraryMaintenanceAgent(apps.value)
-      libraryMaintenanceIssues.value = result.issues || []
-      libraryMaintenanceStats.value = result.stats || {}
-      showLibraryMaintenance.value = true
-
-      const count = libraryMaintenanceIssues.value.length
-      showMessage(
-        count > 0 ? `应用库体检发现 ${count} 个问题` : '应用库体检未发现问题',
-        count > 0 ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
-      )
-      trackEvents.userAction('library_maintenance_checked', { issues: count })
-    } catch (error) {
-      console.error('Library maintenance check failed:', error)
-      showMessage('应用库体检失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
-    } finally {
-      isCheckingLibraryMaintenance.value = false
-    }
-  }
-
-  const closeLibraryMaintenance = () => {
-    showLibraryMaintenance.value = false
-  }
-
-  const getLibraryMaintenanceIssueLabel = (issue) => {
-    const locale = typeof document === 'undefined'
-      ? ''
-      : String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
-    if (locale.startsWith('zh') && issue?.labels?.zh) {
-      return issue.labels.zh
-    }
-    return issue?.message || issue?.type || ''
-  }
-
-  const getLibraryMaintenanceIssueApps = (issue) => (issue?.appIndexes || [])
-    .map((index) => apps.value[index]?.name || `#${index + 1}`)
-    .join(', ')
-
-  const getLibraryMaintenanceIssueSeverityClass = (issue) => {
-    if (issue?.severity === 'error') return 'library-issue--error'
-    if (issue?.severity === 'warning') return 'library-issue--warning'
-    return 'library-issue--info'
-  }
-
   const handleCopySuccess = () => showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
   const handleCopyError = () => showMessage('复制失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
 
@@ -826,10 +768,6 @@ export function useApps() {
     isScanning,
     scannedApps,
     showScanResult,
-    isCheckingLibraryMaintenance,
-    showLibraryMaintenance,
-    libraryMaintenanceIssues,
-    libraryMaintenanceStats,
     scannedAppsSearchQuery,
     showGamesOnly,
     selectedAppType,
@@ -843,7 +781,6 @@ export function useApps() {
     messageClass,
     filteredScannedApps,
     scanResultStats,
-    libraryMaintenanceIssueCounts,
     // 方法
     init,
     loadApps,
@@ -881,11 +818,6 @@ export function useApps() {
     removeScannedApp,
     getScannedAppImage,
     searchCoverForScannedApp,
-    runLibraryMaintenanceCheck,
-    closeLibraryMaintenance,
-    getLibraryMaintenanceIssueLabel,
-    getLibraryMaintenanceIssueApps,
-    getLibraryMaintenanceIssueSeverityClass,
     isTauriEnv,
     showMessage,
     isGameLibrarySkillEnabled,

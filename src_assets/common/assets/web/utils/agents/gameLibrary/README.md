@@ -75,7 +75,6 @@ Agent 默认会捕获单个 skill 的异常，记录 `skill:error` 事件并继�
 ```text
 utils/agents/diagnostics/
 utils/agents/configAdvisor/
-utils/agents/libraryMaintenance/
 ```
 
 推荐结构：
