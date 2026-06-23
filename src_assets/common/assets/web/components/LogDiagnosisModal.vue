@@ -79,6 +79,26 @@
             </div>
           </div>
 
+          <div v-if="localSuggestions?.length" class="local-suggestions mb-3">
+            <div class="local-diagnostics-header">
+              <i class="fas fa-screwdriver-wrench me-1"></i>
+              <strong>Suggested fixes</strong>
+            </div>
+            <div class="local-suggestion-list">
+              <div
+                v-for="suggestion in localSuggestions"
+                :key="suggestion.id"
+                class="local-suggestion"
+                :class="`local-suggestion--${suggestion.severity || 'info'}`"
+              >
+                <div class="local-finding-title">{{ getSuggestionTitle(suggestion) }}</div>
+                <ul class="local-suggestion-actions">
+                  <li v-for="action in getSuggestionActions(suggestion)" :key="action">{{ action }}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
           <!-- Diagnose Button -->
           <div class="text-center mb-3" v-if="!result && !error">
             <button class="btn btn-primary" :disabled="isLoading" @click="$emit('diagnose')">
@@ -151,6 +171,10 @@ defineProps({
     type: Array,
     default: () => [],
   },
+  localSuggestions: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 defineEmits(['close', 'diagnose'])
@@ -170,6 +194,22 @@ function getFindingLabel(finding) {
     return finding.labels.zh
   }
   return finding?.message || finding?.type || ''
+}
+
+function getSuggestionTitle(suggestion) {
+  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
+  if (locale.startsWith('zh') && suggestion?.labels?.zh) {
+    return suggestion.labels.zh
+  }
+  return suggestion?.title || suggestion?.findingType || ''
+}
+
+function getSuggestionActions(suggestion) {
+  const locale = String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
+  if (locale.startsWith('zh') && Array.isArray(suggestion?.actionLabels?.zh)) {
+    return suggestion.actionLabels.zh
+  }
+  return Array.isArray(suggestion?.actions) ? suggestion.actions : []
 }
 
 function renderMarkdown(text) {
@@ -260,6 +300,12 @@ function renderMarkdown(text) {
   gap: 0.5rem;
 }
 
+.local-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .local-finding {
   border-left: 4px solid #0dcaf0;
   border-radius: 6px;
@@ -267,12 +313,29 @@ function renderMarkdown(text) {
   background: var(--bs-body-bg, #fff);
 }
 
+.local-suggestions {
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.local-suggestion {
+  border-left: 4px solid #0dcaf0;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  background: var(--bs-body-bg, #fff);
+}
+
 .local-finding--error,
-.local-finding--fatal {
+.local-finding--fatal,
+.local-suggestion--error,
+.local-suggestion--fatal {
   border-left-color: #dc3545;
 }
 
-.local-finding--warning {
+.local-finding--warning,
+.local-suggestion--warning {
   border-left-color: #ffc107;
 }
 
@@ -291,6 +354,16 @@ function renderMarkdown(text) {
   background: rgba(0, 0, 0, 0.06);
   padding: 0.25rem 0.4rem;
   border-radius: 4px;
+}
+
+.local-suggestion-actions {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.local-suggestion-actions li {
+  margin-bottom: 0.25rem;
 }
 
 .result-header {

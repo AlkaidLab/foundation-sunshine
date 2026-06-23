@@ -15,7 +15,7 @@ import {
   runDiagnosticsAgent,
 } from '../utils/agents/diagnostics/diagnosticsAgent.js'
 
-test('diagnostics agent summarizes severity and detects log patterns', async () => {
+test('diagnostics agent summarizes severity, detects patterns, and suggests fixes', async () => {
   const logs = [
     '[2026-06-23] Warning: configuration option deprecated',
     '[2026-06-23] Error: NVENC encoder failed to initialize',
@@ -29,11 +29,17 @@ test('diagnostics agent summarizes severity and detects log patterns', async () 
   assert.equal(result.stats.errorLogLines, 2)
   assert.equal(result.stats.warningLogLines, 1)
   assert.equal(result.stats.logPatternFindings, 3)
+  assert.equal(result.stats.logRemediationSuggestions, 3)
   assert.deepEqual(
     result.findings.map((finding) => finding.type),
     ['config-risk', 'encoder-failure', 'network-timeout']
   )
-  assert.equal(result.events.length, 2)
+  assert.deepEqual(
+    result.suggestions.map((suggestion) => suggestion.findingType),
+    ['config-risk', 'encoder-failure', 'network-timeout']
+  )
+  assert.ok(result.suggestions[1].actions.some((action) => action.includes('encoder')))
+  assert.equal(result.events.length, 3)
 })
 
 test('diagnostics agent can run a selected skill subset', async () => {
@@ -51,6 +57,7 @@ test('diagnostics capabilities expose selectable skills', () => {
   assert.deepEqual(getDefaultEnabledDiagnosticsSkillIds(), [
     DIAGNOSTICS_SKILL_IDS.logSeverity,
     DIAGNOSTICS_SKILL_IDS.logPatterns,
+    DIAGNOSTICS_SKILL_IDS.logRemediation,
   ])
   assert.deepEqual(
     normalizeDiagnosticsSkillIds([DIAGNOSTICS_SKILL_IDS.logPatterns, 'unknown.skill']),
@@ -61,9 +68,11 @@ test('diagnostics capabilities expose selectable skills', () => {
     [
       DIAGNOSTICS_SKILL_IDS.logSeverity,
       DIAGNOSTICS_SKILL_IDS.logPatterns,
+      DIAGNOSTICS_SKILL_IDS.logRemediation,
     ]
   )
   assert.equal(getDiagnosticsCapabilityIcon(DIAGNOSTICS_SKILL_IDS.logPatterns), 'fa-magnifying-glass-chart')
+  assert.equal(getDiagnosticsCapabilityIcon(DIAGNOSTICS_SKILL_IDS.logRemediation), 'fa-screwdriver-wrench')
   assert.equal(getDiagnosticsCapabilityLabel(DIAGNOSTICS_SKILL_IDS.logSeverity), 'Log severity summary')
   assert.equal(getDiagnosticsCapabilityLabel(DIAGNOSTICS_SKILL_IDS.logSeverity, { locale: 'zh-CN' }), '日志严重度摘要')
 })

@@ -164,6 +164,7 @@
       :result="aiResult"
       :error="aiError"
       :localFindings="aiLocalFindings"
+      :localSuggestions="aiLocalSuggestions"
       @close="showDiagnosisModal = false"
       @diagnose="handleDiagnose"
     />
@@ -264,6 +265,7 @@ const {
   result: aiResult,
   error: aiError,
   localFindings: aiLocalFindings,
+  localSuggestions: aiLocalSuggestions,
   diagnose: aiDiagnose,
 } = useAiDiagnosis()
 

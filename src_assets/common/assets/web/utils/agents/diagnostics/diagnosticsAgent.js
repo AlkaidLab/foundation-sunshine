@@ -17,12 +17,17 @@ import {
   createLogSeveritySkill,
   LOG_SEVERITY_SKILL_ID,
 } from './skills/logSeveritySkill.js'
+import {
+  createLogRemediationSkill,
+  LOG_REMEDIATION_SKILL_ID,
+} from './skills/logRemediationSkill.js'
 
 export const DIAGNOSTICS_AGENT_ID = 'diagnostics'
 
 export const DIAGNOSTICS_SKILL_IDS = {
   logSeverity: LOG_SEVERITY_SKILL_ID,
   logPatterns: LOG_PATTERN_SKILL_ID,
+  logRemediation: LOG_REMEDIATION_SKILL_ID,
 }
 
 export const DIAGNOSTICS_CAPABILITIES = [
@@ -44,6 +49,17 @@ export const DIAGNOSTICS_CAPABILITIES = [
     label: 'Log pattern detection',
     labels: {
       zh: '日志模式检测',
+    },
+    defaultEnabled: true,
+    userSelectable: true,
+  },
+  {
+    skillId: LOG_REMEDIATION_SKILL_ID,
+    stage: 'log-analysis',
+    icon: 'fa-screwdriver-wrench',
+    label: 'Log remediation suggestions',
+    labels: {
+      zh: '日志修复建议',
     },
     defaultEnabled: true,
     userSelectable: true,
@@ -102,6 +118,7 @@ export function createDefaultDiagnosticsSkills(options = {}) {
   return [
     createLogSeveritySkill(options.logSeverity),
     createLogPatternSkill(options.logPatterns),
+    createLogRemediationSkill(options.logRemediation),
     ...diagnosticsRegistry.getExtensionSkills(),
   ]
 }
@@ -116,6 +133,7 @@ export function createDiagnosticsAgent(options = {}) {
       return {
         logs,
         findings: [],
+        suggestions: [],
         severitySummary: null,
         events: [],
         stats: {},

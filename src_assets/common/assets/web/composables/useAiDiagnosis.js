@@ -55,6 +55,7 @@ function isApiKeyRequired(cfg) {
 
 function buildLocalDiagnosticsSummary(diagnostics) {
   const findings = diagnostics?.findings || []
+  const suggestions = diagnostics?.suggestions || []
   const severity = diagnostics?.severitySummary?.counts || {}
 
   return JSON.stringify({
@@ -66,6 +67,12 @@ function buildLocalDiagnosticsSummary(diagnostics) {
       message: finding.message,
       count: finding.count,
       evidence: (finding.evidence || []).slice(0, 3),
+    })),
+    suggestions: suggestions.map((suggestion) => ({
+      findingType: suggestion.findingType,
+      severity: suggestion.severity,
+      title: suggestion.title,
+      actions: suggestion.actions,
     })),
   }, null, 2)
 }
@@ -88,6 +95,7 @@ export function useAiDiagnosis() {
   const result = ref('')
   const error = ref('')
   const localFindings = ref([])
+  const localSuggestions = ref([])
   const localSeveritySummary = ref(null)
 
   async function loadConfig() {
@@ -140,6 +148,7 @@ export function useAiDiagnosis() {
 
     const diagnostics = await runDiagnosticsAgent(logs)
     localFindings.value = diagnostics.findings || []
+    localSuggestions.value = diagnostics.suggestions || []
     localSeveritySummary.value = diagnostics.severitySummary || null
 
     const validationError = validateConfig()
@@ -156,6 +165,7 @@ export function useAiDiagnosis() {
     const truncated = lines.slice(-200).join('\n')
     const localSummary = buildLocalDiagnosticsSummary({
       findings: localFindings.value,
+      suggestions: localSuggestions.value,
       severitySummary: localSeveritySummary.value,
     })
 
@@ -205,6 +215,7 @@ export function useAiDiagnosis() {
     result,
     error,
     localFindings,
+    localSuggestions,
     localSeveritySummary,
     diagnose,
     loadConfig,
