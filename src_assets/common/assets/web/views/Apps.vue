@@ -83,6 +83,15 @@
             <i class="fas" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-gamepad'"></i>
           </button>
           <button
+            class="cute-btn cute-btn-maintenance"
+            @click="runLibraryMaintenanceCheck"
+            :disabled="isCheckingLibraryMaintenance"
+            title="应用库体检"
+            aria-label="应用库体检"
+          >
+            <i class="fas" :class="isCheckingLibraryMaintenance ? 'fa-spinner fa-spin' : 'fa-stethoscope'"></i>
+          </button>
+          <button
             class="cute-btn cute-btn-secondary"
             data-bs-toggle="modal"
             data-bs-target="#envVarsModal"
@@ -329,6 +338,62 @@
         @close="closeAppEditor"
       />
 
+      <Transition name="fade">
+        <div v-if="showLibraryMaintenance" class="library-maintenance-overlay" @click.self="closeLibraryMaintenance">
+          <section class="library-maintenance-modal" role="dialog" aria-modal="true" aria-labelledby="libraryMaintenanceTitle">
+            <header class="library-maintenance-header">
+              <div>
+                <h5 id="libraryMaintenanceTitle">
+                  <i class="fas fa-stethoscope me-2"></i>应用库体检
+                </h5>
+                <div class="library-maintenance-summary">
+                  <span>{{ libraryMaintenanceIssues.length }} issues</span>
+                  <span v-if="libraryMaintenanceIssueCounts.error">{{ libraryMaintenanceIssueCounts.error }} error</span>
+                  <span v-if="libraryMaintenanceIssueCounts.warning">{{ libraryMaintenanceIssueCounts.warning }} warning</span>
+                  <span v-if="libraryMaintenanceIssueCounts.info">{{ libraryMaintenanceIssueCounts.info }} info</span>
+                </div>
+              </div>
+              <button class="btn-close" type="button" aria-label="Close" @click="closeLibraryMaintenance"></button>
+            </header>
+
+            <div class="library-maintenance-body">
+              <div v-if="libraryMaintenanceIssues.length === 0" class="library-maintenance-empty">
+                <i class="fas fa-circle-check"></i>
+                <p>应用库状态良好</p>
+              </div>
+              <div v-else class="library-issue-list">
+                <article
+                  v-for="issue in libraryMaintenanceIssues"
+                  :key="issue.id"
+                  class="library-issue"
+                  :class="getLibraryMaintenanceIssueSeverityClass(issue)"
+                >
+                  <div class="library-issue-icon">
+                    <i
+                      class="fas"
+                      :class="issue.severity === 'error' ? 'fa-circle-exclamation' : issue.severity === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-info'"
+                    ></i>
+                  </div>
+                  <div class="library-issue-content">
+                    <div class="library-issue-title">{{ getLibraryMaintenanceIssueLabel(issue) }}</div>
+                    <div v-if="getLibraryMaintenanceIssueApps(issue)" class="library-issue-apps">
+                      {{ getLibraryMaintenanceIssueApps(issue) }}
+                    </div>
+                    <code v-if="issue.evidence?.cmd" class="library-issue-evidence">{{ issue.evidence.cmd }}</code>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <footer class="library-maintenance-footer">
+              <button type="button" class="btn btn-secondary" @click="closeLibraryMaintenance">
+                关闭
+              </button>
+            </footer>
+          </section>
+        </div>
+      </Transition>
+
       <!-- 提示消息 -->
       <div v-if="message" class="alert-toast" :class="messageClass">
         <i class="fas" :class="getMessageIcon()"></i>
@@ -519,6 +584,10 @@ const {
   isScanning,
   scannedApps,
   showScanResult,
+  isCheckingLibraryMaintenance,
+  showLibraryMaintenance,
+  libraryMaintenanceIssues,
+  libraryMaintenanceIssueCounts,
   selectableGameLibrarySkills,
   loadApps,
   loadPlatform,
@@ -555,6 +624,11 @@ const {
   closeScanResult,
   removeScannedApp,
   quickAddScannedApp,
+  runLibraryMaintenanceCheck,
+  closeLibraryMaintenance,
+  getLibraryMaintenanceIssueLabel,
+  getLibraryMaintenanceIssueApps,
+  getLibraryMaintenanceIssueSeverityClass,
   isTauriEnv,
   isGameLibrarySkillEnabled,
   toggleGameLibrarySkill,
