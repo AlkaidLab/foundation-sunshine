@@ -2,11 +2,20 @@
 
 这套代码负责在 WebUI 的应用扫描流程中，对扫描到的游戏资源做 AI 辅助整理：复用用户已确认的修正、清洗游戏标题、生成封面搜索词、匹配封面，并把低置信度结果留给用户复核。
 
+## 分层设计
+
+- 通用底座：`utils/agents/core/agentCore.js` 提供 agent runner、skill 校验、capability registry、默认启用能力计算和用户选择归一化。
+- 领域适配：`utils/agents/gameLibrary/gameLibraryCuratorAgent.js` 定义游戏资源搜刮的 skill id、capability 文案、默认 skills 和 `apps` context。
+- 领域能力：`skills/` 下的每个文件只实现一个游戏资源处理能力。
+- 领域策略：`policies/` 放不依赖 UI 的判断规则，例如复核队列阈值。
+
+游戏资源之外的新能力不应该塞进 `gameLibrary`。如果要接入日志诊断、配置建议、库维护等能力，应新增自己的 domain agent，并复用 `agents/core`。
+
 ## 入口与边界
 
 - UI 入口：`views/Apps.vue` 展示扫描结果和用户可选的 AI skill 开关。
 - 组合逻辑：`composables/useApps.js` 调用扫描能力，并运行 `runGameLibraryCuratorAgent()`。
-- Agent 入口：`utils/agents/gameLibrary/gameLibraryCuratorAgent.js` 注册能力、规范 skill id、顺序执行 skills。
+- Agent 入口：`utils/agents/gameLibrary/gameLibraryCuratorAgent.js` 注册游戏能力，底层执行由 `utils/agents/core/agentCore.js` 完成。
 - AI 请求：WebUI 只调用 `/api/ai/chat/completions`，不保存独立 LLM 配置。
 - 配置入口：LLM provider、base URL、model、API key 等配置统一由 control panel 的米塔页面维护，并同步到 Sunshine 后端 `/api/ai/config`。
 
@@ -58,6 +67,53 @@
 - `options`：运行时回调，例如 `onTitlesEnhanced`、`onCoverResolved`、`onSkillError`。
 
 Agent 默认会捕获单个 skill 的异常，记录 `skill:error` 事件并继续后续 skill。只有传入 `stopOnSkillError: true` 时才会中断整轮。
+
+## 新增其他 Domain Agent
+
+新增游戏资源之外的能力时，优先建立独立目录，例如：
+
+```text
+utils/agents/diagnostics/
+utils/agents/configAdvisor/
+utils/agents/libraryMaintenance/
+```
+
+推荐结构：
+
+```js
+import {
+  createAgent,
+  createAgentSkill,
+  createSkillRegistry,
+} from '../core/agentCore.js'
+
+export const DIAGNOSTICS_AGENT_ID = 'diagnostics'
+
+export function createDiagnosticsSkill(definition) {
+  return createAgentSkill(definition, {
+    skillSubject: 'Diagnostics skills',
+    runSubject: 'Diagnostics skill',
+  })
+}
+
+const registry = createSkillRegistry({
+  baseCapabilities: DIAGNOSTICS_CAPABILITIES,
+  createSkill: createDiagnosticsSkill,
+  duplicateMessage: 'Diagnostics skill already registered',
+})
+
+export function createDiagnosticsAgent(options = {}) {
+  return createAgent({
+    id: DIAGNOSTICS_AGENT_ID,
+    skills: options.skills || createDefaultDiagnosticsSkills(),
+    createContext(input, runOptions) {
+      return { input, events: [], stats: {}, options: runOptions }
+    },
+  })
+}
+```
+
+每个 domain agent 应自己定义 context 形状、capability 文案、默认启用规则和 UI 接入点。通用 core 不应该知道具体业务字段。
 
 ## 新增内置 Skill
 
@@ -150,6 +206,7 @@ git diff --check
 
 重点测试文件：
 
+- `tests/agentCore.test.js`
 - `tests/gameLibraryCuratorAgent.test.js`
 - `tests/gameMetadataAi.test.js`
 - `tests/aiCache.test.js`
