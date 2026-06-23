@@ -8,11 +8,80 @@ import {
   applyGameLibraryOverrides,
   enhanceGameLibraryMetadata,
   findGameLibraryCover,
+  GAME_LIBRARY_AGENT_CAPABILITIES,
+  GAME_LIBRARY_SKILL_IDS,
   getGameResourceKey,
   rememberGameLibraryApp,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
 const MESSAGE_DURATION = 3000
+const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
+const GAME_LIBRARY_SKILL_UI = {
+  [GAME_LIBRARY_SKILL_IDS.titleNormalize]: {
+    icon: 'fa-wand-magic-sparkles',
+    label: 'AI name cleanup',
+    zhLabel: 'AI 名称清洗',
+  },
+  [GAME_LIBRARY_SKILL_IDS.coverSelection]: {
+    icon: 'fa-image',
+    label: 'AI cover matching',
+    zhLabel: 'AI 封面匹配',
+  },
+}
+
+function getDefaultEnabledGameLibrarySkillIds() {
+  return GAME_LIBRARY_AGENT_CAPABILITIES
+    .filter((capability) => capability.defaultEnabled)
+    .map((capability) => capability.skillId)
+}
+
+function getStorage() {
+  return typeof localStorage !== 'undefined' ? localStorage : null
+}
+
+function normalizeEnabledGameLibrarySkillIds(skillIds) {
+  const known = new Set(GAME_LIBRARY_AGENT_CAPABILITIES.map((capability) => capability.skillId))
+  const enabled = Array.isArray(skillIds) ? skillIds.filter((skillId) => known.has(skillId)) : []
+  if (!enabled.includes(GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)) {
+    enabled.unshift(GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)
+  }
+  return Array.from(new Set(enabled))
+}
+
+function loadEnabledGameLibrarySkillIds() {
+  const storage = getStorage()
+  if (!storage) {
+    return getDefaultEnabledGameLibrarySkillIds()
+  }
+
+  try {
+    const raw = storage.getItem(GAME_LIBRARY_SKILL_PREFS_KEY)
+    if (!raw) {
+      return getDefaultEnabledGameLibrarySkillIds()
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed?.enabledSkillIds)) {
+      return getDefaultEnabledGameLibrarySkillIds()
+    }
+    return normalizeEnabledGameLibrarySkillIds(parsed.enabledSkillIds)
+  } catch {
+    return getDefaultEnabledGameLibrarySkillIds()
+  }
+}
+
+function saveEnabledGameLibrarySkillIds(skillIds) {
+  const storage = getStorage()
+  if (!storage) return
+
+  try {
+    storage.setItem(
+      GAME_LIBRARY_SKILL_PREFS_KEY,
+      JSON.stringify({ enabledSkillIds: normalizeEnabledGameLibrarySkillIds(skillIds) })
+    )
+  } catch {
+    // Skill preferences are convenience state; scanning should continue if persistence fails.
+  }
+}
 
 /**
  * 应用管理组合式函数
@@ -39,6 +108,7 @@ export function useApps() {
   const scannedAppsSearchQuery = ref('')
   const showGamesOnly = ref(false)
   const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
+  const enabledGameLibrarySkillIds = ref(loadEnabledGameLibrarySkillIds())
   const deleteConfirmIndex = ref(null)
 
   // 批量删除：selectionMode 仅控制 UI 是否显示多选 checkbox；
@@ -55,6 +125,9 @@ export function useApps() {
   }))
 
   const filteredApps = computed(() => AppService.searchApps(apps.value, committedSearchQuery.value))
+  const selectableGameLibrarySkills = computed(() =>
+    GAME_LIBRARY_AGENT_CAPABILITIES.filter((capability) => capability.userSelectable)
+  )
 
   // 消息图标映射
   const MESSAGE_ICONS = {
@@ -73,6 +146,51 @@ export function useApps() {
   }
 
   const getMessageIcon = () => MESSAGE_ICONS[messageType.value] || MESSAGE_ICONS.success
+
+  const isGameLibrarySkillEnabled = (skillId) => enabledGameLibrarySkillIds.value.includes(skillId)
+  const isGameLibrarySkillEnabledIn = (skillId, skillIds) => skillIds.includes(skillId)
+
+  const toggleGameLibrarySkill = (skillId) => {
+    const selectable = selectableGameLibrarySkills.value.some((capability) => capability.skillId === skillId)
+    if (!selectable) return
+
+    const enabled = new Set(enabledGameLibrarySkillIds.value)
+    if (enabled.has(skillId)) {
+      enabled.delete(skillId)
+    } else {
+      enabled.add(skillId)
+    }
+
+    enabledGameLibrarySkillIds.value = normalizeEnabledGameLibrarySkillIds(Array.from(enabled))
+    saveEnabledGameLibrarySkillIds(enabledGameLibrarySkillIds.value)
+  }
+
+  const getGameLibrarySkillIcon = (skillId) => GAME_LIBRARY_SKILL_UI[skillId]?.icon || 'fa-bolt'
+
+  const getGameLibrarySkillLabel = (skillId) => {
+    const ui = GAME_LIBRARY_SKILL_UI[skillId]
+    if (!ui) return skillId
+    const locale = typeof document === 'undefined'
+      ? ''
+      : String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
+    return locale.startsWith('zh') ? ui.zhLabel : ui.label
+  }
+
+  const getScanEnhancementMessage = (count, itemLabel) => {
+    const titleEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.titleNormalize)
+    const coverEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.coverSelection)
+
+    if (titleEnabled && coverEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在清洗名称并搜索封面...`
+    }
+    if (titleEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在清洗名称...`
+    }
+    if (coverEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在搜索封面...`
+    }
+    return `找到 ${count} 个${itemLabel}`
+  }
 
   const createDefaultApp = (overrides = {}) => ({
     ...APP_CONSTANTS.DEFAULT_APP,
@@ -347,10 +465,10 @@ export function useApps() {
         const overriddenApps = applyGameLibraryOverrides(foundApps)
         scannedApps.value = overriddenApps
         showScanResult.value = true
-        showMessage(`找到 ${foundApps.length} 个应用程序，正在搜索封面...`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        showMessage(getScanEnhancementMessage(foundApps.length, '应用程序'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
         // 异步更新封面图片
-        asyncEnhanceAndUpdateCovers(overriddenApps)
+        asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
       }
 
       trackEvents.userAction('directory_scanned', { count: foundApps.length, extractIcons })
@@ -409,7 +527,7 @@ export function useApps() {
           `找到 ${result.total ?? allGames.length} 个游戏 (${parts.join(', ')})，耗时 ${result.scan_time_ms ?? 0}ms`,
           APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
         )
-        asyncEnhanceAndUpdateCovers(overriddenApps)
+        asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
       }
 
       trackEvents.userAction('game_libraries_scanned', {
@@ -447,22 +565,26 @@ export function useApps() {
     return changed
   }
 
-  const asyncEnhanceAndUpdateCovers = async (appList) => {
+  const asyncEnhanceAndUpdateCovers = async (appList, enabledSkillIds = enabledGameLibrarySkillIds.value) => {
     let coverList = appList
 
-    try {
-      const enhanced = await enhanceGameLibraryMetadata(appList)
-      const changed = applyEnhancedScannedApps(appList, enhanced)
-      coverList = enhanced
-      if (changed > 0) {
-        showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+    if (isGameLibrarySkillEnabledIn(GAME_LIBRARY_SKILL_IDS.titleNormalize, enabledSkillIds)) {
+      try {
+        const enhanced = await enhanceGameLibraryMetadata(appList)
+        const changed = applyEnhancedScannedApps(appList, enhanced)
+        coverList = enhanced
+        if (changed > 0) {
+          showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+        }
+      } catch (error) {
+        console.warn('AI name cleanup failed; falling back to original names:', error)
+        showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
       }
-    } catch (error) {
-      console.warn('AI name cleanup failed; falling back to original names:', error)
-      showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
     }
 
-    await asyncUpdateCovers(coverList)
+    if (isGameLibrarySkillEnabledIn(GAME_LIBRARY_SKILL_IDS.coverSelection, enabledSkillIds)) {
+      await asyncUpdateCovers(coverList)
+    }
   }
 
   const asyncUpdateCovers = async (appList) => {
@@ -683,6 +805,8 @@ export function useApps() {
     scannedAppsSearchQuery,
     showGamesOnly,
     selectedAppType,
+    enabledGameLibrarySkillIds,
+    selectableGameLibrarySkills,
     selectionMode,
     selectedIndices,
     batchDeleteConfirm,
@@ -730,6 +854,10 @@ export function useApps() {
     searchCoverForScannedApp,
     isTauriEnv,
     showMessage,
+    isGameLibrarySkillEnabled,
+    toggleGameLibrarySkill,
+    getGameLibrarySkillIcon,
+    getGameLibrarySkillLabel,
     getMessageIcon,
     handleCopySuccess,
     handleCopyError,

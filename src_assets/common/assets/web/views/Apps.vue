@@ -57,6 +57,21 @@
           >
             <i class="fas" :class="selectionMode ? 'fa-square-check' : 'fa-square'"></i>
           </button>
+          <template v-if="isTauriEnv()">
+            <button
+              v-for="skill in selectableGameLibrarySkills"
+              :key="skill.skillId"
+              class="cute-btn ai-skill-btn"
+              :class="isGameLibrarySkillEnabled(skill.skillId) ? 'cute-btn-primary' : 'cute-btn-secondary ai-skill-btn--off'"
+              type="button"
+              :aria-pressed="isGameLibrarySkillEnabled(skill.skillId)"
+              :aria-label="getGameLibrarySkillLabel(skill.skillId)"
+              :title="getGameLibrarySkillLabel(skill.skillId)"
+              @click="toggleGameLibrarySkill(skill.skillId)"
+            >
+              <i class="fas" :class="getGameLibrarySkillIcon(skill.skillId)"></i>
+            </button>
+          </template>
           <button
             v-if="isTauriEnv()"
             class="cute-btn cute-btn-info"
@@ -504,6 +519,7 @@ const {
   isScanning,
   scannedApps,
   showScanResult,
+  selectableGameLibrarySkills,
   loadApps,
   loadPlatform,
   clearSearch,
@@ -540,6 +556,10 @@ const {
   removeScannedApp,
   quickAddScannedApp,
   isTauriEnv,
+  isGameLibrarySkillEnabled,
+  toggleGameLibrarySkill,
+  getGameLibrarySkillIcon,
+  getGameLibrarySkillLabel,
   getMessageIcon,
   handleCopySuccess,
   handleCopyError,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   createGameLibraryCuratorAgent,
+  GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
   getGameResourceReviewReasons,
   needsGameResourceReview,
@@ -84,6 +85,22 @@ test('game library curator agent can run a selected skill subset', async () => {
   })
 
   assert.deepEqual(calls, ['title'])
+})
+
+test('game library curator capabilities expose user-selectable skills', () => {
+  const selectableSkillIds = GAME_LIBRARY_AGENT_CAPABILITIES
+    .filter((capability) => capability.userSelectable)
+    .map((capability) => capability.skillId)
+
+  assert.deepEqual(selectableSkillIds, [
+    GAME_LIBRARY_SKILL_IDS.titleNormalize,
+    GAME_LIBRARY_SKILL_IDS.coverSelection,
+  ])
+  assert.equal(
+    GAME_LIBRARY_AGENT_CAPABILITIES.find((capability) => capability.skillId === GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)
+      .userSelectable,
+    false
+  )
 })
 
 test('game resource review policy flags low confidence and missing cover', () => {

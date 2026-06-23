@@ -1310,6 +1310,26 @@
   }
 }
 
+.ai-skill-btn {
+  font-size: var(--font-size-md);
+
+  &--off {
+    opacity: 0.58;
+    filter: saturate(0.55);
+
+    &::after {
+      content: '';
+      position: absolute;
+      width: 24px;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.88);
+      border-radius: 999px;
+      transform: rotate(-38deg);
+      z-index: 3;
+    }
+  }
+}
+
 // ============================================================================
 // LIST ITEM STYLES
 // ============================================================================
