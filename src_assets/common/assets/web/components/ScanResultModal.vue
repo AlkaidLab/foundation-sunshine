@@ -275,6 +275,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import {
+  getGameResourceReviewReasons,
+  needsGameResourceReview,
+} from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
 const { t, locale } = useI18n()
 
@@ -301,8 +305,6 @@ const selectedType = ref('all')
 const gamesOnly = ref(false)
 const reviewOnly = ref(false)
 
-const NAME_REVIEW_THRESHOLD = 0.82
-const COVER_REVIEW_THRESHOLD = 0.7
 const isChineseLocale = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
 const reviewLabel = computed(() => (isChineseLocale.value ? '需要审核' : 'Review'))
 
@@ -403,38 +405,12 @@ const filteredApps = computed(() => {
 })
 
 // 应用类型标签
-function hasNumericValue(value) {
-  return Number.isFinite(Number(value))
-}
-
 function needsReview(app) {
-  return getReviewReasons(app).length > 0
+  return needsGameResourceReview(app, { locale: locale.value })
 }
 
 function getReviewReasons(app) {
-  const reasons = []
-  const nameConfidence = Number(app['ai-confidence'])
-  const coverConfidence = Number(app['ai-cover-confidence'])
-
-  if (hasNumericValue(app['ai-confidence']) && nameConfidence < NAME_REVIEW_THRESHOLD) {
-    const percent = Math.round(nameConfidence * 100)
-    reasons.push(isChineseLocale.value ? `名称置信度 ${percent}%` : `Low name confidence ${percent}%`)
-  }
-
-  if (app['is-game'] === true && !app['canonical-name']) {
-    reasons.push(isChineseLocale.value ? '缺少规范名称' : 'Missing canonical name')
-  }
-
-  if (app['is-game'] === true && !app['image-path']) {
-    reasons.push(isChineseLocale.value ? '缺少封面' : 'Missing cover')
-  }
-
-  if (hasNumericValue(app['ai-cover-confidence']) && coverConfidence < COVER_REVIEW_THRESHOLD) {
-    const percent = Math.round(coverConfidence * 100)
-    reasons.push(isChineseLocale.value ? `封面置信度 ${percent}%` : `Low cover confidence ${percent}%`)
-  }
-
-  return reasons
+  return getGameResourceReviewReasons(app, { locale: locale.value })
 }
 
 const getAppTypeLabel = (appType) => {
