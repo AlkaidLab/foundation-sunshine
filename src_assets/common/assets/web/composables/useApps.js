@@ -6,12 +6,12 @@ import { trackEvents } from '../config/firebase.js'
 import {
   applyCoverToGameResource,
   applyGameLibraryOverrides,
-  enhanceGameLibraryMetadata,
   findGameLibraryCover,
   GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
   getGameResourceKey,
   rememberGameLibraryApp,
+  runGameLibraryCuratorAgent,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
 const MESSAGE_DURATION = 3000
@@ -148,7 +148,6 @@ export function useApps() {
   const getMessageIcon = () => MESSAGE_ICONS[messageType.value] || MESSAGE_ICONS.success
 
   const isGameLibrarySkillEnabled = (skillId) => enabledGameLibrarySkillIds.value.includes(skillId)
-  const isGameLibrarySkillEnabledIn = (skillId, skillIds) => skillIds.includes(skillId)
 
   const toggleGameLibrarySkill = (skillId) => {
     const selectable = selectableGameLibrarySkills.value.some((capability) => capability.skillId === skillId)
@@ -566,60 +565,43 @@ export function useApps() {
   }
 
   const asyncEnhanceAndUpdateCovers = async (appList, enabledSkillIds = enabledGameLibrarySkillIds.value) => {
-    let coverList = appList
+    const enabled = normalizeEnabledGameLibrarySkillIds(enabledSkillIds)
 
-    if (isGameLibrarySkillEnabledIn(GAME_LIBRARY_SKILL_IDS.titleNormalize, enabledSkillIds)) {
-      try {
-        const enhanced = await enhanceGameLibraryMetadata(appList)
-        const changed = applyEnhancedScannedApps(appList, enhanced)
-        coverList = enhanced
+    const result = await runGameLibraryCuratorAgent(appList, {
+      enabledSkills: enabled,
+      onTitlesEnhanced(enhanced, { changed }) {
+        applyEnhancedScannedApps(appList, enhanced)
         if (changed > 0) {
           showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
         }
-      } catch (error) {
-        console.warn('AI name cleanup failed; falling back to original names:', error)
-        showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
-      }
-    }
-
-    if (isGameLibrarySkillEnabledIn(GAME_LIBRARY_SKILL_IDS.coverSelection, enabledSkillIds)) {
-      await asyncUpdateCovers(coverList)
-    }
-  }
-
-  const asyncUpdateCovers = async (appList) => {
-    let coversFound = 0
-    const total = appList.length
-
-    // 并行搜索所有封面，但逐个更新UI
-    const promises = appList.map(async (app, index) => {
-      try {
-        const appKey = getScannedAppKey(app, index)
-
-        if (app?.['user-override'] === true && app?.['image-path']) {
-          coversFound++
-          return
+      },
+      onCoverResolved(next, { key }) {
+        const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === key)
+        if (currentIndex !== -1) {
+          scannedApps.value[currentIndex] = {
+            ...scannedApps.value[currentIndex],
+            ...next,
+          }
         }
-
-        const cover = await findGameLibraryCover(app)
-        const imagePath = cover?.saveUrl || cover?.url || ''
-        const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === appKey)
-        if (imagePath && currentIndex !== -1) {
-          scannedApps.value[currentIndex] = applyCoverToGameResource(scannedApps.value[currentIndex], cover)
-          coversFound++
+      },
+      onSkillError(skillId, error) {
+        if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
+          console.warn('AI name cleanup failed; falling back to original names:', error)
+          showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        } else if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
+          console.warn('AI cover selection failed:', error)
         }
-      } catch (error) {
-        console.warn(`搜索封面失败: ${app.name}`, error)
-      }
+      },
     })
 
-    await Promise.allSettled(promises)
-
-    // 搜索完成后显示结果
-    showMessage(
-      `已匹配 ${coversFound}/${total} 个封面`,
-      coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
-    )
+    if (enabled.includes(GAME_LIBRARY_SKILL_IDS.coverSelection)) {
+      const coversFound = result.stats?.coversFound || 0
+      const total = appList.length
+      showMessage(
+        `已匹配 ${coversFound}/${total} 个封面`,
+        coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
+      )
+    }
   }
 
   // 扫描应用字段处理

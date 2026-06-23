@@ -87,6 +87,38 @@ test('game library curator agent can run a selected skill subset', async () => {
   assert.deepEqual(calls, ['title'])
 })
 
+test('game library curator agent continues after a skill failure', async () => {
+  const errors = []
+  const calls = []
+  const agent = createGameLibraryCuratorAgent({
+    skills: [
+      createGameTitleNormalizeSkill({
+        async enhanceNames() {
+          calls.push('title')
+          throw new Error('metadata unavailable')
+        },
+      }),
+      createCoverSelectionSkill({
+        async findCover() {
+          calls.push('cover')
+          return { saveUrl: 'fallback-cover.jpg', source: 'steam', name: 'Raw Game' }
+        },
+      }),
+    ],
+  })
+
+  const result = await agent.run([{ name: 'Raw Game', cmd: 'raw.exe' }], {
+    onSkillError(skillId, error) {
+      errors.push([skillId, error.message])
+    },
+  })
+
+  assert.deepEqual(calls, ['title', 'cover'])
+  assert.deepEqual(errors, [[GAME_LIBRARY_SKILL_IDS.titleNormalize, 'metadata unavailable']])
+  assert.equal(result.stats.skillFailures, 1)
+  assert.equal(result.apps[0]['image-path'], 'fallback-cover.jpg')
+})
+
 test('game library curator capabilities expose user-selectable skills', () => {
   const selectableSkillIds = GAME_LIBRARY_AGENT_CAPABILITIES
     .filter((capability) => capability.userSelectable)

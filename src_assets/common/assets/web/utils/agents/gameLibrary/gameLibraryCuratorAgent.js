@@ -78,7 +78,23 @@ export function createGameLibraryCuratorAgent(options = {}) {
       }
 
       for (const skill of filterSkills(skills, runOptions.enabledSkills)) {
-        context = await skill.run(context)
+        try {
+          context = await skill.run(context)
+        } catch (error) {
+          context.options?.onSkillError?.(skill.id, error)
+          context.events.push({
+            skillId: skill.id,
+            type: 'skill:error',
+            error,
+          })
+          context.stats = {
+            ...(context.stats || {}),
+            skillFailures: (context.stats?.skillFailures || 0) + 1,
+          }
+          if (runOptions.stopOnSkillError) {
+            throw error
+          }
+        }
       }
 
       return context
