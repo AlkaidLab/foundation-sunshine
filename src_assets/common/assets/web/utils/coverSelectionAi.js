@@ -169,7 +169,13 @@ export async function findBestCoverForApp(app) {
     return cached
   }
 
-  const candidates = await collectCoverCandidates(app)
+  let candidates = []
+  try {
+    candidates = await collectCoverCandidates(app)
+  } catch (error) {
+    console.warn('Cover candidate search failed; skipping cover selection:', error)
+    return null
+  }
   if (candidates.length === 0) {
     coverCache.set(cacheKey, null)
     return null

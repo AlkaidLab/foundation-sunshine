@@ -212,10 +212,10 @@
                 <div v-if="app['original-name'] && app['original-name'] !== app.name" class="scan-app-cmd small">
                   Original: {{ app['original-name'] }}
                 </div>
-                <div v-if="app['canonical-name'] || app['ai-confidence']" class="scan-app-cmd small">
+                <div v-if="app['canonical-name'] || hasNumericValue(app['ai-confidence'])" class="scan-app-cmd small">
                   <i class="fas fa-wand-magic-sparkles me-1"></i>
                   {{ app['canonical-name'] || app.name }}
-                  <span v-if="app['ai-confidence']" class="badge bg-info ms-1">
+                  <span v-if="hasNumericValue(app['ai-confidence'])" class="badge bg-info ms-1">
                     {{ Math.round(app['ai-confidence'] * 100) }}%
                   </span>
                 </div>
@@ -223,7 +223,7 @@
                   <i class="fas fa-image me-1"></i>
                   {{ app['cover-source'] || 'cover' }}
                   <span v-if="app['cover-match-name']">: {{ app['cover-match-name'] }}</span>
-                  <span v-if="app['ai-cover-confidence']" class="badge bg-info ms-1">
+                  <span v-if="hasNumericValue(app['ai-cover-confidence'])" class="badge bg-info ms-1">
                     {{ Math.round(app['ai-cover-confidence'] * 100) }}%
                   </span>
                 </div>
@@ -335,7 +335,11 @@ watch(
 
 // 当数组内部变化时（quick-add/remove via splice），仅做防御性校正
 watch(
-  () => [props.apps.length, ...props.apps.map((a) => a['app-type'])],
+  () => props.apps.map((app) => ({
+    type: app['app-type'],
+    isGame: app['is-game'] === true,
+    review: needsReview(app),
+  })),
   () => {
     // 如果当前选中的 type 已经没有对应项了，回退到 'all'
     if (selectedType.value !== 'all') {
@@ -405,6 +409,10 @@ const filteredApps = computed(() => {
 })
 
 // 应用类型标签
+function hasNumericValue(value) {
+  return Number.isFinite(Number(value))
+}
+
 function needsReview(app) {
   return needsGameResourceReview(app, { locale: locale.value })
 }

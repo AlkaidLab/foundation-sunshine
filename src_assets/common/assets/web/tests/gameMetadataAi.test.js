@@ -129,3 +129,57 @@ test('enhanceScannedGameNames skips user override entries', async () => {
     globalThis.fetch = originalFetch
   }
 })
+
+test('enhanceScannedGameNames skips failed batches and keeps later successes', async () => {
+  __aiCacheTestUtils.clearMemoryStores()
+  const originalFetch = globalThis.fetch
+  const originalWarn = console.warn
+  let fetchCalls = 0
+
+  console.warn = () => {}
+  globalThis.fetch = async () => {
+    fetchCalls += 1
+    if (fetchCalls === 1) {
+      throw new Error('temporary metadata outage')
+    }
+
+    return {
+      ok: true,
+      async json() {
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  items: [
+                    {
+                      id: '20',
+                      displayName: 'Recovered Game',
+                      canonicalName: 'Recovered Game',
+                      searchTerms: ['Recovered Game'],
+                      isGame: true,
+                      confidence: 0.95,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }
+      },
+    }
+  }
+
+  try {
+    const apps = Array.from({ length: 21 }, (_, index) => ({ name: `game-${index}.exe` }))
+    const result = await enhanceScannedGameNames(apps)
+
+    assert.equal(fetchCalls, 2)
+    assert.equal(result[0].name, 'game-0.exe')
+    assert.equal(result[20].name, 'Recovered Game')
+    assert.equal(result[20]['canonical-name'], 'Recovered Game')
+  } finally {
+    globalThis.fetch = originalFetch
+    console.warn = originalWarn
+  }
+})

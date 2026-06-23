@@ -398,6 +398,17 @@ export function useApps() {
   // Tauri 环境检测
   const isTauriEnv = () => !!window.__TAURI__?.core?.invoke
 
+  let scanKeySequence = 0
+  const withScanKeys = (appList) => {
+    const scanId = scanKeySequence++
+    return Array.isArray(appList)
+      ? appList.map((app, index) => ({
+          ...app,
+          '__scan-key': app['__scan-key'] || `scan-${scanId}-${index}`,
+        }))
+      : appList
+  }
+
   // 扫描目录功能
   const scanDirectory = async (extractIcons = true) => {
     const tauri = window.__TAURI__
@@ -434,7 +445,7 @@ export function useApps() {
         showMessage('未找到可添加的应用程序', APP_CONSTANTS.MESSAGE_TYPES.INFO)
       } else {
         // 先显示扫描结果（无封面）
-        const overriddenApps = applyGameLibraryOverrides(foundApps)
+        const overriddenApps = withScanKeys(applyGameLibraryOverrides(foundApps))
         scannedApps.value = overriddenApps
         showScanResult.value = true
         showMessage(getScanEnhancementMessage(foundApps.length, '应用程序'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
@@ -487,7 +498,7 @@ export function useApps() {
           'is-game': true,
         }))
 
-        const overriddenApps = applyGameLibraryOverrides(mapped)
+        const overriddenApps = withScanKeys(applyGameLibraryOverrides(mapped))
         scannedApps.value = overriddenApps
         showScanResult.value = true
 

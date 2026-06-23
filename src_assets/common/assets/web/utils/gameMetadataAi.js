@@ -189,7 +189,13 @@ export async function enhanceScannedGameNames(apps) {
 
   const batches = splitIntoBatches(misses)
   for (const batch of batches) {
-    const aiItems = await callAiForBatch(batch)
+    let aiItems = []
+    try {
+      aiItems = await callAiForBatch(batch)
+    } catch (error) {
+      console.warn('AI metadata enhancement failed for batch; skipping:', error)
+      continue
+    }
     const byId = new Map(aiItems.map((item) => [String(item.id), item]))
 
     for (const { app, index, cacheKey } of batch) {

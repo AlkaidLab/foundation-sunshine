@@ -17,6 +17,7 @@ import {
   registerGameLibrarySkillExtension,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 import { createCoverSelectionSkill } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
+import { getGameResourceKey } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
 import { createGameTitleNormalizeSkill } from '../utils/agents/gameLibrary/skills/gameTitleNormalizeSkill.js'
 import { createScanOverrideMemorySkill } from '../utils/agents/gameLibrary/skills/scanOverrideMemorySkill.js'
 
@@ -145,6 +146,14 @@ test('game library curator agent continues after a skill failure', async () => {
   assert.deepEqual(errors, [[GAME_LIBRARY_SKILL_IDS.titleNormalize, 'metadata unavailable']])
   assert.equal(result.stats.skillFailures, 1)
   assert.equal(result.apps[0]['image-path'], 'fallback-cover.jpg')
+})
+
+test('game resource keys stay unique for duplicate launch metadata', () => {
+  const first = { source_path: 'C:/Games/Same', cmd: 'same.exe' }
+  const second = { source_path: 'C:/Games/Same', cmd: 'same.exe' }
+
+  assert.notEqual(getGameResourceKey(first, 0), getGameResourceKey(second, 1))
+  assert.equal(getGameResourceKey({ ...first, '__scan-key': 'scan-1-0' }, 7), 'scan-1-0')
 })
 
 test('game library curator capabilities expose user-selectable skills', () => {

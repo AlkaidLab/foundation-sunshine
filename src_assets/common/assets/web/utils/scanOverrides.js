@@ -29,7 +29,9 @@ function normalizeKeyPart(value) {
 
 function readOverrides() {
   try {
-    const parsed = JSON.parse(getStorage().getItem(OVERRIDE_STORAGE_KEY) || '')
+    const raw = getStorage().getItem(OVERRIDE_STORAGE_KEY)
+    if (!raw) return { entries: {} }
+    const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && parsed.entries && typeof parsed.entries === 'object') {
       return parsed
     }
@@ -83,13 +85,7 @@ export function learnScanOverride(scannedApp, finalApp = scannedApp) {
   return true
 }
 
-export function applyScanOverride(app) {
-  const key = getScanOverrideKey(app)
-  if (!key) return app
-
-  const override = readOverrides().entries[key]
-  if (!override) return app
-
+function applyOverride(app, override) {
   return {
     ...app,
     ...(override.name && { name: override.name }),
@@ -105,8 +101,24 @@ export function applyScanOverride(app) {
   }
 }
 
+export function applyScanOverride(app) {
+  const key = getScanOverrideKey(app)
+  if (!key) return app
+
+  const override = readOverrides().entries[key]
+  if (!override) return app
+
+  return applyOverride(app, override)
+}
+
 export function applyScanOverrides(apps) {
-  return Array.isArray(apps) ? apps.map(applyScanOverride) : apps
+  if (!Array.isArray(apps)) return apps
+
+  const overrides = readOverrides().entries || {}
+  return apps.map((app) => {
+    const key = getScanOverrideKey(app)
+    return key && overrides[key] ? applyOverride(app, overrides[key]) : app
+  })
 }
 
 export const __scanOverrideTestUtils = {

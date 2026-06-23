@@ -5,11 +5,15 @@ const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const memoryStores = new Map()
 
 function getStorage(namespace) {
-  if (typeof localStorage !== 'undefined') {
-    return {
-      getItem: (key) => localStorage.getItem(key),
-      setItem: (key, value) => localStorage.setItem(key, value),
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return {
+        getItem: (key) => localStorage.getItem(key),
+        setItem: (key, value) => localStorage.setItem(key, value),
+      }
     }
+  } catch {
+    // Restricted browsing contexts can throw when localStorage is accessed.
   }
 
   if (!memoryStores.has(namespace)) {
@@ -48,7 +52,11 @@ function loadStore(namespace, version) {
   const empty = { entries: {} }
 
   try {
-    const parsed = JSON.parse(storage.getItem(storageKey) || '')
+    const raw = storage.getItem(storageKey)
+    if (!raw) {
+      return { storage, storageKey, data: empty }
+    }
+    const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && parsed.entries && typeof parsed.entries === 'object') {
       return { storage, storageKey, data: parsed }
     }

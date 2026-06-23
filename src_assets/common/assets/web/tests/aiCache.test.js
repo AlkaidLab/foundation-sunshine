@@ -25,3 +25,28 @@ test('createAiCache preserves cached null values', () => {
 
   assert.equal(cache.get(key), null)
 })
+
+test('createAiCache falls back to memory when localStorage access throws', () => {
+  __aiCacheTestUtils.clearMemoryStores()
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    get() {
+      throw new Error('storage denied')
+    },
+  })
+
+  try {
+    const cache = createAiCache('unit-denied-cache', { version: 'test' })
+    const key = cache.makeKey({ name: 'restricted-storage' })
+    cache.set(key, { ok: true })
+    assert.deepEqual(cache.get(key), { ok: true })
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'localStorage', originalDescriptor)
+    } else {
+      delete globalThis.localStorage
+    }
+  }
+})

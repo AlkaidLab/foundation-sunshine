@@ -3,7 +3,9 @@ import { findBestCoverForApp } from '../../../coverSelectionAi.js'
 export const COVER_SELECTION_SKILL_ID = 'game.cover.select'
 
 export function getGameResourceKey(app, index) {
-  return app?.source_path || app?.cmd || `${app?.name || 'app'}-${index}`
+  if (app?.['__scan-key']) return app['__scan-key']
+  const stablePart = app?.source_path || app?.cmd || app?.name || 'app'
+  return `${stablePart}-${index}`
 }
 
 export function applyCoverToGameResource(app, cover) {

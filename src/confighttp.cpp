@@ -2665,7 +2665,9 @@ namespace confighttp {
         isStream = false;
       }
       processedBody = convertToAnthropicFormat(processedBody, defaultModel);
-      proxyHeaders["x-api-key"] = apiKey;
+      if (!apiKey.empty()) {
+        proxyHeaders["x-api-key"] = apiKey;
+      }
       proxyHeaders["anthropic-version"] = "2023-06-01";
     } else {
       if (!apiKey.empty()) {
