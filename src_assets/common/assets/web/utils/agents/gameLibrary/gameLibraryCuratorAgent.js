@@ -59,9 +59,20 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
 
 const gameLibrarySkillExtensions = []
 
-function assertValidSkill(skill) {
-  if (!skill || typeof skill.id !== 'string' || !skill.id.trim() || typeof skill.run !== 'function') {
-    throw new Error('Game library skill extensions require a skill with id and run(context)')
+export function createGameLibrarySkill(definition = {}) {
+  const id = typeof definition.id === 'string' ? definition.id.trim() : ''
+  if (!id) {
+    throw new Error('Game library skills require a non-empty id')
+  }
+  if (typeof definition.run !== 'function') {
+    throw new Error(`Game library skill requires run(context): ${id}`)
+  }
+
+  return {
+    ...definition,
+    id,
+    type: definition.type || 'extension',
+    label: definition.label || id,
   }
 }
 
@@ -85,8 +96,7 @@ function hasCapability(skillId, capabilities = getGameLibraryCapabilities()) {
 }
 
 export function registerGameLibrarySkillExtension(extension = {}) {
-  const skill = extension.skill
-  assertValidSkill(skill)
+  const skill = createGameLibrarySkill(extension.skill)
 
   if (hasCapability(skill.id)) {
     throw new Error(`Game library skill already registered: ${skill.id}`)

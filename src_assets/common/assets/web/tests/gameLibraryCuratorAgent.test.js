@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   createGameLibraryCuratorAgent,
+  createGameLibrarySkill,
   GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
   getDefaultEnabledGameLibrarySkillIds,
@@ -18,6 +19,26 @@ import {
 import { createCoverSelectionSkill } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
 import { createGameTitleNormalizeSkill } from '../utils/agents/gameLibrary/skills/gameTitleNormalizeSkill.js'
 import { createScanOverrideMemorySkill } from '../utils/agents/gameLibrary/skills/scanOverrideMemorySkill.js'
+
+test('createGameLibrarySkill normalizes extension skill definitions', async () => {
+  const skill = createGameLibrarySkill({
+    id: ' game.test.skill ',
+    async run(context) {
+      return context
+    },
+  })
+
+  assert.equal(skill.id, 'game.test.skill')
+  assert.equal(skill.type, 'extension')
+  assert.equal(skill.label, 'game.test.skill')
+
+  await assert.doesNotReject(() => skill.run({ apps: [] }))
+})
+
+test('createGameLibrarySkill rejects invalid skill definitions', () => {
+  assert.throws(() => createGameLibrarySkill({ run() {} }), /non-empty id/)
+  assert.throws(() => createGameLibrarySkill({ id: 'game.test.invalid' }), /run\(context\)/)
+})
 
 test('game library curator agent runs memory, title, and cover skills in order', async () => {
   const calls = []
