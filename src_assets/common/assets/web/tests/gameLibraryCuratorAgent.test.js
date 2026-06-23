@@ -5,7 +5,12 @@ import {
   createGameLibraryCuratorAgent,
   GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
+  getDefaultEnabledGameLibrarySkillIds,
+  getGameLibraryCapabilityIcon,
+  getGameLibraryCapabilityLabel,
+  getGameLibrarySelectableCapabilities,
   getGameResourceReviewReasons,
+  normalizeGameLibrarySkillIds,
   needsGameResourceReview,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 import { createCoverSelectionSkill } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
@@ -120,8 +125,7 @@ test('game library curator agent continues after a skill failure', async () => {
 })
 
 test('game library curator capabilities expose user-selectable skills', () => {
-  const selectableSkillIds = GAME_LIBRARY_AGENT_CAPABILITIES
-    .filter((capability) => capability.userSelectable)
+  const selectableSkillIds = getGameLibrarySelectableCapabilities()
     .map((capability) => capability.skillId)
 
   assert.deepEqual(selectableSkillIds, [
@@ -133,6 +137,21 @@ test('game library curator capabilities expose user-selectable skills', () => {
       .userSelectable,
     false
   )
+  assert.equal(getGameLibraryCapabilityIcon(GAME_LIBRARY_SKILL_IDS.titleNormalize), 'fa-wand-magic-sparkles')
+  assert.equal(getGameLibraryCapabilityLabel(GAME_LIBRARY_SKILL_IDS.coverSelection), 'AI cover matching')
+  assert.equal(getGameLibraryCapabilityLabel(GAME_LIBRARY_SKILL_IDS.coverSelection, { locale: 'zh-CN' }), 'AI \u5c01\u9762\u5339\u914d')
+})
+
+test('game library curator skill id helpers keep required skills enabled', () => {
+  assert.deepEqual(getDefaultEnabledGameLibrarySkillIds(), [
+    GAME_LIBRARY_SKILL_IDS.scanOverrideMemory,
+    GAME_LIBRARY_SKILL_IDS.titleNormalize,
+    GAME_LIBRARY_SKILL_IDS.coverSelection,
+  ])
+  assert.deepEqual(normalizeGameLibrarySkillIds([GAME_LIBRARY_SKILL_IDS.coverSelection, 'unknown.skill']), [
+    GAME_LIBRARY_SKILL_IDS.scanOverrideMemory,
+    GAME_LIBRARY_SKILL_IDS.coverSelection,
+  ])
 })
 
 test('game resource review policy flags low confidence and missing cover', () => {

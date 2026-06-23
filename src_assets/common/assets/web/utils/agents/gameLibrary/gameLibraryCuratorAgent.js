@@ -24,22 +24,78 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
   {
     skillId: SCAN_OVERRIDE_MEMORY_SKILL_ID,
     stage: 'memory',
+    icon: 'fa-clock-rotate-left',
+    label: 'Confirmed overrides',
+    labels: {
+      zh: '\u5df2\u786e\u8ba4\u8986\u76d6',
+    },
+    required: true,
     defaultEnabled: true,
     userSelectable: false,
   },
   {
     skillId: GAME_TITLE_NORMALIZE_SKILL_ID,
     stage: 'metadata',
+    icon: 'fa-wand-magic-sparkles',
+    label: 'AI name cleanup',
+    labels: {
+      zh: 'AI \u540d\u79f0\u6e05\u6d17',
+    },
     defaultEnabled: true,
     userSelectable: true,
   },
   {
     skillId: COVER_SELECTION_SKILL_ID,
     stage: 'asset',
+    icon: 'fa-image',
+    label: 'AI cover matching',
+    labels: {
+      zh: 'AI \u5c01\u9762\u5339\u914d',
+    },
     defaultEnabled: true,
     userSelectable: true,
   },
 ]
+
+export function getGameLibraryCapability(skillId, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+  return capabilities.find((capability) => capability.skillId === skillId) || null
+}
+
+export function getGameLibrarySelectableCapabilities(capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+  return capabilities.filter((capability) => capability.userSelectable)
+}
+
+export function getDefaultEnabledGameLibrarySkillIds(capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+  return capabilities
+    .filter((capability) => capability.defaultEnabled || capability.required)
+    .map((capability) => capability.skillId)
+}
+
+export function normalizeGameLibrarySkillIds(skillIds, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+  const known = new Set(capabilities.map((capability) => capability.skillId))
+  const enabled = Array.isArray(skillIds) ? skillIds.filter((skillId) => known.has(skillId)) : []
+  const required = capabilities
+    .filter((capability) => capability.required)
+    .map((capability) => capability.skillId)
+
+  return Array.from(new Set([...required, ...enabled]))
+}
+
+export function getGameLibraryCapabilityIcon(skillId, capabilities = GAME_LIBRARY_AGENT_CAPABILITIES) {
+  return getGameLibraryCapability(skillId, capabilities)?.icon || 'fa-bolt'
+}
+
+export function getGameLibraryCapabilityLabel(skillId, options = {}) {
+  const capability = getGameLibraryCapability(skillId, options.capabilities)
+  if (!capability) return skillId
+
+  const locale = String(options.locale || '').toLowerCase()
+  if (locale.startsWith('zh')) {
+    return capability.labels?.zh || capability.label
+  }
+
+  return capability.label || skillId
+}
 
 export function createDefaultGameLibrarySkills(options = {}) {
   return [

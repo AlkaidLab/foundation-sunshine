@@ -7,45 +7,22 @@ import {
   applyCoverToGameResource,
   applyGameLibraryOverrides,
   findGameLibraryCover,
-  GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
+  getDefaultEnabledGameLibrarySkillIds,
+  getGameLibraryCapabilityIcon,
+  getGameLibraryCapabilityLabel,
+  getGameLibrarySelectableCapabilities,
   getGameResourceKey,
+  normalizeGameLibrarySkillIds,
   rememberGameLibraryApp,
   runGameLibraryCuratorAgent,
 } from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
 const MESSAGE_DURATION = 3000
 const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
-const GAME_LIBRARY_SKILL_UI = {
-  [GAME_LIBRARY_SKILL_IDS.titleNormalize]: {
-    icon: 'fa-wand-magic-sparkles',
-    label: 'AI name cleanup',
-    zhLabel: 'AI 名称清洗',
-  },
-  [GAME_LIBRARY_SKILL_IDS.coverSelection]: {
-    icon: 'fa-image',
-    label: 'AI cover matching',
-    zhLabel: 'AI 封面匹配',
-  },
-}
-
-function getDefaultEnabledGameLibrarySkillIds() {
-  return GAME_LIBRARY_AGENT_CAPABILITIES
-    .filter((capability) => capability.defaultEnabled)
-    .map((capability) => capability.skillId)
-}
 
 function getStorage() {
   return typeof localStorage !== 'undefined' ? localStorage : null
-}
-
-function normalizeEnabledGameLibrarySkillIds(skillIds) {
-  const known = new Set(GAME_LIBRARY_AGENT_CAPABILITIES.map((capability) => capability.skillId))
-  const enabled = Array.isArray(skillIds) ? skillIds.filter((skillId) => known.has(skillId)) : []
-  if (!enabled.includes(GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)) {
-    enabled.unshift(GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)
-  }
-  return Array.from(new Set(enabled))
 }
 
 function loadEnabledGameLibrarySkillIds() {
@@ -63,7 +40,7 @@ function loadEnabledGameLibrarySkillIds() {
     if (!Array.isArray(parsed?.enabledSkillIds)) {
       return getDefaultEnabledGameLibrarySkillIds()
     }
-    return normalizeEnabledGameLibrarySkillIds(parsed.enabledSkillIds)
+    return normalizeGameLibrarySkillIds(parsed.enabledSkillIds)
   } catch {
     return getDefaultEnabledGameLibrarySkillIds()
   }
@@ -76,7 +53,7 @@ function saveEnabledGameLibrarySkillIds(skillIds) {
   try {
     storage.setItem(
       GAME_LIBRARY_SKILL_PREFS_KEY,
-      JSON.stringify({ enabledSkillIds: normalizeEnabledGameLibrarySkillIds(skillIds) })
+      JSON.stringify({ enabledSkillIds: normalizeGameLibrarySkillIds(skillIds) })
     )
   } catch {
     // Skill preferences are convenience state; scanning should continue if persistence fails.
@@ -125,9 +102,7 @@ export function useApps() {
   }))
 
   const filteredApps = computed(() => AppService.searchApps(apps.value, committedSearchQuery.value))
-  const selectableGameLibrarySkills = computed(() =>
-    GAME_LIBRARY_AGENT_CAPABILITIES.filter((capability) => capability.userSelectable)
-  )
+  const selectableGameLibrarySkills = computed(() => getGameLibrarySelectableCapabilities())
 
   // 消息图标映射
   const MESSAGE_ICONS = {
@@ -160,19 +135,17 @@ export function useApps() {
       enabled.add(skillId)
     }
 
-    enabledGameLibrarySkillIds.value = normalizeEnabledGameLibrarySkillIds(Array.from(enabled))
+    enabledGameLibrarySkillIds.value = normalizeGameLibrarySkillIds(Array.from(enabled))
     saveEnabledGameLibrarySkillIds(enabledGameLibrarySkillIds.value)
   }
 
-  const getGameLibrarySkillIcon = (skillId) => GAME_LIBRARY_SKILL_UI[skillId]?.icon || 'fa-bolt'
+  const getGameLibrarySkillIcon = (skillId) => getGameLibraryCapabilityIcon(skillId)
 
   const getGameLibrarySkillLabel = (skillId) => {
-    const ui = GAME_LIBRARY_SKILL_UI[skillId]
-    if (!ui) return skillId
     const locale = typeof document === 'undefined'
       ? ''
       : String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
-    return locale.startsWith('zh') ? ui.zhLabel : ui.label
+    return getGameLibraryCapabilityLabel(skillId, { locale })
   }
 
   const getScanEnhancementMessage = (count, itemLabel) => {
@@ -565,7 +538,7 @@ export function useApps() {
   }
 
   const asyncEnhanceAndUpdateCovers = async (appList, enabledSkillIds = enabledGameLibrarySkillIds.value) => {
-    const enabled = normalizeEnabledGameLibrarySkillIds(enabledSkillIds)
+    const enabled = normalizeGameLibrarySkillIds(enabledSkillIds)
 
     const result = await runGameLibraryCuratorAgent(appList, {
       enabledSkills: enabled,
