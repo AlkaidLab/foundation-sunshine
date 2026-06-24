@@ -2,6 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
+import { apiPostJson } from '../utils/apiFetch.js'
 import { trackEvents } from '../config/firebase.js'
 import {
   applyGameLibraryOverrides,
@@ -18,6 +19,7 @@ import {
 
 const MESSAGE_DURATION = 3000
 const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
+const REMOTE_IMAGE_URL_RE = /^https?:\/\//i
 
 function getStorage() {
   return typeof localStorage !== 'undefined' ? localStorage : null
@@ -805,6 +807,33 @@ export function useApps() {
   // 扫描应用字段处理
   const getScannedAppField = (app, field) => app[field] || app[field.replace(/-/g, '_')] || ''
 
+  const localizeScannedAppCover = async (scannedApp) => {
+    const imagePath = getScannedAppField(scannedApp, 'image-path')
+    if (!REMOTE_IMAGE_URL_RE.test(imagePath)) {
+      return scannedApp
+    }
+
+    try {
+      const result = await apiPostJson('/api/covers/upload', {
+        key: scannedApp.name,
+        url: imagePath,
+      })
+
+      if (result?.path) {
+        return {
+          ...scannedApp,
+          'image-path': result.path,
+          image_path: result.path,
+          'cover-localized': true,
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to localize scanned cover:', scannedApp.name, error)
+    }
+
+    return scannedApp
+  }
+
   const createAppFromScanned = (scannedApp) => ({
     ...APP_CONSTANTS.DEFAULT_APP,
     name: scannedApp.name,
@@ -823,14 +852,16 @@ export function useApps() {
     }
   }
 
-  const addScannedApp = (scannedApp) => {
+  const addScannedApp = async (scannedApp) => {
+    const localizedApp = await localizeScannedAppCover(scannedApp)
+
     editingApp.value = createDefaultApp({
-      name: scannedApp.name,
-      cmd: scannedApp.cmd,
-      'working-dir': getScannedAppField(scannedApp, 'working-dir'),
-      'image-path': getScannedAppField(scannedApp, 'image-path'),
+      name: localizedApp.name,
+      cmd: localizedApp.cmd,
+      'working-dir': getScannedAppField(localizedApp, 'working-dir'),
+      'image-path': getScannedAppField(localizedApp, 'image-path'),
     })
-    scannedEditSource.value = { ...scannedApp }
+    scannedEditSource.value = { ...localizedApp }
 
     removeFromScannedList(scannedApp.source_path)
     showMessage(`正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
@@ -839,9 +870,12 @@ export function useApps() {
 
   const quickAddScannedApp = async (scannedApp, index) => {
     try {
-      apps.value.push(createAppFromScanned(scannedApp))
+      const localizedApp = await localizeScannedAppCover(scannedApp)
+      const appToAdd = createAppFromScanned(localizedApp)
+
+      apps.value.push(appToAdd)
       await AppService.saveApps(apps.value, null)
-      rememberGameLibraryApp(scannedApp, scannedApp)
+      rememberGameLibraryApp(scannedApp, appToAdd)
       await loadApps()
 
       scannedApps.value.splice(index, 1)
@@ -862,7 +896,8 @@ export function useApps() {
 
     try {
       isSaving.value = true
-      const appsToAdd = scannedApps.value.map(createAppFromScanned)
+      const localizedScannedApps = await Promise.all(scannedApps.value.map(localizeScannedAppCover))
+      const appsToAdd = localizedScannedApps.map(createAppFromScanned)
 
       apps.value.push(...appsToAdd)
       await AppService.saveApps(apps.value, null)

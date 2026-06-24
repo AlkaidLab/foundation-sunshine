@@ -249,12 +249,8 @@ export default {
       this.$emit('loading', true)
 
       try {
-        if (cover.source === 'steam') {
-          this.$emit('cover-selected', { path: cover.saveUrl, source: 'steam' })
-        } else {
-          const { path } = await apiPostJson('/api/covers/upload', { key: cover.key, url: cover.saveUrl })
-          this.$emit('cover-selected', { path, source: 'igdb' })
-        }
+        const { path } = await apiPostJson('/api/covers/upload', { key: cover.key, url: cover.saveUrl })
+        this.$emit('cover-selected', { path, source: cover.source })
         this.closeFinder()
       } catch (error) {
         console.error('使用封面失败:', error)

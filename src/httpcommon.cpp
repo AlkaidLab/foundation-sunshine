@@ -6,9 +6,14 @@
 
 #include "process.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <utility>
 
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -379,6 +384,158 @@ namespace http {
 }  // namespace http
 
 namespace {
+  struct ParsedDownloadUrl {
+    std::string scheme;
+    std::string host;
+    std::string port;
+  };
+
+  std::string to_lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    return value;
+  }
+
+  std::string normalize_host(std::string host) {
+    host = to_lower_ascii(std::move(host));
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+      host = host.substr(1, host.size() - 2);
+    }
+    while (!host.empty() && host.back() == '.') {
+      host.pop_back();
+    }
+    return host;
+  }
+
+  bool curl_url_get_string(CURLU *curlu, CURLUPart part, std::string &value, unsigned int flags = 0) {
+    char *raw = nullptr;
+    if (curl_url_get(curlu, part, &raw, flags) != CURLUE_OK) {
+      return false;
+    }
+
+    value = raw;
+    curl_free(raw);
+    return true;
+  }
+
+  bool parse_download_url(const std::string &url, ParsedDownloadUrl &parts) {
+    CURLU *curlu = curl_url();
+    if (!curlu) {
+      return false;
+    }
+
+    if (curl_url_set(curlu, CURLUPART_URL, url.c_str(), 0) != CURLUE_OK) {
+      curl_url_cleanup(curlu);
+      return false;
+    }
+
+    const bool ok = curl_url_get_string(curlu, CURLUPART_SCHEME, parts.scheme) &&
+                    curl_url_get_string(curlu, CURLUPART_HOST, parts.host);
+    curl_url_get_string(curlu, CURLUPART_PORT, parts.port);
+    curl_url_cleanup(curlu);
+
+    if (!ok) {
+      return false;
+    }
+
+    parts.scheme = to_lower_ascii(parts.scheme);
+    parts.host = normalize_host(std::move(parts.host));
+    return true;
+  }
+
+  bool is_private_ipv4(std::uint32_t address) {
+    return address == 0xffffffffu ||
+           (address & 0xff000000u) == 0x00000000u ||
+           (address & 0xff000000u) == 0x0a000000u ||
+           (address & 0xff000000u) == 0x7f000000u ||
+           (address & 0xffc00000u) == 0x64400000u ||
+           (address & 0xffff0000u) == 0xa9fe0000u ||
+           (address & 0xfff00000u) == 0xac100000u ||
+           (address & 0xffff0000u) == 0xc0a80000u ||
+           (address & 0xffffff00u) == 0xc0000000u ||
+           (address & 0xffffff00u) == 0xc0000200u ||
+           (address & 0xffffff00u) == 0xc0586300u ||
+           (address & 0xffff0000u) == 0xc6120000u ||
+           (address & 0xffffff00u) == 0xc6336400u ||
+           (address & 0xffffff00u) == 0xcb007100u ||
+           (address & 0xf0000000u) == 0xe0000000u ||
+           (address & 0xf0000000u) == 0xf0000000u;
+  }
+
+  bool is_local_or_private_address(const boost::asio::ip::address &address) {
+    if (address.is_unspecified() || address.is_loopback() || address.is_multicast()) {
+      return true;
+    }
+
+    if (address.is_v4()) {
+      return is_private_ipv4(address.to_v4().to_uint());
+    }
+
+    const auto bytes = address.to_v6().to_bytes();
+    const bool is_v4_mapped = std::all_of(bytes.begin(), bytes.begin() + 10, [](unsigned char value) { return value == 0; }) &&
+                              bytes[10] == 0xff &&
+                              bytes[11] == 0xff;
+    if (is_v4_mapped) {
+      const auto mapped = (static_cast<std::uint32_t>(bytes[12]) << 24) |
+                          (static_cast<std::uint32_t>(bytes[13]) << 16) |
+                          (static_cast<std::uint32_t>(bytes[14]) << 8) |
+                          static_cast<std::uint32_t>(bytes[15]);
+      return is_private_ipv4(mapped);
+    }
+
+    return (bytes[0] & 0xfe) == 0xfc ||                         // Unique local address fc00::/7
+           (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80) ||    // Link-local fe80::/10
+           (bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8); // Documentation range
+  }
+
+  bool host_resolves_to_public_addresses(const std::string &host) {
+    if (host.empty() || host == "localhost" || host.ends_with(".localhost")) {
+      return false;
+    }
+
+    boost::system::error_code ec;
+    const auto literal = boost::asio::ip::make_address(host, ec);
+    if (!ec) {
+      return !is_local_or_private_address(literal);
+    }
+
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::resolver resolver(io);
+    const auto results = resolver.resolve(host, "443", ec);
+    if (ec || results.empty()) {
+      BOOST_LOG(warning) << "Cover host resolution failed or returned no addresses ["sv << host << ']';
+      return false;
+    }
+
+    for (const auto &result : results) {
+      const auto address = result.endpoint().address();
+      if (is_local_or_private_address(address)) {
+        BOOST_LOG(warning) << "Cover host resolved to a blocked address ["sv << host << " -> " << address.to_string() << ']';
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool is_public_https_cover_url(const std::string &url) {
+    ParsedDownloadUrl parts;
+    if (!parse_download_url(url, parts)) {
+      return false;
+    }
+
+    if (parts.scheme != "https" || parts.host.empty()) {
+      return false;
+    }
+
+    if (!parts.port.empty() && parts.port != "443") {
+      return false;
+    }
+
+    return host_resolves_to_public_addresses(parts.host);
+  }
+
   struct ImageCheckContext {
     std::string filename;
     std::string url;
@@ -552,6 +709,15 @@ namespace http {
     }
 
     return true;
+  }
+
+  bool download_public_cover_image(const std::string &url, const std::string &file, long ssl_version) {
+    if (!is_public_https_cover_url(url)) {
+      BOOST_LOG(warning) << "Blocked cover download from non-public HTTPS URL ["sv << url << ']';
+      return false;
+    }
+
+    return download_image_with_magic_check(url, file, ssl_version);
   }
 }
 

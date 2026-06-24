@@ -1135,12 +1135,8 @@ namespace confighttp {
 
     std::basic_string path = coverdir + http::url_escape(key) + ".png";
     if (!url.empty()) {
-      if (http::url_get_host(url) != "images.igdb.com") {
-        outputTree.put("error", "Only images.igdb.com is allowed");
-        return;
-      }
-      if (!http::download_image_with_magic_check(url, path)) {
-        outputTree.put("error", "Failed to download cover");
+      if (!http::download_public_cover_image(url, path)) {
+        outputTree.put("error", "Failed to download public HTTPS cover");
         return;
       }
     }
