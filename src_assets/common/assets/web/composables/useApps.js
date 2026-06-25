@@ -866,17 +866,34 @@ export function useApps() {
 
   const didCoverLocalizationFail = (scannedApp) => scannedApp?.[COVER_LOCALIZATION_FAILED_FIELD] === true
 
-  const removeScannedAppEntry = (scannedApp) => {
-    let index = scannedApps.value.indexOf(scannedApp)
-    if (index === -1 && scannedApp?.source_path) {
-      index = scannedApps.value.findIndex((a) => a.source_path === scannedApp.source_path)
+  const findScannedAppIndex = (scannedAppOrIndex) => {
+    if (Number.isInteger(scannedAppOrIndex)) {
+      return scannedAppOrIndex
     }
-    if (index !== -1) {
+
+    let index = scannedApps.value.indexOf(scannedAppOrIndex)
+    if (index === -1 && scannedAppOrIndex?.source_path) {
+      index = scannedApps.value.findIndex((app) => app.source_path === scannedAppOrIndex.source_path)
+    }
+    return index
+  }
+
+  const removeScannedApp = (scannedAppOrIndex) => {
+    const index = findScannedAppIndex(scannedAppOrIndex)
+    if (index >= 0 && index < scannedApps.value.length) {
       scannedApps.value.splice(index, 1)
       if (scannedApps.value.length === 0) {
         showScanResult.value = false
       }
     }
+  }
+
+  const showCoverLocalizationMessage = (localizedApp, successMessage, successType) => {
+    const failed = didCoverLocalizationFail(localizedApp)
+    showMessage(
+      failed ? `${successMessage}，但封面本地化失败，已保留原始封面地址` : successMessage,
+      failed ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : successType
+    )
   }
 
   const addScannedApp = async (scannedApp) => {
@@ -890,13 +907,8 @@ export function useApps() {
     })
     scannedEditSource.value = { ...localizedApp }
 
-    removeScannedAppEntry(scannedApp)
-    showMessage(
-      didCoverLocalizationFail(localizedApp)
-        ? `正在编辑应用: ${scannedApp.name}，但封面本地化失败，已保留原始封面地址`
-        : `正在编辑应用: ${scannedApp.name}`,
-      didCoverLocalizationFail(localizedApp) ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.INFO
-    )
+    removeScannedApp(scannedApp)
+    showCoverLocalizationMessage(localizedApp, `正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
     trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
 
@@ -910,14 +922,9 @@ export function useApps() {
       rememberGameLibraryApp(scannedApp, appToAdd)
       await loadApps()
 
-      removeScannedAppEntry(scannedApp)
+      removeScannedApp(scannedApp)
 
-      showMessage(
-        didCoverLocalizationFail(localizedApp)
-          ? `已添加应用: ${scannedApp.name}，但封面本地化失败，已保留原始封面地址`
-          : `已添加应用: ${scannedApp.name}`,
-        didCoverLocalizationFail(localizedApp) ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
-      )
+      showCoverLocalizationMessage(localizedApp, `已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name })
     } catch (error) {
       console.error('快速添加应用失败:', error)
@@ -965,13 +972,6 @@ export function useApps() {
   const closeScanResult = () => {
     showScanResult.value = false
     scannedApps.value = []
-  }
-
-  const removeScannedApp = (index) => {
-    scannedApps.value.splice(index, 1)
-    if (scannedApps.value.length === 0) {
-      showScanResult.value = false
-    }
   }
 
   const handleCopySuccess = () => showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)

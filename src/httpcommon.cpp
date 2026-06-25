@@ -397,6 +397,11 @@ namespace {
     std::string port;
   };
 
+  struct PublicHostResolution {
+    bool is_address_literal = false;
+    std::vector<std::string> addresses;
+  };
+
   std::string to_lower_ascii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
@@ -527,7 +532,7 @@ namespace {
            is_link_or_site_local;
   }
 
-  bool resolve_host_to_public_addresses(const std::string &host, std::vector<std::string> &addresses) {
+  bool resolve_public_host(const std::string &host, PublicHostResolution &resolution) {
     if (host.empty() || host == "localhost" || host.ends_with(".localhost")) {
       return false;
     }
@@ -535,7 +540,11 @@ namespace {
     boost::system::error_code ec;
     const auto literal = boost::asio::ip::make_address(host, ec);
     if (!ec) {
-      return !is_local_or_private_address(literal);
+      if (is_local_or_private_address(literal)) {
+        return false;
+      }
+      resolution.is_address_literal = true;
+      return true;
     }
 
     boost::asio::io_context io;
@@ -573,13 +582,13 @@ namespace {
         BOOST_LOG(warning) << "Cover host resolved to a blocked address ["sv << host << " -> " << address.to_string() << ']';
         return false;
       }
-      addresses.push_back(address.to_string());
+      resolution.addresses.push_back(address.to_string());
     }
 
-    return !addresses.empty();
+    return !resolution.addresses.empty();
   }
 
-  bool resolve_public_https_cover_url(const std::string &url, ParsedDownloadUrl &parts, std::vector<std::string> &addresses) {
+  bool resolve_public_https_cover_url(const std::string &url, ParsedDownloadUrl &parts, PublicHostResolution &resolution) {
     if (!parse_download_url(url, parts)) {
       return false;
     }
@@ -592,7 +601,7 @@ namespace {
       return false;
     }
 
-    return resolve_host_to_public_addresses(parts.host, addresses);
+    return resolve_public_host(parts.host, resolution);
   }
 
   struct ImageCheckContext {
@@ -608,6 +617,26 @@ namespace {
     // Ensure buffer is large enough for our checks to avoid overflow
     static_assert(sizeof(buffer) >= 12, "Image check buffer too small");
   };
+
+  bool has_supported_image_magic(const unsigned char *magic) {
+    return (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) || // PNG
+           (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) || // JPG
+           (magic[0] == 0x42 && magic[1] == 0x4D) || // BMP
+           (memcmp(magic, "RIFF", 4) == 0 && memcmp(magic + 8, "WEBP", 4) == 0) || // WEBP
+           (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00); // ICO
+  }
+
+  bool write_image_data(ImageCheckContext &ctx, const void *data, size_t length) {
+    if (length == 0) {
+      return true;
+    }
+
+    if (fwrite(data, 1, length, ctx.fp) != length) {
+      BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx.filename << ']';
+      return false;
+    }
+    return true;
+  }
 
   size_t image_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
     try {
@@ -646,19 +675,7 @@ namespace {
         // Have we accumulated enough?
         if (ctx->buffer_len == sizeof(ctx->buffer)) {
           ctx->checked = true;
-          unsigned char *magic = ctx->buffer;
-
-          // Perform Magic Byte Check
-          // PNG: 89 50 4E 47
-          if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) ctx->valid = true;
-          // JPG: FF D8 FF
-          else if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) ctx->valid = true;
-          // BMP: 42 4D
-          else if (magic[0] == 0x42 && magic[1] == 0x4D) ctx->valid = true;
-          // WEBP: RIFF ... WEBP
-          else if (memcmp(magic, "RIFF", 4) == 0 && memcmp(magic + 8, "WEBP", 4) == 0) ctx->valid = true;
-          // ICO: 00 00 01 00
-          else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00) ctx->valid = true;
+          ctx->valid = has_supported_image_magic(ctx->buffer);
 
           if (!ctx->valid) {
             BOOST_LOG(warning) << "Streaming validation failed: Invalid magic bytes ["sv << ctx->url << ']';
@@ -673,8 +690,7 @@ namespace {
           }
 
           // Flush buffer to file
-          if (fwrite(ctx->buffer, 1, ctx->buffer_len, ctx->fp) != ctx->buffer_len) {
-            BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx->filename << ']';
+          if (!write_image_data(*ctx, ctx->buffer, ctx->buffer_len)) {
             return 0;
           }
         }
@@ -683,8 +699,7 @@ namespace {
         if (total_size > to_copy) {
           if (ctx->valid && ctx->fp) {
             const size_t remaining = total_size - to_copy;
-            if (fwrite(data + to_copy, 1, remaining, ctx->fp) != remaining) {
-              BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx->filename << ']';
+            if (!write_image_data(*ctx, data + to_copy, remaining)) {
               return 0;
             }
           } else if (!ctx->valid && ctx->checked) {
@@ -695,8 +710,7 @@ namespace {
       } else {
         // Already checked and valid, just write
         if (ctx->valid && ctx->fp) {
-          if (fwrite(ptr, size, nmemb, ctx->fp) != nmemb) {
-            BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx->filename << ']';
+          if (!write_image_data(*ctx, ptr, total_size)) {
             return 0;
           }
         } else {
@@ -720,16 +734,12 @@ namespace {
     return address;
   }
 
-  curl_slist *build_curl_resolve_list(const ParsedDownloadUrl &parts, const std::vector<std::string> &addresses) {
-    if (addresses.empty()) {
-      return nullptr;
-    }
-
-    std::string entry = parts.host + ":443:" + format_curl_resolve_address(addresses.front());
+  curl_slist *build_curl_resolve_list(const ParsedDownloadUrl &parts, const std::string &address) {
+    std::string entry = parts.host + ":443:" + format_curl_resolve_address(address);
     return curl_slist_append(nullptr, entry.c_str());
   }
 
-  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::vector<std::string> *resolved_addresses = nullptr) {
+  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
     BOOST_LOG(info) << "Downloading external image with magic check: " << url;
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -738,8 +748,8 @@ namespace {
     }
 
     curl_slist *resolve_list = nullptr;
-    if (resolved_parts && resolved_addresses && !resolved_addresses->empty()) {
-      resolve_list = build_curl_resolve_list(*resolved_parts, *resolved_addresses);
+    if (resolved_parts && resolved_address) {
+      resolve_list = build_curl_resolve_list(*resolved_parts, *resolved_address);
       if (!resolve_list) {
         BOOST_LOG(error) << "Couldn't pin resolved cover host addresses ["sv << url << ']';
         curl_easy_cleanup(curl);
@@ -824,19 +834,18 @@ namespace http {
 
   bool download_public_cover_image(const std::string &url, const std::string &file, long ssl_version) {
     ParsedDownloadUrl parts;
-    std::vector<std::string> addresses;
-    if (!resolve_public_https_cover_url(url, parts, addresses)) {
+    PublicHostResolution resolution;
+    if (!resolve_public_https_cover_url(url, parts, resolution)) {
       BOOST_LOG(warning) << "Blocked cover download from non-public HTTPS URL ["sv << url << ']';
       return false;
     }
 
-    if (addresses.empty()) {
+    if (resolution.is_address_literal) {
       return perform_image_download_with_magic_check(url, file, ssl_version);
     }
 
-    for (const auto &address : addresses) {
-      std::vector<std::string> pinned_address { address };
-      if (perform_image_download_with_magic_check(url, file, ssl_version, &parts, &pinned_address)) {
+    for (const auto &address : resolution.addresses) {
+      if (perform_image_download_with_magic_check(url, file, ssl_version, &parts, &address)) {
         return true;
       }
     }
