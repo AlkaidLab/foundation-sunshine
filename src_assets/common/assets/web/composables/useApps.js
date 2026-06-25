@@ -21,6 +21,7 @@ const MESSAGE_DURATION = 3000
 const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
 const REMOTE_IMAGE_URL_RE = /^https?:\/\//i
 const COVER_LOCALIZATION_CONCURRENCY = 4
+const COVER_LOCALIZATION_FAILED_FIELD = 'cover-localization-failed'
 
 function getStorage() {
   return typeof localStorage !== 'undefined' ? localStorage : null
@@ -844,11 +845,15 @@ export function useApps() {
           'cover-localized': true,
         }
       }
+      console.warn('Cover localization did not return a local path:', scannedApp.name, result)
     } catch (error) {
       console.warn('Failed to localize scanned cover:', scannedApp.name, error)
     }
 
-    return scannedApp
+    return {
+      ...scannedApp,
+      [COVER_LOCALIZATION_FAILED_FIELD]: true,
+    }
   }
 
   const createAppFromScanned = (scannedApp) => ({
@@ -859,8 +864,13 @@ export function useApps() {
     'image-path': getScannedAppField(scannedApp, 'image-path'),
   })
 
-  const removeFromScannedList = (sourcePath) => {
-    const index = scannedApps.value.findIndex((a) => a.source_path === sourcePath)
+  const didCoverLocalizationFail = (scannedApp) => scannedApp?.[COVER_LOCALIZATION_FAILED_FIELD] === true
+
+  const removeScannedAppEntry = (scannedApp) => {
+    let index = scannedApps.value.indexOf(scannedApp)
+    if (index === -1 && scannedApp?.source_path) {
+      index = scannedApps.value.findIndex((a) => a.source_path === scannedApp.source_path)
+    }
     if (index !== -1) {
       scannedApps.value.splice(index, 1)
       if (scannedApps.value.length === 0) {
@@ -880,12 +890,17 @@ export function useApps() {
     })
     scannedEditSource.value = { ...localizedApp }
 
-    removeFromScannedList(scannedApp.source_path)
-    showMessage(`正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+    removeScannedAppEntry(scannedApp)
+    showMessage(
+      didCoverLocalizationFail(localizedApp)
+        ? `正在编辑应用: ${scannedApp.name}，但封面本地化失败，已保留原始封面地址`
+        : `正在编辑应用: ${scannedApp.name}`,
+      didCoverLocalizationFail(localizedApp) ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.INFO
+    )
     trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
 
-  const quickAddScannedApp = async (scannedApp, index) => {
+  const quickAddScannedApp = async (scannedApp) => {
     try {
       const localizedApp = await localizeScannedAppCover(scannedApp)
       const appToAdd = createAppFromScanned(localizedApp)
@@ -895,12 +910,14 @@ export function useApps() {
       rememberGameLibraryApp(scannedApp, appToAdd)
       await loadApps()
 
-      scannedApps.value.splice(index, 1)
-      if (scannedApps.value.length === 0) {
-        showScanResult.value = false
-      }
+      removeScannedAppEntry(scannedApp)
 
-      showMessage(`已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showMessage(
+        didCoverLocalizationFail(localizedApp)
+          ? `已添加应用: ${scannedApp.name}，但封面本地化失败，已保留原始封面地址`
+          : `已添加应用: ${scannedApp.name}`,
+        didCoverLocalizationFail(localizedApp) ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
       trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name })
     } catch (error) {
       console.error('快速添加应用失败:', error)
@@ -926,7 +943,13 @@ export function useApps() {
       scannedAppSnapshot.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
       await loadApps()
 
-      showMessage(`已添加 ${appsToAdd.length} 个应用`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      const coverLocalizationFailureCount = localizedScannedApps.filter(didCoverLocalizationFail).length
+      showMessage(
+        coverLocalizationFailureCount > 0
+          ? `已添加 ${appsToAdd.length} 个应用，其中 ${coverLocalizationFailureCount} 个封面本地化失败，已保留原始封面地址`
+          : `已添加 ${appsToAdd.length} 个应用`,
+        coverLocalizationFailureCount > 0 ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
       trackEvents.userAction('scanned_apps_batch_added', { count: appsToAdd.length })
 
       scannedApps.value = []
