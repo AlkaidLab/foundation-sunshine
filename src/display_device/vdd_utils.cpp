@@ -1072,11 +1072,16 @@ namespace display_device {
       // 确保即使 VDD 创建后物理屏变 inactive 也能正确识别
       std::vector<std::string> physical_devices;
       std::string original_primary_id;
+      const auto is_active_physical_display = [](const device_info_t &info) {
+        return info.friendly_name != ZAKO_NAME &&
+               (info.device_state == device_state_e::active ||
+                info.device_state == device_state_e::primary);
+      };
 
       if (!pre_vdd_devices.empty()) {
         // 使用 VDD 创建前保存的设备信息（可靠）
         for (const auto &[device_id, info] : pre_vdd_devices) {
-          if (info.friendly_name != ZAKO_NAME) {
+          if (is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;
@@ -1091,7 +1096,7 @@ namespace display_device {
         BOOST_LOG(warning) << "未提供pre-VDD设备列表，从当前设备枚举中查找物理显示器";
         const auto all_devices = enum_available_devices();
         for (const auto &[device_id, info] : all_devices) {
-          if (device_id != vdd_device_id && info.friendly_name != ZAKO_NAME) {
+          if (device_id != vdd_device_id && is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;
