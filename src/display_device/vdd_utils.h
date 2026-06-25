@@ -167,20 +167,37 @@ namespace display_device::vdd_utils {
   bool
   ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve = {});
 
+  bool
+  vdd_prep_requires_pre_vdd_snapshot(parsed_config_t::vdd_prep_e vdd_prep);
+
+  bool
+  has_active_physical_display_snapshot(const device_info_map_t &pre_vdd_devices);
+
+  bool
+  has_physical_display_snapshot(const device_info_map_t &pre_vdd_devices);
+
+  enum class vdd_prep_result_e {
+    success,
+    safety_blocked,
+    topology_failed
+  };
+
   /**
    * @brief Apply VDD prep settings to handle physical displays.
    * @param vdd_device_id The VDD device ID.
    * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
-   * @param pre_vdd_devices Physical device info captured BEFORE VDD creation.
-   *        Used to reliably identify physical displays even if VDD creation
-   *        caused them to become inactive. If empty, falls back to current device enumeration.
-   * @returns True if the operation succeeded.
+   * @param pre_vdd_devices Physical device info captured before VDD prep changes.
+   *        Used to reliably identify physical displays even if VDD creation or
+   *        prep caused them to become inactive.
+   * @param pre_vdd_devices_captured True when pre_vdd_devices is a real baseline
+   *        snapshot. Destructive topology prep is refused without this baseline.
+   * @returns Detailed result of the prep operation.
    * @note This operation modifies topology without saving/restoring state,
    *       as Windows automatically handles topology memory when displays change.
    */
-  bool
+  vdd_prep_result_e
   apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
-    const device_info_map_t &pre_vdd_devices = {});
+    const device_info_map_t &pre_vdd_devices = {}, bool pre_vdd_devices_captured = false);
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);

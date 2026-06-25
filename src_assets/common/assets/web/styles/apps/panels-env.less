@@ -1,0 +1,126 @@
+// GLASS PANEL & TABLE
+// ============================================================================
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: var(--border-radius-md) !important;
+  backdrop-filter: blur(10px) !important;
+  color: #fff !important;
+}
+
+.table-glass {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+  .glass-effect();
+
+  th {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  td {
+    color: #fff;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
+
+// ============================================================================
+// CODE & ENV STYLES
+// ============================================================================
+.env-vars-modal {
+  .env-vars-table {
+    margin-top: 1rem;
+
+    .table {
+      color: var(--modal-text-color, #fff);
+      border-color: var(--modal-border-color, rgba(255, 255, 255, 0.15));
+      margin-bottom: 0;
+
+      th {
+        border-top: none;
+        border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
+        font-weight: 600;
+        font-size: 0.875rem;
+        padding: 1rem 0.75rem;
+        background: var(--glass-medium, rgba(255, 255, 255, 0.1));
+        color: var(--modal-text-color, #fff);
+      }
+
+      thead th {
+        &:first-child {
+          border-radius: 12px 0 0 0;
+        }
+
+        &:last-child {
+          border-radius: 0 12px 0 0;
+        }
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      td {
+        vertical-align: middle;
+        border-color: var(--modal-border-color, rgba(255, 255, 255, 0.1));
+        padding: 0.75rem;
+        background: var(--glass-light, rgba(255, 255, 255, 0.05));
+        transition: background 0.3s ease;
+      }
+
+      tbody tr {
+        &:hover td {
+          background: var(--glass-medium, rgba(255, 255, 255, 0.1));
+        }
+
+        &:last-child td {
+          &:first-child {
+            border-radius: 0 0 0 12px;
+          }
+
+          &:last-child {
+            border-radius: 0 0 12px 0;
+          }
+        }
+      }
+    }
+  }
+
+  .env-var-name {
+    background: rgba(0, 0, 0, 0.3) !important;
+    color: var(--warning-color) !important;
+    padding: 4px 8px !important;
+    border-radius: 6px !important;
+    font-family: 'Courier New', monospace !important;
+    font-weight: 600;
+
+    [data-bs-theme='light'] & {
+      background: #e0e7ff !important;
+      color: #6366f1 !important;
+      border: 1px solid rgba(99, 102, 241, 0.3) !important;
+    }
+  }
+
+  .code-example {
+    margin-top: 1rem;
+    background: rgba(0, 0, 0, 0.3) !important;
+    color: #fff !important;
+    padding: 15px !important;
+    border-radius: var(--border-radius-md) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    font-family: 'Courier New', monospace !important;
+    font-size: var(--font-size-sm) !important;
+
+    [data-bs-theme='light'] & {
+      background: #f5f8ff !important;
+      color: #475569 !important;
+      border: 1px solid rgba(99, 102, 241, 0.2) !important;
+    }
+  }
+}
+
+// ============================================================================

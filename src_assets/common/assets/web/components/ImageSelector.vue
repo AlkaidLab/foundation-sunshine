@@ -73,6 +73,7 @@
 import CoverFinder from './CoverFinder.vue'
 import { validateFile } from '../utils/validation.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { apiPostJson } from '../utils/apiFetch.js'
 
 export default {
   name: 'ImageSelector',
@@ -193,17 +194,7 @@ export default {
       const base64Data = await this.readFileAsBase64(file)
       const key = this.generateImageKey()
 
-      const response = await fetch('/api/covers/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, data: base64Data }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      const result = await response.json()
+      const result = await apiPostJson('/api/covers/upload', { key, data: base64Data })
       console.log('✅ Sunshine API 上传成功，文件路径:', result.path)
 
       return `${key}.png`

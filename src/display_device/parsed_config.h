@@ -25,7 +25,7 @@ namespace display_device {
      * @brief Enum detailing how to prepare the display device.
      */
     enum class device_prep_e : int {
-      no_operation, /**< User has to make sure the display device is active, we will only verify. */
+      no_operation, /**< Do not change display topology; resolution, refresh rate, and HDR are controlled by their own options. */
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
       ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */
@@ -188,6 +188,22 @@ namespace display_device {
     bool
     requires_vdd(bool requested_device_exists, bool is_vdd_device) const;
   };
+
+  enum class vdd_request_decision_e {
+    use_requested_display,
+    use_vdd,
+    blocked_automatic_fallback
+  };
+
+  bool
+  is_explicit_vdd_request(const display_request_t &request, bool is_vdd_device);
+
+  vdd_request_decision_e
+  resolve_vdd_request(
+    const display_request_t &request,
+    bool requested_device_exists,
+    bool is_vdd_device,
+    parsed_config_t::device_prep_e device_prep);
 
   display_request_t
   resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session);

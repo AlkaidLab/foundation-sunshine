@@ -161,7 +161,11 @@
     "wait_all": "Continue streaming until all app processes exit",
     "wait_all_desc": "This will continue streaming until all processes started by the app have terminated. When unchecked, streaming will stop when the initial app process exits, even if other app processes are still running.",
     "working_dir": "Working Directory",
-    "working_dir_desc": "The working directory that should be passed to the process. For example, some applications use the working directory to search for configuration files. If not set, Sunshine will default to the parent directory of the command"
+    "working_dir_desc": "The working directory that should be passed to the process. For example, some applications use the working directory to search for configuration files. If not set, Sunshine will default to the parent directory of the command",
+    "restore_default_apps": "Restore built-in apps",
+    "restore_default_apps_failed": "Failed to restore built-in apps",
+    "restore_default_apps_none": "Built-in apps are already restored",
+    "restore_default_apps_result": "Restored {restored} built-in apps, added {added}"
   },
   "config": {
     "adapter_name": "Adapter Name",
@@ -407,6 +411,8 @@
     "mouse_desc": "Allows guests to control the host system with the mouse",
     "native_pen_touch": "Native Pen/Touch Support",
     "native_pen_touch_desc": "When enabled, Sunshine will pass through native pen/touch events from Moonlight clients. This can be useful to disable for older applications without native pen/touch support.",
+    "native_touchpad_optimization": "Native Touchpad Adaptation",
+    "native_touchpad_optimization_desc": "When enabled, Sunshine enables near-native touchpad support for native touchpads. When disabled, it falls back to legacy touchpad events.",
     "no_fps": "No FPS values added",
     "no_resolutions": "No resolutions added",
     "notify_pre_releases": "PreRelease Notifications",
@@ -525,7 +531,7 @@
       "items": {
         "display_device_prep": {
           "description": "Sunshine will change the host display topology when a stream starts. This can affect the local monitor layout.",
-          "only_display_description": "Sunshine will disable other displays and keep only the selected display active. If the selected display is unavailable, the host may appear blank locally.",
+          "only_display_description": "Sunshine will disable other displays and keep only the selected display active. If the selected display is unavailable, the host may appear blank locally. Hosts with DisplayPort or USB-C DP physical monitors may experience periodic stutter caused by hot-plug or automatic input scanning; if this happens, use Primary/Secondary Display Streaming or disable automatic input scanning/detection in the monitor menu.",
           "recovery": "If the display state is wrong, restore this option to Disabled or use the Troubleshooting page to reset display device persistence.",
           "title": "Display topology will be changed"
         },
@@ -661,7 +667,8 @@
     "vigem_refresh": "Refresh Status",
     "vigem_reinstall": "Reinstall Latest",
     "vigem_reinstall_desc": "Force download and reinstall the latest ViGEmBus release, bypassing the bat's >=1.17 skip check.",
-    "vigem_status_installed": "Installed (bus not active)",
+    "vigem_status_checking": "Checking...",
+    "vigem_status_installed": "Installed",
     "vigem_status_not_installed": "Not Installed",
     "vigem_status_outdated": "Outdated (needs 1.17+)",
     "vigem_status_running": "Running",
@@ -680,6 +687,7 @@
     "vmouse_installing": "Installing...",
     "vmouse_note": "The virtual mouse driver requires separate installation. Please use the Sunshine Control Panel to install or manage the driver.",
     "vmouse_refresh": "Refresh Status",
+    "vmouse_status_checking": "Checking...",
     "vmouse_status_installed": "Installed (not active)",
     "vmouse_status_not_installed": "Not Installed",
     "vmouse_status_running": "Running",
@@ -818,6 +826,8 @@
     "harmony_client": "HarmonyOS Moonlight V+",
     "join_group": "Join Community",
     "join_group_desc": "Get help and share experience",
+    "jiaoyuelian_desc": "Network tunneling tool for stable remote streaming access",
+    "jiaoyuelian_title": "Natpierce",
     "legal": "Legal",
     "legal_desc": "By continuing to use this software you agree to the terms and conditions in the following documents.",
     "license": "License",
@@ -828,6 +838,7 @@
     "moonlight_ohos_desc": "by smdsbz · OpenHarmony pioneer",
     "moonlight_pc_title": "Moonlight PC",
     "official_website": "Official Website",
+    "official_website_desc": "Visit AlkaidLab for products, downloads, and latest news",
     "official_website_title": "AlkaidLab - Official Website",
     "open_source": "Open Source",
     "open_source_desc": "Star & Fork to support the project",
@@ -852,6 +863,7 @@
     "device_id": "Device ID",
     "device_state": "State",
     "download_clients": "Download Clients",
+    "featured_services": "Recommended Services",
     "finish": "Finish Setup",
     "go_to_apps": "Configure Applications",
     "harmony_goto_repo": "Go to Repository",

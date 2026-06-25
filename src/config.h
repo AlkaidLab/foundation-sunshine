@@ -216,6 +216,7 @@ namespace config {
 
     bool high_resolution_scrolling;
     bool native_pen_touch;
+    bool native_touchpad_optimization;
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
     bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). On by default; effective only when the user-session GUI agent is alive. Set to false to force-disable.

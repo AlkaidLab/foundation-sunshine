@@ -1,0 +1,268 @@
+// LIST ITEM STYLES
+// ============================================================================
+
+.app-list-item {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+  .glass-effect();
+  .transition-default();
+  box-shadow: var(--box-shadow-sm);
+  animation: fadeIn 0.5s ease;
+  touch-action: pan-y;
+
+  &:hover {
+    transform: translateX(5px);
+    box-shadow: var(--box-shadow-lg);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.app-list-item-inner {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  gap: 16px;
+  position: relative;
+}
+
+.drag-handle-list {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: grab;
+  font-size: var(--font-size-lg);
+  padding: 0;
+  border-radius: 10px;
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: none;
+  .transition-default();
+  .flex-center();
+  width: 44px;
+  flex-shrink: 0;
+
+  &:hover {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+.app-icon-container-list {
+  .flex-center();
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+}
+
+.app-icon-list {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--border-radius-md);
+  object-fit: cover;
+  box-shadow: var(--box-shadow-md);
+}
+
+.app-icon-placeholder-list {
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(135deg, #ff6b6b, #ffa500);
+  border-radius: var(--border-radius-md);
+  .flex-center();
+  color: #fff;
+  font-size: 1.5rem;
+  box-shadow: var(--box-shadow-md);
+}
+
+.app-info-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-name-list {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  .text-ellipsis();
+  flex-shrink: 0;
+}
+
+.app-command-list {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 12px;
+  border-radius: var(--border-radius-sm);
+  .text-ellipsis();
+  .transition-default();
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.35);
+    color: rgba(255, 255, 255, 0.9);
+    transform: translateX(3px);
+  }
+
+  &.copy-success {
+    animation: copySuccess 0.4s ease;
+  }
+}
+
+.app-working-dir-list {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  .text-ellipsis();
+}
+
+.app-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.app-tag-list {
+  background: rgba(255, 255, 255, 0.4);
+  color: #333;
+  padding: 3px 8px;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-actions-list {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+
+  .btn {
+    .btn-rounded(38px);
+    color: #fff;
+    font-size: var(--font-size-md);
+    backdrop-filter: blur(5px);
+  }
+}
+
+.btn-edit-list {
+  background: rgba(0, 123, 255, 0.3);
+  border: 1px solid rgba(0, 123, 255, 0.5);
+  .hover-scale();
+
+  &:hover {
+    background: rgba(0, 123, 255, 0.5);
+  }
+}
+
+.btn-delete-list {
+  background: rgba(220, 53, 69, 0.3);
+  border: 1px solid rgba(220, 53, 69, 0.5);
+  .hover-scale();
+
+  &:hover {
+    background: rgba(220, 53, 69, 0.5);
+  }
+}
+
+.search-indicator-list {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 576px) {
+  .app-list-item-inner {
+    display: grid;
+    grid-template-columns: 44px 45px minmax(0, 1fr);
+    grid-template-areas:
+      'handle icon actions'
+      'info info info';
+    align-items: center;
+    gap: 10px 12px;
+    padding: 12px;
+  }
+
+  .drag-handle-list {
+    grid-area: handle;
+  }
+
+  .app-icon-container-list {
+    grid-area: icon;
+  }
+
+  .app-info-list {
+    grid-area: info;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-name-row {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .app-name-list,
+  .app-command-list,
+  .app-working-dir-list {
+    max-width: 100%;
+  }
+
+  .app-actions-list {
+    grid-area: actions;
+    justify-self: end;
+    margin-left: 0;
+  }
+
+  .app-actions-list .btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+// List drag states
+.app-list-item-dragging {
+  opacity: 0.8;
+}
+.app-list-item-ghost {
+  opacity: 0.3;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+.app-list-item-chosen {
+  transform: scale(1.02);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3) !important;
+  z-index: 1000;
+}
+.app-list-item-drag {
+  transform: rotate(2deg) scale(1.03);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4) !important;
+}
+
+// ============================================================================

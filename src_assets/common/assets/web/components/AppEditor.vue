@@ -308,6 +308,8 @@ import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
+import { apiPostJson } from '../utils/apiFetch.js'
+import { deepClone } from '../utils/helpers.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   name: '',
@@ -437,7 +439,7 @@ const ensureDefaultValues = () => {
 }
 
 const initializeForm = (app) => {
-  formData.value = { ...DEFAULT_FORM_DATA, ...JSON.parse(JSON.stringify(app)) }
+  formData.value = { ...DEFAULT_FORM_DATA, ...deepClone(app) }
   ensureDefaultValues()
   validation.value = {}
   imageError.value = ''
@@ -541,17 +543,11 @@ const testMenuCommand = async (index) => {
 
   try {
     showMessage(t('apps.test_menu_cmd_executing'))
-    const response = await fetch('/api/apps/test-menu-cmd', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        cmd: menuCmd.cmd,
-        working_dir: formData.value['working-dir'] || '',
-        elevated: menuCmd.elevated === 'true' || menuCmd.elevated === true,
-      }),
+    const result = await apiPostJson('/api/apps/test-menu-cmd', {
+      cmd: menuCmd.cmd,
+      working_dir: formData.value['working-dir'] || '',
+      elevated: menuCmd.elevated === 'true' || menuCmd.elevated === true,
     })
-
-    const result = await response.json()
     const isSuccess = result.status
     showMessage(
       isSuccess

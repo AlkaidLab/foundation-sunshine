@@ -106,6 +106,7 @@
 
 <script>
 import { searchAllCovers } from '../utils/coverSearch.js'
+import { apiPostJson } from '../utils/apiFetch.js'
 
 const PLACEHOLDER_IMAGE =
   'data:image/svg+xml,' +
@@ -248,20 +249,8 @@ export default {
       this.$emit('loading', true)
 
       try {
-        if (cover.source === 'steam') {
-          this.$emit('cover-selected', { path: cover.saveUrl, source: 'steam' })
-        } else {
-          const response = await fetch('/api/covers/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: cover.key, url: cover.saveUrl }),
-          })
-
-          if (!response.ok) throw new Error('Failed to download cover')
-
-          const { path } = await response.json()
-          this.$emit('cover-selected', { path, source: 'igdb' })
-        }
+        const { path } = await apiPostJson('/api/covers/upload', { key: cover.key, url: cover.saveUrl })
+        this.$emit('cover-selected', { path, source: cover.source })
         this.closeFinder()
       } catch (error) {
         console.error('使用封面失败:', error)

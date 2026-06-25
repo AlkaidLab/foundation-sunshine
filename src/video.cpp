@@ -2459,7 +2459,6 @@ namespace video {
             params.maxscl[0] = av_make_q(1, 1);
             params.maxscl[1] = av_make_q(1, 1);
             params.maxscl[2] = av_make_q(1, 1);
-            params.maxscl[3] = av_make_q(0, 1);  // Unused
 
             // Set average maxRGB to 1.0
             params.average_maxrgb = av_make_q(1, 1);

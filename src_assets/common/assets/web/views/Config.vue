@@ -166,48 +166,50 @@
       </div>
 
       <div v-else class="form card">
-        <ul class="nav nav-tabs config-tabs card-header">
-          <template v-for="tab in tabs" :key="tab.id">
-            <li
-              v-if="tab.type === 'group' && tab.children"
-              class="nav-item dropdown"
-              :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
-            >
-              <a
-                class="nav-link dropdown-toggle"
-                :class="{ active: isEncoderTabActive(tab) }"
-                href="#"
-                role="button"
-                :aria-expanded="expandedDropdown === tab.id"
-                @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+        <div class="config-tabs-shell">
+          <ul ref="configTabsRef" class="nav nav-tabs config-tabs">
+            <template v-for="tab in tabs" :key="tab.id">
+              <li
+                v-if="tab.type === 'group' && tab.children"
+                class="nav-item dropdown"
+                :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
               >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-              <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
-                <li v-for="childTab in tab.children" :key="childTab.id">
-                  <a
-                    class="dropdown-item"
-                    :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
-                    href="#"
-                    @click.prevent="selectEncoderTab(childTab.id, $event)"
-                  >
-                    {{ $t(`tabs.${childTab.id}`) || childTab.name }}
-                  </a>
-                </li>
-              </ul>
-            </li>
-            <li v-else class="nav-item">
-              <a
-                class="nav-link"
-                :class="{ active: tab.id === currentTab }"
-                href="#"
-                @click.prevent="currentTab = tab.id"
-              >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-            </li>
-          </template>
-        </ul>
+                <a
+                  class="nav-link dropdown-toggle"
+                  :class="{ active: isEncoderTabActive(tab) }"
+                  href="#"
+                  role="button"
+                  :aria-expanded="expandedDropdown === tab.id"
+                  @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+                <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
+                  <li v-for="childTab in tab.children" :key="childTab.id">
+                    <a
+                      class="dropdown-item"
+                      :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
+                      href="#"
+                      @click.prevent="selectEncoderTab(childTab.id, $event)"
+                    >
+                      {{ $t(`tabs.${childTab.id}`) || childTab.name }}
+                    </a>
+                  </li>
+                </ul>
+              </li>
+              <li v-else class="nav-item">
+                <a
+                  class="nav-link"
+                  :class="{ active: tab.id === currentTab }"
+                  href="#"
+                  @click.prevent="currentTab = tab.id"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+              </li>
+            </template>
+          </ul>
+        </div>
 
         <General
           v-if="currentTab === 'general'"
@@ -285,6 +287,7 @@ const riskItems = ref([])
 const riskActionRunning = ref(false)
 const riskDialogRef = ref(null)
 const lastFocusedElement = ref(null)
+const configTabsRef = ref(null)
 
 const hasUnsaved = computed(() => {
   if (!config.value) return false
@@ -299,6 +302,13 @@ const hasUnsaved = computed(() => {
 const isEncoderCurrentTab = computed(() => ENCODER_TAB_IDS.has(currentTab.value))
 
 const isEncoderTabActive = (tab) => tab.type === 'group' && tab.children?.some((child) => child.id === currentTab.value)
+
+const scrollActiveTabIntoView = async () => {
+  await nextTick()
+  const activeTab = configTabsRef.value?.querySelector('.nav-link.active')
+  const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  activeTab?.scrollIntoView?.({ behavior, block: 'nearest', inline: 'center' })
+}
 
 const toggleEncoderDropdown = (tabId, event) => {
   event.stopPropagation()
@@ -441,6 +451,8 @@ watch(showRiskConfirm, async (isOpen) => {
   restoreRiskFocus()
 })
 
+watch(currentTab, scrollActiveTabIntoView)
+
 watch(saved, (newVal) => {
   if (newVal && !restarted.value) {
     showToast(showSaveToast)
@@ -470,6 +482,7 @@ onMounted(async () => {
   initTabs()
   await loadConfig()
   handleHash()
+  await scrollActiveTabIntoView()
 
   window.addEventListener('hashchange', handleHash)
   document.addEventListener('click', handleOutsideClick)
@@ -628,6 +641,12 @@ onUnmounted(() => {
     border-radius: @border-radius-sm;
     font-size: 12px;
     font-weight: bold;
+  }
+
+  .config-tabs-shell {
+    position: relative;
+    border-radius: @border-radius-lg @border-radius-lg 0 0;
+    z-index: 10;
   }
 
   .config-tabs {
@@ -1267,14 +1286,44 @@ onUnmounted(() => {
 
   .page-config .config-tabs {
     padding: 0.5rem 0.5rem 0;
-    gap: 0.25rem;
+    gap: 0.35rem;
     overflow-x: auto;
+    overflow-y: hidden;
     flex-wrap: nowrap;
+    scroll-padding-inline: 2rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
 
     .nav-link {
-      padding: 0.5rem 1rem;
+      min-height: 44px;
+      padding: 0.625rem 1rem;
       font-size: 0.875rem;
       white-space: nowrap;
+      scroll-snap-align: center;
+    }
+  }
+
+  .page-config .config-tabs-shell {
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2rem;
+      pointer-events: none;
+      z-index: 11;
+    }
+
+    &::before {
+      left: 0;
+      background: linear-gradient(90deg, rgba(var(--bs-body-bg-rgb), 0.98), rgba(var(--bs-body-bg-rgb), 0));
+    }
+
+    &::after {
+      right: 0;
+      background: linear-gradient(270deg, rgba(var(--bs-body-bg-rgb), 0.98), rgba(var(--bs-body-bg-rgb), 0));
     }
   }
 }

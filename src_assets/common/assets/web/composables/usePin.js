@@ -1,4 +1,5 @@
 import { ref, reactive } from 'vue'
+import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
 
 const STATUS_RESET_DELAY = 5000
 
@@ -52,8 +53,7 @@ export function usePin() {
   const refreshClients = async () => {
     loading.value = true
     try {
-      const response = await fetch('/api/clients/list')
-      const data = await response.json()
+      const data = await apiJson('/api/clients/list')
 
       if (data.status === 'true' && data.named_certs?.length) {
         clients.value = data.named_certs
@@ -79,8 +79,7 @@ export function usePin() {
   const unpairAll = async () => {
     unpairAllPressed.value = true
     try {
-      const response = await fetch('/api/clients/unpair-all', { method: 'POST' })
-      const data = await response.json()
+      const data = await apiJson('/api/clients/unpair-all', { method: 'POST' })
       showApplyMessage.value = true
       unpairAllStatus.value = data.status.toString() === 'true'
 
@@ -103,12 +102,7 @@ export function usePin() {
   const unpairSingle = async (uuid) => {
     deleting.value.add(uuid)
     try {
-      const response = await fetch('/api/clients/unpair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid }),
-      })
-      const data = await response.json()
+      const data = await apiPostJson('/api/clients/unpair', { uuid })
       const status = data.status?.toString().toLowerCase()
       if (status === '1' || status === 'true') {
         showApplyMessage.value = true
@@ -158,10 +152,9 @@ export function usePin() {
       }
 
       config.value.clients = serialize(tmpClients)
-      const response = await fetch('/api/clients/list', {
+      const response = await apiFetch('/api/clients/list', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config.value),
+        body: config.value,
       })
 
       if (response.status === 200) {
@@ -184,10 +177,9 @@ export function usePin() {
     saving.value = true
     try {
       config.value.clients = serialize(clients.value)
-      const response = await fetch('/api/clients/list', {
+      const response = await apiFetch('/api/clients/list', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config.value),
+        body: config.value,
       })
 
       if (response.status === 200) {
@@ -229,12 +221,7 @@ export function usePin() {
       statusDiv.innerHTML = ''
 
       try {
-        const response = await fetch('/api/pin', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin: pinInput.value, name: nameInput.value }),
-        })
-        const data = await response.json()
+        const data = await apiPostJson('/api/pin', { pin: pinInput.value, name: nameInput.value })
 
         if (data.status.toString().toLowerCase() === 'true') {
           statusDiv.innerHTML =
@@ -256,7 +243,7 @@ export function usePin() {
   const clickedApplyBanner = async () => {
     showApplyMessage.value = false
     try {
-      await fetch('/api/restart', { method: 'POST' })
+      await apiFetch('/api/restart', { method: 'POST' })
     } catch (error) {
       console.error('Failed to restart:', error)
     }
@@ -264,8 +251,7 @@ export function usePin() {
 
   const loadConfig = async () => {
     try {
-      const response = await fetch('/api/config')
-      const data = await response.json()
+      const data = await apiJson('/api/config')
       config.value = data
       pairingDeviceName.value = data.pair_name ?? ''
     } catch (error) {

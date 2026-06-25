@@ -72,6 +72,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { apiFetch } from '../utils/apiFetch.js'
 
 const props = defineProps({
   logFilter: {
@@ -130,7 +131,7 @@ const downloadLogs = async () => {
   // Tauri WebView2: fetch into memory then use Rust save_text_file command (dialog + fs write)
   if (window.__TAURI_INTERNALS__) {
     try {
-      const response = await fetch('/api/logs')
+      const response = await apiFetch('/api/logs')
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const content = await response.text()
       await window.__TAURI_INTERNALS__.invoke('save_text_file', {

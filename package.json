@@ -21,21 +21,21 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "6.6.0",
     "@popperjs/core": "2.11.8",
-    "bootstrap": "5.3.3",
+    "bootstrap": "^5.3.8",
     "colorthief": "^2.6.0",
     "firebase": "^12.3.0",
     "marked": "^16.2.1",
-    "nanoid": "^5.0.7",
+    "nanoid": "^5.1.15",
     "qrcode": "^1.5.4",
     "vue": "^3.5.38",
-    "vue-i18n": "^11.2.8",
+    "vue-i18n": "^11.4.6",
     "vuedraggable-es": "^4.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.7",
     "express": "^4.18.2",
-    "less": "^4.4.2",
-    "vite": "^8.0.16",
+    "less": "^4.6.7",
+    "vite": "^8.1.0",
     "vite-plugin-ejs": "1.6.4",
     "vite-plugin-mkcert": "^1.17.8"
   }

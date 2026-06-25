@@ -1,5 +1,13 @@
-import { API_ENDPOINTS } from '../utils/constants.js';
-import { formatError } from '../utils/helpers.js';
+import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
+import { apiJson, apiPostJson } from '../utils/apiFetch.js';
+import { deepClone, formatError } from '../utils/helpers.js';
+
+const cloneData = deepClone;
+const normalizeAppName = (name) => String(name || '').trim().toLowerCase();
+const withoutIndex = (app) => {
+  const { index, ...rest } = app || {};
+  return rest;
+};
 
 /**
  * 应用服务类
@@ -11,11 +19,7 @@ export class AppService {
    */
   static async getApps() {
     try {
-      const response = await fetch(API_ENDPOINTS.APPS);
-      if (!response.ok) {
-        throw new Error(`获取应用列表失败: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await apiJson(API_ENDPOINTS.APPS);
       return data.apps || [];
     } catch (error) {
       console.error('获取应用列表失败:', error);
@@ -31,21 +35,7 @@ export class AppService {
    */
   static async saveApps(apps, editApp = null) {
     try {
-      const response = await fetch(API_ENDPOINTS.APPS, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          apps,
-          editApp
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`保存应用失败: ${response.status}`);
-      }
-      
+      await apiPostJson(API_ENDPOINTS.APPS, { apps, editApp });
       return true;
     } catch (error) {
       console.error('保存应用失败:', error);
@@ -60,14 +50,7 @@ export class AppService {
    */
   static async deleteApp(index) {
     try {
-      const response = await fetch(API_ENDPOINTS.APP_DELETE(index), {
-        method: 'DELETE'
-      });
-      
-      if (!response.ok) {
-        throw new Error(`删除应用失败: ${response.status}`);
-      }
-      
+      await apiJson(API_ENDPOINTS.APP_DELETE(index), { method: 'DELETE' });
       return true;
     } catch (error) {
       console.error('删除应用失败:', error);
@@ -82,15 +65,9 @@ export class AppService {
    */
   static async batchDeleteApps(indices) {
     try {
-      const response = await fetch(API_ENDPOINTS.APPS_BATCH_DELETE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ indices })
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.status === false || data.status === 'false') {
-        throw new Error(data.error || `批量删除失败: ${response.status}`);
+      const data = await apiPostJson(API_ENDPOINTS.APPS_BATCH_DELETE, { indices });
+      if (data.status === false || data.status === 'false') {
+        throw new Error(data.error || '批量删除失败');
       }
       return {
         deleted: Number(data.deleted) || 0,
@@ -108,17 +85,56 @@ export class AppService {
    */
   static async getPlatform() {
     try {
-      const response = await fetch(API_ENDPOINTS.CONFIG);
-      if (!response.ok) {
-        throw new Error(`获取平台信息失败: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await apiJson(API_ENDPOINTS.CONFIG);
       return data.platform || 'windows';
     } catch (error) {
       console.error('获取平台信息失败:', error);
       // 默认返回windows平台
       return 'windows';
     }
+  }
+
+  /**
+   * Get the platform default built-in apps.
+   */
+  static getDefaultBuiltInApps(platform) {
+    return cloneData(DEFAULT_BUILT_IN_APPS[platform] || []);
+  }
+
+  /**
+   * Restore matching built-in app defaults and append missing built-in apps.
+   */
+  static restoreDefaultBuiltInApps(apps, platform) {
+    const defaults = AppService.getDefaultBuiltInApps(platform);
+    const nextApps = cloneData(Array.isArray(apps) ? apps : []);
+    let added = 0;
+    let restored = 0;
+
+    defaults.forEach((defaultApp) => {
+      const defaultName = normalizeAppName(defaultApp.name);
+      const existingIndex = nextApps.findIndex((app) => normalizeAppName(app.name) === defaultName);
+      const cleanDefault = cloneData(defaultApp);
+
+      if (existingIndex === -1) {
+        nextApps.push(cleanDefault);
+        added++;
+        return;
+      }
+
+      const currentComparable = JSON.stringify(withoutIndex(nextApps[existingIndex]));
+      const defaultComparable = JSON.stringify(cleanDefault);
+      if (currentComparable !== defaultComparable) {
+        nextApps[existingIndex] = cleanDefault;
+        restored++;
+      }
+    });
+
+    return {
+      apps: nextApps,
+      added,
+      restored,
+      changed: added + restored
+    };
   }
 
   /**
@@ -199,4 +215,4 @@ export class AppService {
       'working-dir': app['working-dir']?.trim() || ''
     };
   }
-} 
+}

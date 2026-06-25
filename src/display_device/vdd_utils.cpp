@@ -1056,42 +1056,84 @@ namespace display_device {
     }
 
     bool
+    vdd_prep_requires_pre_vdd_snapshot(parsed_config_t::vdd_prep_e vdd_prep) {
+      return vdd_prep == parsed_config_t::vdd_prep_e::display_off;
+    }
+
+    bool
+    has_active_physical_display_snapshot(const device_info_map_t &pre_vdd_devices) {
+      return std::any_of(pre_vdd_devices.begin(), pre_vdd_devices.end(), [](const auto &entry) {
+        const auto &info = entry.second;
+        return info.friendly_name != ZAKO_NAME &&
+               (info.device_state == device_state_e::active ||
+                info.device_state == device_state_e::primary);
+      });
+    }
+
+    bool
+    has_physical_display_snapshot(const device_info_map_t &pre_vdd_devices) {
+      return std::any_of(pre_vdd_devices.begin(), pre_vdd_devices.end(), [](const auto &entry) {
+        return entry.second.friendly_name != ZAKO_NAME;
+      });
+    }
+
+    vdd_prep_result_e
     apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
-      const device_info_map_t &pre_vdd_devices) {
+      const device_info_map_t &pre_vdd_devices, bool pre_vdd_devices_captured) {
       if (vdd_device_id.empty()) {
         BOOST_LOG(info) << "VDD设备ID为空，跳过vdd_prep处理";
-        return true;
+        return vdd_prep_result_e::success;
       }
 
       if (vdd_prep == parsed_config_t::vdd_prep_e::no_operation) {
         BOOST_LOG(info) << "vdd_prep设置为无操作，跳过物理显示器处理";
-        return true;
+        return vdd_prep_result_e::success;
       }
 
-      // 从 pre_vdd_devices（VDD创建前保存的设备列表）中获取物理显示器，
-      // 确保即使 VDD 创建后物理屏变 inactive 也能正确识别
+      // 从基线快照中获取物理显示器，确保即使 VDD prep 后物理屏变 inactive 也能正确识别
+      if (vdd_prep_requires_pre_vdd_snapshot(vdd_prep) && !pre_vdd_devices_captured) {
+        BOOST_LOG(error) << "Missing baseline display snapshot; refusing VDD prep "
+                         << static_cast<int>(vdd_prep)
+                         << " to avoid guessing the original physical display topology.";
+        return vdd_prep_result_e::safety_blocked;
+      }
+
+      if (vdd_prep_requires_pre_vdd_snapshot(vdd_prep) &&
+          has_physical_display_snapshot(pre_vdd_devices) &&
+          !has_active_physical_display_snapshot(pre_vdd_devices)) {
+        BOOST_LOG(error) << "Baseline display snapshot contains no active physical display; refusing VDD prep "
+                         << static_cast<int>(vdd_prep)
+                         << " because the baseline is not restorable.";
+        return vdd_prep_result_e::safety_blocked;
+      }
+
       std::vector<std::string> physical_devices;
       std::string original_primary_id;
 
-      if (!pre_vdd_devices.empty()) {
-        // 使用 VDD 创建前保存的设备信息（可靠）
+      if (pre_vdd_devices_captured) {
+        // 使用 VDD prep 前保存的基线设备信息（可靠）
         for (const auto &[device_id, info] : pre_vdd_devices) {
-          if (info.friendly_name != ZAKO_NAME) {
+          if (info.friendly_name != ZAKO_NAME &&
+              (info.device_state == device_state_e::active ||
+               info.device_state == device_state_e::primary)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;
             }
           }
         }
-        BOOST_LOG(info) << "使用pre-VDD设备列表: " << physical_devices.size() << "个物理显示器"
+        BOOST_LOG(info) << "使用VDD prep基线设备列表: " << physical_devices.size() << "个物理显示器"
                         << (original_primary_id.empty() ? "" : ", 原主屏: " + original_primary_id);
       }
       else {
-        // 回退：从当前设备枚举中获取（VDD创建前未保存时的兜底逻辑）
-        BOOST_LOG(warning) << "未提供pre-VDD设备列表，从当前设备枚举中查找物理显示器";
+        // 回退：从当前设备枚举中获取（未保存 VDD prep 基线时的兜底逻辑）
+        BOOST_LOG(warning) << "未提供VDD prep基线设备列表，从当前设备枚举中查找物理显示器";
         const auto all_devices = enum_available_devices();
         for (const auto &[device_id, info] : all_devices) {
-          if (device_id != vdd_device_id && info.friendly_name != ZAKO_NAME) {
+          if (device_id != vdd_device_id &&
+              info.friendly_name != ZAKO_NAME &&
+              (info.device_state == device_state_e::active ||
+               info.device_state == device_state_e::primary)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;
@@ -1110,7 +1152,7 @@ namespace display_device {
 
       if (physical_devices.empty()) {
         BOOST_LOG(debug) << "没有物理显示器需要处理";
-        return true;
+        return vdd_prep_result_e::success;
       }
 
       active_topology_t new_topology;
@@ -1149,21 +1191,21 @@ namespace display_device {
         }
 
         default:
-          return true;
+          return vdd_prep_result_e::success;
       }
 
       if (!is_topology_valid(new_topology)) {
         BOOST_LOG(error) << "新拓扑无效";
-        return false;
+        return vdd_prep_result_e::safety_blocked;
       }
 
       if (!set_topology(new_topology)) {
         BOOST_LOG(error) << "设置拓扑失败";
-        return false;
+        return vdd_prep_result_e::topology_failed;
       }
 
       BOOST_LOG(info) << "成功应用vdd_prep设置";
-      return true;
+      return vdd_prep_result_e::success;
     }
   }  // namespace vdd_utils
 }  // namespace display_device

@@ -171,6 +171,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWelcome } from '../composables/useWelcome.js'
+import { apiJson } from '../utils/apiFetch.js'
 
 const { locale, setLocaleMessage } = useI18n()
 const selectedLocale = ref('en')
@@ -199,7 +200,7 @@ const loadLanguage = (lang) => {
 onMounted(async () => {
   try {
     // 使用 /api/configLocale，这个 API 不需要认证（在 welcome 页面时可能还没有账号）
-    const config = await fetch('/api/configLocale').then((r) => r.json())
+    const config = await apiJson('/api/configLocale')
     if (config.locale) {
       selectedLocale.value = config.locale
       loadLanguage(config.locale)

@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import { trackEvents } from '../config/firebase.js'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
+import { deepClone, safeJsonParse } from '../utils/helpers.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -42,6 +44,7 @@ const DEFAULT_TABS = [
       mouse: 'enabled',
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
+      native_touchpad_optimization: 'enabled',
       virtual_mouse: 'enabled',
       capture_cursor: true,
       amf_draw_mouse_cursor: false,
@@ -201,19 +204,11 @@ const DEFAULT_TABS = [
 ]
 
 /**
- * 深拷贝对象
- */
-const deepClone = (obj) => JSON.parse(JSON.stringify(obj))
-
-/**
  * 安全解析 JSON
  */
 const safeParseJSON = (str, fallback = []) => {
-  try {
-    return JSON.parse(str || JSON.stringify(fallback))
-  } catch {
-    return fallback
-  }
+  if (!str) return fallback
+  return safeJsonParse(str, fallback)
 }
 
 /**
@@ -413,8 +408,7 @@ export function useConfig() {
    */
   const loadConfig = async () => {
     try {
-      const response = await fetch('/api/config')
-      const data = await response.json()
+      const data = await apiJson('/api/config')
 
       platform.value = data.platform || ''
       filterTabsByPlatform(platform.value)
@@ -632,10 +626,9 @@ export function useConfig() {
     removeDefaultValues(configData)
 
     try {
-      const response = await fetch('/api/config', {
+      const response = await apiFetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(configData),
+        body: configData,
       })
 
       saved.value = response.ok
@@ -670,7 +663,7 @@ export function useConfig() {
     }, 5000)
 
     try {
-      await fetch('/api/restart', { method: 'POST' })
+      await apiFetch('/api/restart', { method: 'POST' })
       trackEvents.userAction('config_applied')
     } catch (error) {
       console.error('Failed to restart:', error)

@@ -1,4 +1,5 @@
 import { ref, computed, onUnmounted } from 'vue'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 
 const LOG_REFRESH_INTERVAL = 5000
 const STATUS_RESET_DELAY = 5000
@@ -80,20 +81,12 @@ export function useTroubleshooting() {
     return lines.filter(filterFn).join('\n')
   })
 
-  const fetchJson = async (url, options = {}) => {
-    const response = await fetch(url, options)
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-    return response.json()
-  }
-
   const refreshLogs = async () => {
     try {
       const offset = Number(logOffset.value)
       // Always send X-Log-Offset to use cached tail mode (without it, server returns full file for download)
       const headers = { 'X-Log-Offset': String(Number.isNaN(offset) ? 0 : offset) }
-      const response = await fetch('/api/logs', { headers })
+      const response = await apiFetch('/api/logs', { headers })
 
       if (response.status === 304) {
         const sizeHeader = response.headers.get('X-Log-Size')
@@ -131,7 +124,7 @@ export function useTroubleshooting() {
   const closeApp = () =>
     withPressedState(closeAppPressed, async () => {
       try {
-        const data = await fetchJson('/api/apps/close', { method: 'POST' })
+        const data = await apiJson('/api/apps/close', { method: 'POST' })
         closeAppStatus.value = data.status.toString() === 'true'
         createStatusResetter(closeAppStatus)
       } catch {
@@ -144,7 +137,7 @@ export function useTroubleshooting() {
       restartPressed,
       async () => {
         try {
-          await fetch('/api/restart', { method: 'POST' })
+          await apiFetch('/api/restart', { method: 'POST' })
         } catch {}
       },
       true
@@ -153,14 +146,14 @@ export function useTroubleshooting() {
   const boom = async () => {
     boomPressed.value = true
     try {
-      await fetch('/api/boom')
+      await apiFetch('/api/boom')
     } catch {}
   }
 
   const resetDisplayDevicePersistence = () =>
     withPressedState(resetDisplayDevicePressed, async () => {
       try {
-        const data = await fetchJson('/api/reset-display-device-persistence', { method: 'POST' })
+        const data = await apiJson('/api/reset-display-device-persistence', { method: 'POST' })
         resetDisplayDeviceStatus.value = data.status.toString() === 'true'
         createStatusResetter(resetDisplayDeviceStatus)
       } catch {
@@ -176,7 +169,7 @@ export function useTroubleshooting() {
 
   const copyConfig = async (t) => {
     try {
-      const data = await fetchJson('/api/config')
+      const data = await apiJson('/api/config')
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
       alert(t('troubleshooting.copy_config_success'))
     } catch {
@@ -186,13 +179,12 @@ export function useTroubleshooting() {
 
   const reopenSetupWizard = async (t) => {
     try {
-      const config = await fetchJson('/api/config')
+      const config = await apiJson('/api/config')
       config.setup_wizard_completed = false
 
-      const saveResponse = await fetch('/api/config', {
+      const saveResponse = await apiFetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: config,
       })
 
       if (saveResponse.ok) {
@@ -207,7 +199,7 @@ export function useTroubleshooting() {
 
   const loadPlatform = async () => {
     try {
-      const data = await fetchJson('/api/config')
+      const data = await apiJson('/api/config')
       platform.value = data.platform || ''
     } catch {}
   }

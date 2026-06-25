@@ -26,6 +26,31 @@ test('searchApps matches app name and command case-insensitively', () => {
   assert.deepEqual(AppService.searchApps(apps, 'MSTSC'), [apps[2]])
 })
 
+test('restoreDefaultBuiltInApps restores matching defaults and appends missing apps', () => {
+  const customApp = { name: 'Moonlight', cmd: 'moonlight.exe' }
+  const result = AppService.restoreDefaultBuiltInApps([
+    { name: 'Desktop', cmd: 'broken.exe', index: 0 },
+    { name: 'Steam Big Picture', cmd: 'steam://open/bigpicture', 'auto-detach': 'true', 'wait-all': 'true', 'image-path': 'steam.png' },
+    customApp,
+  ], 'windows')
+
+  assert.equal(result.restored, 1)
+  assert.equal(result.added, 1)
+  assert.equal(result.changed, 2)
+  assert.deepEqual(result.apps[0], AppService.getDefaultBuiltInApps('windows')[0])
+  assert.deepEqual(result.apps[2], customApp)
+  assert.equal(result.apps.at(-1).name, 'Xbox Game')
+})
+
+test('restoreDefaultBuiltInApps leaves unknown platforms unchanged', () => {
+  const apps = [{ name: 'Moonlight', cmd: 'moonlight.exe' }]
+  const result = AppService.restoreDefaultBuiltInApps(apps, 'unknown')
+
+  assert.equal(result.changed, 0)
+  assert.deepEqual(result.apps, apps)
+  assert.notEqual(result.apps, apps)
+})
+
 test('formatAppData trims scalar fields and removes empty prep commands', () => {
   const result = AppService.formatAppData({
     name: '  Game  ',

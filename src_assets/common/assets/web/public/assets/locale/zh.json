@@ -161,7 +161,11 @@
     "wait_all": "等待所有应用进程终止",
     "wait_all_desc": "串流将持续到应用启动的所有进程终止。未选中时，串流将在初始应用进程终止时停止，即使其他进程仍在运行。",
     "working_dir": "工作目录",
-    "working_dir_desc": "传递给进程的工作目录。某些应用使用工作目录搜索配置文件。未设置时默认使用命令的父目录。"
+    "working_dir_desc": "传递给进程的工作目录。某些应用使用工作目录搜索配置文件。未设置时默认使用命令的父目录。",
+    "restore_default_apps": "还原内置应用",
+    "restore_default_apps_failed": "还原内置应用失败",
+    "restore_default_apps_none": "内置应用已是默认状态",
+    "restore_default_apps_result": "已还原 {restored} 个内置应用，新增 {added} 个"
   },
   "config": {
     "adapter_name": "适配器名称",
@@ -407,6 +411,8 @@
     "mouse_desc": "允许客户端使用鼠标控制主机系统",
     "native_pen_touch": "原生笔/触摸支持",
     "native_pen_touch_desc": "启用后，Sunshine 将透传来自 Moonlight 客户端的原生笔/触控事件。对于不支持原生笔/触控的旧版应用程序，禁用此功能可能更有用。",
+    "native_touchpad_optimization": "适配原生触摸板",
+    "native_touchpad_optimization_desc": "启用后，Sunshine 将为原生触摸板启用近似原生的触摸板支持。关闭后会回退到旧版触摸板事件。",
     "no_fps": "未添加帧率值",
     "no_resolutions": "未添加分辨率",
     "notify_pre_releases": "预发布版本通知",
@@ -525,7 +531,7 @@
       "items": {
         "display_device_prep": {
           "description": "串流开始时 Sunshine 会改动主机显示器拓扑，可能影响本机显示布局。",
-          "only_display_description": "Sunshine 会停用其他显示器，只保留指定显示器。如果目标显示器不可用，本机画面可能变黑。",
+          "only_display_description": "Sunshine 会停用其他显示器，只保留指定显示器。如果目标显示器不可用，本机画面可能变黑。若主机连接 DisplayPort 或 USB-C DP 物理显示器，可能因热插拔或自动输入源扫描出现周期性卡顿；遇到此问题请改用主屏/副屏串流，或在显示器菜单中关闭自动输入源扫描/自动检测。",
           "recovery": "如果显示状态异常，请改回“禁用”，或到故障排除页面重置显示设备记忆。",
           "title": "将改动显示器拓扑"
         },
@@ -661,7 +667,8 @@
     "vigem_refresh": "刷新状态",
     "vigem_reinstall": "重装最新版",
     "vigem_reinstall_desc": "强制从 GitHub 拉取 ViGEmBus 最新发行版重新安装，绕过 bat 的 >=1.17 跳过检查。",
-    "vigem_status_installed": "已安装（总线未激活）",
+    "vigem_status_checking": "检测中...",
+    "vigem_status_installed": "已安装",
     "vigem_status_not_installed": "未安装",
     "vigem_status_outdated": "版本过旧（需 1.17+）",
     "vigem_status_running": "运行中",
@@ -680,6 +687,7 @@
     "vmouse_installing": "安装中...",
     "vmouse_note": "虚拟鼠标驱动需要单独安装，请使用 Sunshine 控制面板来安装或管理驱动。",
     "vmouse_refresh": "刷新状态",
+    "vmouse_status_checking": "检测中...",
     "vmouse_status_installed": "已安装（未激活）",
     "vmouse_status_not_installed": "未安装",
     "vmouse_status_running": "运行中",
@@ -818,6 +826,8 @@
     "harmony_client": "鸿蒙Moonlight V+",
     "join_group": "加入串流裙",
     "join_group_desc": "获取帮助与交流经验",
+    "jiaoyuelian_desc": "网络穿透工具，帮助远程串流更稳定地连回家中主机",
+    "jiaoyuelian_title": "皎月连",
     "legal": "法律声明",
     "legal_desc": "继续使用本软件即表示您同意以下文档中的条款和条件。",
     "license": "许可协议",
@@ -828,6 +838,7 @@
     "moonlight_ohos_desc": "by smdsbz · OpenHarmony 鸿蒙版先行者",
     "moonlight_pc_title": "Moonlight PC",
     "official_website": "基地官网",
+    "official_website_desc": "了解 AlkaidLab 产品、下载与最新动态",
     "official_website_title": "瑶光流梦 - 官方网站",
     "open_source": "开源项目",
     "open_source_desc": "Star & Fork 支持项目发展",
@@ -852,6 +863,7 @@
     "device_id": "设备ID",
     "device_state": "状态",
     "download_clients": "下载客户端",
+    "featured_services": "推荐服务",
     "finish": "完成设置",
     "go_to_apps": "配置应用程序",
     "harmony_goto_repo": "前往仓库",

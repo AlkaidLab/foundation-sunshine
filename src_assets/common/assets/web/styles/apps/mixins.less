@@ -1,0 +1,65 @@
+// VARIABLES & MIXINS
+// ============================================================================
+
+// Common transition
+.transition-default() {
+  transition: var(--transition-default);
+}
+
+.transition-transform() {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.transition-bounce() {
+  transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+// Common backdrop blur
+.glass-effect() {
+  backdrop-filter: blur(10px);
+}
+
+.glass-effect-light() {
+  backdrop-filter: blur(4px);
+}
+
+// Common button base
+.btn-base() {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: none;
+  cursor: pointer;
+  .transition-default();
+}
+
+// Common rounded button
+.btn-rounded(@size: 40px) {
+  .btn-base();
+  width: @size;
+  height: @size;
+  border-radius: 50%;
+}
+
+// Hover scale effect
+.hover-scale(@scale: 1.1) {
+  &:hover {
+    transform: scale(@scale);
+  }
+}
+
+// Text ellipsis
+.text-ellipsis() {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// Flex center
+.flex-center() {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+// ============================================================================
