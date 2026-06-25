@@ -20,6 +20,7 @@ import {
 const MESSAGE_DURATION = 3000
 const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
 const REMOTE_IMAGE_URL_RE = /^https?:\/\//i
+const COVER_LOCALIZATION_CONCURRENCY = 4
 
 function getStorage() {
   return typeof localStorage !== 'undefined' ? localStorage : null
@@ -58,6 +59,22 @@ function saveEnabledGameLibrarySkillIds(skillIds) {
   } catch {
     // Skill preferences are convenience state; scanning should continue if persistence fails.
   }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), items.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
 }
 
 /**
@@ -896,12 +913,17 @@ export function useApps() {
 
     try {
       isSaving.value = true
-      const localizedScannedApps = await Promise.all(scannedApps.value.map(localizeScannedAppCover))
+      const scannedAppSnapshot = [...scannedApps.value]
+      const localizedScannedApps = await mapWithConcurrency(
+        scannedAppSnapshot,
+        COVER_LOCALIZATION_CONCURRENCY,
+        localizeScannedAppCover
+      )
       const appsToAdd = localizedScannedApps.map(createAppFromScanned)
 
       apps.value.push(...appsToAdd)
       await AppService.saveApps(apps.value, null)
-      scannedApps.value.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
+      scannedAppSnapshot.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
       await loadApps()
 
       showMessage(`已添加 ${appsToAdd.length} 个应用`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
