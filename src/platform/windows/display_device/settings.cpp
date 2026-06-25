@@ -949,10 +949,20 @@ namespace display_device {
       // was applied.
       persistent_data_t new_settings { topology_result->pair };
       persistent_data_t &current_settings { persistent_data ? *persistent_data : new_settings };
+      const bool should_skip_new_vdd_only_persistence =
+        is_vdd_mode &&
+        !persistent_data &&
+        !pre_saved_initial_topology &&
+        is_vdd_only_topology(new_settings.topology.initial, config.device_id);
 
       const auto persist_settings = [&]() -> apply_result_t {
         if (current_settings.contains_modifications()) {
           if (!persistent_data) {
+            if (should_skip_new_vdd_only_persistence) {
+              BOOST_LOG(warning) << "VDD mode: refusing to persist current VDD-only topology as the initial restore baseline; continuing without new display restore data.";
+              return { apply_result_t::result_e::success };
+            }
+
             persistent_data = std::make_unique<persistent_data_t>(new_settings);
           }
 

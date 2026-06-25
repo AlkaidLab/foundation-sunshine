@@ -242,7 +242,7 @@ namespace nvhttp::stream_start {
     explicit_vdd_requested_for_launch(const rtsp_stream::launch_session_t &launch_session) {
       const auto display_request = display_device::resolve_display_request(config::video, launch_session);
       const bool is_vdd_device = display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME;
-      return display_device::is_explicit_vdd_request(display_request, is_vdd_device);
+      return display_request.use_vdd || is_vdd_device;
     }
 
     bool

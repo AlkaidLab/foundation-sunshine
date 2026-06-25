@@ -521,38 +521,7 @@ namespace display_device {
 
   bool
   display_request_t::requires_vdd(bool requested_device_exists, bool is_vdd_device) const {
-    return resolve_vdd_request(
-      *this,
-      requested_device_exists,
-      is_vdd_device,
-      parsed_config_t::device_prep_e::ensure_active
-    ) == vdd_request_decision_e::use_vdd;
-  }
-
-  bool
-  is_explicit_vdd_request(const display_request_t &request, bool is_vdd_device) {
-    return request.use_vdd || is_vdd_device;
-  }
-
-  vdd_request_decision_e
-  resolve_vdd_request(
-    const display_request_t &request,
-    bool requested_device_exists,
-    bool is_vdd_device,
-    parsed_config_t::device_prep_e device_prep) {
-    if (is_explicit_vdd_request(request, is_vdd_device)) {
-      return vdd_request_decision_e::use_vdd;
-    }
-
-    if (requested_device_exists || !request.allows_vdd_fallback()) {
-      return vdd_request_decision_e::use_requested_display;
-    }
-
-    if (device_prep == parsed_config_t::device_prep_e::no_operation) {
-      return vdd_request_decision_e::blocked_automatic_fallback;
-    }
-
-    return vdd_request_decision_e::use_vdd;
+    return use_vdd || is_vdd_device || (!requested_device_exists && allows_vdd_fallback());
   }
 
   display_request_t
@@ -726,20 +695,19 @@ namespace display_device {
       return boost::none;
     }
 
-    const auto vdd_request_decision = resolve_vdd_request(
-      display_request,
-      requested_device_exists,
-      is_vdd_device,
-      parsed_config.device_prep
-    );
-
-    if (vdd_request_decision == vdd_request_decision_e::blocked_automatic_fallback) {
+    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
+    const bool automatic_vdd_fallback =
+      !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+    if (parsed_config.device_prep == parsed_config_t::device_prep_e::no_operation &&
+        automatic_vdd_fallback) {
       BOOST_LOG(error) << "Requested display is unavailable and no_operation forbids automatic VDD fallback: " << parsed_config.device_id;
       return boost::none;
     }
 
+    const bool needs_vdd = explicit_vdd_request || automatic_vdd_fallback;
+
     // 不需要VDD时，使用物理模式映射
-    if (vdd_request_decision != vdd_request_decision_e::use_vdd) {
+    if (!needs_vdd) {
       BOOST_LOG(debug) << "输出设备已存在，跳过VDD准备"sv;
       parsed_config.use_vdd = false;
       parsed_config.device_prep = parsed_config_t::to_physical_device_prep(parsed_config.device_prep);
@@ -761,10 +729,7 @@ namespace display_device {
     }
 
     // 准备VDD设备
-    if (!display_device::session_t::get().prepare_vdd(parsed_config, session)) {
-      BOOST_LOG(error) << "Failed to prepare VDD display safely.";
-      return boost::none;
-    }
+    display_device::session_t::get().prepare_vdd(parsed_config, session);
 
     return parsed_config;
   }

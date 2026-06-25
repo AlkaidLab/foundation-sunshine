@@ -212,9 +212,8 @@ namespace display_device {
 
     /**
      * @brief Prepares VDD for use
-     * @returns True when VDD prep succeeded; false when display configuration should abort.
      */
-    bool
+    void
     prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session);
 
     /**
