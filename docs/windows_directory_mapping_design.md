@@ -498,11 +498,28 @@ Windows 路径处理必须作为核心安全边界：
 - 每个主机独立授权。
 - 串流中显示远端文件入口。
 
-第一版 moonlight-qt 可以先做一个文件面板，不急于做盘符挂载。
+第一版 moonlight-qt 先做文件面板，不把盘符挂载作为默认入口。
 
 ## 虚拟盘扩展
 
-第二阶段可接入 WinFsp：
+桌面端 moonlight-qt 可以通过 WinFsp/Dokany 把远端共享目录挂载到 Windows Explorer。该能力应作为可选增强，而不是第一版 UX 闭环的前置条件。
+
+推荐分层：
+
+```text
+moonlight-qt file panel
+  -> FileMappingClient
+      -> WSS RPC
+
+optional Explorer mount
+  -> WinFsp/Dokany adapter
+      -> FileMappingClient
+          -> WSS RPC
+```
+
+不推荐把 WebDAV/SMB 作为默认实现。它们会引入额外认证面、缓存语义和系统服务依赖，也不自然复用 Sunshine/Moonlight 已有的配对身份。
+
+第三阶段可接入 WinFsp：
 
 ```text
 WinFsp filesystem
@@ -524,6 +541,10 @@ N:\Client\Documents
 - 权限和路径安全仍在 provider 端执行。
 - 虚拟盘失败不应影响串流。
 - 未安装 WinFsp 时仍保留文件面板能力。
+- 第一阶段只允许只读挂载；上传、删除、rename、replace 需要等写入语义和冲突处理单独设计。
+- 挂载生命周期绑定 Moonlight 与对应 Sunshine 主机连接；断线、退出或主机撤销共享时必须自动卸载。
+- 挂载后本机任意程序都可能读取该盘符，因此 UI 必须明确提示用户这一点。
+- 不承诺固定盘符。默认使用可读挂载名，高级设置再允许用户指定盘符或挂载目录。
 
 ## 分阶段实施
 
@@ -562,14 +583,16 @@ N:\Client\Documents
 目标：
 
 - 可选安装 WinFsp。
-- 将远端目录挂载为盘符或目录。
+- 将远端目录只读挂载为盘符或目录。
 - 文件浏览器和普通 Windows 程序可访问远端目录。
+- 断线、退出、主机撤销共享时自动卸载。
 
 交付：
 
 - Moonlight WinFsp adapter。
 - Sunshine WinFsp adapter，可选。
 - 挂载状态 UI。
+- 挂载/卸载失败的用户可读错误提示。
 
 ## 测试清单
 
