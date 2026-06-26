@@ -61,16 +61,18 @@ TEST(FileMappingConfig, SkipsMissingDirectories) {
   EXPECT_FALSE(result.warnings.empty());
 }
 
-TEST(FileMappingConfig, IgnoresDeletePermissionForReadMode) {
+TEST(FileMappingConfig, IgnoresDangerousPermissionsInReadOnlyPhase) {
   temp_config_mapping_t temp;
   const auto json =
     "[{\"id\":\"host-test\",\"path\":\"" +
     temp.root.generic_string() +
-    "\",\"mode\":\"read\",\"allow_delete\":true}]";
+    "\",\"mode\":\"readwrite\",\"allow_delete\":true,\"allow_execute\":true,\"follow_reparse_points\":true}]";
 
   auto result = file_mapping_config::parse_mappings_json(json);
   ASSERT_EQ(result.mappings.size(), 1);
   EXPECT_EQ(result.mappings[0].mode, file_mapping::access_mode_e::read);
   EXPECT_FALSE(result.mappings[0].allow_delete);
-  EXPECT_FALSE(result.warnings.empty());
+  EXPECT_FALSE(result.mappings[0].allow_execute);
+  EXPECT_FALSE(result.mappings[0].follow_reparse_points);
+  EXPECT_GE(result.warnings.size(), 4);
 }

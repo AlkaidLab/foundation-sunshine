@@ -52,7 +52,22 @@ TEST(FileMappingHttp, CapabilityBuildsSessionUrlFromRequestHost) {
   auto body = nlohmann::json::parse(response.body);
   EXPECT_EQ(
     body["session_url"].get<std::string>(),
-    "wss://192.168.1.20:47999/api/v1/file-mapping/session?token=abc123");
+    "wss://192.168.1.20:47999/api/v1/file-mapping/session");
+  EXPECT_EQ(body["session_token"].get<std::string>(), "abc123");
+}
+
+TEST(FileMappingHttp, CapabilityStripsTokenFromExplicitSessionUrl) {
+  file_mapping_http::capability_state_t state;
+  state.enabled = true;
+  state.listening = true;
+  state.session_url = "wss://127.0.0.1:47999/api/v1/file-mapping/session?token=abc123";
+  state.session_token = "abc123";
+
+  auto response = file_mapping_http::make_capability_response(state);
+  auto body = nlohmann::json::parse(response.body);
+  EXPECT_EQ(
+    body["session_url"].get<std::string>(),
+    "wss://127.0.0.1:47999/api/v1/file-mapping/session");
 }
 
 TEST(FileMappingHttp, SessionPlaceholderRequiresUpgrade) {

@@ -78,9 +78,15 @@ namespace file_mapping_http {
     }
 
     std::string
+    url_without_query(std::string_view url) {
+      const auto query_start = url.find('?');
+      return std::string { query_start == std::string_view::npos ? url : url.substr(0, query_start) };
+    }
+
+    std::string
     make_request_session_url(const capability_state_t &state, std::string_view request_host) {
       if (!state.session_url.empty()) {
-        return state.session_url;
+        return url_without_query(state.session_url);
       }
       if (!state.listening || state.port == 0) {
         return {};
@@ -92,12 +98,7 @@ namespace file_mapping_http {
       }
 
       const auto endpoint = state.session_endpoint.empty() ? "/api/v1/file-mapping/session" : state.session_endpoint;
-      auto url = "wss://" + host + ":" + std::to_string(state.port) + endpoint;
-      if (!state.session_token.empty()) {
-        url += endpoint.find('?') == std::string::npos ? "?token=" : "&token=";
-        url += state.session_token;
-      }
-      return url;
+      return "wss://" + host + ":" + std::to_string(state.port) + endpoint;
     }
 
     void

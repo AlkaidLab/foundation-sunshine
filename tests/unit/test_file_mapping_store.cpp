@@ -59,6 +59,28 @@ TEST(FileMappingStore, QuickShareIsIdempotentForSamePath) {
   EXPECT_EQ(store.snapshot().size(), 1);
 }
 
+TEST(FileMappingStore, ReplaceNormalizesReadOnlyBoundary) {
+  temp_store_tree_t tree;
+  file_mapping_store::store_t store;
+  file_mapping::mapping_t mapping;
+  mapping.id = "legacy-writable";
+  mapping.name = "Legacy Writable";
+  mapping.local_root = tree.root / "Downloads";
+  mapping.mode = file_mapping::access_mode_e::readwrite;
+  mapping.allow_delete = true;
+  mapping.allow_execute = true;
+  mapping.follow_reparse_points = true;
+
+  store.replace({ mapping });
+
+  auto snapshot = store.snapshot();
+  ASSERT_EQ(snapshot.size(), 1);
+  EXPECT_EQ(snapshot.front().mode, file_mapping::access_mode_e::read);
+  EXPECT_FALSE(snapshot.front().allow_delete);
+  EXPECT_FALSE(snapshot.front().allow_execute);
+  EXPECT_FALSE(snapshot.front().follow_reparse_points);
+}
+
 TEST(FileMappingStore, UpdateChangesUserFacingSettings) {
   temp_store_tree_t tree;
   file_mapping_store::store_t store;
@@ -67,22 +89,20 @@ TEST(FileMappingStore, UpdateChangesUserFacingSettings) {
 
   auto updated = store.update(created.mapping.id, {
                                                  { "name", "Shared Downloads" },
-                                                 { "mode", "readwrite" },
-                                                 { "allow_delete", true },
                                                  { "max_file_size", 42 },
                                                  { "clients", { "client-a", "client-b" } },
                                                });
 
   ASSERT_TRUE(updated.ok) << updated.error;
   EXPECT_EQ(updated.mapping.name, "Shared Downloads");
-  EXPECT_EQ(updated.mapping.mode, file_mapping::access_mode_e::readwrite);
-  EXPECT_TRUE(updated.mapping.allow_delete);
+  EXPECT_EQ(updated.mapping.mode, file_mapping::access_mode_e::read);
+  EXPECT_FALSE(updated.mapping.allow_delete);
   EXPECT_EQ(updated.mapping.max_file_size, 42);
   ASSERT_EQ(updated.mapping.clients.size(), 2);
   EXPECT_EQ(updated.mapping.clients[0], "client-a");
 }
 
-TEST(FileMappingStore, DeletePermissionRequiresReadWriteMode) {
+TEST(FileMappingStore, RejectsUnsupportedDeletePermission) {
   temp_store_tree_t tree;
   file_mapping_store::store_t store;
   auto created = store.add_quick_share(tree.root / "Downloads");
@@ -93,29 +113,42 @@ TEST(FileMappingStore, DeletePermissionRequiresReadWriteMode) {
                                                   });
 
   EXPECT_FALSE(rejected.ok);
-  EXPECT_EQ(rejected.error, "allow_delete requires readwrite mode");
+  EXPECT_EQ(rejected.error, "allow_delete is not supported in the read-only phase");
   EXPECT_FALSE(store.snapshot().front().allow_delete);
 }
 
-TEST(FileMappingStore, SwitchingToReadModeDisablesDeletePermission) {
+TEST(FileMappingStore, RejectsReadWriteModeInReadOnlyPhase) {
   temp_store_tree_t tree;
   file_mapping_store::store_t store;
   auto created = store.add_quick_share(tree.root / "Downloads");
   ASSERT_TRUE(created.ok) << created.error;
 
-  auto writable = store.update(created.mapping.id, {
-                                                   { "mode", "readwrite" },
-                                                   { "allow_delete", true },
-                                                 });
-  ASSERT_TRUE(writable.ok) << writable.error;
+  auto rejected = store.update(created.mapping.id, {
+                                                    { "mode", "readwrite" },
+                                                  });
 
-  auto readonly = store.update(created.mapping.id, {
-                                                   { "mode", "read" },
-                                                 });
+  EXPECT_FALSE(rejected.ok);
+  EXPECT_EQ(rejected.error, "readwrite mode is not supported in the read-only phase");
+  EXPECT_EQ(store.snapshot().front().mode, file_mapping::access_mode_e::read);
+}
 
-  ASSERT_TRUE(readonly.ok) << readonly.error;
-  EXPECT_EQ(readonly.mapping.mode, file_mapping::access_mode_e::read);
-  EXPECT_FALSE(readonly.mapping.allow_delete);
+TEST(FileMappingStore, RejectsUnsupportedDangerousPermissions) {
+  temp_store_tree_t tree;
+  file_mapping_store::store_t store;
+  auto created = store.add_quick_share(tree.root / "Downloads");
+  ASSERT_TRUE(created.ok) << created.error;
+
+  auto execute = store.update(created.mapping.id, {
+                                                  { "allow_execute", true },
+                                                });
+  EXPECT_FALSE(execute.ok);
+  EXPECT_EQ(execute.error, "allow_execute is not supported");
+
+  auto reparse = store.update(created.mapping.id, {
+                                                  { "follow_reparse_points", true },
+                                                });
+  EXPECT_FALSE(reparse.ok);
+  EXPECT_EQ(reparse.error, "follow_reparse_points is not supported");
 }
 
 TEST(FileMappingStore, SerializesConfigJson) {

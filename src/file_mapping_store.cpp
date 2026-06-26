@@ -77,10 +77,22 @@ namespace file_mapping_store {
         return false;
       }
     }
+
+    void
+    normalize_read_only_mapping(file_mapping::mapping_t &mapping) {
+      mapping.mode = file_mapping::access_mode_e::read;
+      mapping.allow_delete = false;
+      mapping.allow_execute = false;
+      mapping.follow_reparse_points = false;
+    }
   }  // namespace
 
   void
   store_t::replace(std::vector<file_mapping::mapping_t> mappings) {
+    for (auto &mapping : mappings) {
+      normalize_read_only_mapping(mapping);
+    }
+
     std::scoped_lock lock { mutex_ };
     mappings_ = std::move(mappings);
   }
@@ -179,7 +191,7 @@ namespace file_mapping_store {
         updated.mode = file_mapping::access_mode_e::read;
       }
       else if (mode == "readwrite") {
-        updated.mode = file_mapping::access_mode_e::readwrite;
+        return { false, {}, "readwrite mode is not supported in the read-only phase" };
       }
       else {
         return { false, {}, "mode must be read or readwrite" };
@@ -189,17 +201,26 @@ namespace file_mapping_store {
       if (!patch["allow_delete"].is_boolean()) {
         return { false, {}, "allow_delete must be a boolean" };
       }
+      if (patch["allow_delete"].get<bool>()) {
+        return { false, {}, "allow_delete is not supported in the read-only phase" };
+      }
       updated.allow_delete = patch["allow_delete"].get<bool>();
     }
     if (patch.contains("allow_execute")) {
       if (!patch["allow_execute"].is_boolean()) {
         return { false, {}, "allow_execute must be a boolean" };
       }
+      if (patch["allow_execute"].get<bool>()) {
+        return { false, {}, "allow_execute is not supported" };
+      }
       updated.allow_execute = patch["allow_execute"].get<bool>();
     }
     if (patch.contains("follow_reparse_points")) {
       if (!patch["follow_reparse_points"].is_boolean()) {
         return { false, {}, "follow_reparse_points must be a boolean" };
+      }
+      if (patch["follow_reparse_points"].get<bool>()) {
+        return { false, {}, "follow_reparse_points is not supported" };
       }
       updated.follow_reparse_points = patch["follow_reparse_points"].get<bool>();
     }
@@ -223,15 +244,7 @@ namespace file_mapping_store {
       updated.clients = std::move(clients);
     }
 
-    if (updated.mode == file_mapping::access_mode_e::read && updated.allow_delete) {
-      if (patch.contains("mode") && patch["mode"].get<std::string>() == "read" && !patch.contains("allow_delete")) {
-        updated.allow_delete = false;
-      }
-      else {
-        return { false, {}, "allow_delete requires readwrite mode" };
-      }
-    }
-
+    normalize_read_only_mapping(updated);
     *it = updated;
     return { true, updated, {} };
   }

@@ -6,7 +6,7 @@
 
 - Moonlight 可以访问 Sunshine 主机授权的目录。
 - Sunshine 可以访问 Moonlight 客户端授权的目录。
-- 第一阶段提供稳定的文件浏览、上传、下载能力。
+- 第一阶段提供稳定的文件浏览和下载能力，默认只读。
 - 后续可选接入 WinFsp/Dokany，将远端目录挂载为 Windows 盘符或目录。
 
 本方案不把目录映射设计成 SMB 或驱动级共享，而是设计为基于现有配对身份的双向文件 RPC 通道。虚拟盘只是 RPC 的一个前端，不是第一版核心。
@@ -144,7 +144,7 @@ moonlight-qt 在 `NvHTTP::getServerInfo()` 后解析能力。仅当目标为 Sun
   "name": "Downloads",
   "side": "host",
   "local_root": "D:\\Downloads",
-  "mode": "readwrite",
+  "mode": "read",
   "allow_delete": false,
   "allow_execute": false,
   "follow_reparse_points": false,
@@ -159,10 +159,10 @@ moonlight-qt 在 `NvHTTP::getServerInfo()` 后解析能力。仅当目标为 Sun
 - `name`：显示名称。
 - `side`：`host` 或 `client`。
 - `local_root`：本机真实目录，只保存在拥有该目录的一端。
-- `mode`：`read` 或 `readwrite`。
-- `allow_delete`：是否允许删除。只有 `mode = readwrite` 时才允许为 `true`；`mode = read` 时配置解析和管理 API 都必须回落到不可删除。
-- `allow_execute`：是否允许远端请求执行文件，默认必须为 `false`。
-- `follow_reparse_points`：是否允许穿透 junction、symlink、mount point，默认必须为 `false`。
+- `mode`：第一阶段只允许 `read`。配置或管理 API 传入 `readwrite` 时，core 必须拒绝或降级为只读。
+- `allow_delete`：第一阶段必须保持 `false`，不开放远端删除。
+- `allow_execute`：必须保持 `false`，不开放远端执行。
+- `follow_reparse_points`：必须保持 `false`，不允许穿透 junction、symlink、mount point。
 - `clients`：允许访问的配对客户端 UUID。
 - `max_file_size`：单文件操作上限。
 
@@ -173,8 +173,8 @@ moonlight-qt 在 `NvHTTP::getServerInfo()` 后解析能力。仅当目标为 Sun
   "id": "host-downloads",
   "name": "Downloads",
   "side": "host",
-  "mode": "readwrite",
-  "capabilities": ["list", "read", "write", "mkdir", "rename"]
+  "mode": "read",
+  "capabilities": ["list", "read"]
 }
 ```
 
@@ -339,7 +339,7 @@ wss://<sunshine-host>:<https-port>/api/v1/file-mapping/session
 - `fetchCapability()` 请求 Sunshine GameStream HTTPS 端口上的 `GET /api/v1/file-mapping/capability`，即 `NvComputer::activeHttpsPort`，通常是 `47984`，不是 Web UI 配置端口。
 - 请求仍携带 Moonlight `IdentityManager::getUniqueId()` 作为 `client_uuid` query 和 `X-File-Mapping-Client-UUID` header，主要用于诊断和兼容；Sunshine 授权以 HTTPS 客户端证书推导出的配对 UUID 为准。
 - Sunshine capability 响应会返回 `client_uuid`，这是 Sunshine pairing store 内部的配对证书 UUID。
-- `smokeRead()` 使用 capability 返回的 `session_url` 建立 WSS，并在 `hello.client_uuid` 中使用 capability 返回的 `client_uuid`，然后发送 `list`、`read`。
+- `smokeRead()` 使用 capability 返回的 `session_url` 和独立 `session_token` 建立 WSS；实现中需要避免记录拼接 token 后的完整 URL。`hello.client_uuid` 使用 capability 返回的 `client_uuid`，然后发送 `list`、`read`。
 - 该模块复用 Moonlight 现有客户端证书配置和 Sunshine 服务端证书 pinning。
 - 当前开发环境没有 QtWebSockets 模块，因此该原型使用 `QSslSocket` 实现最小 WebSocket handshake 和 text frame 收发；这只作为烟测客户端，不替代后续完整产品化传输层。
 
@@ -533,8 +533,8 @@ N:\Client\Documents
 
 - Sunshine 配置共享目录。
 - moonlight-qt 文件面板浏览主机目录。
-- 支持下载、上传、创建目录。
-- 支持 read-only/readwrite 权限。
+- 支持下载。
+- 第一阶段固定 read-only，不开放上传、删除、执行、reparse point 穿透。
 
 交付：
 
@@ -655,7 +655,7 @@ Capability 响应中返回实际 WSS 通道信息：
   "transport": "wss",
   "port": 47999,
   "session_endpoint": "/api/v1/file-mapping/session",
-  "session_url": "wss://192.168.1.20:47999/api/v1/file-mapping/session?token=...",
+  "session_url": "wss://192.168.1.20:47999/api/v1/file-mapping/session",
   "session_token": "...",
   "client_uuid": "<sunshine-paired-cert-uuid>",
   "implementation": "boost.beast"

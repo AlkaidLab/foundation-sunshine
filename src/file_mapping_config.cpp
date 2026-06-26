@@ -84,9 +84,21 @@ namespace file_mapping_config {
       mapping.follow_reparse_points = item.value("follow_reparse_points", false);
       mapping.max_file_size = item.value("max_file_size", std::uintmax_t { 0 });
       mapping.clients = parse_clients(item);
-      if (mapping.mode == file_mapping::access_mode_e::read && mapping.allow_delete) {
-        result.warnings.push_back(prefix + "allow_delete ignored for read mode");
+      if (mapping.mode == file_mapping::access_mode_e::readwrite) {
+        result.warnings.push_back(prefix + "readwrite mode ignored in read-only phase");
+        mapping.mode = file_mapping::access_mode_e::read;
+      }
+      if (mapping.allow_delete) {
+        result.warnings.push_back(prefix + "allow_delete ignored in read-only phase");
         mapping.allow_delete = false;
+      }
+      if (mapping.allow_execute) {
+        result.warnings.push_back(prefix + "allow_execute ignored");
+        mapping.allow_execute = false;
+      }
+      if (mapping.follow_reparse_points) {
+        result.warnings.push_back(prefix + "follow_reparse_points ignored");
+        mapping.follow_reparse_points = false;
       }
 
       std::error_code ec;

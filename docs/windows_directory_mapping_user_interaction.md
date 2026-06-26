@@ -172,16 +172,14 @@ Icon = <sunshine.exe>,0
 
 ```text
 只读：Moonlight 可以查看和下载文件，不能修改。
-读写：Moonlight 可以上传和修改文件。
-允许删除：Moonlight 可以删除此文件夹内的文件。
 ```
+
+读写、删除、执行和符号链接/junction 穿透属于后续高级能力。第一阶段 UI 不展示可开启入口，core 也会拒绝或降级这些字段。
 
 高级选项默认折叠：
 
 ```text
 最大文件大小
-允许符号链接或 junction
-允许执行文件
 ```
 
 默认值：
@@ -201,7 +199,7 @@ clients = 当前选择的设备 UUID 列表
 名称
 本机路径
 允许设备数量
-权限：只读 / 读写
+权限：只读
 状态：可用 / 路径不存在 / 被安全策略阻止
 最近访问时间
 ```
@@ -210,7 +208,6 @@ clients = 当前选择的设备 UUID 列表
 
 ```text
 此共享包含符号链接或 junction，已被默认安全策略阻止。
-如确实需要访问，请在高级选项中显式允许。
 ```
 
 ## Moonlight 侧体验
@@ -241,7 +238,6 @@ Sunshine 想访问你的文件夹
 主机文件夹
 本机文件夹
 下载
-上传
 取消
 重试
 在文件夹中显示
@@ -303,7 +299,7 @@ file_mapping_store
 
 `file_mapping_store` 仍然输出 `std::vector<mapping_t>` 给 WSS operations context，但配置持久化和默认值归一化不应散落在 Rust GUI 里。
 
-管理 API 写入必须按事务语义处理：先保留 store 快照，内存变更通过校验后再写入 Sunshine 配置；如果配置持久化失败，需要恢复旧 store，且不能提前更新 `config::nvhttp.file_mappings`。权限归一化也留在 core：`allow_delete=true` 只能和 `mode=readwrite` 同时存在，切回 `mode=read` 时应自动关闭删除权限。
+管理 API 写入必须按事务语义处理：先保留 store 快照，内存变更通过校验后再写入 Sunshine 配置；如果配置持久化失败，需要恢复旧 store，且不能提前更新 `config::nvhttp.file_mappings`。权限归一化也留在 core：第一阶段固定只读，`readwrite`、删除、执行和 reparse point 穿透都不能由 Rust GUI 或本机 API 打开。
 
 ### 2. 新增本地管理 API
 
