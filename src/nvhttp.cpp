@@ -44,6 +44,7 @@
 #include "nvhttp/ai_api.h"
 #include "nvhttp/apps.h"
 #include "nvhttp/clipboard_api.h"
+#include "nvhttp/file_transfer_api.h"
 #include "nvhttp/display_control.h"
 #include "nvhttp/display_scale.h"
 #include "nvhttp/dynamic_params.h"
@@ -949,6 +950,10 @@ namespace nvhttp {
     // use the confighttp /api/v1/clipboard/* endpoints on loopback.
     https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = clipboard_api::upload_blob;
     https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = clipboard_api::get_blob;
+
+    // File transfer bytes are fetched by paired clients over nvhttp. Offer
+    // creation remains local-only on confighttp.
+    https_server.resource["^/api/v1/file-transfer/([a-f0-9]{64})$"]["GET"] = file_transfer_api::get;
 
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
