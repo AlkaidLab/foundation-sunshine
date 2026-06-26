@@ -2,7 +2,7 @@
  * @file tests/unit/test_file_mapping_store.cpp
  * @brief Test src/file_mapping_store.*.
  */
-#include <src/file_mapping_store.h>
+#include <src/file_mapping/file_mapping_store.h>
 
 #include <filesystem>
 #include <fstream>

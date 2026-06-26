@@ -377,7 +377,7 @@ core 返回：
 
 ### 3. WSS operations context 需要支持热更新
 
-当前 `nvhttp::start()` 创建 WSS server 时把 mappings 注入 `execution_context_t`。运行时新增共享后，WSS 需要看到最新 mappings。
+当前 `file_mapping::service_t` 创建 WSS server 时把 mappings 注入 `execution_context_t`。运行时新增共享后，WSS 需要看到最新 mappings。
 
 建议把：
 

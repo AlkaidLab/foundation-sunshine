@@ -2,7 +2,7 @@
  * @file tests/unit/test_file_mapping_ws_server.cpp
  * @brief Test src/file_mapping_ws_server.*.
  */
-#include <src/file_mapping_ws_server.h>
+#include <src/file_mapping/file_mapping_ws_server.h>
 
 #include <gtest/gtest.h>
 

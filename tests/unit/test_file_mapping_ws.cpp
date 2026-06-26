@@ -2,8 +2,8 @@
  * @file tests/unit/test_file_mapping_ws.cpp
  * @brief Test src/file_mapping_ws.*.
  */
-#include <src/file_mapping_ws.h>
-#include <src/file_mapping_rpc.h>
+#include <src/file_mapping/file_mapping_ws.h>
+#include <src/file_mapping/file_mapping_rpc.h>
 
 #include <filesystem>
 #include <fstream>

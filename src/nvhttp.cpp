@@ -37,11 +37,8 @@
 #include "confighttp.h"
 #include "display_device/session.h"
 #include "file_handler.h"
-#include "file_mapping_config.h"
-#include "file_mapping_http.h"
-#include "file_mapping_store.h"
-#include "file_mapping_token.h"
-#include "file_mapping_ws_server.h"
+#include "file_mapping/file_mapping_http.h"
+#include "file_mapping/service.h"
 #include "globals.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -879,23 +876,6 @@ namespace nvhttp {
     bool host_audio {};
 
     auto bind_address = net::get_bind_address(address_family);
-    boost::asio::io_context file_mapping_io;
-    std::shared_ptr<file_mapping_ws::server_t> file_mapping_server;
-    auto file_mapping_tokens = std::make_shared<file_mapping_token::token_store_t>();
-    std::thread file_mapping_thread;
-    std::mutex file_mapping_state_mutex;
-    std::string file_mapping_start_error;
-
-    auto file_mapping_config_result = file_mapping_config::parse_mappings_json(config::nvhttp.file_mappings);
-    for (const auto &config_warning : file_mapping_config_result.warnings) {
-      BOOST_LOG(warning) << config_warning;
-    }
-    file_mapping_store::global().replace(std::move(file_mapping_config_result.mappings));
-    file_mapping::operations::execution_context_t file_mapping_operations_context;
-    file_mapping_operations_context.mapping_provider = []() {
-      return file_mapping_store::global().snapshot();
-    };
-
     auto is_file_mapping_client_paired = [](std::string_view client_uuid) {
       if (client_uuid.empty()) {
         return false;
@@ -910,49 +890,15 @@ namespace nvhttp {
       return false;
     };
 
-    {
-      file_mapping_ws::transport_config_t file_mapping_config;
-      file_mapping_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
-      file_mapping_config.port = config::nvhttp.file_mapping_port;
-      file_mapping_config.certificate_file = config::nvhttp.cert;
-      file_mapping_config.private_key_file = config::nvhttp.pkey;
-      // The capability endpoint is served by nvhttp HTTPS after paired-client
-      // certificate verification. The Beast data port is additionally gated by
-      // a short-lived token bound to the certificate-derived client UUID.
-      file_mapping_config.require_client_certificate = false;
-
-      auto candidate = std::make_shared<file_mapping_ws::server_t>(
-        file_mapping_io,
-        std::move(file_mapping_config),
-        [file_mapping_tokens](std::string_view token) {
-          return file_mapping_tokens->consume(std::string { token });
-        },
-        is_file_mapping_client_paired,
-        file_mapping_operations_context);
-
-      if (auto result = candidate->start(); result.ok) {
-        {
-          std::scoped_lock lock { file_mapping_state_mutex };
-          file_mapping_server = std::move(candidate);
-        }
-        file_mapping_thread = std::thread([&file_mapping_io, shutdown_event]() {
-          try {
-            file_mapping_io.run();
-          }
-          catch (const std::exception &err) {
-            if (!shutdown_event->peek()) {
-              BOOST_LOG(error) << "File mapping WebSocket server failed: "sv << err.what();
-            }
-          }
-        });
-        BOOST_LOG(info) << "File mapping WebSocket server listening on port ["sv << file_mapping_server->bound_port() << "]"sv;
-      }
-      else {
-        std::scoped_lock lock { file_mapping_state_mutex };
-        file_mapping_start_error = result.error;
-        BOOST_LOG(warning) << "File mapping WebSocket server disabled: "sv << result.error;
-      }
-    }
+    file_mapping::service_t file_mapping_service;
+    file_mapping::service_t::config_t file_mapping_config;
+    file_mapping_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
+    file_mapping_config.port = config::nvhttp.file_mapping_port;
+    file_mapping_config.certificate_file = config::nvhttp.cert;
+    file_mapping_config.private_key_file = config::nvhttp.pkey;
+    file_mapping_config.mappings_json = config::nvhttp.file_mappings;
+    file_mapping_config.authorize_client = is_file_mapping_client_paired;
+    file_mapping_service.start(std::move(file_mapping_config));
 
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
@@ -1043,44 +989,11 @@ namespace nvhttp {
           response->write(out.status, out.body, out.headers);
         };
 
-        file_mapping_http::capability_state_t state;
-        state.enabled = true;
-        state.session_endpoint = "/api/v1/file-mapping/session";
-        state.client_uuid = get_client_cert_uuid_from_request(req);
-        state.diagnostics["bind_address"] = bind_address.empty() ? "0.0.0.0" : bind_address;
-        state.diagnostics["configured_port"] = std::to_string(config::nvhttp.file_mapping_port);
-
-        {
-          std::scoped_lock lock { file_mapping_state_mutex };
-          state.error = file_mapping_start_error;
-          if (!file_mapping_start_error.empty()) {
-            state.diagnostics["start_error"] = file_mapping_start_error;
-          }
-          if (file_mapping_server) {
-            state.listening = file_mapping_server->state() == file_mapping_ws::transport_state_e::listening;
-            state.port = file_mapping_server->bound_port();
-          }
-        }
-        state.diagnostics["listening"] = state.listening ? "true" : "false";
-        state.diagnostics["bound_port"] = std::to_string(state.port);
-        state.diagnostics["client_certificate"] = state.client_uuid.empty() ? "missing" : "verified";
-
-        if (state.client_uuid.empty()) {
-          state.error = "paired client certificate is required for file mapping";
-          state.diagnostics["token"] = "not_issued";
-        }
-        else if (state.listening && state.port != 0) {
-          state.session_token = file_mapping_tokens->issue(state.client_uuid);
-          state.diagnostics["token"] = state.session_token.empty() ? "rate_limited" : "issued";
-          if (state.session_token.empty() && state.error.empty()) {
-            state.error = "file mapping session token rate limited";
-          }
-        }
-        else {
-          state.diagnostics["token"] = "not_issued";
-        }
-
-        write_response(std::move(resp), file_mapping_http::make_capability_response(state, header_value(req->header, "host")));
+        write_response(
+          std::move(resp),
+          file_mapping_service.make_capability_response(
+            get_client_cert_uuid_from_request(req),
+            header_value(req->header, "host")));
       };
 
     https_server.resource["^/api/v1/file-mapping/session$"]["GET"] =
@@ -1170,19 +1083,10 @@ namespace nvhttp {
     // Wait for any event
     shutdown_event->view();
 
-    {
-      std::scoped_lock lock { file_mapping_state_mutex };
-      if (file_mapping_server) {
-        file_mapping_server->stop();
-      }
-    }
-    file_mapping_io.stop();
+    file_mapping_service.stop();
     https_server.stop();
     http_server.stop();
 
-    if (file_mapping_thread.joinable()) {
-      file_mapping_thread.join();
-    }
     ssl.join();
     tcp.join();
   }

@@ -2,7 +2,7 @@
  * @file tests/unit/test_file_mapping_config.cpp
  * @brief Test src/file_mapping_config.*.
  */
-#include <src/file_mapping_config.h>
+#include <src/file_mapping/file_mapping_config.h>
 
 #include <filesystem>
 #include <fstream>

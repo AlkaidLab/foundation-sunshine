@@ -2,7 +2,7 @@
  * @file tests/unit/test_file_mapping_token.cpp
  * @brief Test src/file_mapping_token.*.
  */
-#include <src/file_mapping_token.h>
+#include <src/file_mapping/file_mapping_token.h>
 
 #include <gtest/gtest.h>
 

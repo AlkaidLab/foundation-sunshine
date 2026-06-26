@@ -41,7 +41,7 @@
 #include "clipboard_http.h"
 #include "crypto.h"
 #include "display_device/session.h"
-#include "file_mapping_store.h"
+#include "file_mapping/file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"

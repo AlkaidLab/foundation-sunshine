@@ -73,12 +73,15 @@ Rust GUI 的校验只能提升体验，不能替代 core 校验。任何来自�
 建议新增：
 
 ```text
-src/file_mapping.h
-src/file_mapping.cpp
-src/file_mapping_rpc.h
-src/file_mapping_rpc.cpp
-src/file_mapping_http.h
-src/file_mapping_http.cpp
+src/file_mapping/
+  file_mapping.h
+  file_mapping.cpp
+  file_mapping_rpc.h
+  file_mapping_rpc.cpp
+  file_mapping_http.h
+  file_mapping_http.cpp
+  service.h
+  service.cpp
 ```
 
 职责：
@@ -87,6 +90,7 @@ src/file_mapping_http.cpp
 - `file_mapping_rpc`：请求/响应模型、handle 管理、流控、错误码。
 - `file_mapping_http`：HTTPS/WSS 路由注册，复用 Sunshine 现有证书与客户端认证。
 - `file_mapping_config`：mapping JSON 解析、默认值归一化、配置错误报告。
+- `file_mapping::service_t`：内置 feature service，负责 WSS 生命周期、token store、capability 状态和 mapping store 注入。
 
 路由注册方式建议参考 `clipboard_http::register_routes()`，避免继续膨胀 `confighttp.cpp`。
 

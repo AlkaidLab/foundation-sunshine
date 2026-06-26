@@ -348,13 +348,14 @@ file_mapping_http: REST/discovery/config
 file_mapping_ws: Beast WebSocket transport
 file_mapping_rpc: protocol model
 file_mapping: local filesystem safety
+file_mapping::service_t: built-in feature lifecycle and capability state
 ```
 
 除非后续统一网络层，否则不要在 `Simple-Web-Server::on_upgrade` 上手写完整 WebSocket 协议。
 
 ## 当前落地状态记录
 
-Sunshine 侧已拆出 `file_mapping_ws_server`，使用 Boost.Asio/Boost.Beast 建立独立 WSS listener，并随 `nvhttp::start()` 生命周期启动和停止。能力发现 endpoint 已从 Web UI 配置 HTTPS 端口迁移到 GameStream `nvhttp` HTTPS 端口，复用 paired client certificate 校验。
+Sunshine 侧已拆出 `src/file_mapping/` 内置 feature module。`file_mapping::service_t` 负责配置解析、mapping store 注入、token store、Boost.Asio/Boost.Beast WSS listener 生命周期和 capability 状态；`nvhttp::start()` 只负责启动 service 并把 GameStream HTTPS capability endpoint 转发给它。能力发现 endpoint 已从 Web UI 配置 HTTPS 端口迁移到 GameStream `nvhttp` HTTPS 端口，复用 paired client certificate 校验。
 
 当前 capability 接口返回：
 
@@ -381,7 +382,7 @@ Sunshine 侧已拆出 `file_mapping_ws_server`，使用 Boost.Asio/Boost.Beast �
 当前已补的文件能力：
 
 - 已新增 `file_mappings` 配置项，使用 JSON array 注入 host mappings。
-- `nvhttp::start()` 会解析 `config::nvhttp.file_mappings` 并注入 WSS server 的 operations context。
+- `file_mapping::service_t` 会解析 `config::nvhttp.file_mappings` 并注入 WSS server 的 operations context。
 - 已新增 Sunshine 本机管理 API 和 `file_mapping_store`，支持运行期创建、列出、更新、删除 mapping，并持久化回 `file_mappings`。
 - 管理 API 写入采用失败回滚：配置持久化失败时恢复旧 store，避免 HTTP 返回失败但运行态已经生效。
 - 第一阶段固定只读：`readwrite`、`allow_delete=true`、`allow_execute=true`、`follow_reparse_points=true` 都不会进入运行时 store。

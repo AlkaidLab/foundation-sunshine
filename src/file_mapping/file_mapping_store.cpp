@@ -10,8 +10,8 @@
 #include <sstream>
 #include <system_error>
 
-#include "config.h"
-#include "file_handler.h"
+#include "src/config.h"
+#include "src/file_handler.h"
 
 namespace file_mapping_store {
   namespace {

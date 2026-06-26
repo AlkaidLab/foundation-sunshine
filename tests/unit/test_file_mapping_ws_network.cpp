@@ -2,8 +2,8 @@
  * @file tests/unit/test_file_mapping_ws_network.cpp
  * @brief End-to-end loopback smoke test for file mapping WSS transport.
  */
-#include <src/file_mapping_token.h>
-#include <src/file_mapping_ws_server.h>
+#include <src/file_mapping/file_mapping_token.h>
+#include <src/file_mapping/file_mapping_ws_server.h>
 
 #include <filesystem>
 #include <fstream>

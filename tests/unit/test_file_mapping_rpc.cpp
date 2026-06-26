@@ -2,7 +2,7 @@
  * @file tests/unit/test_file_mapping_rpc.cpp
  * @brief Test src/file_mapping_rpc.*.
  */
-#include <src/file_mapping_rpc.h>
+#include <src/file_mapping/file_mapping_rpc.h>
 
 #include <gtest/gtest.h>
 

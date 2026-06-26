@@ -2,8 +2,8 @@
  * @file tests/unit/test_file_mapping_http.cpp
  * @brief Test src/file_mapping_http.*.
  */
-#include <src/file_mapping_http.h>
-#include <src/file_mapping_rpc.h>
+#include <src/file_mapping/file_mapping_http.h>
+#include <src/file_mapping/file_mapping_rpc.h>
 
 #include <algorithm>
 

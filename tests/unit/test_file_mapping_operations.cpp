@@ -2,8 +2,8 @@
  * @file tests/unit/test_file_mapping_operations.cpp
  * @brief Test src/file_mapping_operations.*.
  */
-#include <src/file_mapping_operations.h>
-#include <src/file_mapping_store.h>
+#include <src/file_mapping/file_mapping_operations.h>
+#include <src/file_mapping/file_mapping_store.h>
 
 #include <filesystem>
 #include <fstream>
