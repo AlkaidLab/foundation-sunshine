@@ -149,6 +149,12 @@ namespace file_mapping::rpc {
     switch (value) {
       case operation_e::download:
         return "download";
+      case operation_e::list:
+        return "list";
+      case operation_e::stat:
+        return "stat";
+      case operation_e::read:
+        return "read";
       case operation_e::upload:
         return "upload";
       case operation_e::copy:
@@ -181,7 +187,7 @@ namespace file_mapping::rpc {
     if (value == "delete") return message_type_e::remove;
     if (value == "job_start") return message_type_e::job_start;
     if (value == "job_status") return message_type_e::job_status;
-    if (value == "cancel") return message_type_e::cancel;
+    if (value == "cancel" || value == "cancel_job") return message_type_e::cancel;
     if (value == "result") return message_type_e::result;
     if (value == "error") return message_type_e::error;
     return message_type_e::unknown;
@@ -200,6 +206,9 @@ namespace file_mapping::rpc {
 
   std::optional<operation_e>
   operation_from_string(std::string_view value) {
+    if (value == "list") return operation_e::list;
+    if (value == "stat") return operation_e::stat;
+    if (value == "read") return operation_e::read;
     if (value == "download") return operation_e::download;
     if (value == "upload") return operation_e::upload;
     if (value == "copy") return operation_e::copy;

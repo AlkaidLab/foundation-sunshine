@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
@@ -22,6 +23,7 @@ namespace file_mapping_ws {
   static constexpr std::uint32_t kDefaultMaxBinaryFrameBytes = 1024 * 1024;
   static constexpr std::size_t kDefaultMaxActiveSessions = 32;
   static constexpr std::size_t kDefaultMaxWriteQueueFrames = 16;
+  static constexpr std::size_t kDefaultMaxSessionJobs = 128;
 
   enum class transport_state_e {
     stopped,
@@ -51,6 +53,7 @@ namespace file_mapping_ws {
     std::uint32_t max_binary_frame_bytes = kDefaultMaxBinaryFrameBytes;
     std::size_t max_active_sessions = kDefaultMaxActiveSessions;
     std::size_t max_write_queue_frames = kDefaultMaxWriteQueueFrames;
+    std::size_t max_session_jobs = kDefaultMaxSessionJobs;
   };
 
   struct validation_result_t {
@@ -96,12 +99,19 @@ namespace file_mapping_ws {
 
   private:
     inbound_result_t handle_hello(const nlohmann::json &body);
+    inbound_result_t handle_job_status(const nlohmann::json &body);
+    inbound_result_t handle_cancel(const nlohmann::json &body);
+    inbound_result_t handle_operation(file_mapping::rpc::parse_result_t parsed);
+    file_mapping::rpc::transfer_job_t make_job(const file_mapping::rpc::parse_result_t &parsed);
+    void remember_job(file_mapping::rpc::transfer_job_t job);
 
     std::string endpoint_name_;
     std::string expected_peer_uuid_;
     std::string peer_uuid_;
     client_uuid_authorizer_t authorize_peer_uuid_;
     file_mapping::operations::execution_context_t operations_context_;
+    std::unordered_map<std::string, file_mapping::rpc::transfer_job_t> jobs_;
+    std::uint64_t next_job_id_ = 1;
     session_state_e state_ = session_state_e::awaiting_hello;
   };
 

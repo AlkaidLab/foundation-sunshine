@@ -1047,21 +1047,37 @@ namespace nvhttp {
         state.enabled = true;
         state.session_endpoint = "/api/v1/file-mapping/session";
         state.client_uuid = get_client_cert_uuid_from_request(req);
+        state.diagnostics["bind_address"] = bind_address.empty() ? "0.0.0.0" : bind_address;
+        state.diagnostics["configured_port"] = std::to_string(config::nvhttp.file_mapping_port);
 
         {
           std::scoped_lock lock { file_mapping_state_mutex };
           state.error = file_mapping_start_error;
+          if (!file_mapping_start_error.empty()) {
+            state.diagnostics["start_error"] = file_mapping_start_error;
+          }
           if (file_mapping_server) {
             state.listening = file_mapping_server->state() == file_mapping_ws::transport_state_e::listening;
             state.port = file_mapping_server->bound_port();
           }
         }
+        state.diagnostics["listening"] = state.listening ? "true" : "false";
+        state.diagnostics["bound_port"] = std::to_string(state.port);
+        state.diagnostics["client_certificate"] = state.client_uuid.empty() ? "missing" : "verified";
 
         if (state.client_uuid.empty()) {
           state.error = "paired client certificate is required for file mapping";
+          state.diagnostics["token"] = "not_issued";
         }
         else if (state.listening && state.port != 0) {
           state.session_token = file_mapping_tokens->issue(state.client_uuid);
+          state.diagnostics["token"] = state.session_token.empty() ? "rate_limited" : "issued";
+          if (state.session_token.empty() && state.error.empty()) {
+            state.error = "file mapping session token rate limited";
+          }
+        }
+        else {
+          state.diagnostics["token"] = "not_issued";
         }
 
         write_response(std::move(resp), file_mapping_http::make_capability_response(state, header_value(req->header, "host")));

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@ namespace file_mapping_http {
     std::string session_token;
     std::string error;
     std::string client_uuid;
+    std::map<std::string, std::string> diagnostics;
     std::uint16_t port = 0;
   };
 

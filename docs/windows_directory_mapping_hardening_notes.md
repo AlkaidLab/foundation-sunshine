@@ -384,6 +384,8 @@ Sunshine 侧已拆出 `file_mapping_ws_server`，使用 Boost.Asio/Boost.Beast �
 - `allow_delete=true` 只允许和 `mode=readwrite` 同时存在；只读 mapping 会强制保持不可删除。
 - WSS 已增加第一批资源闸门：token 全局/单客户端配额、签发间隔、Beast message size limit、active session 上限、write queue 上限。
 - 目录 listing 已增加默认返回数量上限，并通过 `truncated=true` 告诉客户端需要分页/继续读取。
+- RPC 已增加最小 job model：`list`、`stat`、`read` 回包携带 `job_id` / `job`，并支持 `job_status` 与 `cancel_job` 查询/取消入口。
+- capability response 已增加 diagnostics，明确返回 bind address、configured/bound port、listening、client certificate、token issue/rate-limit 等状态。
 - 已新增只读 RPC 执行器 `file_mapping_operations`。
 - 已支持 host mapping 的 `list`、`stat`、`read`。
 - `read` 当前返回 JSON `result`，文件数据使用 base64 编码。
@@ -412,7 +414,8 @@ Moonlight-qt 侧当前已补：
 - Control Panel 目前只覆盖普通用户快速共享、列表和移除；高级权限 UI 还未完整开放。
 - WSS 仍需要接入 paired client certificate verify callback；当前 Beast 端口仍主要依赖 capability 签发的一次性 token。
 - 文件打开仍需要补 Windows handle-level final path 校验，消除 resolve 后到 open/read 之间的 TOCTOU 窗口。
-- WSS 仍需要补 handshake/idle timeout、ping/pong、任务取消和更完整的审计日志。
+- WSS 仍需要补 handshake/idle timeout、ping/pong、异步任务中途取消和更完整的审计日志。
+- 当前 job model 仍是同步执行后的状态记录；长耗时目录遍历/文件传输要支持真正中途取消，还需要把 executor 改成异步 job runner。
 - 大文件数据还没有切换到 WebSocket binary frame。
 - 写入、删除、rename、mkdir 尚未启用。
 - Moonlight-qt 文件面板、helper 进程隔离、反向客户端目录共享尚未接入。

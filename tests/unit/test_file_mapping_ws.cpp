@@ -180,6 +180,46 @@ TEST(FileMappingWsSessionCore, HandlesControlAfterHello) {
   EXPECT_EQ(reply["type"].get<std::string>(), "result");
   EXPECT_TRUE(reply["ok"].get<bool>());
   EXPECT_EQ(reply["entries"].size(), 1);
+  ASSERT_TRUE(reply.contains("job_id"));
+  ASSERT_TRUE(reply.contains("job"));
+  EXPECT_EQ(reply["job"]["operation"].get<std::string>(), "list");
+  EXPECT_EQ(reply["job"]["state"].get<std::string>(), "completed");
+
+  const auto status_message = std::string { R"({"type":"job_status","id":8,"job_id":")" } +
+                              reply["job_id"].get<std::string>() + R"("})";
+  auto status = session.handle_text(status_message);
+  ASSERT_TRUE(status.ok) << status.error;
+  ASSERT_TRUE(status.reply.has_value());
+  auto status_reply = nlohmann::json::parse(status.reply->text);
+  EXPECT_EQ(status_reply["type"].get<std::string>(), "result");
+  EXPECT_EQ(status_reply["job"]["state"].get<std::string>(), "completed");
+}
+
+TEST(FileMappingWsSessionCore, CancelsKnownJob) {
+  temp_ws_mapping_t tree;
+  file_mapping::mapping_t mapping;
+  mapping.id = "host-downloads";
+  mapping.name = "Host Downloads";
+  mapping.local_root = tree.root;
+
+  file_mapping::operations::execution_context_t context;
+  context.mappings.push_back(std::move(mapping));
+
+  file_mapping_ws::session_core_t session { "host", {}, {}, std::move(context) };
+  auto hello = file_mapping::rpc::make_hello(file_mapping::rpc::endpoint_e::client, "client-uuid", {});
+  ASSERT_TRUE(session.handle_text(hello.dump()).ok);
+
+  auto result = session.handle_text(R"({"type":"read","id":9,"mapping":"host-downloads","path":"hello.txt","length":2})");
+  ASSERT_TRUE(result.ok) << result.error;
+  auto reply = nlohmann::json::parse(result.reply->text);
+
+  const auto cancel_message = std::string { R"({"type":"cancel_job","id":10,"job_id":")" } +
+                              reply["job_id"].get<std::string>() + R"("})";
+  auto cancelled = session.handle_text(cancel_message);
+  ASSERT_TRUE(cancelled.ok) << cancelled.error;
+  auto cancel_reply = nlohmann::json::parse(cancelled.reply->text);
+  EXPECT_EQ(cancel_reply["type"].get<std::string>(), "result");
+  EXPECT_EQ(cancel_reply["job_id"].get<std::string>(), reply["job_id"].get<std::string>());
 }
 
 TEST(FileMappingWsSessionCore, HandlesBinaryAfterHello) {

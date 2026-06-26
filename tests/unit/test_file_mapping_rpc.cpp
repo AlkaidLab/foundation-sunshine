@@ -46,6 +46,10 @@ TEST(FileMappingRpc, ParsesReadChunkAlias) {
   ASSERT_TRUE(parsed.ok) << parsed.error;
   EXPECT_EQ(parsed.type, file_mapping::rpc::message_type_e::read);
   EXPECT_EQ(file_mapping::rpc::to_string(parsed.type), "read");
+
+  auto cancel = file_mapping::rpc::parse_control_message(R"({"type":"cancel_job","id":2,"job_id":"job-1"})");
+  ASSERT_TRUE(cancel.ok) << cancel.error;
+  EXPECT_EQ(cancel.type, file_mapping::rpc::message_type_e::cancel);
 }
 
 TEST(FileMappingRpc, SerializesTransferJob) {
@@ -70,6 +74,18 @@ TEST(FileMappingRpc, SerializesTransferJob) {
   EXPECT_EQ(parsed.total_bytes, 1000);
   EXPECT_EQ(parsed.transferred_bytes, 250);
   EXPECT_EQ(parsed.state, file_mapping::rpc::job_state_e::running);
+}
+
+TEST(FileMappingRpc, ParsesFileOperationJobs) {
+  EXPECT_EQ(
+    file_mapping::rpc::operation_from_string("list").value(),
+    file_mapping::rpc::operation_e::list);
+  EXPECT_EQ(
+    file_mapping::rpc::operation_from_string("stat").value(),
+    file_mapping::rpc::operation_e::stat);
+  EXPECT_EQ(
+    file_mapping::rpc::operation_from_string("read").value(),
+    file_mapping::rpc::operation_e::read);
 }
 
 TEST(FileMappingRpc, EncodesAndDecodesBinaryHeader) {

@@ -150,12 +150,15 @@ namespace file_mapping_http {
     if (!state.error.empty()) {
       body["error"] = state.error;
     }
+    body["diagnostics"] = nlohmann::json::object();
+    for (const auto &[key, value] : state.diagnostics) {
+      body["diagnostics"][key] = value;
+    }
     body["features"] = nlohmann::json::array({
       "mappings",
       "transfer_jobs",
-      "binary_frames",
       "explicit_authorization",
-      "audit_log"
+      "cancel_job"
     });
     body["limits"] = {
       { "binary_header_size", file_mapping::rpc::kBinaryHeaderSize },

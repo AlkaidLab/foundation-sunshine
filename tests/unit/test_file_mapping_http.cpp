@@ -5,6 +5,8 @@
 #include <src/file_mapping_http.h>
 #include <src/file_mapping_rpc.h>
 
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
@@ -16,6 +18,7 @@ TEST(FileMappingHttp, CapabilityResponseAdvertisesProtocol) {
   state.session_endpoint = "/api/v1/file-mapping/session";
   state.session_url = "wss://127.0.0.1:47999/api/v1/file-mapping/session";
   state.session_token = "abc123";
+  state.diagnostics["token"] = "issued";
   state.port = 47999;
 
   auto response = file_mapping_http::make_capability_response(state);
@@ -32,6 +35,9 @@ TEST(FileMappingHttp, CapabilityResponseAdvertisesProtocol) {
   EXPECT_EQ(body["session_url"].get<std::string>(), state.session_url);
   EXPECT_EQ(body["session_token"].get<std::string>(), state.session_token);
   EXPECT_EQ(body["port"].get<int>(), state.port);
+  EXPECT_EQ(body["diagnostics"]["token"].get<std::string>(), "issued");
+  EXPECT_TRUE(std::find(body["features"].begin(), body["features"].end(), "cancel_job") != body["features"].end());
+  EXPECT_TRUE(std::find(body["features"].begin(), body["features"].end(), "binary_frames") == body["features"].end());
   EXPECT_EQ(body["limits"]["binary_header_size"].get<std::size_t>(), file_mapping::rpc::kBinaryHeaderSize);
 }
 

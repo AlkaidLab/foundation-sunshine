@@ -51,6 +51,9 @@ namespace file_mapping::rpc {
   };
 
   enum class operation_e {
+    list,
+    stat,
+    read,
     download,
     upload,
     copy
