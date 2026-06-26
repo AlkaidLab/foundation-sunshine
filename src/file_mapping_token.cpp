@@ -29,20 +29,42 @@ namespace file_mapping_token {
     }
   }  // namespace
 
-  token_store_t::token_store_t(std::chrono::seconds ttl):
-      ttl_(ttl) {
+  token_store_t::token_store_t(
+    std::chrono::seconds ttl,
+    std::size_t max_tokens,
+    std::size_t max_tokens_per_client,
+    std::chrono::seconds min_issue_interval):
+      ttl_(ttl),
+      max_tokens_(max_tokens),
+      max_tokens_per_client_(max_tokens_per_client),
+      min_issue_interval_(min_issue_interval) {
   }
 
   std::string
   token_store_t::issue(std::string client_uuid, clock_t::time_point now) {
+    if (client_uuid.empty()) {
+      return {};
+    }
+
     std::scoped_lock lock { mutex_ };
     cleanup_unlocked(now);
+
+    if (max_tokens_ != 0 && tokens_.size() >= max_tokens_) {
+      return {};
+    }
+    if (max_tokens_per_client_ != 0 && count_client_tokens_unlocked(client_uuid) >= max_tokens_per_client_) {
+      return {};
+    }
+    if (auto last = last_issue_by_client_.find(client_uuid); last != last_issue_by_client_.end() && now < last->second + min_issue_interval_) {
+      return {};
+    }
 
     auto token = random_token();
     while (tokens_.contains(token)) {
       token = random_token();
     }
 
+    last_issue_by_client_[client_uuid] = now;
     tokens_.emplace(token, token_record_t { std::move(client_uuid), now + ttl_ });
     return token;
   }
@@ -82,6 +104,17 @@ namespace file_mapping_token {
         ++it;
       }
     }
+  }
+
+  std::size_t
+  token_store_t::count_client_tokens_unlocked(const std::string &client_uuid) const {
+    std::size_t count = 0;
+    for (const auto &[_, token] : tokens_) {
+      if (token.client_uuid == client_uuid) {
+        ++count;
+      }
+    }
+    return count;
   }
 
   std::size_t

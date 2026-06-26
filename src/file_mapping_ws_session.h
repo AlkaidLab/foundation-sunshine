@@ -5,6 +5,7 @@
 #pragma once
 
 #include <deque>
+#include <functional>
 #include <memory>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -34,7 +35,11 @@ namespace file_mapping_ws {
       client_uuid_authorizer_t authorize_peer_uuid = {},
       session_core_t core = session_core_t {},
       std::string expected_path = "/api/v1/file-mapping/session",
-      file_mapping::operations::execution_context_t operations_context = {});
+      file_mapping::operations::execution_context_t operations_context = {},
+      transport_config_t config = {},
+      std::function<void()> on_close = {});
+
+    ~beast_session_t();
 
     void start();
     void close();
@@ -58,6 +63,8 @@ namespace file_mapping_ws {
     session_core_t core_;
     std::string expected_path_;
     file_mapping::operations::execution_context_t operations_context_;
+    transport_config_t config_;
+    std::function<void()> on_close_;
     std::deque<outbound_frame_t> write_queue_;
     bool write_active_ = false;
     bool close_requested_ = false;

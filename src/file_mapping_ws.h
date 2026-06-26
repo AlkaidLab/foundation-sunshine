@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -19,6 +20,8 @@ namespace file_mapping_ws {
   static constexpr std::uint16_t kDefaultPort = 0;
   static constexpr std::uint32_t kDefaultMaxControlFrameBytes = 1024 * 1024;
   static constexpr std::uint32_t kDefaultMaxBinaryFrameBytes = 1024 * 1024;
+  static constexpr std::size_t kDefaultMaxActiveSessions = 32;
+  static constexpr std::size_t kDefaultMaxWriteQueueFrames = 16;
 
   enum class transport_state_e {
     stopped,
@@ -46,6 +49,8 @@ namespace file_mapping_ws {
     bool require_client_certificate = true;
     std::uint32_t max_control_frame_bytes = kDefaultMaxControlFrameBytes;
     std::uint32_t max_binary_frame_bytes = kDefaultMaxBinaryFrameBytes;
+    std::size_t max_active_sessions = kDefaultMaxActiveSessions;
+    std::size_t max_write_queue_frames = kDefaultMaxWriteQueueFrames;
   };
 
   struct validation_result_t {

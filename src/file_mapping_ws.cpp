@@ -177,6 +177,9 @@ namespace file_mapping_ws {
     if (config.max_binary_frame_bytes == 0) {
       return fail("max binary frame size must be non-zero");
     }
+    if (config.max_write_queue_frames == 0) {
+      return fail("max write queue frame count must be non-zero");
+    }
 
     return { true, {} };
   }

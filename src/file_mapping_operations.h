@@ -20,6 +20,7 @@ namespace file_mapping::operations {
     std::function<std::vector<mapping_t>()> mapping_provider;
     std::string peer_uuid;
     std::uint32_t max_read_bytes = 1024 * 1024;
+    std::uint32_t max_list_entries = 4096;
   };
 
   nlohmann::json

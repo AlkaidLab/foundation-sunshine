@@ -58,6 +58,21 @@ TEST(FileMappingOperations, ListsDirectoryEntries) {
   EXPECT_EQ(result["entries"].size(), 2);
 }
 
+TEST(FileMappingOperations, TruncatesLargeDirectoryListings) {
+  temp_tree_t tree;
+  std::ofstream(tree.root / "extra.txt", std::ios::binary) << "extra";
+  auto context = make_context(tree.root);
+  context.max_list_entries = 2;
+
+  auto parsed = file_mapping::rpc::parse_control_message(R"({"type":"list","id":9,"mapping":"host-test","path":""})");
+  ASSERT_TRUE(parsed.ok) << parsed.error;
+
+  auto result = file_mapping::operations::execute_control_message(parsed, context);
+  EXPECT_EQ(result["type"].get<std::string>(), "result");
+  EXPECT_EQ(result["entries"].size(), 2);
+  EXPECT_TRUE(result["truncated"].get<bool>());
+}
+
 TEST(FileMappingOperations, StatsFile) {
   temp_tree_t tree;
   auto context = make_context(tree.root);

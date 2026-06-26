@@ -44,6 +44,11 @@ TEST(FileMappingWs, ValidatesTransportConfig) {
   config.certificate_file.clear();
   result = file_mapping_ws::validate_config(config);
   EXPECT_FALSE(result.ok);
+
+  config.certificate_file = "cert.pem";
+  config.max_write_queue_frames = 0;
+  result = file_mapping_ws::validate_config(config);
+  EXPECT_FALSE(result.ok);
 }
 
 TEST(FileMappingWs, BuildsSessionTarget) {

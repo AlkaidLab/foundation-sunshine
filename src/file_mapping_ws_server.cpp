@@ -175,8 +175,29 @@ namespace file_mapping_ws {
     }
 
     if (!ec) {
+      if (config_.max_active_sessions != 0 && active_sessions_.load() >= config_.max_active_sessions) {
+        boost::system::error_code ignored;
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+        accept_next();
+        return;
+      }
+
+      active_sessions_.fetch_add(1);
       websocket_stream_t ws { std::move(socket), ssl_ctx_ };
-      std::make_shared<beast_session_t>(std::move(ws), validate_token_, authorize_peer_uuid_, session_core_t {}, "/api/v1/file-mapping/session", operations_context_)->start();
+      auto self = shared_from_this();
+      std::make_shared<beast_session_t>(
+        std::move(ws),
+        validate_token_,
+        authorize_peer_uuid_,
+        session_core_t {},
+        "/api/v1/file-mapping/session",
+        operations_context_,
+        config_,
+        [self]() {
+          self->active_sessions_.fetch_sub(1);
+        })
+        ->start();
     }
 
     accept_next();

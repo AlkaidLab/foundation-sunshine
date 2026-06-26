@@ -382,6 +382,8 @@ Sunshine 侧已拆出 `file_mapping_ws_server`，使用 Boost.Asio/Boost.Beast �
 - 已新增 Sunshine 本机管理 API 和 `file_mapping_store`，支持运行期创建、列出、更新、删除 mapping，并持久化回 `file_mappings`。
 - 管理 API 写入采用失败回滚：配置持久化失败时恢复旧 store，避免 HTTP 返回失败但运行态已经生效。
 - `allow_delete=true` 只允许和 `mode=readwrite` 同时存在；只读 mapping 会强制保持不可删除。
+- WSS 已增加第一批资源闸门：token 全局/单客户端配额、签发间隔、Beast message size limit、active session 上限、write queue 上限。
+- 目录 listing 已增加默认返回数量上限，并通过 `truncated=true` 告诉客户端需要分页/继续读取。
 - 已新增只读 RPC 执行器 `file_mapping_operations`。
 - 已支持 host mapping 的 `list`、`stat`、`read`。
 - `read` 当前返回 JSON `result`，文件数据使用 base64 编码。
@@ -408,6 +410,9 @@ Moonlight-qt 侧当前已补：
 
 - Sunshine Web UI 还没有目录 mapping 管理页面。
 - Control Panel 目前只覆盖普通用户快速共享、列表和移除；高级权限 UI 还未完整开放。
+- WSS 仍需要接入 paired client certificate verify callback；当前 Beast 端口仍主要依赖 capability 签发的一次性 token。
+- 文件打开仍需要补 Windows handle-level final path 校验，消除 resolve 后到 open/read 之间的 TOCTOU 窗口。
+- WSS 仍需要补 handshake/idle timeout、ping/pong、任务取消和更完整的审计日志。
 - 大文件数据还没有切换到 WebSocket binary frame。
 - 写入、删除、rename、mkdir 尚未启用。
 - Moonlight-qt 文件面板、helper 进程隔离、反向客户端目录共享尚未接入。

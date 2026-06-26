@@ -190,10 +190,16 @@ namespace file_mapping::operations {
       out["mapping"] = mapping->id;
       out["path"] = remote_path;
       out["entries"] = nlohmann::json::array();
+      out["truncated"] = false;
 
+      std::uint32_t count = 0;
       for (const auto &entry : fs::directory_iterator(resolved.resolved_path, ec)) {
         if (ec) {
           return error_response(body, "filesystem_error", ec.message());
+        }
+        if (context.max_list_entries != 0 && count >= context.max_list_entries) {
+          out["truncated"] = true;
+          break;
         }
 
         std::error_code entry_ec;
@@ -207,6 +213,7 @@ namespace file_mapping::operations {
           item["size"] = file_size_or_zero(entry.path(), entry_ec);
         }
         out["entries"].push_back(std::move(item));
+        ++count;
       }
       if (ec) {
         return error_response(body, "filesystem_error", ec.message());

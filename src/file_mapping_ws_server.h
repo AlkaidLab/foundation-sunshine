@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include <boost/asio/io_context.hpp>
@@ -44,6 +45,7 @@ namespace file_mapping_ws {
     file_mapping::operations::execution_context_t operations_context_;
     ssl::context ssl_ctx_;
     tcp::acceptor acceptor_;
+    std::atomic<std::size_t> active_sessions_ { 0 };
     transport_state_e state_ = transport_state_e::stopped;
   };
 }  // namespace file_mapping_ws
