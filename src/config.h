@@ -176,6 +176,8 @@ namespace config {
     std::string clients;
 
     std::string file_state;
+    std::string file_mappings;
+    std::uint16_t file_mapping_port;
 
     std::string external_ip;
     std::vector<std::string> resolutions;

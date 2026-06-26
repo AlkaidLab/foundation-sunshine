@@ -268,7 +268,7 @@ namespace nvhttp {
           last_pair_name = get_arg(args, "clientname", "Named Zako");
 
           BOOST_LOG(verbose) << "Client cert: " << sess.client.cert.substr(0, 100) << "...";
-          auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
+          auto ptr = map_id_sess.insert_or_assign(sess.client.uniqueID, std::move(sess)).first;
 
           ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
           if (config::sunshine.flags[config::flag::PIN_STDIN]) {
@@ -280,6 +280,7 @@ namespace nvhttp {
             if (!getservercert_checked(ptr->second, tree, pin, last_pair_name)) {
               return;
             }
+            return;
           }
           else {
             auto remote_addr = request->remote_endpoint().address();
@@ -292,6 +293,7 @@ namespace nvhttp {
               if (!getservercert_checked(ptr->second, tree, preset, last_pair_name)) {
                 return;
               }
+              return;
             }
             else {
               if (!pending_pin_unique_id.empty() && map_id_sess.find(pending_pin_unique_id) != std::end(map_id_sess)) {

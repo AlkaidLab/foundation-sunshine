@@ -30,8 +30,6 @@
 
 #include <boost/algorithm/string.hpp>
 
-#include <boost/asio/ssl/context.hpp>
-
 #include <boost/filesystem.hpp>
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
@@ -43,6 +41,7 @@
 #include "clipboard_http.h"
 #include "crypto.h"
 #include "display_device/session.h"
+#include "file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
@@ -2441,6 +2440,151 @@ namespace confighttp {
     }
   }
 
+  SimpleWeb::CaseInsensitiveMultimap
+  json_headers() {
+    return {
+      { "Content-Type", "application/json" },
+      { "Cache-Control", "no-store" },
+      { "X-Content-Type-Options", "nosniff" }
+    };
+  }
+
+  void
+  write_json(resp_https_t response, SimpleWeb::StatusCode status, const json &body) {
+    response->write(status, body.dump(), json_headers());
+  }
+
+  void
+  write_json_error(resp_https_t response, SimpleWeb::StatusCode status, std::string error) {
+    json body;
+    body["ok"] = false;
+    body["error"] = std::move(error);
+    write_json(std::move(response), status, body);
+  }
+
+  bool
+  read_json_body(resp_https_t response, req_https_t request, json &body) {
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      body = json::parse(ss.str());
+      return true;
+    }
+    catch (const std::exception &e) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, std::string { "Invalid JSON: " } + e.what());
+      return false;
+    }
+  }
+
+  bool
+  persistFileMappingStoreOrRestore(std::vector<file_mapping::mapping_t> previous_mappings) {
+    if (file_mapping_store::persist_to_config(file_mapping_store::global())) {
+      return true;
+    }
+
+    file_mapping_store::global().replace(std::move(previous_mappings));
+    return false;
+  }
+
+  void
+  listFileMappings(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    json body;
+    body["ok"] = true;
+    body["mappings"] = file_mapping_store::global().to_json();
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  createFileMapping(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    json input;
+    if (!read_json_body(response, request, input)) return;
+    if (!input.is_object() || !input.contains("path") || !input["path"].is_string()) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "missing string field: path");
+      return;
+    }
+
+    auto previous_mappings = file_mapping_store::global().snapshot();
+    auto result = file_mapping_store::global().add_quick_share(input["path"].get<std::string>());
+    if (!result.ok) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, result.error);
+      return;
+    }
+    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+      return;
+    }
+
+    json body;
+    body["ok"] = true;
+    body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  updateFileMapping(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
+    if (!file_mapping::is_valid_mapping_id(id)) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+      return;
+    }
+
+    json input;
+    if (!read_json_body(response, request, input)) return;
+    auto previous_mappings = file_mapping_store::global().snapshot();
+    auto result = file_mapping_store::global().update(id, input);
+    if (!result.ok) {
+      const auto status = result.error == "mapping was not found" ? SimpleWeb::StatusCode::client_error_not_found : SimpleWeb::StatusCode::client_error_bad_request;
+      write_json_error(std::move(response), status, result.error);
+      return;
+    }
+    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+      return;
+    }
+
+    json body;
+    body["ok"] = true;
+    body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  deleteFileMapping(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
+    if (!file_mapping::is_valid_mapping_id(id)) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+      return;
+    }
+    auto previous_mappings = file_mapping_store::global().snapshot();
+    if (!file_mapping_store::global().remove(id)) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_not_found, "mapping was not found");
+      return;
+    }
+    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+      return;
+    }
+
+    json body;
+    body["ok"] = true;
+    body["id"] = id;
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
   /**
    * @brief GET /api/ai/config — 获取 AI 配置（不返回完整 API key）
    */
@@ -3041,6 +3185,10 @@ namespace confighttp {
     server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
     server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
     server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
+    server.resource["^/api/v1/file-mapping/mappings$"]["GET"] = listFileMappings;
+    server.resource["^/api/v1/file-mapping/mappings$"]["POST"] = createFileMapping;
+    server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["PATCH"] = updateFileMapping;
+    server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["DELETE"] = deleteFileMapping;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;

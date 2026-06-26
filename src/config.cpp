@@ -498,6 +498,8 @@ namespace config {
     platf::get_host_name(),  // sunshine_name,
     "[]",
     "sunshine_state.json"s,  // file_state
+    "[]"s,  // file_mappings
+    48010,  // file_mapping_port
     {},  // external_ip
     {
       "1280x720"s,
@@ -1358,6 +1360,10 @@ namespace config {
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
+    string_f(vars, "file_mappings", nvhttp.file_mappings);
+    int file_mapping_port = nvhttp.file_mapping_port;
+    int_between_f(vars, "file_mapping_port", file_mapping_port, { 1024, 65535 });
+    nvhttp.file_mapping_port = static_cast<std::uint16_t>(file_mapping_port);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;

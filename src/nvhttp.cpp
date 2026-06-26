@@ -16,12 +16,14 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 // lib includes
 #include <Simple-Web-Server/server_http.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -35,6 +37,11 @@
 #include "confighttp.h"
 #include "display_device/session.h"
 #include "file_handler.h"
+#include "file_mapping_config.h"
+#include "file_mapping_http.h"
+#include "file_mapping_store.h"
+#include "file_mapping_token.h"
+#include "file_mapping_ws_server.h"
 #include "globals.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -871,6 +878,82 @@ namespace nvhttp {
     // launch will store it in host_audio
     bool host_audio {};
 
+    auto bind_address = net::get_bind_address(address_family);
+    boost::asio::io_context file_mapping_io;
+    std::shared_ptr<file_mapping_ws::server_t> file_mapping_server;
+    auto file_mapping_tokens = std::make_shared<file_mapping_token::token_store_t>();
+    std::thread file_mapping_thread;
+    std::mutex file_mapping_state_mutex;
+    std::string file_mapping_start_error;
+
+    auto file_mapping_config_result = file_mapping_config::parse_mappings_json(config::nvhttp.file_mappings);
+    for (const auto &config_warning : file_mapping_config_result.warnings) {
+      BOOST_LOG(warning) << config_warning;
+    }
+    file_mapping_store::global().replace(std::move(file_mapping_config_result.mappings));
+    file_mapping::operations::execution_context_t file_mapping_operations_context;
+    file_mapping_operations_context.mapping_provider = []() {
+      return file_mapping_store::global().snapshot();
+    };
+
+    auto is_file_mapping_client_paired = [](std::string_view client_uuid) {
+      if (client_uuid.empty()) {
+        return false;
+      }
+
+      const auto clients = nvhttp::get_all_clients();
+      for (const auto &client : clients) {
+        if (client.contains("uuid") && client["uuid"].is_string() && std::string_view { client["uuid"].get_ref<const std::string &>() } == client_uuid) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    {
+      file_mapping_ws::transport_config_t file_mapping_config;
+      file_mapping_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
+      file_mapping_config.port = config::nvhttp.file_mapping_port;
+      file_mapping_config.certificate_file = config::nvhttp.cert;
+      file_mapping_config.private_key_file = config::nvhttp.pkey;
+      // The capability endpoint is served by nvhttp HTTPS after paired-client
+      // certificate verification. The Beast data port is additionally gated by
+      // a short-lived token bound to the certificate-derived client UUID.
+      file_mapping_config.require_client_certificate = false;
+
+      auto candidate = std::make_shared<file_mapping_ws::server_t>(
+        file_mapping_io,
+        std::move(file_mapping_config),
+        [file_mapping_tokens](std::string_view token) {
+          return file_mapping_tokens->consume(std::string { token });
+        },
+        is_file_mapping_client_paired,
+        file_mapping_operations_context);
+
+      if (auto result = candidate->start(); result.ok) {
+        {
+          std::scoped_lock lock { file_mapping_state_mutex };
+          file_mapping_server = std::move(candidate);
+        }
+        file_mapping_thread = std::thread([&file_mapping_io, shutdown_event]() {
+          try {
+            file_mapping_io.run();
+          }
+          catch (const std::exception &err) {
+            if (!shutdown_event->peek()) {
+              BOOST_LOG(error) << "File mapping WebSocket server failed: "sv << err.what();
+            }
+          }
+        });
+        BOOST_LOG(info) << "File mapping WebSocket server listening on port ["sv << file_mapping_server->bound_port() << "]"sv;
+      }
+      else {
+        std::scoped_lock lock { file_mapping_state_mutex };
+        file_mapping_start_error = result.error;
+        BOOST_LOG(warning) << "File mapping WebSocket server disabled: "sv << result.error;
+      }
+    }
+
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
 
@@ -950,6 +1033,46 @@ namespace nvhttp {
     https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = clipboard_api::upload_blob;
     https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = clipboard_api::get_blob;
 
+    https_server.resource["^/api/v1/file-mapping/capability$"]["GET"] =
+      [&](resp_https_t resp, req_https_t req) {
+        auto header_value = [](const SimpleWeb::CaseInsensitiveMultimap &headers, const std::string &name) {
+          auto it = headers.find(name);
+          return it == headers.end() ? std::string {} : it->second;
+        };
+        auto write_response = [](resp_https_t response, const file_mapping_http::http_response_t &out) {
+          response->write(out.status, out.body, out.headers);
+        };
+
+        file_mapping_http::capability_state_t state;
+        state.enabled = true;
+        state.session_endpoint = "/api/v1/file-mapping/session";
+        state.client_uuid = get_client_cert_uuid_from_request(req);
+
+        {
+          std::scoped_lock lock { file_mapping_state_mutex };
+          state.error = file_mapping_start_error;
+          if (file_mapping_server) {
+            state.listening = file_mapping_server->state() == file_mapping_ws::transport_state_e::listening;
+            state.port = file_mapping_server->bound_port();
+          }
+        }
+
+        if (state.client_uuid.empty()) {
+          state.error = "paired client certificate is required for file mapping";
+        }
+        else if (state.listening && state.port != 0) {
+          state.session_token = file_mapping_tokens->issue(state.client_uuid);
+        }
+
+        write_response(std::move(resp), file_mapping_http::make_capability_response(state, header_value(req->header, "host")));
+      };
+
+    https_server.resource["^/api/v1/file-mapping/session$"]["GET"] =
+      [](resp_https_t resp, req_https_t req) {
+        auto out = file_mapping_http::make_session_placeholder_response(req->header);
+        resp->write(out.status, out.body, out.headers);
+      };
+
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
     https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
@@ -959,7 +1082,7 @@ namespace nvhttp {
     https_server.resource["^/ai/completions$"]["POST"] = ai_api::completions;
 
     https_server.config.reuse_address = true;
-    https_server.config.address = net::get_bind_address(address_family);
+    https_server.config.address = bind_address;
     https_server.config.port = port_https;
     // Run nvhttps server with a small thread pool. The HTTPS endpoint serves
     // SSL handshakes + request handlers on the same io_service. With the default
@@ -1031,9 +1154,19 @@ namespace nvhttp {
     // Wait for any event
     shutdown_event->view();
 
+    {
+      std::scoped_lock lock { file_mapping_state_mutex };
+      if (file_mapping_server) {
+        file_mapping_server->stop();
+      }
+    }
+    file_mapping_io.stop();
     https_server.stop();
     http_server.stop();
 
+    if (file_mapping_thread.joinable()) {
+      file_mapping_thread.join();
+    }
     ssl.join();
     tcp.join();
   }
