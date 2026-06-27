@@ -57,6 +57,9 @@ namespace file_mapping_store {
   std::string
   serialize_config_json(const std::vector<file_mapping::mapping_t> &mappings);
 
+  std::string
+  serialize_config_value(const std::vector<file_mapping::mapping_t> &mappings);
+
   bool
   persist_to_config(const store_t &store);
 }  // namespace file_mapping_store

@@ -46,6 +46,6 @@ namespace file_mapping_ws {
     ssl::context ssl_ctx_;
     tcp::acceptor acceptor_;
     std::atomic<std::size_t> active_sessions_ { 0 };
-    transport_state_e state_ = transport_state_e::stopped;
+    std::atomic<transport_state_e> state_ { transport_state_e::stopped };
   };
 }  // namespace file_mapping_ws

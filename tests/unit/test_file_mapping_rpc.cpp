@@ -39,6 +39,9 @@ TEST(FileMappingRpc, RejectsBadControlMessages) {
 
   auto wrong_version = file_mapping::rpc::parse_control_message(R"({"type":"hello","version":99})");
   EXPECT_FALSE(wrong_version.ok);
+
+  auto malformed_version = file_mapping::rpc::parse_control_message(R"({"type":"hello","version":"1"})");
+  EXPECT_FALSE(malformed_version.ok);
 }
 
 TEST(FileMappingRpc, ParsesReadChunkAlias) {
@@ -94,7 +97,7 @@ TEST(FileMappingRpc, EncodesAndDecodesBinaryHeader) {
   header.request_id = 42;
   header.job_id_hash = 123;
   header.handle_id = 456;
-  header.offset = 789;
+  header.offset = (std::uint64_t { 1 } << 40) + 789;
   header.payload_length = 1024;
 
   auto bytes = file_mapping::rpc::encode_binary_header(header);
@@ -108,6 +111,6 @@ TEST(FileMappingRpc, EncodesAndDecodesBinaryHeader) {
   EXPECT_EQ(decoded.request_id, 42);
   EXPECT_EQ(decoded.job_id_hash, 123);
   EXPECT_EQ(decoded.handle_id, 456);
-  EXPECT_EQ(decoded.offset, 789);
+  EXPECT_EQ(decoded.offset, (std::uint64_t { 1 } << 40) + 789);
   EXPECT_EQ(decoded.payload_length, 1024);
 }

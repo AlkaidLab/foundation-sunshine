@@ -236,8 +236,10 @@ namespace file_mapping {
 
     std::string safety_message;
     if (!is_safe_relative_path(remote_path, &safety_message)) {
-      const auto error = safety_message == "remote path must be relative" ? resolve_error_e::absolute_path :
-                                                                       resolve_error_e::invalid_relative_path;
+      const auto error =
+        safety_message == "remote path must be relative" ? resolve_error_e::absolute_path :
+        safety_message == "remote path contains a reserved Windows device name" ? resolve_error_e::reserved_name :
+                                                                                resolve_error_e::invalid_relative_path;
       return fail(error, std::move(safety_message));
     }
 
@@ -272,6 +274,9 @@ namespace file_mapping {
     }
 
     if (must_exist && !fs::exists(candidate, ec)) {
+      if (ec) {
+        return fail(resolve_error_e::filesystem_error, ec.message());
+      }
       return fail(resolve_error_e::not_found, "resolved path does not exist");
     }
     ec.clear();

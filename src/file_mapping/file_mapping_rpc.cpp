@@ -334,7 +334,22 @@ namespace file_mapping::rpc {
     }
 
     if (result.type == message_type_e::hello) {
-      const auto version = result.body.value("version", 0);
+      if (!result.body.contains("version") || (!result.body["version"].is_number_unsigned() && !result.body["version"].is_number_integer())) {
+        result.error = "hello missing version";
+        return result;
+      }
+      std::uint64_t version = 0;
+      if (result.body["version"].is_number_unsigned()) {
+        version = result.body["version"].get<std::uint64_t>();
+      }
+      else {
+        const auto signed_version = result.body["version"].get<std::int64_t>();
+        if (signed_version < 0) {
+          result.error = "unsupported protocol version";
+          return result;
+        }
+        version = static_cast<std::uint64_t>(signed_version);
+      }
       if (version != kProtocolVersion) {
         result.error = "unsupported protocol version";
         return result;
@@ -355,7 +370,7 @@ namespace file_mapping::rpc {
     write_u64(out, 16, header.job_id_hash);
     write_u64(out, 24, header.handle_id);
     write_u64(out, 32, header.offset);
-    write_u32(out, 36, header.payload_length);
+    write_u32(out, 40, header.payload_length);
     return out;
   }
 
@@ -373,7 +388,7 @@ namespace file_mapping::rpc {
     out.job_id_hash = read_u64(data, 16);
     out.handle_id = read_u64(data, 24);
     out.offset = read_u64(data, 32);
-    out.payload_length = read_u32(data, 36);
+    out.payload_length = read_u32(data, 40);
 
     if (out.magic != kBinaryMagic) {
       error = "invalid binary frame magic";

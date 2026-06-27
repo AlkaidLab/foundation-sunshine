@@ -102,6 +102,20 @@ TEST(FileMappingStore, UpdateChangesUserFacingSettings) {
   EXPECT_EQ(updated.mapping.clients[0], "client-a");
 }
 
+TEST(FileMappingStore, AcceptsSignedJsonIntegerMaxFileSize) {
+  temp_store_tree_t tree;
+  file_mapping_store::store_t store;
+  auto created = store.add_quick_share(tree.root / "Downloads");
+  ASSERT_TRUE(created.ok) << created.error;
+
+  auto updated = store.update(created.mapping.id, {
+                                                 { "max_file_size", static_cast<std::int64_t>(42) },
+                                               });
+
+  ASSERT_TRUE(updated.ok) << updated.error;
+  EXPECT_EQ(updated.mapping.max_file_size, 42);
+}
+
 TEST(FileMappingStore, RejectsUnsupportedDeletePermission) {
   temp_store_tree_t tree;
   file_mapping_store::store_t store;
@@ -164,4 +178,18 @@ TEST(FileMappingStore, SerializesConfigJson) {
   EXPECT_EQ(parsed[0]["id"], created.mapping.id);
   EXPECT_EQ(parsed[0]["mode"], "read");
   EXPECT_EQ(parsed[0]["clients"].size(), 0);
+}
+
+TEST(FileMappingStore, SerializesConfigValueAsParserSafeBase64) {
+  temp_store_tree_t tree;
+  file_mapping::mapping_t mapping;
+  mapping.id = "host-test";
+  mapping.name = "Downloads ] # still data";
+  mapping.local_root = tree.root / "Downloads";
+
+  const auto value = file_mapping_store::serialize_config_value({ mapping });
+  EXPECT_TRUE(value.rfind("base64:", 0) == 0);
+  EXPECT_EQ(value.find('['), std::string::npos);
+  EXPECT_EQ(value.find(']'), std::string::npos);
+  EXPECT_EQ(value.find('#'), std::string::npos);
 }

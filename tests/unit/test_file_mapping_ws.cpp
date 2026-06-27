@@ -158,6 +158,15 @@ TEST(FileMappingWsSessionCore, RejectsUnpairedHelloUuid) {
   EXPECT_TRUE(result.close);
 }
 
+TEST(FileMappingWsSessionCore, RejectsHostHelloEndpoint) {
+  file_mapping_ws::session_core_t session;
+  auto hello = file_mapping::rpc::make_hello(file_mapping::rpc::endpoint_e::host, "client-uuid", {});
+
+  auto result = session.handle_text(hello.dump());
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.close);
+}
+
 TEST(FileMappingWsSessionCore, HandlesControlAfterHello) {
   temp_ws_mapping_t tree;
   file_mapping::mapping_t mapping;
@@ -242,6 +251,22 @@ TEST(FileMappingWsSessionCore, HandlesBinaryAfterHello) {
   EXPECT_TRUE(reply["binary"].get<bool>());
   EXPECT_EQ(reply["request_id"].get<int>(), 9);
   EXPECT_EQ(reply["payload_length"].get<int>(), 3);
+}
+
+TEST(FileMappingWsSessionCore, RejectsBinaryPayloadLengthMismatch) {
+  file_mapping_ws::session_core_t session;
+  auto hello = file_mapping::rpc::make_hello(file_mapping::rpc::endpoint_e::client, "client-uuid", {});
+  ASSERT_TRUE(session.handle_text(hello.dump()).ok);
+
+  file_mapping::rpc::binary_header_t header;
+  header.payload_length = 3;
+  auto encoded = file_mapping::rpc::encode_binary_header(header);
+  std::vector<std::uint8_t> frame(encoded.begin(), encoded.end());
+  frame.insert(frame.end(), { 1, 2, 3, 4 });
+
+  auto result = session.handle_binary(frame.data(), frame.size());
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.close);
 }
 
 TEST(FileMappingWsSessionCore, RejectsBinaryBeforeHello) {

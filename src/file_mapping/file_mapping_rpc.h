@@ -16,7 +16,7 @@
 namespace file_mapping::rpc {
   static constexpr std::uint16_t kProtocolVersion = 1;
   static constexpr std::uint32_t kBinaryMagic = 0x53464d50;  // "SFMP"
-  static constexpr std::size_t kBinaryHeaderSize = 40;
+  static constexpr std::size_t kBinaryHeaderSize = 44;
 
   enum class endpoint_e {
     host,

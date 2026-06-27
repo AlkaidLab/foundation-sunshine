@@ -7,7 +7,14 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <thread>
+
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -26,55 +33,62 @@ namespace {
   namespace websocket = boost::beast::websocket;
   using tcp = boost::asio::ip::tcp;
 
-  constexpr char kSmokeCert[] = R"(-----BEGIN CERTIFICATE-----
-MIIC1zCCAb+gAwIBAgIUPr4savoWrPXtJOBkQb2uVK5JaFcwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDYyNTEzNDIwMloXDTI2MDYy
-NjEzNDIwMlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEAvP/OykMlXtcBTiq9Ee2KJaNIrNLo39C0wEEQYMRO+7JY
-sI8C2b4ekr+HdCCJ/tcsHdCkUt/82BvHHrdwUknORYn6LA7h2ZDS/cDcCYLbHU4h
-vx+/rbVBE7zI9fHS++MxX2qcU4f9xp76tk7S0hpTGAi6vlNT1QE0E54HIkNwhW2X
-tiyhwPpjmzUE8iNzP0k3BrFDSmHCMX0bmq1UKTcg8m6jJWPij4BozTi7aT6KXi4/
-s0jqiiRIVGm96d+qEMNm9RPVO3rgL4ZzJ3n5LverXtHWD8je9qM/8vVa8rasSxAW
-bFTJRqNA2XC/JSBDYHOeHcHwpvZRj9NNi5nKSXDWpQIDAQABoyEwHzAdBgNVHQ4E
-FgQU69Gpm4kqLucRmc0bSIhLYllsM/0wDQYJKoZIhvcNAQELBQADggEBAHKTsr4D
-A0QChEGgi/y++FAyXEjBWkwJPCgvSr0foRywZ4vDGD2FND0wx4voW7QvaNDDLrrv
-skXSnJzrqDTJS6efmgX6ZT/psY/taRMz92ZmeWBxi4gibDXgYopjLYj+J55n2jhJ
-RsrTtB5snsx16nuwvJmP2E2l1BF9Gk91PUSeJllqpjnOcj4hcenHlGS6Et606QpB
-j2Ln6nPYip3OODepPCr6/TdE8CJcPMWEYUfEwWiIxi1V4dcA8C9u3dgxVUQfRWtn
-qhNb4CtvbsyAILkS1yhgi4HevyignddAKYJ5Z5tVzYzGdIHjnpzUVU20v/+OG2U6
-jA6Vzm1GD88zAjM=
------END CERTIFICATE-----
-)";
+  void
+  throw_if_false(bool ok, const char *message) {
+    if (!ok) {
+      throw std::runtime_error(message);
+    }
+  }
 
-  constexpr char kSmokeKey[] = R"(-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC8/87KQyVe1wFO
-Kr0R7Yolo0is0ujf0LTAQRBgxE77sliwjwLZvh6Sv4d0IIn+1ywd0KRS3/zYG8ce
-t3BSSc5FifosDuHZkNL9wNwJgtsdTiG/H7+ttUETvMj18dL74zFfapxTh/3Gnvq2
-TtLSGlMYCLq+U1PVATQTngciQ3CFbZe2LKHA+mObNQTyI3M/STcGsUNKYcIxfRua
-rVQpNyDybqMlY+KPgGjNOLtpPopeLj+zSOqKJEhUab3p36oQw2b1E9U7euAvhnMn
-efku96te0dYPyN72oz/y9VrytqxLEBZsVMlGo0DZcL8lIENgc54dwfCm9lGP002L
-mcpJcNalAgMBAAECggEAXTKTiT+1JOBG/4GpvDZzYf3zr21NclibWRZ8egszm4Al
-peLPmAndT6XsqIIHKkh2s7kX3toe934zIV15oMpOUhIo8CLikgONV54LoxEI9Zl6
-oKGKRqFTluUH/+egj59H0HJk5ffwV0o7/Tw/T2W1xetAEuxKMYYnZOkPQYEZ8mDw
-PR6/hA3RpFLiPdGUnSjTTOi44yx4WGwjmpsgbEo8/P1cV/L6zoiuyT8vBsZCqSdX
-rZ0jwzl0P9L7AGbWcleASjrsl/8ZzwHdUhg0DTe+vnhxCRYXfQ0PgaJsmdcpjeCV
-8y7gt5NmD1Wm5dtTMYZGdIvcZcPB9vLxsYDsSCO4HQKBgQDmW2ykAxeXoGX4DsqM
-FX3HdLYCC267aTA9pVPw0vcnw6Wq9AuP61k99gT+u7SOpudg7Ax7uhJrs/7UmOLd
-3tlL+/jKX1bILAZrDK+/HIOUjMe84UeF6XwCcIrviDMl7+wuy2BMHfOwOp/iS6i5
-yWqAhmk0dygtI4GoOOzqP0g8PwKBgQDSCcrEcGEJYuK1BFV8QaKOnec3CzYDxel7
-u8UMndz50I5CqyLMiqJF9OJhekjRPMc/cewzXeMc9ovr+ZcudclaTsyMpZiEnfDY
-8rf9hkaWk8BB/0Kg6hKJcpbLS8/SZPpJVa2ZlfBHXTxfL67eclLTWBlAny5BncQN
-I5Gqmb6EGwKBgQCA0lvdFMWay956bHsk/9fJNSGb3xzbvaV2tABPSwtgt27sPXJB
-19Gebvi4I+yDYh8++oK4poQqqww1hBJLFZbbgVvOgKadZtFoCD44WA/VgS0qGanP
-35S0II/yCG7iJlwkhyOhLZbb1M0Y1krTKypeGcy3xHM5WwPlOYB0N1OELQKBgQCs
-KOaQ+WQwY2Nb6H+BZ/MsXvVkQsY1dYWZrCEp5EN6aJ4Su1+8tG2qVb0xFSCWkPDo
-aiKnP++mj9fExkJLDLTMVwaGyj0nhqYhzWFOZz94sQbHkck1SGeFTe2YGT3xQF9+
-uMGgwCvA8wVHKDh3kNGe9flM5Kzvj7dg5aTCZ16nvQKBgCw5SSNKBrhd8PtPN7no
-S9aGVND/9jXvsrjOro/8X+IZhhI+eorETebhLmsZfuj2+33qlNLV5VWwYk0YT9PF
-nYHMvQFm+cBYGfgZsq5mcFE0sSNjtwAqANFMZtneEB+5PQ3ftwZOYwy6j87vkeI8
-H/ghgEVOl3Zy/flQFDrlnAmq
------END PRIVATE KEY-----
-)";
+  void
+  write_self_signed_certificate(const std::filesystem::path &cert, const std::filesystem::path &key) {
+    using evp_pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
+    using evp_pkey_ptr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+    using x509_ptr = std::unique_ptr<X509, decltype(&X509_free)>;
+    using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+
+    evp_pkey_ctx_ptr ctx { EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr), EVP_PKEY_CTX_free };
+    throw_if_false(static_cast<bool>(ctx), "failed to create keygen context");
+    throw_if_false(EVP_PKEY_keygen_init(ctx.get()) > 0, "failed to initialize keygen");
+    throw_if_false(EVP_PKEY_CTX_set_rsa_keygen_bits(ctx.get(), 2048) > 0, "failed to set rsa key size");
+
+    EVP_PKEY *raw_key = nullptr;
+    throw_if_false(EVP_PKEY_keygen(ctx.get(), &raw_key) > 0, "failed to generate private key");
+    evp_pkey_ptr pkey { raw_key, EVP_PKEY_free };
+
+    x509_ptr x509 { X509_new(), X509_free };
+    throw_if_false(static_cast<bool>(x509), "failed to create x509 certificate");
+    throw_if_false(X509_set_version(x509.get(), 2) == 1, "failed to set x509 version");
+    throw_if_false(ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), 1) == 1, "failed to set serial number");
+    throw_if_false(X509_gmtime_adj(X509_get_notBefore(x509.get()), 0) != nullptr, "failed to set notBefore");
+    throw_if_false(X509_gmtime_adj(X509_get_notAfter(x509.get()), 3600) != nullptr, "failed to set notAfter");
+    throw_if_false(X509_set_pubkey(x509.get(), pkey.get()) == 1, "failed to set public key");
+
+    auto *name = X509_get_subject_name(x509.get());
+    throw_if_false(name != nullptr, "failed to get certificate subject");
+    throw_if_false(
+      X509_NAME_add_entry_by_txt(
+        name,
+        "CN",
+        MBSTRING_ASC,
+        reinterpret_cast<const unsigned char *>("localhost"),
+        -1,
+        -1,
+        0) == 1,
+      "failed to set certificate subject");
+    throw_if_false(X509_set_issuer_name(x509.get(), name) == 1, "failed to set certificate issuer");
+    throw_if_false(X509_sign(x509.get(), pkey.get(), EVP_sha256()) > 0, "failed to sign certificate");
+
+    const auto cert_file = cert.string();
+    bio_ptr cert_bio { BIO_new_file(cert_file.c_str(), "w"), BIO_free };
+    throw_if_false(static_cast<bool>(cert_bio), "failed to open certificate file");
+    throw_if_false(PEM_write_bio_X509(cert_bio.get(), x509.get()) == 1, "failed to write certificate file");
+
+    const auto key_file = key.string();
+    bio_ptr key_bio { BIO_new_file(key_file.c_str(), "w"), BIO_free };
+    throw_if_false(static_cast<bool>(key_bio), "failed to open private key file");
+    throw_if_false(PEM_write_bio_PrivateKey(key_bio.get(), pkey.get(), nullptr, nullptr, 0, nullptr, nullptr) == 1, "failed to write private key file");
+  }
 
   struct temp_ws_smoke_t {
     std::filesystem::path root;
@@ -89,8 +103,7 @@ H/ghgEVOl3Zy/flQFDrlnAmq
       std::filesystem::remove_all(root, ec);
       std::filesystem::create_directories(root);
       std::ofstream(root / "hello.txt", std::ios::binary) << "hello world";
-      std::ofstream(cert, std::ios::binary) << kSmokeCert;
-      std::ofstream(key, std::ios::binary) << kSmokeKey;
+      write_self_signed_certificate(cert, key);
     }
 
     ~temp_ws_smoke_t() {

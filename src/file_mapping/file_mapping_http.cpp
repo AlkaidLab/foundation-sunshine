@@ -40,25 +40,6 @@ namespace file_mapping_http {
     }
 
     std::string
-    request_host_without_port(std::string_view request_host) {
-      if (request_host.empty()) {
-        return {};
-      }
-
-      if (request_host.front() == '[') {
-        const auto end = request_host.find(']');
-        return end == std::string_view::npos ? std::string { request_host } : std::string { request_host.substr(0, end + 1) };
-      }
-
-      const auto first_colon = request_host.find(':');
-      if (first_colon == std::string_view::npos || request_host.find(':', first_colon + 1) != std::string_view::npos) {
-        return std::string { request_host };
-      }
-
-      return std::string { request_host.substr(0, first_colon) };
-    }
-
-    std::string
     header_value(const SimpleWeb::CaseInsensitiveMultimap &headers, const std::string &name) {
       auto it = headers.find(name);
       return it == headers.end() ? std::string {} : it->second;
@@ -84,21 +65,11 @@ namespace file_mapping_http {
     }
 
     std::string
-    make_request_session_url(const capability_state_t &state, std::string_view request_host) {
+    make_request_session_url(const capability_state_t &state) {
       if (!state.session_url.empty()) {
         return url_without_query(state.session_url);
       }
-      if (!state.listening || state.port == 0) {
-        return {};
-      }
-
-      const auto host = request_host_without_port(request_host);
-      if (host.empty()) {
-        return {};
-      }
-
-      const auto endpoint = state.session_endpoint.empty() ? "/api/v1/file-mapping/session" : state.session_endpoint;
-      return "wss://" + host + ":" + std::to_string(state.port) + endpoint;
+      return {};
     }
 
     void
@@ -133,6 +104,7 @@ namespace file_mapping_http {
 
   http_response_t
   make_capability_response(const capability_state_t &state, std::string_view request_host) {
+    (void) request_host;
     nlohmann::json body;
     body["ok"] = true;
     body["enabled"] = state.enabled;
@@ -142,7 +114,7 @@ namespace file_mapping_http {
     body["control"] = "json";
     body["data"] = "binary";
     body["session_endpoint"] = state.session_endpoint.empty() ? "/api/v1/file-mapping/session" : state.session_endpoint;
-    body["session_url"] = make_request_session_url(state, request_host);
+    body["session_url"] = make_request_session_url(state);
     body["session_token"] = state.session_token;
     body["port"] = state.port;
     if (!state.client_uuid.empty()) {

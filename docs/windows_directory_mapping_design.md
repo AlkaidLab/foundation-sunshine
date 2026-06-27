@@ -315,6 +315,7 @@ wss://<sunshine-host>:<https-port>/api/v1/file-mapping/session
 - `list`：`{"type":"list","id":1,"mapping":"host-test","path":""}`
 - `stat`：`{"type":"stat","id":2,"mapping":"host-test","path":"hello.txt"}`
 - `read` / `read_chunk`：`{"type":"read","id":3,"mapping":"host-test","path":"hello.txt","offset":0,"length":65536}`
+- `open`：当前 read-only executor 不提供 handle 语义，必须返回 `unsupported_operation`，不能隐式路由到 `read`。
 
 当前 `read` 响应暂时使用 JSON + base64：
 
@@ -682,12 +683,14 @@ Capability 响应中返回实际 WSS 通道信息：
   "transport": "wss",
   "port": 47999,
   "session_endpoint": "/api/v1/file-mapping/session",
-  "session_url": "wss://192.168.1.20:47999/api/v1/file-mapping/session",
+  "session_url": "",
   "session_token": "...",
   "client_uuid": "<sunshine-paired-cert-uuid>",
   "implementation": "boost.beast"
 }
 ```
+
+`session_url` 只能来自 Sunshine 内部可信状态，不能使用请求 `Host` header 拼接。通常情况下 capability 返回 `port` 和 `session_endpoint`，Moonlight 使用当前已连接的 Sunshine 主机地址自行组合 WSS 目标，避免 Host header injection。
 
 Moonlight 请求 capability 时可携带自身 `IdentityManager::getUniqueId()` 作为诊断 hint：
 
@@ -725,6 +728,10 @@ Sunshine 不信任请求里的 UUID 作为授权依据，而是从 HTTPS 客户�
 - `path`：Windows 本地目录，必须存在。
 - `clients`：为空表示所有已配对客户端可访问；非空时只允许列出的 UUID。
 - 第一阶段运行时会跳过无效 mapping，并在日志中写 warning。
+
+实现字段关系：配置持久化和 Web UI API 使用 `path` 表示本机真实目录；运行时 `file_mapping::mapping_t` 使用 `local_root` 保存同一值。协议层和远端响应不得暴露 `local_root`，只暴露 `mapping` id 与相对 `path`。
+
+兼容性：手写配置仍支持上面的 raw JSON array；Web UI / control-panel 持久化时写入 `base64:<json>`，避免 `sunshine.conf` 行解析器把 JSON 字符串里的 `]`、`#` 或换行误判为配置语法。
 
 端口策略有两种：
 

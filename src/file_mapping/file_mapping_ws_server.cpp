@@ -35,44 +35,44 @@ namespace file_mapping_ws {
 
   validation_result_t
   server_t::start() {
-    if (state_ != transport_state_e::stopped) {
+    if (state_.load() != transport_state_e::stopped) {
       return fail("file mapping websocket server is already started");
     }
     if (weak_from_this().expired()) {
       return fail("file mapping websocket server must be owned by std::shared_ptr before start");
     }
 
-    state_ = transport_state_e::starting;
+    state_.store(transport_state_e::starting);
     if (auto config_result = validate_config(config_); !config_result.ok) {
-      state_ = transport_state_e::stopped;
+      state_.store(transport_state_e::stopped);
       return config_result;
     }
     if (auto ssl_result = configure_ssl(); !ssl_result.ok) {
-      state_ = transport_state_e::stopped;
+      state_.store(transport_state_e::stopped);
       return ssl_result;
     }
     if (auto acceptor_result = open_acceptor(); !acceptor_result.ok) {
-      state_ = transport_state_e::stopped;
+      state_.store(transport_state_e::stopped);
       return acceptor_result;
     }
 
-    state_ = transport_state_e::listening;
+    state_.store(transport_state_e::listening);
     accept_next();
     return { true, {} };
   }
 
   void
   server_t::stop() {
-    state_ = transport_state_e::stopping;
+    state_.store(transport_state_e::stopping);
     boost::system::error_code ignored;
     acceptor_.cancel(ignored);
     acceptor_.close(ignored);
-    state_ = transport_state_e::stopped;
+    state_.store(transport_state_e::stopped);
   }
 
   transport_state_e
   server_t::state() const {
-    return state_;
+    return state_.load();
   }
 
   std::uint16_t
@@ -93,6 +93,8 @@ namespace file_mapping_ws {
       ssl::context::default_workarounds |
       ssl::context::no_sslv2 |
       ssl::context::no_sslv3 |
+      ssl::context::no_tlsv1 |
+      ssl::context::no_tlsv1_1 |
       ssl::context::single_dh_use,
       ec);
     if (ec) {
@@ -159,7 +161,7 @@ namespace file_mapping_ws {
 
   void
   server_t::accept_next() {
-    if (state_ != transport_state_e::listening) {
+    if (state_.load() != transport_state_e::listening) {
       return;
     }
 
@@ -170,7 +172,7 @@ namespace file_mapping_ws {
 
   void
   server_t::on_accept(boost::system::error_code ec, tcp::socket socket) {
-    if (state_ != transport_state_e::listening) {
+    if (state_.load() != transport_state_e::listening) {
       return;
     }
 

@@ -94,7 +94,7 @@ TEST_F(FileMappingTests, RejectsUnsafePaths) {
 
   auto reserved = file_mapping::resolve_path(m, "folder/NUL.txt");
   EXPECT_FALSE(reserved.ok);
-  EXPECT_EQ(reserved.error, file_mapping::resolve_error_e::invalid_relative_path);
+  EXPECT_EQ(reserved.error, file_mapping::resolve_error_e::reserved_name);
 }
 
 TEST_F(FileMappingTests, MustExistRejectsMissingPath) {

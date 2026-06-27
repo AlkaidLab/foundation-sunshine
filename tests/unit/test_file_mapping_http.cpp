@@ -41,18 +41,18 @@ TEST(FileMappingHttp, CapabilityResponseAdvertisesProtocol) {
   EXPECT_EQ(body["limits"]["binary_header_size"].get<std::size_t>(), file_mapping::rpc::kBinaryHeaderSize);
 }
 
-TEST(FileMappingHttp, CapabilityBuildsSessionUrlFromRequestHost) {
+TEST(FileMappingHttp, CapabilityDoesNotBuildSessionUrlFromRequestHost) {
   file_mapping_http::capability_state_t state;
   state.enabled = true;
   state.listening = true;
   state.port = 47999;
   state.session_token = "abc123";
 
-  auto response = file_mapping_http::make_capability_response(state, "192.168.1.20:47990");
+  auto response = file_mapping_http::make_capability_response(state, "evil.example:47990");
   auto body = nlohmann::json::parse(response.body);
-  EXPECT_EQ(
-    body["session_url"].get<std::string>(),
-    "wss://192.168.1.20:47999/api/v1/file-mapping/session");
+  EXPECT_EQ(body["session_url"].get<std::string>(), "");
+  EXPECT_EQ(body["session_endpoint"].get<std::string>(), "/api/v1/file-mapping/session");
+  EXPECT_EQ(body["port"].get<int>(), 47999);
   EXPECT_EQ(body["session_token"].get<std::string>(), "abc123");
 }
 

@@ -362,7 +362,7 @@ Sunshine 侧已拆出 `src/file_mapping/` 内置 feature module。`file_mapping:
 - `enabled`：Sunshine 是否编译并尝试启用文件映射能力。
 - `listening`：Beast WSS listener 是否已经监听。
 - `port`：本次启动绑定的动态端口。
-- `session_url`：根据当前 HTTPS 请求 `Host` 头和 WSS 动态端口拼出的连接 URL，不携带 token。
+- `session_url`：只在 Sunshine 内部有可信显式地址时返回；不得根据当前 HTTPS 请求 `Host` 头拼接。
 - `session_token`：短期一次性 WSS 连接 token。
 - `client_uuid`：Sunshine 从 HTTPS 客户端证书反查 pairing store 得到的内部配对证书 UUID。
 - `error`：WSS listener 启动失败原因。
@@ -373,10 +373,11 @@ Sunshine 侧已拆出 `src/file_mapping/` 内置 feature module。`file_mapping:
 - capability 请求可以携带 Moonlight `IdentityManager::getUniqueId()` 作为 query/header 诊断 hint，但 Sunshine 不把该值作为授权依据。
 - capability 通过 `get_client_cert_uuid_from_request()` 从 nvhttp HTTPS 客户端证书推导 Sunshine pairing store 内部 UUID。
 - `session_token` 已绑定证书推导出的 `client_uuid`。
-- `session_url` 不自动携带 token，避免完整 WSS URL 被日志、崩溃 dump 或诊断 UI 记录。客户端连接时应临时附加 `session_token`，并避免记录拼接后的 URL。
+- 默认 capability 只返回 `port`、`session_endpoint` 和 `session_token`。客户端使用当前已连接的 Sunshine 主机地址自行组合 WSS 目标，并避免记录拼接 token 后的完整 URL。
 - Beast WSS 在 WebSocket upgrade 前读取 HTTP request target，并消费 token。
 - token 缺失、过期、错误、重放都会拒绝进入文件映射协议。
 - Moonlight `hello.client_uuid` 必须使用 capability 返回的 `client_uuid`，并和 token 绑定 UUID 一致。
+- Web UI / control-panel 持久化 `file_mappings` 时写入 `base64:<json>`；解析层继续兼容旧 raw JSON array。这样可以避免 `sunshine.conf` 行解析器把 JSON 字符串里的 `]`、`#` 或换行当作配置语法。
 - `hello.client_uuid` 必须存在于 Sunshine 已配对客户端列表。
 
 当前已补的文件能力：

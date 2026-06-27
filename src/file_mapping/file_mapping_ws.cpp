@@ -40,6 +40,29 @@ namespace file_mapping_ws {
       return {};
     }
 
+    std::uint64_t
+    request_id(const nlohmann::json &body) {
+      if (!body.contains("id")) {
+        return 0;
+      }
+      if (body["id"].is_number_unsigned()) {
+        return body["id"].get<std::uint64_t>();
+      }
+      if (body["id"].is_number_integer()) {
+        const auto id = body["id"].get<std::int64_t>();
+        return id < 0 ? 0 : static_cast<std::uint64_t>(id);
+      }
+      return 0;
+    }
+
+    std::string
+    optional_string(const nlohmann::json &body, const char *name) {
+      if (body.contains(name) && body[name].is_string()) {
+        return body[name].get<std::string>();
+      }
+      return {};
+    }
+
     file_mapping::rpc::operation_e
     operation_from_message_type(file_mapping::rpc::message_type_e type) {
       switch (type) {
@@ -48,7 +71,6 @@ namespace file_mapping_ws {
         case file_mapping::rpc::message_type_e::stat:
           return file_mapping::rpc::operation_e::stat;
         case file_mapping::rpc::message_type_e::read:
-        case file_mapping::rpc::message_type_e::open:
           return file_mapping::rpc::operation_e::read;
         default:
           return file_mapping::rpc::operation_e::download;
@@ -136,8 +158,8 @@ namespace file_mapping_ws {
     if (!file_mapping::rpc::decode_binary_header(data, size, header, error)) {
       return inbound_fail(std::move(error), true);
     }
-    if (size < file_mapping::rpc::kBinaryHeaderSize + header.payload_length) {
-      return inbound_fail("binary frame payload is shorter than declared length", true);
+    if (size - file_mapping::rpc::kBinaryHeaderSize != header.payload_length) {
+      return inbound_fail("binary frame payload length does not match declared length", true);
     }
 
     nlohmann::json reply;
@@ -153,17 +175,17 @@ namespace file_mapping_ws {
   session_core_t::handle_job_status(const nlohmann::json &body) {
     const auto job_id = require_job_id(body);
     if (job_id.empty()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(body.value("id", std::uint64_t { 0 }), "bad_request", "missing string field: job_id")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "bad_request", "missing string field: job_id")) };
     }
 
     auto it = jobs_.find(job_id);
     if (it == jobs_.end()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(body.value("id", std::uint64_t { 0 }), "job_not_found", "job was not found")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "job_not_found", "job was not found")) };
     }
 
     nlohmann::json reply;
     reply["type"] = "result";
-    reply["id"] = body.value("id", std::uint64_t { 0 });
+    reply["id"] = request_id(body);
     reply["ok"] = true;
     reply["job_id"] = job_id;
     reply["job"] = file_mapping::rpc::job_to_json(it->second);
@@ -174,12 +196,12 @@ namespace file_mapping_ws {
   session_core_t::handle_cancel(const nlohmann::json &body) {
     const auto job_id = require_job_id(body);
     if (job_id.empty()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(body.value("id", std::uint64_t { 0 }), "bad_request", "missing string field: job_id")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "bad_request", "missing string field: job_id")) };
     }
 
     auto it = jobs_.find(job_id);
     if (it == jobs_.end()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(body.value("id", std::uint64_t { 0 }), "job_not_found", "job was not found")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "job_not_found", "job was not found")) };
     }
     if (it->second.state == file_mapping::rpc::job_state_e::queued ||
         it->second.state == file_mapping::rpc::job_state_e::running) {
@@ -188,7 +210,7 @@ namespace file_mapping_ws {
 
     nlohmann::json reply;
     reply["type"] = "result";
-    reply["id"] = body.value("id", std::uint64_t { 0 });
+    reply["id"] = request_id(body);
     reply["ok"] = true;
     reply["job_id"] = job_id;
     reply["job"] = file_mapping::rpc::job_to_json(it->second);
@@ -228,8 +250,8 @@ namespace file_mapping_ws {
     job.job_id = "job-" + std::to_string(next_job_id_++);
     job.operation = operation_from_message_type(parsed.type);
     job.source.side = "host";
-    job.source.mapping = parsed.body.value("mapping", std::string {});
-    job.source.path = parsed.body.value("path", std::string {});
+    job.source.mapping = optional_string(parsed.body, "mapping");
+    job.source.path = optional_string(parsed.body, "path");
     job.destination.side = "client";
     return job;
   }
@@ -251,6 +273,9 @@ namespace file_mapping_ws {
     auto endpoint = file_mapping::rpc::endpoint_from_string(body["endpoint"].get<std::string>());
     if (!endpoint) {
       return inbound_fail("hello contains invalid endpoint", true);
+    }
+    if (*endpoint != file_mapping::rpc::endpoint_e::client) {
+      return inbound_fail("hello endpoint must be client", true);
     }
 
     if (!body.contains("client_uuid") || !body["client_uuid"].is_string() || body["client_uuid"].get<std::string>().empty()) {

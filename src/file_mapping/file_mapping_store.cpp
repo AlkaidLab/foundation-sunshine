@@ -6,8 +6,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 
 #include "src/config.h"
@@ -84,6 +87,49 @@ namespace file_mapping_store {
       mapping.allow_delete = false;
       mapping.allow_execute = false;
       mapping.follow_reparse_points = false;
+    }
+
+    bool
+    read_uintmax_patch_value(const nlohmann::json &json, std::uintmax_t &out) {
+      std::uint64_t value = 0;
+      if (json.is_number_unsigned()) {
+        value = json.get<std::uint64_t>();
+      }
+      else if (json.is_number_integer()) {
+        const auto signed_value = json.get<std::int64_t>();
+        if (signed_value < 0) {
+          return false;
+        }
+        value = static_cast<std::uint64_t>(signed_value);
+      }
+      else {
+        return false;
+      }
+      if (value > std::numeric_limits<std::uintmax_t>::max()) {
+        return false;
+      }
+      out = static_cast<std::uintmax_t>(value);
+      return true;
+    }
+
+    std::string
+    base64_encode(std::string_view text) {
+      static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      std::string out;
+      out.reserve(((text.size() + 2) / 3) * 4);
+
+      for (std::size_t i = 0; i < text.size(); i += 3) {
+        const auto b0 = static_cast<unsigned char>(text[i]);
+        const auto b1 = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
+        const auto b2 = i + 2 < text.size() ? static_cast<unsigned char>(text[i + 2]) : 0;
+
+        out.push_back(alphabet[(b0 >> 2) & 0x3f]);
+        out.push_back(alphabet[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)]);
+        out.push_back(i + 1 < text.size() ? alphabet[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)] : '=');
+        out.push_back(i + 2 < text.size() ? alphabet[b2 & 0x3f] : '=');
+      }
+
+      return out;
     }
   }  // namespace
 
@@ -225,10 +271,11 @@ namespace file_mapping_store {
       updated.follow_reparse_points = patch["follow_reparse_points"].get<bool>();
     }
     if (patch.contains("max_file_size")) {
-      if (!patch["max_file_size"].is_number_unsigned()) {
-        return { false, {}, "max_file_size must be an unsigned integer" };
+      std::uintmax_t max_file_size = 0;
+      if (!read_uintmax_patch_value(patch["max_file_size"], max_file_size)) {
+        return { false, {}, "max_file_size must be a non-negative integer" };
       }
-      updated.max_file_size = patch["max_file_size"].get<std::uintmax_t>();
+      updated.max_file_size = max_file_size;
     }
     if (patch.contains("clients")) {
       if (!patch["clients"].is_array()) {
@@ -289,10 +336,15 @@ namespace file_mapping_store {
     return root.dump();
   }
 
+  std::string
+  serialize_config_value(const std::vector<file_mapping::mapping_t> &mappings) {
+    return "base64:" + base64_encode(serialize_config_json(mappings));
+  }
+
   bool
   persist_to_config(const store_t &store) {
     auto mappings = store.snapshot();
-    const auto serialized = serialize_config_json(mappings);
+    const auto serialized = serialize_config_value(mappings);
     if (config::nvhttp.file_mappings == serialized) {
       return true;
     }

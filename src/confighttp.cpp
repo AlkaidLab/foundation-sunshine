@@ -74,6 +74,7 @@ namespace confighttp {
   // Prevent saveApp/deleteApp concurrent write to file_apps causing file corruption, non-blocking
   // return busy if not acquired
   static std::atomic<bool> apps_writing { false };
+  static std::mutex file_mapping_store_transaction_mutex;
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
 
@@ -2510,15 +2511,19 @@ namespace confighttp {
       return;
     }
 
-    auto previous_mappings = file_mapping_store::global().snapshot();
-    auto result = file_mapping_store::global().add_quick_share(input["path"].get<std::string>());
-    if (!result.ok) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, result.error);
-      return;
-    }
-    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
-      return;
+    file_mapping_store::mutation_result_t result;
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      result = file_mapping_store::global().add_quick_share(input["path"].get<std::string>());
+      if (!result.ok) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, result.error);
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
     }
 
     json body;
@@ -2541,16 +2546,20 @@ namespace confighttp {
 
     json input;
     if (!read_json_body(response, request, input)) return;
-    auto previous_mappings = file_mapping_store::global().snapshot();
-    auto result = file_mapping_store::global().update(id, input);
-    if (!result.ok) {
-      const auto status = result.error == "mapping was not found" ? SimpleWeb::StatusCode::client_error_not_found : SimpleWeb::StatusCode::client_error_bad_request;
-      write_json_error(std::move(response), status, result.error);
-      return;
-    }
-    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
-      return;
+    file_mapping_store::mutation_result_t result;
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      result = file_mapping_store::global().update(id, input);
+      if (!result.ok) {
+        const auto status = result.error == "mapping was not found" ? SimpleWeb::StatusCode::client_error_not_found : SimpleWeb::StatusCode::client_error_bad_request;
+        write_json_error(std::move(response), status, result.error);
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
     }
 
     json body;
@@ -2569,14 +2578,17 @@ namespace confighttp {
       write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
       return;
     }
-    auto previous_mappings = file_mapping_store::global().snapshot();
-    if (!file_mapping_store::global().remove(id)) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_not_found, "mapping was not found");
-      return;
-    }
-    if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
-      return;
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      if (!file_mapping_store::global().remove(id)) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_not_found, "mapping was not found");
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
     }
 
     json body;

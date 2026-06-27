@@ -111,6 +111,35 @@ TEST(FileMappingOperations, RejectsFilesAboveMappingLimit) {
   EXPECT_EQ(result["code"].get<std::string>(), "file_too_large");
 }
 
+TEST(FileMappingOperations, RejectsMalformedRequestFields) {
+  temp_tree_t tree;
+  auto context = make_context(tree.root);
+  auto bad_path = file_mapping::rpc::parse_control_message(R"({"type":"list","id":"bad","mapping":"host-test","path":7})");
+  ASSERT_TRUE(bad_path.ok) << bad_path.error;
+
+  auto path_result = file_mapping::operations::execute_control_message(bad_path, context);
+  EXPECT_EQ(path_result["type"].get<std::string>(), "error");
+  EXPECT_EQ(path_result["id"].get<int>(), 0);
+  EXPECT_EQ(path_result["code"].get<std::string>(), "bad_request");
+
+  auto bad_length = file_mapping::rpc::parse_control_message(R"({"type":"read","id":11,"mapping":"host-test","path":"hello.txt","length":-1})");
+  ASSERT_TRUE(bad_length.ok) << bad_length.error;
+  auto length_result = file_mapping::operations::execute_control_message(bad_length, context);
+  EXPECT_EQ(length_result["type"].get<std::string>(), "error");
+  EXPECT_EQ(length_result["code"].get<std::string>(), "bad_request");
+}
+
+TEST(FileMappingOperations, RejectsOpenAsUnsupported) {
+  temp_tree_t tree;
+  auto context = make_context(tree.root);
+  auto parsed = file_mapping::rpc::parse_control_message(R"({"type":"open","id":12,"mapping":"host-test","path":"hello.txt"})");
+  ASSERT_TRUE(parsed.ok) << parsed.error;
+
+  auto result = file_mapping::operations::execute_control_message(parsed, context);
+  EXPECT_EQ(result["type"].get<std::string>(), "error");
+  EXPECT_EQ(result["code"].get<std::string>(), "unsupported_operation");
+}
+
 TEST(FileMappingOperations, RejectsUnauthorizedClient) {
   temp_tree_t tree;
   auto context = make_context(tree.root);

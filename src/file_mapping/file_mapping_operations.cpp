@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <system_error>
 
@@ -18,7 +19,17 @@ namespace file_mapping::operations {
 
     std::uint64_t
     request_id(const nlohmann::json &body) {
-      return body.value("id", std::uint64_t { 0 });
+      if (!body.contains("id")) {
+        return 0;
+      }
+      if (body["id"].is_number_unsigned()) {
+        return body["id"].get<std::uint64_t>();
+      }
+      if (body["id"].is_number_integer()) {
+        const auto id = body["id"].get<std::int64_t>();
+        return id < 0 ? 0 : static_cast<std::uint64_t>(id);
+      }
+      return 0;
     }
 
     nlohmann::json
@@ -145,6 +156,41 @@ namespace file_mapping::operations {
       return true;
     }
 
+    bool
+    optional_string_field(const nlohmann::json &body, const char *name, std::string &out, nlohmann::json &error) {
+      if (!body.contains(name)) {
+        out.clear();
+        return true;
+      }
+      if (!body[name].is_string()) {
+        error = error_response(body, "bad_request", std::string("field must be a string: ") + name);
+        return false;
+      }
+      out = body[name].get<std::string>();
+      return true;
+    }
+
+    bool
+    optional_uint64_field(const nlohmann::json &body, const char *name, std::uint64_t fallback, std::uint64_t &out, nlohmann::json &error) {
+      if (!body.contains(name)) {
+        out = fallback;
+        return true;
+      }
+      if (body[name].is_number_unsigned()) {
+        out = body[name].get<std::uint64_t>();
+        return true;
+      }
+      if (body[name].is_number_integer()) {
+        const auto value = body[name].get<std::int64_t>();
+        if (value >= 0) {
+          out = static_cast<std::uint64_t>(value);
+          return true;
+        }
+      }
+      error = error_response(body, "bad_request", std::string("field must be a non-negative integer: ") + name);
+      return false;
+    }
+
     std::optional<mapping_t>
     require_mapping(const nlohmann::json &body, const execution_context_t &context, nlohmann::json &error) {
       std::string mapping_id;
@@ -175,7 +221,10 @@ namespace file_mapping::operations {
         return error;
       }
 
-      const auto remote_path = body.value("path", std::string {});
+      std::string remote_path;
+      if (!optional_string_field(body, "path", remote_path, error)) {
+        return error;
+      }
       auto resolved = resolve_path(*mapping, remote_path, true);
       if (!resolved.ok) {
         return error_response(body, resolve_error_code(resolved.error), resolved.message);
@@ -231,7 +280,10 @@ namespace file_mapping::operations {
         return error;
       }
 
-      const auto remote_path = body.value("path", std::string {});
+      std::string remote_path;
+      if (!optional_string_field(body, "path", remote_path, error)) {
+        return error;
+      }
       auto resolved = resolve_path(*mapping, remote_path, true);
       if (!resolved.ok) {
         return error_response(body, resolve_error_code(resolved.error), resolved.message);
@@ -258,7 +310,10 @@ namespace file_mapping::operations {
         return error;
       }
 
-      const auto remote_path = body.value("path", std::string {});
+      std::string remote_path;
+      if (!optional_string_field(body, "path", remote_path, error)) {
+        return error;
+      }
       auto resolved = resolve_path(*mapping, remote_path, true);
       if (!resolved.ok) {
         return error_response(body, resolve_error_code(resolved.error), resolved.message);
@@ -274,8 +329,18 @@ namespace file_mapping::operations {
         return error_response(body, "file_too_large", "file exceeds mapping max_file_size");
       }
 
-      const auto offset = body.value("offset", std::uint64_t { 0 });
-      auto length = body.value("length", static_cast<std::uint32_t>(64 * 1024));
+      std::uint64_t offset = 0;
+      if (!optional_uint64_field(body, "offset", 0, offset, error)) {
+        return error;
+      }
+      std::uint64_t requested_length = 64 * 1024;
+      if (!optional_uint64_field(body, "length", requested_length, requested_length, error)) {
+        return error;
+      }
+      if (requested_length > std::numeric_limits<std::uint32_t>::max()) {
+        return error_response(body, "bad_request", "read length is too large");
+      }
+      auto length = static_cast<std::uint32_t>(requested_length);
       length = std::min(length, context.max_read_bytes);
       if (length == 0) {
         return error_response(body, "bad_request", "read length must be non-zero");
@@ -328,7 +393,6 @@ namespace file_mapping::operations {
       case rpc::message_type_e::stat:
         return execute_stat(message, context);
       case rpc::message_type_e::read:
-      case rpc::message_type_e::open:
         return execute_read(message, context);
       default:
         return error_response(message.body, "unsupported_operation", "operation is not supported by the read-only file mapping executor");
