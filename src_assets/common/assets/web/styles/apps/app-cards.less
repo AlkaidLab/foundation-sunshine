@@ -73,6 +73,8 @@
 
 .app-card-wrapper,
 .app-list-wrapper {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
   position: relative;
 
   &.selection-mode {
@@ -88,6 +90,7 @@
 }
 
 .apps-grid .app-card-wrapper {
+  contain-intrinsic-size: auto 280px;
   display: flex;
   min-width: 0;
   height: 100%;

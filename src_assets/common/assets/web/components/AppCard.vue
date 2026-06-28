@@ -8,6 +8,8 @@
           :src="getImageUrl()" 
           :alt="app.name"
           class="app-icon"
+          loading="lazy"
+          decoding="async"
           @error="handleImageError"
         >
         <div v-else class="app-icon-placeholder">
