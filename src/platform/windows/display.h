@@ -678,6 +678,9 @@ namespace platf::dxgi {
     UINT64 vdd_last_dropped_acquire_failures = 0;
     std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
 
+    void
+    log_vdd_borrow_debug_telemetry();
+
   public:
     int
     init(const ::video::config_t &config, const std::string &display_name);

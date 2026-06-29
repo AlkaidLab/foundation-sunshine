@@ -3965,6 +3965,42 @@ namespace platf::dxgi {
   // to the file-local `img_d3d_t` and `texture_lock_helper` defined above.
   // init() lives in display_vdd.cpp.
 
+  void
+  display_vdd_vram_t::log_vdd_borrow_debug_telemetry() {
+    if (config::sunshine.min_log_level > debug.default_severity()) {
+      return;
+    }
+
+    const auto log_now = std::chrono::steady_clock::now();
+    if (vdd_borrow_last_telemetry.time_since_epoch().count() != 0 &&
+        log_now - vdd_borrow_last_telemetry < vdd_borrow_telemetry_interval) {
+      return;
+    }
+    vdd_borrow_last_telemetry = log_now;
+
+    const auto cooldown_ms = log_now < vdd_borrow_cooldown_until ?
+                               std::chrono::duration_cast<std::chrono::milliseconds>(vdd_borrow_cooldown_until - log_now).count() :
+                               0LL;
+    BOOST_LOG(debug) << "[vdd] borrowed texture stats: attempts="sv << vdd_borrow_attempts
+                     << " successes="sv << vdd_borrow_successes
+                     << " fallbacks="sv << vdd_borrow_fallbacks
+                     << " disabled_frames="sv << vdd_borrow_disabled_frames
+                     << " cooldown_frames="sv << vdd_borrow_cooldown_frames
+                     << " cooldown_events="sv << vdd_borrow_cooldown_events
+                     << " cooldown_ms="sv << cooldown_ms
+                     << " producer_frame="sv << dup.frame_counter()
+                     << " slot="sv << dup.producer_slot_index() << "/"sv << dup.producer_slot_count()
+                     << " dirty_rects="sv << dup.last_dirty_rect_count()
+                     << " replaced_unread="sv << vdd_last_replaced_unread
+                     << " dropped_consumer_held="sv << vdd_last_dropped_consumer_held
+                     << " dropped_acquire_failures="sv << vdd_last_dropped_acquire_failures
+                     << " deferred="sv << vdd_borrow_deferred_images.size()
+                     << " deferred_frames="sv << vdd_borrow_deferred_frames
+                     << " returned_deferred="sv << vdd_borrow_returned_deferred_frames
+                     << " inflight="sv << vdd_borrow_inflight_frames->load(std::memory_order_relaxed) << "/"sv << vdd_borrow_max_inflight_frames
+                     << " inflight_limit_frames="sv << vdd_borrow_inflight_limit_frames;
+  }
+
   capture_e
   display_vdd_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb,
                                std::shared_ptr<platf::img_t> &img_out,
@@ -4068,36 +4104,6 @@ namespace platf::dxgi {
     vdd_last_dropped_consumer_held = producer_dropped_consumer_held;
     vdd_last_dropped_acquire_failures = producer_dropped_acquire_failures;
 
-    auto log_vdd_borrow_telemetry = [&]() {
-      const auto log_now = std::chrono::steady_clock::now();
-      if (vdd_borrow_last_telemetry.time_since_epoch().count() != 0 &&
-          log_now - vdd_borrow_last_telemetry < vdd_borrow_telemetry_interval) {
-        return;
-      }
-      vdd_borrow_last_telemetry = log_now;
-      const auto cooldown_ms = log_now < vdd_borrow_cooldown_until ?
-                                 std::chrono::duration_cast<std::chrono::milliseconds>(vdd_borrow_cooldown_until - log_now).count() :
-                                 0LL;
-      BOOST_LOG(info) << "[vdd] borrowed texture stats: attempts="sv << vdd_borrow_attempts
-                      << " successes="sv << vdd_borrow_successes
-                      << " fallbacks="sv << vdd_borrow_fallbacks
-                      << " disabled_frames="sv << vdd_borrow_disabled_frames
-                      << " cooldown_frames="sv << vdd_borrow_cooldown_frames
-                      << " cooldown_events="sv << vdd_borrow_cooldown_events
-                      << " cooldown_ms="sv << cooldown_ms
-                      << " producer_frame="sv << dup.frame_counter()
-                      << " slot="sv << dup.producer_slot_index() << "/"sv << dup.producer_slot_count()
-                      << " dirty_rects="sv << dup.last_dirty_rect_count()
-                      << " replaced_unread="sv << vdd_last_replaced_unread
-                      << " dropped_consumer_held="sv << vdd_last_dropped_consumer_held
-                      << " dropped_acquire_failures="sv << vdd_last_dropped_acquire_failures
-                      << " deferred="sv << vdd_borrow_deferred_images.size()
-                      << " deferred_frames="sv << vdd_borrow_deferred_frames
-                      << " returned_deferred="sv << vdd_borrow_returned_deferred_frames
-                      << " inflight="sv << vdd_borrow_inflight_frames->load(std::memory_order_relaxed) << "/"sv << vdd_borrow_max_inflight_frames
-                      << " inflight_limit_frames="sv << vdd_borrow_inflight_limit_frames;
-    };
-
     auto enter_borrow_cooldown = [&](const char *reason) {
       const auto cooldown_now = std::chrono::steady_clock::now();
       const bool was_in_cooldown = cooldown_now < vdd_borrow_cooldown_until;
@@ -4161,7 +4167,7 @@ namespace platf::dxgi {
     };
 
     if (!pull_reusable_image()) {
-      log_vdd_borrow_telemetry();
+      log_vdd_borrow_debug_telemetry();
       return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
     }
 
@@ -4255,16 +4261,16 @@ namespace platf::dxgi {
     };
 
     if (try_borrow_current_frame()) {
-      log_vdd_borrow_telemetry();
+      log_vdd_borrow_debug_telemetry();
       img_out = img;
       img_out->frame_timestamp = frame_timestamp;
       armed = false;  // success: VDD slot ownership transferred to img/encoder
       return capture_e::ok;
     }
-    log_vdd_borrow_telemetry();
+    log_vdd_borrow_debug_telemetry();
 
     if (!d3d_img && !pull_reusable_image()) {
-      log_vdd_borrow_telemetry();
+      log_vdd_borrow_debug_telemetry();
       return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
     }
 
