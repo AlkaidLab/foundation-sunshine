@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "현재 사용자 모드에서 실행 중입니다. WGC 캡처를 사용할 수 있습니다.",
     "window_title": "창 제목",
     "window_title_desc": "캡처할 창의 제목(부분 일치, 대소문자 구분 안 함). 비워두면 현재 실행 중인 응용 프로그램 이름이 자동으로 사용됩니다.",
-    "window_title_placeholder": "예: 응용 프로그램 이름"
+    "window_title_placeholder": "예: 응용 프로그램 이름",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sunshine은 Moonlight의 게임 스트리밍 프로그램입니다.",

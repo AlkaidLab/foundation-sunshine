@@ -43,6 +43,8 @@ namespace config {
     bool vdd_headless_create_enabled;
     /** When true, reuse existing VDD on client switch instead of destroying and recreating. Default true. */
     bool vdd_reuse;
+    /** When true, Zako Direct Capture borrows VDD shared textures instead of copying into Sunshine-owned capture textures. */
+    bool vdd_borrowed_texture;
 
     struct {
       int preset;

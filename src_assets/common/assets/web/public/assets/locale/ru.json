@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "В настоящее время работает в режиме пользователя. Захват WGC доступен.",
     "window_title": "Заголовок окна",
     "window_title_desc": "Заголовок окна для захвата (частичное совпадение, без учета регистра). Если оставить пустым, будет использовано имя текущего запущенного приложения.",
-    "window_title_placeholder": "например, Имя Приложения"
+    "window_title_placeholder": "например, Имя Приложения",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sunshine - это ваш собственный сервер вещания игр для Moonlight.",

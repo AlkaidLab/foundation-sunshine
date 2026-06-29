@@ -686,9 +686,15 @@ namespace amf {
     desc.Format = dxgi_fmt;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS;
 
     auto hr = device->CreateTexture2D(&desc, nullptr, &input_texture);
+    if (FAILED(hr)) {
+      BOOST_LOG(info) << "AMF: input texture UAV bind unavailable, falling back to render-target input, HRESULT: 0x"
+                      << std::hex << hr;
+      desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+      hr = device->CreateTexture2D(&desc, nullptr, &input_texture);
+    }
     if (FAILED(hr)) {
       BOOST_LOG(error) << "AMF: failed to create input texture, HRESULT: 0x" << std::hex << hr;
       return false;

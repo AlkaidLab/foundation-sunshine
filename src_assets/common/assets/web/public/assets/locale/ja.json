@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "現在ユーザーモードで実行中です。WGCキャプチャが利用可能です。",
     "window_title": "ウィンドウタイトル",
     "window_title_desc": "キャプチャするウィンドウのタイトル（部分一致、大文字小文字区別なし）。空のままにすると、現在実行中のアプリケーション名が自動的に使用されます。",
-    "window_title_placeholder": "例: アプリケーション名"
+    "window_title_placeholder": "例: アプリケーション名",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "サンシャインはムーンライトのための自己ホストゲームストリームホストです。",

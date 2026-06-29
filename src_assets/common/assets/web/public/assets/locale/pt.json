@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Atualmente em execução no modo de usuário. A captura WGC está disponível.",
     "window_title": "Título da Janela",
     "window_title_desc": "O título da janela a ser capturada (correspondência parcial, não diferencia maiúsculas de minúsculas). Se deixado vazio, o nome do aplicativo em execução atual será usado automaticamente.",
-    "window_title_placeholder": "ex: Nome do Aplicativo"
+    "window_title_placeholder": "ex: Nome do Aplicativo",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "O sol é um anfitrião de jogos auto-hospedado para o Moonlight.",

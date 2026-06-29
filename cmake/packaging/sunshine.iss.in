@@ -170,6 +170,10 @@ Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; T
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; Remove old hashed Web UI bundles before installing the freshly built frontend.
+Type: filesandordirs; Name: "{app}\assets\web"
+
 [Files]
 ; Main application
 Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: application

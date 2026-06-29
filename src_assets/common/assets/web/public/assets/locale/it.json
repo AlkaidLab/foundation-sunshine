@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Attualmente in modalità utente. La cattura WGC è disponibile.",
     "window_title": "Titolo Finestra",
     "window_title_desc": "Il titolo della finestra da acquisire (corrispondenza parziale, non fa distinzione tra maiuscole e minuscole). Se lasciato vuoto, verrà utilizzato automaticamente il nome dell'applicazione in esecuzione corrente.",
-    "window_title_placeholder": "es., Nome Applicazione"
+    "window_title_placeholder": "es., Nome Applicazione",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sunshine è una piattaforma autonoma di game stream per Moonlight.",

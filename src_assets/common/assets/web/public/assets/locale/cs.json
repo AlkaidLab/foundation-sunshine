@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Aktuálně běží v uživatelském režimu. Snímání WGC je dostupné.",
     "window_title": "Titulek okna",
     "window_title_desc": "Titulek okna k zachycení (částečná shoda, nerozlišuje velká/malá písmena). Pokud je prázdné, použije se automaticky název aktuálně běžící aplikace.",
-    "window_title_placeholder": "např. Název aplikace"
+    "window_title_placeholder": "např. Název aplikace",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sluneční stream je hostitelem pro Měsíční světlo.",

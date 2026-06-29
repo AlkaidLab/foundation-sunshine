@@ -15,13 +15,17 @@
 
 #include "display.h"
 #include "misc.h"
+#include "src/config.h"
 #include "src/main.h"
 
 #include <d3d11_1.h>
 #include <sddl.h>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -45,10 +49,53 @@ namespace platf::dxgi {
     float  MaxFALL;
     UINT64 FrameCounter;
     UINT64 LastPresentQpc;
+    UINT64 LastPublishQpc;
+    UINT32 LastPresentationFrameNumber;
+    UINT32 LastDirtyRectCount;
+    UINT64 ReplacedUnreadFrames;
+    UINT64 DroppedConsumerHeldFrames;
+    UINT64 DroppedAcquireFailures;
+    UINT32 MetadataSize;
+    UINT32 SlotCount;
+    UINT32 SlotIndex;
+    UINT32 Reserved0;
+    UINT32 AdapterLuidLowPart;
+    INT32  AdapterLuidHighPart;
+    UINT64 ProducerQpcFrequency;
   };
 
   static constexpr UINT32 VDD_META_MAGIC = 0x5A564446;  // 'ZVDF'
   static constexpr UINT32 VDD_META_VERSION = 1;
+  static constexpr UINT32 VDD_MAX_SHARED_SLOTS = 8;
+
+  static std::wstring
+  vdd_texture_name(unsigned int monitor_idx, UINT32 slot_idx) {
+    std::wstring base = L"Global\\ZakoVDD_Frame_" + std::to_wstring(monitor_idx);
+    if (slot_idx == 0) {
+      return base;
+    }
+    return base + L"_Slot_" + std::to_wstring(slot_idx);
+  }
+
+  static std::optional<bool>
+  vdd_borrowed_texture_env_override() {
+    const char *raw_value = std::getenv("SUNSHINE_VDD_BORROWED_TEXTURE");
+    if (!raw_value || !*raw_value) {
+      return std::nullopt;
+    }
+
+    std::string value { raw_value };
+    std::transform(value.begin(), value.end(), value.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (value == "1" || value == "true" || value == "on" || value == "yes" || value == "enabled") {
+      return true;
+    }
+    if (value == "0" || value == "false" || value == "off" || value == "no" || value == "disabled") {
+      return false;
+    }
+    BOOST_LOG(warning) << "[vdd] ignoring invalid SUNSHINE_VDD_BORROWED_TEXTURE value: "sv << value;
+    return std::nullopt;
+  }
 
   vdd_capture_t::vdd_capture_t() = default;
 
@@ -58,12 +105,13 @@ namespace platf::dxgi {
 
   void
   vdd_capture_t::close() {
-    if (m_holdsKey && m_keyedMutex) {
-      m_keyedMutex->ReleaseSync(0);
+    if (m_holdsKey && m_heldSlot < m_keyedMutex.size() && m_keyedMutex[m_heldSlot]) {
+      m_keyedMutex[m_heldSlot]->ReleaseSync(0);
       m_holdsKey = false;
     }
-    m_keyedMutex.reset();
-    m_sharedTex.reset();
+    m_keyedMutex.clear();
+    m_sharedTex.clear();
+    m_heldSlot = 0;
     if (m_pMeta) {
       UnmapViewOfFile(m_pMeta);
       m_pMeta = nullptr;
@@ -87,7 +135,6 @@ namespace platf::dxgi {
 
     std::wstring meta_name = L"Global\\ZakoVDD_Meta_" + std::to_wstring(monitor_idx);
     std::wstring ev_name = L"Global\\ZakoVDD_FrameReady_" + std::to_wstring(monitor_idx);
-    std::wstring tex_name = L"Global\\ZakoVDD_Frame_" + std::to_wstring(monitor_idx);
 
     // Open metadata first so we can fail fast if the driver isn't running
     // (or hasn't published a swap chain yet for this monitor).
@@ -129,6 +176,22 @@ namespace platf::dxgi {
     m_min_nits = meta->MinNits;
     m_max_fall = meta->MaxFALL;
     m_lastFrameCounter = meta->FrameCounter;
+    m_lastPresentQpc = meta->LastPresentQpc;
+    m_lastPublishQpc = meta->LastPublishQpc;
+    m_lastPresentationFrameNumber = meta->LastPresentationFrameNumber;
+    m_lastDirtyRectCount = meta->LastDirtyRectCount;
+    m_replacedUnreadFrames = meta->ReplacedUnreadFrames;
+    m_droppedConsumerHeldFrames = meta->DroppedConsumerHeldFrames;
+    m_droppedAcquireFailures = meta->DroppedAcquireFailures;
+    m_slotCount = meta->SlotCount ? std::min(meta->SlotCount, VDD_MAX_SHARED_SLOTS) : 1;
+    m_slotIndex = meta->SlotIndex;
+    m_producerQpcFrequency = meta->ProducerQpcFrequency;
+    m_adapterLuid.LowPart = meta->AdapterLuidLowPart;
+    m_adapterLuid.HighPart = meta->AdapterLuidHighPart;
+    if (meta->SlotCount > VDD_MAX_SHARED_SLOTS) {
+      BOOST_LOG(warning) << "[vdd_capture] producer advertised "sv << meta->SlotCount
+                         << " slots; clamping to "sv << VDD_MAX_SHARED_SLOTS;
+    }
 
     if (m_width == 0 || m_height == 0) {
       BOOST_LOG(warning) << "[vdd_capture] producer has not pushed any frame yet "
@@ -157,34 +220,42 @@ namespace platf::dxgi {
     }
     device1_t dev1{dev1_p};
 
-    ID3D11Texture2D *raw = nullptr;
-    hr = dev1->OpenSharedResourceByName(tex_name.c_str(),
-                                        DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-                                        __uuidof(ID3D11Texture2D),
-                                        reinterpret_cast<void **>(&raw));
-    if (FAILED(hr) || !raw) {
-      BOOST_LOG(error) << "[vdd_capture] OpenSharedResourceByName failed: 0x"sv
-                       << util::hex(hr).to_string_view()
-                       << ". LUID mismatch with VDD RenderAdapter?"sv;
-      close();
-      return -1;
-    }
-    m_sharedTex.reset(raw);
+    m_sharedTex.resize(m_slotCount);
+    m_keyedMutex.resize(m_slotCount);
+    for (UINT32 slot = 0; slot < m_slotCount; ++slot) {
+      ID3D11Texture2D *raw = nullptr;
+      auto tex_name = vdd_texture_name(monitor_idx, slot);
+      hr = dev1->OpenSharedResourceByName(tex_name.c_str(),
+                                          DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+                                          __uuidof(ID3D11Texture2D),
+                                          reinterpret_cast<void **>(&raw));
+      if (FAILED(hr) || !raw) {
+        BOOST_LOG(error) << "[vdd_capture] OpenSharedResourceByName failed for slot "sv
+                         << slot << ": 0x"sv << util::hex(hr).to_string_view()
+                         << ". LUID mismatch with VDD RenderAdapter?"sv;
+        close();
+        return -1;
+      }
+      m_sharedTex[slot].reset(raw);
 
-    IDXGIKeyedMutex *km = nullptr;
-    hr = m_sharedTex->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void **>(&km));
-    if (FAILED(hr) || !km) {
-      BOOST_LOG(error) << "[vdd_capture] no IDXGIKeyedMutex on shared texture: 0x"sv
-                       << util::hex(hr).to_string_view();
-      close();
-      return -1;
+      IDXGIKeyedMutex *km = nullptr;
+      hr = m_sharedTex[slot]->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void **>(&km));
+      if (FAILED(hr) || !km) {
+        BOOST_LOG(error) << "[vdd_capture] no IDXGIKeyedMutex on shared texture slot "sv
+                         << slot << ": 0x"sv << util::hex(hr).to_string_view();
+        close();
+        return -1;
+      }
+      m_keyedMutex[slot].reset(km);
     }
-    m_keyedMutex.reset(km);
 
     BOOST_LOG(info) << "[vdd_capture] opened monitor "sv << monitor_idx
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
-                    << " hdr="sv << m_is_hdr;
+                    << " hdr="sv << m_is_hdr
+                    << " luid="sv << m_adapterLuid.LowPart << ":"sv << m_adapterLuid.HighPart
+                    << " slot="sv << m_slotIndex << "/"sv << m_slotCount
+                    << " meta_size="sv << meta->MetadataSize;
     return 0;
   }
 
@@ -193,7 +264,7 @@ namespace platf::dxgi {
     if (out) *out = nullptr;
     out_frame_qpc = 0;
 
-    if (!m_hEvent || !m_keyedMutex || !m_sharedTex || !m_pMeta) {
+    if (!m_hEvent || m_keyedMutex.empty() || m_sharedTex.empty() || !m_pMeta) {
       return capture_e::error;
     }
 
@@ -210,17 +281,27 @@ namespace platf::dxgi {
       return capture_e::error;
     }
 
-    // Producer released as key 1; consumer acquires key 1.
-    HRESULT hr = m_keyedMutex->AcquireSync(1, ms);
+    // Producer released the latest slot as key 1; consumer acquires that slot.
+    UINT32 slot = meta->SlotIndex;
+    if (slot >= m_keyedMutex.size()) {
+      BOOST_LOG(warning) << "[vdd_capture] producer slot "sv << slot
+                         << " outside opened slot count "sv << m_keyedMutex.size()
+                         << ", falling back to slot 0"sv;
+      slot = 0;
+    }
+
+    HRESULT hr = m_keyedMutex[slot]->AcquireSync(1, ms);
     if (hr == static_cast<HRESULT>(WAIT_TIMEOUT)) {
       return capture_e::timeout;
     }
     if (FAILED(hr)) {
-      BOOST_LOG(error) << "[vdd_capture] AcquireSync(1) failed: 0x"sv
+      BOOST_LOG(error) << "[vdd_capture] AcquireSync(1) failed for slot "sv << slot
+                       << ": 0x"sv
                        << util::hex(hr).to_string_view();
       return capture_e::error;
     }
     m_holdsKey = true;
+    m_heldSlot = slot;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper
@@ -228,31 +309,87 @@ namespace platf::dxgi {
     if (meta->Width != m_width || meta->Height != m_height ||
         static_cast<DXGI_FORMAT>(meta->DxgiFormat) != m_format) {
       BOOST_LOG(info) << "[vdd_capture] producer resolution/format changed, requesting reinit"sv;
-      m_keyedMutex->ReleaseSync(0);
+      m_keyedMutex[m_heldSlot]->ReleaseSync(0);
       m_holdsKey = false;
+      m_heldSlot = 0;
       return capture_e::reinit;
     }
 
-    // Refresh HDR metadata (cheap copy from shared mapping).
+    const auto previous_replaced = m_replacedUnreadFrames;
+    const auto previous_held = m_droppedConsumerHeldFrames;
+    const auto previous_acquire = m_droppedAcquireFailures;
+
+    // Refresh producer metadata (cheap copy from shared mapping).
     m_is_hdr = (meta->IsHdr != 0);
     m_max_nits = meta->MaxNits;
     m_min_nits = meta->MinNits;
     m_max_fall = meta->MaxFALL;
     m_lastFrameCounter = meta->FrameCounter;
-    out_frame_qpc = meta->LastPresentQpc;
+    m_lastPresentQpc = meta->LastPresentQpc;
+    m_lastPublishQpc = meta->LastPublishQpc;
+    m_lastPresentationFrameNumber = meta->LastPresentationFrameNumber;
+    m_lastDirtyRectCount = meta->LastDirtyRectCount;
+    m_replacedUnreadFrames = meta->ReplacedUnreadFrames;
+    m_droppedConsumerHeldFrames = meta->DroppedConsumerHeldFrames;
+    m_droppedAcquireFailures = meta->DroppedAcquireFailures;
+    m_slotCount = meta->SlotCount ? std::min(meta->SlotCount, VDD_MAX_SHARED_SLOTS) : 1;
+    m_slotIndex = slot;
+    m_producerQpcFrequency = meta->ProducerQpcFrequency;
+    m_adapterLuid.LowPart = meta->AdapterLuidLowPart;
+    m_adapterLuid.HighPart = meta->AdapterLuidHighPart;
+    out_frame_qpc = m_lastPresentQpc ? m_lastPresentQpc : m_lastPublishQpc;
+
+    if (m_replacedUnreadFrames != previous_replaced ||
+        m_droppedConsumerHeldFrames != previous_held ||
+        m_droppedAcquireFailures != previous_acquire) {
+      BOOST_LOG(debug) << "[vdd_capture] producer mailbox stats: frame="sv << m_lastFrameCounter
+                       << " replaced_unread="sv << m_replacedUnreadFrames
+                       << " dropped_consumer_held="sv << m_droppedConsumerHeldFrames
+                       << " dropped_acquire_failures="sv << m_droppedAcquireFailures;
+    }
 
     if (out) {
-      m_sharedTex->AddRef();
-      *out = m_sharedTex.get();
+      m_sharedTex[slot]->AddRef();
+      *out = m_sharedTex[slot].get();
     }
     return capture_e::ok;
   }
 
   capture_e
+  vdd_capture_t::handoff_frame(UINT64 release_key, IDXGIKeyedMutex **out_mutex, UINT32 &out_slot) {
+    if (out_mutex) *out_mutex = nullptr;
+    out_slot = 0;
+
+    if (!m_holdsKey || m_heldSlot >= m_keyedMutex.size() || !m_keyedMutex[m_heldSlot]) {
+      BOOST_LOG(error) << "[vdd_capture] handoff_frame called without a held slot"sv;
+      return capture_e::error;
+    }
+
+    auto *mutex = m_keyedMutex[m_heldSlot].get();
+    HRESULT hr = mutex->ReleaseSync(release_key);
+    if (FAILED(hr)) {
+      BOOST_LOG(error) << "[vdd_capture] ReleaseSync("sv << release_key
+                       << ") failed during handoff for slot "sv << m_heldSlot
+                       << ": 0x"sv << util::hex(hr).to_string_view();
+      return capture_e::error;
+    }
+
+    out_slot = m_heldSlot;
+    if (out_mutex) {
+      mutex->AddRef();
+      *out_mutex = mutex;
+    }
+    m_holdsKey = false;
+    m_heldSlot = 0;
+    return capture_e::ok;
+  }
+
+  capture_e
   vdd_capture_t::release_frame() {
-    if (m_holdsKey && m_keyedMutex) {
-      m_keyedMutex->ReleaseSync(0);
+    if (m_holdsKey && m_heldSlot < m_keyedMutex.size() && m_keyedMutex[m_heldSlot]) {
+      m_keyedMutex[m_heldSlot]->ReleaseSync(0);
       m_holdsKey = false;
+      m_heldSlot = 0;
     }
     return capture_e::ok;
   }
@@ -388,6 +525,26 @@ namespace platf::dxgi {
     // pool will be created against this format.
     capture_format = dup.format();
     capture_linear_gamma = capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    vdd_borrow_enabled = config::video.vdd_borrowed_texture;
+    if (auto env_override = vdd_borrowed_texture_env_override()) {
+      vdd_borrow_enabled = *env_override;
+    }
+    vdd_borrow_cooldown_until = {};
+    vdd_borrow_last_telemetry = {};
+    vdd_borrow_attempts = 0;
+    vdd_borrow_successes = 0;
+    vdd_borrow_fallbacks = 0;
+    vdd_borrow_disabled_frames = 0;
+    vdd_borrow_cooldown_frames = 0;
+    vdd_borrow_cooldown_events = 0;
+    vdd_borrow_deferred_frames = 0;
+    vdd_borrow_returned_deferred_frames = 0;
+    vdd_borrow_inflight_frames = std::make_shared<std::atomic<UINT64>>(0);
+    vdd_borrow_inflight_limit_frames = 0;
+    vdd_borrow_deferred_images.clear();
+    vdd_last_replaced_unread = dup.replaced_unread_frames();
+    vdd_last_dropped_consumer_held = dup.dropped_consumer_held_frames();
+    vdd_last_dropped_acquire_failures = dup.dropped_acquire_failures();
 
     // Validate the producer-reported format against the formats display_vram_t
     // can actually consume (RTV creation, shaders, color conversion). Anything
@@ -411,7 +568,8 @@ namespace platf::dxgi {
                     << " "sv << dup.width() << "x"sv << dup.height()
                     << " fmt="sv << dxgi_format_to_string(capture_format)
                     << " hdr="sv << dup.is_hdr()
-                    << " linear_gamma="sv << capture_linear_gamma;
+                    << " linear_gamma="sv << capture_linear_gamma
+                    << " borrowed_texture="sv << vdd_borrow_enabled;
     return 0;
   }
 

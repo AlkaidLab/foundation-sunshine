@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Derzeit im Benutzermodus ausgeführt. WGC-Aufnahme ist verfügbar.",
     "window_title": "Fenstertitel",
     "window_title_desc": "Der Titel des aufzunehmenden Fensters (teilweise Übereinstimmung, Groß-/Kleinschreibung wird nicht beachtet). Wenn leer, wird der Name der aktuell laufenden Anwendung automatisch verwendet.",
-    "window_title_placeholder": "z.B. Anwendungsname"
+    "window_title_placeholder": "z.B. Anwendungsname",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sunshine ist ein selbst gehosteter Game-Stream-Host für Moonlight.",

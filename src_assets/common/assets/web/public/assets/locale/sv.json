@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Kör för närvarande i användarläge. WGC-fångst är tillgängligt.",
     "window_title": "Fönstertitel",
     "window_title_desc": "Titeln på fönstret som ska fångas (partiell matchning, skiftlägesokänslig). Om tomt, kommer det nuvarande körande applikationsnamnet att användas automatiskt.",
-    "window_title_placeholder": "t.ex. Applikationsnamn"
+    "window_title_placeholder": "t.ex. Applikationsnamn",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Solsken är en själv-värd spel ström värd för Moonlight.",

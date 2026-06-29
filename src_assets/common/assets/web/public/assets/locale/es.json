@@ -584,7 +584,11 @@
     "wgc_user_mode_available": "Actualmente ejecutándose en modo usuario. La captura WGC está disponible.",
     "window_title": "Título de la ventana",
     "window_title_desc": "El título de la ventana a capturar (coincidencia parcial, no distingue entre mayúsculas y minúsculas). Si se deja vacío, el nombre de la aplicación en ejecución actual se usará automáticamente.",
-    "window_title_placeholder": "ej., Nombre de la aplicación"
+    "window_title_placeholder": "ej., Nombre de la aplicación",
+    "capture_vdd_direct": "Zako Direct (recommended)",
+    "capture_vdd_direct_desc": "Recommended for Zako virtual displays. Captures the VDD shared frame directly and falls back safely when zero-copy handoff is unavailable.",
+    "vdd_borrowed_texture": "Zero-copy frame handoff",
+    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported."
   },
   "index": {
     "description": "Sunshine es un servidor de transmisión de juego autoalojado para Moonlight.",

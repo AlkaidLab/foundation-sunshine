@@ -64,6 +64,7 @@ const DEFAULT_TABS = [
       output_name: '',
       capture_target: 'display',
       capture_compute_shader: 'auto',
+      vdd_borrowed_texture: 'enabled',
       window_title: '',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
@@ -594,7 +595,7 @@ export function useConfig() {
       )
     }
 
-    if (valueChanged(currentConfig, 'capture') && ['amd', 'vdd'].includes(currentConfig.capture)) {
+    if (valueChanged(currentConfig, 'capture') && ['amd'].includes(currentConfig.capture)) {
       addRisk(risks, createRisk('experimental_capture', 'medium', { currentValue: currentConfig.capture }))
     }
 

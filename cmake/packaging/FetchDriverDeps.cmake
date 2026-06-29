@@ -36,9 +36,9 @@ option(DRIVER_DEPS_REQUIRED "Treat missing driver dependencies as a fatal error"
 
 # Version pins
 set(VMOUSE_DRIVER_VERSION "v1.2.0" CACHE STRING "ZakoVirtualMouse driver version tag")
-set(VDD_DRIVER_VERSION "v0.16.0" CACHE STRING "ZakoVDD driver version tag")
+set(VDD_DRIVER_VERSION "pr13-vdd-shared-frame-ring-test" CACHE STRING "ZakoVDD driver version tag")
 set(VDD_WIN10_DRIVER_VERSION "v0.14.3-rc1-edid13-test" CACHE STRING "Win10-pinned ZakoVDD driver version tag")
-set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
+set(VDD_DRIVER_ASSET_NAME "zakovdd-pr13-vdd-shared-frame-ring-test.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "ZakoVDD-edid13-issue612.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.17.40" CACHE STRING "nefcon version tag")
 
