@@ -77,6 +77,11 @@ namespace file_mapping_ws {
       }
     }
 
+    std::vector<file_mapping::mapping_t>
+    current_mappings(const file_mapping::operations::execution_context_t &context) {
+      return context.mapping_provider ? context.mapping_provider() : context.mappings;
+    }
+
     std::optional<std::string_view>
     query_param(std::string_view query, std::string_view name) {
       while (!query.empty()) {
@@ -299,7 +304,7 @@ namespace file_mapping_ws {
     reply["endpoint"] = endpoint_name_;
     reply["peer_accepted"] = true;
     reply["mappings"] = nlohmann::json::array();
-    for (const auto &mapping : operations_context_.mappings) {
+    for (const auto &mapping : current_mappings(operations_context_)) {
       if (mapping.clients.empty() || std::find(mapping.clients.begin(), mapping.clients.end(), peer_uuid_) != mapping.clients.end()) {
         reply["mappings"].push_back(file_mapping::operations::mapping_to_json(mapping));
       }

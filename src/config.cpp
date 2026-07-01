@@ -500,7 +500,7 @@ namespace config {
     "[]",
     "sunshine_state.json"s,  // file_state
     "[]"s,  // file_mappings
-    48010,  // file_mapping_port
+    48020,  // file_mapping_port
     {},  // external_ip
     {
       "1280x720"s,

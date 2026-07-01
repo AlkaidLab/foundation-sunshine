@@ -6,6 +6,10 @@
 
 #include <utility>
 
+#ifdef _WIN32
+  #include <winsock2.h>
+#endif
+
 #include <boost/asio/ip/address.hpp>
 
 #include "file_mapping_ws_session.h"
@@ -141,10 +145,24 @@ namespace file_mapping_ws {
       return fail_and_close(ec);
     }
 
+#ifdef _WIN32
+    {
+      BOOL exclusive = TRUE;
+      if (::setsockopt(
+            acceptor_.native_handle(),
+            SOL_SOCKET,
+            SO_EXCLUSIVEADDRUSE,
+            reinterpret_cast<const char *>(&exclusive),
+            sizeof(exclusive)) == SOCKET_ERROR) {
+        return fail_and_close({ WSAGetLastError(), boost::asio::error::get_system_category() });
+      }
+    }
+#else
     acceptor_.set_option(tcp::acceptor::reuse_address(true), ec);
     if (ec) {
       return fail_and_close(ec);
     }
+#endif
 
     acceptor_.bind(endpoint, ec);
     if (ec) {

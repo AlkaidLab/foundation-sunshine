@@ -105,7 +105,7 @@ DELETE /api/v1/file-mapping/mappings/{id}
 
 这些 API 只服务本机 Control Panel / Rust GUI，不走 GameStream `nvhttp`。它们负责配置管理，不负责文件数据传输。
 
-Beast WSS 数据面默认监听 `file_mapping_port = 48010`。该端口应允许通过配置或命令行覆盖，便于多实例测试、端口冲突规避和受管环境部署；capability 响应必须返回实际监听端口。
+Beast WSS 数据面默认监听 `file_mapping_port = 48020`，避免占用 GameStream/RTSP 已使用的 `48010`。该端口应允许通过配置或命令行覆盖，便于多实例测试、端口冲突规避和受管环境部署；capability 响应必须返回实际监听端口。
 
 ### moonlight-qt 侧模块
 
