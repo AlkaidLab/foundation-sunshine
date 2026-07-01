@@ -10,8 +10,23 @@
 
 #include <boost/asio/buffer.hpp>
 #include <boost/beast/core/buffers_to_string.hpp>
+#include <nlohmann/json.hpp>
+
+#include "src/logging.h"
+
+#include "file_mapping_rpc.h"
 
 namespace file_mapping_ws {
+  namespace {
+    outbound_frame_t
+    make_session_error_frame(std::string message) {
+      outbound_frame_t out;
+      out.kind = frame_kind_e::text;
+      out.text = file_mapping::rpc::make_error(0, "session_error", std::move(message)).dump();
+      return out;
+    }
+  }  // namespace
+
   beast_session_t::beast_session_t(
     websocket_stream_t stream,
     session_token_validator_t validate_token,
@@ -57,7 +72,7 @@ namespace file_mapping_ws {
   void
   beast_session_t::on_tls_handshake(beast::error_code ec) {
     if (ec) {
-      close_with_error();
+      close_with_error("TLS handshake failed: " + ec.message());
       return;
     }
 
@@ -70,11 +85,11 @@ namespace file_mapping_ws {
   void
   beast_session_t::on_ws_request(beast::error_code ec, std::size_t /*bytes_transferred*/) {
     if (ec) {
-      close_with_error();
+      close_with_error("WebSocket upgrade request read failed: " + ec.message());
       return;
     }
     if (!websocket::is_upgrade(upgrade_request_)) {
-      close_with_error();
+      close_with_error("WebSocket upgrade request is missing required upgrade headers");
       return;
     }
 
@@ -83,7 +98,7 @@ namespace file_mapping_ws {
       expected_path_,
       validate_token_);
     if (!target_result.ok) {
-      close_with_error();
+      close_with_error("WebSocket session target rejected: " + target_result.error);
       return;
     }
 
@@ -96,7 +111,7 @@ namespace file_mapping_ws {
   void
   beast_session_t::on_ws_accept(beast::error_code ec) {
     if (ec) {
-      close_with_error();
+      close_with_error("WebSocket accept failed: " + ec.message());
       return;
     }
 
@@ -106,7 +121,7 @@ namespace file_mapping_ws {
   void
   beast_session_t::read_next() {
     if (close_requested_) {
-      close_with_error();
+      close_with_error("WebSocket close requested before next read");
       return;
     }
 
@@ -123,21 +138,21 @@ namespace file_mapping_ws {
       return;
     }
     if (ec) {
-      close_with_error();
+      close_with_error("WebSocket read failed: " + ec.message());
       return;
     }
 
     inbound_result_t result;
     if (ws_.got_text()) {
       if (read_buffer_.size() > config_.max_control_frame_bytes) {
-        close_with_error();
+        close_with_error("WebSocket text frame exceeds configured size limit");
         return;
       }
       result = core_.handle_text(beast::buffers_to_string(read_buffer_.data()));
     }
     else {
       if (read_buffer_.size() > config_.max_binary_frame_bytes) {
-        close_with_error();
+        close_with_error("WebSocket binary frame exceeds configured size limit");
         return;
       }
       std::vector<std::uint8_t> bytes(read_buffer_.size());
@@ -146,14 +161,18 @@ namespace file_mapping_ws {
     }
     read_buffer_.consume(read_buffer_.size());
 
-    if (result.reply) {
+    if (!result.ok && !result.reply && !result.error.empty()) {
+      BOOST_LOG(warning) << "File mapping WebSocket session rejected message: " << result.error;
+      queue_reply(make_session_error_frame(result.error));
+    }
+    else if (result.reply) {
       queue_reply(std::move(*result.reply));
     }
 
     if (!result.ok || result.close) {
       close_requested_ = true;
       if (!write_active_) {
-        close_with_error();
+        close_with_error(result.error.empty() ? "WebSocket session closed after protocol error" : result.error);
       }
       return;
     }
@@ -165,7 +184,7 @@ namespace file_mapping_ws {
   beast_session_t::queue_reply(outbound_frame_t frame) {
     if (write_queue_.size() >= config_.max_write_queue_frames) {
       close_requested_ = true;
-      close_with_error();
+      close_with_error("WebSocket write queue limit exceeded");
       return;
     }
 
@@ -180,7 +199,7 @@ namespace file_mapping_ws {
     if (write_queue_.empty()) {
       write_active_ = false;
       if (close_requested_) {
-        close_with_error();
+        close_with_error("WebSocket close requested after queued writes");
       }
       return;
     }
@@ -205,7 +224,7 @@ namespace file_mapping_ws {
   void
   beast_session_t::on_write(beast::error_code ec, std::size_t /*bytes_transferred*/) {
     if (ec) {
-      close_with_error();
+      close_with_error("WebSocket write failed: " + ec.message());
       return;
     }
 
@@ -214,9 +233,13 @@ namespace file_mapping_ws {
   }
 
   void
-  beast_session_t::close_with_error() {
+  beast_session_t::close_with_error(const std::string &reason) {
     if (socket_closed_) {
       return;
+    }
+
+    if (!reason.empty()) {
+      BOOST_LOG(warning) << "Closing file mapping WebSocket session: " << reason;
     }
 
     close_requested_ = true;

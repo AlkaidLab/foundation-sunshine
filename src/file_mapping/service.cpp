@@ -141,7 +141,13 @@ namespace file_mapping {
       state.error = "paired client certificate is required for file mapping";
       state.diagnostics["token"] = "not_issued";
     }
+    else if (config_.authorize_client && !config_.authorize_client(state.client_uuid)) {
+      state.error = "paired client is not authorized for file mapping";
+      state.diagnostics["token"] = "not_issued";
+      state.diagnostics["client_authorized"] = "false";
+    }
     else if (state.listening && state.port != 0 && tokens) {
+      state.diagnostics["client_authorized"] = "true";
       state.session_token = tokens->issue(state.client_uuid);
       state.diagnostics["token"] = state.session_token.empty() ? "rate_limited" : "issued";
       if (state.session_token.empty() && state.error.empty()) {

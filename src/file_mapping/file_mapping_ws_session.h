@@ -53,7 +53,7 @@ namespace file_mapping_ws {
     void queue_reply(outbound_frame_t frame);
     void write_next();
     void on_write(beast::error_code ec, std::size_t bytes_transferred);
-    void close_with_error();
+    void close_with_error(const std::string &reason = {});
 
     websocket_stream_t ws_;
     beast::flat_buffer read_buffer_;
