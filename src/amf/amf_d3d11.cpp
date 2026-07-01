@@ -773,6 +773,12 @@ namespace amf {
       auto qt_res = encoder->GetProperty(qt_prop, &qt_val);
       query_timeout_supported = (qt_res == AMF_OK && qt_val > 0);
       BOOST_LOG(info) << "AMF: QUERY_TIMEOUT " << (query_timeout_supported ? "supported" : "not supported") << " (value=" << qt_val << ")";
+      avcodec_scheduler.configure(hwsurfaces_in_queue_max, query_timeout_supported);
+      if (avcodec_compat_profile) {
+        BOOST_LOG(info) << "AMF: AVCodec compatibility scheduler ready"
+                        << " (hwsurfaces_in_queue_max=" << hwsurfaces_in_queue_max
+                        << ", query_timeout=" << (query_timeout_supported ? "yes" : "no") << ")";
+      }
     }
 
     // Create input texture for the rendering pipeline to write to.
@@ -827,6 +833,7 @@ namespace amf {
     current_ltr_slot = 0;
     rfi_pending = false;
     hwsurfaces_in_queue = 0;
+    avcodec_scheduler.reset();
     consecutive_submit_failures = 0;
     consecutive_empty_outputs = 0;
 
@@ -845,6 +852,7 @@ namespace amf {
     pending_outputs.clear();
     frame_rfi_flags.clear();
     hwsurfaces_in_queue = 0;
+    avcodec_scheduler.reset();
     if (encoder) {
       encoder->Terminate();
       encoder = nullptr;
@@ -977,6 +985,59 @@ namespace amf {
 
     frame_rfi_flags[frame_index] = frame_after_ref_frame_invalidation;
 
+    ::amf::AMFDataPtr output_data;
+    if (avcodec_compat_profile) {
+      auto compat = avcodec_scheduler.submit_and_query(encoder, surface);
+      res = compat.submit_result;
+
+      if (compat.input_exhausted) {
+        BOOST_LOG(warning) << "AMF: AVCodec scheduler SubmitInput still "
+                           << (res == AMF_INPUT_FULL ? "AMF_INPUT_FULL" : "AMF_DECODER_NO_FREE_SURFACES")
+                           << " after retries, dropping frame " << frame_index
+                           << " (in_flight=" << avcodec_scheduler.in_flight() << ")";
+        frame_rfi_flags.erase(frame_index);
+        if (++consecutive_submit_failures >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_submit_failures
+                           << " consecutive frames with AVCodec scheduler input exhaustion, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+
+      if (compat.need_more_input) {
+        consecutive_submit_failures = 0;
+        return result;
+      }
+
+      if (res != AMF_OK) {
+        BOOST_LOG(error) << "AMF: AVCodec scheduler SubmitInput failed, error: " << res;
+        frame_rfi_flags.erase(frame_index);
+        if (device) {
+          auto removed_reason = device->GetDeviceRemovedReason();
+          if (removed_reason != S_OK) {
+            BOOST_LOG(error) << "AMF: D3D11 device lost after SubmitInput, reason: 0x" << util::hex(removed_reason).to_string_view();
+            result.fatal = true;
+            return result;
+          }
+        }
+        if (++consecutive_submit_failures >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_submit_failures << " consecutive AVCodec scheduler SubmitInput failures, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+
+      consecutive_submit_failures = 0;
+      output_data = compat.output_data;
+      if (!output_data) {
+        if (++consecutive_empty_outputs >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_empty_outputs << " consecutive frames with no AVCodec scheduler output, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+    }
+    else {
     // FFmpeg-style proactive backpressure: if we already have many surfaces
     // in flight, drain one output BEFORE SubmitInput to avoid AMF_INPUT_FULL
     // entirely. This eliminates the tight retry spin in the common overrun
@@ -1068,7 +1129,6 @@ namespace amf {
     ++hwsurfaces_in_queue;
 
     // Query output — if we already drained output during SubmitInput retry, use that
-    ::amf::AMFDataPtr output_data;
     if (!pending_outputs.empty()) {
       output_data = pending_outputs.front();
       pending_outputs.pop_front();
@@ -1097,6 +1157,7 @@ namespace amf {
         return result;
       }
       --hwsurfaces_in_queue;
+    }
     }
     consecutive_empty_outputs = 0;
 

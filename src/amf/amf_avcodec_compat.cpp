@@ -6,8 +6,10 @@
 #include "amf_avcodec_compat.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <limits>
+#include <thread>
 
 #include <AMF/components/VideoEncoderAV1.h>
 #include <AMF/components/VideoEncoderHEVC.h>
@@ -22,6 +24,9 @@ namespace amf {
     constexpr int AVCODEC_ASYNC_DEPTH_DEFAULT = 16;
     constexpr int AVCODEC_LOOKAHEAD_DEPTH_MAX = 41;
     constexpr int AVCODEC_ASYNC_DEPTH_MAX = AVCODEC_LOOKAHEAD_DEPTH_MAX + 1;
+    constexpr int AVCODEC_BACKPRESSURE_POLL_MAX = 20;
+    constexpr int AVCODEC_SUBMIT_RETRY_MAX = 20;
+    constexpr int AVCODEC_OUTPUT_POLL_MAX = 10;
 
     struct avcodec_context_like_t {
       int64_t bit_rate = 0;
@@ -30,6 +35,11 @@ namespace amf {
       int gop_size = std::numeric_limits<int>::max();
       int async_depth = AVCODEC_ASYNC_DEPTH_DEFAULT;
     };
+
+    bool
+    is_input_exhausted(AMF_RESULT res) {
+      return res == AMF_INPUT_FULL || res == AMF_DECODER_NO_FREE_SURFACES;
+    }
 
     template <class T>
     AMF_RESULT
@@ -247,6 +257,117 @@ namespace amf {
     }
 
   }  // namespace
+
+  void
+  amf_avcodec_scheduler::configure(int max_in_queue, bool query_timeout) {
+    hwsurfaces_in_queue_max = std::max(max_in_queue, 1);
+    query_timeout_supported = query_timeout;
+  }
+
+  void
+  amf_avcodec_scheduler::reset() {
+    output_list.clear();
+    hwsurfaces_in_queue = 0;
+  }
+
+  int
+  amf_avcodec_scheduler::in_flight() const {
+    return hwsurfaces_in_queue;
+  }
+
+  AMF_RESULT
+  amf_avcodec_scheduler::query_once(::amf::AMFComponent *encoder, ::amf::AMFDataPtr &output_data) {
+    output_data = nullptr;
+    auto res = encoder->QueryOutput(&output_data);
+    if (output_data) {
+      decrement_in_flight();
+    }
+    return res;
+  }
+
+  void
+  amf_avcodec_scheduler::sleep_if_needed(bool already_have_output) const {
+    if (!query_timeout_supported || already_have_output) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+
+  void
+  amf_avcodec_scheduler::decrement_in_flight() {
+    if (hwsurfaces_in_queue > 0) {
+      --hwsurfaces_in_queue;
+    }
+  }
+
+  amf_avcodec_scheduler_result
+  amf_avcodec_scheduler::submit_and_query(::amf::AMFComponent *encoder, const ::amf::AMFSurfacePtr &surface) {
+    amf_avcodec_scheduler_result result;
+
+    if (hwsurfaces_in_queue >= hwsurfaces_in_queue_max) {
+      for (int wait = 0; wait < AVCODEC_BACKPRESSURE_POLL_MAX && hwsurfaces_in_queue >= hwsurfaces_in_queue_max; ++wait) {
+        result.query_result = query_once(encoder, result.output_data);
+        if (result.output_data) {
+          output_list.push_back(result.output_data);
+          result.output_data = nullptr;
+          break;
+        }
+        sleep_if_needed(false);
+      }
+    }
+
+    result.submit_result = encoder->SubmitInput(surface);
+    if (is_input_exhausted(result.submit_result)) {
+      for (int retry = 0; retry < AVCODEC_SUBMIT_RETRY_MAX && is_input_exhausted(result.submit_result); ++retry) {
+        ::amf::AMFDataPtr drain_data;
+        result.query_result = query_once(encoder, drain_data);
+        if (drain_data) {
+          output_list.push_back(drain_data);
+        }
+        else {
+          sleep_if_needed(false);
+        }
+        result.submit_result = encoder->SubmitInput(surface);
+      }
+
+      if (is_input_exhausted(result.submit_result)) {
+        result.input_exhausted = true;
+        return result;
+      }
+    }
+
+    if (result.submit_result == AMF_NEED_MORE_INPUT) {
+      result.submitted = true;
+      result.need_more_input = true;
+      ++hwsurfaces_in_queue;
+      return result;
+    }
+
+    if (result.submit_result != AMF_OK) {
+      return result;
+    }
+
+    result.submitted = true;
+    ++hwsurfaces_in_queue;
+
+    if (!output_list.empty()) {
+      // Unlike libavcodec receive_packet(), Sunshine has already handed us the
+      // current input frame. Submit it first, then return previously drained
+      // output so we do not silently skip the current surface.
+      result.output_data = output_list.front();
+      output_list.pop_front();
+      return result;
+    }
+
+    for (int poll = 0; poll < AVCODEC_OUTPUT_POLL_MAX; ++poll) {
+      result.query_result = query_once(encoder, result.output_data);
+      if (result.output_data || (result.query_result != AMF_REPEAT && result.query_result != AMF_NEED_MORE_INPUT)) {
+        break;
+      }
+      sleep_if_needed(false);
+    }
+
+    return result;
+  }
 
   amf_avcodec_compat_result
   amf_avcodec_compat::configure(::amf::AMFComponent *encoder,
