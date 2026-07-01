@@ -432,6 +432,9 @@ namespace config {
       std::nullopt,  // vbaq: unset by default, matching FFmpeg amfenc
       (int) amd::coder_e::_auto,  // coder
       23,  // qvbr_quality (1-51, default 23)
+      0,  // ltr_frames
+      0,  // slices_per_frame
+      true,  // avcodec_compat: enable optional AVCodec-like adapter for validation
     },  // amd
 
     {
@@ -1233,6 +1236,7 @@ namespace config {
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
+    bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
     bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
     // matches FFmpeg amfenc.c behavior of never setting the property unless

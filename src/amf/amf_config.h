@@ -34,6 +34,11 @@ namespace amf {
    * Integer values correspond directly to AMF SDK enum values.
    */
   struct amf_config {
+    // Optional compatibility adapter for the standalone AMF encoder. When
+    // enabled, AMF properties are derived from AVCodecContext-like state and
+    // FFmpeg amfenc behavior; when disabled, the standalone path stays clean.
+    bool avcodec_compat = false;
+
     // Usage preset (AMF_VIDEO_ENCODER_USAGE_ENUM values)
     std::optional<int> usage;
 
@@ -49,8 +54,11 @@ namespace amf {
     // VBAQ enable
     std::optional<int> vbaq;
 
-    // H.264 entropy coding (0=CAVLC, 1=CABAC)
+    // H.264 entropy coding used by the standalone path (0=CAVLC, 1=CABAC).
     int h264_cabac = 1;
+    // H.264 AVCodec-style coding mode. Nullopt means coder=auto, so the
+    // compatibility adapter does not set AMF_VIDEO_ENCODER_CABAC_ENABLE.
+    std::optional<int> h264_coding_mode;
 
     // Enforce HRD
     std::optional<int> enforce_hrd;
@@ -125,12 +133,12 @@ namespace amf {
     // but exposing it lets users disable it as a workaround for driver bugs.
     std::optional<bool> lowlatency_mode;
 
-    // --- Input Queue Size (async_depth) ---
-    // Default nullopt = do not set the property; AMD driver default ~16,
-    // matches FFmpeg amfenc default. Sunshine historically forced 1 for
-    // minimum latency, but that is the most fragile code path inside the
-    // driver. Users can opt-in to 1 for absolute lowest latency or larger
-    // values (4/8/16) as a workaround for driver freezes.
+    // --- Input Queue Size / async_depth ---
+    // Standalone path: optional AMF INPUT_QUEUE_SIZE property.
+    // AVCodec compatibility path: FFmpeg-style async_depth / in-flight surface
+    // cap, default 16, with no AMF INPUT_QUEUE_SIZE property set. Sunshine
+    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency, but that
+    // is the most fragile code path inside the driver.
     std::optional<int> input_queue_size;
   };
 

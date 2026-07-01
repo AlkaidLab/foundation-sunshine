@@ -2574,6 +2574,7 @@ namespace platf::dxgi {
       if (!amf_d3d) return false;
 
       ::amf::amf_config amf_cfg;
+      amf_cfg.avcodec_compat = config::video.amd.amd_avcodec_compat;
 
       // Pass AMF SDK integer values directly from config
       if (client_config.videoFormat == 0) {
@@ -2605,6 +2606,9 @@ namespace platf::dxgi {
       amf_cfg.vbaq = config::video.amd.amd_vbaq;
       amf_cfg.enforce_hrd = config::video.amd.amd_enforce_hrd;
       amf_cfg.h264_cabac = (config::video.amd.amd_coder != 2);  // 2 = CAVLC
+      if (config::video.amd.amd_coder != 0) {  // 0 = auto / AMF_VIDEO_ENCODER_UNDEFINED
+        amf_cfg.h264_coding_mode = config::video.amd.amd_coder;
+      }
       amf_cfg.max_ltr_frames = config::video.amd.amd_ltr_frames;
 
       // Pre-Analysis sub-system defaults: enable PAQ + TAQ for better quality at same bitrate
