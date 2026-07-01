@@ -236,7 +236,9 @@ namespace amf {
       if (!config.multi_hw_instance_encode || !*config.multi_hw_instance_encode) return;
 
       if (video_format == 0) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
+        if (!config.lowlatency_mode || *config.lowlatency_mode) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
+        }
       }
       else if (video_format == 1) {
         if (!config.lowlatency_mode) {
@@ -254,6 +256,9 @@ namespace amf {
 
     if (avcodec_compat_profile) {
       auto compat = amf_avcodec_compat::configure(encoder, video_format, config, client_config, colorspace);
+      if (compat.result != AMF_OK) {
+        return false;
+      }
       hwsurfaces_in_queue_max = compat.hwsurfaces_in_queue_max;
       user_configured_rate_control = compat.manages_rate_control;
 

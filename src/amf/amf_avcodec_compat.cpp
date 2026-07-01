@@ -19,13 +19,36 @@ namespace amf {
 
   namespace {
 
+    constexpr int AVCODEC_ASYNC_DEPTH_DEFAULT = 16;
+    constexpr int AVCODEC_LOOKAHEAD_DEPTH_MAX = 41;
+    constexpr int AVCODEC_ASYNC_DEPTH_MAX = AVCODEC_LOOKAHEAD_DEPTH_MAX + 1;
+
     struct avcodec_context_like_t {
       int64_t bit_rate = 0;
       int64_t rc_max_rate = 0;
       int64_t rc_buffer_size = 0;
       int gop_size = std::numeric_limits<int>::max();
-      int async_depth = 16;
+      int async_depth = AVCODEC_ASYNC_DEPTH_DEFAULT;
     };
+
+    template <class T>
+    AMF_RESULT
+    set_required_property(::amf::AMFComponent *encoder, const wchar_t *property, T value, const char *label) {
+      auto res = encoder->SetProperty(property, value);
+      if (res != AMF_OK) {
+        BOOST_LOG(error) << "AMF: AVCodec compatibility failed to set " << label << ", error: " << res;
+      }
+      return res;
+    }
+
+    template <class T>
+    void
+    set_optional_property(::amf::AMFComponent *encoder, const wchar_t *property, T value, const char *label) {
+      auto res = encoder->SetProperty(property, value);
+      if (res != AMF_OK) {
+        BOOST_LOG(warning) << "AMF: AVCodec compatibility ignored unsupported " << label << ", error: " << res;
+      }
+    }
 
     avcodec_context_like_t
     make_avcodec_context_like(const video::config_t &client_config) {
@@ -63,128 +86,164 @@ namespace amf {
       return AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR;
     }
 
-    void
+    AMF_RESULT
     configure_h264(::amf::AMFComponent *encoder,
       const amf_config &config,
       const avcodec_context_like_t &ctx,
       const video::config_t &client_config,
       AMFRate framerate) {
-      if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_USAGE, (amf_int64) *config.usage);
-      if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_QUALITY_PRESET, (amf_int64) *config.quality_preset);
+      if (config.usage) set_optional_property(encoder, AMF_VIDEO_ENCODER_USAGE, (amf_int64) *config.usage, "H.264 usage");
+      if (config.quality_preset) set_optional_property(encoder, AMF_VIDEO_ENCODER_QUALITY_PRESET, (amf_int64) *config.quality_preset, "H.264 quality_preset");
 
       const auto rc_mode = auto_rc_h264(config, ctx);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, (amf_int64) rc_mode);
+      auto res = set_required_property(encoder, AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, (amf_int64) rc_mode, "H.264 rate_control_method");
+      if (res != AMF_OK) return res;
       if (rc_mode == AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_QUALITY_VBR && config.qvbr_quality_level) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level, "H.264 qvbr_quality_level");
       }
       if (config.high_motion_quality_boost_enable) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HIGH_MOTION_QUALITY_BOOST_ENABLE, *config.high_motion_quality_boost_enable);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_HIGH_MOTION_QUALITY_BOOST_ENABLE, *config.high_motion_quality_boost_enable, "H.264 high_motion_quality_boost");
       }
-      if (ctx.rc_buffer_size) encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, ctx.rc_buffer_size);
-      if (ctx.bit_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, ctx.bit_rate);
-      if (rc_mode == AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR && ctx.bit_rate) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, ctx.bit_rate);
+      if (ctx.rc_buffer_size) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, ctx.rc_buffer_size, "H.264 vbv_buffer_size");
+        if (res != AMF_OK) return res;
       }
-      if (ctx.rc_max_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, ctx.rc_max_rate);
+      if (ctx.bit_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_TARGET_BITRATE, ctx.bit_rate, "H.264 target_bitrate");
+        if (res != AMF_OK) return res;
+      }
+      if (ctx.rc_max_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_PEAK_BITRATE, ctx.rc_max_rate, "H.264 peak_bitrate");
+        if (res != AMF_OK) return res;
+      }
 
-      encoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, framerate);
-      if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd));
-      encoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, (amf_int64) ctx.gop_size);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_DE_BLOCKING_FILTER, true);
-      if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
-      if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_ENABLE_VBAQ, !!(*config.vbaq));
-      encoder->SetProperty(AMF_VIDEO_ENCODER_B_PIC_PATTERN, (amf_int64) 0);
-      if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
-      encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1);
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_FRAMERATE, framerate, "H.264 framerate");
+      if (res != AMF_OK) return res;
+      if (config.enforce_hrd) set_optional_property(encoder, AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd), "H.264 enforce_hrd");
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_IDR_PERIOD, (amf_int64) ctx.gop_size, "H.264 idr_period");
+      if (res != AMF_OK) return res;
+      set_optional_property(encoder, AMF_VIDEO_ENCODER_DE_BLOCKING_FILTER, true, "H.264 deblocking_filter");
+      if (config.preanalysis) set_optional_property(encoder, AMF_VIDEO_ENCODER_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis), "H.264 preanalysis");
+      if (config.vbaq) set_optional_property(encoder, AMF_VIDEO_ENCODER_ENABLE_VBAQ, !!(*config.vbaq), "H.264 vbaq");
+      set_optional_property(encoder, AMF_VIDEO_ENCODER_B_PIC_PATTERN, (amf_int64) 0, "H.264 b_pic_pattern");
+      if (config.lowlatency_mode) set_optional_property(encoder, AMF_VIDEO_ENCODER_LOWLATENCY_MODE, !!(*config.lowlatency_mode), "H.264 lowlatency_mode");
+      set_optional_property(encoder, AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1, "H.264 query_timeout");
       if (config.intra_refresh_mbs) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_INTRA_REFRESH_NUM_MBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_INTRA_REFRESH_NUM_MBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs, "H.264 intra_refresh_mbs");
       }
       if (client_config.slicesPerFrame > 1) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame, "H.264 slices_per_frame");
       }
       if (config.h264_coding_mode && *config.h264_coding_mode != AMF_VIDEO_ENCODER_UNDEFINED) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_CABAC_ENABLE, (amf_int64) *config.h264_coding_mode);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_CABAC_ENABLE, (amf_int64) *config.h264_coding_mode, "H.264 coding_mode");
       }
+      return AMF_OK;
     }
 
-    void
+    AMF_RESULT
     configure_hevc(::amf::AMFComponent *encoder,
       const amf_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &colorspace,
       const avcodec_context_like_t &ctx,
       AMFRate framerate) {
-      if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_USAGE, (amf_int64) *config.usage);
-      if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET, (amf_int64) *config.quality_preset);
+      if (config.usage) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_USAGE, (amf_int64) *config.usage, "HEVC usage");
+      if (config.quality_preset) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET, (amf_int64) *config.quality_preset, "HEVC quality_preset");
 
       const auto rc_mode = auto_rc_hevc(config, ctx);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, (amf_int64) rc_mode);
+      auto res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, (amf_int64) rc_mode, "HEVC rate_control_method");
+      if (res != AMF_OK) return res;
       if (rc_mode == AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_QUALITY_VBR && config.qvbr_quality_level) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level, "HEVC qvbr_quality_level");
       }
       if (config.high_motion_quality_boost_enable) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HIGH_MOTION_QUALITY_BOOST_ENABLE, *config.high_motion_quality_boost_enable);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_HIGH_MOTION_QUALITY_BOOST_ENABLE, *config.high_motion_quality_boost_enable, "HEVC high_motion_quality_boost");
       }
-      if (ctx.rc_buffer_size) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, ctx.rc_buffer_size);
-      if (ctx.bit_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, ctx.bit_rate);
-      if (rc_mode == AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR && ctx.bit_rate) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, ctx.bit_rate);
+      if (ctx.rc_buffer_size) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, ctx.rc_buffer_size, "HEVC vbv_buffer_size");
+        if (res != AMF_OK) return res;
       }
-      if (ctx.rc_max_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, ctx.rc_max_rate);
+      if (ctx.bit_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, ctx.bit_rate, "HEVC target_bitrate");
+        if (res != AMF_OK) return res;
+      }
+      if (ctx.rc_max_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, ctx.rc_max_rate, "HEVC peak_bitrate");
+        if (res != AMF_OK) return res;
+      }
 
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
-      if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) ctx.gop_size);
-      if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
-      if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
-      if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 1);
-      encoder->SetProperty(
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate, "HEVC framerate");
+      if (res != AMF_OK) return res;
+      if (config.enforce_hrd) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd), "HEVC enforce_hrd");
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1, "HEVC num_gops_per_idr");
+      if (res != AMF_OK) return res;
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) ctx.gop_size, "HEVC gop_size");
+      if (res != AMF_OK) return res;
+      if (config.preanalysis) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis), "HEVC preanalysis");
+      if (config.vbaq) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq), "HEVC vbaq");
+      if (config.lowlatency_mode) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode), "HEVC lowlatency_mode");
+      set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 1, "HEVC query_timeout");
+      set_optional_property(
+        encoder,
         AMF_VIDEO_ENCODER_HEVC_PROFILE,
-        (amf_int64) (colorspace.bit_depth == 10 ? AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10 : AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN));
+        (amf_int64) (colorspace.bit_depth == 10 ? AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10 : AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN),
+        "HEVC profile");
       if (config.intra_refresh_mbs) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INTRA_REFRESH_NUM_CTBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_INTRA_REFRESH_NUM_CTBS_PER_SLOT, (amf_int64) *config.intra_refresh_mbs, "HEVC intra_refresh_mbs");
       }
       if (client_config.slicesPerFrame > 1) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_SLICES_PER_FRAME, (amf_int64) client_config.slicesPerFrame, "HEVC slices_per_frame");
       }
+      return AMF_OK;
     }
 
-    void
+    AMF_RESULT
     configure_av1(::amf::AMFComponent *encoder,
       const amf_config &config,
       const avcodec_context_like_t &ctx,
       AMFRate framerate) {
-      if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_USAGE, (amf_int64) *config.usage);
-      if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET, (amf_int64) *config.quality_preset);
+      if (config.usage) set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_USAGE, (amf_int64) *config.usage, "AV1 usage");
+      if (config.quality_preset) set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET, (amf_int64) *config.quality_preset, "AV1 quality_preset");
 
       const auto rc_mode = auto_rc_av1(config, ctx);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD, (amf_int64) rc_mode);
+      auto res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD, (amf_int64) rc_mode, "AV1 rate_control_method");
+      if (res != AMF_OK) return res;
       if (rc_mode == AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_QUALITY_VBR && config.qvbr_quality_level) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_QVBR_QUALITY_LEVEL, (amf_int64) *config.qvbr_quality_level, "AV1 qvbr_quality_level");
       }
       if (config.high_motion_quality_boost_enable) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_HIGH_MOTION_QUALITY_BOOST, *config.high_motion_quality_boost_enable);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_HIGH_MOTION_QUALITY_BOOST, *config.high_motion_quality_boost_enable, "AV1 high_motion_quality_boost");
       }
-      if (ctx.rc_buffer_size) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, ctx.rc_buffer_size);
-      if (ctx.bit_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, ctx.bit_rate);
-      if (rc_mode == AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR && ctx.bit_rate) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, ctx.bit_rate);
+      if (ctx.rc_buffer_size) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, ctx.rc_buffer_size, "AV1 vbv_buffer_size");
+        if (res != AMF_OK) return res;
       }
-      if (ctx.rc_max_rate) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, ctx.rc_max_rate);
+      if (ctx.bit_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, ctx.bit_rate, "AV1 target_bitrate");
+        if (res != AMF_OK) return res;
+      }
+      if (ctx.rc_max_rate) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, ctx.rc_max_rate, "AV1 peak_bitrate");
+        if (res != AMF_OK) return res;
+      }
 
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
-      if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
-      encoder->SetProperty(
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate, "AV1 framerate");
+      if (res != AMF_OK) return res;
+      if (config.enforce_hrd) set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd), "AV1 enforce_hrd");
+      res = set_required_property(
+        encoder,
         AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE,
-        (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) ctx.gop_size);
-      if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
+        (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS,
+        "AV1 alignment_mode");
+      if (res != AMF_OK) return res;
+      res = set_required_property(encoder, AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) ctx.gop_size, "AV1 gop_size");
+      if (res != AMF_OK) return res;
+      if (config.preanalysis) set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis), "AV1 preanalysis");
       if (config.av1_encoding_latency_mode) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode);
+        set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode, "AV1 encoding_latency_mode");
       }
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 1);
+      set_optional_property(encoder, AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 1, "AV1 query_timeout");
+      return AMF_OK;
     }
 
   }  // namespace
@@ -197,23 +256,37 @@ namespace amf {
     const video::sunshine_colorspace_t &colorspace) {
     auto ctx = make_avcodec_context_like(client_config);
     auto framerate = AMFConstructRate(client_config.framerate, 1);
-    auto async_depth = config.input_queue_size.value_or(ctx.async_depth);
+    auto requested_async_depth = config.input_queue_size.value_or(ctx.async_depth);
+    auto async_depth = std::clamp(requested_async_depth, 1, AVCODEC_ASYNC_DEPTH_MAX);
 
-    if (config.pa_lookahead_depth && *config.pa_lookahead_depth >= async_depth) {
-      async_depth = *config.pa_lookahead_depth + 1;
-      BOOST_LOG(warning) << "AMF: AVCodec compatibility async_depth raised to " << async_depth
-                         << " to exceed PA lookahead depth " << *config.pa_lookahead_depth;
+    if (async_depth != requested_async_depth) {
+      BOOST_LOG(warning) << "AMF: AVCodec compatibility async_depth clamped from "
+                         << requested_async_depth << " to " << async_depth;
     }
 
+    if (config.pa_lookahead_depth) {
+      const auto lookahead_depth = std::clamp(*config.pa_lookahead_depth, 0, AVCODEC_LOOKAHEAD_DEPTH_MAX);
+      if (lookahead_depth != *config.pa_lookahead_depth) {
+        BOOST_LOG(warning) << "AMF: AVCodec compatibility PA lookahead depth clamped from "
+                           << *config.pa_lookahead_depth << " to " << lookahead_depth;
+      }
+      if (lookahead_depth >= async_depth) {
+        async_depth = std::min(lookahead_depth + 1, AVCODEC_ASYNC_DEPTH_MAX);
+        BOOST_LOG(warning) << "AMF: AVCodec compatibility async_depth raised to " << async_depth
+                           << " to exceed PA lookahead depth " << lookahead_depth;
+      }
+    }
+
+    AMF_RESULT configure_result = AMF_OK;
     switch (video_format) {
       case 0:
-        configure_h264(encoder, config, ctx, client_config, framerate);
+        configure_result = configure_h264(encoder, config, ctx, client_config, framerate);
         break;
       case 1:
-        configure_hevc(encoder, config, client_config, colorspace, ctx, framerate);
+        configure_result = configure_hevc(encoder, config, client_config, colorspace, ctx, framerate);
         break;
       default:
-        configure_av1(encoder, config, ctx, framerate);
+        configure_result = configure_av1(encoder, config, ctx, framerate);
         break;
     }
 
@@ -224,6 +297,7 @@ namespace amf {
     return {
       async_depth,
       true,
+      configure_result,
     };
   }
 

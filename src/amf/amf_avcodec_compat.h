@@ -16,6 +16,7 @@ namespace amf {
   struct amf_avcodec_compat_result {
     int hwsurfaces_in_queue_max = 16;
     bool manages_rate_control = true;
+    AMF_RESULT result = AMF_OK;
   };
 
   class amf_avcodec_compat {
