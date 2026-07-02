@@ -7,6 +7,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <string>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/stream.hpp>
@@ -66,6 +67,7 @@ namespace file_mapping_ws {
     transport_config_t config_;
     std::function<void()> on_close_;
     std::deque<outbound_frame_t> write_queue_;
+    std::string pending_close_reason_;
     bool write_active_ = false;
     bool close_requested_ = false;
     bool socket_closed_ = false;

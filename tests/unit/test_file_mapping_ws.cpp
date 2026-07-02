@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 #include <gtest/gtest.h>
 
@@ -156,6 +157,21 @@ TEST(FileMappingWsSessionCore, RejectsUnpairedHelloUuid) {
   auto result = session.handle_text(hello.dump());
   EXPECT_FALSE(result.ok);
   EXPECT_TRUE(result.close);
+}
+
+TEST(FileMappingWsSessionCore, ClosesWhenHelloMappingProviderThrows) {
+  file_mapping::operations::execution_context_t context;
+  context.mapping_provider = []() -> std::vector<file_mapping::mapping_t> {
+    throw std::runtime_error("mapping store unavailable");
+  };
+
+  file_mapping_ws::session_core_t session { "host", {}, {}, std::move(context) };
+  auto hello = file_mapping::rpc::make_hello(file_mapping::rpc::endpoint_e::client, "client-uuid", {});
+
+  auto result = session.handle_text(hello.dump());
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.close);
+  EXPECT_NE(result.error.find("mapping store unavailable"), std::string::npos);
 }
 
 TEST(FileMappingWsSessionCore, RejectsHostHelloEndpoint) {

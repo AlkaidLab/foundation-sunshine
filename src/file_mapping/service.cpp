@@ -147,7 +147,7 @@ namespace file_mapping {
       state.diagnostics["client_authorized"] = "false";
     }
     else if (state.listening && state.port != 0 && tokens) {
-      state.diagnostics["client_authorized"] = "true";
+      state.diagnostics["client_authorized"] = config_.authorize_client ? "true" : "not_configured";
       state.session_token = tokens->issue(state.client_uuid);
       state.diagnostics["token"] = state.session_token.empty() ? "rate_limited" : "issued";
       if (state.session_token.empty() && state.error.empty()) {

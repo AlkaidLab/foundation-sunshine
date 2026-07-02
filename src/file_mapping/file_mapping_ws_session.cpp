@@ -171,8 +171,9 @@ namespace file_mapping_ws {
 
     if (!result.ok || result.close) {
       close_requested_ = true;
+      pending_close_reason_ = result.error.empty() ? "WebSocket session closed after protocol error" : result.error;
       if (!write_active_) {
-        close_with_error(result.error.empty() ? "WebSocket session closed after protocol error" : result.error);
+        close_with_error(pending_close_reason_);
       }
       return;
     }
@@ -199,7 +200,7 @@ namespace file_mapping_ws {
     if (write_queue_.empty()) {
       write_active_ = false;
       if (close_requested_) {
-        close_with_error("WebSocket close requested after queued writes");
+        close_with_error(pending_close_reason_.empty() ? "WebSocket close requested after queued writes" : pending_close_reason_);
       }
       return;
     }
