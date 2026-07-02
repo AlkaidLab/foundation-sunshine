@@ -313,6 +313,11 @@ namespace amf {
         }
         sleep_if_needed(false);
       }
+      if (hwsurfaces_in_queue >= hwsurfaces_in_queue_max) {
+        result.submit_result = AMF_INPUT_FULL;
+        result.input_exhausted = true;
+        return result;
+      }
     }
 
     result.submit_result = encoder->SubmitInput(surface);
