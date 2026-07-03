@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   filterValidFps,
+  normalizeEnabledDisabledValue,
   parseResolutions,
   serializeFps,
   serializeResolutions,
@@ -25,4 +26,17 @@ test('fps config removes invalid values before serialization', () => {
 
   assert.deepEqual(valid, ['30', 60, '500'])
   assert.equal(serializeFps(valid), '[30,60,500]')
+})
+
+test('boolean-like config values normalize to enabled and disabled select values', () => {
+  assert.equal(normalizeEnabledDisabledValue('true'), 'enabled')
+  assert.equal(normalizeEnabledDisabledValue('YES'), 'enabled')
+  assert.equal(normalizeEnabledDisabledValue('1'), 'enabled')
+  assert.equal(normalizeEnabledDisabledValue(true), 'enabled')
+  assert.equal(normalizeEnabledDisabledValue('false'), 'disabled')
+  assert.equal(normalizeEnabledDisabledValue('off'), 'disabled')
+  assert.equal(normalizeEnabledDisabledValue('0'), 'disabled')
+  assert.equal(normalizeEnabledDisabledValue(false), 'disabled')
+  assert.equal(normalizeEnabledDisabledValue(''), '')
+  assert.equal(normalizeEnabledDisabledValue(undefined), undefined)
 })

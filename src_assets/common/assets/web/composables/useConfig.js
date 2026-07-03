@@ -173,6 +173,7 @@ const DEFAULT_TABS = [
           amd_preanalysis: '',
           amd_vbaq: '',
           amd_coder: 'auto',
+          amd_avcodec_compat: 'enabled',
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting
           // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).
@@ -269,6 +270,16 @@ export const parseResolutions = (resStr) => {
  * 过滤有效的 FPS 值
  */
 export const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
+
+export const normalizeEnabledDisabledValue = (value) => {
+  if (value === undefined || value === null || value === '') return value
+
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', 'yes', 'enable', 'enabled', 'on', '1'].includes(normalized)) return 'enabled'
+  if (['false', 'no', 'disable', 'disabled', 'off', '0'].includes(normalized)) return 'disabled'
+
+  return value
+}
 
 const RISK_SEVERITY_WEIGHT = {
   critical: 3,
@@ -415,6 +426,7 @@ export function useConfig() {
       filterTabsByPlatform(platform.value)
 
       const { platform: _, status, version, ...configData } = data
+      configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       config.value = configData
 
       fillDefaultValues()

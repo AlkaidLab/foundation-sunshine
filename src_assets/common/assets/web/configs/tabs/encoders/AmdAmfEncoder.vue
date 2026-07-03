@@ -142,11 +142,11 @@ const config = ref(props.config)
               <div class="form-text">{{ $t('config.amd_vbaq_desc') }}</div>
             </div>
 
-            <!-- AMF Coder (H264) -->
+            <!-- H.264 Entropy Coding -->
             <div class="mb-3">
               <label for="amd_coder" class="form-label">{{ $t('config.amd_coder') }}</label>
               <select id="amd_coder" class="form-select" v-model="config.amd_coder">
-                <option value="auto">{{ $t('config.ffmpeg_auto') }}</option>
+                <option value="auto">{{ $t('config.coder_auto') }}</option>
                 <option value="cabac">{{ $t('config.coder_cabac') }}</option>
                 <option value="cavlc">{{ $t('config.coder_cavlc') }}</option>
               </select>
@@ -168,6 +168,16 @@ const config = ref(props.config)
         <option value="4">4</option>
       </select>
       <div class="form-text">{{ $t('config.amd_slices_per_frame_desc') }}</div>
+    </div>
+
+    <!-- AVCodec-compatible AMF path -->
+    <div class="mb-3" v-if="platform === 'windows'">
+      <label for="amd_avcodec_compat" class="form-label">{{ $t('config.amd_avcodec_compat') }}</label>
+      <select id="amd_avcodec_compat" class="form-select" v-model="config.amd_avcodec_compat">
+        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
+        <option value="disabled">{{ $t('_common.disabled') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.amd_avcodec_compat_desc') }}</div>
     </div>
 
     <!-- AMF Advanced (driver workarounds) -->
