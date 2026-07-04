@@ -9,6 +9,9 @@
 #include <fstream>
 #include <iostream>
 
+// lib includes
+#include <rs.h>
+
 // local includes
 #include "confighttp.h"
 #include "display_device/session.h"
@@ -28,10 +31,6 @@
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
 #endif
-
-extern "C" {
-#include "rswrapper.h"
-}
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN

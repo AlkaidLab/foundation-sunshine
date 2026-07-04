@@ -12,6 +12,7 @@
 
 #include <fstream>
 #include <openssl/err.h>
+#include <rs.h>
 
 #include <boost/atomic.hpp>
 #include <boost/container/flat_map.hpp>
@@ -26,7 +27,6 @@
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
-#include "rswrapper.h"
 // clang-format on
 }
 
