@@ -183,7 +183,7 @@
     "always_send_scancodes": "Vždy odesílat Scancody",
     "always_send_scancodes_desc": "Odesílání scancodes zvyšuje kompatibilitu s hrami a aplikacemi, ale může mít za následek nesprávný vstup na klávesnici od určitých klientů, kteří nepoužívají americké anglické rozložení klávesnice. Povolit, pokud vstup klávesnice v některých aplikacích vůbec nefunguje. Zakázat, pokud klíče klienta generují nesprávný vstup na hostitele.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "AMF kodér (H264)",
     "amd_coder_desc": "Umožňuje vybrat entropie kódování pro upřednostnění kvality nebo rychlosti kódování. Pouze H.264.",
     "amd_enforce_hrd": "Vymáhání hypotetického referenčního dekodéru (HRD) AMF",

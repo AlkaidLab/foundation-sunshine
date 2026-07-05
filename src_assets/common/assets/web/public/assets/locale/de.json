@@ -183,7 +183,7 @@
     "always_send_scancodes": "Scancodes immer senden",
     "always_send_scancodes_desc": "Das Senden von Scancodes verbessert die Kompatibilität mit Spielen und Apps, kann aber zu falschen Tastatureingaben von bestimmten Clients führen, die kein amerikanisches Tastaturlayout verwenden. Aktivieren, wenn die Eingabe der Tastatur in bestimmten Anwendungen überhaupt nicht funktioniert. Deaktivieren, wenn Schlüssel auf dem Client die falsche Eingabe auf dem Host generieren.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "AMF Coder (H264)",
     "amd_coder_desc": "Erlaubt es Ihnen, die Entropy-Kodierung auszuwählen, um die Qualität oder die Kodierungsgeschwindigkeit zu priorisieren. H.264 nur.",
     "amd_enforce_hrd": "Hypothetische Referenz-Decodierer (HRD) durchsetzen",

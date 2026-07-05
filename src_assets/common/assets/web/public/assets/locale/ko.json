@@ -183,7 +183,7 @@
     "always_send_scancodes": "항상 스캔 코드 보내기",
     "always_send_scancodes_desc": "스캔코드를 전송하면 게임 및 앱과의 호환성이 향상되지만 미국식 영어 키보드 레이아웃을 사용하지 않는 특정 클라이언트에서 키보드 입력이 잘못될 수 있습니다. 특정 애플리케이션에서 키보드 입력이 전혀 작동하지 않는 경우 활성화합니다. 클라이언트의 키가 호스트에서 잘못된 입력을 생성하는 경우 비활성화합니다.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "AMF 코더(H264)",
     "amd_coder_desc": "엔트로피 인코딩을 선택하여 품질 또는 인코딩 속도의 우선순위를 정할 수 있습니다. H.264만 해당.",
     "amd_enforce_hrd": "AMF 가상 참조 디코더(HRD) 시행",

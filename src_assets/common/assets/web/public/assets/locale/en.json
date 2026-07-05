@@ -186,7 +186,7 @@
     "amd_advanced_group_desc": "Optional driver-level AMF properties. Leaving everything blank keeps the AMD driver's default (matches FFmpeg amfenc and is recommended for most users). Tune these if you want to push for lower latency, or set them to 'disabled' to work around hardware/driver bugs such as the RX 9070 / RDNA4 + Adrenalin 26.5.x H.264/HEVC freeze (see issue #666).",
     "amd_advanced_reset": "Reset all to driver default",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_av1_latency_mode": "AMF AV1 Encoding Latency Mode",
     "amd_av1_latency_mode_desc": "AV1-only latency mode. Leave blank for driver default. Sunshine's legacy value was 'lowest latency'. If unsure, keep the driver default.",
     "amd_av1_latency_mode_lowest": "lowest latency",

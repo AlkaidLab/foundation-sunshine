@@ -183,7 +183,7 @@
     "always_send_scancodes": "Всегда посылать коды клавиш",
     "always_send_scancodes_desc": "Передача кодов клавиш улучшает совместимость с играми и приложениями, но может привести к неправильному вводу с клавиатуры, если клиент используют раскладку, отличную от английской США. Включите, если в каких-то приложениях ввод с клавиатуры не работает вовсе. Отключите, если клавиши клиента передают на ввод не те клавиши сервер.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "Кодировщик AMF (H264)",
     "amd_coder_desc": "Позволяет выбрать энтропическую кодировку для приоритизации скорости или качества кодирования. Работает только с H.264.",
     "amd_enforce_hrd": "AMF Hypothetical Reference Decoder (HRD) Enforcement",

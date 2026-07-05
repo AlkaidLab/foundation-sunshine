@@ -183,7 +183,7 @@
     "always_send_scancodes": "Skicka alltid sökkoder",
     "always_send_scancodes_desc": "Att skicka skanningskoder förbättrar kompatibiliteten med spel och appar men kan resultera i felaktig tangentbordsinmatning från vissa klienter som inte använder en amerikansk engelsk tangentbordslayout. Aktivera om tangentbordsinmatningen inte fungerar alls i vissa program. Inaktivera om nycklar på klienten genererar fel indata på värden.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "AMF-kod (H264)",
     "amd_coder_desc": "Låter dig välja entropi-kodning för att prioritera kvalitet eller kodningshastighet. H.264 endast.",
     "amd_enforce_hrd": "AMF Hypotetisk referensavkodare (HRD) verkställighet",

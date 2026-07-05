@@ -173,7 +173,7 @@ const DEFAULT_TABS = [
           amd_preanalysis: '',
           amd_vbaq: '',
           amd_coder: 'auto',
-          amd_avcodec_compat: 'enabled',
+          amd_avcodec_compat: 'disabled',
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting
           // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).

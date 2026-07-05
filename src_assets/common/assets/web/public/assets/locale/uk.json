@@ -183,7 +183,7 @@
     "always_send_scancodes": "Завжди Надсилати Скан-коди",
     "always_send_scancodes_desc": "Надсилання скан-кодів покращує сумісність з іграми та програмами, але може призвести до некоректного введення з клавіатури деякими клієнтами, які не використовують розкладку клавіатури США. Увімкніть, якщо введення з клавіатури взагалі не працює у певних програмах. Вимкніть, якщо клавіші на клієнті генерують неправильні клавіші на хості.",
     "amd_avcodec_compat": "AVCodec-compatible AMF path",
-    "amd_avcodec_compat_desc": "Use Sunshine's AVCodec-like compatibility layer for standalone AMF. Enabled is closest to FFmpeg/upstream Sunshine behavior; disabled keeps the clean standalone AMF parameter path.",
+    "amd_avcodec_compat_desc": "Disabled by default to use Sunshine's clean standalone AMF path. Enable only if you hit device/client compatibility issues and want to try the AVCodec-like AMF compatibility layer.",
     "amd_coder": "AMF Coder (H264)",
     "amd_coder_desc": "Дозволяє вибрати ентропійне кодування, щоб надати пріоритет якості або швидкості кодування. Тільки H.264.",
     "amd_enforce_hrd": "Примусове застосування AMF Hypothetical Reference Decoder (HRD)",

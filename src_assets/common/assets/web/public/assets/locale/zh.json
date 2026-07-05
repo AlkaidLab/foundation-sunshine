@@ -186,7 +186,7 @@
     "amd_advanced_group_desc": "可选的驱动级 AMF 属性。全部留空时使用 AMD 驱动默认值（与 FFmpeg amfenc 一致，对大多数用户最稳）。如需追求更低延迟可显式开启；如遇到硬件/驱动 bug（例如 RX 9070 / RDNA4 + Adrenalin 26.5.x 在 H.264/HEVC 下卡死，见 issue #666）可显式关闭对应项。",
     "amd_advanced_reset": "全部重置为驱动默认",
     "amd_avcodec_compat": "AVCodec 兼容 AMF 路径",
-    "amd_avcodec_compat_desc": "为 standalone AMF 启用 Sunshine 的 AVCodec-like 兼容层。开启时最接近 FFmpeg/上游 Sunshine 行为；关闭时保留干净的 standalone AMF 参数路径。",
+    "amd_avcodec_compat_desc": "默认关闭，使用 Sunshine 干净的 standalone AMF 路径。仅在遇到设备或客户端兼容性问题时再开启，以尝试 AVCodec-like AMF 兼容层。",
     "amd_av1_latency_mode": "AMF AV1 编码延迟模式",
     "amd_av1_latency_mode_desc": "仅 AV1 的延迟模式。留空使用驱动默认。Sunshine 旧值为 '最低延迟'。如不确定请保持驱动默认。",
     "amd_av1_latency_mode_lowest": "最低延迟",

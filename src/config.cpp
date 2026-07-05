@@ -434,7 +434,7 @@ namespace config {
       23,  // qvbr_quality (1-51, default 23)
       0,  // ltr_frames
       0,  // slices_per_frame
-      true,  // avcodec_compat: enable optional AVCodec-like adapter for validation
+      false,  // avcodec_compat: keep clean standalone AMF path by default
     },  // amd
 
     {

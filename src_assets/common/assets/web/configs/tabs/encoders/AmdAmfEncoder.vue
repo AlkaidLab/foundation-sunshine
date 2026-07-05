@@ -174,8 +174,8 @@ const config = ref(props.config)
     <div class="mb-3" v-if="platform === 'windows'">
       <label for="amd_avcodec_compat" class="form-label">{{ $t('config.amd_avcodec_compat') }}</label>
       <select id="amd_avcodec_compat" class="form-select" v-model="config.amd_avcodec_compat">
-        <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
+        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+        <option value="enabled">{{ $t('_common.enabled') }}</option>
       </select>
       <div class="form-text">{{ $t('config.amd_avcodec_compat_desc') }}</div>
     </div>

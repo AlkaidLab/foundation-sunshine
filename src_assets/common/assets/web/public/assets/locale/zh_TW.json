@@ -183,7 +183,7 @@
     "always_send_scancodes": "永遠傳送掃描碼",
     "always_send_scancodes_desc": "傳送掃描碼可以增強與遊戲和應用程式的相容性，但可能會導致某些未使用美式英語鍵盤佈局的用戶端輸入錯誤。若某些應用程式的鍵盤輸入完全無效，請啟用此選項。若用戶端的鍵盤輸入在主機端產生錯誤輸入，則請停用此選項。",
     "amd_avcodec_compat": "AVCodec 相容 AMF 路徑",
-    "amd_avcodec_compat_desc": "為 standalone AMF 啟用 Sunshine 的 AVCodec-like 相容層。啟用時最接近 FFmpeg/上游 Sunshine 行為；停用時保留乾淨的 standalone AMF 參數路徑。",
+    "amd_avcodec_compat_desc": "預設停用，使用 Sunshine 乾淨的 standalone AMF 路徑。僅在遇到裝置或用戶端相容性問題時再啟用，以嘗試 AVCodec-like AMF 相容層。",
     "amd_coder": "H.264 熵編碼模式",
     "amd_coder_desc": "僅影響 H.264 的 CABAC/CAVLC 熵編碼選擇。一般保持自動，只有排查相容性或效能問題時再調整。",
     "amd_enforce_hrd": "AMF 假想參考解碼器 (HRD) 強制執行",
