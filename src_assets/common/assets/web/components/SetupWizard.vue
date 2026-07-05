@@ -592,12 +592,15 @@ export default {
     },
     async saveLanguage() {
       try {
-        await apiFetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
           body: {
             locale: this.selectedLocale
           },
         })
+        if (!response.ok) {
+          throw new Error(`Failed to save language: HTTP ${response.status}`)
+        }
         markLanguageSavedForReload()
         // 重新加载页面以应用新语言
         window.location.reload()
