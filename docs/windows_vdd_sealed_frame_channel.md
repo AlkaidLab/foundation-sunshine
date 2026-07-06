@@ -7,15 +7,16 @@ This document defines the v2 Sunshine <-> ZakoVDD frame channel. The goal is to 
 - Keep VDD as the owner of the source frame ring.
 - Let Sunshine borrow the latest complete producer frame with no CPU readback.
 - Stop exposing predictable global names for metadata, frame-ready events, and textures.
-- Keep legacy named shared textures as an automatic fallback unless `SUNSHINE_VDD_FRAME_CHANNEL=sealed` is set.
+- Keep Sunshine's legacy named-object consumer as a fallback for old drivers.
+- Keep new drivers sealed-only by default. Legacy named export must be explicitly enabled with `LEGACYNAMEDFRAMECHANNEL=1`.
 - Make strict mode fail closed rather than silently falling back to named objects.
 
 ## Host Modes
 
 `SUNSHINE_VDD_FRAME_CHANNEL` controls host behavior:
 
-- `auto`: probe sealed support, use sealed borrow when attach succeeds, otherwise fall back to hardened legacy named objects.
-- `legacy`: skip sealed probing and use hardened legacy named objects.
+- `auto`: probe sealed support, use sealed borrow when attach succeeds, otherwise fall back to hardened legacy named objects for old drivers or drivers with legacy export explicitly enabled.
+- `legacy`: skip sealed probing and use hardened legacy named objects. This requires an old driver or a new driver with `LEGACYNAMEDFRAMECHANNEL=1`.
 - `sealed`: require sealed caps, open, and attach to succeed. Do not fall back to legacy names.
 
 ## Runtime Telemetry
@@ -106,7 +107,8 @@ The driver remains the source-frame owner.
 
 Required behavior:
 
-- Create metadata mapping, frame-ready event, and frame textures without global object names.
+- Create metadata mapping, frame-ready event, and frame textures without global object names by default.
+- Create `Global\ZakoVDD_*` legacy named objects only when the explicit driver setting `LEGACYNAMEDFRAMECHANNEL=1` is present.
 - Apply a restrictive DACL before any handle duplication.
 - Validate the caller and target process before duplicating handles.
 - Duplicate handles into `TargetProcessId`; the raw numeric handle values returned in the response must be valid only in that process.
@@ -130,9 +132,9 @@ The current host implementation:
 Minimum driver-side validation before enabling sealed mode by default:
 
 - `SUNSHINE_VDD_FRAME_CHANNEL=sealed` succeeds with a current driver.
-- `SUNSHINE_VDD_FRAME_CHANNEL=legacy` still works with old drivers.
+- `SUNSHINE_VDD_FRAME_CHANNEL=legacy` still works with old drivers, and with new drivers only after `LEGACYNAMEDFRAMECHANNEL=1`.
 - `SUNSHINE_VDD_FRAME_CHANNEL=auto` uses sealed on new drivers and legacy on old drivers.
-- Handle enumeration does not reveal `Global\ZakoVDD_Frame_*`, `Global\ZakoVDD_Meta_*`, or `Global\ZakoVDD_FrameReady_*` for sealed sessions.
+- Handle enumeration does not reveal `Global\ZakoVDD_Frame_*`, `Global\ZakoVDD_Meta_*`, or `Global\ZakoVDD_FrameReady_*` for default new-driver sealed sessions.
 - Driver restart, monitor mode change, HDR format change, and Sunshine restart do not leak handles or stuck keyed-mutex slots.
 - Borrowed frame telemetry remains stable: low `consumer_acquire_timeouts`, low held-slot drops, and no persistent fallback churn.
 
@@ -149,6 +151,19 @@ Check that the duplicated ABI header is in sync with the driver repo:
 
 ```powershell
 cmake --build build --target check-vdd-ioctl-abi
+```
+
+Enable new-driver legacy named export only when old Sunshine builds must connect:
+
+```powershell
+New-Item -Path 'HKLM:\SOFTWARE\ZakoTech\ZakoDisplayAdapter' -Force | Out-Null
+New-ItemProperty -Path 'HKLM:\SOFTWARE\ZakoTech\ZakoDisplayAdapter' -Name LEGACYNAMEDFRAMECHANNEL -PropertyType DWord -Value 1 -Force
+```
+
+Return to sealed-only default:
+
+```powershell
+New-ItemProperty -Path 'HKLM:\SOFTWARE\ZakoTech\ZakoDisplayAdapter' -Name LEGACYNAMEDFRAMECHANNEL -PropertyType DWord -Value 0 -Force
 ```
 
 Probe sealed caps only:
