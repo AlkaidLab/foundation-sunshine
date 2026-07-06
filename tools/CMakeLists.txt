@@ -67,7 +67,9 @@ target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
 if(WIN32)
     add_executable(vdd-frame-channel-probe vdd_frame_channel_probe.cpp)
-    set_target_properties(vdd-frame-channel-probe PROPERTIES CXX_STANDARD 23)
+    set_target_properties(vdd-frame-channel-probe PROPERTIES
+            CXX_STANDARD 23
+            CXX_STANDARD_REQUIRED ON)
     target_link_libraries(vdd-frame-channel-probe
             setupapi
             ${PLATFORM_LIBRARIES})
@@ -77,5 +79,5 @@ if(WIN32)
             COMMAND powershell -NoProfile -ExecutionPolicy Bypass
                     -File "${CMAKE_CURRENT_SOURCE_DIR}/check_vdd_ioctl_abi.ps1"
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            COMMENT "Checking Sunshine/VDD IOCTL ABI header sync")
+            COMMENT "Checking Sunshine/VDD IOCTL ABI header sync; set VDD_DRIVER_HEADER when DriverHeader is not passed")
 endif()

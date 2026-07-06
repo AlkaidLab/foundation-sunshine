@@ -5,7 +5,7 @@ param(
   [int]$DelaySeconds = 3,
   [string]$ProbePath = "",
   [string]$SunshineLog = "C:\Program Files\Sunshine\config\sunshine.log",
-  [string]$TriggerMonitorScript = "C:\Users\mohaha\Program\github\Virtual-Display-Driver\tools\vdd_capture_test\trigger_monitor.ps1",
+  [string]$TriggerMonitorScript = $env:VDD_TRIGGER_MONITOR_SCRIPT,
   [switch]$RestartSunshineService,
   [switch]$RequireSunshineSealedLog
 )
@@ -33,15 +33,25 @@ function Test-IsAdmin {
 }
 
 function Restart-Sunshine {
+  [CmdletBinding(SupportsShouldProcess)]
+  param()
+
   if (-not (Test-IsAdmin)) {
     throw "-RestartSunshineService requires an elevated PowerShell."
   }
 
-  Restart-Service -Name SunshineService -Force -ErrorAction Stop
-  Start-Sleep -Seconds 4
+  if ($PSCmdlet.ShouldProcess("SunshineService", "Restart service")) {
+    Restart-Service -Name SunshineService -Force -ErrorAction Stop
+    Start-Sleep -Seconds 4
+  }
 }
 
 function Invoke-TriggerMonitor {
+  if (-not $TriggerMonitorScript) {
+    Write-Warning "TriggerMonitorScript not specified; monitor trigger step skipped. Pass -TriggerMonitorScript or set VDD_TRIGGER_MONITOR_SCRIPT."
+    return
+  }
+
   if (Test-Path $TriggerMonitorScript) {
     try {
       & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $TriggerMonitorScript *> $null
@@ -49,6 +59,9 @@ function Invoke-TriggerMonitor {
     catch {
       Write-Verbose "trigger monitor failed: $($_.Exception.Message)"
     }
+  }
+  else {
+    Write-Warning "TriggerMonitorScript not found at '$TriggerMonitorScript'; monitor trigger step skipped."
   }
 }
 
@@ -69,7 +82,7 @@ function Invoke-Probe($probe) {
   }
 }
 
-function Read-RecentSunshineSignals {
+function Read-RecentSunshineSignal {
   if (-not (Test-Path $SunshineLog)) {
     return ""
   }
@@ -111,7 +124,7 @@ for ($i = 1; $i -le $Iterations; ++$i) {
     Write-Warning "probe succeeded but metadata telemetry was incomplete"
   }
 
-  $signals = Read-RecentSunshineSignals
+  $signals = Read-RecentSunshineSignal
   if ($signals) {
     Write-Host "recent sunshine signals:"
     Write-Host $signals

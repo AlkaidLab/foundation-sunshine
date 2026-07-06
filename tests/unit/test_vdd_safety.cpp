@@ -159,6 +159,27 @@ TEST(VddFrameChannelSafety, BoundsPostEventAcquireWait) {
             consumer_acquire_wait_budget_ms);
 }
 
+TEST(VddFrameChannelSafety, ReadsOnlyStableMetadataSnapshots) {
+  using namespace platf::dxgi::vdd_frame_channel;
+
+  auto meta = valid_vdd_metadata();
+  meta.MetadataSequence = (static_cast<UINT32>(7) << 16) | 2u;
+
+  shared_frame_metadata_t snapshot {};
+  ASSERT_TRUE(read_stable_metadata(&meta, snapshot, 1));
+  EXPECT_EQ(snapshot.FrameCounter, meta.FrameCounter);
+  EXPECT_EQ(snapshot.MetadataSequence, meta.MetadataSequence);
+  EXPECT_TRUE(metadata_sequence_is_stable(snapshot.MetadataSequence));
+  EXPECT_EQ(metadata_sequence_counter(snapshot.MetadataSequence), 2u);
+  EXPECT_EQ(metadata_channel_generation(snapshot.MetadataSequence), 7u);
+
+  meta.MetadataSequence = (static_cast<UINT32>(8) << 16) | 3u;
+  EXPECT_FALSE(metadata_sequence_is_stable(meta.MetadataSequence));
+  EXPECT_FALSE(read_stable_metadata(&meta, snapshot, 1));
+  EXPECT_EQ(metadata_sequence_counter(meta.MetadataSequence), 3u);
+  EXPECT_EQ(metadata_channel_generation(meta.MetadataSequence), 8u);
+}
+
 TEST(VddFrameChannelSafety, ParsesFrameChannelModes) {
   using namespace platf::dxgi::vdd_frame_channel;
 

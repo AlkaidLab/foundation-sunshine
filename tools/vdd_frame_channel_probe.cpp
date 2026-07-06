@@ -10,8 +10,10 @@ extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID
 #include <windows.h>
 
 #include <cstdint>
+#include <exception>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -107,6 +109,22 @@ namespace {
     return 2;
   }
 
+  bool
+  parse_uint32_arg(const char *text, UINT32 &value) {
+    try {
+      const std::string input { text ? text : "" };
+      std::size_t parsed_chars = 0;
+      const auto parsed = std::stoul(input, &parsed_chars, 0);
+      if (input.empty() || parsed_chars != input.size() || parsed > std::numeric_limits<UINT32>::max()) {
+        return false;
+      }
+      value = static_cast<UINT32>(parsed);
+      return true;
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+
 }  // namespace
 
 int
@@ -121,10 +139,14 @@ main(int argc, char **argv) {
       do_open = true;
     }
     else if (arg == "--monitor" && i + 1 < argc) {
-      monitor_index = static_cast<UINT32>(std::stoul(argv[++i]));
+      if (!parse_uint32_arg(argv[++i], monitor_index)) {
+        return usage();
+      }
     }
     else if (arg == "--slots" && i + 1 < argc) {
-      desired_slots = static_cast<UINT32>(std::stoul(argv[++i]));
+      if (!parse_uint32_arg(argv[++i], desired_slots)) {
+        return usage();
+      }
     }
     else if (arg == "--help" || arg == "-h") {
       return usage();

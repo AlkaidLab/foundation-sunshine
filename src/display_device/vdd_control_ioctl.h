@@ -124,6 +124,11 @@ typedef struct VDD_FRAME_CHANNEL_OPEN_RESPONSE {
 
 #ifdef __cplusplus
 }
+
+static_assert(sizeof(VDD_FRAME_CHANNEL_CAPS) == 32, "VDD_FRAME_CHANNEL_CAPS layout must stay stable");
+static_assert(sizeof(VDD_FRAME_CHANNEL_OPEN_REQUEST) == 40, "VDD_FRAME_CHANNEL_OPEN_REQUEST layout must stay stable");
+static_assert(sizeof(VDD_FRAME_CHANNEL_SLOT_HANDLE) == 16, "VDD_FRAME_CHANNEL_SLOT_HANDLE layout must stay stable");
+static_assert(sizeof(VDD_FRAME_CHANNEL_OPEN_RESPONSE) == 40 + 16 * VDD_FRAME_CHANNEL_MAX_SLOTS, "VDD_FRAME_CHANNEL_OPEN_RESPONSE layout must stay stable");
 #endif
 
 #endif  // _WIN32 || _WIN64

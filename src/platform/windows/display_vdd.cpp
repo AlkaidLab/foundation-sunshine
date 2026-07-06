@@ -131,6 +131,13 @@ namespace platf::dxgi {
           BOOST_LOG(warning) << "[vdd_capture] sealed frame-channel reported zero shared slots; using hardened legacy named channel"sv;
           return vdd_frame_channel::channel_selection::caps_failed;
         }
+        const auto required_flags = display_device::vdd_ioctl::required_sealed_frame_channel_flags();
+        if (caps.version != vdd_frame_channel::meta_version ||
+            caps.metadata_size < vdd_frame_channel::min_metadata_size ||
+            (caps.flags & required_flags) != required_flags) {
+          BOOST_LOG(warning) << "[vdd_capture] sealed frame-channel caps do not satisfy the required ABI/security contract; using hardened legacy named channel"sv;
+          return vdd_frame_channel::channel_selection::caps_failed;
+        }
         return vdd_frame_channel::channel_selection::unknown;
       case display_device::vdd_ioctl::frame_channel_status::unsupported:
         BOOST_LOG(debug) << "[vdd_capture] sealed frame-channel IOCTL unsupported; using hardened legacy named channel"sv;
@@ -451,7 +458,7 @@ namespace platf::dxgi {
                     << " meta_seq="sv << meta_snapshot.MetadataSequence
                     << " generation="sv << m_channelGeneration
                     << " mode="sv << vdd_frame_channel::channel_mode_name(m_frameChannelMode)
-                    << " channel=sealed_borrow"
+                    << " channel=sealed"
                     << " selection="sv << vdd_frame_channel::channel_selection_name(m_frameChannelSelection)
                     << " access=duplicated_handles";
     return true;

@@ -1,6 +1,6 @@
 param(
   [string]$SunshineHeader = "",
-  [string]$DriverHeader = "C:\Users\mohaha\Program\github\Virtual-Display-Driver\Common\Include\vdd_control_ioctl.h"
+  [string]$DriverHeader = $env:VDD_DRIVER_HEADER
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,6 +8,10 @@ $ErrorActionPreference = "Stop"
 if (-not $SunshineHeader) {
   $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
   $SunshineHeader = Join-Path $repoRoot "src\display_device\vdd_control_ioctl.h"
+}
+
+if (-not $DriverHeader) {
+  throw "DriverHeader not specified. Pass -DriverHeader <path> or set `$env:VDD_DRIVER_HEADER."
 }
 
 if (-not (Test-Path $SunshineHeader)) {

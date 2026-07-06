@@ -48,6 +48,15 @@ namespace platf::dxgi::vdd_frame_channel {
     UINT64 ProducerQpcFrequency;
   };
 
+  static_assert(sizeof(shared_frame_metadata_t) == 128,
+                "shared_frame_metadata_t must remain ABI-compatible with the VDD producer");
+  static_assert(offsetof(shared_frame_metadata_t, MetadataSize) == 96,
+                "MetadataSize offset is part of the shared metadata ABI");
+  static_assert(offsetof(shared_frame_metadata_t, MetadataSequence) == 108,
+                "MetadataSequence offset is part of the shared metadata ABI");
+  static_assert(offsetof(shared_frame_metadata_t, ProducerQpcFrequency) == 120,
+                "ProducerQpcFrequency offset is part of the shared metadata ABI");
+
   static constexpr UINT32 meta_magic = 0x5A564446;  // 'ZVDF'
   static constexpr UINT32 meta_version = 1;
   static constexpr UINT32 max_shared_slots = 8;

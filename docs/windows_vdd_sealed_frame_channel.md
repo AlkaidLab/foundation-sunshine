@@ -24,7 +24,7 @@ This document defines the v2 Sunshine <-> ZakoVDD frame channel. The goal is to 
 Sunshine logs both the transport mode and the final structured selection:
 
 ```text
-[vdd_capture] opened sealed monitor ... channel=sealed_borrow selection=sealed_opened access=duplicated_handles
+[vdd_capture] opened sealed monitor ... channel=sealed selection=sealed_opened access=duplicated_handles
 [vdd] backend ready ... channel=sealed selection=sealed_opened sealed_supported=true producer_slots=3 generation=2
 ```
 
