@@ -12,9 +12,7 @@
 #include "vdd_ioctl.h"
 #include "vdd_control_ioctl.h"
 
-extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = {
-  0xDA9F8C2B, 0x7E4F, 0x49A1, {0x9D, 0x4E, 0x6F, 0x2B, 0x0E, 0x1A, 0x0C, 0x4D}
-};
+extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID_INIT;
 
 #include <SetupAPI.h>
 

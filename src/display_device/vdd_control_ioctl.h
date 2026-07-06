@@ -39,14 +39,27 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 
+#if defined(INITGUID)
+#define VDD_CONTROL_RESTORE_INITGUID
+#undef INITGUID
+#endif
+
 #include <Windows.h>
 #include <winioctl.h>
+
+#if defined(VDD_CONTROL_RESTORE_INITGUID)
+#define INITGUID
+#undef VDD_CONTROL_RESTORE_INITGUID
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // {DA9F8C2B-7E4F-49A1-9D4E-6F2B0E1A0C4D}
+#define ZAKO_VDD_CONTROL_GUID_INIT \
+  { 0xDA9F8C2B, 0x7E4F, 0x49A1, { 0x9D, 0x4E, 0x6F, 0x2B, 0x0E, 0x1A, 0x0C, 0x4D } }
+
 DEFINE_GUID(GUID_DEVINTERFACE_ZAKO_VDD_CONTROL,
   0xDA9F8C2B, 0x7E4F, 0x49A1, 0x9D, 0x4E, 0x6F, 0x2B, 0x0E, 0x1A, 0x0C, 0x4D);
 

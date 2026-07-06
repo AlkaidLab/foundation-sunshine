@@ -1,9 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
-#define INITGUID
 
 #include "src/display_device/vdd_control_ioctl.h"
 #include "src/platform/windows/vdd_frame_channel.h"
+
+extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID_INIT;
 
 #include <SetupAPI.h>
 #include <windows.h>
