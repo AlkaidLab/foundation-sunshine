@@ -25,6 +25,12 @@
 #include "src/platform/common.h"
 #include "src/utility.h"
 #include "src/video.h"
+#include "vdd_frame_channel.h"
+
+namespace display_device::vdd_ioctl {
+  struct frame_channel_caps;
+  struct frame_channel_open_response;
+}
 
 namespace platf::dxgi {
   extern const char *format_str[];
@@ -617,11 +623,42 @@ namespace platf::dxgi {
     UINT64 dropped_acquire_failures() const { return m_droppedAcquireFailures; }
     UINT32 producer_slot_count() const { return m_slotCount; }
     UINT32 producer_slot_index() const { return m_slotIndex; }
+    UINT16 producer_channel_generation() const { return m_channelGeneration; }
     UINT64 producer_qpc_frequency() const { return m_producerQpcFrequency; }
     LUID producer_adapter_luid() const { return m_adapterLuid; }
+    UINT64 consumer_acquire_timeouts() const { return m_consumerAcquireTimeouts; }
+    bool sealed_frame_channel_supported() const { return m_sealedFrameChannelSupported; }
+    vdd_frame_channel::channel_mode frame_channel_mode() const { return m_frameChannelMode; }
+    vdd_frame_channel::channel_selection frame_channel_selection() const { return m_frameChannelSelection; }
+    bool legacy_named_channel() const { return m_legacyNamedChannel; }
 
   private:
+    enum class sealed_channel_attempt {
+      skipped,
+      opened,
+      fallback_allowed,
+      required_failed,
+    };
+
     void close();
+    void apply_metadata_snapshot(const vdd_frame_channel::shared_frame_metadata_t &meta);
+    bool attach_texture_slot(ID3D11Device1 *device,
+                             HANDLE shared_handle,
+                             const vdd_frame_channel::shared_frame_metadata_t &meta,
+                             UINT32 slot,
+                             bool close_handle,
+                             const wchar_t *debug_name = nullptr);
+    bool attach_sealed_channel(ID3D11Device1 *device,
+                               unsigned int monitor_idx,
+                               const LUID &device_luid,
+                               display_device::vdd_ioctl::frame_channel_open_response &sealed_channel);
+    bool attach_legacy_named_channel(ID3D11Device1 *device,
+                                     unsigned int monitor_idx,
+                                     const LUID &device_luid);
+    sealed_channel_attempt try_open_sealed_channel(ID3D11Device1 *device,
+                                                  unsigned int monitor_idx,
+                                                  const LUID &device_luid,
+                                                  const display_device::vdd_ioctl::frame_channel_caps &sealed_caps);
 
     HANDLE m_hMeta = nullptr;
     void  *m_pMeta = nullptr;
@@ -648,8 +685,14 @@ namespace platf::dxgi {
     UINT64 m_droppedAcquireFailures = 0;
     UINT32 m_slotCount = 1;
     UINT32 m_slotIndex = 0;
+    UINT16 m_channelGeneration = 0;
     UINT64 m_producerQpcFrequency = 0;
     LUID m_adapterLuid = {};
+    UINT64 m_consumerAcquireTimeouts = 0;
+    bool m_sealedFrameChannelSupported = false;
+    vdd_frame_channel::channel_mode m_frameChannelMode = vdd_frame_channel::channel_mode::auto_probe;
+    vdd_frame_channel::channel_selection m_frameChannelSelection = vdd_frame_channel::channel_selection::unknown;
+    bool m_legacyNamedChannel = true;
   };
 
   /**

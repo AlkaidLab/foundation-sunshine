@@ -3998,6 +3998,7 @@ namespace platf::dxgi {
                      << " replaced_unread="sv << vdd_last_replaced_unread
                      << " dropped_consumer_held="sv << vdd_last_dropped_consumer_held
                      << " dropped_acquire_failures="sv << vdd_last_dropped_acquire_failures
+                     << " consumer_acquire_timeouts="sv << dup.consumer_acquire_timeouts()
                      << " deferred="sv << vdd_borrow_deferred_images.size()
                      << " deferred_frames="sv << vdd_borrow_deferred_frames
                      << " returned_deferred="sv << vdd_borrow_returned_deferred_frames

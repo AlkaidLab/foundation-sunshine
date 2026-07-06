@@ -64,3 +64,18 @@ endif()
 target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 # 明确标记为不安装（开发测试工具），但可以正常构建
 # 注意：不会在 cmake/packaging/windows.cmake 中安装，所以不会被打包
+
+if(WIN32)
+    add_executable(vdd-frame-channel-probe vdd_frame_channel_probe.cpp)
+    set_target_properties(vdd-frame-channel-probe PROPERTIES CXX_STANDARD 23)
+    target_link_libraries(vdd-frame-channel-probe
+            setupapi
+            ${PLATFORM_LIBRARIES})
+    target_compile_options(vdd-frame-channel-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+
+    add_custom_target(check-vdd-ioctl-abi
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+                    -File "${CMAKE_CURRENT_SOURCE_DIR}/check_vdd_ioctl_abi.ps1"
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            COMMENT "Checking Sunshine/VDD IOCTL ABI header sync")
+endif()
