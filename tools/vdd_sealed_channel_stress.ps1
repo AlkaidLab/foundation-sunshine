@@ -1,7 +1,11 @@
 param(
+  [ValidateRange(1, 2147483647)]
   [int]$Iterations = 5,
+  [ValidateRange(0, 2147483647)]
   [int]$Monitor = 0,
+  [ValidateRange(0, 2147483647)]
   [int]$Slots = 3,
+  [ValidateRange(0, 2147483647)]
   [int]$DelaySeconds = 3,
   [string]$ProbePath = "",
   [string]$SunshineLog = "C:\Program Files\Sunshine\config\sunshine.log",
@@ -54,10 +58,15 @@ function Invoke-TriggerMonitor {
 
   if (Test-Path $TriggerMonitorScript) {
     try {
-      & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $TriggerMonitorScript *> $null
+      $triggerOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $TriggerMonitorScript 2>&1 |
+        ForEach-Object { $_.ToString() }
+      if ($LASTEXITCODE -ne 0) {
+        throw "trigger monitor exited with code $LASTEXITCODE. $($triggerOutput -join "`n")"
+      }
     }
     catch {
-      Write-Verbose "trigger monitor failed: $($_.Exception.Message)"
+      Write-Warning "trigger monitor failed: $($_.Exception.Message)"
+      throw
     }
   }
   else {
@@ -82,13 +91,42 @@ function Invoke-Probe($probe) {
   }
 }
 
+function Get-SunshineLogOffset {
+  if (-not (Test-Path $SunshineLog)) {
+    return 0
+  }
+
+  return (Get-Item $SunshineLog).Length
+}
+
 function Read-RecentSunshineSignal {
+  param(
+    [long]$StartOffset
+  )
+
   if (-not (Test-Path $SunshineLog)) {
     return ""
   }
 
   $patterns = "opened sealed monitor|backend ready|channel=sealed|selection=|meta_seq|generation=|unable to read stable metadata|frame channel open failed|sealed frame channel attach failed|requesting reinit"
-  $lines = Select-String -Path $SunshineLog -Pattern $patterns | Select-Object -Last 80
+  $file = Get-Item $SunshineLog
+  $offset = if ($file.Length -ge $StartOffset) { $StartOffset } else { 0 }
+  $stream = [System.IO.File]::Open($SunshineLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+  try {
+    [void]$stream.Seek($offset, [System.IO.SeekOrigin]::Begin)
+    $reader = [System.IO.StreamReader]::new($stream)
+    try {
+      $content = $reader.ReadToEnd()
+    }
+    finally {
+      $reader.Dispose()
+    }
+  }
+  finally {
+    $stream.Dispose()
+  }
+
+  $lines = $content -split "`r?`n" | Select-String -Pattern $patterns | Select-Object -Last 80
   return (($lines | ForEach-Object { $_.Line }) -join "`n")
 }
 
@@ -102,6 +140,7 @@ Write-Host "iterations=$Iterations monitor=$Monitor slots=$Slots"
 for ($i = 1; $i -le $Iterations; ++$i) {
   Write-Host ""
   Write-Host "iteration $i/$Iterations"
+  $iterationLogOffset = Get-SunshineLogOffset
 
   if ($RestartSunshineService) {
     Restart-Sunshine
@@ -124,7 +163,7 @@ for ($i = 1; $i -le $Iterations; ++$i) {
     Write-Warning "probe succeeded but metadata telemetry was incomplete"
   }
 
-  $signals = Read-RecentSunshineSignal
+  $signals = Read-RecentSunshineSignal $iterationLogOffset
   if ($signals) {
     Write-Host "recent sunshine signals:"
     Write-Host $signals
