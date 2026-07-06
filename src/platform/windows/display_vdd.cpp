@@ -122,7 +122,7 @@ namespace platf::dxgi {
   probe_sealed_frame_channel(display_device::vdd_ioctl::frame_channel_caps &caps) {
     caps = {};
     switch (display_device::vdd_ioctl::query_frame_channel_caps(caps)) {
-      case display_device::vdd_ioctl::frame_channel_status::supported:
+      case display_device::vdd_ioctl::frame_channel_status::supported: {
         BOOST_LOG(info) << "[vdd_capture] sealed frame-channel caps: version="sv << caps.version
                         << " flags=0x"sv << util::hex(caps.flags).to_string_view()
                         << " max_slots="sv << caps.max_shared_slots
@@ -139,6 +139,7 @@ namespace platf::dxgi {
           return vdd_frame_channel::channel_selection::caps_failed;
         }
         return vdd_frame_channel::channel_selection::unknown;
+      }
       case display_device::vdd_ioctl::frame_channel_status::unsupported:
         BOOST_LOG(debug) << "[vdd_capture] sealed frame-channel IOCTL unsupported; using hardened legacy named channel"sv;
         return vdd_frame_channel::channel_selection::caps_unsupported;
