@@ -528,6 +528,17 @@ namespace nvhttp {
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
 
+    // Client-driven resolution change capability: advertise to the client that it may send
+    // 0x5506 RESOLUTION (IDX_DYNAMIC_PARAM_CHANGE / paramType=0) requests and the host will
+    // act on them.  Requires BOTH allow_client_resolution_change AND
+    // dynamic_resolution_follow_display — the latter drives the encoder-size update and
+    // 0x5507 notify; without it the Windows display changes but the stream stays at the
+    // original negotiated resolution and clients see no effect.
+    // Clients MUST check this field before sending resolution-change packets; absent or 0
+    // means requests will be silently ignored.
+    tree.put("root.ClientResolutionChange",
+      (config::video.allow_client_resolution_change && config::video.dynamic_resolution_follow_display) ? 1 : 0);
+
     std::ostringstream data;
 
     pt::write_xml(data, tree);
