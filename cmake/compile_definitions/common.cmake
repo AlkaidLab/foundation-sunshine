@@ -149,6 +149,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/abr.h"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.h"
+        "${CMAKE_SOURCE_DIR}/src/perf_recorder.cpp"
+        "${CMAKE_SOURCE_DIR}/src/perf_recorder.h"
         "${CMAKE_SOURCE_DIR}/src/confighttp.cpp"
         "${CMAKE_SOURCE_DIR}/src/confighttp.h"
         "${CMAKE_SOURCE_DIR}/src/rtsp.cpp"

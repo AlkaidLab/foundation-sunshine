@@ -375,6 +375,7 @@ namespace video {
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
   };
 
   struct packet_raw_avcodec: packet_raw_t {

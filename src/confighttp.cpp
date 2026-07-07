@@ -48,6 +48,7 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"
@@ -1877,27 +1878,40 @@ namespace confighttp {
   }
 
   void
+  write_runtime_error(resp_https_t response, SimpleWeb::StatusCode http_status, int status_code, const std::string &status_message) {
+    json error_json;
+    error_json["success"] = false;
+    error_json["status_code"] = status_code;
+    error_json["status_message"] = status_message;
+
+    response->write(http_status, error_json.dump());
+    response->close_connection_after_response = true;
+  }
+
+  bool
+  require_localhost(resp_https_t response, req_https_t request, const std::string &action) {
+    auto client_address = request->remote_endpoint().address();
+    auto address = net::addr_to_normalized_string(client_address);
+    auto ip_type = net::from_address(address);
+
+    if (ip_type == net::PC) {
+      return true;
+    }
+
+    std::ostringstream msg_stream;
+    msg_stream << "Access denied when " << action << ". Only localhost requests are allowed. Client IP: " << client_address.to_string();
+    BOOST_LOG(warning) << msg_stream.str();
+    write_runtime_error(response, SimpleWeb::StatusCode::client_error_forbidden, 403, msg_stream.str());
+    return false;
+  }
+
+  void
   getRuntimeSessions(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
     print_req(request);
 
-    // 限制只允许 localhost 访问（增强安全性）
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    
-    if (ip_type != net::PC) {
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied when getting runtime sessions. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      BOOST_LOG(warning) << msg_stream.str();
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 403;
-      error_json["status_message"] = msg_stream.str();
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+    if (!require_localhost(response, request, "getting runtime sessions")) {
       return;
     }
 
@@ -1941,25 +1955,36 @@ namespace confighttp {
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "getRuntimeSessions: " << e.what();
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = std::string(e.what());
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
     }
     catch (...) {
       BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = "Unknown error";
-      
-      response->write(error_json.dump());
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
+  getPerfCurrent(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "getting performance snapshot")) {
+      return;
+    }
+
+    try {
+      response->write(perf::current_snapshot_json().dump());
       response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getPerfCurrent: " << e.what();
+
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getPerfCurrent: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
 
@@ -1969,22 +1994,7 @@ namespace confighttp {
 
     print_req(request);
 
-    // 限制只允许 localhost 访问
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    
-    if (ip_type != net::PC) {
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      BOOST_LOG(warning) << msg_stream.str();
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 403;
-      error_json["status_message"] = msg_stream.str();
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+    if (!require_localhost(response, request, "changing runtime bitrate")) {
       return;
     }
 
@@ -1998,12 +2008,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Missing bitrate parameter when changing bitrate";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -2011,12 +2016,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Missing clientname parameter when changing bitrate";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -2026,12 +2026,7 @@ namespace confighttp {
         bitrate = std::stoi(bitrate_param->second);
       }
       catch (...) {
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = "Invalid bitrate parameter format";
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, "Invalid bitrate parameter format");
         return;
       }
 
@@ -2042,12 +2037,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Invalid bitrate value when changing bitrate. Must be between 1 and 800000 Kbps";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -2104,30 +2094,19 @@ namespace confighttp {
         BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
       }
       
-      response->write(response_json.dump());
+      response->write(
+        success ? SimpleWeb::StatusCode::success_ok : SimpleWeb::StatusCode::client_error_not_found,
+        response_json.dump()
+      );
       response->close_connection_after_response = true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "changeRuntimeBitrate: " << e.what();
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = std::string(e.what());
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
     }
     catch (...) {
       BOOST_LOG(error) << "changeRuntimeBitrate: Unknown exception";
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = "Unknown error";
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
 
@@ -3191,6 +3170,7 @@ namespace confighttp {
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
+    server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;

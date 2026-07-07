@@ -400,10 +400,14 @@ namespace video {
   class frame_timestamp_ring_t {
   public:
     void
-    store(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> timestamp) {
+    store(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
       auto &entry = entries[frame_index % entries.size()];
       entry.frame_index = frame_index;
       entry.timestamp = timestamp;
+      entry.pipeline_trace = std::move(pipeline_trace);
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -415,11 +419,21 @@ namespace video {
       return entry.timestamp;
     }
 
+    std::optional<platf::frame_pipeline_trace_t>
+    lookup_trace(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      if (entry.frame_index != frame_index) {
+        return std::nullopt;
+      }
+      return entry.pipeline_trace;
+    }
+
   private:
-    // Encoder output can lag submission; keep recent capture timestamps without heap churn.
+    // Encoder output can lag submission; keep recent per-frame timing data without heap churn.
     struct entry_t {
       uint64_t frame_index = std::numeric_limits<uint64_t>::max();
       std::optional<std::chrono::steady_clock::time_point> timestamp;
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
     };
 
     std::array<entry_t, 256> entries {};
@@ -682,13 +696,21 @@ namespace video {
     }
 
     void
-    track_frame_timestamp(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
-      frame_timestamps.store(frame_index, frame_timestamp);
+    track_frame_timestamp(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
     }
 
     std::optional<std::chrono::steady_clock::time_point>
     resolve_frame_timestamp(uint64_t frame_index) const {
       return frame_timestamps.lookup(frame_index);
+    }
+
+    std::optional<platf::frame_pipeline_trace_t>
+    resolve_frame_trace(uint64_t frame_index) const {
+      return frame_timestamps.lookup_trace(frame_index);
     }
 
   private:
@@ -766,13 +788,21 @@ namespace video {
     }
 
     void
-    track_frame_timestamp(uint64_t frame_index, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
-      frame_timestamps.store(frame_index, frame_timestamp);
+    track_frame_timestamp(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
     }
 
     std::optional<std::chrono::steady_clock::time_point>
     resolve_frame_timestamp(uint64_t frame_index) const {
       return frame_timestamps.lookup(frame_index);
+    }
+
+    std::optional<platf::frame_pipeline_trace_t>
+    resolve_frame_trace(uint64_t frame_index) const {
+      return frame_timestamps.lookup_trace(frame_index);
     }
 
   private:
@@ -1610,6 +1640,7 @@ namespace video {
           // trim allocated but unused portion of the pool based on timeouts
           trim_imgs();
           img_out->frame_timestamp.reset();
+          img_out->pipeline_trace.reset();
           return true;
         }
         else {
@@ -1893,9 +1924,18 @@ namespace video {
   static thread_local hdr_luminance_ema_t hdr_ema_state;
 
   int
-  encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_avcodec(
+    int64_t frame_nr,
+    avcodec_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
-    session.frame_timestamps.store(submitted_frame_index, frame_timestamp);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
 
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
@@ -1978,7 +2018,13 @@ namespace video {
       }
 
       if (av_packet && av_packet->pts >= 0) {
-        packet->frame_timestamp = session.frame_timestamps.lookup(static_cast<uint64_t>(av_packet->pts));
+        const auto encoded_frame_index = static_cast<uint64_t>(av_packet->pts);
+        packet->frame_timestamp = session.frame_timestamps.lookup(encoded_frame_index);
+        auto encoded_trace = session.frame_timestamps.lookup_trace(encoded_frame_index);
+        if (encoded_trace) {
+          encoded_trace->packet_ready = std::chrono::steady_clock::now();
+          packet->pipeline_trace = std::move(encoded_trace);
+        }
       }
 
       packet->replacements = &session.replacements;
@@ -1990,9 +2036,18 @@ namespace video {
   }
 
   int
-  encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_nvenc(
+    int64_t frame_nr,
+    nvenc_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
-    session.track_frame_timestamp(submitted_frame_index, frame_timestamp);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
 
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
@@ -2014,15 +2069,29 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
+    if (encoded_trace) {
+      encoded_trace->packet_ready = std::chrono::steady_clock::now();
+      packet->pipeline_trace = std::move(encoded_trace);
+    }
     packets->raise(std::move(packet));
 
     return 0;
   }
 
   int
-  encode_amf(int64_t frame_nr, amf_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_amf(
+    int64_t frame_nr,
+    amf_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
-    session.track_frame_timestamp(submitted_frame_index, frame_timestamp);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
 
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.fatal) {
@@ -2054,21 +2123,32 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
+    if (encoded_trace) {
+      encoded_trace->packet_ready = std::chrono::steady_clock::now();
+      packet->pipeline_trace = std::move(encoded_trace);
+    }
     packets->raise(std::move(packet));
 
     return 0;
   }
 
   int
-  encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode(
+    int64_t frame_nr,
+    encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
+      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
-      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp);
+      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
 
     return -1;
@@ -2921,6 +3001,7 @@ namespace video {
         config::video.minimum_fps_target);
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
       bool has_new_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
@@ -2928,11 +3009,17 @@ namespace video {
       if (!requested_idr_frame || images->peek()) {
         if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           frame_timestamp = img->frame_timestamp;
+          pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+          if (!pipeline_trace->capture_ready) {
+            pipeline_trace->capture_ready = frame_timestamp;
+          }
+          pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          pipeline_trace->convert_end = std::chrono::steady_clock::now();
           has_new_frame = true;
         }
         else if (!images->running()) {
@@ -2960,7 +3047,7 @@ namespace video {
         // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
@@ -3233,6 +3320,20 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+          std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
+          if (img) {
+            frame_timestamp = img->frame_timestamp;
+          }
+
+          if (frame_captured) {
+            pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+            if (!pipeline_trace->capture_ready) {
+              pipeline_trace->capture_ready = frame_timestamp;
+            }
+            pipeline_trace->convert_begin = std::chrono::steady_clock::now();
+          }
+
           if (frame_captured && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
@@ -3240,12 +3341,11 @@ namespace video {
             continue;
           }
 
-          std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
-          if (img) {
-            frame_timestamp = img->frame_timestamp;
+          if (frame_captured) {
+            pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
+          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -3268,6 +3368,7 @@ namespace video {
       auto pull_free_image_callback = [&img](std::shared_ptr<platf::img_t> &img_out) -> bool {
         img_out = img;
         img_out->frame_timestamp.reset();
+        img_out->pipeline_trace.reset();
         return true;
       };
 
@@ -3562,7 +3663,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {})) {
+      if (encode(1, *session, packets, nullptr, {}, {})) {
         return -1;
       }
       // Timeout protection: if encoding takes more than 5 seconds, it's likely hung

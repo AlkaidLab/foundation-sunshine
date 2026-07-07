@@ -7,9 +7,11 @@
 // standard includes
 #include <array>
 #include <bitset>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 
 // lib includes
@@ -418,6 +420,14 @@ namespace platf {
     virtual ~deinit_t() = default;
   };
 
+  struct frame_pipeline_trace_t {
+    std::optional<std::chrono::steady_clock::time_point> capture_ready;
+    std::optional<std::chrono::steady_clock::time_point> convert_begin;
+    std::optional<std::chrono::steady_clock::time_point> convert_end;
+    std::optional<std::chrono::steady_clock::time_point> encode_submit;
+    std::optional<std::chrono::steady_clock::time_point> packet_ready;
+  };
+
   struct img_t: std::enable_shared_from_this<img_t> {
   public:
     img_t() = default;
@@ -436,6 +446,7 @@ namespace platf {
     std::int32_t row_pitch {};
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    std::optional<frame_pipeline_trace_t> pipeline_trace;
 
     virtual ~img_t() = default;
   };

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <future>
 #include <iomanip>
+#include <optional>
 #include <queue>
 #include <unordered_map>
 
@@ -41,6 +42,7 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
 #include "system_tray.h"
@@ -1410,6 +1412,12 @@ namespace stream {
       // 更新会话配置
       session->config.monitor.width = new_width;
       session->config.monitor.height = new_height;
+      perf::update_session_display(
+        session->launch_session_id,
+        session->config.monitor.width,
+        session->config.monitor.height,
+        session->config.monitor.framerate
+      );
 
       // 创建临时的 launch_session_t 来更新显示设备配置
       // 注意：必须按照结构体声明顺序初始化字段
@@ -1506,6 +1514,12 @@ namespace stream {
         }
 
         session->config.monitor.framerate = static_cast<int>(new_fps);
+        perf::update_session_display(
+          session->launch_session_id,
+          session->config.monitor.width,
+          session->config.monitor.height,
+          session->config.monitor.framerate
+        );
         
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::FPS;
@@ -2308,9 +2322,31 @@ namespace stream {
           return (uint16_t) std::clamp<decltype(duration_us)>((duration_us + 50) / 100, 0, std::numeric_limits<uint16_t>::max());
         };
 
-        uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *packet->frame_timestamp);
+        auto now = std::chrono::steady_clock::now();
+        uint16_t latency = duration_to_latency(now - *packet->frame_timestamp);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
+        perf::record_host_latency(session->launch_session_id, latency / 10., now);
+
+        if (packet->pipeline_trace) {
+          const auto &trace = *packet->pipeline_trace;
+          const auto elapsed_ms = [](const auto &begin, const auto &end) -> std::optional<double> {
+            if (!begin || !end) {
+              return std::nullopt;
+            }
+
+            return std::chrono::duration<double, std::milli>(*end - *begin).count();
+          };
+
+          perf::pipeline_sample_t sample;
+          sample.capture_to_convert_ms = elapsed_ms(trace.capture_ready, trace.convert_begin);
+          sample.convert_ms = elapsed_ms(trace.convert_begin, trace.convert_end);
+          sample.encode_queue_ms = elapsed_ms(trace.convert_end, trace.encode_submit);
+          sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
+          sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { now });
+          sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { now });
+          perf::record_pipeline_sample(session->launch_session_id, sample, now);
+        }
       }
       else {
         frame_header.frame_processing_latency = 0;
@@ -2971,6 +3007,7 @@ namespace stream {
         return;
       }
 
+      perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
     }
 
@@ -3063,6 +3100,8 @@ namespace stream {
         }
       }
 
+      perf::end_session(session.launch_session_id);
+
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
 
@@ -3112,6 +3151,17 @@ namespace stream {
       }
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+      perf::begin_session({
+        session.launch_session_id,
+        session.client_name,
+        session.config.monitor.width,
+        session.config.monitor.height,
+        session.config.monitor.framerate,
+        session.current_total_bitrate.load(std::memory_order_relaxed),
+        ::config::video.encoder.empty() ? "auto" : ::config::video.encoder,
+        ::config::video.capture.empty() ? "auto" : ::config::video.capture,
+        session.control_only,
+      });
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
@@ -3283,6 +3333,7 @@ namespace stream {
             effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
             session_p->current_total_bitrate = effective_param.value.int_value;
+            perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
                             << "': " << effective_param.value.int_value << " Kbps (including FEC)";
           }
