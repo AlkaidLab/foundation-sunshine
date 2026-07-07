@@ -173,14 +173,15 @@ namespace platf::dxgi {
   open_sealed_frame_channel(unsigned int monitor_idx,
                             const LUID &device_luid,
                             UINT32 desired_slots,
-                            display_device::vdd_ioctl::frame_channel_open_response &channel) {
+                            display_device::vdd_ioctl::frame_channel_open_response &channel,
+                            bool log_failures = true) {
     display_device::vdd_ioctl::frame_channel_open_request request {};
     request.monitor_index = monitor_idx;
     request.required_flags = display_device::vdd_ioctl::required_sealed_frame_channel_flags();
     request.desired_slots = desired_slots;
     request.adapter_luid_low_part = device_luid.LowPart;
     request.adapter_luid_high_part = device_luid.HighPart;
-    return display_device::vdd_ioctl::open_frame_channel(request, channel);
+    return display_device::vdd_ioctl::open_frame_channel(request, channel, log_failures);
   }
 
   static void
@@ -836,17 +837,87 @@ namespace platf::dxgi {
     return result;
   }
 
+  static vdd_probe_result_t
+  probe_sealed_vdd_monitor_index(const LUID &device_luid,
+                                 const display_device::vdd_ioctl::frame_channel_caps &sealed_caps,
+                                 unsigned int target_w,
+                                 unsigned int target_h,
+                                 unsigned int max_probe) {
+    vdd_probe_result_t result;
+
+    const UINT32 desired_slots = std::min<UINT32>(vdd_frame_channel::max_shared_slots, sealed_caps.max_shared_slots);
+    for (unsigned int i = 0; i < max_probe; ++i) {
+      display_device::vdd_ioctl::frame_channel_open_response sealed_channel;
+      const auto open_status = open_sealed_frame_channel(i, device_luid, desired_slots, sealed_channel, false);
+      if (open_status == display_device::vdd_ioctl::frame_channel_open_status::unsupported ||
+          open_status == display_device::vdd_ioctl::frame_channel_open_status::interface_missing) {
+        close_sealed_frame_channel_handles(sealed_channel);
+        break;
+      }
+      if (open_status != display_device::vdd_ioctl::frame_channel_open_status::opened) {
+        close_sealed_frame_channel_handles(sealed_channel);
+        continue;
+      }
+
+      HANDLE h_meta = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(sealed_channel.metadata_handle));
+      void *p_meta = h_meta ? MapViewOfFile(h_meta, FILE_MAP_READ, 0, 0, sizeof(SharedFrameMetadata)) : nullptr;
+      if (!p_meta) {
+        BOOST_LOG(debug) << "[vdd] sealed probe failed to map metadata for monitor "sv
+                         << i << " (gle="sv << GetLastError() << ")"sv;
+        close_sealed_frame_channel_handles(sealed_channel);
+        continue;
+      }
+
+      auto *meta = static_cast<const SharedFrameMetadata *>(p_meta);
+      SharedFrameMetadata meta_snapshot {};
+      bool stable = vdd_frame_channel::read_stable_metadata(meta, meta_snapshot);
+      auto validation = stable ?
+        vdd_frame_channel::validate_metadata_for_attach(meta_snapshot, device_luid) :
+        vdd_frame_channel::validation_result {};
+      bool valid = stable && static_cast<bool>(validation);
+      unsigned mw = valid ? meta_snapshot.Width : 0;
+      unsigned mh = valid ? meta_snapshot.Height : 0;
+      unsigned mfmt = valid ? meta_snapshot.DxgiFormat : 0;
+      bool mhdr = valid && (meta_snapshot.IsHdr != 0);
+
+      UnmapViewOfFile(p_meta);
+      close_sealed_frame_channel_handles(sealed_channel);
+      if (!valid) {
+        BOOST_LOG(debug) << "[vdd] sealed probe rejected monitor "sv << i
+                         << " stable="sv << stable
+                         << " reason="sv << static_cast<int>(validation.reason);
+        continue;
+      }
+
+      BOOST_LOG(debug) << "[vdd] sealed probe monitor "sv << i
+                       << ": "sv << mw << "x"sv << mh
+                       << " fmt="sv << mfmt << " hdr="sv << mhdr;
+      ++result.valid_count;
+      result.only_valid = static_cast<int>(i);
+      result.only_valid_width = mw;
+      result.only_valid_height = mh;
+      if (result.exact < 0 && mw == target_w && mh == target_h) {
+        result.exact = static_cast<int>(i);
+      }
+    }
+
+    return result;
+  }
+
   // Probes Global\ZakoVDD_Meta_<i> for valid producers and returns the index
   // whose Width/Height exactly match target. A stale sole producer is not safe:
   // the encoder and capture surfaces are already sized for the requested mode,
   // so opening a mismatched producer can spin the stream in a reinit loop.
   static int
-  resolve_vdd_monitor_index(unsigned int target_w, unsigned int target_h, unsigned int max_probe = 16) {
+  resolve_vdd_monitor_index(unsigned int target_w,
+                            unsigned int target_h,
+                            unsigned int max_probe = 16,
+                            std::optional<std::chrono::steady_clock::time_point> deadline_override = std::nullopt) {
     constexpr auto retry_window = 2500ms;
     constexpr auto retry_delay = 100ms;
 
     vdd_probe_result_t last_result;
-    const auto deadline = std::chrono::steady_clock::now() + retry_window;
+    const auto deadline = deadline_override.value_or(std::chrono::steady_clock::now() + retry_window);
 
     for (;;) {
       last_result = probe_vdd_monitor_index(target_w, target_h, max_probe);
@@ -883,6 +954,63 @@ namespace platf::dxgi {
     return -1;
   }
 
+  static int
+  resolve_sealed_vdd_monitor_index(ID3D11Device *d3d_device,
+                                   unsigned int target_w,
+                                   unsigned int target_h,
+                                   unsigned int max_probe = 16,
+                                   std::optional<std::chrono::steady_clock::time_point> deadline_override = std::nullopt) {
+    constexpr auto retry_window = 2500ms;
+    constexpr auto retry_delay = 100ms;
+
+    const auto device_luid = vdd_device_adapter_luid(d3d_device);
+    if (!device_luid) {
+      return -1;
+    }
+
+    display_device::vdd_ioctl::frame_channel_caps sealed_caps {};
+    if (probe_sealed_frame_channel(sealed_caps) != vdd_frame_channel::channel_selection::unknown) {
+      return -1;
+    }
+
+    vdd_probe_result_t last_result;
+    const auto deadline = deadline_override.value_or(std::chrono::steady_clock::now() + retry_window);
+
+    for (;;) {
+      last_result = probe_sealed_vdd_monitor_index(*device_luid, sealed_caps, target_w, target_h, max_probe);
+      if (last_result.exact >= 0) {
+        BOOST_LOG(info) << "[vdd] resolved sealed monitor index "sv << last_result.exact
+                        << " for "sv << target_w << "x"sv << target_h << " (exact match)"sv;
+        return last_result.exact;
+      }
+
+      if (std::chrono::steady_clock::now() >= deadline) {
+        break;
+      }
+
+      std::this_thread::sleep_for(retry_delay);
+    }
+
+    if (last_result.valid_count == 0) {
+      BOOST_LOG(warning) << "[vdd] no valid sealed VDD producer found for "sv
+                         << target_w << "x"sv << target_h << "."sv;
+    }
+    else if (last_result.valid_count == 1 && last_result.only_valid >= 0) {
+      BOOST_LOG(warning) << "[vdd] sole sealed VDD producer monitor "sv << last_result.only_valid
+                         << " is "sv << last_result.only_valid_width
+                         << "x"sv << last_result.only_valid_height
+                         << ", but requested "sv << target_w << "x"sv << target_h
+                         << "; refusing stale producer to avoid black screen/reinit loop."sv;
+    }
+    else {
+      BOOST_LOG(warning) << "[vdd] "sv << last_result.valid_count
+                         << " sealed VDD producers present but none match "sv
+                         << target_w << "x"sv << target_h
+                         << "."sv;
+    }
+    return -1;
+  }
+
   int
   display_vdd_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
     if (display_base_t::init(config, display_name)) {
@@ -897,8 +1025,30 @@ namespace platf::dxgi {
     // adding a 3s NamedPipe round-trip per encoder probe wastes ~20s on every
     // startup with no real benefit. If no producer is reachable, we just fail
     // and let the upper layer try a different backend.
-    int idx = resolve_vdd_monitor_index(static_cast<unsigned>(width_before_rotation),
-                                        static_cast<unsigned>(height_before_rotation));
+    const auto target_w = static_cast<unsigned>(width_before_rotation);
+    const auto target_h = static_cast<unsigned>(height_before_rotation);
+    const auto frame_channel_mode =
+      vdd_frame_channel_mode_env_override().value_or(vdd_frame_channel::channel_mode::auto_probe);
+    const auto producer_discovery_deadline = std::chrono::steady_clock::now() + 2500ms;
+
+    int idx = -1;
+    if (frame_channel_mode != vdd_frame_channel::channel_mode::legacy_named) {
+      idx = resolve_sealed_vdd_monitor_index(device.get(), target_w, target_h, 16, producer_discovery_deadline);
+      if (idx < 0 && frame_channel_mode == vdd_frame_channel::channel_mode::sealed_required) {
+        BOOST_LOG(error) << "[vdd] SUNSHINE_VDD_FRAME_CHANNEL=sealed requested, "
+                         << "but sealed producer discovery failed or found no matching producer for "sv
+                         << target_w << "x"sv << target_h;
+        return -1;
+      }
+      if (idx < 0) {
+        BOOST_LOG(warning) << "[vdd] sealed producer discovery was unavailable or found no matching monitor; "
+                           << "falling back to legacy Meta_* discovery"sv;
+      }
+    }
+
+    if (idx < 0) {
+      idx = resolve_vdd_monitor_index(target_w, target_h, 16, producer_discovery_deadline);
+    }
     if (idx < 0) {
       return -1;
     }

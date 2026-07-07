@@ -353,7 +353,8 @@ namespace display_device::vdd_ioctl {
 
   frame_channel_open_status
   open_frame_channel(const frame_channel_open_request &request,
-                     frame_channel_open_response &response) {
+                     frame_channel_open_response &response,
+                     bool log_failures) {
     response = {};
 
     device_handle dev;
@@ -395,7 +396,9 @@ namespace display_device::vdd_ioctl {
         BOOST_LOG(debug) << "vdd_ioctl: open frame-channel unsupported by driver (err=" << err << ")";
         return frame_channel_open_status::unsupported;
       }
-      BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_OPEN_FRAME_CHANNEL) failed (err=" << err << ")";
+      if (log_failures) {
+        BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_OPEN_FRAME_CHANNEL) failed (err=" << err << ")";
+      }
       return frame_channel_open_status::failed;
     }
 

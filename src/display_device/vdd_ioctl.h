@@ -133,6 +133,7 @@ namespace display_device::vdd_ioctl {
    * support as proof that this open path is usable until this call succeeds.
    */
   frame_channel_open_status open_frame_channel(const frame_channel_open_request &request,
-                                               frame_channel_open_response &response);
+                                               frame_channel_open_response &response,
+                                               bool log_failures = true);
 
 }  // namespace display_device::vdd_ioctl
