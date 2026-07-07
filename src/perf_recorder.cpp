@@ -16,6 +16,7 @@ namespace perf {
     using clock_t = std::chrono::steady_clock;
 
     constexpr std::size_t SAMPLE_WINDOW_SIZE = 240;
+    constexpr auto RECENT_FPS_STALE_AFTER = std::chrono::seconds(2);
 
     struct latency_window_t {
       std::array<double, SAMPLE_WINDOW_SIZE> samples {};
@@ -53,6 +54,18 @@ namespace perf {
 
     double round_ms(double value) {
       return std::round(value * 100.0) / 100.0;
+    }
+
+    double recent_fps_for_snapshot(const latency_window_t &window, clock_t::time_point now) {
+      if (window.count == 0 || window.last_sample_at == clock_t::time_point {}) {
+        return 0.0;
+      }
+
+      if (now - window.last_sample_at > RECENT_FPS_STALE_AFTER) {
+        return 0.0;
+      }
+
+      return window.recent_fps;
     }
 
     void record_window_sample(latency_window_t &window, double latency_ms, clock_t::time_point now, bool count_frame) {
@@ -98,7 +111,7 @@ namespace perf {
       result["samples"] = window.count;
       result["total_samples"] = window.total_samples;
       result["frames_total"] = window.total_frames;
-      result["recent_fps"] = round_ms(window.recent_fps);
+      result["recent_fps"] = round_ms(recent_fps_for_snapshot(window, now));
 
       if (window.count == 0) {
         result["avg_ms"] = nullptr;
