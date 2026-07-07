@@ -20,6 +20,9 @@
 #include "platform/common.h"
 #include "src/display_device/display_device.h"
 #include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/nvprefs/nvprefs_interface.h"
+#endif
 #include "version.h"
 
 extern "C" {
@@ -69,9 +72,10 @@ namespace args {
 #ifdef _WIN32
   int
   restore_nvprefs_undo() {
-    if (nvprefs_instance.load()) {
-      nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
-      nvprefs_instance.unload();
+    nvprefs::nvprefs_interface preferences;
+    if (preferences.load()) {
+      preferences.restore_from_and_delete_undo_file_if_exists();
+      preferences.unload();
     }
     return 0;
   }

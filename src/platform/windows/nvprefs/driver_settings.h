@@ -61,6 +61,18 @@ namespace nvprefs {
     bool
     check_and_modify_application_profile(bool &modified);
 
+    bool
+    check_and_modify_game_profile(const std::wstring &exe_name, int client_fps, std::optional<undo_data_t::data_t::game_profile_t> &undo_out);
+
+    bool
+    restore_game_profile_to_undo(const undo_data_t::data_t::game_profile_t &undo_data);
+
+    bool
+    check_and_modify_base_extras(int client_fps, std::optional<undo_data_t::data_t::base_extras_t> &undo_out);
+
+    bool
+    restore_base_extras_to_undo(const undo_data_t::data_t::base_extras_t &undo_data);
+
   private:
     NvDRSSessionHandle session_handle = 0;
   };

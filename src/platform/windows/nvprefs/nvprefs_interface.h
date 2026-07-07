@@ -6,6 +6,7 @@
 
 // standard library headers
 #include <memory>
+#include <string>
 
 namespace nvprefs {
 
@@ -34,6 +35,15 @@ namespace nvprefs {
 
     bool
     restore_global_profile();
+
+    bool
+    apply_stream_optimizations(const std::wstring &exe_name, int client_fps);
+
+    bool
+    restore_stream_optimizations();
+
+    void
+    release_undo_file_for_later_restore();
 
   private:
     struct impl;

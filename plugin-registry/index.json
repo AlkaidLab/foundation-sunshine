@@ -1,0 +1,11 @@
+{
+  "marketplace_version": 1,
+  "generated_at": null,
+  "source": "https://github.com/AlkaidLab/sunshine-plugin-registry",
+  "blocklist": {
+    "schema_version": 1,
+    "blocked_plugins": [],
+    "blocked_versions": []
+  },
+  "plugins": []
+}

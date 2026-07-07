@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVIDIA Control Panel Optimizer",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "opengl_vulkan_on_dxgi": {
+      "type": "boolean",
+      "default": true,
+      "title": "Prefer DXGI present path for OpenGL and Vulkan"
+    },
+    "sunshine_high_power_mode": {
+      "type": "boolean",
+      "default": true,
+      "title": "Prefer high performance mode for Sunshine"
+    },
+    "nv_optimize_game": {
+      "type": "boolean",
+      "default": false,
+      "title": "Enable per-game stream profile optimization"
+    },
+    "nv_force_vsync": {
+      "type": "boolean",
+      "default": true,
+      "title": "Force VSync while streaming"
+    },
+    "nv_lock_frame_rate": {
+      "type": "boolean",
+      "default": true,
+      "title": "Limit frame rate while streaming"
+    },
+    "nv_frl_fps_offset": {
+      "type": "integer",
+      "default": -2,
+      "minimum": -30,
+      "maximum": 30,
+      "title": "Frame rate limit offset"
+    },
+    "nv_frl_fps_override": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 500,
+      "title": "Frame rate limit override"
+    },
+    "nv_prefer_max_performance": {
+      "type": "boolean",
+      "default": false,
+      "title": "Prefer maximum performance for streamed games"
+    },
+    "nv_low_latency_mode": {
+      "type": "boolean",
+      "default": false,
+      "title": "Enable low latency mode for streamed games"
+    },
+    "nv_apply_to_base_profile": {
+      "type": "boolean",
+      "default": false,
+      "title": "Mirror stream optimization to the global NVIDIA profile"
+    },
+    "dynamic_stream_params": {
+      "type": "boolean",
+      "default": false,
+      "title": "React to dynamic stream parameter changes"
+    }
+  }
+}

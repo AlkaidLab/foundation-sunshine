@@ -22,14 +22,6 @@ extern thread_pool_util::ThreadPool task_pool;
 extern bool display_cursor;
 
 #ifdef _WIN32
-  // Declare global singleton used for NVIDIA control panel modifications
-  #include "platform/windows/nvprefs/nvprefs_interface.h"
-
-/**
- * @brief A global singleton used for NVIDIA control panel modifications.
- */
-extern nvprefs::nvprefs_interface nvprefs_instance;
-
 extern const std::string VDD_NAME;
 extern const std::string ZAKO_NAME;
 extern std::string zako_device_id;

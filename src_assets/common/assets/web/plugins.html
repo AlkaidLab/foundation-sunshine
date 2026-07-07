@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+  <head>
+    <%- header %>
+  </head>
+
+  <body id="app" v-cloak>
+  </body>
+
+  <script type="module">
+    import { createApp } from 'vue'
+    import { initApp } from './init'
+    import Plugins from './views/Plugins.vue'
+
+    const app = createApp(Plugins)
+    initApp(app)
+  </script>
+</html>
