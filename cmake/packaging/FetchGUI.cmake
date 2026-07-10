@@ -19,7 +19,6 @@ if(NOT WIN32)
 endif()
 
 option(FETCH_GUI "Download pre-built GUI from GitHub Releases" ON)
-option(SUNSHINE_ALLOW_FLOATING_GUI "Allow downloading the moving latest GUI release (development only)" OFF)
 
 set(GUI_VERSION "latest" CACHE STRING "Sunshine GUI release tag (or 'latest')")
 set(GUI_REPO "qiin2333/sunshine-control-panel" CACHE STRING "GUI GitHub repository")
@@ -30,13 +29,6 @@ set(_gui_exe_cached FALSE)
 if(NOT FETCH_GUI)
   message(STATUS "GUI download disabled (FETCH_GUI=OFF)")
   return()
-endif()
-
-if(GUI_VERSION STREQUAL "latest" AND NOT SUNSHINE_ALLOW_FLOATING_GUI)
-  message(FATAL_ERROR
-    "Refusing to package a floating Sunshine GUI release. Build the local GUI, "
-    "set GUI_VERSION to an explicit release tag, or opt in for development with "
-    "SUNSHINE_ALLOW_FLOATING_GUI=ON.")
 endif()
 
 # Skip if already downloaded
