@@ -8,15 +8,18 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <thread>
 #include <vector>
 
-#include <boost/algorithm/string.hpp>
 #include <nlohmann/json.hpp>
 
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/session.h"
 #include "src/globals.h"
+#include "src/http_util.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/process.h"
@@ -27,6 +30,8 @@ namespace tray_http {
 
   namespace {
     std::atomic<bool> tray_vdd_action_cooldown { false };
+    std::atomic<bool> tray_vdd_action_running { false };
+    std::atomic<bool> tray_app_termination_running { false };
     std::mutex tray_action_mutex;
 
     struct tray_subscriber_t {
@@ -60,7 +65,8 @@ namespace tray_http {
             subscriber->alive.store(false, std::memory_order_release);
           }
         });
-      } catch (const std::exception &e) {
+      }
+      catch (const std::exception &e) {
         BOOST_LOG(debug) << "tray SSE write failed: "sv << e.what();
         subscriber->alive.store(false, std::memory_order_release);
       }
@@ -93,7 +99,8 @@ namespace tray_http {
       task_pool.pushDelayed([]() {
         publish_tray_event(": tray-keepalive\n\n");
         schedule_tray_keepalive();
-      }, 30s);
+      },
+        30s);
     }
 
     void
@@ -110,9 +117,10 @@ namespace tray_http {
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(SimpleWeb::StatusCode::client_error_bad_request, nlohmann::json {
-        { "status", false },
-        { "error", error },
-      }.dump(),
+                                                                         { "status", false },
+                                                                         { "error", error },
+                                                                       }
+                                                                         .dump(),
         headers);
     }
 
@@ -124,14 +132,7 @@ namespace tray_http {
         return false;
       }
 
-      auto actual_content_type = request_content_type->second;
-      if (const auto semicolon_pos = actual_content_type.find(';'); semicolon_pos != std::string::npos) {
-        actual_content_type = actual_content_type.substr(0, semicolon_pos);
-      }
-
-      boost::algorithm::trim(actual_content_type);
-      boost::algorithm::to_lower(actual_content_type);
-      if (actual_content_type != "application/json") {
+      if (!http_util::content_type_matches(request_content_type->second, "application/json")) {
         send_bad_request(std::move(response), "Content type mismatch");
         return false;
       }
@@ -150,46 +151,102 @@ namespace tray_http {
         tray_vdd_active(),
         config::video.vdd_keep_enabled,
         config::video.vdd_headless_create_enabled,
-        tray_vdd_action_cooldown.load());
+        tray_vdd_action_running.load() || tray_vdd_action_cooldown.load());
     }
 
     void
-    start_tray_vdd_action_cooldown() {
+    finish_tray_vdd_action(bool success, std::string_view error) {
       tray_vdd_action_cooldown = true;
+      tray_vdd_action_running = false;
       update_tray_vdd_state();
+
+      if (!success) {
+        tray_state::set_notification("Virtual display", std::string { error }, "default");
+      }
 
       task_pool.pushDelayed([]() {
         tray_vdd_action_cooldown = false;
         update_tray_vdd_state();
-      }, 10s);
+      },
+        10s);
+    }
+
+    bool
+    dispatch_tray_vdd_action(bool create) {
+      try {
+        std::thread([create]() {
+          const auto action_name = create ? "create"sv : "close"sv;
+          BOOST_LOG(info) << (create ? "Creating"sv : "Closing"sv) << " VDD from GUI tray"sv;
+
+          try {
+            const bool success = create ?
+                                   display_device::session_t::get().toggle_display_power() :
+                                   display_device::session_t::get().destroy_vdd_monitor();
+            finish_tray_vdd_action(success, create ? "Failed to create virtual display"sv : "Failed to close virtual display"sv);
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "VDD "sv << action_name << " action failed: "sv << e.what();
+            finish_tray_vdd_action(false, create ? "Failed to create virtual display"sv : "Failed to close virtual display"sv);
+          }
+        }).detach();
+        return true;
+      }
+      catch (const std::system_error &e) {
+        BOOST_LOG(error) << "Failed to dispatch VDD action: "sv << e.what();
+        return false;
+      }
+    }
+
+    bool
+    dispatch_app_termination() {
+      try {
+        std::thread([]() {
+          BOOST_LOG(info) << "Clearing cache by terminating application from GUI tray"sv;
+          try {
+            proc::proc.terminate();
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Application termination failed: "sv << e.what();
+            tray_state::set_notification("Sunshine", "Failed to terminate the running application", "default");
+          }
+          tray_app_termination_running = false;
+        }).detach();
+        return true;
+      }
+      catch (const std::system_error &e) {
+        BOOST_LOG(error) << "Failed to dispatch application termination: "sv << e.what();
+        return false;
+      }
     }
 
     nlohmann::json
     run_tray_action(const std::string &action, const std::optional<bool> enabled, const std::optional<std::uint64_t> notification_id) {
-      std::lock_guard lock { tray_action_mutex };
+      std::unique_lock lock { tray_action_mutex };
 
       if (action == "vdd_create") {
-        if (tray_vdd_action_cooldown.load()) {
-          return { { "status", false }, { "error", "VDD action is cooling down" } };
+        if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
+          return { { "status", false }, { "error", "VDD action is already in progress or cooling down" } };
         }
         if (tray_vdd_active()) {
           update_tray_vdd_state();
           return { { "status", false }, { "error", "VDD is already active" } };
         }
 
-        BOOST_LOG(info) << "Creating VDD from GUI tray"sv;
-        if (!display_device::session_t::get().toggle_display_power()) {
+        tray_vdd_action_running = true;
+        lock.unlock();
+        update_tray_vdd_state();
+        if (!dispatch_tray_vdd_action(true)) {
+          tray_vdd_action_running = false;
           update_tray_vdd_state();
-          return { { "status", false }, { "error", "Failed to create VDD" } };
+          return { { "status", false }, { "error", "Failed to start VDD create action" } };
         }
 
-        start_tray_vdd_action_cooldown();
         return { { "status", true }, { "message", "VDD create requested" } };
       }
 
       if (action == "vdd_destroy") {
-        if (tray_vdd_action_cooldown.load()) {
-          return { { "status", false }, { "error", "VDD action is cooling down" } };
+        if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
+          return { { "status", false }, { "error", "VDD action is already in progress or cooling down" } };
         }
         if (!tray_vdd_active()) {
           update_tray_vdd_state();
@@ -200,13 +257,15 @@ namespace tray_http {
           return { { "status", false }, { "error", "VDD keep-enabled mode is active" } };
         }
 
-        BOOST_LOG(info) << "Closing VDD from GUI tray"sv;
-        if (!display_device::session_t::get().destroy_vdd_monitor()) {
+        tray_vdd_action_running = true;
+        lock.unlock();
+        update_tray_vdd_state();
+        if (!dispatch_tray_vdd_action(false)) {
+          tray_vdd_action_running = false;
           update_tray_vdd_state();
-          return { { "status", false }, { "error", "Failed to close VDD" } };
+          return { { "status", false }, { "error", "Failed to start VDD close action" } };
         }
 
-        start_tray_vdd_action_cooldown();
         return { { "status", true }, { "message", "VDD close requested" } };
       }
 
@@ -231,8 +290,15 @@ namespace tray_http {
       }
 
       if (action == "clear_app") {
-        BOOST_LOG(info) << "Clearing cache by terminating application from GUI tray"sv;
-        proc::proc.terminate();
+        if (tray_app_termination_running.exchange(true)) {
+          return { { "status", false }, { "error", "Application termination is already in progress" } };
+        }
+
+        lock.unlock();
+        if (!dispatch_app_termination()) {
+          tray_app_termination_running = false;
+          return { { "status", false }, { "error", "Failed to start application termination" } };
+        }
         return { { "status", true }, { "message", "Application termination requested" } };
       }
 
@@ -324,10 +390,10 @@ namespace tray_http {
       }
       catch (const std::exception &e) {
         send_json(std::move(response), {
-          { "status", false },
-          { "error", e.what() },
-          { "tray_state", tray_state::to_json() },
-        });
+                                         { "status", false },
+                                         { "error", e.what() },
+                                         { "tray_state", tray_state::to_json() },
+                                       });
       }
     }
 

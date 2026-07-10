@@ -198,6 +198,7 @@ jobs:
           ninja -C build
 
       - name: Run native tests
+        shell: msys2 {0}
         run: ctest --test-dir build --output-on-failure
 
       - name: Cache Inno Setup

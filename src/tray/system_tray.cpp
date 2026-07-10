@@ -1478,8 +1478,9 @@ namespace system_tray {
     }
 
     if (tray_thread_should_exit) {
-      tray_initialized = false;
-      tray_exit();
+      if (tray_initialized.exchange(false)) {
+        tray_exit();
+      }
       tray_thread_running = false;
       BOOST_LOG(info) << "System tray thread stopped before entering event loop"sv;
       return;

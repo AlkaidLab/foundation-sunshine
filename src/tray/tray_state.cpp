@@ -63,7 +63,7 @@ namespace tray_state {
     };
 
     presentation_t
-    presentation_locked(const state_t &state) {
+    presentation(const state_t &state) {
       if (state.pairing_pending) {
         return {
           "pairing",
@@ -169,6 +169,8 @@ namespace tray_state {
       current_state.pairing_client_name = client_name;
       current_state.notification.id = ++next_notification_id;
       current_state.notification.active = true;
+      current_state.notification.title.clear();
+      current_state.notification.message.clear();
       current_state.notification.icon = "locked";
       current_state.notification.action = "open_pin";
       touch_locked();
@@ -273,16 +275,16 @@ namespace tray_state {
       snapshot = current_state;
     }
 
-    const auto presentation = presentation_locked(snapshot);
+    const auto current_presentation = presentation(snapshot);
 
     return {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
       { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "notification-ack", "pairing", "vdd" }) },
-      { "status", presentation.status },
-      { "icon", presentation.icon },
-      { "tooltip", presentation.tooltip },
+      { "status", current_presentation.status },
+      { "icon", current_presentation.icon },
+      { "tooltip", current_presentation.tooltip },
       { "app_name", snapshot.app_name },
       { "pairing_client_name", snapshot.pairing_client_name },
       { "revision", snapshot.revision },

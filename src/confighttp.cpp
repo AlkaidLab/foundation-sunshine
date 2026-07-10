@@ -45,6 +45,7 @@
 #include "file_mapping/file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "http_util.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
@@ -161,17 +162,7 @@ namespace confighttp {
       send_bad_request("Content type not provided");
       return false;
     }
-    // Extract the media type part before any parameters (e.g., charset)
-    std::string actualContentType = requestContentType->second;
-    size_t semicolonPos = actualContentType.find(';');
-    if (semicolonPos != std::string::npos) {
-      actualContentType = actualContentType.substr(0, semicolonPos);
-    }
-    boost::algorithm::trim(actualContentType);
-    boost::algorithm::to_lower(actualContentType);
-    std::string expectedContentType(contentType);
-    boost::algorithm::to_lower(expectedContentType);
-    if (actualContentType != expectedContentType) {
+    if (!http_util::content_type_matches(requestContentType->second, contentType)) {
       send_bad_request("Content type mismatch");
       return false;
     }

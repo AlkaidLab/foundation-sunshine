@@ -30,6 +30,7 @@ endif ()
 
 add_executable(tray_state_unit_tests
         ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp)
 target_include_directories(tray_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(tray_state_unit_tests
