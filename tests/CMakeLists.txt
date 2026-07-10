@@ -28,6 +28,24 @@ if (WIN32)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # cmake-lint: disable=C0103
 endif ()
 
+add_executable(tray_state_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp)
+target_include_directories(tray_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(tray_state_unit_tests
+        nlohmann_json::nlohmann_json
+        gtest_main)
+target_compile_options(tray_state_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(tray_state_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
+
+if (NOT BUILD_TESTS)
+    return()
+endif ()
+
 # modify SUNSHINE_DEFINITIONS
 if (WIN32)
     list(APPEND

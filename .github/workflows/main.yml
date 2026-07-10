@@ -188,6 +188,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
@@ -195,6 +196,9 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
           ninja -C build
+
+      - name: Run native tests
+        run: ctest --test-dir build --output-on-failure
 
       - name: Cache Inno Setup
         id: inno-cache

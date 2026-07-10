@@ -74,17 +74,8 @@ FunctionEnd
 !define MUI_FINISHPAGE_RUN_TEXT '打开使用教程'
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenDocumentation
 
-; 复选框2: 启动 Sunshine GUI（默认勾选）
-!define MUI_FINISHPAGE_SHOWREADME
-!define MUI_FINISHPAGE_SHOWREADME_TEXT '启动 Sunshine GUI'
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION LaunchGUI
-
 Function OpenDocumentation
     ExecShell 'open' 'https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ'
-FunctionEnd
-
-Function LaunchGUI
-    Exec '\$INSTDIR\\\\assets\\\\gui\\\\sunshine-gui.exe'
 FunctionEnd
 ")
 
@@ -234,6 +225,8 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
         DetailPrint '恢复NVIDIA设置...'
         nsExec::ExecToLog '\\\"$INSTDIR\\\\${CMAKE_PROJECT_NAME}.exe\\\" --restore-nvprefs-undo'
         
+        DeleteRegValue HKCU 'Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run' 'Sunshine GUI Desktop'
+
         MessageBox MB_YESNO|MB_ICONQUESTION \
             'Do you want to remove Virtual Gamepad?' \
             /SD IDNO IDNO NoGamepad

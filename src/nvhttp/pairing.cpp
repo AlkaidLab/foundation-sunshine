@@ -26,7 +26,8 @@
 #include "src/httpcommon.h"
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/system_tray.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/tray_state.h"
 #include "src/utility.h"
 #include "src/uuid.h"
 
@@ -124,6 +125,7 @@ namespace nvhttp {
     static std::mutex map_id_sess_mutex;
     static std::shared_mutex client_state_mutex;
     static pair_rate_limiter_t pair_rate_limit;
+    constexpr auto pending_pin_timeout = 5min;
 
     static struct {
       std::string pin;
@@ -304,11 +306,45 @@ namespace nvhttp {
                 remove_session(ptr->second);
                 return;
               }
+              tray_state::set_pairing_required(last_pair_name);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
               system_tray::update_tray_require_pin(last_pair_name);
 #endif
               pending_pin_unique_id = ptr->second.client.uniqueID;
               ptr->second.async_insert_pin.response = std::move(response);
+
+              const auto pending_id = pending_pin_unique_id;
+              task_pool.pushDelayed([pending_id]() {
+                std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
+                if (pending_pin_unique_id != pending_id) {
+                  return;
+                }
+
+                const auto session = map_id_sess.find(pending_id);
+                if (session == std::end(map_id_sess)) {
+                  pending_pin_unique_id.clear();
+                  tray_state::clear_pairing_required();
+                  return;
+                }
+
+                pt::ptree timeout_tree;
+                timeout_tree.put("root.paired", 0);
+                timeout_tree.put("root.<xmlattr>.status_code", 408);
+                timeout_tree.put("root.<xmlattr>.status_message", "Pairing PIN entry timed out");
+                std::ostringstream data;
+                pt::write_xml(data, timeout_tree);
+
+                auto &async_response = session->second.async_insert_pin.response;
+                if (async_response.has_left() && async_response.left()) {
+                  async_response.left()->write(data.str());
+                }
+                else if (async_response.has_right() && async_response.right()) {
+                  async_response.right()->write(data.str());
+                }
+
+                BOOST_LOG(info) << "Pairing request timed out while waiting for PIN entry";
+                remove_session(session->second);
+              }, pending_pin_timeout);
 
               fg.disable();
               return;
@@ -462,6 +498,7 @@ namespace nvhttp {
   remove_session(const pair_session_t &sess) {
     if (pending_pin_unique_id == sess.client.uniqueID) {
       pending_pin_unique_id.clear();
+      tray_state::clear_pairing_required();
     }
     map_id_sess.erase(sess.client.uniqueID);
   }
@@ -687,6 +724,8 @@ namespace nvhttp {
     }
 
     async_response = std::decay_t<decltype(async_response.left())>();
+    pending_pin_unique_id.clear();
+    tray_state::clear_pairing_required();
     return true;
   }
 

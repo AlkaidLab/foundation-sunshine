@@ -71,6 +71,9 @@ namespace stream {
     join(session_t &session);
     state_e
     state(session_t &session);
+
+    bool
+    has_active_video_sessions();
     
 
 

@@ -59,7 +59,7 @@
 #include "process.h"
 #include "rtsp.h"
 #include "stream.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"

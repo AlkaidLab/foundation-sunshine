@@ -179,10 +179,14 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/network.cpp"
         "${CMAKE_SOURCE_DIR}/src/network.h"
         "${CMAKE_SOURCE_DIR}/src/move_by_copy.h"
-        "${CMAKE_SOURCE_DIR}/src/system_tray.cpp"
-        "${CMAKE_SOURCE_DIR}/src/system_tray.h"
-        "${CMAKE_SOURCE_DIR}/src/system_tray_i18n.cpp"
-        "${CMAKE_SOURCE_DIR}/src/system_tray_i18n.h"
+        "${CMAKE_SOURCE_DIR}/src/tray/system_tray.cpp"
+        "${CMAKE_SOURCE_DIR}/src/tray/system_tray.h"
+        "${CMAKE_SOURCE_DIR}/src/tray/system_tray_i18n.cpp"
+        "${CMAKE_SOURCE_DIR}/src/tray/system_tray_i18n.h"
+        "${CMAKE_SOURCE_DIR}/src/tray/tray_http.cpp"
+        "${CMAKE_SOURCE_DIR}/src/tray/tray_http.h"
+        "${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp"
+        "${CMAKE_SOURCE_DIR}/src/tray/tray_state.h"
         "${CMAKE_SOURCE_DIR}/src/task_pool.h"
         "${CMAKE_SOURCE_DIR}/src/thread_pool.h"
         "${CMAKE_SOURCE_DIR}/src/thread_safe.h"
@@ -198,6 +202,7 @@ endif()
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ASSETS_DIR="${SUNSHINE_ASSETS_DIR_DEF}")
 
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_TRAY=${SUNSHINE_TRAY})
+list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_GUI_TRAY=${SUNSHINE_GUI_TRAY})
 
 # Publisher metadata - escape spaces for proper compilation
 string(REPLACE " " "_" SUNSHINE_PUBLISHER_NAME_SAFE "${SUNSHINE_PUBLISHER_NAME}")

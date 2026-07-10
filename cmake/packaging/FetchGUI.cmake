@@ -19,21 +19,34 @@ if(NOT WIN32)
 endif()
 
 option(FETCH_GUI "Download pre-built GUI from GitHub Releases" ON)
+option(SUNSHINE_ALLOW_FLOATING_GUI "Allow downloading the moving latest GUI release (development only)" OFF)
 
 set(GUI_VERSION "latest" CACHE STRING "Sunshine GUI release tag (or 'latest')")
 set(GUI_REPO "qiin2333/sunshine-control-panel" CACHE STRING "GUI GitHub repository")
 
 set(GUI_DIR "${CMAKE_BINARY_DIR}/_gui" CACHE PATH "GUI binary directory" FORCE)
+set(_gui_exe_cached FALSE)
 
 if(NOT FETCH_GUI)
   message(STATUS "GUI download disabled (FETCH_GUI=OFF)")
   return()
 endif()
 
+if(GUI_VERSION STREQUAL "latest" AND NOT SUNSHINE_ALLOW_FLOATING_GUI)
+  message(FATAL_ERROR
+    "Refusing to package a floating Sunshine GUI release. Build the local GUI, "
+    "set GUI_VERSION to an explicit release tag, or opt in for development with "
+    "SUNSHINE_ALLOW_FLOATING_GUI=ON.")
+endif()
+
 # Skip if already downloaded
 if(EXISTS "${GUI_DIR}/sunshine-gui.exe")
-  message(STATUS "GUI binary already cached at ${GUI_DIR}")
-  return()
+  set(_gui_exe_cached TRUE)
+  if(EXISTS "${GUI_DIR}/WebView2Loader.dll")
+    message(STATUS "GUI binary already cached at ${GUI_DIR}")
+    return()
+  endif()
+  message(STATUS "GUI binary already cached at ${GUI_DIR}; checking for WebView2Loader.dll")
 endif()
 
 file(MAKE_DIRECTORY "${GUI_DIR}")
@@ -97,30 +110,32 @@ else()
 endif()
 
 # Download sunshine-gui.exe
-if(_gui_url)
-  message(STATUS "  Downloading sunshine-gui.exe ...")
-  execute_process(
-    COMMAND "${_CURL}" -fsSL
-      ${_auth_args}
-      -o "${GUI_DIR}/sunshine-gui.exe"
-      -L "${_gui_url}"
-    RESULT_VARIABLE _rc
-    ERROR_VARIABLE _err)
-elseif(_gui_api_url)
-  message(STATUS "  Downloading sunshine-gui.exe via API ...")
-  execute_process(
-    COMMAND "${_CURL}" -fsSL
-      ${_auth_args}
-      -H "Accept: application/octet-stream"
-      -o "${GUI_DIR}/sunshine-gui.exe"
-      "${_gui_api_url}"
-    RESULT_VARIABLE _rc
-    ERROR_VARIABLE _err)
-endif()
+if(NOT _gui_exe_cached)
+  if(_gui_url)
+    message(STATUS "  Downloading sunshine-gui.exe ...")
+    execute_process(
+      COMMAND "${_CURL}" -fsSL
+        ${_auth_args}
+        -o "${GUI_DIR}/sunshine-gui.exe"
+        -L "${_gui_url}"
+      RESULT_VARIABLE _rc
+      ERROR_VARIABLE _err)
+  elseif(_gui_api_url)
+    message(STATUS "  Downloading sunshine-gui.exe via API ...")
+    execute_process(
+      COMMAND "${_CURL}" -fsSL
+        ${_auth_args}
+        -H "Accept: application/octet-stream"
+        -o "${GUI_DIR}/sunshine-gui.exe"
+        "${_gui_api_url}"
+      RESULT_VARIABLE _rc
+      ERROR_VARIABLE _err)
+  endif()
 
-if(NOT _rc EQUAL 0)
-  message(WARNING "  Download failed (${_rc}): ${_err}")
-  file(REMOVE "${GUI_DIR}/sunshine-gui.exe")
+  if(NOT _rc EQUAL 0)
+    message(WARNING "  Download failed (${_rc}): ${_err}")
+    file(REMOVE "${GUI_DIR}/sunshine-gui.exe")
+  endif()
 endif()
 
 # Try downloading WebView2Loader.dll (optional, Tauri 2 may embed it)

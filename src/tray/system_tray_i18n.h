@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <map>
 
 namespace system_tray_i18n {
   // String key constants
@@ -24,7 +23,6 @@ namespace system_tray_i18n {
   extern const std::string KEY_VDD_CANCEL_CREATE_LOG;
   extern const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE;
   extern const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG;
-  extern const std::string KEY_CONFIGURATION;
   extern const std::string KEY_IMPORT_CONFIG;
   extern const std::string KEY_EXPORT_CONFIG;
   extern const std::string KEY_RESET_TO_DEFAULT;
@@ -36,10 +34,6 @@ namespace system_tray_i18n {
   extern const std::string KEY_VISIT_PROJECT;
   extern const std::string KEY_VISIT_PROJECT_SUNSHINE;
   extern const std::string KEY_VISIT_PROJECT_MOONLIGHT;
-  extern const std::string KEY_HELP_US;
-  extern const std::string KEY_DEVELOPER_YUNDI339;
-  extern const std::string KEY_DEVELOPER_QIIN;
-  extern const std::string KEY_SPONSOR_ALKaidLab;
   extern const std::string KEY_ADVANCED_SETTINGS;
   extern const std::string KEY_CLOSE_APP;
   extern const std::string KEY_CLOSE_APP_CONFIRM_TITLE;
@@ -61,13 +55,9 @@ namespace system_tray_i18n {
   extern const std::string KEY_CLICK_TO_COMPLETE_PAIRING;
   
   // MessageBox keys
-  extern const std::string KEY_ERROR_TITLE;
-  extern const std::string KEY_ERROR_NO_USER_SESSION;
   extern const std::string KEY_IMPORT_SUCCESS_TITLE;
-  extern const std::string KEY_IMPORT_SUCCESS_MSG;
   extern const std::string KEY_IMPORT_ERROR_TITLE;
   extern const std::string KEY_IMPORT_ERROR_WRITE;
-  extern const std::string KEY_IMPORT_ERROR_READ;
   extern const std::string KEY_IMPORT_ERROR_EXCEPTION;
   extern const std::string KEY_EXPORT_SUCCESS_TITLE;
   extern const std::string KEY_EXPORT_SUCCESS_MSG;
@@ -85,7 +75,6 @@ namespace system_tray_i18n {
   extern const std::string KEY_FILE_DIALOG_SELECT_IMPORT;
   extern const std::string KEY_FILE_DIALOG_SAVE_EXPORT;
   extern const std::string KEY_FILE_DIALOG_CONFIG_FILES;
-  extern const std::string KEY_FILE_DIALOG_ALL_FILES;
   
   // Get localized string
   std::string get_localized_string(const std::string& key);

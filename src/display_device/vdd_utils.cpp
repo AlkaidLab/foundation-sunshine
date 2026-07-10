@@ -30,8 +30,9 @@
 #include "src/platform/run_command.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
-#include "src/system_tray.h"
-#include "src/system_tray_i18n.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/system_tray_i18n.h"
+#include "src/tray/tray_state.h"
 #include "to_string.h"
 
 namespace pt = boost::property_tree;
@@ -641,6 +642,7 @@ namespace display_device {
       // Preferred path: IOCTL device interface. On success skip pipe entirely.
       switch (vdd_ioctl::send_command(command)) {
         case vdd_ioctl::result::success:
+          tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_vdd_menu();
 #endif
@@ -672,6 +674,7 @@ namespace display_device {
         return false;
       }
 
+      tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
@@ -713,6 +716,7 @@ namespace display_device {
       // 这是必要的，因为驱动程序卸载是异步的
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+      tray_state::set_vdd_state(false, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif

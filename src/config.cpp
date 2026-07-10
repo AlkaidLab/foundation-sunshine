@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -48,6 +49,10 @@ using namespace std::literals;
 
 #define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
 namespace config {
+
+  namespace {
+    std::mutex config_file_mutex;
+  }
 
   namespace nv {
 
@@ -1750,6 +1755,7 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 读取现有配置文件
       std::map<std::string, std::string> configMap;
@@ -1807,6 +1813,7 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {

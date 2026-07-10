@@ -1,5 +1,5 @@
 /**
- * @file src/system_tray.h
+ * @file src/tray/system_tray.h
  * @brief Declarations for the system tray icon and notification system.
  */
 #pragma once
@@ -10,55 +10,6 @@
  * @brief Handles the system tray icon and notification system.
  */
 namespace system_tray {
-  /**
-   * @brief Callback for opening the UI from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_open_ui_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for opening GitHub Sponsors from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_donate_github_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for opening Patreon from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_donate_patreon_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for opening PayPal donation from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_donate_paypal_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for resetting display device configuration.
-   * @param item The tray menu item.
-   */
-  void
-  tray_reset_display_device_config_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for restarting Sunshine from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_restart_cb(struct tray_menu *item);
-
-  /**
-   * @brief Callback for exiting Sunshine from the system tray.
-   * @param item The tray menu item.
-   */
-  void
-  tray_quit_cb(struct tray_menu *item);
-
   /**
    * @brief Initializes the system tray without starting a loop.
    * @return 0 if initialization was successful, non-zero otherwise.
@@ -118,13 +69,6 @@ namespace system_tray {
    * @return 0 if initialization was successful, non-zero otherwise.
    */
   int init_tray_threaded();
-
-  // Internationalization support
-  std::string get_localized_string(const std::string& key);
-  std::wstring get_localized_wstring(const std::string& key);
-  
-  // GUI process management
-  void terminate_gui_processes();
 
   // VDD menu management
   void update_vdd_menu();

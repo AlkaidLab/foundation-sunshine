@@ -80,7 +80,16 @@ endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/platform/windows/windows.rc.in" windows.rc @ONLY)
 
-# set(SUNSHINE_TRAY 0)
+if(SUNSHINE_ENABLE_TRAY AND SUNSHINE_ENABLE_LEGACY_TRAY)
+    set(SUNSHINE_TRAY 1)
+    set(SUNSHINE_GUI_TRAY 0)
+elseif(SUNSHINE_ENABLE_TRAY)
+    set(SUNSHINE_TRAY 0)
+    set(SUNSHINE_GUI_TRAY 1)
+else()
+    set(SUNSHINE_TRAY 0)
+    set(SUNSHINE_GUI_TRAY 0)
+endif()
 
 set(PLATFORM_TARGET_FILES
         "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
@@ -154,7 +163,7 @@ list(PREPEND PLATFORM_LIBRARIES
         wsock32
 )
 
-if(SUNSHINE_ENABLE_TRAY)
+if(SUNSHINE_ENABLE_TRAY AND SUNSHINE_ENABLE_LEGACY_TRAY)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_windows.c")
 endif()

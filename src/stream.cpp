@@ -45,7 +45,8 @@ extern "C" {
 #include "perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "thread_safe.h"
 #include "utility.h"
 
@@ -2998,6 +2999,11 @@ namespace stream {
       return session.state.load(std::memory_order_relaxed);
     }
 
+    bool
+    has_active_video_sessions() {
+      return running_non_control_only_sessions.load(std::memory_order_relaxed) > 0;
+    }
+
     void
     stop(session_t &session) {
       while_starting_do_nothing(session.state);
@@ -3065,12 +3071,19 @@ namespace stream {
 
           bool restore_display_state { true };
           if (proc::proc.running()) {
+            tray_state::set_paused(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
             system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
 #endif
 
             // TODO: make this configurable per app
             restore_display_state = false;
+          }
+          else {
+            tray_state::set_idle(proc::proc.get_last_run_app_name());
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+            system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
+#endif
           }
 
           if (restore_display_state) {
@@ -3187,6 +3200,7 @@ namespace stream {
           }
 
           platf::streaming_will_start();
+          tray_state::set_streaming(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif

@@ -22,7 +22,7 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
 #include "video.h"
@@ -445,7 +445,9 @@ main(int argc, char *argv[]) {
 
   mainThreadLoop(shutdown_event);
 
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   system_tray::end_tray();
+#endif
   try {
     display_device::session_t::get().restore_state();
   }

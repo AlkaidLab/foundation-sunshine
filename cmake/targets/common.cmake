@@ -78,7 +78,8 @@ if(BUILD_DOCS)
 endif()
 
 # tests
-if(BUILD_TESTS)
+if(BUILD_TESTS OR BUILD_TRAY_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 

@@ -128,7 +128,7 @@ set(CPACK_COMPONENT_APPLICATION_DISPLAY_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_COMPONENT_APPLICATION_DESCRIPTION "${CMAKE_PROJECT_NAME} main application and required components.")
 set(CPACK_COMPONENT_APPLICATION_GROUP "Core")
 set(CPACK_COMPONENT_APPLICATION_REQUIRED true)
-set(CPACK_COMPONENT_APPLICATION_DEPENDS assets)
+set(CPACK_COMPONENT_APPLICATION_DEPENDS "assets;gui")
 
 # Virtual Display Driver
 set(CPACK_COMPONENT_VDD_DISPLAY_NAME "Zako Display Driver")
@@ -147,6 +147,12 @@ set(CPACK_COMPONENT_ASSETS_DISPLAY_NAME "Required Assets")
 set(CPACK_COMPONENT_ASSETS_DESCRIPTION "Shaders, default box art, and web UI.")
 set(CPACK_COMPONENT_ASSETS_GROUP "Core")
 set(CPACK_COMPONENT_ASSETS_REQUIRED true)
+
+# Windows user-session agent and tray owner
+set(CPACK_COMPONENT_GUI_DISPLAY_NAME "Sunshine GUI and Tray Agent")
+set(CPACK_COMPONENT_GUI_DESCRIPTION "Required Windows tray, pairing UI, and user-session services.")
+set(CPACK_COMPONENT_GUI_GROUP "Core")
+set(CPACK_COMPONENT_GUI_REQUIRED true)
 
 # audio tool
 set(CPACK_COMPONENT_AUDIO_DISPLAY_NAME "audio-info")

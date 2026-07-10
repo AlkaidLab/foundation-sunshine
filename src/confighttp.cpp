@@ -21,6 +21,7 @@
 #include <sstream>
 #include <cstdio>
 #include <ctime>
+#include <thread>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -52,8 +53,8 @@
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"
-#include "src/display_device/display_device.h"
 #include "src/display_device/to_string.h"
+#include "src/tray/tray_http.h"
 #include "stream.h"
 #include "utility.h"
 #include "uuid.h"
@@ -3190,6 +3191,17 @@ namespace confighttp {
     // basic-auth via the lambda below.
     clipboard_http::register_routes(server,
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
+        return authenticate(std::move(resp), std::move(req));
+      });
+    tray_http::register_routes(server,
+      [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
+        const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+        if (config::sunshine.username.empty() && net::from_address(address) == net::PC) {
+          return true;
+        }
+        return authenticate(std::move(resp), std::move(req));
+      },
+      [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;

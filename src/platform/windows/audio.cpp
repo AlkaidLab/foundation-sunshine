@@ -18,9 +18,11 @@
 #include "mic_write.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include "src/system_tray.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/tray_state.h"
 
 // Must be the last included file
 // clang-format off
@@ -952,6 +954,12 @@ namespace platf::audio {
 
       last_virtual_sink_notification = now;
       BOOST_LOG(info) << "Virtual audio sink is being kept selected for host audio streaming";
+      const auto notification_id = tray_state::set_notification(
+        "Audio device kept for streaming",
+        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+      task_pool.pushDelayed([notification_id]() {
+        tray_state::clear_notification_if(notification_id);
+      }, std::chrono::seconds(10));
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::show_notification(
         "Audio device kept for streaming",

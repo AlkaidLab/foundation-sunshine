@@ -1,5 +1,7 @@
 #include "system_tray_i18n.h"
-#include "config.h"
+#include "src/config.h"
+
+#include <map>
 
 #ifdef _WIN32
   #include <windows.h>
@@ -26,7 +28,6 @@ namespace system_tray_i18n {
   const std::string KEY_VDD_CANCEL_CREATE_LOG = "vdd_cancel_create_log";
   const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE = "vdd_persistent_confirm_title";
   const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG = "vdd_persistent_confirm_msg";
-  const std::string KEY_CONFIGURATION = "configuration";
   const std::string KEY_IMPORT_CONFIG = "import_config";
   const std::string KEY_EXPORT_CONFIG = "export_config";
   const std::string KEY_RESET_TO_DEFAULT = "reset_to_default";
@@ -38,10 +39,6 @@ namespace system_tray_i18n {
   const std::string KEY_VISIT_PROJECT = "visit_project";
   const std::string KEY_VISIT_PROJECT_SUNSHINE = "visit_project_sunshine";
   const std::string KEY_VISIT_PROJECT_MOONLIGHT = "visit_project_moonlight";
-  const std::string KEY_HELP_US = "help_us";
-  const std::string KEY_DEVELOPER_YUNDI339 = "developer_yundi339";
-  const std::string KEY_DEVELOPER_QIIN = "developer_qiin";
-  const std::string KEY_SPONSOR_ALKaidLab = "sponsor_alkaidlab";
   const std::string KEY_ADVANCED_SETTINGS = "advanced_settings";
   const std::string KEY_CLOSE_APP = "clear_cache";
   const std::string KEY_CLOSE_APP_CONFIRM_TITLE = "clear_cache_confirm_title";
@@ -63,13 +60,9 @@ namespace system_tray_i18n {
   const std::string KEY_CLICK_TO_COMPLETE_PAIRING = "click_to_complete_pairing";
   
   // MessageBox keys
-  const std::string KEY_ERROR_TITLE = "error_title";
-  const std::string KEY_ERROR_NO_USER_SESSION = "error_no_user_session";
   const std::string KEY_IMPORT_SUCCESS_TITLE = "import_success_title";
-  const std::string KEY_IMPORT_SUCCESS_MSG = "import_success_msg";
   const std::string KEY_IMPORT_ERROR_TITLE = "import_error_title";
   const std::string KEY_IMPORT_ERROR_WRITE = "import_error_write";
-  const std::string KEY_IMPORT_ERROR_READ = "import_error_read";
   const std::string KEY_IMPORT_ERROR_EXCEPTION = "import_error_exception";
   const std::string KEY_EXPORT_SUCCESS_TITLE = "export_success_title";
   const std::string KEY_EXPORT_SUCCESS_MSG = "export_success_msg";
@@ -87,7 +80,6 @@ namespace system_tray_i18n {
   const std::string KEY_FILE_DIALOG_SELECT_IMPORT = "file_dialog_select_import";
   const std::string KEY_FILE_DIALOG_SAVE_EXPORT = "file_dialog_save_export";
   const std::string KEY_FILE_DIALOG_CONFIG_FILES = "file_dialog_config_files";
-  const std::string KEY_FILE_DIALOG_ALL_FILES = "file_dialog_all_files";
 
   // Default English strings
   const std::map<std::string, std::string> DEFAULT_STRINGS = {
@@ -108,7 +100,6 @@ namespace system_tray_i18n {
     { KEY_VDD_CANCEL_CREATE_LOG, "User cancelled creating virtual display" },
     { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "Keep Virtual Display Enabled" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "By enabling this option, the virtual display will NOT be closed after you stop streaming.\n\nDo you want to enable this feature?" },
-    { KEY_CONFIGURATION, "Configuration" },
     { KEY_IMPORT_CONFIG, "Import Config" },
     { KEY_EXPORT_CONFIG, "Export Config" },
     { KEY_RESET_TO_DEFAULT, "Reset Config" },
@@ -120,10 +111,6 @@ namespace system_tray_i18n {
     { KEY_VISIT_PROJECT, "Visit Project" },
     { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
     { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
-    { KEY_HELP_US, "Sponsor Us" },
-    { KEY_DEVELOPER_YUNDI339, "Developer: Yundi339" },
-    { KEY_DEVELOPER_QIIN, "Developer: qiin2333" },
-    { KEY_SPONSOR_ALKaidLab, "Sponsor AlkaidLab" },
     { KEY_ADVANCED_SETTINGS, "Advanced Settings" },
     { KEY_CLOSE_APP, "Clear Cache" },
     { KEY_CLOSE_APP_CONFIRM_TITLE, "Clear Cache" },
@@ -141,13 +128,9 @@ namespace system_tray_i18n {
     { KEY_APPLICATION_STOPPED_MSG, "Application %s successfully stopped" },
     { KEY_INCOMING_PAIRING_REQUEST, "Incoming PIN Request From: %s" },
     { KEY_CLICK_TO_COMPLETE_PAIRING, "Click here to enter PIN" },
-    { KEY_ERROR_TITLE, "Error" },
-    { KEY_ERROR_NO_USER_SESSION, "Cannot open file dialog: No active user session found." },
     { KEY_IMPORT_SUCCESS_TITLE, "Import Success" },
-    { KEY_IMPORT_SUCCESS_MSG, "Configuration imported successfully!\nPlease restart Sunshine to apply changes." },
     { KEY_IMPORT_ERROR_TITLE, "Import Error" },
     { KEY_IMPORT_ERROR_WRITE, "Failed to import configuration file." },
-    { KEY_IMPORT_ERROR_READ, "Failed to read the selected configuration file." },
     { KEY_IMPORT_ERROR_EXCEPTION, "An error occurred while importing configuration." },
     { KEY_EXPORT_SUCCESS_TITLE, "Export Success" },
     { KEY_EXPORT_SUCCESS_MSG, "Configuration exported successfully!" },
@@ -164,8 +147,7 @@ namespace system_tray_i18n {
     { KEY_RESET_ERROR_EXCEPTION, "An error occurred while resetting configuration." },
     { KEY_FILE_DIALOG_SELECT_IMPORT, "Select Configuration File to Import" },
     { KEY_FILE_DIALOG_SAVE_EXPORT, "Save Configuration File As" },
-    { KEY_FILE_DIALOG_CONFIG_FILES, "Configuration Files" },
-    { KEY_FILE_DIALOG_ALL_FILES, "All Files" }
+    { KEY_FILE_DIALOG_CONFIG_FILES, "Configuration Files" }
   };
 
   // Chinese strings
@@ -187,7 +169,6 @@ namespace system_tray_i18n {
     { KEY_VDD_CANCEL_CREATE_LOG, "用户取消创建基地显示器" },
     { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "保持开启虚拟显示器" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "启用此选项后，在串流结束后基地显示器将不会被自动关闭。\n\n确定要开启此功能吗？" },
-    { KEY_CONFIGURATION, "配置" },
     { KEY_IMPORT_CONFIG, "导入配置" },
     { KEY_EXPORT_CONFIG, "导出配置" },
     { KEY_RESET_TO_DEFAULT, "重置配置" },
@@ -199,10 +180,6 @@ namespace system_tray_i18n {
     { KEY_VISIT_PROJECT, "访问项目地址" },
     { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
     { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
-    { KEY_HELP_US, "赞助我们" },
-    { KEY_DEVELOPER_YUNDI339, "开发者：Yundi339" },
-    { KEY_DEVELOPER_QIIN, "开发者：qiin2333" },
-    { KEY_SPONSOR_ALKaidLab, "赞助 AlkaidLab" },
     { KEY_ADVANCED_SETTINGS, "高级设置" },
     { KEY_CLOSE_APP, "清理缓存" },
     { KEY_CLOSE_APP_CONFIRM_TITLE, "清理缓存" },
@@ -220,13 +197,9 @@ namespace system_tray_i18n {
     { KEY_APPLICATION_STOPPED_MSG, "应用 %s 已成功停止" },
     { KEY_INCOMING_PAIRING_REQUEST, "来自 %s 的PIN请求" },
     { KEY_CLICK_TO_COMPLETE_PAIRING, "点击此处完成PIN验证" },
-    { KEY_ERROR_TITLE, "错误" },
-    { KEY_ERROR_NO_USER_SESSION, "无法打开文件对话框：未找到活动的用户会话。" },
     { KEY_IMPORT_SUCCESS_TITLE, "导入成功" },
-    { KEY_IMPORT_SUCCESS_MSG, "配置已成功导入！\n请重新启动 Sunshine 以应用更改。" },
     { KEY_IMPORT_ERROR_TITLE, "导入失败" },
     { KEY_IMPORT_ERROR_WRITE, "无法写入配置文件。" },
-    { KEY_IMPORT_ERROR_READ, "无法读取所选的配置文件。" },
     { KEY_IMPORT_ERROR_EXCEPTION, "导入配置时发生错误。" },
     { KEY_EXPORT_SUCCESS_TITLE, "导出成功" },
     { KEY_EXPORT_SUCCESS_MSG, "配置已成功导出！" },
@@ -243,8 +216,7 @@ namespace system_tray_i18n {
     { KEY_RESET_ERROR_EXCEPTION, "重置配置时发生错误。" },
     { KEY_FILE_DIALOG_SELECT_IMPORT, "选择要导入的配置文件" },
     { KEY_FILE_DIALOG_SAVE_EXPORT, "配置文件另存为" },
-    { KEY_FILE_DIALOG_CONFIG_FILES, "配置文件" },
-    { KEY_FILE_DIALOG_ALL_FILES, "所有文件" }
+    { KEY_FILE_DIALOG_CONFIG_FILES, "配置文件" }
   };
 
   const std::map<std::string, std::string> JAPANESE_STRINGS = {
@@ -265,7 +237,6 @@ namespace system_tray_i18n {
     { KEY_VDD_CANCEL_CREATE_LOG, "ユーザーが仮想ディスプレイの作成をキャンセルしました" },
     { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "仮想ディスプレイを有効に保つ" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "このオプションを有効にすると、ストリーミング終了後に仮想ディスプレイは**自動的に閉じられません**。\n\nこの機能を有効にしますか？" },
-    { KEY_CONFIGURATION, "設定" },
     { KEY_IMPORT_CONFIG, "設定をインポート" },
     { KEY_EXPORT_CONFIG, "設定をエクスポート" },
     { KEY_RESET_TO_DEFAULT, "設定をリセット" },
@@ -277,10 +248,6 @@ namespace system_tray_i18n {
     { KEY_VISIT_PROJECT, "プロジェクトアドレスを訪問" },
     { KEY_VISIT_PROJECT_SUNSHINE, "Sunshine" },
     { KEY_VISIT_PROJECT_MOONLIGHT, "Moonlight" },
-    { KEY_HELP_US, "スポンサー" },
-    { KEY_DEVELOPER_YUNDI339, "開発者：Yundi339" },
-    { KEY_DEVELOPER_QIIN, "開発者：qiin2333" },
-    { KEY_SPONSOR_ALKaidLab, "AlkaidLabをスポンサー" },
     { KEY_ADVANCED_SETTINGS, "詳細設定" },
     { KEY_CLOSE_APP, "キャッシュをクリア" },
     { KEY_CLOSE_APP_CONFIRM_TITLE, "キャッシュをクリア" },
@@ -298,13 +265,9 @@ namespace system_tray_i18n {
     { KEY_APPLICATION_STOPPED_MSG, "アプリケーション %s が正常に停止しました" },
     { KEY_INCOMING_PAIRING_REQUEST, "%s からのPIN要求" },
     { KEY_CLICK_TO_COMPLETE_PAIRING, "クリックしてPIN認証を完了" },
-    { KEY_ERROR_TITLE, "エラー" },
-    { KEY_ERROR_NO_USER_SESSION, "ファイルダイアログを開けません：アクティブなユーザーセッションが見つかりません。" },
     { KEY_IMPORT_SUCCESS_TITLE, "インポート成功" },
-    { KEY_IMPORT_SUCCESS_MSG, "設定のインポートに成功しました！\n変更を適用するにはSunshineを再起動してください。" },
     { KEY_IMPORT_ERROR_TITLE, "インポート失敗" },
     { KEY_IMPORT_ERROR_WRITE, "設定ファイルを書き込めませんでした。" },
-    { KEY_IMPORT_ERROR_READ, "選択した設定ファイルを読み取れませんでした。" },
     { KEY_IMPORT_ERROR_EXCEPTION, "設定のインポート中にエラーが発生しました。" },
     { KEY_EXPORT_SUCCESS_TITLE, "エクスポート成功" },
     { KEY_EXPORT_SUCCESS_MSG, "設定のエクスポートに成功しました！" },
@@ -321,8 +284,7 @@ namespace system_tray_i18n {
     { KEY_RESET_ERROR_EXCEPTION, "設定のリセット中にエラーが発生しました。" },
     { KEY_FILE_DIALOG_SELECT_IMPORT, "インポートする設定ファイルを選択" },
     { KEY_FILE_DIALOG_SAVE_EXPORT, "設定ファイルに名前を付けて保存" },
-    { KEY_FILE_DIALOG_CONFIG_FILES, "設定ファイル" },
-    { KEY_FILE_DIALOG_ALL_FILES, "すべてのファイル" }
+    { KEY_FILE_DIALOG_CONFIG_FILES, "設定ファイル" }
   };
 
   // Get current locale from config

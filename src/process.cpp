@@ -29,7 +29,9 @@
 #include "logging.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
-#include "system_tray.h"
+#include "stream.h"
+#include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "utility.h"
 
 #ifdef _WIN32
@@ -385,7 +387,8 @@ namespace proc {
     bool has_run = _app_id > 0;
     // Only show the Stopped notification if we actually have an app to stop
     // Since terminate() is always run when a new app has started
-    if (proc::proc.get_last_run_app_name().length() > 0 && has_run) {
+    if (proc::proc.get_last_run_app_name().length() > 0 && has_run && !stream::session::has_active_video_sessions()) {
+      tray_state::set_idle(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
 #endif
