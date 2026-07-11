@@ -23,6 +23,8 @@ namespace tray_state {
     bool keep_enabled = false;
     bool headless_create_enabled = false;
     bool cooldown = false;
+    bool awaiting_confirmation = false;
+    std::uint64_t confirmation_operation_id = 0;
   };
 
   struct notification_t {
@@ -91,6 +93,9 @@ namespace tray_state {
 
   void
   set_vdd_state(bool active, bool keep_enabled, bool headless_create_enabled, bool cooldown);
+
+  void
+  set_vdd_confirmation(bool awaiting_confirmation, std::uint64_t operation_id = 0);
 
   std::uint64_t
   begin_operation(const std::string &action);

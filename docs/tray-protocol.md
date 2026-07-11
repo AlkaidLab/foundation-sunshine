@@ -51,13 +51,21 @@ The `owner` field describes the packaged tray strategy (`gui`, `core`, or
 Only fields relevant to the selected action are required. Supported actions
 are `vdd_create`, `vdd_destroy`, `vdd_toggle_keep_enabled`,
 `vdd_toggle_headless_create`, `clear_app`, `reset_display_device_config`,
-`restart`, and `notification_ack`.
+`restart`, and `notification_ack`. While `vdd.awaiting_confirmation` is true,
+the GUI answers with `vdd_confirm_keep`, an `enabled` decision, and the matching
+`operation_id`.
 
 VDD creation is non-interactive inside Core. A graphical provider must obtain
-user confirmation before requesting it. Long-running actions return an
-`operation_id`; their current `running`, `succeeded`, or `failed` result is
-published in the state `operation` object. Operations execute serially and are
-joined during Core shutdown.
+user confirmation before requesting it. After creation and topology setup, Core
+starts a 20-second confirmation deadline and publishes it through tray state.
+The GUI presents the timed keep dialog in the user session. A negative decision
+or missing confirmation closes the VDD; Core owns the deadline so rollback still
+works if the GUI exits. Matching operation IDs prevent an old timer or dialog
+from closing a newer VDD.
+
+Long-running actions return an `operation_id`; their current `running`,
+`succeeded`, or `failed` result is published in the state `operation` object.
+Operations execute serially and are joined during Core shutdown.
 
 ## Future providers
 

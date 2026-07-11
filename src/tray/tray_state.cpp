@@ -268,6 +268,17 @@ namespace tray_state {
     notify_changed();
   }
 
+  void
+  set_vdd_confirmation(const bool awaiting_confirmation, const std::uint64_t operation_id) {
+    {
+      std::lock_guard lock { state_mutex };
+      current_state.vdd.awaiting_confirmation = awaiting_confirmation;
+      current_state.vdd.confirmation_operation_id = awaiting_confirmation ? operation_id : 0;
+      touch_locked();
+    }
+    notify_changed();
+  }
+
   std::uint64_t
   begin_operation(const std::string &action) {
     std::uint64_t operation_id;
@@ -330,6 +341,8 @@ namespace tray_state {
           { "keep_enabled", snapshot.vdd.keep_enabled },
           { "headless_create_enabled", snapshot.vdd.headless_create_enabled },
           { "cooldown", snapshot.vdd.cooldown },
+          { "awaiting_confirmation", snapshot.vdd.awaiting_confirmation },
+          { "confirmation_operation_id", snapshot.vdd.confirmation_operation_id },
         } },
       { "notification",
         {

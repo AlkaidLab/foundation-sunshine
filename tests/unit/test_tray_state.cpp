@@ -17,6 +17,7 @@ protected:
     tray_state::clear_pairing_required();
     tray_state::clear_notification();
     tray_state::set_vdd_state(false, false, false, false);
+    tray_state::set_vdd_confirmation(false);
     const auto operation_id = tray_state::begin_operation("test_reset");
     tray_state::complete_operation(operation_id, true);
     tray_state::set_idle();
@@ -56,6 +57,7 @@ TEST_F(TrayStateTest, PublishesStreamingLifecycle) {
 
 TEST_F(TrayStateTest, SerializesPairingAndVddState) {
   tray_state::set_vdd_state(true, true, false, true);
+  tray_state::set_vdd_confirmation(true, 42);
   tray_state::set_pairing_required("Moonlight Client");
 
   const auto json = tray_state::to_json();
@@ -69,6 +71,13 @@ TEST_F(TrayStateTest, SerializesPairingAndVddState) {
   EXPECT_TRUE(json.at("vdd").at("keep_enabled"));
   EXPECT_FALSE(json.at("vdd").at("headless_create_enabled"));
   EXPECT_TRUE(json.at("vdd").at("cooldown"));
+  EXPECT_TRUE(json.at("vdd").at("awaiting_confirmation"));
+  EXPECT_EQ(json.at("vdd").at("confirmation_operation_id"), 42);
+
+  tray_state::set_vdd_confirmation(false);
+  const auto cleared_vdd = tray_state::to_json().at("vdd");
+  EXPECT_FALSE(cleared_vdd.at("awaiting_confirmation"));
+  EXPECT_EQ(cleared_vdd.at("confirmation_operation_id"), 0);
 
   tray_state::clear_pairing_required();
   const auto restored = tray_state::to_json();

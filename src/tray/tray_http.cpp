@@ -30,6 +30,7 @@ namespace tray_http {
   namespace {
     std::atomic<bool> tray_vdd_action_cooldown { false };
     std::atomic<bool> tray_vdd_action_running { false };
+    std::atomic<std::uint64_t> tray_vdd_confirmation_operation_id { 0 };
     std::atomic<bool> tray_app_termination_running { false };
     std::mutex tray_action_mutex;
 
@@ -206,6 +207,9 @@ namespace tray_http {
         10s);
     }
 
+    void
+    schedule_vdd_confirmation_timeout(std::uint64_t operation_id);
+
     bool
     dispatch_tray_vdd_action(bool create, const std::uint64_t operation_id) {
       try {
@@ -217,7 +221,17 @@ namespace tray_http {
             const bool success = create ?
                                    display_device::session_t::get().create_vdd_monitor_noninteractive() :
                                    display_device::session_t::get().destroy_vdd_monitor();
-            finish_tray_vdd_action(operation_id, success, create ? "Failed to create virtual display"sv : "Failed to close virtual display"sv);
+            if (create && success) {
+              tray_vdd_action_running = false;
+              tray_vdd_confirmation_operation_id = operation_id;
+              tray_state::set_vdd_confirmation(true, operation_id);
+              update_tray_vdd_state();
+              tray_state::complete_operation(operation_id, true, "Virtual display created; awaiting confirmation");
+              schedule_vdd_confirmation_timeout(operation_id);
+            }
+            else {
+              finish_tray_vdd_action(operation_id, success, create ? "Failed to create virtual display"sv : "Failed to close virtual display"sv);
+            }
           }
           catch (const std::exception &e) {
             BOOST_LOG(error) << "VDD "sv << action_name << " action failed: "sv << e.what();
@@ -230,6 +244,28 @@ namespace tray_http {
         BOOST_LOG(error) << "Failed to dispatch VDD action: "sv << e.what();
         return false;
       }
+    }
+
+    void
+    schedule_vdd_confirmation_timeout(const std::uint64_t operation_id) {
+      task_pool.pushDelayed([operation_id]() {
+        std::unique_lock lock { tray_action_mutex };
+        auto expected_operation_id = operation_id;
+        if (!tray_vdd_confirmation_operation_id.compare_exchange_strong(expected_operation_id, 0)) {
+          return;
+        }
+
+        tray_state::set_vdd_confirmation(false);
+        tray_vdd_action_running = true;
+        lock.unlock();
+        update_tray_vdd_state();
+        tray_state::set_notification("Virtual display", "Virtual display was not confirmed and was closed", "default");
+        if (!dispatch_tray_vdd_action(false, operation_id)) {
+          tray_vdd_action_running = false;
+          update_tray_vdd_state();
+        }
+      },
+        20s);
     }
 
     bool
@@ -260,14 +296,18 @@ namespace tray_http {
     }
 
     nlohmann::json
-    run_tray_action(const std::string &action, const std::optional<bool> enabled, const std::optional<std::uint64_t> notification_id) {
+    run_tray_action(
+      const std::string &action,
+      const std::optional<bool> enabled,
+      const std::optional<std::uint64_t> notification_id,
+      const std::optional<std::uint64_t> operation_id) {
       std::unique_lock lock { tray_action_mutex };
 
-      const auto start_vdd_action = [&](const bool create) {
+      const auto start_vdd_action = [&](const bool create, const std::string_view operation_action) {
         const auto dispatch_error = create ? "Failed to start VDD create action"sv : "Failed to start VDD close action"sv;
         const auto requested_message = create ? "VDD create requested"sv : "VDD close requested"sv;
         tray_vdd_action_running = true;
-        const auto operation_id = tray_state::begin_operation(action);
+        const auto operation_id = tray_state::begin_operation(std::string { operation_action });
         lock.unlock();
         update_tray_vdd_state();
         if (!dispatch_tray_vdd_action(create, operation_id)) {
@@ -279,6 +319,34 @@ namespace tray_http {
         return action_success(requested_message, operation_id);
       };
 
+      if (action == "vdd_confirm_keep") {
+        if (!enabled || !operation_id || *operation_id == 0) {
+          return action_error("enabled and operation_id are required");
+        }
+        auto expected_operation_id = *operation_id;
+        if (!tray_vdd_confirmation_operation_id.compare_exchange_strong(expected_operation_id, 0)) {
+          return action_error("Virtual display confirmation is stale");
+        }
+
+        tray_state::set_vdd_confirmation(false);
+        if (*enabled) {
+          return action_success("Virtual display retained");
+        }
+        if (!tray_vdd_active()) {
+          update_tray_vdd_state();
+          return action_success("Virtual display is already closed");
+        }
+        tray_vdd_action_running = true;
+        lock.unlock();
+        update_tray_vdd_state();
+        if (!dispatch_tray_vdd_action(false, *operation_id)) {
+          tray_vdd_action_running = false;
+          update_tray_vdd_state();
+          return action_error("Failed to start virtual display rollback");
+        }
+        return action_success("Virtual display rollback requested");
+      }
+
       if (action == "vdd_create") {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load() || tray_app_termination_running.load()) {
           return action_error("Another tray action is already in progress or VDD is cooling down");
@@ -287,7 +355,7 @@ namespace tray_http {
           update_tray_vdd_state();
           return action_error("VDD is already active");
         }
-        return start_vdd_action(true);
+        return start_vdd_action(true, action);
       }
 
       if (action == "vdd_destroy") {
@@ -302,7 +370,10 @@ namespace tray_http {
           update_tray_vdd_state();
           return action_error("VDD keep-enabled mode is active");
         }
-        return start_vdd_action(false);
+        if (tray_vdd_confirmation_operation_id.exchange(0) != 0) {
+          tray_state::set_vdd_confirmation(false);
+        }
+        return start_vdd_action(false, action);
       }
 
       if (action == "vdd_toggle_keep_enabled") {
@@ -427,7 +498,14 @@ namespace tray_http {
           }
           notification_id = body.at("notification_id").get<std::uint64_t>();
         }
-        auto result = run_tray_action(action, enabled, notification_id);
+        std::optional<std::uint64_t> operation_id;
+        if (body.contains("operation_id")) {
+          if (!body.at("operation_id").is_number_unsigned()) {
+            throw std::invalid_argument("operation_id must be an unsigned integer");
+          }
+          operation_id = body.at("operation_id").get<std::uint64_t>();
+        }
+        auto result = run_tray_action(action, enabled, notification_id, operation_id);
         result["action"] = action;
         result["tray_state"] = tray_state::to_json();
         send_json(std::move(response), result);
