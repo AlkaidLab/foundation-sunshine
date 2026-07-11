@@ -108,19 +108,24 @@ namespace tray_http {
         30s);
     }
 
-    void
-    send_json(resp_https_t response, const nlohmann::json &body) {
+    SimpleWeb::CaseInsensitiveMultimap
+    json_response_headers() {
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       headers.emplace("X-Frame-Options", "DENY");
       headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+      return headers;
+    }
+
+    void
+    send_json(resp_https_t response, const nlohmann::json &body) {
+      auto headers = json_response_headers();
       response->write(body.dump(), headers);
     }
 
     void
     send_bad_request(resp_https_t response, const std::string &error) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "application/json");
+      auto headers = json_response_headers();
       response->write(SimpleWeb::StatusCode::client_error_bad_request, nlohmann::json {
                                                                          { "status", false },
                                                                          { "error", error },
@@ -143,6 +148,26 @@ namespace tray_http {
       }
 
       return true;
+    }
+
+    nlohmann::json
+    action_success(const std::string_view message, const std::optional<std::uint64_t> operation_id = std::nullopt) {
+      nlohmann::json result {
+        { "status", true },
+        { "message", message },
+      };
+      if (operation_id) {
+        result["operation_id"] = *operation_id;
+      }
+      return result;
+    }
+
+    nlohmann::json
+    action_error(const std::string_view error) {
+      return {
+        { "status", false },
+        { "error", error },
+      };
     }
 
     bool
@@ -238,88 +263,74 @@ namespace tray_http {
     run_tray_action(const std::string &action, const std::optional<bool> enabled, const std::optional<std::uint64_t> notification_id) {
       std::unique_lock lock { tray_action_mutex };
 
-      if (action == "vdd_create") {
-        if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load() || tray_app_termination_running.load()) {
-          return { { "status", false }, { "error", "Another tray action is already in progress or VDD is cooling down" } };
-        }
-        if (tray_vdd_active()) {
-          update_tray_vdd_state();
-          return { { "status", false }, { "error", "VDD is already active" } };
-        }
-
+      const auto start_vdd_action = [&](const bool create) {
+        const auto dispatch_error = create ? "Failed to start VDD create action"sv : "Failed to start VDD close action"sv;
+        const auto requested_message = create ? "VDD create requested"sv : "VDD close requested"sv;
         tray_vdd_action_running = true;
         const auto operation_id = tray_state::begin_operation(action);
         lock.unlock();
         update_tray_vdd_state();
-        if (!dispatch_tray_vdd_action(true, operation_id)) {
+        if (!dispatch_tray_vdd_action(create, operation_id)) {
           tray_vdd_action_running = false;
-          tray_state::complete_operation(operation_id, false, {}, "Failed to start VDD create action");
+          tray_state::complete_operation(operation_id, false, {}, std::string { dispatch_error });
           update_tray_vdd_state();
-          return { { "status", false }, { "error", "Failed to start VDD create action" } };
+          return action_error(dispatch_error);
         }
+        return action_success(requested_message, operation_id);
+      };
 
-        return { { "status", true }, { "message", "VDD create requested" }, { "operation_id", operation_id } };
+      if (action == "vdd_create") {
+        if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load() || tray_app_termination_running.load()) {
+          return action_error("Another tray action is already in progress or VDD is cooling down");
+        }
+        if (tray_vdd_active()) {
+          update_tray_vdd_state();
+          return action_error("VDD is already active");
+        }
+        return start_vdd_action(true);
       }
 
       if (action == "vdd_destroy") {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load() || tray_app_termination_running.load()) {
-          return { { "status", false }, { "error", "Another tray action is already in progress or VDD is cooling down" } };
+          return action_error("Another tray action is already in progress or VDD is cooling down");
         }
         if (!tray_vdd_active()) {
           update_tray_vdd_state();
-          return { { "status", false }, { "error", "VDD is not active" } };
+          return action_error("VDD is not active");
         }
         if (config::video.vdd_keep_enabled) {
           update_tray_vdd_state();
-          return { { "status", false }, { "error", "VDD keep-enabled mode is active" } };
+          return action_error("VDD keep-enabled mode is active");
         }
-
-        tray_vdd_action_running = true;
-        const auto operation_id = tray_state::begin_operation(action);
-        lock.unlock();
-        update_tray_vdd_state();
-        if (!dispatch_tray_vdd_action(false, operation_id)) {
-          tray_vdd_action_running = false;
-          tray_state::complete_operation(operation_id, false, {}, "Failed to start VDD close action");
-          update_tray_vdd_state();
-          return { { "status", false }, { "error", "Failed to start VDD close action" } };
-        }
-
-        return { { "status", true }, { "message", "VDD close requested" }, { "operation_id", operation_id } };
+        return start_vdd_action(false);
       }
 
       if (action == "vdd_toggle_keep_enabled") {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
-          return { { "status", false }, { "error", "VDD settings cannot change while an action is in progress or cooling down" } };
+          return action_error("VDD settings cannot change while an action is in progress or cooling down");
         }
         config::video.vdd_keep_enabled = enabled.value_or(!config::video.vdd_keep_enabled);
         config::update_config({ { "vdd_keep_enabled", config::video.vdd_keep_enabled ? "true" : "false" } });
         update_tray_vdd_state();
-        return {
-          { "status", true },
-          { "message", config::video.vdd_keep_enabled ? "VDD keep-enabled mode enabled" : "VDD keep-enabled mode disabled" },
-        };
+        return action_success(config::video.vdd_keep_enabled ? "VDD keep-enabled mode enabled" : "VDD keep-enabled mode disabled");
       }
 
       if (action == "vdd_toggle_headless_create") {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
-          return { { "status", false }, { "error", "VDD settings cannot change while an action is in progress or cooling down" } };
+          return action_error("VDD settings cannot change while an action is in progress or cooling down");
         }
         config::video.vdd_headless_create_enabled = enabled.value_or(!config::video.vdd_headless_create_enabled);
         config::update_config({ { "vdd_headless_create", config::video.vdd_headless_create_enabled ? "true" : "false" } });
         update_tray_vdd_state();
-        return {
-          { "status", true },
-          { "message", config::video.vdd_headless_create_enabled ? "Headless VDD auto-create enabled" : "Headless VDD auto-create disabled" },
-        };
+        return action_success(config::video.vdd_headless_create_enabled ? "Headless VDD auto-create enabled" : "Headless VDD auto-create disabled");
       }
 
       if (action == "clear_app") {
         if (tray_vdd_action_running.load()) {
-          return { { "status", false }, { "error", "Another asynchronous tray action is already in progress" } };
+          return action_error("Another asynchronous tray action is already in progress");
         }
         if (tray_app_termination_running.exchange(true)) {
-          return { { "status", false }, { "error", "Application termination is already in progress" } };
+          return action_error("Application termination is already in progress");
         }
 
         const auto operation_id = tray_state::begin_operation(action);
@@ -327,38 +338,38 @@ namespace tray_http {
         if (!dispatch_app_termination(operation_id)) {
           tray_app_termination_running = false;
           tray_state::complete_operation(operation_id, false, {}, "Failed to start application termination");
-          return { { "status", false }, { "error", "Failed to start application termination" } };
+          return action_error("Failed to start application termination");
         }
-        return { { "status", true }, { "message", "Application termination requested" }, { "operation_id", operation_id } };
+        return action_success("Application termination requested", operation_id);
       }
 
       if (action == "reset_display_device_config") {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
-          return { { "status", false }, { "error", "Display device config cannot reset while a VDD action is in progress or cooling down" } };
+          return action_error("Display device config cannot reset while a VDD action is in progress or cooling down");
         }
         BOOST_LOG(info) << "Resetting display device config from GUI tray"sv;
         display_device::session_t::get().reset_persistence();
         update_tray_vdd_state();
-        return { { "status", true }, { "message", "Display device config reset" } };
+        return action_success("Display device config reset");
       }
 
       if (action == "restart") {
         BOOST_LOG(info) << "Restarting from GUI tray"sv;
         platf::restart();
-        return { { "status", true }, { "message", "Restart requested" } };
+        return action_success("Restart requested");
       }
 
       if (action == "notification_ack") {
         if (!notification_id || *notification_id == 0) {
-          return { { "status", false }, { "error", "notification_id is required" } };
+          return action_error("notification_id is required");
         }
         if (!tray_state::acknowledge_notification(*notification_id)) {
-          return { { "status", false }, { "error", "Notification is stale or still actionable" } };
+          return action_error("Notification is stale or still actionable");
         }
-        return { { "status", true }, { "message", "Notification acknowledged" } };
+        return action_success("Notification acknowledged");
       }
 
-      return { { "status", false }, { "error", "Unknown tray action" } };
+      return action_error("Unknown tray action");
     }
 
     void
