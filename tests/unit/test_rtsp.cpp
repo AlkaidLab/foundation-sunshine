@@ -115,6 +115,26 @@ TEST(LaunchSessionManager, EnforcesCapacityAndExpiresTickets) {
             rtsp_stream::launch_ticket_register_e::client_limit);
 }
 
+TEST(LaunchSessionManager, PreservesClaimedTicketsPastPendingExpiry) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+
+  ASSERT_EQ(manager.register_session(make_session(30, "claimed-cert", "192.0.2.30"), 1s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_EQ(manager.register_session(make_session(31, "pending-cert", "192.0.2.31"), 1s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_TRUE(manager.claim_plaintext("192.0.2.30", now));
+
+  EXPECT_EQ(manager.prune(now + 2s), 1U);
+  EXPECT_EQ(manager.size(now + 2s), 1U);
+  EXPECT_EQ(manager.register_session(make_session(32, "claimed-cert", "192.0.2.32"), 1s, now + 2s),
+            rtsp_stream::launch_ticket_register_e::client_busy);
+
+  EXPECT_TRUE(manager.release(30, 1s, now + 2s));
+  EXPECT_EQ(manager.prune(now + 4s), 1U);
+  EXPECT_EQ(manager.size(now + 4s), 0U);
+}
+
 TEST(LaunchSessionManager, AuthenticatesEncryptedClaimByGcmTagAcrossRouteChanges) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();

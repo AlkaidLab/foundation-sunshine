@@ -47,7 +47,8 @@ namespace rtsp_stream {
     void
     prune_locked(clock_t::time_point now) {
       tickets.erase(std::remove_if(tickets.begin(), tickets.end(), [now](const auto &ticket) {
-                      return !ticket.session || now >= ticket.expires_at;
+                      return !ticket.session ||
+                             (ticket.state == launch_ticket_state_e::pending && now >= ticket.expires_at);
                     }),
                     tickets.end());
     }
