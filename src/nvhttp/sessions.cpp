@@ -59,6 +59,7 @@ namespace nvhttp::sessions {
       response_json["status_code"] = 200;
       response_json["status_message"] = "Success";
       response_json["total_sessions"] = sessions_info.size();
+      response_json["pending_sessions"] = rtsp_stream::pending_session_count();
 
       json sessions_array = json::array();
 

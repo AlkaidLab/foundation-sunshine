@@ -345,6 +345,27 @@ namespace nvhttp {
     return launch_session;
   }
 
+  bool
+  register_launch_ticket(pt::ptree &tree,
+                         const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+                         std::string_view result_node) {
+    const auto result = rtsp_stream::launch_session_raise(launch_session);
+    if (result == rtsp_stream::launch_ticket_register_e::accepted ||
+        result == rtsp_stream::launch_ticket_register_e::replaced) {
+      return true;
+    }
+
+    const auto busy = result == rtsp_stream::launch_ticket_register_e::client_busy;
+    tree.put("root.<xmlattr>.status_code", busy ? 409 : 503);
+    tree.put("root.<xmlattr>.status_message",
+             busy ? "A streaming handshake is already in progress for this client" :
+                    "The host has no capacity for another pending streaming handshake");
+    tree.put(std::string { "root." } + std::string { result_node }, 0);
+    BOOST_LOG(warning) << "Unable to register RTSP launch ticket for client "sv
+                       << launch_session->client_name << ": result="sv << static_cast<int>(result);
+    return false;
+  }
+
   template <class T>
   struct tunnel;
 
@@ -594,10 +615,12 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     // Store the stable client certificate UUID in the launch environment.
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
@@ -637,13 +660,20 @@ namespace nvhttp {
       }
     }
 
+    if (!register_launch_ticket(tree, launch_session, "gamesession")) {
+      // The application was started solely for this launch request. Roll it
+      // back if the bounded ticket registry cannot publish the handshake.
+      if (appid > 0 && proc::proc.running() == appid) {
+        proc::proc.terminate();
+      }
+      return;
+    }
+
     tree.put("root.<xmlattr>.status_code", 200);
     tree.put("root.sessionUrl0", launch_session->rtsp_url_scheme +
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.gamesession", 1);
-
-    rtsp_stream::launch_session_raise(launch_session);
 
     // Send webhook notification for successful launch
     webhook::send_event_async(webhook::event_t {
@@ -678,6 +708,7 @@ namespace nvhttp {
     }
 
     pt::ptree tree;
+    bool need_to_restore_display_state { false };
     auto g = util::fail_guard([&]() {
       std::ostringstream data;
 
@@ -688,6 +719,10 @@ namespace nvhttp {
       pt::write_xml(data, tree);
       response->write(data.str());
       response->close_connection_after_response = true;
+
+      if (need_to_restore_display_state) {
+        display_device::session_t::get().restore_state();
+      }
     });
 
     auto current_appid = proc::proc.running();
@@ -726,31 +761,37 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
     if (no_active_sessions) {
-      // We want to prepare display only if there are no active sessions at
-      // the moment. This should be done before probing encoders as it could
-      // change the active displays.
+      // Prepare before publishing the ticket so the handshake expiration
+      // window starts only when the host is ready to accept RTSP.
       if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, false)) {
         tree.put("root.resume", 0);
-
         return;
       }
+      need_to_restore_display_state = true;
     }
+
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
       BOOST_LOG(error) << "Rejecting client that cannot comply with mandatory encryption requirement"sv;
 
       tree.put("root.<xmlattr>.status_code", 403);
       tree.put("root.<xmlattr>.status_message", "Encryption is mandatory for this host but unsupported by the client");
-      tree.put("root.gamesession", 0);
+      tree.put("root.resume", 0);
 
+      return;
+    }
+
+    if (!register_launch_ticket(tree, launch_session, "resume")) {
       return;
     }
 
@@ -759,8 +800,7 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.resume", 1);
-
-    rtsp_stream::launch_session_raise(launch_session);
+    need_to_restore_display_state = false;
 
     // Send webhook notification for successful resume
     webhook::send_event_async(webhook::event_t {
