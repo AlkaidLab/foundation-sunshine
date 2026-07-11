@@ -42,12 +42,6 @@ namespace tray_state {
     std::string error;
   };
 
-  struct provider_t {
-    bool active = false;
-    std::string id;
-    std::string version;
-  };
-
   struct state_t {
     status_e status = status_e::idle;
     std::string icon = "default";
@@ -58,7 +52,6 @@ namespace tray_state {
     vdd_state_t vdd;
     notification_t notification;
     operation_t operation;
-    provider_t provider;
     std::uint64_t revision = 0;
     std::int64_t updated_at_ms = 0;
   };
@@ -104,12 +97,6 @@ namespace tray_state {
 
   void
   complete_operation(std::uint64_t operation_id, bool success, const std::string &message = {}, const std::string &error = {});
-
-  void
-  set_provider(const std::string &id, const std::string &version);
-
-  void
-  clear_provider();
 
   nlohmann::json
   to_json();

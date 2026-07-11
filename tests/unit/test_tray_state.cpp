@@ -19,7 +19,6 @@ protected:
     tray_state::set_vdd_state(false, false, false, false);
     const auto operation_id = tray_state::begin_operation("test_reset");
     tray_state::complete_operation(operation_id, true);
-    tray_state::clear_provider();
     tray_state::set_idle();
   }
 
@@ -179,17 +178,6 @@ TEST_F(TrayStateTest, PublishesAsynchronousOperationLifecycle) {
   operation = tray_state::to_json().at("operation");
   EXPECT_EQ(operation.at("state"), "failed");
   EXPECT_EQ(operation.at("error"), "create failed");
-}
-
-TEST_F(TrayStateTest, PublishesProviderWithoutLeaseSecret) {
-  tray_state::set_provider("sunshine.gui.tauri", "0.3.41");
-  const auto json = tray_state::to_json();
-  EXPECT_TRUE(json.at("provider").at("active"));
-  EXPECT_EQ(json.at("provider").at("id"), "sunshine.gui.tauri");
-  EXPECT_FALSE(json.at("provider").contains("lease_id"));
-
-  tray_state::clear_provider();
-  EXPECT_FALSE(tray_state::to_json().at("provider").at("active"));
 }
 
 TEST_F(TrayStateTest, AcknowledgesOnlyCurrentNonPairingNotification) {

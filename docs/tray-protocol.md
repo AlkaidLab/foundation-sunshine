@@ -32,14 +32,13 @@ endpoint is the compatibility fallback.
 - `events-v1`: SSE state changes
 - `actions-v1`: action endpoint
 - `operations-v1`: asynchronous operation lifecycle in state
-- `provider-lease-v1`: optional provider ownership lease
 - `notification-ack`: non-pairing notification acknowledgement
 - `pairing`: pairing notification with the `open_pin` action
 - `vdd`: virtual-display state and actions
 
 The `owner` field describes the packaged tray strategy (`gui`, `core`, or
-`disabled`). It is retained for version-1 compatibility. Active runtime
-ownership is represented separately by `provider`.
+`disabled`). The packaged GUI uses its existing single-instance guard. Version
+1 deliberately does not add a second ownership heartbeat.
 
 ## Actions and operations
 
@@ -60,34 +59,19 @@ user confirmation before requesting it. Long-running actions return an
 published in the state `operation` object. Operations execute serially and are
 joined during Core shutdown.
 
-## Provider lease
+## Future providers
 
-Lease support is optional in protocol version 1 so released GUI versions remain
-compatible during migration.
-
-1. `POST /api/tray/provider/register` with `provider_id`, `version`,
-   `protocol_version`, and optional provider capabilities.
-2. Core returns a private `lease_id` and `lease_duration_ms`. The lease token is
-   never included in public state.
-3. `POST /api/tray/provider/heartbeat` with `lease_id` before expiry.
-4. `DELETE /api/tray/provider/lease` with `lease_id` for best-effort release.
-   An uncleanly terminated provider is released automatically after expiry.
-
-Only one distinct provider ID may hold an active lease. Re-registering the
-same provider ID replaces its previous lease, which supports provider restart.
-The public `provider` state contains only ID, version, and active status. Lease
-renewal does not increment the tray state revision or rebuild the provider UI.
-
-During the version-1 compatibility period, legacy clients may still read state
-and invoke actions without a lease. A future protocol version may require the
-lease for provider-owned actions after all supported packaged clients have
-migrated.
+Version 1 keeps runtime ownership intentionally simple: the packaged GUI is
+single-instance and Core exposes no registration or heartbeat endpoint. If a
+second tray implementation creates a real ownership conflict, introduce that
+coordination in a later protocol version with enforceable semantics. Consumers
+must not infer ownership from undocumented process or port probes.
 
 ## Compatibility
 
-- New provider with old Core: use state polling/SSE and actions; do not attempt
-  lease registration unless `provider-lease-v1` is advertised.
+- New provider with old Core: use state polling/SSE and actions according to
+  advertised capabilities.
 - Old provider with new Core: existing state, event, and action behavior remains
-  available; no lease is required.
+  available.
 - GUI-only installation: the provider may run independently but reports Core as
   disconnected until a compatible local Core is installed and running.

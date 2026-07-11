@@ -6,7 +6,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -49,24 +48,6 @@ namespace tray_http {
     std::mutex tray_subscribers_mutex;
     std::vector<std::shared_ptr<tray_subscriber_t>> tray_subscribers;
     std::atomic_bool tray_keepalive_started { false };
-
-    constexpr auto provider_lease_duration = 45s;
-    struct provider_lease_t {
-      std::string lease_id;
-      std::string provider_id;
-      std::string version;
-      std::chrono::steady_clock::time_point expires_at;
-    };
-    std::mutex provider_lease_mutex;
-    std::optional<provider_lease_t> provider_lease;
-
-    std::string
-    new_lease_id() {
-      std::random_device random;
-      std::ostringstream id;
-      id << std::hex << random() << random() << random() << random();
-      return id.str();
-    }
 
     std::string
     tray_state_event() {
@@ -137,15 +118,6 @@ namespace tray_http {
     }
 
     void
-    send_json(resp_https_t response, const SimpleWeb::StatusCode status, const nlohmann::json &body) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "application/json");
-      headers.emplace("X-Frame-Options", "DENY");
-      headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
-      response->write(status, body.dump(), headers);
-    }
-
-    void
     send_bad_request(resp_https_t response, const std::string &error) {
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
@@ -171,137 +143,6 @@ namespace tray_http {
       }
 
       return true;
-    }
-
-    nlohmann::json
-    read_json_body(const req_https_t &request) {
-      std::stringstream content;
-      content << request->content.rdbuf();
-      return nlohmann::json::parse(content.str());
-    }
-
-    void
-    clear_provider_lease_if_expired(const std::optional<std::string_view> expected_lease = std::nullopt) {
-      std::lock_guard lock { provider_lease_mutex };
-      if (provider_lease &&
-          (!expected_lease || provider_lease->lease_id == *expected_lease) &&
-          provider_lease->expires_at <= std::chrono::steady_clock::now()) {
-        provider_lease.reset();
-        tray_state::clear_provider();
-      }
-    }
-
-    void
-    schedule_provider_lease_expiry(const std::string &lease_id) {
-      task_pool.pushDelayed([lease_id]() {
-        clear_provider_lease_if_expired(lease_id);
-      },
-        provider_lease_duration + 1s);
-    }
-
-    void
-    register_provider(resp_https_t response, req_https_t request, const auth_fn &auth) {
-      if (!check_json_content_type(response, request)) return;
-      if (!auth(response, request)) return;
-
-      try {
-        const auto body = read_json_body(request);
-        const auto provider_id = body.value("provider_id", ""s);
-        const auto version = body.value("version", ""s);
-        const auto requested_protocol = body.value("protocol_version", 0U);
-        if (provider_id.empty()) {
-          throw std::invalid_argument("provider_id is required");
-        }
-        if (requested_protocol != tray_state::protocol_version) {
-          throw std::invalid_argument("unsupported tray protocol version");
-        }
-
-        clear_provider_lease_if_expired();
-        provider_lease_t lease;
-        {
-          std::lock_guard lock { provider_lease_mutex };
-          if (provider_lease && provider_lease->provider_id != provider_id) {
-            send_json(std::move(response), SimpleWeb::StatusCode::client_error_conflict, {
-                                                                                           { "status", false },
-                                                                                           { "error", "Another tray provider owns the active lease" },
-                                                                                         });
-            return;
-          }
-          lease = { new_lease_id(), provider_id, version, std::chrono::steady_clock::now() + provider_lease_duration };
-          provider_lease = lease;
-          tray_state::set_provider(provider_id, version);
-        }
-
-        schedule_provider_lease_expiry(lease.lease_id);
-        send_json(std::move(response), {
-                                         { "status", true },
-                                         { "lease_id", lease.lease_id },
-                                         { "lease_duration_ms", std::chrono::duration_cast<std::chrono::milliseconds>(provider_lease_duration).count() },
-                                       });
-      }
-      catch (const std::exception &e) {
-        send_bad_request(std::move(response), e.what());
-      }
-    }
-
-    void
-    heartbeat_provider(resp_https_t response, req_https_t request, const auth_fn &auth) {
-      if (!check_json_content_type(response, request)) return;
-      if (!auth(response, request)) return;
-
-      try {
-        const auto lease_id = read_json_body(request).value("lease_id", ""s);
-        std::string provider_id;
-        std::string version;
-        {
-          std::lock_guard lock { provider_lease_mutex };
-          if (!provider_lease || provider_lease->lease_id != lease_id || provider_lease->expires_at <= std::chrono::steady_clock::now()) {
-            provider_lease.reset();
-            tray_state::clear_provider();
-          }
-          else {
-            provider_lease->expires_at = std::chrono::steady_clock::now() + provider_lease_duration;
-            provider_id = provider_lease->provider_id;
-            version = provider_lease->version;
-          }
-        }
-        if (provider_id.empty()) {
-          send_json(std::move(response), SimpleWeb::StatusCode::client_error_conflict, {
-                                                                                         { "status", false },
-                                                                                         { "error", "Provider lease is missing or expired" },
-                                                                                       });
-          return;
-        }
-
-        schedule_provider_lease_expiry(lease_id);
-        send_json(std::move(response), { { "status", true }, { "lease_duration_ms", std::chrono::duration_cast<std::chrono::milliseconds>(provider_lease_duration).count() } });
-      }
-      catch (const std::exception &e) {
-        send_bad_request(std::move(response), e.what());
-      }
-    }
-
-    void
-    release_provider(resp_https_t response, req_https_t request, const auth_fn &auth) {
-      if (!check_json_content_type(response, request)) return;
-      if (!auth(response, request)) return;
-
-      try {
-        const auto lease_id = read_json_body(request).value("lease_id", ""s);
-        bool released = false;
-        {
-          std::lock_guard lock { provider_lease_mutex };
-          if (provider_lease && provider_lease->lease_id == lease_id) {
-            provider_lease.reset();
-            tray_state::clear_provider();
-            released = true;
-          }
-        }
-        send_json(std::move(response), { { "status", released } });
-      }
-      catch (const std::exception &e) {
-        send_bad_request(std::move(response), e.what());
-      }
     }
 
     bool
@@ -524,7 +365,6 @@ namespace tray_http {
     get_tray_state(resp_https_t response, req_https_t request, const auth_fn &auth) {
       if (!auth(response, request)) return;
 
-      clear_provider_lease_if_expired();
       send_json(std::move(response), tray_state::to_json());
     }
 
@@ -607,15 +447,6 @@ namespace tray_http {
     };
     server.resource["^/api/tray/action$"]["POST"] = [action_auth](resp_https_t response, req_https_t request) {
       tray_action(std::move(response), std::move(request), action_auth);
-    };
-    server.resource["^/api/tray/provider/register$"]["POST"] = [action_auth](resp_https_t response, req_https_t request) {
-      register_provider(std::move(response), std::move(request), action_auth);
-    };
-    server.resource["^/api/tray/provider/heartbeat$"]["POST"] = [action_auth](resp_https_t response, req_https_t request) {
-      heartbeat_provider(std::move(response), std::move(request), action_auth);
-    };
-    server.resource["^/api/tray/provider/lease$"]["DELETE"] = [action_auth](resp_https_t response, req_https_t request) {
-      release_provider(std::move(response), std::move(request), action_auth);
     };
   }
 
