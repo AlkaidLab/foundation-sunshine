@@ -773,6 +773,47 @@ namespace display_device {
     }
 
     bool
+    create_vdd_monitor_noninteractive() {
+      std::unordered_set<std::string> physical_devices_before;
+      const auto topology_before = get_current_topology();
+      const auto all_devices_before = enum_available_devices();
+
+      for (const auto &group : topology_before) {
+        for (const auto &device_id : group) {
+          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
+            physical_devices_before.insert(device_id);
+          }
+        }
+      }
+      if (physical_devices_before.empty()) {
+        for (const auto &[device_id, device_info] : all_devices_before) {
+          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
+            physical_devices_before.insert(device_id);
+          }
+        }
+      }
+
+      if (!create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {})) {
+        return false;
+      }
+
+      auto vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
+      if (vdd_device_id.empty()) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
+      }
+      if (vdd_device_id.empty()) {
+        BOOST_LOG(warning) << "VDD was created but its display device was not found for topology setup";
+        return true;
+      }
+
+      if (!ensure_vdd_extended_mode(vdd_device_id, physical_devices_before)) {
+        BOOST_LOG(warning) << "VDD was created but extended topology setup did not complete";
+      }
+      return true;
+    }
+
+    bool
     toggle_display_power() {
       auto now = std::chrono::steady_clock::now();
 

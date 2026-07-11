@@ -3184,17 +3184,14 @@ namespace confighttp {
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
-    tray_http::register_routes(server,
-      [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
+    tray_http::auth_fn tray_local_auth = [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
         const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
         if (config::sunshine.username.empty() && net::from_address(address) == net::PC) {
           return true;
         }
         return authenticate(std::move(resp), std::move(req));
-      },
-      [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
-        return authenticate(std::move(resp), std::move(req));
-      });
+      };
+    tray_http::register_routes(server, tray_local_auth, tray_local_auth);
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);

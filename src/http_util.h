@@ -4,10 +4,9 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <string_view>
-
-#include <boost/algorithm/string.hpp>
 
 namespace http_util {
   inline bool
@@ -16,10 +15,16 @@ namespace http_util {
       actual.erase(semicolon);
     }
 
+    const auto first = actual.find_first_not_of(" \t\r\n");
+    const auto last = actual.find_last_not_of(" \t\r\n");
+    actual = first == std::string::npos ? std::string {} : actual.substr(first, last - first + 1);
+
     auto normalized_expected = std::string { expected };
-    boost::algorithm::trim(actual);
-    boost::algorithm::to_lower(actual);
-    boost::algorithm::to_lower(normalized_expected);
+    const auto lowercase_ascii = [](unsigned char value) {
+      return static_cast<char>(value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value);
+    };
+    std::transform(actual.begin(), actual.end(), actual.begin(), lowercase_ascii);
+    std::transform(normalized_expected.begin(), normalized_expected.end(), normalized_expected.begin(), lowercase_ascii);
     return actual == normalized_expected;
   }
 }  // namespace http_util

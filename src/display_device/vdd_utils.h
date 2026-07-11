@@ -136,6 +136,13 @@ namespace display_device::vdd_utils {
   bool
   create_vdd_monitor(const std::string &client_identifier = "", const hdr_brightness_t &hdr_brightness = {}, const physical_size_t &physical_size = {});
 
+  /**
+   * Create a VDD for a user-session provider without displaying Core UI.
+   * The provider owns confirmation; Core performs bounded topology setup.
+   */
+  bool
+  create_vdd_monitor_noninteractive();
+
   bool
   destroy_vdd_monitor();
 

@@ -13,6 +13,7 @@ namespace tray_state {
     std::mutex state_mutex;
     state_t current_state;
     std::uint64_t next_notification_id = 0;
+    std::uint64_t next_operation_id = 0;
     std::mutex change_sink_mutex;
     change_sink_t change_sink;
     std::int64_t
@@ -267,6 +268,63 @@ namespace tray_state {
     notify_changed();
   }
 
+  std::uint64_t
+  begin_operation(const std::string &action) {
+    std::uint64_t operation_id;
+    {
+      std::lock_guard lock { state_mutex };
+      current_state.operation = {
+        ++next_operation_id,
+        action,
+        "running",
+        {},
+        {},
+      };
+      operation_id = current_state.operation.id;
+      touch_locked();
+    }
+    notify_changed();
+    return operation_id;
+  }
+
+  void
+  complete_operation(const std::uint64_t operation_id, const bool success, const std::string &message, const std::string &error) {
+    {
+      std::lock_guard lock { state_mutex };
+      if (current_state.operation.id != operation_id || current_state.operation.state != "running") {
+        return;
+      }
+      current_state.operation.state = success ? "succeeded" : "failed";
+      current_state.operation.message = message;
+      current_state.operation.error = error;
+      touch_locked();
+    }
+    notify_changed();
+  }
+
+  void
+  set_provider(const std::string &id, const std::string &version) {
+    {
+      std::lock_guard lock { state_mutex };
+      current_state.provider = { true, id, version };
+      touch_locked();
+    }
+    notify_changed();
+  }
+
+  void
+  clear_provider() {
+    {
+      std::lock_guard lock { state_mutex };
+      if (!current_state.provider.active) {
+        return;
+      }
+      current_state.provider = {};
+      touch_locked();
+    }
+    notify_changed();
+  }
+
   nlohmann::json
   to_json() {
     state_t snapshot;
@@ -281,7 +339,7 @@ namespace tray_state {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "notification-ack", "pairing", "vdd" }) },
+      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "operations-v1", "provider-lease-v1", "notification-ack", "pairing", "vdd" }) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },
@@ -304,6 +362,20 @@ namespace tray_state {
           { "message", snapshot.notification.message },
           { "icon", snapshot.notification.icon },
           { "action", snapshot.notification.action },
+        } },
+      { "operation",
+        {
+          { "id", snapshot.operation.id },
+          { "action", snapshot.operation.action },
+          { "state", snapshot.operation.state },
+          { "message", snapshot.operation.message },
+          { "error", snapshot.operation.error },
+        } },
+      { "provider",
+        {
+          { "active", snapshot.provider.active },
+          { "id", snapshot.provider.id },
+          { "version", snapshot.provider.version },
         } },
     };
   }

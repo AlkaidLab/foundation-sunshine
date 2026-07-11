@@ -494,6 +494,11 @@ namespace display_device {
   }
 
   bool
+  session_t::create_vdd_monitor_noninteractive() {
+    return vdd_utils::create_vdd_monitor_noninteractive();
+  }
+
+  bool
   session_t::destroy_vdd_monitor() {
     current_vdd_client_id.clear();
     return vdd_utils::destroy_vdd_monitor();

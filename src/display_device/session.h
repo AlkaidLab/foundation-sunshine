@@ -175,6 +175,12 @@ namespace display_device {
     create_vdd_monitor(const std::string &client_name = "");
 
     /**
+     * Create a VDD without displaying Core UI. Intended for tray providers.
+     */
+    bool
+    create_vdd_monitor_noninteractive();
+
+    /**
      * @brief Destroy VDD monitor
      */
     bool
