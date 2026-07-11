@@ -107,6 +107,23 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
+add_executable(launch_session_manager_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
+        ${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(launch_session_manager_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(launch_session_manager_unit_tests
+        ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES})
+target_compile_definitions(launch_session_manager_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(launch_session_manager_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(launch_session_manager_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME launch_session_manager_unit_tests COMMAND launch_session_manager_unit_tests)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(launch_session_manager_unit_tests ${dep})
+endforeach()
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
