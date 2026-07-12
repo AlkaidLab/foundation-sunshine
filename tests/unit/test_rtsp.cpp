@@ -155,6 +155,39 @@ TEST(LaunchSessionManager, SupportsOverlappingRtspConnectionsForOneLaunch) {
   EXPECT_TRUE(manager.release(33, 10s, now));
   EXPECT_EQ(manager.register_session(make_session(34, "multi-rtsp-cert", "192.0.2.34"), 10s, now),
             rtsp_stream::launch_ticket_register_e::replaced);
+
+  rtsp_stream::launch_session_manager_t encrypted_manager;
+  const crypto::aes_t key(16, 0x33);
+  ASSERT_EQ(encrypted_manager.register_session(make_session(35, "encrypted-cert", "192.0.2.35", &key), 10s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+
+  constexpr std::string_view plaintext { "OPTIONS rtsp://host RTSP/1.0\r\nCSeq: 1\r\n\r\n" };
+  crypto::aes_t iv(12, 0);
+  iv[10] = 'C';
+  iv[11] = 'R';
+  crypto::cipher::gcm_t client_cipher { key, false };
+  std::vector<std::uint8_t> tagged_cipher(
+    crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size);
+  const auto encrypted_size = client_cipher.encrypt(plaintext, tagged_cipher.data(), &iv);
+  ASSERT_GT(encrypted_size, 0);
+  const auto encrypted_message = std::string_view {
+    reinterpret_cast<const char *>(tagged_cipher.data()),
+    static_cast<std::size_t>(encrypted_size) + crypto::cipher::tag_size
+  };
+
+  auto encrypted_describe = encrypted_manager.claim_encrypted("192.0.2.35", encrypted_message, iv, now);
+  auto encrypted_announce = encrypted_manager.claim_encrypted("192.0.2.35", encrypted_message, iv, now);
+  ASSERT_TRUE(encrypted_describe);
+  ASSERT_TRUE(encrypted_announce);
+  EXPECT_EQ(encrypted_describe.session->id, 35U);
+  EXPECT_EQ(encrypted_announce.session->id, 35U);
+
+  EXPECT_TRUE(encrypted_manager.release(35, 10s, now));
+  EXPECT_EQ(encrypted_manager.register_session(make_session(36, "encrypted-cert", "192.0.2.36", &key), 10s, now),
+            rtsp_stream::launch_ticket_register_e::client_busy);
+  EXPECT_TRUE(encrypted_manager.release(35, 10s, now));
+  EXPECT_EQ(encrypted_manager.register_session(make_session(36, "encrypted-cert", "192.0.2.36", &key), 10s, now),
+            rtsp_stream::launch_ticket_register_e::replaced);
 }
 
 TEST(LaunchSessionManager, AuthenticatesEncryptedClaimByGcmTagAcrossRouteChanges) {
