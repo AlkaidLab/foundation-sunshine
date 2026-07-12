@@ -34,6 +34,7 @@ namespace tray_http {
     std::atomic<std::uint64_t> tray_vdd_confirmation_operation_id { 0 };
     std::atomic<bool> tray_app_termination_running { false };
     std::atomic<bool> tray_shutdown_running { false };
+    constexpr auto tray_shutdown_response_grace = 250ms;
     std::mutex tray_action_mutex;
 
     thread_pool_util::ThreadPool &
@@ -448,7 +449,7 @@ namespace tray_http {
 #endif
             lifetime::exit_sunshine(exit_code, true);
           },
-            250ms);
+            tray_shutdown_response_grace);
         }
         catch (const std::exception &e) {
           tray_shutdown_running = false;
