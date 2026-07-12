@@ -238,6 +238,7 @@ Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flag
 ; Gamepad scripts
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
 
 ; Virtual Mouse Driver scripts & files
 Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
@@ -275,7 +276,7 @@ Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueNam
 [Run]
 ; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
 ; attribute on files & dirs. The latter is what fixes the rare "Sunshine
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
@@ -340,6 +341,7 @@ var
   BrandTitle: TNewStaticText;
   BrandSubtitle: TNewStaticText;
   AccentBar: TBevel;
+  ExistingInnoInstall: Boolean;
 
 procedure InitializeWizard();
 var
@@ -599,6 +601,42 @@ begin
   RegDeleteKeyIfEmpty(HKLM32, 'SOFTWARE\AlkaidLab');
 end;
 
+function DetectExistingInnoInstall(): Boolean;
+var
+  InstallDir: String;
+begin
+  Result := RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  if not Result then
+    Result := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  Result := Result and (InstallDir <> '') and DirExists(InstallDir);
+end;
+
+function ShouldRepairInstallPermissions(): Boolean;
+var
+  ResultCode: Integer;
+  VerifyLog, Params: String;
+begin
+  Result := False;
+  if not ExistingInnoInstall then
+    Exit;
+
+  // Verification is read-only and substantially cheaper than rewriting every
+  // ACL. Only legacy installs with malformed/non-canonical ACLs take the slow
+  // recursive reset path.
+  VerifyLog := ExpandConstant('{tmp}\sunshine-icacls-verify.log');
+  Params := '/c icacls "' + ExpandConstant('{app}') +
+            '" /verify /T /C > "' + VerifyLog + '" 2>&1';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Result := True
+  else
+    Result := ResultCode <> 0;
+
+  if not Result then
+    DeleteFile(VerifyLog);
+end;
+
 procedure VerifyServiceInstalled();
 var
   ExpectedPath, ImagePath, Lower, Detail, TmpFile, Line: String;
@@ -687,6 +725,7 @@ var
   ResultCode: Integer;
   Waited: Integer;
 begin
+  ExistingInnoInstall := DetectExistingInnoInstall();
   Result := True;
 
   if not DetectOldNSISInstall() then

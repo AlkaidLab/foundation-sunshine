@@ -46,6 +46,12 @@ if not errorlevel 1 (
     exit /b 87
 )
 
+rem Skip expensive PnP and DriverStore cleanup on a clean installation.
+set "VMOUSE_CLEANUP_REQUIRED=0"
+if exist "%DIST_DIR%\ZakoVirtualMouse.inf" set "VMOUSE_CLEANUP_REQUIRED=1"
+call :count_vmouse_devices EXISTING_VIRTUAL_MOUSE_DEVICES
+if !EXISTING_VIRTUAL_MOUSE_DEVICES! GTR 0 set "VMOUSE_CLEANUP_REQUIRED=1"
+
 rem Copy driver files to target directory
 if exist "%DIST_DIR%" (
     rmdir /s /q "%DIST_DIR%"
@@ -53,14 +59,19 @@ if exist "%DIST_DIR%" (
 mkdir "%DIST_DIR%"
 copy "%DRIVER_DIR%\*.*" "%DIST_DIR%"
 
+set "SERVICE_WAS_RUNNING=0"
+if "!VMOUSE_CLEANUP_REQUIRED!"=="1" goto :cleanup_existing_vmouse
+echo No existing Virtual Mouse device or payload found; skipping legacy cleanup.
+goto :after_existing_vmouse_cleanup
+
 rem ============================================================================
 rem  Stop Sunshine service to release HID device handle
 rem ============================================================================
 
+:cleanup_existing_vmouse
 rem Use sc + taskkill (non-blocking) instead of `net stop`, which can block
 rem for up to 30 seconds on a stuck stop handler.
 echo Stopping Sunshine service...
-set "SERVICE_WAS_RUNNING=0"
 sc query SunshineService >nul 2>&1
 if not errorlevel 1 (
     sc query SunshineService | find /I "RUNNING" >nul 2>&1
@@ -69,7 +80,6 @@ if not errorlevel 1 (
         sc stop SunshineService >nul 2>&1
     )
     taskkill /f /im sunshinesvc.exe >nul 2>&1
-    timeout /t 1 /nobreak >nul 2>&1
     echo Sunshine service stopped.
 ) else (
     echo Sunshine service not installed, OK.
@@ -106,7 +116,6 @@ if !REMAINING_AFTER! LSS !REMAINING_BEFORE! (
     set /a CLEANUP_COUNT+=REMOVED_NOW
     echo Removed !REMOVED_NOW! device node^(s^), !REMAINING_AFTER! remaining...
     set "REMAINING_BEFORE=!REMAINING_AFTER!"
-    timeout /t 1 /nobreak >nul
     goto remove_loop
 )
 if !NEFCON_REMOVE_RC! GEQ 1 (
@@ -125,14 +134,13 @@ for /f "tokens=*" %%d in ('powershell -NoProfile -Command ^
     echo Removing remaining device: %%d
     pnputil /remove-device "%%d" >nul 2>&1
 )
+call :wait_for_vmouse_removal 20
 call :count_vmouse_devices REMAINING_AFTER_PNPUTIL
 if !REMAINING_AFTER_PNPUTIL! GTR 0 (
     echo WARN: !REMAINING_AFTER_PNPUTIL! device node^(s^) still remain after pnputil cleanup.
 ) else (
     echo All existing device nodes removed.
 )
-
-timeout /t 2 /nobreak 1>nul
 
 rem Uninstall previous driver
 "%NEFCON%" --uninstall-driver --inf-path "%DIST_DIR%\ZakoVirtualMouse.inf"
@@ -142,17 +150,14 @@ if not errorlevel 1 (
     echo No previous driver found, OK.
 )
 
-timeout /t 3 /nobreak 1>nul
-
 rem Clean up stale driver packages from DriverStore (locale-independent)
 powershell -NoProfile -Command "Get-ChildItem ($env:SystemRoot + '\INF\oem*.inf') -ErrorAction SilentlyContinue | Where-Object { Select-String -Path $_.FullName -Pattern 'ZakoVirtualMouse' -Quiet } | ForEach-Object { Write-Host ('Removing stale driver package: ' + $_.Name); pnputil /delete-driver $_.Name /force | Out-Null }"
-
-timeout /t 1 /nobreak 1>nul
 
 rem ============================================================================
 rem  Install Certificate and Driver
 rem ============================================================================
 
+:after_existing_vmouse_cleanup
 rem Install certificate to Trusted Root and Trusted Publisher stores
 set "CERTIFICATE=%DIST_DIR%\ZakoVirtualMouse.cer"
 if exist "%CERTIFICATE%" (
@@ -209,3 +214,16 @@ for /f %%C in ('powershell -NoProfile -Command ^
     "$devices = Get-PnpDevice -InstanceId 'ROOT\HIDCLASS\*' -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\ZakoVirtualMouse' }; @($devices).Count"') do set "COUNT=%%C"
 endlocal & set "%~1=%COUNT%"
 exit /b 0
+
+:wait_for_vmouse_removal
+setlocal enabledelayedexpansion
+set "MAX_POLLS=%~1"
+for /l %%P in (1,1,!MAX_POLLS!) do (
+    call :count_vmouse_devices REMAINING_VIRTUAL_MOUSE_DEVICES
+    if !REMAINING_VIRTUAL_MOUSE_DEVICES! LEQ 0 goto :vmouse_removed
+    powershell -NoProfile -Command "Start-Sleep -Milliseconds 250"
+)
+endlocal & exit /b 1
+
+:vmouse_removed
+endlocal & exit /b 0

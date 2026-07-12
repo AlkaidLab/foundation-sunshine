@@ -54,6 +54,11 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/firewall/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
         DESTINATION "scripts"
         COMPONENT gamepad)
+if(VIGEMBUS_AVAILABLE)
+  install(FILES "${VIGEMBUS_INSTALLER}"
+          DESTINATION "scripts/gamepad"
+          COMPONENT gamepad)
+endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
         COMPONENT vsink)

@@ -17,6 +17,9 @@
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
+#   VIGEMBUS_VERSION        — pinned ViGEmBus release tag
+#   VIGEMBUS_ASSET_NAME     — pinned multi-architecture installer asset
+#   VIGEMBUS_SHA256         — expected installer digest
 #   GITHUB_TOKEN            — Token for private repos (or set env GITHUB_TOKEN)
 #
 # Output variables (CACHE FORCE, available to parent):
@@ -24,6 +27,7 @@
 #   VDD_DRIVER_DIR          — Directory containing latest VDD driver files
 #   VDD_WIN10_DRIVER_DIR    — Directory containing Win10-pinned VDD driver files
 #   NEFCON_DRIVER_DIR       — Directory containing nefconw.exe
+#   VIGEMBUS_INSTALLER      — Hash-verified installer bundled into packages
 
 include_guard(GLOBAL)
 
@@ -41,6 +45,11 @@ set(VDD_WIN10_DRIVER_VERSION "v0.14.3-rc1-edid13-test" CACHE STRING "Win10-pinne
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "ZakoVDD-edid13-issue612.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.17.40" CACHE STRING "nefcon version tag")
+set(VIGEMBUS_VERSION "v1.22.0" CACHE STRING "ViGEmBus release tag")
+set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"
+    CACHE STRING "ViGEmBus release asset name")
+set(VIGEMBUS_SHA256 "89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a"
+    CACHE STRING "SHA256 of the pinned ViGEmBus installer")
 
 # Repositories
 set(_VMOUSE_REPO "AlkaidLab/ZakoVirtualMouse")
@@ -55,6 +64,9 @@ set(VMOUSE_DRIVER_DIR "${DRIVER_DEPS_CACHE}/vmouse" CACHE PATH "" FORCE)
 set(VDD_DRIVER_DIR "${DRIVER_DEPS_CACHE}/vdd" CACHE PATH "" FORCE)
 set(VDD_WIN10_DRIVER_DIR "${DRIVER_DEPS_CACHE}/vdd-win10" CACHE PATH "" FORCE)
 set(NEFCON_DRIVER_DIR "${DRIVER_DEPS_CACHE}/nefcon" CACHE PATH "" FORCE)
+set(VIGEMBUS_DIR "${DRIVER_DEPS_CACHE}/vigembus" CACHE PATH "" FORCE)
+set(VIGEMBUS_INSTALLER "${VIGEMBUS_DIR}/${VIGEMBUS_ASSET_NAME}"
+    CACHE FILEPATH "Pinned ViGEmBus installer" FORCE)
 
 if(NOT FETCH_DRIVER_DEPS)
   message(STATUS "Driver dependency downloads disabled (FETCH_DRIVER_DEPS=OFF)")
@@ -72,8 +84,22 @@ endif()
 # properly (CMake file(DOWNLOAD) doesn't forward auth headers on redirect).
 # ---------------------------------------------------------------------------
 function(_driver_download url output_path)
+  set(_expected_sha256 "")
+  if(ARGC GREATER 2)
+    set(_expected_sha256 "${ARGV2}")
+  endif()
+
   if(EXISTS "${output_path}")
-    return()
+    if(_expected_sha256)
+      file(SHA256 "${output_path}" _cached_sha256)
+      if(_cached_sha256 STREQUAL _expected_sha256)
+        return()
+      endif()
+      message(WARNING "  Cached file hash mismatch; downloading again: ${output_path}")
+      file(REMOVE "${output_path}")
+    else()
+      return()
+    endif()
   endif()
 
   get_filename_component(_dir "${output_path}" DIRECTORY)
@@ -115,6 +141,17 @@ function(_driver_download url output_path)
     file(SIZE "${output_path}" _size)
     if(_size EQUAL 0)
       message(WARNING "  Downloaded file is empty: ${output_path}")
+      file(REMOVE "${output_path}")
+    endif()
+  endif()
+
+  if(EXISTS "${output_path}" AND _expected_sha256)
+    file(SHA256 "${output_path}" _actual_sha256)
+    if(NOT _actual_sha256 STREQUAL _expected_sha256)
+      message(WARNING
+        "  SHA256 mismatch for ${output_path}\n"
+        "  expected: ${_expected_sha256}\n"
+        "  actual:   ${_actual_sha256}")
       file(REMOVE "${output_path}")
     endif()
   endif()
@@ -306,12 +343,20 @@ function(_fetch_nefcon)
   endif()
 endfunction()
 
+# Pinned installer bundled into the package so installation never downloads it.
+function(_fetch_vigembus)
+  set(_url
+    "https://github.com/nefarius/ViGEmBus/releases/download/${VIGEMBUS_VERSION}/${VIGEMBUS_ASSET_NAME}")
+  _driver_download("${_url}" "${VIGEMBUS_INSTALLER}" "${VIGEMBUS_SHA256}")
+endfunction()
+
 # ---------------------------------------------------------------------------
 # Execute all fetches
 # ---------------------------------------------------------------------------
 _fetch_vmouse()
 _fetch_vdd()
 _fetch_nefcon()
+_fetch_vigembus()
 
 # ---------------------------------------------------------------------------
 # Verify critical files (per-driver, so optional drivers can be skipped
@@ -359,3 +404,5 @@ _check_driver("vdd (win10)" VDD_WIN10_DRIVER_AVAILABLE
     "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer")
 _check_driver("nefcon" NEFCON_DRIVER_AVAILABLE
     "${NEFCON_DRIVER_DIR}/nefconw.exe")
+_check_driver("ViGEmBus" VIGEMBUS_AVAILABLE
+    "${VIGEMBUS_INSTALLER}")
