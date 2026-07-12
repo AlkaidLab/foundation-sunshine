@@ -16,6 +16,7 @@
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/session.h"
+#include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/http_util.h"
 #include "src/logging.h"
@@ -32,6 +33,7 @@ namespace tray_http {
     std::atomic<bool> tray_vdd_action_running { false };
     std::atomic<std::uint64_t> tray_vdd_confirmation_operation_id { 0 };
     std::atomic<bool> tray_app_termination_running { false };
+    std::atomic<bool> tray_shutdown_running { false };
     std::mutex tray_action_mutex;
 
     thread_pool_util::ThreadPool &
@@ -428,6 +430,32 @@ namespace tray_http {
         BOOST_LOG(info) << "Restarting from GUI tray"sv;
         platf::restart();
         return action_success("Restart requested");
+      }
+
+      if (action == "shutdown") {
+        if (tray_shutdown_running.exchange(true)) {
+          return action_error("Sunshine shutdown is already in progress");
+        }
+
+        BOOST_LOG(info) << "Shutting down Sunshine from GUI tray"sv;
+        lock.unlock();
+        try {
+          task_pool.pushDelayed([]() {
+#ifdef _WIN32
+            const auto exit_code = GetConsoleWindow() == NULL ? ERROR_SHUTDOWN_IN_PROGRESS : 0;
+#else
+            constexpr auto exit_code = 0;
+#endif
+            lifetime::exit_sunshine(exit_code, true);
+          },
+            250ms);
+        }
+        catch (const std::exception &e) {
+          tray_shutdown_running = false;
+          BOOST_LOG(error) << "Failed to schedule Sunshine shutdown: "sv << e.what();
+          return action_error("Failed to schedule Sunshine shutdown");
+        }
+        return action_success("Sunshine shutdown requested");
       }
 
       if (action == "notification_ack") {

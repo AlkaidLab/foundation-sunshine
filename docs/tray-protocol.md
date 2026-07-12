@@ -35,10 +35,16 @@ endpoint is the compatibility fallback.
 - `notification-ack`: non-pairing notification acknowledgement
 - `pairing`: pairing notification with the `open_pin` action
 - `vdd`: virtual-display state and actions
+- `shutdown`: graceful Core and service-wrapper shutdown
 
 The `owner` field describes the packaged tray strategy (`gui`, `core`, or
 `disabled`). The packaged GUI uses its existing single-instance guard. Version
 1 deliberately does not add a second ownership heartbeat.
+
+On Windows, the service wrapper starts the packaged GUI agent in the active
+signed-in user's session after Core starts. Failed launches are retried while
+Core remains alive, and the GUI's single-instance guard absorbs duplicate
+logon and service-start attempts.
 
 ## Actions and operations
 
@@ -51,7 +57,8 @@ The `owner` field describes the packaged tray strategy (`gui`, `core`, or
 Only fields relevant to the selected action are required. Supported actions
 are `vdd_create`, `vdd_destroy`, `vdd_toggle_keep_enabled`,
 `vdd_toggle_headless_create`, `clear_app`, `reset_display_device_config`,
-`restart`, and `notification_ack`. While `vdd.awaiting_confirmation` is true,
+`restart`, `shutdown`, and `notification_ack`. While
+`vdd.awaiting_confirmation` is true,
 the GUI answers with `vdd_confirm_keep`, an `enabled` decision, and the matching
 `operation_id`.
 

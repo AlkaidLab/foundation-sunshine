@@ -4,9 +4,11 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <userenv.h>
 #include <wtsapi32.h>
 
 #include <string>
+#include <vector>
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
 #ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
@@ -118,6 +120,74 @@ DuplicateTokenForSession(DWORD console_session_id) {
   }
 
   return new_token;
+}
+
+bool
+LaunchGuiAgent(DWORD console_session_id) {
+  std::wstring service_path(32768, L'\0');
+  const auto service_path_length =
+    GetModuleFileNameW(NULL, service_path.data(), static_cast<DWORD>(service_path.size()));
+  if (service_path_length == 0 || service_path_length >= service_path.size()) {
+    return false;
+  }
+  service_path.resize(service_path_length);
+
+  const auto tools_separator = service_path.find_last_of(L"\\/");
+  if (tools_separator == std::wstring::npos || tools_separator == 0) {
+    return false;
+  }
+  const auto install_separator = service_path.find_last_of(L"\\/", tools_separator - 1);
+  if (install_separator == std::wstring::npos) {
+    return false;
+  }
+
+  const auto install_directory = service_path.substr(0, install_separator);
+  const auto gui_directory = install_directory + L"\\assets\\gui";
+  const auto gui_path = gui_directory + L"\\sunshine-gui.exe";
+  const auto gui_attributes = GetFileAttributesW(gui_path.c_str());
+  if (gui_attributes == INVALID_FILE_ATTRIBUTES || (gui_attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    return false;
+  }
+
+  HANDLE user_token = NULL;
+  if (!WTSQueryUserToken(console_session_id, &user_token)) {
+    return false;
+  }
+
+  LPVOID environment = NULL;
+  if (!CreateEnvironmentBlock(&environment, user_token, FALSE)) {
+    CloseHandle(user_token);
+    return false;
+  }
+
+  auto command = L"\"" + gui_path + L"\" --hidden";
+  std::vector<wchar_t> command_line(command.begin(), command.end());
+  command_line.push_back(L'\0');
+
+  STARTUPINFOW startup_info = {};
+  startup_info.cb = sizeof(startup_info);
+  startup_info.lpDesktop = (LPWSTR) L"winsta0\\default";
+
+  PROCESS_INFORMATION process_info = {};
+  const auto launched = CreateProcessAsUserW(user_token,
+    gui_path.c_str(),
+    command_line.data(),
+    NULL,
+    NULL,
+    FALSE,
+    CREATE_UNICODE_ENVIRONMENT,
+    environment,
+    gui_directory.c_str(),
+    &startup_info,
+    &process_info);
+
+  if (launched) {
+    CloseHandle(process_info.hThread);
+    CloseHandle(process_info.hProcess);
+  }
+  DestroyEnvironmentBlock(environment);
+  CloseHandle(user_token);
+  return launched;
 }
 
 HANDLE
@@ -315,11 +385,22 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
+    // Launch the tray in the signed-in user's session so HKCU settings and
+    // single-instance ownership remain scoped to that user.
+    bool gui_agent_started = LaunchGuiAgent(console_session_id);
+
     bool still_running;
     do {
       // Wait for the stop event to be set, Sunshine.exe to terminate, or the console session to change
       const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event };
-      switch (WaitForMultipleObjects(_countof(wait_objects), wait_objects, FALSE, INFINITE)) {
+      const auto wait_result =
+        WaitForMultipleObjects(_countof(wait_objects), wait_objects, FALSE, gui_agent_started ? INFINITE : 3000);
+      switch (wait_result) {
+        case WAIT_TIMEOUT:
+          gui_agent_started = LaunchGuiAgent(console_session_id);
+          still_running = true;
+          break;
+
         case WAIT_OBJECT_0 + 2:
           if (WTSGetActiveConsoleSessionId() == console_session_id) {
             // The active console session didn't actually change. Let Sunshine keep running.
@@ -349,6 +430,11 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           still_running = false;
           break;
         }
+
+        default:
+          SetEvent(stop_event);
+          still_running = false;
+          break;
       }
     } while (still_running);
 

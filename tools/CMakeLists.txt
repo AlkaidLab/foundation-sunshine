@@ -25,6 +25,7 @@ add_executable(sunshinesvc sunshinesvc.cpp)
 set_target_properties(sunshinesvc PROPERTIES CXX_STANDARD 23)
 target_link_libraries(sunshinesvc
         ${CMAKE_THREAD_LIBS_INIT}
+        userenv
         wtsapi32
         ${PLATFORM_LIBRARIES})
 target_compile_options(sunshinesvc PRIVATE ${SUNSHINE_COMPILE_OPTIONS})

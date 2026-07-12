@@ -327,7 +327,7 @@ namespace tray_state {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd" }) },
+      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown" }) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },

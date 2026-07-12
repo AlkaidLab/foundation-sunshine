@@ -156,6 +156,9 @@ TEST_F(TrayStateTest, PublishesStableProtocolIdentity) {
   EXPECT_NE(
     std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "events-v1"),
     first.at("capabilities").end());
+  EXPECT_NE(
+    std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "shutdown"),
+    first.at("capabilities").end());
 }
 
 TEST_F(TrayStateTest, PublishesChangesToTheEventSink) {
