@@ -51,7 +51,13 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/firewall/"
         DESTINATION "scripts"
         COMPONENT firewall)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
+set(GENERATED_GAMEPAD_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-gamepad.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/install-gamepad.bat.in"
+        "${GENERATED_GAMEPAD_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_GAMEPAD_INSTALL_SCRIPT}"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/uninstall-gamepad.bat"
         DESTINATION "scripts"
         COMPONENT gamepad)
 if(VIGEMBUS_AVAILABLE)

@@ -8,11 +8,11 @@ if /I "%~1"=="--verify-only" (
 )
 
 rem Optional first argument: "force" to skip the version check and always
-rem download + reinstall the latest ViGEmBus release. Without it the script
+rem reinstall the bundled ViGEmBus release. Without it the script
 rem keeps the original behaviour (bail out early if a compatible version
 rem is already installed).
 if /I "%~1"=="force" (
-    echo Force mode: skipping version check, will download and reinstall latest.
+    echo Force mode: skipping version check, will reinstall bundled ViGEmBus.
     goto continue
 )
 
@@ -30,8 +30,8 @@ exit /b 0
 :continue
 rem ViGEmBus is pinned, hash-verified at package build time, and bundled next
 rem to this script. Installation must not depend on GitHub or a proxy.
-set "installer=%~dp0gamepad\ViGEmBus_1.22.0_x64_x86_arm64.exe"
-set "expected_sha256=89220A7865076B342892F98865F3499FB7C4CFD673159E89D352C360FD014C6A"
+set "installer=%~dp0gamepad\@VIGEMBUS_ASSET_NAME@"
+set "expected_sha256=@VIGEMBUS_SHA256@"
 
 if not exist "%installer%" (
   echo ERROR: Bundled ViGEmBus installer not found: "%installer%"
