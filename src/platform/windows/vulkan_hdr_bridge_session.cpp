@@ -7,16 +7,19 @@
 #include <boost/process/v1.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cwctype>
 #include <filesystem>
 #include <mutex>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "src/logging.h"
 #include "src/platform/run_command.h"
+#include "src/platform/windows/misc.h"
 
 namespace platf::vulkan_hdr_bridge {
   namespace {
@@ -25,9 +28,12 @@ namespace platf::vulkan_hdr_bridge {
     constexpr wchar_t kLayerDllName[] = L"zako_vulkan_hdr_bridge.dll";
     constexpr wchar_t kProbeName[] = L"vulkan_hdr_probe.exe";
     constexpr wchar_t kCacheName[] = L"zako_vulkan_hdr_capabilities.bin";
+    constexpr auto kHelperTimeout = std::chrono::seconds(30);
+    constexpr auto kHelperPollInterval = std::chrono::milliseconds(50);
 
     std::mutex state_mutex;
     bool registered = false;
+    bool cleanup_pending = false;
     std::string current_state = "idle";
     std::string current_message = "Waiting for an HDR VDD stream.";
 
@@ -75,22 +81,17 @@ namespace platf::vulkan_hdr_bridge {
     }
 
     bool
-    remove_machine_bridge_values(bool log_errors = true) {
+    remove_bridge_values(HKEY root, const char *scope, bool log_errors = true) {
       HKEY key = nullptr;
-      const LONG open_status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, kImplicitLayersKey, 0,
-        KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY, &key);
+      const LONG open_status = RegOpenKeyExW(root, kImplicitLayersKey, 0,
+        KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
       if (open_status == ERROR_FILE_NOT_FOUND) {
-        return true;
-      }
-      // Current releases use HKCU through the interactive-user helper. A
-      // non-elevated portable Sunshine cannot remove legacy HKLM values, and
-      // that must not prevent the per-user path from working.
-      if (open_status == ERROR_ACCESS_DENIED) {
         return true;
       }
       if (open_status != ERROR_SUCCESS) {
         if (log_errors) {
-          BOOST_LOG(warning) << "Vulkan HDR bridge: failed to open implicit-layer registry key for cleanup: " << open_status;
+          BOOST_LOG(warning) << "Vulkan HDR bridge: failed to inspect " << scope
+                             << " implicit-layer registry key: " << open_status;
         }
         return false;
       }
@@ -106,7 +107,8 @@ namespace platf::vulkan_hdr_bridge {
         if (status != ERROR_SUCCESS) {
           RegCloseKey(key);
           if (log_errors) {
-            BOOST_LOG(warning) << "Vulkan HDR bridge: failed to enumerate implicit layers: " << status;
+            BOOST_LOG(warning) << "Vulkan HDR bridge: failed to enumerate " << scope
+                               << " implicit layers: " << status;
           }
           return false;
         }
@@ -115,19 +117,98 @@ namespace platf::vulkan_hdr_bridge {
           stale_values.emplace_back(std::move(name));
         }
       }
+      RegCloseKey(key);
+
+      if (stale_values.empty()) {
+        return true;
+      }
+
+      key = nullptr;
+      const LONG write_status = RegOpenKeyExW(root, kImplicitLayersKey, 0,
+        KEY_SET_VALUE | KEY_WOW64_64KEY, &key);
+      if (write_status == ERROR_FILE_NOT_FOUND) {
+        return true;
+      }
+      if (write_status != ERROR_SUCCESS) {
+        if (log_errors) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge: failed to open " << scope
+                             << " implicit-layer registry key for cleanup: " << write_status;
+        }
+        return false;
+      }
 
       bool success = true;
       for (const auto &value : stale_values) {
         const LONG status = RegDeleteValueW(key, value.c_str());
         if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
           if (log_errors) {
-            BOOST_LOG(warning) << "Vulkan HDR bridge: failed to remove implicit-layer value: " << status;
+            BOOST_LOG(warning) << "Vulkan HDR bridge: failed to remove " << scope
+                               << " implicit-layer value: " << status;
           }
           success = false;
         }
       }
       RegCloseKey(key);
       return success;
+    }
+
+    bool
+    remove_machine_bridge_values(bool log_errors = true) {
+      return remove_bridge_values(HKEY_LOCAL_MACHINE, "machine", log_errors);
+    }
+
+    bool
+    remove_current_user_bridge_values(bool log_errors = true) {
+      HKEY current_user = nullptr;
+      const LONG open_status = RegOpenCurrentUser(KEY_READ | KEY_WRITE | KEY_WOW64_64KEY, &current_user);
+      if (open_status != ERROR_SUCCESS) {
+        if (log_errors) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge: failed to open the current user's registry hive: " << open_status;
+        }
+        return false;
+      }
+      const bool cleaned = remove_bridge_values(current_user, "per-user", log_errors);
+      RegCloseKey(current_user);
+      return cleaned;
+    }
+
+    bool
+    unregister_user_manifest(bool log_errors = true) {
+      if (!platf::is_running_as_system()) {
+        return remove_current_user_bridge_values(log_errors);
+      }
+
+      HANDLE user_token = platf::retrieve_users_token(false);
+      if (!user_token) {
+        if (log_errors) BOOST_LOG(warning) << "Vulkan HDR bridge: no interactive-user token is available for cleanup";
+        return false;
+      }
+
+      bool cleaned = false;
+      const auto impersonation_error = platf::impersonate_current_user(user_token, [&]() {
+        cleaned = remove_current_user_bridge_values(log_errors);
+      });
+      CloseHandle(user_token);
+      if (impersonation_error) {
+        if (log_errors) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge: failed to impersonate the interactive user for cleanup: "
+                             << impersonation_error.message();
+        }
+        return false;
+      }
+      return cleaned;
+    }
+
+    bool
+    cleanup_registrations(bool log_errors = true) {
+      const bool machine_cleaned = remove_machine_bridge_values(log_errors);
+      const bool user_cleaned = unregister_user_manifest(log_errors);
+      const bool cleaned = machine_cleaned && user_cleaned;
+      cleanup_pending = !cleaned;
+      if (cleaned) {
+        registered = false;
+      }
+      return cleaned;
     }
 
     std::wstring
@@ -182,6 +263,32 @@ namespace platf::vulkan_hdr_bridge {
         if (log_errors) BOOST_LOG(warning) << "Vulkan HDR bridge: failed to launch " << operation << ": " << error.message();
         return false;
       }
+      const auto deadline = std::chrono::steady_clock::now() + kHelperTimeout;
+      while (child.running(error) && !error && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(kHelperPollInterval);
+      }
+      if (error) {
+        if (log_errors) BOOST_LOG(warning) << "Vulkan HDR bridge: " << operation << " status check failed: " << error.message();
+        return false;
+      }
+      const bool still_running = child.running(error);
+      if (error) {
+        if (log_errors) BOOST_LOG(warning) << "Vulkan HDR bridge: " << operation << " final status check failed: " << error.message();
+        return false;
+      }
+      if (still_running) {
+        std::error_code terminate_error;
+        child.terminate(terminate_error);
+        std::error_code wait_error;
+        child.wait(wait_error);
+        if (log_errors) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge: " << operation << " timed out after "
+                             << kHelperTimeout.count() << " seconds"
+                             << (terminate_error ? "; termination failed: " + terminate_error.message() : "")
+                             << (wait_error ? "; final wait failed: " + wait_error.message() : "");
+        }
+        return false;
+      }
       child.wait(error);
       if (error) {
         if (log_errors) BOOST_LOG(warning) << "Vulkan HDR bridge: " << operation << " wait failed: " << error.message();
@@ -208,18 +315,14 @@ namespace platf::vulkan_hdr_bridge {
     }
 
     bool
-    unregister_user_manifest(bool log_errors = true) {
-      const auto probe = artifact_directory() / kProbeName;
-      if (!std::filesystem::exists(probe)) return true;
-      return run_helper(probe, "--unregister-implicit-layer \"" + std::filesystem::path(kManifestName).string() +
-                               "\"", "per-user layer cleanup", log_errors);
-    }
-
-    bool
     enable_locked() {
-      if (registered) return true;
+      if (registered && !cleanup_pending) return true;
 
       set_status("validating", "Validating Vulkan HDR presentation on the active VDD.");
+      if (!cleanup_registrations()) {
+        set_status("error", "Could not remove a stale Vulkan layer registration.");
+        return false;
+      }
       const auto directory = artifact_directory();
       const auto manifest = directory / kManifestName;
       const auto layer_dll = directory / kLayerDllName;
@@ -230,8 +333,6 @@ namespace platf::vulkan_hdr_bridge {
         return false;
       }
 
-      remove_machine_bridge_values();
-      unregister_user_manifest();
       const auto display = active_zako_display();
       if (display.empty()) {
         BOOST_LOG(warning) << "Vulkan HDR bridge: no active Zako display was found";
@@ -248,6 +349,7 @@ namespace platf::vulkan_hdr_bridge {
       }
 
       registered = true;
+      cleanup_pending = false;
       set_status("enabled", "Vulkan HDR compatibility is active for this VDD stream.");
       return true;
     }
@@ -256,10 +358,7 @@ namespace platf::vulkan_hdr_bridge {
   void
   startup_cleanup() {
     std::lock_guard lock(state_mutex);
-    const bool machine_cleaned = remove_machine_bridge_values();
-    const bool user_cleaned = unregister_user_manifest();
-    const bool cleaned = machine_cleaned && user_cleaned;
-    registered = false;
+    const bool cleaned = cleanup_registrations();
     set_status(cleaned ? "idle" : "error",
       cleaned ? "Waiting for an HDR VDD stream." : "Could not clean a stale Vulkan layer registration.");
   }
@@ -275,13 +374,10 @@ namespace platf::vulkan_hdr_bridge {
   bool
   validate_now() {
     std::lock_guard lock(state_mutex);
-    if (registered) return true;
+    if (registered && !cleanup_pending) return true;
     if (!enable_locked()) return false;
 
-    const bool machine_cleaned = remove_machine_bridge_values();
-    const bool user_cleaned = unregister_user_manifest();
-    registered = false;
-    if (!machine_cleaned || !user_cleaned) {
+    if (!cleanup_registrations()) {
       set_status("error", "Validation succeeded, but the temporary Vulkan layer registration could not be removed.");
       return false;
     }
@@ -292,16 +388,14 @@ namespace platf::vulkan_hdr_bridge {
   void
   disable() {
     std::lock_guard lock(state_mutex);
-    if (!registered) {
+    if (!registered && !cleanup_pending) {
       return;
     }
-    const bool machine_cleaned = remove_machine_bridge_values();
-    const bool user_cleaned = unregister_user_manifest();
-    const bool cleaned = machine_cleaned && user_cleaned;
-    if (cleaned && registered) {
+    const bool was_registered = registered;
+    const bool cleaned = cleanup_registrations();
+    if (cleaned && was_registered) {
       BOOST_LOG(info) << "Vulkan HDR bridge disabled";
     }
-    registered = false;
     set_status(cleaned ? "idle" : "error",
       cleaned ? "Waiting for an HDR VDD stream." : "Could not remove the Vulkan layer registration.");
   }
@@ -309,18 +403,16 @@ namespace platf::vulkan_hdr_bridge {
   void
   shutdown_cleanup() {
     std::lock_guard lock(state_mutex);
-    if (!registered) {
+    if (!registered && !cleanup_pending) {
       return;
     }
-    remove_machine_bridge_values(false);
-    unregister_user_manifest(false);
-    registered = false;
+    cleanup_registrations(false);
   }
 
   status_t
   status() {
     std::lock_guard lock(state_mutex);
-    return { current_state, current_message, registered, artifacts_installed() };
+    return { current_state, current_message, registered || cleanup_pending, artifacts_installed() };
   }
 
 }  // namespace platf::vulkan_hdr_bridge

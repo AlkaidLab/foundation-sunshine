@@ -394,7 +394,7 @@ namespace display_device {
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
     const bool vulkan_hdr_bridge_requested =
-      will_use_vdd && session.enable_hdr && config::video.vdd_vulkan_hdr_bridge;
+      will_use_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
     const bool vdd_will_turn_off_physical_displays =
       will_use_vdd &&
       parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;

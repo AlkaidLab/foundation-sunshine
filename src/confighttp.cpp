@@ -1452,16 +1452,14 @@ namespace confighttp {
   void
   writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
     const auto bridge_status = platf::vulkan_hdr_bridge::status();
-    pt::ptree output;
-    output.put("status", operation_status);
-    output.put("state", bridge_status.state);
-    output.put("message", bridge_status.message);
-    output.put("registered", bridge_status.registered);
-    output.put("artifacts_installed", bridge_status.artifacts_installed);
-
-    std::ostringstream data;
-    pt::write_json(data, output);
-    response->write(data.str());
+    nlohmann::json output {
+      {"status", operation_status},
+      {"state", bridge_status.state},
+      {"message", bridge_status.message},
+      {"registered", bridge_status.registered},
+      {"artifacts_installed", bridge_status.artifacts_installed},
+    };
+    send_response(std::move(response), output);
   }
 
   void

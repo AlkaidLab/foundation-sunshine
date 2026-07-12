@@ -7,6 +7,7 @@ namespace platf::vulkan_hdr_bridge {
   struct status_t {
     std::string state;
     std::string message;
+    // True while the layer is active or its cleanup still needs to be retried.
     bool registered;
     bool artifacts_installed;
   };

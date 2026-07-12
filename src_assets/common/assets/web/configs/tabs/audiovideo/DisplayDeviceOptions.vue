@@ -51,11 +51,14 @@ async function validateVulkanHdrBridge() {
 }
 
 onMounted(() => {
+  if (props.platform !== 'windows') return
   refreshVulkanHdrStatus()
   vulkanHdrStatusTimer = window.setInterval(refreshVulkanHdrStatus, 3000)
 })
 
-onUnmounted(() => window.clearInterval(vulkanHdrStatusTimer))
+onUnmounted(() => {
+  if (vulkanHdrStatusTimer !== undefined) window.clearInterval(vulkanHdrStatusTimer)
+})
 
 // TODO: Sample for use in PR #2032
 function getRemappingType() {
