@@ -33,8 +33,9 @@ namespace tray_http {
     std::atomic<bool> tray_vdd_action_running { false };
     std::atomic<std::uint64_t> tray_vdd_confirmation_operation_id { 0 };
     std::atomic<bool> tray_app_termination_running { false };
+    std::atomic<bool> tray_restart_running { false };
     std::atomic<bool> tray_shutdown_running { false };
-    constexpr auto tray_shutdown_response_grace = 250ms;
+    constexpr auto tray_lifecycle_response_grace = 250ms;
     std::mutex tray_action_mutex;
 
     thread_pool_util::ThreadPool &
@@ -428,8 +429,23 @@ namespace tray_http {
       }
 
       if (action == "restart") {
-        BOOST_LOG(info) << "Restarting from GUI tray"sv;
-        platf::restart();
+        if (tray_restart_running.exchange(true)) {
+          return action_error("Sunshine restart is already in progress");
+        }
+
+        BOOST_LOG(info) << "Restart requested from GUI tray"sv;
+        lock.unlock();
+        try {
+          task_pool.pushDelayed([]() {
+            platf::restart();
+          },
+            tray_lifecycle_response_grace);
+        }
+        catch (const std::exception &e) {
+          tray_restart_running = false;
+          BOOST_LOG(error) << "Failed to schedule Sunshine restart: "sv << e.what();
+          return action_error("Failed to schedule Sunshine restart");
+        }
         return action_success("Restart requested");
       }
 
@@ -449,7 +465,7 @@ namespace tray_http {
 #endif
             lifetime::exit_sunshine(exit_code, true);
           },
-            tray_shutdown_response_grace);
+            tray_lifecycle_response_grace);
         }
         catch (const std::exception &e) {
           tray_shutdown_running = false;
