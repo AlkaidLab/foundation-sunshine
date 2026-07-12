@@ -10,18 +10,18 @@ protocol phases.
 /launch or /resume
         |
         v
-     pending  -- first RTSP request authenticated --> claimed
-        ^                                         |
-        |---- request socket closes before ANNOUNCE|
-                                                  v
-                           successful ANNOUNCE --> active stream
-                                                  (ticket removed)
+     pending  -- RTSP request authenticated --> claimed (lease count + 1)
+        ^                                      |
+        |---- request socket closes -----------|  (lease count - 1)
+        |
+        +---- stream startup confirmed --> active stream (ticket removed)
 ```
 
-Both `pending` and `claimed` tickets expire. A claimed ticket is released back
-to `pending` when an RTSP request socket closes before the stream is activated.
-This is required because GameStream uses a separate TCP connection for each
-RTSP request.
+Only unclaimed `pending` tickets expire. Authenticated RTSP sockets hold counted
+leases, so overlapping requests cannot prematurely release the ticket. The
+ticket returns to `pending` when its last socket closes and remains available
+until stream startup is confirmed. This is required because GameStream uses a
+separate TCP connection for each RTSP request.
 
 ## Identity and compatibility
 

@@ -1559,10 +1559,6 @@ namespace rtsp_stream {
       return;
     }
 
-    // The RTSP handshake has created the active stream. The launch ticket is
-    // no longer needed for connection routing and must not block a reconnect.
-    server->activate_launch_session(session.id);
-
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
 

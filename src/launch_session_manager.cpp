@@ -16,6 +16,7 @@ namespace rtsp_stream {
     struct launch_ticket_t {
       std::shared_ptr<launch_session_t> session;
       launch_ticket_state_e state { launch_ticket_state_e::pending };
+      std::size_t claim_count { 0 };
       launch_session_manager_t::clock_t::time_point expires_at;
     };
 
@@ -87,6 +88,7 @@ namespace rtsp_stream {
 
         same_client->session = std::move(session);
         same_client->state = launch_ticket_state_e::pending;
+        same_client->claim_count = 0;
         same_client->expires_at = now + timeout;
         return launch_ticket_register_e::replaced;
       }
@@ -109,6 +111,7 @@ namespace rtsp_stream {
     _impl->tickets.push_back({
       .session = std::move(session),
       .state = launch_ticket_state_e::pending,
+      .claim_count = 0,
       .expires_at = now + timeout,
     });
     return launch_ticket_register_e::accepted;
@@ -122,8 +125,7 @@ namespace rtsp_stream {
     launch_ticket_t *match = nullptr;
     if (!remote_address.empty()) {
       for (auto &ticket : _impl->tickets) {
-        if (ticket.state != launch_ticket_state_e::pending ||
-            !ticket.session ||
+        if (!ticket.session ||
             ticket.session->rtsp_cipher ||
             ticket.session->rtsp_peer_address != remote_address) {
           continue;
@@ -138,7 +140,7 @@ namespace rtsp_stream {
     if (!match) {
       auto only_pending = static_cast<launch_ticket_t *>(nullptr);
       for (auto &ticket : _impl->tickets) {
-        if (ticket.state != launch_ticket_state_e::pending || !ticket.session || ticket.session->rtsp_cipher) {
+        if (!ticket.session || ticket.session->rtsp_cipher) {
           continue;
         }
         if (only_pending) {
@@ -154,6 +156,7 @@ namespace rtsp_stream {
     }
 
     match->state = launch_ticket_state_e::claimed;
+    ++match->claim_count;
     return match->session;
   }
 
@@ -172,8 +175,7 @@ namespace rtsp_stream {
     // GCM authentication tag remains the sole identity decision.
     for (int route_pass = 0; route_pass < 2; ++route_pass) {
       for (auto &ticket : _impl->tickets) {
-        if (ticket.state != launch_ticket_state_e::pending ||
-            !ticket.session ||
+        if (!ticket.session ||
             !ticket.session->rtsp_cipher) {
           continue;
         }
@@ -203,6 +205,7 @@ namespace rtsp_stream {
     }
 
     match->state = launch_ticket_state_e::claimed;
+    ++match->claim_count;
     return {
       .session = match->session,
       .plaintext = std::move(matched_plaintext),
@@ -226,8 +229,10 @@ namespace rtsp_stream {
       return false;
     }
 
-    ticket->state = launch_ticket_state_e::pending;
-    ticket->expires_at = now + timeout;
+    if (--ticket->claim_count == 0) {
+      ticket->state = launch_ticket_state_e::pending;
+      ticket->expires_at = now + timeout;
+    }
     return true;
   }
 

@@ -135,6 +135,28 @@ TEST(LaunchSessionManager, PreservesClaimedTicketsPastPendingExpiry) {
   EXPECT_EQ(manager.size(now + 4s), 0U);
 }
 
+TEST(LaunchSessionManager, SupportsOverlappingRtspConnectionsForOneLaunch) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+
+  ASSERT_EQ(manager.register_session(make_session(33, "multi-rtsp-cert", "192.0.2.33"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+
+  auto describe = manager.claim_plaintext("192.0.2.33", now);
+  auto announce = manager.claim_plaintext("192.0.2.33", now);
+  ASSERT_TRUE(describe);
+  ASSERT_TRUE(announce);
+  EXPECT_EQ(describe->id, 33U);
+  EXPECT_EQ(announce->id, 33U);
+
+  EXPECT_TRUE(manager.release(33, 10s, now));
+  EXPECT_EQ(manager.register_session(make_session(34, "multi-rtsp-cert", "192.0.2.34"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::client_busy);
+  EXPECT_TRUE(manager.release(33, 10s, now));
+  EXPECT_EQ(manager.register_session(make_session(34, "multi-rtsp-cert", "192.0.2.34"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::replaced);
+}
+
 TEST(LaunchSessionManager, AuthenticatesEncryptedClaimByGcmTagAcrossRouteChanges) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
