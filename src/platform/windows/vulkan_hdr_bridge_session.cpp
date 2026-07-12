@@ -29,6 +29,7 @@ namespace platf::vulkan_hdr_bridge {
     constexpr wchar_t kProbeName[] = L"vulkan_hdr_probe.exe";
     constexpr wchar_t kCacheName[] = L"zako_vulkan_hdr_capabilities.bin";
     constexpr auto kHelperTimeout = std::chrono::seconds(30);
+    constexpr auto kHelperTerminationTimeout = std::chrono::seconds(5);
     constexpr auto kHelperPollInterval = std::chrono::milliseconds(50);
 
     std::mutex state_mutex;
@@ -279,12 +280,34 @@ namespace platf::vulkan_hdr_bridge {
       if (still_running) {
         std::error_code terminate_error;
         child.terminate(terminate_error);
+
+        const auto termination_deadline = std::chrono::steady_clock::now() + kHelperTerminationTimeout;
+        std::error_code termination_status_error;
+        bool exited = false;
+        while (std::chrono::steady_clock::now() < termination_deadline) {
+          if (!child.running(termination_status_error)) {
+            exited = !termination_status_error;
+            break;
+          }
+          if (termination_status_error) break;
+          std::this_thread::sleep_for(kHelperPollInterval);
+        }
+
         std::error_code wait_error;
-        child.wait(wait_error);
+        if (exited) {
+          child.wait(wait_error);
+        }
+        else {
+          // Keep this path bounded even if TerminateProcess failed. Detaching
+          // prevents the child destructor from issuing another implicit kill.
+          child.detach();
+        }
         if (log_errors) {
           BOOST_LOG(warning) << "Vulkan HDR bridge: " << operation << " timed out after "
                              << kHelperTimeout.count() << " seconds"
                              << (terminate_error ? "; termination failed: " + terminate_error.message() : "")
+                             << (termination_status_error ? "; termination status check failed: " + termination_status_error.message() : "")
+                             << (!exited && !termination_status_error ? "; process did not exit within the termination timeout" : "")
                              << (wait_error ? "; final wait failed: " + wait_error.message() : "");
         }
         return false;
@@ -344,6 +367,7 @@ namespace platf::vulkan_hdr_bridge {
         return false;
       }
       if (!register_user_manifest(probe, manifest)) {
+        cleanup_registrations();
         set_status("error", "Vulkan layer registration failed. The stream continues without the workaround.");
         return false;
       }
