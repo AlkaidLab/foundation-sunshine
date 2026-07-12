@@ -12,6 +12,9 @@
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
 #include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/vulkan_hdr_bridge_session.h"
+#endif
 #include "src/rtsp.h"
 #include "to_string.h"
 #include "vdd_ioctl.h"
@@ -131,6 +134,9 @@ namespace display_device {
   };
 
   session_t::deinit_t::~deinit_t() {
+#ifdef _WIN32
+    platf::vulkan_hdr_bridge::shutdown_cleanup();
+#endif
     // 清理事件监听器
     SessionEventListener::deinit();
     
@@ -149,6 +155,11 @@ namespace display_device {
 
   std::unique_ptr<session_t::deinit_t>
   session_t::init() {
+#ifdef _WIN32
+    // Remove a registration left behind by a terminated Sunshine process
+    // before recovering display state or accepting a new stream.
+    platf::vulkan_hdr_bridge::startup_cleanup();
+#endif
     session_t::get().settings.set_filepath(platf::appdata() / "original_display_settings.json");
     
     // 初始化会话事件监听器（用于检测解锁事件）
@@ -382,6 +393,8 @@ namespace display_device {
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+    const bool vulkan_hdr_bridge_requested =
+      will_use_vdd && session.enable_hdr && config::video.vdd_vulkan_hdr_bridge;
     const bool vdd_will_turn_off_physical_displays =
       will_use_vdd &&
       parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
@@ -440,7 +453,8 @@ namespace display_device {
     current_use_vdd = parsed_config->use_vdd;
 
     if (settings.is_changing_settings_going_to_fail()) {
-      timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name, pre_saved_initial_topology]() {
+      timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name,
+                           pre_saved_initial_topology, vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
           return false;
@@ -454,6 +468,16 @@ namespace display_device {
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
         }
+#ifdef _WIN32
+        else if (vulkan_hdr_bridge_requested) {
+          if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {
+            BOOST_LOG(warning) << "Vulkan HDR bridge validation or registration failed; continuing without the workaround";
+          }
+        }
+        else {
+          platf::vulkan_hdr_bridge::disable();
+        }
+#endif
         return true;
       });
 
@@ -468,6 +492,16 @@ namespace display_device {
     const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology);
     if (apply_result) {
       timer->setup_timer(nullptr);
+#ifdef _WIN32
+      if (vulkan_hdr_bridge_requested) {
+        if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge validation or registration failed; continuing without the workaround";
+        }
+      }
+      else {
+        platf::vulkan_hdr_bridge::disable();
+      }
+#endif
       return make_apply_configure_result(apply_result);
     }
 
@@ -739,6 +773,12 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
+#ifdef _WIN32
+    // Stop exposing the implicit layer before changing HDR state or removing
+    // the VDD. The layer itself is pass-through, but registration must remain
+    // scoped to the stream that requested HDR on a Zako display.
+    platf::vulkan_hdr_bridge::disable();
+#endif
     // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
 

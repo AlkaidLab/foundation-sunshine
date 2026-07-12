@@ -82,6 +82,30 @@ if(VDD_WIN10_DRIVER_AVAILABLE)
           COMPONENT vdd)
 endif()
 
+# Vulkan HDR WSI compatibility layer shipped by newer ZakoVDD releases.
+# Keep these files out of global Vulkan registry state at install time;
+# Sunshine registers the manifest only while an HDR VDD session is active.
+set(VDD_VULKAN_HDR_FILES
+    "${VDD_DRIVER_DIR}/zako_vulkan_hdr_bridge.dll"
+    "${VDD_DRIVER_DIR}/VkLayer_zako_virtual_hdr.json"
+    "${VDD_DRIVER_DIR}/vulkan_hdr_probe.exe")
+set(VDD_VULKAN_HDR_AVAILABLE TRUE)
+foreach(VDD_VULKAN_HDR_FILE IN LISTS VDD_VULKAN_HDR_FILES)
+  if(NOT EXISTS "${VDD_VULKAN_HDR_FILE}")
+    set(VDD_VULKAN_HDR_AVAILABLE FALSE)
+  endif()
+endforeach()
+if(VDD_VULKAN_HDR_AVAILABLE)
+  install(FILES ${VDD_VULKAN_HDR_FILES}
+          DESTINATION "tools/vulkan_hdr"
+          COMPONENT vdd)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tools/vulkan_hdr")
+  file(COPY ${VDD_VULKAN_HDR_FILES}
+       DESTINATION "${CMAKE_BINARY_DIR}/tools/vulkan_hdr")
+else()
+  message(STATUS "Zako Vulkan HDR bridge artifacts are not present in the selected VDD package")
+endif()
+
 # vmouse: scripts from source tree, driver binaries + cert from download cache
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/install-vmouse.bat"
               "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vmouse/uninstall-vmouse.bat"

@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import Checkbox from '../../../components/Checkbox.vue'
@@ -11,6 +11,51 @@ const props = defineProps({
 
 const config = ref(props.config)
 const display_mode_remapping = ref(props.display_mode_remapping || [])
+const vulkanHdrStatus = ref({ state: 'idle', artifacts_installed: true })
+const vulkanHdrValidating = ref(false)
+let vulkanHdrStatusTimer
+
+const vulkanHdrStatusKey = computed(() => {
+  if (config.value.vdd_vulkan_hdr_bridge !== 'enabled') return 'config.vdd_vulkan_hdr_bridge_status_disabled'
+  if (!vulkanHdrStatus.value.artifacts_installed || vulkanHdrStatus.value.state === 'unavailable') {
+    return 'config.vdd_vulkan_hdr_bridge_status_unavailable'
+  }
+  const knownStates = ['idle', 'validating', 'enabled', 'error']
+  const state = knownStates.includes(vulkanHdrStatus.value.state) ? vulkanHdrStatus.value.state : 'idle'
+  return `config.vdd_vulkan_hdr_bridge_status_${state}`
+})
+
+async function refreshVulkanHdrStatus() {
+  try {
+    const response = await fetch('/api/vulkan-hdr-bridge')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const result = await response.json()
+    if (result.status?.toString() === 'true') vulkanHdrStatus.value = result
+  } catch (_) {
+    vulkanHdrStatus.value = { state: 'unavailable', artifacts_installed: false }
+  }
+}
+
+async function validateVulkanHdrBridge() {
+  vulkanHdrValidating.value = true
+  vulkanHdrStatus.value = { ...vulkanHdrStatus.value, state: 'validating' }
+  try {
+    const response = await fetch('/api/vulkan-hdr-bridge/validate', { method: 'POST' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    vulkanHdrStatus.value = await response.json()
+  } catch (_) {
+    vulkanHdrStatus.value = { ...vulkanHdrStatus.value, state: 'error' }
+  } finally {
+    vulkanHdrValidating.value = false
+  }
+}
+
+onMounted(() => {
+  refreshVulkanHdrStatus()
+  vulkanHdrStatusTimer = window.setInterval(refreshVulkanHdrStatus, 3000)
+})
+
+onUnmounted(() => window.clearInterval(vulkanHdrStatusTimer))
 
 // TODO: Sample for use in PR #2032
 function getRemappingType() {
@@ -153,6 +198,34 @@ function addRemapping(type) {
                   <option value="no_operation">{{ $tp('config.hdr_prep_no_operation') }}</option>
                   <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
                 </select>
+              </div>
+
+              <div class="mb-3">
+                <label for="vdd_vulkan_hdr_bridge" class="form-label">
+                  {{ $tp('config.vdd_vulkan_hdr_bridge') }}
+                </label>
+                <select id="vdd_vulkan_hdr_bridge" class="form-select" v-model="config.vdd_vulkan_hdr_bridge">
+                  <option value="enabled">{{ $tp('config.vdd_vulkan_hdr_bridge_automatic') }}</option>
+                  <option value="disabled">{{ $tp('config.vdd_vulkan_hdr_bridge_disabled') }}</option>
+                </select>
+                <div class="form-text">{{ $tp('config.vdd_vulkan_hdr_bridge_desc') }}</div>
+                <div
+                  class="form-text fw-semibold"
+                  :class="{
+                    'text-success': vulkanHdrStatus.state === 'enabled',
+                    'text-danger': vulkanHdrStatus.state === 'error' || vulkanHdrStatus.state === 'unavailable',
+                  }"
+                >
+                  {{ $tp(vulkanHdrStatusKey) }}
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary btn-sm mt-2"
+                  :disabled="config.vdd_vulkan_hdr_bridge !== 'enabled' || vulkanHdrValidating"
+                  @click="validateVulkanHdrBridge"
+                >
+                  {{ $tp('config.vdd_vulkan_hdr_bridge_validate') }}
+                </button>
               </div>
 
               <Checkbox

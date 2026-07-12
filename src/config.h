@@ -45,6 +45,8 @@ namespace config {
     bool vdd_reuse;
     /** When true, Zako Direct Capture borrows VDD shared textures instead of copying into Sunshine-owned capture textures. */
     bool vdd_borrowed_texture;
+    /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
+    bool vdd_vulkan_hdr_bridge;
 
     struct {
       int preset;

@@ -65,6 +65,7 @@ const DEFAULT_TABS = [
       capture_target: 'display',
       capture_compute_shader: 'auto',
       vdd_borrowed_texture: 'enabled',
+      vdd_vulkan_hdr_bridge: 'enabled',
       window_title: '',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
