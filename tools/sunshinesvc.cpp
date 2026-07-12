@@ -122,42 +122,50 @@ DuplicateTokenForSession(DWORD console_session_id) {
   return new_token;
 }
 
-bool
+DWORD
 LaunchGuiAgent(DWORD console_session_id) {
   std::wstring service_path(32768, L'\0');
   const auto service_path_length =
     GetModuleFileNameW(NULL, service_path.data(), static_cast<DWORD>(service_path.size()));
-  if (service_path_length == 0 || service_path_length >= service_path.size()) {
-    return false;
+  if (service_path_length == 0) {
+    const auto error = GetLastError();
+    return error == ERROR_SUCCESS ? ERROR_BAD_PATHNAME : error;
+  }
+  if (service_path_length >= service_path.size()) {
+    return ERROR_INSUFFICIENT_BUFFER;
   }
   service_path.resize(service_path_length);
 
   const auto tools_separator = service_path.find_last_of(L"\\/");
   if (tools_separator == std::wstring::npos || tools_separator == 0) {
-    return false;
+    return ERROR_BAD_PATHNAME;
   }
   const auto install_separator = service_path.find_last_of(L"\\/", tools_separator - 1);
   if (install_separator == std::wstring::npos) {
-    return false;
+    return ERROR_BAD_PATHNAME;
   }
 
   const auto install_directory = service_path.substr(0, install_separator);
   const auto gui_directory = install_directory + L"\\assets\\gui";
   const auto gui_path = gui_directory + L"\\sunshine-gui.exe";
   const auto gui_attributes = GetFileAttributesW(gui_path.c_str());
-  if (gui_attributes == INVALID_FILE_ATTRIBUTES || (gui_attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-    return false;
+  if (gui_attributes == INVALID_FILE_ATTRIBUTES) {
+    return GetLastError();
+  }
+  if (gui_attributes & FILE_ATTRIBUTE_DIRECTORY) {
+    return ERROR_FILE_NOT_FOUND;
   }
 
   HANDLE user_token = NULL;
   if (!WTSQueryUserToken(console_session_id, &user_token)) {
-    return false;
+    return GetLastError();
   }
 
   LPVOID environment = NULL;
   if (!CreateEnvironmentBlock(&environment, user_token, FALSE)) {
+    const auto error = GetLastError();
     CloseHandle(user_token);
-    return false;
+    return error;
   }
 
   auto command = L"\"" + gui_path + L"\" --hidden";
@@ -180,6 +188,7 @@ LaunchGuiAgent(DWORD console_session_id) {
     gui_directory.c_str(),
     &startup_info,
     &process_info);
+  const auto launch_error = launched ? ERROR_SUCCESS : GetLastError();
 
   if (launched) {
     CloseHandle(process_info.hThread);
@@ -187,7 +196,31 @@ LaunchGuiAgent(DWORD console_session_id) {
   }
   DestroyEnvironmentBlock(environment);
   CloseHandle(user_token);
-  return launched;
+  return launch_error;
+}
+
+void
+WriteServiceLog(HANDLE log_file, const std::string &message) {
+  DWORD bytes_written;
+  const auto line = "[sunshinesvc] " + message + "\r\n";
+  WriteFile(log_file, line.data(), static_cast<DWORD>(line.size()), &bytes_written, NULL);
+}
+
+bool
+ReconcileGuiAgent(HANDLE log_file, DWORD console_session_id, DWORD &last_error) {
+  const auto error = LaunchGuiAgent(console_session_id);
+  if (error == ERROR_SUCCESS) {
+    if (last_error != ERROR_SUCCESS) {
+      WriteServiceLog(log_file, "GUI agent launch recovered for session " + std::to_string(console_session_id));
+    }
+  }
+  else if (error != last_error) {
+    WriteServiceLog(log_file,
+      "GUI agent launch failed for session " + std::to_string(console_session_id) +
+        " (Win32 error " + std::to_string(error) + "); retrying");
+  }
+  last_error = error;
+  return error == ERROR_SUCCESS;
 }
 
 HANDLE
@@ -387,7 +420,8 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
 
     // Launch the tray in the signed-in user's session so HKCU settings and
     // single-instance ownership remain scoped to that user.
-    bool gui_agent_started = LaunchGuiAgent(console_session_id);
+    DWORD gui_agent_error = ERROR_SUCCESS;
+    bool gui_agent_started = ReconcileGuiAgent(log_file_handle, console_session_id, gui_agent_error);
 
     bool still_running;
     do {
@@ -397,7 +431,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         WaitForMultipleObjects(_countof(wait_objects), wait_objects, FALSE, gui_agent_started ? INFINITE : 3000);
       switch (wait_result) {
         case WAIT_TIMEOUT:
-          gui_agent_started = LaunchGuiAgent(console_session_id);
+          gui_agent_started = ReconcileGuiAgent(log_file_handle, console_session_id, gui_agent_error);
           still_running = true;
           break;
 
