@@ -66,9 +66,16 @@ namespace nvhttp::sessions {
       for (const auto &session_info : sessions_info) {
         json session_obj;
         session_obj["client_name"] = session_info.client_name;
+        session_obj["client_uuid"] = session_info.client_uuid;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
+        session_obj["stop_reason"] = session_info.stop_reason;
         session_obj["session_id"] = session_info.session_id;
+        session_obj["uptime_ms"] = session_info.uptime_ms;
+        session_obj["control_connected"] = session_info.control_connected;
+        session_obj["control_idle_ms"] = session_info.control_idle_ms < 0 ? json(nullptr) : json(session_info.control_idle_ms);
+        session_obj["video_idle_ms"] = session_info.video_idle_ms < 0 ? json(nullptr) : json(session_info.video_idle_ms);
+        session_obj["audio_idle_ms"] = session_info.audio_idle_ms < 0 ? json(nullptr) : json(session_info.audio_idle_ms);
         session_obj["width"] = session_info.width;
         session_obj["height"] = session_info.height;
         session_obj["fps"] = session_info.fps;

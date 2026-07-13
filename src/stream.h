@@ -3,6 +3,7 @@
  * @brief Declarations for the streaming protocols.
  */
 #pragma once
+#include <cstdint>
 #include <utility>
 #include <vector>
 #include <string>
@@ -36,12 +37,34 @@ namespace stream {
     std::optional<int> gcmap;
   };
 
+  namespace session {
+    enum class stop_reason_e : int {
+      none,
+      control_disconnect,
+      control_timeout,
+      protocol_error,
+      video_ended,
+      audio_ended,
+      host_terminate,
+    };
+
+    const char *
+    stop_reason_name(stop_reason_e reason);
+  }  // namespace session
+
   // Session information structure for API responses
   struct session_info_t {
     std::string client_name;
+    std::string client_uuid;
     std::string client_address;
     std::string state;
+    std::string stop_reason;
     uint32_t session_id;
+    std::int64_t uptime_ms;
+    std::int64_t control_idle_ms;
+    std::int64_t video_idle_ms;
+    std::int64_t audio_idle_ms;
+    bool control_connected;
     int width;
     int height;
     int fps;
@@ -66,7 +89,7 @@ namespace stream {
     int
     start(session_t &session, const std::string &addr_string);
     void
-    stop(session_t &session);
+    stop(session_t &session, stop_reason_e reason = stop_reason_e::none);
     void
     join(session_t &session);
     state_e

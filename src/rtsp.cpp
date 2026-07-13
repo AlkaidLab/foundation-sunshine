@@ -831,7 +831,7 @@ namespace rtsp_stream {
       for (auto i = _session_slots->begin(); i != _session_slots->end();) {
         auto &slot = *(*i);
         if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
-          stream::session::stop(slot);
+          stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
           stream::session::join(slot);
 
           i = _session_slots->erase(i);

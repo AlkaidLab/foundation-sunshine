@@ -108,6 +108,20 @@ using namespace std::literals;
 
 namespace stream {
 
+  namespace {
+    std::int64_t
+    steady_now_ms() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+    }
+
+    std::int64_t
+    idle_ms(std::int64_t now, std::int64_t last_activity) {
+      return last_activity == 0 ? -1 : std::max<std::int64_t>(0, now - last_activity);
+    }
+  }  // namespace
+
   enum class socket_e : int {
     video,  ///< Video
     audio,  ///< Audio
@@ -489,6 +503,13 @@ namespace stream {
 
     // 添加客户端名称字段
     std::string client_name;
+    std::string client_cert_uuid;
+
+    std::int64_t created_at_ms { 0 };
+    std::atomic<std::int64_t> last_control_activity_ms { 0 };
+    std::atomic<std::int64_t> last_video_activity_ms { 0 };
+    std::atomic<std::int64_t> last_audio_activity_ms { 0 };
+    std::atomic<session::stop_reason_e> stop_reason { session::stop_reason_e::none };
 
     struct {
       std::string ping_payload;
@@ -852,6 +873,7 @@ namespace stream {
       }
 
       session->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      session->last_control_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
       switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE: {
@@ -869,7 +891,7 @@ namespace stream {
           BOOST_LOG(info) << "CLIENT DISCONNECTED"sv;
           // No more clients to send video data to ^_^
           if (session->state == session::state_e::RUNNING) {
-            session::stop(*session);
+            session::stop(*session, session::stop_reason_e::control_disconnect);
           }
           break;
         case ENET_EVENT_TYPE_NONE:
@@ -1643,7 +1665,7 @@ namespace stream {
 
         BOOST_LOG(error) << "Failed to verify tag"sv;
 
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1699,7 +1721,7 @@ namespace stream {
 
         BOOST_LOG(error) << "Failed to verify tag"sv;
 
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1708,7 +1730,7 @@ namespace stream {
 
       if (type == packetTypes[IDX_ENCRYPTED]) {
         BOOST_LOG(error) << "Bad packet type [IDX_ENCRYPTED] found"sv;
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1749,7 +1771,7 @@ namespace stream {
           if (now > session->pingTimeout) {
             auto address = session->control.peer ? platf::from_sockaddr((sockaddr *) &session->control.peer->address.address) : session->control.expected_peer_address;
             BOOST_LOG(info) << address << ": Ping Timeout"sv;
-            session::stop(*session);
+            session::stop(*session, session::stop_reason_e::control_timeout);
           }
 
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
@@ -2288,6 +2310,7 @@ namespace stream {
       frame_network_latency_logger.first_point_now();
 
       auto session = (session_t *) packet->channel_data;
+      session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
@@ -2639,6 +2662,7 @@ namespace stream {
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
+      session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
@@ -2945,7 +2969,7 @@ namespace stream {
   void
   videoThread(session_t *session) {
     auto fg = util::fail_guard([&]() {
-      session::stop(*session);
+      session::stop(*session, session::stop_reason_e::video_ended);
     });
 
     while_starting_do_nothing(session->state);
@@ -2970,7 +2994,7 @@ namespace stream {
   void
   audioThread(session_t *session) {
     auto fg = util::fail_guard([&]() {
-      session::stop(*session);
+      session::stop(*session, session::stop_reason_e::audio_ended);
     });
 
     while_starting_do_nothing(session->state);
@@ -2994,6 +3018,26 @@ namespace stream {
     std::atomic_uint running_sessions;
     std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
 
+    const char *
+    stop_reason_name(stop_reason_e reason) {
+      switch (reason) {
+        case stop_reason_e::none:
+          return "none";
+        case stop_reason_e::control_disconnect:
+          return "control_disconnect";
+        case stop_reason_e::control_timeout:
+          return "control_timeout";
+        case stop_reason_e::protocol_error:
+          return "protocol_error";
+        case stop_reason_e::video_ended:
+          return "video_ended";
+        case stop_reason_e::audio_ended:
+          return "audio_ended";
+        case stop_reason_e::host_terminate:
+          return "host_terminate";
+      }
+      return "unknown";
+    }
     state_e
     state(session_t &session) {
       return session.state.load(std::memory_order_relaxed);
@@ -3005,13 +3049,18 @@ namespace stream {
     }
 
     void
-    stop(session_t &session) {
+    stop(session_t &session, stop_reason_e reason) {
       while_starting_do_nothing(session.state);
       auto expected = state_e::RUNNING;
       auto already_stopping = !session.state.compare_exchange_strong(expected, state_e::STOPPING);
       if (already_stopping) {
         return;
       }
+
+      session.stop_reason.store(reason, std::memory_order_relaxed);
+      BOOST_LOG(info) << "Stopping streaming session "sv << session.launch_session_id
+                      << " [client_uuid="sv << session.client_cert_uuid
+                      << ", reason="sv << stop_reason_name(reason) << ']';
 
       perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
@@ -3118,7 +3167,9 @@ namespace stream {
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
 
-      BOOST_LOG(debug) << "Session ended"sv;
+      BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id
+                       << ", client_uuid="sv << session.client_cert_uuid
+                       << ", reason="sv << stop_reason_name(session.stop_reason.load(std::memory_order_relaxed)) << ']';
     }
 
     int
@@ -3224,9 +3275,11 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->created_at_ms = steady_now_ms();
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
+      session->client_cert_uuid = launch_session.client_cert_uuid;
 
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
@@ -3392,7 +3445,16 @@ namespace stream {
           session_info_t info;
 
           info.client_name = session_p->client_name;
+          info.client_uuid = session_p->client_cert_uuid;
           info.session_id = session_p->launch_session_id;
+          info.stop_reason = stop_reason_name(session_p->stop_reason.load(std::memory_order_relaxed));
+
+          const auto now_ms = steady_now_ms();
+          info.uptime_ms = std::max<std::int64_t>(0, now_ms - session_p->created_at_ms);
+          info.control_idle_ms = idle_ms(now_ms, session_p->last_control_activity_ms.load(std::memory_order_relaxed));
+          info.video_idle_ms = idle_ms(now_ms, session_p->last_video_activity_ms.load(std::memory_order_relaxed));
+          info.audio_idle_ms = idle_ms(now_ms, session_p->last_audio_activity_ms.load(std::memory_order_relaxed));
+          info.control_connected = session_p->control.peer != nullptr;
 
           // Get client address
           if (session_p->control.peer) {
