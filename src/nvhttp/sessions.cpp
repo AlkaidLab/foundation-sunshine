@@ -28,6 +28,31 @@ namespace nvhttp::sessions {
 
   }  // namespace
 
+  json
+  make_session_json(const stream::session_info_t &session_info) {
+    json session_obj;
+    session_obj["client_name"] = session_info.client_name;
+    session_obj["client_uuid"] = session_info.client_uuid;
+    session_obj["client_address"] = session_info.client_address;
+    session_obj["state"] = session_info.state;
+    session_obj["stop_reason"] = session_info.stop_reason;
+    session_obj["session_id"] = session_info.session_id;
+    session_obj["uptime_ms"] = session_info.uptime_ms;
+    session_obj["control_connected"] = session_info.control_connected;
+    session_obj["control_idle_ms"] = session_info.control_idle_ms < 0 ? json(nullptr) : json(session_info.control_idle_ms);
+    session_obj["video_idle_ms"] = session_info.video_idle_ms < 0 ? json(nullptr) : json(session_info.video_idle_ms);
+    session_obj["audio_idle_ms"] = session_info.audio_idle_ms < 0 ? json(nullptr) : json(session_info.audio_idle_ms);
+    session_obj["width"] = session_info.width;
+    session_obj["height"] = session_info.height;
+    session_obj["fps"] = session_info.fps;
+    session_obj["host_audio"] = session_info.host_audio;
+    session_obj["enable_hdr"] = session_info.enable_hdr;
+    session_obj["enable_mic"] = session_info.enable_mic;
+    session_obj["app_name"] = session_info.app_name;
+    session_obj["app_id"] = session_info.app_id;
+    return session_obj;
+  }
+
   void
   get(resp_https_t response, req_https_t request) {
     log_request(request);
@@ -64,28 +89,7 @@ namespace nvhttp::sessions {
       json sessions_array = json::array();
 
       for (const auto &session_info : sessions_info) {
-        json session_obj;
-        session_obj["client_name"] = session_info.client_name;
-        session_obj["client_uuid"] = session_info.client_uuid;
-        session_obj["client_address"] = session_info.client_address;
-        session_obj["state"] = session_info.state;
-        session_obj["stop_reason"] = session_info.stop_reason;
-        session_obj["session_id"] = session_info.session_id;
-        session_obj["uptime_ms"] = session_info.uptime_ms;
-        session_obj["control_connected"] = session_info.control_connected;
-        session_obj["control_idle_ms"] = session_info.control_idle_ms < 0 ? json(nullptr) : json(session_info.control_idle_ms);
-        session_obj["video_idle_ms"] = session_info.video_idle_ms < 0 ? json(nullptr) : json(session_info.video_idle_ms);
-        session_obj["audio_idle_ms"] = session_info.audio_idle_ms < 0 ? json(nullptr) : json(session_info.audio_idle_ms);
-        session_obj["width"] = session_info.width;
-        session_obj["height"] = session_info.height;
-        session_obj["fps"] = session_info.fps;
-        session_obj["host_audio"] = session_info.host_audio;
-        session_obj["enable_hdr"] = session_info.enable_hdr;
-        session_obj["enable_mic"] = session_info.enable_mic;
-        session_obj["app_name"] = session_info.app_name;
-        session_obj["app_id"] = session_info.app_id;
-
-        sessions_array.push_back(session_obj);
+        sessions_array.push_back(make_session_json(session_info));
       }
 
       response_json["sessions"] = sessions_array;
