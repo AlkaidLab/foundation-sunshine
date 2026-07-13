@@ -200,10 +200,12 @@ if errorlevel 1 (
 
 echo [%TIME%] Staging VDD driver package...
 pnputil /add-driver "!DIST_DIR!\ZakoVDD.inf"
-if errorlevel 1 (
-    echo ERROR: Failed to stage the VDD driver package.
+set "PNPUTIL_EXIT_CODE=!ERRORLEVEL!"
+if not "!PNPUTIL_EXIT_CODE!"=="0" if not "!PNPUTIL_EXIT_CODE!"=="3010" (
+    echo ERROR: Failed to stage the VDD driver package ^(exit code !PNPUTIL_EXIT_CODE!^).
     exit /b 1
 )
+if "!PNPUTIL_EXIT_CODE!"=="3010" echo VDD driver package staged; Windows reports that a reboot is required.
 
 echo [%TIME%] Creating VDD adapter...
 "!NEFCON!" --create-device-node --hardware-id !VDD_HARDWARE_ID! --service-name !VDD_SERVICE_NAME! --class-name Display --class-guid !VDD_CLASS_GUID!
