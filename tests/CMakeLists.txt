@@ -124,11 +124,21 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(launch_session_manager_unit_tests ${dep})
 endforeach()
 
+add_executable(session_cleanup_gate_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_cleanup_gate.cpp
+        ${CMAKE_SOURCE_DIR}/src/session_cleanup_gate.cpp)
+target_include_directories(session_cleanup_gate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_cleanup_gate_unit_tests gtest_main)
+target_compile_options(session_cleanup_gate_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_cleanup_gate_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME session_cleanup_gate_unit_tests COMMAND session_cleanup_gate_unit_tests)
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(session_cleanup_gate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 
 if (WIN32)

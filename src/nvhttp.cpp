@@ -560,6 +560,7 @@ namespace nvhttp {
     print_req<SunshineHTTPS>(request);
 
     print_request_ip<SunshineHTTPS>(request, "Launch request");
+    rtsp_stream::launch_operation_guard_t launch_operation;
 
     pt::ptree tree;
     bool need_to_restore_display_state { false };
@@ -700,6 +701,7 @@ namespace nvhttp {
     print_req<SunshineHTTPS>(request);
 
     print_request_ip<SunshineHTTPS>(request, "Resume request");
+    rtsp_stream::launch_operation_guard_t launch_operation;
 
     // If the system is in Away Mode, exit it now since we're resuming a session
     if (platf::is_away_mode_active()) {
@@ -850,14 +852,7 @@ namespace nvhttp {
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
-    if (result.remaining_sessions == 0) {
-      if (proc::proc.running() > 0) {
-        proc::proc.terminate();
-      }
-
-      // Preserve the legacy single-client behavior once no other session is using the host.
-      display_device::session_t::get().restore_state();
-    }
+    // The RTSP reaper performs final joins and legacy host cleanup in order.
   }
 
   void

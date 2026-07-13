@@ -18,6 +18,16 @@
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
 
+  class launch_operation_guard_t {
+  public:
+    launch_operation_guard_t();
+    ~launch_operation_guard_t();
+
+    launch_operation_guard_t(const launch_operation_guard_t &) = delete;
+    launch_operation_guard_t &
+    operator=(const launch_operation_guard_t &) = delete;
+  };
+
   struct client_session_cancel_result_t {
     std::size_t cancelled_sessions {};
     std::size_t remaining_sessions {};

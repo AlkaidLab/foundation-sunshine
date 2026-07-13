@@ -27,11 +27,14 @@ extern "C" {
 // local includes
 #include "clipboard_bridge.h"
 #include "config.h"
+#include "display_device/session.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "process.h"
 #include "rtsp.h"
+#include "session_cleanup_gate.h"
 #include "stream.h"
 #include "sync.h"
 #include "video.h"
@@ -756,9 +759,22 @@ namespace rtsp_stream {
       const auto result = _launch_sessions.register_session(
         std::move(launch_session), config::stream.ping_timeout);
       if (result == launch_ticket_register_e::accepted || result == launch_ticket_register_e::replaced) {
+        _cleanup_gate.cancel_cleanup();
         schedule_pending_prune();
       }
       return result;
+    }
+
+    void
+    begin_launch_operation() {
+      _cleanup_gate.begin_launch();
+    }
+
+    void
+    end_launch_operation() noexcept {
+      if (_cleanup_gate.end_launch()) {
+        wake_reaper();
+      }
     }
 
     /**
@@ -789,35 +805,29 @@ namespace rtsp_stream {
     cancel_client_sessions(std::string_view client_cert_uuid) {
       client_session_cancel_result_t result;
       result.cancelled_sessions = _launch_sessions.erase_client_sessions(client_cert_uuid);
-      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
+      std::size_t active_sessions_cancelled {};
 
       {
         auto lg = _session_slots.lock();
-        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-          auto &slot = *(*i);
+        for (const auto &session : *_session_slots) {
+          auto &slot = *session;
           if (stream::session::stop_client_session(slot, client_cert_uuid)) {
             const auto reason = stream::session::stop_reason(slot);
             observe_session(slot, session_coord::state_e::draining, stream::session::stop_reason_name(reason));
-            sessions_to_join.push_back(*i);
-            i = _session_slots->erase(i);
             ++result.cancelled_sessions;
+            ++active_sessions_cancelled;
           }
-          else {
-            if (stream::session::state(slot) != stream::session::state_e::STOPPING) {
-              ++result.remaining_sessions;
-            }
-            ++i;
+          else if (stream::session::state(slot) != stream::session::state_e::STOPPING) {
+            ++result.remaining_sessions;
           }
         }
       }
 
-      for (const auto &session : sessions_to_join) {
-        stream::session::join(*session);
-        const auto reason = stream::session::stop_reason(*session);
-        observe_session(*session, session_coord::state_e::closed, stream::session::stop_reason_name(reason));
-      }
-
       result.remaining_sessions += _launch_sessions.size();
+      const bool cleanup_requested = result.remaining_sessions == 0 && _cleanup_gate.request_cleanup();
+      if (active_sessions_cancelled != 0 || cleanup_requested) {
+        wake_reaper();
+      }
       return result;
     }
 
@@ -845,6 +855,42 @@ namespace rtsp_stream {
     }
 
     launch_session_manager_t _launch_sessions;
+
+    void
+    wake_reaper() noexcept {
+      try {
+        boost::asio::post(io_context, []() {});
+      }
+      catch (...) {
+        // Shutdown can race with an HTTPS request. Cleanup will run during stop().
+      }
+    }
+
+    void
+    cleanup_host_if_idle() {
+      bool sessions_idle;
+      {
+        auto lg = _session_slots.lock();
+        sessions_idle = _session_slots->empty();
+      }
+      const bool host_idle = sessions_idle && _launch_sessions.size() == 0;
+      const auto claim = _cleanup_gate.claim_cleanup(host_idle);
+      if (claim == session_cleanup_gate_t::cleanup_claim_e::cancelled) {
+        BOOST_LOG(debug) << "Deferred client cleanup cancelled because a new session took ownership"sv;
+        return;
+      }
+      if (claim != session_cleanup_gate_t::cleanup_claim_e::acquired) {
+        return;
+      }
+
+      auto finish_cleanup = util::fail_guard([this]() {
+        _cleanup_gate.finish_cleanup();
+      });
+      if (proc::proc.running() > 0) {
+        proc::proc.terminate();
+      }
+      display_device::session_t::get().restore_state();
+    }
 
     void
     observe_session(stream::session_t &session,
@@ -880,23 +926,27 @@ namespace rtsp_stream {
         _launch_sessions.prune();
       }
 
-      auto lg = _session_slots.lock();
+      {
+        auto lg = _session_slots.lock();
 
-      for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-        auto &slot = *(*i);
-        if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
-          stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
-          const auto reason = stream::session::stop_reason(slot);
-          observe_session(slot, session_coord::state_e::draining, stream::session::stop_reason_name(reason));
-          stream::session::join(slot);
-          observe_session(slot, session_coord::state_e::closed, stream::session::stop_reason_name(reason));
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          auto &slot = *(*i);
+          if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
+            stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
+            const auto reason = stream::session::stop_reason(slot);
+            observe_session(slot, session_coord::state_e::draining, stream::session::stop_reason_name(reason));
+            stream::session::join(slot);
+            observe_session(slot, session_coord::state_e::closed, stream::session::stop_reason_name(reason));
 
-          i = _session_slots->erase(i);
-        }
-        else {
-          i++;
+            i = _session_slots->erase(i);
+          }
+          else {
+            i++;
+          }
         }
       }
+
+      cleanup_host_if_idle();
     }
 
     /**
@@ -921,6 +971,7 @@ namespace rtsp_stream {
      */
     void
     insert(const std::shared_ptr<stream::session_t> &session) {
+      _cleanup_gate.cancel_cleanup();
       {
         auto lg = _session_slots.lock();
         _session_slots->emplace(session);
@@ -971,6 +1022,7 @@ namespace rtsp_stream {
 
     boost::asio::io_context io_context;
     session_coord::coordinator_t _session_coordinator { io_context.get_executor() };
+    session_cleanup_gate_t _cleanup_gate;
     tcp::acceptor acceptor { io_context };
     boost::asio::steady_timer raised_timer { io_context };
 
@@ -978,6 +1030,14 @@ namespace rtsp_stream {
   };
 
   rtsp_server_t server {};
+
+  launch_operation_guard_t::launch_operation_guard_t() {
+    server.begin_launch_operation();
+  }
+
+  launch_operation_guard_t::~launch_operation_guard_t() {
+    server.end_launch_operation();
+  }
 
   launch_ticket_register_e
   launch_session_raise(std::shared_ptr<launch_session_t> launch_session) {
