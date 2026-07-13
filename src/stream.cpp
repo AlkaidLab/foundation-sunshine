@@ -3033,6 +3033,8 @@ namespace stream {
           return "video_ended";
         case stop_reason_e::audio_ended:
           return "audio_ended";
+        case stop_reason_e::client_cancel:
+          return "client_cancel";
         case stop_reason_e::host_terminate:
           return "host_terminate";
       }
@@ -3061,6 +3063,16 @@ namespace stream {
 
       perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
+    }
+
+    bool
+    stop_client_session(session_t &session, std::string_view client_cert_uuid) {
+      if (client_cert_uuid.empty() || session.client_cert_uuid != client_cert_uuid) {
+        return false;
+      }
+
+      stop(session, stop_reason_e::client_cancel);
+      return session.lifecycle.state() == state_e::STOPPING;
     }
 
     void

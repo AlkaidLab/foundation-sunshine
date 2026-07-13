@@ -135,6 +135,27 @@ TEST(LaunchSessionManager, PreservesClaimedTicketsPastPendingExpiry) {
   EXPECT_EQ(manager.size(now + 4s), 0U);
 }
 
+TEST(LaunchSessionManager, ErasesOnlyTicketsOwnedByAuthenticatedClient) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+
+  ASSERT_EQ(manager.register_session(make_session(40, "cert-a", "192.0.2.40"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_EQ(manager.register_session(make_session(41, "cert-b", "192.0.2.41"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_EQ(manager.register_session(make_session(42, {}, "192.0.2.42"), 10s, now),
+            rtsp_stream::launch_ticket_register_e::accepted);
+
+  EXPECT_EQ(manager.erase_client_sessions({}), 0U);
+  EXPECT_EQ(manager.erase_client_sessions("cert-a"), 1U);
+  EXPECT_EQ(manager.size(now), 2U);
+
+  EXPECT_FALSE(manager.claim_plaintext("192.0.2.40", now));
+  auto other_client = manager.claim_plaintext("192.0.2.41", now);
+  ASSERT_TRUE(other_client);
+  EXPECT_EQ(other_client->id, 41U);
+}
+
 TEST(LaunchSessionManager, SupportsOverlappingRtspConnectionsForOneLaunch) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();

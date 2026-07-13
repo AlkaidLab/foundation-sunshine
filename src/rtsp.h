@@ -5,6 +5,8 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
+#include <string_view>
 
 #include <boost/process/v1.hpp>
 
@@ -14,6 +16,11 @@
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
+
+  struct client_session_cancel_result_t {
+    std::size_t cancelled_sessions {};
+    std::size_t remaining_sessions {};
+  };
 
   struct launch_session_t {
     uint32_t id;
@@ -88,6 +95,12 @@ namespace rtsp_stream {
    */
   void
   terminate_sessions();
+
+  /**
+   * @brief Terminates sessions owned by one authenticated client.
+   */
+  client_session_cancel_result_t
+  cancel_client_sessions(std::string_view client_cert_uuid);
 
   /**
    * @brief Runs the RTSP server loop.

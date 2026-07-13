@@ -785,6 +785,33 @@ namespace rtsp_stream {
       return static_cast<int>(_launch_sessions.size());
     }
 
+    client_session_cancel_result_t
+    cancel_client_sessions(std::string_view client_cert_uuid) {
+      client_session_cancel_result_t result;
+      result.cancelled_sessions = _launch_sessions.erase_client_sessions(client_cert_uuid);
+
+      {
+        auto lg = _session_slots.lock();
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          auto &slot = *(*i);
+          if (stream::session::stop_client_session(slot, client_cert_uuid)) {
+            stream::session::join(slot);
+            i = _session_slots->erase(i);
+            ++result.cancelled_sessions;
+          }
+          else {
+            if (stream::session::state(slot) != stream::session::state_e::STOPPING) {
+              ++result.remaining_sessions;
+            }
+            ++i;
+          }
+        }
+      }
+
+      result.remaining_sessions += _launch_sessions.size();
+      return result;
+    }
+
     bool
     activate_launch_session(std::uint32_t launch_session_id) {
       return _launch_sessions.activate(launch_session_id);
@@ -928,6 +955,11 @@ namespace rtsp_stream {
   void
   terminate_sessions() {
     server.clear(true);
+  }
+
+  client_session_cancel_result_t
+  cancel_client_sessions(std::string_view client_cert_uuid) {
+    return server.cancel_client_sessions(client_cert_uuid);
   }
 
   int

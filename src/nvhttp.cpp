@@ -834,17 +834,30 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
+    const auto client_cert_uuid = get_client_cert_uuid_from_request(request);
+    if (client_cert_uuid.empty()) {
+      tree.put("root.cancel", 0);
+      tree.put("root.<xmlattr>.status_code", 401);
+      tree.put("root.<xmlattr>.status_message", "Unable to identify the authenticated client");
+      return;
+    }
+
+    const auto result = rtsp_stream::cancel_client_sessions(client_cert_uuid);
+    BOOST_LOG(info) << "Client-scoped cancel [client_uuid="sv << client_cert_uuid
+                    << ", cancelled="sv << result.cancelled_sessions
+                    << ", remaining="sv << result.remaining_sessions << ']';
+
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
-    rtsp_stream::terminate_sessions();
+    if (result.remaining_sessions == 0) {
+      if (proc::proc.running() > 0) {
+        proc::proc.terminate();
+      }
 
-    if (proc::proc.running() > 0) {
-      proc::proc.terminate();
+      // Preserve the legacy single-client behavior once no other session is using the host.
+      display_device::session_t::get().restore_state();
     }
-
-    // The state needs to be restored regardless of whether "proc::proc.terminate()" was called or not.
-    display_device::session_t::get().restore_state();
   }
 
   void

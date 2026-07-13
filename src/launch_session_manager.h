@@ -82,6 +82,9 @@ namespace rtsp_stream {
     erase(std::uint32_t launch_session_id);
 
     std::size_t
+    erase_client_sessions(std::string_view client_cert_uuid);
+
+    std::size_t
     prune(clock_t::time_point now = clock_t::now());
 
     void

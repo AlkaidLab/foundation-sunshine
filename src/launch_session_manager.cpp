@@ -247,6 +247,20 @@ namespace rtsp_stream {
   }
 
   std::size_t
+  launch_session_manager_t::erase_client_sessions(std::string_view client_cert_uuid) {
+    if (client_cert_uuid.empty()) {
+      return 0;
+    }
+
+    std::lock_guard lock { _impl->mutex };
+    const auto old_size = _impl->tickets.size();
+    std::erase_if(_impl->tickets, [client_cert_uuid](const auto &ticket) {
+      return ticket.session && ticket.session->client_cert_uuid == client_cert_uuid;
+    });
+    return old_size - _impl->tickets.size();
+  }
+
+  std::size_t
   launch_session_manager_t::prune(clock_t::time_point now) {
     std::lock_guard lock { _impl->mutex };
     const auto old_size = _impl->tickets.size();
