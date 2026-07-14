@@ -1169,6 +1169,43 @@ namespace platf {
     return create_boost_child_from_results(ret, cmd, ec, process_info);
   }
 
+  std::error_code
+  launch_gui_agent() {
+    std::wstring executable(32768, L'\0');
+    const auto executable_length = GetModuleFileNameW(
+      nullptr,
+      executable.data(),
+      static_cast<DWORD>(executable.size()));
+    if (executable_length == 0) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (executable_length >= executable.size()) {
+      return { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+    }
+    executable.resize(executable_length);
+
+    const boost::filesystem::path sunshine_path { executable };
+    const auto gui_dir = sunshine_path.parent_path() / L"assets" / L"gui";
+    const auto gui_path = gui_dir / L"sunshine-gui.exe";
+    const auto attributes = GetFileAttributesW(gui_path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+      return std::make_error_code(std::errc::no_such_file_or_directory);
+    }
+
+    auto environment = boost::this_process::environment();
+    auto working_dir = gui_dir;
+    std::error_code ec;
+    const auto command = "\"" + to_utf8(gui_path.wstring()) + "\" --hidden";
+    auto child = run_command(false, false, command, working_dir, environment, nullptr, ec, nullptr);
+    if (!ec) {
+      child.detach();
+    }
+    return ec;
+  }
+
   /**
    * @brief Open a url in the default web browser.
    * @param url The url to open.

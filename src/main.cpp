@@ -419,6 +419,17 @@ main(int argc, char *argv[]) {
   std::thread configThread { confighttp::start };
   std::thread rtspThread { rtsp_stream::start };
 
+#if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
+  // The service wrapper owns user-session agent startup in service mode.
+  // Standalone and portable runs need to reconcile the same bundled agent here.
+  if (!platf::is_running_as_system()) {
+    const auto gui_agent_error = platf::launch_gui_agent();
+    if (gui_agent_error) {
+      BOOST_LOG(warning) << "Failed to launch bundled GUI agent: "sv << gui_agent_error.message();
+    }
+  }
+#endif
+
 #ifdef _WIN32
   // If we're using the default port and GameStream is enabled, warn the user
   if (config::sunshine.port == 47989 && is_gamestream_enabled()) {

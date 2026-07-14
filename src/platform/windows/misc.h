@@ -47,6 +47,13 @@ namespace platf {
   is_running_as_system();
 
   /**
+   * @brief Launch the bundled GUI user agent in hidden mode.
+   * @return An error code when the agent cannot be started.
+   */
+  std::error_code
+  launch_gui_agent();
+
+  /**
    * @brief Retrieve the current logged-in user's token.
    * @param elevated Whether to retrieve an elevated token if available.
    * @return The user's token handle, or nullptr if not available.

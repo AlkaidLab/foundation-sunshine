@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -44,6 +45,11 @@ namespace tray_state {
     std::string error;
   };
 
+  struct client_session_t {
+    std::uint32_t id = 0;
+    std::string client_name;
+  };
+
   struct state_t {
     status_e status = status_e::idle;
     std::string icon = "default";
@@ -54,6 +60,7 @@ namespace tray_state {
     vdd_state_t vdd;
     notification_t notification;
     operation_t operation;
+    std::vector<client_session_t> sessions;
     std::uint64_t revision = 0;
     std::int64_t updated_at_ms = 0;
   };
@@ -96,6 +103,15 @@ namespace tray_state {
 
   void
   set_vdd_confirmation(bool awaiting_confirmation, std::uint64_t operation_id = 0);
+
+  void
+  add_session(std::uint32_t session_id, const std::string &client_name);
+
+  void
+  remove_session(std::uint32_t session_id);
+
+  void
+  clear_sessions();
 
   std::uint64_t
   begin_operation(const std::string &action);

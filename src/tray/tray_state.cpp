@@ -1,5 +1,6 @@
 #include "tray_state.h"
 
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <random>
@@ -279,6 +280,65 @@ namespace tray_state {
     notify_changed();
   }
 
+  void
+  add_session(const std::uint32_t session_id, const std::string &client_name) {
+    {
+      std::lock_guard lock { state_mutex };
+      const auto position = std::lower_bound(
+        current_state.sessions.begin(),
+        current_state.sessions.end(),
+        session_id,
+        [](const client_session_t &session, const std::uint32_t id) {
+          return session.id < id;
+        });
+
+      if (position != current_state.sessions.end() && position->id == session_id) {
+        if (position->client_name == client_name) {
+          return;
+        }
+        position->client_name = client_name;
+      }
+      else {
+        current_state.sessions.insert(position, { session_id, client_name });
+      }
+      touch_locked();
+    }
+    notify_changed();
+  }
+
+  void
+  remove_session(const std::uint32_t session_id) {
+    {
+      std::lock_guard lock { state_mutex };
+      const auto position = std::lower_bound(
+        current_state.sessions.begin(),
+        current_state.sessions.end(),
+        session_id,
+        [](const client_session_t &session, const std::uint32_t id) {
+          return session.id < id;
+        });
+      if (position == current_state.sessions.end() || position->id != session_id) {
+        return;
+      }
+      current_state.sessions.erase(position);
+      touch_locked();
+    }
+    notify_changed();
+  }
+
+  void
+  clear_sessions() {
+    {
+      std::lock_guard lock { state_mutex };
+      if (current_state.sessions.empty()) {
+        return;
+      }
+      current_state.sessions.clear();
+      touch_locked();
+    }
+    notify_changed();
+  }
+
   std::uint64_t
   begin_operation(const std::string &action) {
     std::uint64_t operation_id;
@@ -322,17 +382,25 @@ namespace tray_state {
     }
 
     const auto current_presentation = presentation(snapshot);
+    auto sessions = nlohmann::json::array();
+    for (const auto &session : snapshot.sessions) {
+      sessions.push_back({
+        { "id", session.id },
+        { "client_name", session.client_name },
+      });
+    }
 
     return {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown" }) },
+      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown" }) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },
       { "app_name", snapshot.app_name },
       { "pairing_client_name", snapshot.pairing_client_name },
+      { "sessions", std::move(sessions) },
       { "revision", snapshot.revision },
       { "updated_at_ms", snapshot.updated_at_ms },
       { "vdd",

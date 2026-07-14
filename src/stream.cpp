@@ -3048,6 +3048,7 @@ namespace stream {
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
+      tray_state::remove_session(session.launch_session_id);
 
       // 对于仅控制流会话，只减少总会话计数，不调用 streaming_will_stop
       // 只有当所有非控制流会话都结束时才调用 streaming_will_stop
@@ -3175,6 +3176,7 @@ namespace stream {
         ::config::video.capture.empty() ? "auto" : ::config::video.capture,
         session.control_only,
       });
+      tray_state::add_session(session.launch_session_id, session.client_name);
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话

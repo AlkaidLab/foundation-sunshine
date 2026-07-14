@@ -30,6 +30,7 @@ endpoint is the compatibility fallback.
 
 - `state-v1`: state snapshot and stable instance identity
 - `events-v1`: SSE state changes
+- `sessions-v1`: active client session snapshots with stable IDs and names
 - `actions-v1`: action endpoint
 - `operations-v1`: asynchronous operation lifecycle in state
 - `notification-ack`: non-pairing notification acknowledgement
@@ -40,6 +41,22 @@ endpoint is the compatibility fallback.
 The `owner` field describes the packaged tray strategy (`gui`, `core`, or
 `disabled`). The packaged GUI uses its existing single-instance guard. Version
 1 deliberately does not add a second ownership heartbeat.
+
+When `sessions-v1` is advertised, the state includes a `sessions` array:
+
+```json
+{
+  "sessions": [
+    { "id": 12, "client_name": "Living Room TV" }
+  ]
+}
+```
+
+Providers derive connection and disconnection notifications by comparing
+session IDs between consecutive snapshots. The first snapshot and a changed
+`instance_id` establish a new baseline and must not produce notifications.
+This preserves client names and handles multiple concurrent clients without a
+second polling loop.
 
 On Windows, the service wrapper starts the packaged GUI agent in the active
 signed-in user's session after Core starts. Failed launches are retried while

@@ -14,6 +14,7 @@ protected:
   void
   SetUp() override {
     tray_state::set_change_sink({});
+    tray_state::clear_sessions();
     tray_state::clear_pairing_required();
     tray_state::clear_notification();
     tray_state::set_vdd_state(false, false, false, false);
@@ -86,6 +87,28 @@ TEST_F(TrayStateTest, SerializesPairingAndVddState) {
   EXPECT_FALSE(restored.at("notification").at("active"));
 }
 
+TEST_F(TrayStateTest, PublishesActiveClientSessionSnapshots) {
+  tray_state::add_session(12, "Living Room TV");
+  tray_state::add_session(7, "Handheld");
+
+  auto sessions = tray_state::to_json().at("sessions");
+  ASSERT_EQ(sessions.size(), 2);
+  EXPECT_EQ(sessions.at(0).at("id"), 7);
+  EXPECT_EQ(sessions.at(0).at("client_name"), "Handheld");
+  EXPECT_EQ(sessions.at(1).at("id"), 12);
+  EXPECT_EQ(sessions.at(1).at("client_name"), "Living Room TV");
+
+  tray_state::add_session(12, "Living Room Moonlight");
+  sessions = tray_state::to_json().at("sessions");
+  ASSERT_EQ(sessions.size(), 2);
+  EXPECT_EQ(sessions.at(1).at("client_name"), "Living Room Moonlight");
+
+  tray_state::remove_session(7);
+  sessions = tray_state::to_json().at("sessions");
+  ASSERT_EQ(sessions.size(), 1);
+  EXPECT_EQ(sessions.at(0).at("id"), 12);
+}
+
 TEST_F(TrayStateTest, PairingClearsPreviousNotificationContent) {
   tray_state::set_notification("Audio warning", "Audio device unavailable", "default");
   tray_state::set_pairing_required("Moonlight Client");
@@ -155,6 +178,9 @@ TEST_F(TrayStateTest, PublishesStableProtocolIdentity) {
   EXPECT_TRUE(first.at("capabilities").is_array());
   EXPECT_NE(
     std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "events-v1"),
+    first.at("capabilities").end());
+  EXPECT_NE(
+    std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "sessions-v1"),
     first.at("capabilities").end());
   EXPECT_NE(
     std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "shutdown"),
