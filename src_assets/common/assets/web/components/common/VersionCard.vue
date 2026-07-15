@@ -132,14 +132,36 @@ let pendingNativeRequestId = ''
 let nativeRequestTimer = null
 const contextRequestTimers = []
 
+const CONTROL_PANEL_ORIGINS = new Set([
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
+  'http://localhost:8080',
+  'https://localhost:8080',
+])
+
+const normalizeOrigin = (url) => {
+  try {
+    const parsed = new URL(url)
+    return parsed.origin === 'null' ? `${parsed.protocol}//${parsed.host}` : parsed.origin
+  } catch {
+    return ''
+  }
+}
+
+const controlPanelOrigin = [
+  document.referrer,
+  window.location.ancestorOrigins?.[0],
+].map(normalizeOrigin).find((origin) => CONTROL_PANEL_ORIGINS.has(origin)) || ''
+
 const requestNativeUpdaterContext = () => {
-  if (window.parent === window) return
+  if (window.parent === window || !CONTROL_PANEL_ORIGINS.has(controlPanelOrigin)) return
   window.parent.postMessage(
     {
       type: 'native-updater-context-request',
       source: 'sunshine-webui',
     },
-    '*'
+    controlPanelOrigin
   )
 }
 
@@ -153,7 +175,12 @@ const clearNativeRequest = () => {
 }
 
 const handleNativeUpdaterMessage = (event) => {
-  if (event.source !== window.parent || event.data?.source !== 'sunshine-control-panel') return
+  if (
+    event.source !== window.parent
+    || event.origin !== controlPanelOrigin
+    || !CONTROL_PANEL_ORIGINS.has(event.origin)
+    || event.data?.source !== 'sunshine-control-panel'
+  ) return
 
   if (event.data.type === 'native-updater-context') {
     nativeUpdaterAvailable.value = event.data.available === true
@@ -169,6 +196,7 @@ const handleNativeUpdaterMessage = (event) => {
 }
 
 const requestNativeUpdate = (channel) => {
+  if (!CONTROL_PANEL_ORIGINS.has(controlPanelOrigin)) return
   pendingNativeChannel.value = channel
   pendingNativeRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   window.parent.postMessage(
@@ -178,7 +206,7 @@ const requestNativeUpdate = (channel) => {
       requestId: pendingNativeRequestId,
       channel,
     },
-    '*'
+    controlPanelOrigin
   )
 
   nativeRequestTimer = setTimeout(clearNativeRequest, 30000)
