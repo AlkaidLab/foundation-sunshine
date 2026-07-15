@@ -3045,6 +3045,19 @@ namespace stream {
       return session.lifecycle.state();
     }
 
+    identity_t
+    identity(const session_t &session) {
+      return {
+        .session_id = session.launch_session_id,
+        .client_uuid = session.client_cert_uuid,
+      };
+    }
+
+    stop_reason_e
+    stop_reason(const session_t &session) {
+      return session.lifecycle.snapshot().stop_reason;
+    }
+
     bool
     has_active_video_sessions() {
       return running_non_control_only_sessions.load(std::memory_order_relaxed) > 0;

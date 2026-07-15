@@ -45,6 +45,11 @@ namespace stream {
   };
 
   namespace session {
+    struct identity_t {
+      std::uint32_t session_id {};
+      std::string client_uuid;
+    };
+
     enum class stop_reason_e : int {
       none,
       control_disconnect,
@@ -152,6 +157,10 @@ namespace stream {
     join(session_t &session);
     state_e
     state(session_t &session);
+    identity_t
+    identity(const session_t &session);
+    stop_reason_e
+    stop_reason(const session_t &session);
 
     bool
     has_active_video_sessions();

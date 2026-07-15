@@ -796,6 +796,8 @@ namespace rtsp_stream {
         for (auto i = _session_slots->begin(); i != _session_slots->end();) {
           auto &slot = *(*i);
           if (stream::session::stop_client_session(slot, client_cert_uuid)) {
+            const auto reason = stream::session::stop_reason(slot);
+            observe_session(slot, session_coord::state_e::draining, stream::session::stop_reason_name(reason));
             sessions_to_join.push_back(*i);
             i = _session_slots->erase(i);
             ++result.cancelled_sessions;
@@ -811,6 +813,8 @@ namespace rtsp_stream {
 
       for (const auto &session : sessions_to_join) {
         stream::session::join(*session);
+        const auto reason = stream::session::stop_reason(*session);
+        observe_session(*session, session_coord::state_e::closed, stream::session::stop_reason_name(reason));
       }
 
       result.remaining_sessions += _launch_sessions.size();
@@ -842,6 +846,24 @@ namespace rtsp_stream {
 
     launch_session_manager_t _launch_sessions;
 
+    void
+    observe_session(stream::session_t &session,
+                    session_coord::state_e state,
+                    std::string stop_reason = {}) noexcept {
+      try {
+        auto identity = stream::session::identity(session);
+        _session_coordinator.observe({
+          .session_id = identity.session_id,
+          .client_uuid = std::move(identity.client_uuid),
+          .state = state,
+          .stop_reason = std::move(stop_reason),
+        });
+      }
+      catch (...) {
+        // The coordinator is observational in this migration phase.
+      }
+    }
+
     /**
      * @brief Clear launch sessions.
      * @param all If true, clear all sessions. Otherwise, only clear timed out and stopped sessions.
@@ -864,7 +886,10 @@ namespace rtsp_stream {
         auto &slot = *(*i);
         if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
           stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
+          const auto reason = stream::session::stop_reason(slot);
+          observe_session(slot, session_coord::state_e::draining, stream::session::stop_reason_name(reason));
           stream::session::join(slot);
+          observe_session(slot, session_coord::state_e::closed, stream::session::stop_reason_name(reason));
 
           i = _session_slots->erase(i);
         }
@@ -880,8 +905,14 @@ namespace rtsp_stream {
      */
     void
     remove(const std::shared_ptr<stream::session_t> &session) {
-      auto lg = _session_slots.lock();
-      _session_slots->erase(session);
+      bool removed;
+      {
+        auto lg = _session_slots.lock();
+        removed = _session_slots->erase(session) != 0;
+      }
+      if (removed) {
+        observe_session(*session, session_coord::state_e::closed, "start_failed");
+      }
     }
 
     /**
@@ -890,9 +921,22 @@ namespace rtsp_stream {
      */
     void
     insert(const std::shared_ptr<stream::session_t> &session) {
-      auto lg = _session_slots.lock();
-      _session_slots->emplace(session);
-      BOOST_LOG(info) << "New streaming session started [active sessions: "sv << _session_slots->size() << ']';
+      {
+        auto lg = _session_slots.lock();
+        _session_slots->emplace(session);
+        BOOST_LOG(info) << "New streaming session started [active sessions: "sv << _session_slots->size() << ']';
+      }
+      observe_session(*session, session_coord::state_e::starting);
+    }
+
+    void
+    mark_active(const std::shared_ptr<stream::session_t> &session) {
+      observe_session(*session, session_coord::state_e::active);
+    }
+
+    std::shared_ptr<const session_coord::snapshot_t>
+    lifecycle_snapshot() const {
+      return _session_coordinator.snapshot();
     }
 
     /**
@@ -926,6 +970,7 @@ namespace rtsp_stream {
     sync_util::sync_t<std::set<std::shared_ptr<stream::session_t>>> _session_slots;
 
     boost::asio::io_context io_context;
+    session_coord::coordinator_t _session_coordinator { io_context.get_executor() };
     tcp::acceptor acceptor { io_context };
     boost::asio::steady_timer raised_timer { io_context };
 
@@ -965,6 +1010,11 @@ namespace rtsp_stream {
   client_session_cancel_result_t
   cancel_client_sessions(std::string_view client_cert_uuid) {
     return server.cancel_client_sessions(client_cert_uuid);
+  }
+
+  std::shared_ptr<const session_coord::snapshot_t>
+  session_lifecycle_snapshot() {
+    return server.lifecycle_snapshot();
   }
 
   int
@@ -1595,6 +1645,8 @@ namespace rtsp_stream {
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
+
+    server->mark_active(stream_session);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

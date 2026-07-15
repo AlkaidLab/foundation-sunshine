@@ -151,6 +151,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/httpcommon.h"
         "${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp"
         "${CMAKE_SOURCE_DIR}/src/launch_session_manager.h"
+        "${CMAKE_SOURCE_DIR}/src/session_coordinator.cpp"
+        "${CMAKE_SOURCE_DIR}/src/session_coordinator.h"
         "${CMAKE_SOURCE_DIR}/src/perf_recorder.cpp"
         "${CMAKE_SOURCE_DIR}/src/perf_recorder.h"
         "${CMAKE_SOURCE_DIR}/src/confighttp.cpp"

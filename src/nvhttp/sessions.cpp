@@ -1,5 +1,6 @@
 #include "sessions.h"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -78,6 +79,7 @@ namespace nvhttp::sessions {
 
     try {
       auto sessions_info = stream::session::get_all_sessions_info();
+      auto lifecycle = rtsp_stream::session_lifecycle_snapshot();
 
       json response_json;
       response_json["success"] = true;
@@ -85,11 +87,24 @@ namespace nvhttp::sessions {
       response_json["status_message"] = "Success";
       response_json["total_sessions"] = sessions_info.size();
       response_json["pending_sessions"] = rtsp_stream::pending_session_count();
+      response_json["coordinator_version"] = lifecycle->version;
+      response_json["coordinator_rejected_events"] = lifecycle->rejected_events;
 
       json sessions_array = json::array();
 
       for (const auto &session_info : sessions_info) {
-        sessions_array.push_back(make_session_json(session_info));
+        auto session_obj = make_session_json(session_info);
+        const auto lifecycle_record = std::ranges::find(
+          lifecycle->records, session_info.session_id, &session_coord::record_t::session_id);
+        if (lifecycle_record == lifecycle->records.end() ||
+            lifecycle_record->state == session_coord::state_e::closed) {
+          session_obj["lifecycle_state"] = nullptr;
+        }
+        else {
+          session_obj["lifecycle_state"] = session_coord::state_name(lifecycle_record->state);
+        }
+
+        sessions_array.push_back(session_obj);
       }
 
       response_json["sessions"] = sessions_array;

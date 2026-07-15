@@ -12,6 +12,7 @@
 
 #include "crypto.h"
 #include "launch_session_manager.h"
+#include "session_coordinator.h"
 #include "thread_safe.h"
 
 namespace rtsp_stream {
@@ -101,6 +102,9 @@ namespace rtsp_stream {
    */
   client_session_cancel_result_t
   cancel_client_sessions(std::string_view client_cert_uuid);
+
+  std::shared_ptr<const session_coord::snapshot_t>
+  session_lifecycle_snapshot();
 
   /**
    * @brief Runs the RTSP server loop.
