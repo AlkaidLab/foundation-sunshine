@@ -789,13 +789,14 @@ namespace rtsp_stream {
     cancel_client_sessions(std::string_view client_cert_uuid) {
       client_session_cancel_result_t result;
       result.cancelled_sessions = _launch_sessions.erase_client_sessions(client_cert_uuid);
+      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
 
       {
         auto lg = _session_slots.lock();
         for (auto i = _session_slots->begin(); i != _session_slots->end();) {
           auto &slot = *(*i);
           if (stream::session::stop_client_session(slot, client_cert_uuid)) {
-            stream::session::join(slot);
+            sessions_to_join.push_back(*i);
             i = _session_slots->erase(i);
             ++result.cancelled_sessions;
           }
@@ -806,6 +807,10 @@ namespace rtsp_stream {
             ++i;
           }
         }
+      }
+
+      for (const auto &session : sessions_to_join) {
+        stream::session::join(*session);
       }
 
       result.remaining_sessions += _launch_sessions.size();
