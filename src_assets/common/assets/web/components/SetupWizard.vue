@@ -217,6 +217,42 @@
                 {{ saveError }}
               </div>
 
+              <!-- 推荐服务 -->
+              <div class="promo-service-section mt-3">
+                <h5 class="mb-3">
+                  <i class="fas fa-bullhorn"></i>
+                  {{ $t('setup.featured_services') }}
+                </h5>
+                <div class="promo-service-links">
+                  <a class="resource-link resource-link-primary"
+                     href="https://www.alkaidlab.com/"
+                     target="_blank"
+                     rel="noopener noreferrer">
+                    <div class="resource-icon resource-logo-icon">
+                      <img src="/images/logo-alkaidlab.png" alt="AlkaidLab" class="resource-logo-image">
+                    </div>
+                    <div class="resource-content">
+                      <span class="resource-title">{{ $t('resource_card.official_website_title') }}</span>
+                      <span class="resource-desc">{{ $t('resource_card.official_website_desc') }}</span>
+                    </div>
+                    <i class="fas fa-external-link-alt resource-arrow"></i>
+                  </a>
+                  <a class="resource-link resource-link-moonlink"
+                     href="https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE"
+                     target="_blank"
+                     rel="noopener noreferrer">
+                    <div class="resource-icon resource-logo-icon">
+                      <img src="/images/logo-natpierce.png" alt="皎月连" class="resource-logo-image">
+                    </div>
+                    <div class="resource-content">
+                      <span class="resource-title">{{ $t('resource_card.jiaoyuelian_title') }}</span>
+                      <span class="resource-desc">{{ $t('resource_card.jiaoyuelian_desc') }}</span>
+                    </div>
+                    <i class="fas fa-external-link-alt resource-arrow"></i>
+                  </a>
+                </div>
+              </div>
+
               <!-- 客户端下载 -->
               <div class="client-download-section mt-3">
                 <h5 class="mb-3">
@@ -419,14 +455,25 @@
 
 <script>
 import { trackEvents } from '../config/firebase.js'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
+import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
 
 // 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
 // 因此把系统语言探测结果折叠到这两者之一即可
 function detectInitialWizardLocale() {
   const sys = detectSystemLocale() // 已经过支持白名单过滤，未知语言落到 'en'
   return (sys === 'zh' || sys === 'zh_TW') ? 'zh' : 'en'
+}
+
+function markLanguageSavedForReload() {
+  try {
+    window.sessionStorage.setItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY, 'true')
+  } catch (e) {
+    // If sessionStorage is unavailable, the saved locale still takes effect;
+    // the user may simply see the language step again in Chinese environments.
+  }
 }
 
 export default {
@@ -545,15 +592,16 @@ export default {
     },
     async saveLanguage() {
       try {
-        await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
+          body: {
             locale: this.selectedLocale
-          }),
+          },
         })
+        if (!response.ok) {
+          throw new Error(`Failed to save language: HTTP ${response.status}`)
+        }
+        markLanguageSavedForReload()
         // 重新加载页面以应用新语言
         window.location.reload()
       } catch (error) {
@@ -566,7 +614,7 @@ export default {
 
       try {
         // 先获取当前完整配置，保留所有已有设置
-        const currentConfig = await fetch('/api/config').then(r => r.json())
+        const currentConfig = await apiJson('/api/config')
         
         // 从完整配置中复制所有字段，避免覆盖其他配置
         const config = { ...currentConfig }
@@ -592,12 +640,9 @@ export default {
 
         console.log('保存配置:', config)
 
-        const response = await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(config),
+          body: config,
         })
 
         if (response.ok) {
@@ -668,19 +713,16 @@ export default {
 
       try {
         // 先获取当前完整配置，保留所有已有设置
-        const currentConfig = await fetch('/api/config').then(r => r.json())
+        const currentConfig = await apiJson('/api/config')
         
         // 从完整配置中复制所有字段，避免覆盖其他配置
         const config = { ...currentConfig }
         // 标记新手引导已完成
         config.setup_wizard_completed = true
         console.log('跳过新手引导，保存配置:', config)
-        const response = await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(config),
+          body: config,
         })
 
         if (response.ok) {
@@ -719,7 +761,7 @@ export default {
     async triggerRestartAndRedirect() {
       // 调用重启 API
       try {
-        await fetch('/api/restart', { method: 'POST' })
+        await apiFetch('/api/restart', { method: 'POST' })
       } catch {
         // 重启请求可能会断开连接，忽略错误
       }
@@ -1154,17 +1196,25 @@ export default {
   vertical-align: middle;
 }
 
-/* 客户端下载样式 */
-.client-download-section {
+/* 完成页资源区样式 */
+.client-download-section,
+.promo-service-section {
   background: var(--bs-secondary-bg);
   padding: 1em;
   border-radius: 10px;
 }
 
-.client-download-section h5 {
+.client-download-section h5,
+.promo-service-section h5 {
   font-size: 1em;
   margin-bottom: 0.8em;
   color: var(--bs-body-color);
+}
+
+.promo-service-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75em;
 }
 
 .client-download-layout {
@@ -1223,6 +1273,24 @@ export default {
   background: var(--icon-gradient);
 }
 
+.resource-logo-icon {
+  width: 86px;
+  height: 44px;
+  padding: 4px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  overflow: visible;
+}
+
+.resource-logo-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0;
+}
+
 .resource-content {
   flex: 1;
   min-width: 0;
@@ -1271,6 +1339,16 @@ export default {
 .resource-link-harmony {
   --link-color: 206, 48, 48;
   --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
+}
+
+.resource-link-primary {
+  --link-color: 13, 110, 253;
+  --icon-gradient: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+}
+
+.resource-link-moonlink {
+  --link-color: 111, 66, 193;
+  --icon-gradient: linear-gradient(135deg, #6f42c1 0%, #4c2f8f 100%);
 }
 
 .qr-code-item {
@@ -1453,6 +1531,12 @@ export default {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 768px) {
+  .promo-service-links {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 

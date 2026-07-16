@@ -5,12 +5,19 @@
       <button
         class="cute-btn cute-btn-primary"
         :class="{ 'has-unsaved': hasUnsaved }"
-        @click="save"
+        @click="requestConfigAction('save')"
+        :disabled="riskActionRunning"
         :title="hasUnsaved ? $t('config.unsaved_changes_tooltip') : $t('_common.save')"
       >
         <i class="fas fa-save"></i>
       </button>
-      <button v-if="saved && !restarted" class="cute-btn cute-btn-success" @click="apply" :title="$t('_common.apply')">
+      <button
+        v-if="saved && !restarted"
+        class="cute-btn cute-btn-success"
+        @click="requestConfigAction('apply')"
+        :disabled="riskActionRunning"
+        :title="$t('_common.apply')"
+      >
         <i class="fas fa-check"></i>
       </button>
       <div class="floating-toast-container">
@@ -60,6 +67,77 @@
         </Transition>
       </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="risk-modal">
+        <div v-if="showRiskConfirm" class="risk-confirm-overlay" @click.self="cancelRiskConfirm">
+          <div
+            ref="riskDialogRef"
+            class="risk-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="risk-confirm-title"
+            tabindex="-1"
+            @keydown.esc.prevent="cancelRiskConfirm"
+            @keydown.tab="trapRiskFocus"
+          >
+            <div class="risk-confirm-header">
+              <div>
+                <h5 id="risk-confirm-title">
+                  <i class="fas fa-exclamation-triangle me-2"></i>
+                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.title_apply' : 'config.risk_confirm.title_save') }}
+                </h5>
+                <p>
+                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.intro_apply' : 'config.risk_confirm.intro_save') }}
+                </p>
+              </div>
+              <button type="button" class="btn-close" @click="cancelRiskConfirm" :aria-label="$t('_common.close')"></button>
+            </div>
+
+            <div class="risk-confirm-body">
+              <div
+                v-for="risk in riskItems"
+                :key="risk.id"
+                class="risk-item"
+                :class="risk.severity"
+              >
+                <div class="risk-item-header">
+                  <span class="risk-badge" :class="risk.severity">
+                    {{ $t(`config.risk_confirm.severity_${risk.severity}`) }}
+                  </span>
+                  <strong>{{ $t(risk.titleKey) }}</strong>
+                </div>
+                <p>{{ $t(risk.descriptionKey) }}</p>
+                <div v-if="risk.currentValue" class="risk-detail">
+                  <span>{{ $t('config.risk_confirm.value_label') }}</span>
+                  <code>{{ risk.currentValue }}</code>
+                </div>
+                <div v-if="risk.recoveryKey" class="risk-recovery">
+                  <span>{{ $t('config.risk_confirm.recovery_label') }}</span>
+                  <p>{{ $t(risk.recoveryKey) }}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="risk-confirm-footer">
+              <button type="button" class="btn btn-secondary" @click="cancelRiskConfirm" :disabled="riskActionRunning">
+                {{ $t('_common.cancel') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                @click="confirmRiskAction"
+                :disabled="riskActionRunning"
+              >
+                <i v-if="riskActionRunning" class="fas fa-spinner fa-spin me-1"></i>
+                {{ $t(riskAction === 'apply' ? 'config.risk_confirm.confirm_apply' : 'config.risk_confirm.confirm_save') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <div class="container">
       <h1 class="my-4 page-title">{{ $t('config.configuration') }}</h1>
 
@@ -88,48 +166,50 @@
       </div>
 
       <div v-else class="form card">
-        <ul class="nav nav-tabs config-tabs card-header">
-          <template v-for="tab in tabs" :key="tab.id">
-            <li
-              v-if="tab.type === 'group' && tab.children"
-              class="nav-item dropdown"
-              :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
-            >
-              <a
-                class="nav-link dropdown-toggle"
-                :class="{ active: isEncoderTabActive(tab) }"
-                href="#"
-                role="button"
-                :aria-expanded="expandedDropdown === tab.id"
-                @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+        <div class="config-tabs-shell">
+          <ul ref="configTabsRef" class="nav nav-tabs config-tabs">
+            <template v-for="tab in tabs" :key="tab.id">
+              <li
+                v-if="tab.type === 'group' && tab.children"
+                class="nav-item dropdown"
+                :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
               >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-              <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
-                <li v-for="childTab in tab.children" :key="childTab.id">
-                  <a
-                    class="dropdown-item"
-                    :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
-                    href="#"
-                    @click.prevent="selectEncoderTab(childTab.id, $event)"
-                  >
-                    {{ $t(`tabs.${childTab.id}`) || childTab.name }}
-                  </a>
-                </li>
-              </ul>
-            </li>
-            <li v-else class="nav-item">
-              <a
-                class="nav-link"
-                :class="{ active: tab.id === currentTab }"
-                href="#"
-                @click.prevent="currentTab = tab.id"
-              >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-            </li>
-          </template>
-        </ul>
+                <a
+                  class="nav-link dropdown-toggle"
+                  :class="{ active: isEncoderTabActive(tab) }"
+                  href="#"
+                  role="button"
+                  :aria-expanded="expandedDropdown === tab.id"
+                  @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+                <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
+                  <li v-for="childTab in tab.children" :key="childTab.id">
+                    <a
+                      class="dropdown-item"
+                      :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
+                      href="#"
+                      @click.prevent="selectEncoderTab(childTab.id, $event)"
+                    >
+                      {{ $t(`tabs.${childTab.id}`) || childTab.name }}
+                    </a>
+                  </li>
+                </ul>
+              </li>
+              <li v-else class="nav-item">
+                <a
+                  class="nav-link"
+                  :class="{ active: tab.id === currentTab }"
+                  href="#"
+                  @click.prevent="currentTab = tab.id"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+              </li>
+            </template>
+          </ul>
+        </div>
 
         <General
           v-if="currentTab === 'general'"
@@ -149,26 +229,34 @@
         <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
         <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
         <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
-        <ContainerEncoders :current-tab="currentTab" :config="config" :platform="platform" />
+        <ContainerEncoders
+          v-if="isEncoderCurrentTab"
+          :current-tab="currentTab"
+          :config="config"
+          :platform="platform"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, provide, computed, onUnmounted } from 'vue'
+import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
-import General from '../configs/tabs/General.vue'
-import Inputs from '../configs/tabs/Inputs.vue'
-import Network from '../configs/tabs/Network.vue'
-import Files from '../configs/tabs/Files.vue'
-import Advanced from '../configs/tabs/Advanced.vue'
-import AudioVideo from '../configs/tabs/AudioVideo.vue'
-import ContainerEncoders from '../configs/tabs/ContainerEncoders.vue'
 import { useConfig } from '../composables/useConfig.js'
 import { initFirebase, trackEvents } from '../config/firebase.js'
 
 initFirebase()
+
+const General = defineAsyncComponent(() => import('../configs/tabs/General.vue'))
+const Inputs = defineAsyncComponent(() => import('../configs/tabs/Inputs.vue'))
+const Network = defineAsyncComponent(() => import('../configs/tabs/Network.vue'))
+const Files = defineAsyncComponent(() => import('../configs/tabs/Files.vue'))
+const Advanced = defineAsyncComponent(() => import('../configs/tabs/Advanced.vue'))
+const AudioVideo = defineAsyncComponent(() => import('../configs/tabs/AudioVideo.vue'))
+const ContainerEncoders = defineAsyncComponent(() => import('../configs/tabs/ContainerEncoders.vue'))
+
+const ENCODER_TAB_IDS = new Set(['nv', 'qsv', 'amd', 'vt', 'sw'])
 
 const {
   platform,
@@ -183,8 +271,9 @@ const {
   tabs,
   initTabs,
   loadConfig,
-  save,
-  apply,
+  save: saveConfig,
+  apply: applyConfig,
+  getRiskyChanges,
   handleHash,
   hasUnsavedChanges,
 } = useConfig()
@@ -192,6 +281,13 @@ const {
 const showSaveToast = ref(false)
 const showRestartToast = ref(false)
 const expandedDropdown = ref(null)
+const showRiskConfirm = ref(false)
+const riskAction = ref('save')
+const riskItems = ref([])
+const riskActionRunning = ref(false)
+const riskDialogRef = ref(null)
+const lastFocusedElement = ref(null)
+const configTabsRef = ref(null)
 
 const hasUnsaved = computed(() => {
   if (!config.value) return false
@@ -203,7 +299,16 @@ const hasUnsaved = computed(() => {
   return hasUnsavedChanges()
 })
 
+const isEncoderCurrentTab = computed(() => ENCODER_TAB_IDS.has(currentTab.value))
+
 const isEncoderTabActive = (tab) => tab.type === 'group' && tab.children?.some((child) => child.id === currentTab.value)
+
+const scrollActiveTabIntoView = async () => {
+  await nextTick()
+  const activeTab = configTabsRef.value?.querySelector('.nav-link.active')
+  const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  activeTab?.scrollIntoView?.({ behavior, block: 'nearest', inline: 'center' })
+}
 
 const toggleEncoderDropdown = (tabId, event) => {
   event.stopPropagation()
@@ -236,6 +341,118 @@ const showToast = (toastRef, duration = 5000) => {
   }, duration)
 }
 
+const getRiskFocusableElements = () => {
+  const root = riskDialogRef.value
+  if (!root) return []
+
+  return Array.from(
+    root.querySelectorAll(
+      [
+        'button:not([disabled])',
+        '[href]',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(','),
+    ),
+  ).filter((element) => element.offsetParent !== null)
+}
+
+const focusRiskDialog = async () => {
+  await nextTick()
+  const focusable = getRiskFocusableElements()
+  const target = focusable[0] || riskDialogRef.value
+  target?.focus?.()
+}
+
+const restoreRiskFocus = () => {
+  const target = lastFocusedElement.value
+  lastFocusedElement.value = null
+
+  if (target && document.contains(target)) {
+    target.focus?.()
+  }
+}
+
+const trapRiskFocus = (event) => {
+  const focusable = getRiskFocusableElements()
+  if (!focusable.length) {
+    event.preventDefault()
+    riskDialogRef.value?.focus?.()
+    return
+  }
+
+  const currentIndex = focusable.indexOf(document.activeElement)
+  const lastIndex = focusable.length - 1
+  let nextIndex = currentIndex + 1
+
+  if (event.shiftKey) {
+    nextIndex = currentIndex <= 0 ? lastIndex : currentIndex - 1
+  } else if (currentIndex === -1 || currentIndex >= lastIndex) {
+    nextIndex = 0
+  }
+
+  event.preventDefault()
+  focusable[nextIndex].focus()
+}
+
+const runConfigAction = async (action) => {
+  if (riskActionRunning.value) return
+
+  riskActionRunning.value = true
+  try {
+    if (action === 'apply') {
+      await applyConfig()
+    } else {
+      await saveConfig()
+    }
+  } finally {
+    riskActionRunning.value = false
+  }
+}
+
+const requestConfigAction = async (action) => {
+  if (riskActionRunning.value || showRiskConfirm.value) return
+
+  const risks = getRiskyChanges(action)
+  if (risks.length > 0) {
+    lastFocusedElement.value = document.activeElement
+    riskAction.value = action
+    riskItems.value = risks
+    showRiskConfirm.value = true
+    return
+  }
+
+  await runConfigAction(action)
+}
+
+const cancelRiskConfirm = () => {
+  if (riskActionRunning.value) return
+  showRiskConfirm.value = false
+  riskItems.value = []
+}
+
+const confirmRiskAction = async () => {
+  if (riskActionRunning.value) return
+
+  const action = riskAction.value
+  showRiskConfirm.value = false
+  await runConfigAction(action)
+  riskItems.value = []
+}
+
+watch(showRiskConfirm, async (isOpen) => {
+  if (isOpen) {
+    await focusRiskDialog()
+    return
+  }
+
+  restoreRiskFocus()
+})
+
+watch(currentTab, scrollActiveTabIntoView)
+
 watch(saved, (newVal) => {
   if (newVal && !restarted.value) {
     showToast(showSaveToast)
@@ -265,6 +482,7 @@ onMounted(async () => {
   initTabs()
   await loadConfig()
   handleHash()
+  await scrollActiveTabIntoView()
 
   window.addEventListener('hashchange', handleHash)
   document.addEventListener('click', handleOutsideClick)
@@ -273,6 +491,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('hashchange', handleHash)
   document.removeEventListener('click', handleOutsideClick)
+  lastFocusedElement.value = null
 })
 </script>
 
@@ -424,6 +643,12 @@ onUnmounted(() => {
     font-weight: bold;
   }
 
+  .config-tabs-shell {
+    position: relative;
+    border-radius: @border-radius-lg @border-radius-lg 0 0;
+    z-index: 10;
+  }
+
   .config-tabs {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.1));
     border-radius: @border-radius-lg @border-radius-lg 0 0;
@@ -562,6 +787,260 @@ onUnmounted(() => {
   opacity: 1;
 }
 
+.risk-modal-enter-active,
+.risk-modal-leave-active {
+  transition: opacity @transition-fast ease;
+
+  .risk-confirm-modal {
+    transition: transform @transition-fast @cubic-smooth, opacity @transition-fast ease;
+  }
+}
+
+.risk-modal-enter-from,
+.risk-modal-leave-to {
+  opacity: 0;
+
+  .risk-confirm-modal {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+}
+
+.risk-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg, 1.5rem);
+  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  backdrop-filter: blur(8px);
+
+  [data-bs-theme='light'] & {
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+.risk-confirm-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--border-radius-xl, 1.5rem);
+  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
+  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  color: var(--text-primary, #fff);
+
+  [data-bs-theme='light'] & {
+    border-color: rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+    color: #000;
+  }
+}
+
+.risk-confirm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  h5 {
+    margin: 0 0 0.35rem;
+    font-size: var(--font-size-lg, 1.25rem);
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+
+    i {
+      color: var(--bs-danger);
+    }
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+    line-height: 1.5;
+  }
+
+  .btn-close {
+    flex: 0 0 auto;
+  }
+
+  [data-bs-theme='light'] & {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+
+    h5 {
+      color: #000;
+    }
+
+    p {
+      color: #4b5563;
+    }
+  }
+}
+
+.risk-confirm-body {
+  overflow-y: auto;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+}
+
+.risk-item {
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: @border-radius-md;
+  background: rgba(255, 255, 255, 0.06);
+
+  & + & {
+    margin-top: 0.75rem;
+  }
+
+  &.critical {
+    border-color: rgba(var(--bs-danger-rgb), 0.38);
+    background: rgba(var(--bs-danger-rgb), 0.1);
+  }
+
+  &.high {
+    border-color: rgba(var(--bs-warning-rgb), 0.36);
+  }
+
+  &.medium {
+    border-color: rgba(var(--bs-info-rgb), 0.32);
+  }
+
+  p {
+    margin: 0.5rem 0 0;
+    color: var(--text-primary, #fff);
+    line-height: 1.5;
+  }
+
+  [data-bs-theme='light'] & {
+    border-color: rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.75);
+
+    &.critical {
+      border-color: rgba(var(--bs-danger-rgb), 0.34);
+      background: rgba(var(--bs-danger-rgb), 0.08);
+    }
+
+    &.high {
+      border-color: rgba(var(--bs-warning-rgb), 0.4);
+      background: rgba(var(--bs-warning-rgb), 0.08);
+    }
+
+    &.medium {
+      border-color: rgba(var(--bs-info-rgb), 0.32);
+      background: rgba(var(--bs-info-rgb), 0.06);
+    }
+
+    p {
+      color: #000;
+    }
+  }
+}
+
+.risk-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+
+  strong {
+    font-size: 0.98rem;
+  }
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+
+  &.critical {
+    color: #fff;
+    background: var(--bs-danger);
+  }
+
+  &.high {
+    color: #231f20;
+    background: var(--bs-warning);
+  }
+
+  &.medium {
+    color: #fff;
+    background: var(--bs-info);
+  }
+}
+
+.risk-detail,
+.risk-recovery {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+
+  span {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 0.2rem 0.4rem;
+    border-radius: @border-radius-sm;
+    color: var(--text-primary, #fff);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  [data-bs-theme='light'] & {
+    border-top-color: rgba(0, 0, 0, 0.1);
+
+    span {
+      color: #4b5563;
+    }
+
+    code {
+      color: #000;
+      background: rgba(0, 0, 0, 0.06);
+    }
+  }
+}
+
+.risk-recovery p {
+  margin: 0;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.85));
+
+  [data-bs-theme='light'] & {
+    color: #4b5563;
+  }
+}
+
+.risk-confirm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+
+  [data-bs-theme='light'] & {
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
 .config-floating-buttons {
   position: sticky;
   top: 80%;
@@ -685,6 +1164,22 @@ onUnmounted(() => {
     &:hover i {
       transform: scale(1.2) rotate(5deg);
     }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+      transform: none;
+      box-shadow: none;
+      animation: none;
+
+      &::before {
+        opacity: 0;
+      }
+
+      i {
+        transform: none;
+      }
+    }
   }
 
   @keyframes gradient-shift {
@@ -791,14 +1286,44 @@ onUnmounted(() => {
 
   .page-config .config-tabs {
     padding: 0.5rem 0.5rem 0;
-    gap: 0.25rem;
+    gap: 0.35rem;
     overflow-x: auto;
+    overflow-y: hidden;
     flex-wrap: nowrap;
+    scroll-padding-inline: 2rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
 
     .nav-link {
-      padding: 0.5rem 1rem;
+      min-height: 44px;
+      padding: 0.625rem 1rem;
       font-size: 0.875rem;
       white-space: nowrap;
+      scroll-snap-align: center;
+    }
+  }
+
+  .page-config .config-tabs-shell {
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2rem;
+      pointer-events: none;
+      z-index: 11;
+    }
+
+    &::before {
+      left: 0;
+      background: linear-gradient(90deg, rgba(var(--bs-body-bg-rgb), 0.98), rgba(var(--bs-body-bg-rgb), 0));
+    }
+
+    &::after {
+      right: 0;
+      background: linear-gradient(270deg, rgba(var(--bs-body-bg-rgb), 0.98), rgba(var(--bs-body-bg-rgb), 0));
     }
   }
 }

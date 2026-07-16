@@ -158,12 +158,13 @@
     <LogDiagnosisModal
       :show="showDiagnosisModal"
       :config="aiConfig"
-      :providers="aiProviders"
+      :isConfigLoading="aiConfigLoading"
+      :isSavingConfig="aiSavingConfig"
       :isLoading="aiLoading"
       :result="aiResult"
       :error="aiError"
-      :onProviderChange="aiProviderChange"
-      :getAvailableModels="aiGetModels"
+      :localFindings="aiLocalFindings"
+      :localSuggestions="aiLocalSuggestions"
       @close="showDiagnosisModal = false"
       @diagnose="handleDiagnose"
     />
@@ -258,12 +259,13 @@ const { logout } = useLogout()
 
 const {
   config: aiConfig,
-  providers: aiProviders,
+  isConfigLoading: aiConfigLoading,
+  isSavingConfig: aiSavingConfig,
   isLoading: aiLoading,
   result: aiResult,
   error: aiError,
-  onProviderChange: aiProviderChange,
-  getAvailableModels: aiGetModels,
+  localFindings: aiLocalFindings,
+  localSuggestions: aiLocalSuggestions,
   diagnose: aiDiagnose,
 } = useAiDiagnosis()
 

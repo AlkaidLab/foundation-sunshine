@@ -4,8 +4,11 @@
  */
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <memory>
 #include <optional>
+#include <vector>
 
 #include <d3d11.h>
 #include <d3d11_4.h>
@@ -22,6 +25,12 @@
 #include "src/platform/common.h"
 #include "src/utility.h"
 #include "src/video.h"
+#include "vdd_frame_channel.h"
+
+namespace display_device::vdd_ioctl {
+  struct frame_channel_caps;
+  struct frame_channel_open_response;
+}
 
 namespace platf::dxgi {
   extern const char *format_str[];
@@ -580,6 +589,15 @@ namespace platf::dxgi {
     next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_frame_qpc);
 
     /**
+     * @brief Hand the current keyed-mutex slot to a downstream D3D11 consumer.
+     *        The producer released the slot as key 1 and next_frame() acquired it.
+     *        This releases the slot as release_key instead of key 0 so the encoder
+     *        can acquire it on its own device, then release key 0 back to producer.
+     */
+    capture_e
+    handoff_frame(UINT64 release_key, IDXGIKeyedMutex **out_mutex, UINT32 &out_slot);
+
+    /**
      * @brief Release the current keyed-mutex hold so the producer can write again.
      */
     capture_e
@@ -595,16 +613,60 @@ namespace platf::dxgi {
     float max_nits()   const { return m_max_nits; }
     float min_nits()   const { return m_min_nits; }
     float max_fall()   const { return m_max_fall; }
+    UINT64 frame_counter() const { return m_lastFrameCounter; }
+    UINT64 last_present_qpc() const { return m_lastPresentQpc; }
+    UINT64 last_publish_qpc() const { return m_lastPublishQpc; }
+    UINT32 last_presentation_frame_number() const { return m_lastPresentationFrameNumber; }
+    UINT32 last_dirty_rect_count() const { return m_lastDirtyRectCount; }
+    UINT64 replaced_unread_frames() const { return m_replacedUnreadFrames; }
+    UINT64 dropped_consumer_held_frames() const { return m_droppedConsumerHeldFrames; }
+    UINT64 dropped_acquire_failures() const { return m_droppedAcquireFailures; }
+    UINT32 producer_slot_count() const { return m_slotCount; }
+    UINT32 producer_slot_index() const { return m_slotIndex; }
+    UINT16 producer_channel_generation() const { return m_channelGeneration; }
+    UINT64 producer_qpc_frequency() const { return m_producerQpcFrequency; }
+    LUID producer_adapter_luid() const { return m_adapterLuid; }
+    UINT64 consumer_acquire_timeouts() const { return m_consumerAcquireTimeouts; }
+    bool sealed_frame_channel_supported() const { return m_sealedFrameChannelSupported; }
+    vdd_frame_channel::channel_mode frame_channel_mode() const { return m_frameChannelMode; }
+    vdd_frame_channel::channel_selection frame_channel_selection() const { return m_frameChannelSelection; }
+    bool legacy_named_channel() const { return m_legacyNamedChannel; }
 
   private:
+    enum class sealed_channel_attempt {
+      skipped,
+      opened,
+      fallback_allowed,
+      required_failed,
+    };
+
     void close();
+    void apply_metadata_snapshot(const vdd_frame_channel::shared_frame_metadata_t &meta);
+    bool attach_texture_slot(ID3D11Device1 *device,
+                             HANDLE shared_handle,
+                             const vdd_frame_channel::shared_frame_metadata_t &meta,
+                             UINT32 slot,
+                             bool close_handle,
+                             const wchar_t *debug_name = nullptr);
+    bool attach_sealed_channel(ID3D11Device1 *device,
+                               unsigned int monitor_idx,
+                               const LUID &device_luid,
+                               display_device::vdd_ioctl::frame_channel_open_response &sealed_channel);
+    bool attach_legacy_named_channel(ID3D11Device1 *device,
+                                     unsigned int monitor_idx,
+                                     const LUID &device_luid);
+    sealed_channel_attempt try_open_sealed_channel(ID3D11Device1 *device,
+                                                  unsigned int monitor_idx,
+                                                  const LUID &device_luid,
+                                                  const display_device::vdd_ioctl::frame_channel_caps &sealed_caps);
 
     HANDLE m_hMeta = nullptr;
     void  *m_pMeta = nullptr;
     HANDLE m_hEvent = nullptr;
-    texture2d_t m_sharedTex;
-    keyed_mutex_t m_keyedMutex;
+    std::vector<texture2d_t> m_sharedTex;
+    std::vector<keyed_mutex_t> m_keyedMutex;
     bool m_holdsKey = false;
+    UINT32 m_heldSlot = 0;
 
     UINT m_width = 0;
     UINT m_height = 0;
@@ -614,6 +676,23 @@ namespace platf::dxgi {
     float m_min_nits = 0.0f;
     float m_max_fall = 0.0f;
     UINT64 m_lastFrameCounter = 0;
+    UINT64 m_lastPresentQpc = 0;
+    UINT64 m_lastPublishQpc = 0;
+    UINT32 m_lastPresentationFrameNumber = 0;
+    UINT32 m_lastDirtyRectCount = 0;
+    UINT64 m_replacedUnreadFrames = 0;
+    UINT64 m_droppedConsumerHeldFrames = 0;
+    UINT64 m_droppedAcquireFailures = 0;
+    UINT32 m_slotCount = 1;
+    UINT32 m_slotIndex = 0;
+    UINT16 m_channelGeneration = 0;
+    UINT64 m_producerQpcFrequency = 0;
+    LUID m_adapterLuid = {};
+    UINT64 m_consumerAcquireTimeouts = 0;
+    bool m_sealedFrameChannelSupported = false;
+    vdd_frame_channel::channel_mode m_frameChannelMode = vdd_frame_channel::channel_mode::auto_probe;
+    vdd_frame_channel::channel_selection m_frameChannelSelection = vdd_frame_channel::channel_selection::unknown;
+    bool m_legacyNamedChannel = true;
   };
 
   /**
@@ -624,6 +703,26 @@ namespace platf::dxgi {
     vdd_capture_t dup;
     unsigned int monitor_idx = 0;
     ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
+    bool vdd_borrow_enabled = false;
+    std::chrono::steady_clock::time_point vdd_borrow_cooldown_until {};
+    std::chrono::steady_clock::time_point vdd_borrow_last_telemetry {};
+    UINT64 vdd_borrow_attempts = 0;
+    UINT64 vdd_borrow_successes = 0;
+    UINT64 vdd_borrow_fallbacks = 0;
+    UINT64 vdd_borrow_disabled_frames = 0;
+    UINT64 vdd_borrow_cooldown_frames = 0;
+    UINT64 vdd_borrow_cooldown_events = 0;
+    UINT64 vdd_borrow_deferred_frames = 0;
+    UINT64 vdd_borrow_returned_deferred_frames = 0;
+    std::shared_ptr<std::atomic<UINT64>> vdd_borrow_inflight_frames {std::make_shared<std::atomic<UINT64>>(0)};
+    UINT64 vdd_borrow_inflight_limit_frames = 0;
+    UINT64 vdd_last_replaced_unread = 0;
+    UINT64 vdd_last_dropped_consumer_held = 0;
+    UINT64 vdd_last_dropped_acquire_failures = 0;
+    std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
+
+    void
+    log_vdd_borrow_debug_telemetry();
 
   public:
     int

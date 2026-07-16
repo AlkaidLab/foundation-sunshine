@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="apps-page">
     <Navbar />
     <div class="container-fluid px-4">
       <div class="my-4">
@@ -16,7 +16,6 @@
             class="form-control search-input"
             :placeholder="$t('apps.search_placeholder')"
             v-model="searchQuery"
-            @input="debouncedSearch"
           />
           <button v-if="searchQuery" class="btn-clear-search" @click="clearSearch">
             <i class="fas fa-times"></i>
@@ -48,6 +47,16 @@
             <i class="fas fa-plus"></i>
           </button>
           <button
+            class="cute-btn cute-btn-secondary"
+            type="button"
+            @click="restoreDefaultApps"
+            :disabled="isSaving"
+            :title="$t('apps.restore_default_apps')"
+            :aria-label="$t('apps.restore_default_apps')"
+          >
+            <i class="fas fa-rotate-left"></i>
+          </button>
+          <button
             class="cute-btn"
             :class="selectionMode ? 'cute-btn-warning' : 'cute-btn-secondary'"
             type="button"
@@ -61,12 +70,12 @@
           <button
             v-if="isTauriEnv()"
             class="cute-btn cute-btn-info"
-            @click="scanGameLibraries()"
-            :disabled="isScanning"
+            @click="openScanOptions"
+            :disabled="isScanning || scanProgress.active"
             title="扫描游戏平台库 (Steam/Epic/GOG)"
             aria-label="扫描游戏平台库 (Steam/Epic/GOG)"
           >
-            <i class="fas" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-gamepad'"></i>
+            <i class="fas" :class="isScanning || scanProgress.active ? 'fa-spinner fa-spin' : 'fa-gamepad'"></i>
           </button>
           <button
             class="cute-btn cute-btn-secondary"
@@ -78,15 +87,31 @@
           </button>
           <button 
             class="cute-btn cute-btn-success" 
-            :class="{ 'has-changes': hasUnsavedChanges() }"
+            :class="{ 'has-changes': hasUnsavedChanges }"
             @click="save" 
-            :disabled="!hasUnsavedChanges() || isSaving"
-            :title="hasUnsavedChanges() ? $t('_common.save') : $t('_common.no_changes')"
+            :disabled="!hasUnsavedChanges || isSaving"
+            :title="hasUnsavedChanges ? $t('_common.save') : $t('_common.no_changes')"
           >
             <i class="fas fa-save"></i>
-            <span v-if="hasUnsavedChanges()" class="unsaved-indicator"></span>
+            <span v-if="hasUnsavedChanges" class="unsaved-indicator"></span>
           </button>
         </div>
+
+        <Transition name="fade">
+          <div v-if="scanProgress.active" class="scan-progress-strip" role="status" aria-live="polite">
+            <div class="scan-progress-copy">
+              <i class="fas fa-wand-magic-sparkles"></i>
+              <span>{{ scanProgress.stage }}</span>
+              <small v-if="scanProgress.detail">{{ scanProgress.detail }}</small>
+            </div>
+            <div v-if="scanProgress.total" class="scan-progress-count">
+              {{ scanProgress.current }}/{{ scanProgress.total }}
+            </div>
+            <div class="scan-progress-bar" :class="{ 'scan-progress-bar--indeterminate': scanProgress.indeterminate }">
+              <span :style="{ width: scanProgress.indeterminate ? '42%' : `${scanProgressPercent}%` }"></span>
+            </div>
+          </div>
+        </Transition>
       </div>
 
       <!-- 批量操作工具栏 -->
@@ -124,10 +149,14 @@
         <draggable
           v-if="viewMode === 'grid' && !searchQuery"
           v-model="apps"
-          item-key="name"
+          :item-key="getAppRenderKey"
           class="apps-grid"
           :animation="300"
-          :delay="0"
+          handle=".drag-handle"
+          :delay="180"
+          :delay-on-touch-only="true"
+          :touch-start-threshold="8"
+          :fallback-tolerance="8"
           :disabled="false"
           ghost-class="app-card-ghost"
           chosen-class="app-card-chosen"
@@ -153,7 +182,6 @@
               <AppCard
                 :app="app"
                 :draggable="!selectionMode"
-                :is-drag-result="false"
                 :is-dragging="isDragging"
                 @edit="selectionMode ? toggleAppSelection(index) : editApp(index)"
                 @delete="showDeleteForm(index)"
@@ -167,31 +195,31 @@
         <!-- 网格视图 - 搜索模式 -->
         <div v-else-if="viewMode === 'grid' && searchQuery" class="apps-grid">
           <div
-            v-for="(app, index) in filteredApps"
-            :key="`search-grid-${app.name}-${index}`"
+            v-for="({ app, index: originalIndex }, index) in filteredAppsWithIndex"
+            :key="`search-grid-${app.name}-${originalIndex}-${index}`"
             class="app-card-wrapper"
-            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(getOriginalIndex(app)) }"
+            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(originalIndex) }"
           >
             <div
               v-if="selectionMode"
               class="app-select-checkbox"
               role="checkbox"
               tabindex="0"
-              :aria-checked="isAppSelected(getOriginalIndex(app))"
+              :aria-checked="isAppSelected(originalIndex)"
               :aria-label="$t('apps.batch_select_toggle')"
-              @click.stop="toggleAppSelection(getOriginalIndex(app))"
-              @keydown.space.prevent="toggleAppSelection(getOriginalIndex(app))"
-              @keydown.enter.prevent="toggleAppSelection(getOriginalIndex(app))"
+              @click.stop="toggleAppSelection(originalIndex)"
+              @keydown.space.prevent="toggleAppSelection(originalIndex)"
+              @keydown.enter.prevent="toggleAppSelection(originalIndex)"
             >
-              <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
+              <i class="fas" :class="isAppSelected(originalIndex) ? 'fa-square-check' : 'fa-square'"></i>
             </div>
             <AppCard
               :app="app"
               :draggable="false"
               :is-search-result="true"
               :is-dragging="false"
-              @edit="selectionMode ? toggleAppSelection(getOriginalIndex(app)) : editApp(getOriginalIndex(app, index))"
-              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              @edit="selectionMode ? toggleAppSelection(originalIndex) : editApp(originalIndex)"
+              @delete="showDeleteForm(originalIndex)"
               @copy-success="handleCopySuccess"
               @copy-error="handleCopyError"
             />
@@ -202,10 +230,14 @@
         <draggable
           v-else-if="viewMode === 'list' && !searchQuery"
           v-model="apps"
-          item-key="name"
+          :item-key="getAppRenderKey"
           class="apps-list"
           :animation="300"
-          :delay="0"
+          handle=".drag-handle-list"
+          :delay="180"
+          :delay-on-touch-only="true"
+          :touch-start-threshold="8"
+          :fallback-tolerance="8"
           :disabled="false"
           ghost-class="app-list-item-ghost"
           chosen-class="app-list-item-chosen"
@@ -244,31 +276,31 @@
         <!-- 列表视图 - 搜索模式 -->
         <div v-else-if="viewMode === 'list' && searchQuery" class="apps-list">
           <div
-            v-for="(app, index) in filteredApps"
-            :key="`search-list-${app.name}-${index}`"
+            v-for="({ app, index: originalIndex }, index) in filteredAppsWithIndex"
+            :key="`search-list-${app.name}-${originalIndex}-${index}`"
             class="app-list-wrapper"
-            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(getOriginalIndex(app)) }"
+            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(originalIndex) }"
           >
             <div
               v-if="selectionMode"
               class="app-select-checkbox app-select-checkbox--list"
               role="checkbox"
               tabindex="0"
-              :aria-checked="isAppSelected(getOriginalIndex(app))"
+              :aria-checked="isAppSelected(originalIndex)"
               :aria-label="$t('apps.batch_select_toggle')"
-              @click.stop="toggleAppSelection(getOriginalIndex(app))"
-              @keydown.space.prevent="toggleAppSelection(getOriginalIndex(app))"
-              @keydown.enter.prevent="toggleAppSelection(getOriginalIndex(app))"
+              @click.stop="toggleAppSelection(originalIndex)"
+              @keydown.space.prevent="toggleAppSelection(originalIndex)"
+              @keydown.enter.prevent="toggleAppSelection(originalIndex)"
             >
-              <i class="fas" :class="isAppSelected(getOriginalIndex(app)) ? 'fa-square-check' : 'fa-square'"></i>
+              <i class="fas" :class="isAppSelected(originalIndex) ? 'fa-square-check' : 'fa-square'"></i>
             </div>
             <AppListItem
               :app="app"
               :draggable="false"
               :is-search-result="true"
               :is-dragging="false"
-              @edit="selectionMode ? toggleAppSelection(getOriginalIndex(app)) : editApp(getOriginalIndex(app, index))"
-              @delete="showDeleteForm(getOriginalIndex(app, index))"
+              @edit="selectionMode ? toggleAppSelection(originalIndex) : editApp(originalIndex)"
+              @delete="showDeleteForm(originalIndex)"
               @copy-success="handleCopySuccess"
               @copy-error="handleCopyError"
             />
@@ -321,12 +353,100 @@
         :show="showScanResult"
         :apps="scannedApps"
         :saving="isSaving"
+        :enhancement-progress="scanProgress"
+        :enhancement-progress-percent="scanProgressPercent"
         @close="closeScanResult"
         @edit="handleScanEdit"
         @quick-add="quickAddScannedApp"
         @remove="removeScannedApp"
         @add-all="addAllScannedApps"
       />
+
+      <Transition name="fade">
+        <div v-if="showScanOptions" class="scan-options-overlay" @click.self="closeScanOptions">
+          <div class="scan-options-modal">
+            <div class="scan-options-header">
+              <h5>
+                <i class="fas fa-gamepad me-2"></i>扫描游戏资源
+              </h5>
+              <button class="btn-close" type="button" aria-label="Close" @click="closeScanOptions"></button>
+            </div>
+
+            <div class="scan-options-body">
+              <section class="scan-options-section">
+                <div class="scan-options-title">扫描范围</div>
+                <label class="scan-option-row">
+                  <input v-model="scanOptions.scope" type="radio" value="libraries" />
+                  <span>
+                    <strong>游戏平台库</strong>
+                    <small>扫描已安装的 Steam、Epic Games 和 GOG 游戏</small>
+                  </span>
+                </label>
+                <label class="scan-option-row">
+                  <input v-model="scanOptions.scope" type="radio" value="directory" />
+                  <span>
+                    <strong>自选目录</strong>
+                    <small>选择一个本地目录，扫描其中的可启动程序</small>
+                  </span>
+                </label>
+              </section>
+
+              <section v-if="scanOptions.scope === 'libraries'" class="scan-options-section">
+                <div class="scan-options-title">游戏平台</div>
+                <div class="scan-platform-grid">
+                  <label v-for="platformOption in scanPlatformOptions" :key="platformOption.id" class="scan-pill-toggle">
+                    <input v-model="scanOptions.platforms[platformOption.id]" type="checkbox" />
+                    <span>{{ platformOption.label }}</span>
+                  </label>
+                </div>
+              </section>
+
+              <section v-if="scanOptions.scope === 'directory'" class="scan-options-section">
+                <div class="scan-options-title">目录扫描</div>
+                <label class="scan-option-row scan-option-row--compact">
+                  <input v-model="scanOptions.extractIcons" type="checkbox" />
+                  <span>
+                    <strong>提取应用图标</strong>
+                    <small>扫描速度会稍慢，但结果更容易辨认</small>
+                  </span>
+                </label>
+              </section>
+
+              <section class="scan-options-section">
+                <div class="scan-options-title">AI 增强</div>
+                <div class="scan-enhancement-list">
+                  <label
+                    v-for="skill in selectableGameLibrarySkills"
+                    :key="skill.skillId"
+                    class="scan-option-row scan-option-row--compact"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="isGameLibrarySkillEnabled(skill.skillId)"
+                      @change="toggleGameLibrarySkill(skill.skillId)"
+                    />
+                    <span>
+                      <strong>{{ getGameLibrarySkillLabel(skill.skillId) }}</strong>
+                      <small>作为扫描后的增强步骤执行</small>
+                    </span>
+                    <i class="fas scan-option-icon" :class="getGameLibrarySkillIcon(skill.skillId)"></i>
+                  </label>
+                </div>
+              </section>
+            </div>
+
+            <div class="scan-options-footer">
+              <button class="btn btn-secondary" type="button" :disabled="isScanning" @click="closeScanOptions">
+                取消
+              </button>
+              <button class="btn btn-primary" type="button" :disabled="isScanning" @click="runConfiguredScan">
+                <i class="fas me-1" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-search'"></i>
+                开始扫描
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
 
       <!-- 环境变量说明模态框 -->
       <div id="envVarsModal" class="modal fade" tabindex="-1">
@@ -466,10 +586,9 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { defineAsyncComponent, ref, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable-es'
 import Navbar from '../components/layout/Navbar.vue'
-import AppEditor from '../components/AppEditor.vue'
 import AppCard from '../components/AppCard.vue'
 import AppListItem from '../components/AppListItem.vue'
 import ScanResultModal from '../components/ScanResultModal.vue'
@@ -479,11 +598,14 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
+const AppEditor = defineAsyncComponent(() => import('../components/AppEditor.vue'))
+
 const isLoaded = ref(false)
 
 const {
   apps,
   filteredApps,
+  filteredAppsWithIndex,
   searchQuery,
   editingApp,
   platform,
@@ -495,12 +617,18 @@ const {
   debouncedSearch,
   messageClass,
   isScanning,
+  scanProgress,
+  scanProgressPercent,
   scannedApps,
   showScanResult,
+  showScanOptions,
+  scanOptions,
+  scanPlatformOptions,
+  selectableGameLibrarySkills,
   loadApps,
   loadPlatform,
   clearSearch,
-  getOriginalIndex,
+  getAppRenderKey,
   newApp,
   editApp,
   closeAppEditor,
@@ -523,16 +651,22 @@ const {
   confirmBatchDelete,
   save,
   hasUnsavedChanges,
+  restoreDefaultApps,
   onDragStart,
   onDragEnd,
-  scanDirectory,
-  scanGameLibraries,
+  openScanOptions,
+  closeScanOptions,
+  runConfiguredScan,
   addScannedApp,
   addAllScannedApps,
   closeScanResult,
   removeScannedApp,
   quickAddScannedApp,
   isTauriEnv,
+  isGameLibrarySkillEnabled,
+  toggleGameLibrarySkill,
+  getGameLibrarySkillIcon,
+  getGameLibrarySkillLabel,
   getMessageIcon,
   handleCopySuccess,
   handleCopyError,

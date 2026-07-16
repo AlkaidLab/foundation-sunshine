@@ -562,7 +562,7 @@ namespace platf::dxgi {
       return -1;
     }
 
-    const auto adapter_name = from_utf8(config::video.adapter_name);
+    auto adapter_name = from_utf8(config::video.adapter_name);
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
@@ -574,10 +574,23 @@ namespace platf::dxgi {
     }
 
     adapter_t::pointer adapter_p;
-    for (int tries = 0; tries < 2 && !output; ++tries) {
+    // Tries:
+    //   0 - normal pass with the configured adapter filter (if any).
+    //   1 - same filter, but after nudging the display power state.
+    //   2 - last resort: if the configured adapter never matched, drop the
+    //       filter and accept any adapter so a misconfigured / stale
+    //       adapter_name doesn't make capture init fail outright.
+    for (int tries = 0; tries < 3 && !output; ++tries) {
       if (tries == 1) {
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
         Sleep(500);
+      }
+      if (tries == 2) {
+        if (adapter_name.empty()) {
+          break;
+        }
+        BOOST_LOG(warning) << "[Display Init] Configured adapter ["sv << to_utf8(adapter_name) << "] did not match any enumerated adapter; falling back to auto-select"sv;
+        adapter_name.clear();
       }
 
       for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {

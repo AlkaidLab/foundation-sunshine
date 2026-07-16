@@ -39,11 +39,18 @@
         <div class="version-update-header">
           <div class="version-update-title">
             <i class="fas fa-rocket text-warning me-2"></i>
-            <span>有新的 <b>基地版</b> sunshine可以更新!</span>
+            <span>{{ $t('index.new_pre_release') }}</span>
           </div>
-          <button type="button" class="btn btn-success btn-download" @click="handleDownloadClick(preReleaseVersion.release.html_url)">
-            <i class="fas fa-download me-2"></i>
+          <button
+            type="button"
+            class="btn btn-success btn-download"
+            :disabled="pendingNativeChannel !== ''"
+            :aria-busy="pendingNativeChannel === 'prerelease'"
+            @click="handleDownloadClick(preReleaseVersion.release.html_url, 'prerelease')"
+          >
+            <i :class="pendingNativeChannel === 'prerelease' ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
             {{ $t('index.download') }}
+            <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
           </button>
         </div>
         <h3 class="version-release-name">{{ preReleaseVersion.release.name }}</h3>
@@ -57,9 +64,16 @@
             <i class="fas fa-star text-warning me-2"></i>
             <span>{{ $t('index.new_stable') }}</span>
           </div>
-          <button type="button" class="btn btn-success btn-download" @click="handleDownloadClick(githubVersion.release.html_url)">
-            <i class="fas fa-download me-2"></i>
+          <button
+            type="button"
+            class="btn btn-success btn-download"
+            :disabled="pendingNativeChannel !== ''"
+            :aria-busy="pendingNativeChannel === 'stable'"
+            @click="handleDownloadClick(githubVersion.release.html_url, 'stable')"
+          >
+            <i :class="pendingNativeChannel === 'stable' ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
             {{ $t('index.download') }}
+            <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
           </button>
         </div>
         <h3 class="version-release-name">{{ githubVersion.release.name }}</h3>
@@ -93,7 +107,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { openExternalUrl } from '../../utils/helpers.js'
 
 defineProps({
@@ -112,8 +126,98 @@ defineProps({
 
 const showDownloadConfirm = ref(false)
 const pendingDownloadUrl = ref('')
+const nativeUpdaterAvailable = ref(false)
+const pendingNativeChannel = ref('')
+let pendingNativeRequestId = ''
+let nativeRequestTimer = null
+const contextRequestTimers = []
 
-const handleDownloadClick = (url) => {
+const CONTROL_PANEL_ORIGINS = new Set([
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
+  'http://localhost:8080',
+  'https://localhost:8080',
+])
+
+const normalizeOrigin = (url) => {
+  try {
+    const parsed = new URL(url)
+    return parsed.origin === 'null' ? `${parsed.protocol}//${parsed.host}` : parsed.origin
+  } catch {
+    return ''
+  }
+}
+
+const controlPanelOrigin = [
+  document.referrer,
+  window.location.ancestorOrigins?.[0],
+].map(normalizeOrigin).find((origin) => CONTROL_PANEL_ORIGINS.has(origin)) || ''
+
+const requestNativeUpdaterContext = () => {
+  if (window.parent === window || !CONTROL_PANEL_ORIGINS.has(controlPanelOrigin)) return
+  window.parent.postMessage(
+    {
+      type: 'native-updater-context-request',
+      source: 'sunshine-webui',
+    },
+    controlPanelOrigin
+  )
+}
+
+const clearNativeRequest = () => {
+  pendingNativeChannel.value = ''
+  pendingNativeRequestId = ''
+  if (nativeRequestTimer) {
+    clearTimeout(nativeRequestTimer)
+    nativeRequestTimer = null
+  }
+}
+
+const handleNativeUpdaterMessage = (event) => {
+  if (
+    event.source !== window.parent
+    || event.origin !== controlPanelOrigin
+    || !CONTROL_PANEL_ORIGINS.has(event.origin)
+    || event.data?.source !== 'sunshine-control-panel'
+  ) return
+
+  if (event.data.type === 'native-updater-context') {
+    nativeUpdaterAvailable.value = event.data.available === true
+    return
+  }
+
+  if (
+    event.data.type === 'native-update-result'
+    && event.data.requestId === pendingNativeRequestId
+  ) {
+    clearNativeRequest()
+  }
+}
+
+const requestNativeUpdate = (channel) => {
+  if (!CONTROL_PANEL_ORIGINS.has(controlPanelOrigin)) return
+  pendingNativeChannel.value = channel
+  pendingNativeRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  window.parent.postMessage(
+    {
+      type: 'native-update-request',
+      source: 'sunshine-webui',
+      requestId: pendingNativeRequestId,
+      channel,
+    },
+    controlPanelOrigin
+  )
+
+  nativeRequestTimer = setTimeout(clearNativeRequest, 30000)
+}
+
+const handleDownloadClick = (url, channel) => {
+  if (nativeUpdaterAvailable.value) {
+    requestNativeUpdate(channel)
+    return
+  }
+
   pendingDownloadUrl.value = url
   showDownloadConfirm.value = true
 }
@@ -134,6 +238,19 @@ const cancelDownload = () => {
   showDownloadConfirm.value = false
   pendingDownloadUrl.value = ''
 }
+
+onMounted(() => {
+  window.addEventListener('message', handleNativeUpdaterMessage)
+  requestNativeUpdaterContext()
+  contextRequestTimers.push(setTimeout(requestNativeUpdaterContext, 500))
+  contextRequestTimers.push(setTimeout(requestNativeUpdaterContext, 1500))
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', handleNativeUpdaterMessage)
+  contextRequestTimers.forEach(clearTimeout)
+  clearNativeRequest()
+})
 </script>
 
 <style scoped>
@@ -213,6 +330,18 @@ const cancelDownload = () => {
   font-weight: 600;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   white-space: nowrap;
+}
+
+.native-updater-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.55rem;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .btn-download:hover {

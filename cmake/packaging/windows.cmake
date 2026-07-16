@@ -51,14 +51,26 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/firewall/"
         DESTINATION "scripts"
         COMPONENT firewall)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
+set(GENERATED_GAMEPAD_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-gamepad.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/install-gamepad.bat.in"
+        "${GENERATED_GAMEPAD_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_GAMEPAD_INSTALL_SCRIPT}"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/uninstall-gamepad.bat"
         DESTINATION "scripts"
         COMPONENT gamepad)
+if(VIGEMBUS_AVAILABLE)
+  install(FILES "${VIGEMBUS_INSTALLER}"
+          DESTINATION "scripts/gamepad"
+          COMPONENT gamepad)
+endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
         COMPONENT vsink)
 # VDD: scripts & shared config from source tree, driver binaries from download cache
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/install-vdd.bat"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/vdd-device-helper.ps1"
               "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vdd/uninstall-vdd.bat"
         DESTINATION "scripts"
         COMPONENT vdd)
@@ -80,6 +92,30 @@ if(VDD_WIN10_DRIVER_AVAILABLE)
                 "${VDD_WIN10_DRIVER_DIR}/ZakoVDD.cer"
           DESTINATION "scripts/driver/win10"
           COMPONENT vdd)
+endif()
+
+# Vulkan HDR WSI compatibility layer shipped by newer ZakoVDD releases.
+# Keep these files out of global Vulkan registry state at install time;
+# Sunshine registers the manifest only while an HDR VDD session is active.
+set(VDD_VULKAN_HDR_FILES
+    "${VDD_DRIVER_DIR}/zako_vulkan_hdr_bridge.dll"
+    "${VDD_DRIVER_DIR}/VkLayer_zako_virtual_hdr.json"
+    "${VDD_DRIVER_DIR}/vulkan_hdr_probe.exe")
+set(VDD_VULKAN_HDR_AVAILABLE TRUE)
+foreach(VDD_VULKAN_HDR_FILE IN LISTS VDD_VULKAN_HDR_FILES)
+  if(NOT EXISTS "${VDD_VULKAN_HDR_FILE}")
+    set(VDD_VULKAN_HDR_AVAILABLE FALSE)
+  endif()
+endforeach()
+if(VDD_VULKAN_HDR_AVAILABLE)
+  install(FILES ${VDD_VULKAN_HDR_FILES}
+          DESTINATION "tools/vulkan_hdr"
+          COMPONENT vdd)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tools/vulkan_hdr")
+  file(COPY ${VDD_VULKAN_HDR_FILES}
+       DESTINATION "${CMAKE_BINARY_DIR}/tools/vulkan_hdr")
+else()
+  message(STATUS "Zako Vulkan HDR bridge artifacts are not present in the selected VDD package")
 endif()
 
 # vmouse: scripts from source tree, driver binaries + cert from download cache
@@ -128,7 +164,7 @@ set(CPACK_COMPONENT_APPLICATION_DISPLAY_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_COMPONENT_APPLICATION_DESCRIPTION "${CMAKE_PROJECT_NAME} main application and required components.")
 set(CPACK_COMPONENT_APPLICATION_GROUP "Core")
 set(CPACK_COMPONENT_APPLICATION_REQUIRED true)
-set(CPACK_COMPONENT_APPLICATION_DEPENDS assets)
+set(CPACK_COMPONENT_APPLICATION_DEPENDS "assets;gui")
 
 # Virtual Display Driver
 set(CPACK_COMPONENT_VDD_DISPLAY_NAME "Zako Display Driver")
@@ -147,6 +183,12 @@ set(CPACK_COMPONENT_ASSETS_DISPLAY_NAME "Required Assets")
 set(CPACK_COMPONENT_ASSETS_DESCRIPTION "Shaders, default box art, and web UI.")
 set(CPACK_COMPONENT_ASSETS_GROUP "Core")
 set(CPACK_COMPONENT_ASSETS_REQUIRED true)
+
+# Windows user-session agent and tray owner
+set(CPACK_COMPONENT_GUI_DISPLAY_NAME "Sunshine GUI and Tray Agent")
+set(CPACK_COMPONENT_GUI_DESCRIPTION "Required Windows tray, pairing UI, and user-session services.")
+set(CPACK_COMPONENT_GUI_GROUP "Core")
+set(CPACK_COMPONENT_GUI_REQUIRED true)
 
 # audio tool
 set(CPACK_COMPONENT_AUDIO_DISPLAY_NAME "audio-info")

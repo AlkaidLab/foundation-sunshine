@@ -186,7 +186,7 @@ Nous accueillons favorablement les discussions et les contributions de code !
 
 ## Historique des stars
 
-[![Graphique d'historique des stars](https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date)](https://www.star-history.com/#qiin2333/Sunshine-Foundation&Date)
+[![Graphique d'historique des stars](https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&legend=top-left&sealed_token=8GzivsLWTBiHWFj-MfIXqxD6tKYaPkTgNvC2q8IjHD2nbEypOWmB3bwOGTGtsCNg-ZKW0uy10gX845qiIMElcA4v_qbJh8OUYhiWtI0aSCvempCz97-OcUeWNrYRPz_rZ0hy7mb8Hfj8qnuVAOZ-p04lzSPXNOyVbm4U-acAHIqyQTdm8FXY-jrXzArQ)](https://www.star-history.com/?repos=AlkaidLab%2Ffoundation-sunshine&type=date&legend=top-left)
 
 ---
 

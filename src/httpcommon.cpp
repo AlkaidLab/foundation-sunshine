@@ -6,9 +6,18 @@
 
 #include "process.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <utility>
+#include <vector>
 
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -379,18 +388,255 @@ namespace http {
 }  // namespace http
 
 namespace {
+  constexpr auto COVER_DOWNLOAD_MAX_BYTES = static_cast<std::size_t>(10 * 1024 * 1024);
+  constexpr auto COVER_DNS_TIMEOUT = std::chrono::seconds(10);
+
+  struct ParsedDownloadUrl {
+    std::string scheme;
+    std::string host;
+    std::string port;
+  };
+
+  struct PublicHostResolution {
+    bool is_address_literal = false;
+    std::vector<std::string> addresses;
+  };
+
+  std::string to_lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    return value;
+  }
+
+  std::string normalize_host(std::string host) {
+    host = to_lower_ascii(std::move(host));
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+      host = host.substr(1, host.size() - 2);
+    }
+    while (!host.empty() && host.back() == '.') {
+      host.pop_back();
+    }
+    return host;
+  }
+
+  bool curl_url_get_string(CURLU *curlu, CURLUPart part, std::string &value, unsigned int flags = 0) {
+    char *raw = nullptr;
+    if (curl_url_get(curlu, part, &raw, flags) != CURLUE_OK) {
+      return false;
+    }
+
+    value = raw;
+    curl_free(raw);
+    return true;
+  }
+
+  bool parse_download_url(const std::string &url, ParsedDownloadUrl &parts) {
+    CURLU *curlu = curl_url();
+    if (!curlu) {
+      return false;
+    }
+
+    if (curl_url_set(curlu, CURLUPART_URL, url.c_str(), 0) != CURLUE_OK) {
+      curl_url_cleanup(curlu);
+      return false;
+    }
+
+    const bool ok = curl_url_get_string(curlu, CURLUPART_SCHEME, parts.scheme) &&
+                    curl_url_get_string(curlu, CURLUPART_HOST, parts.host);
+    curl_url_get_string(curlu, CURLUPART_PORT, parts.port);
+    curl_url_cleanup(curlu);
+
+    if (!ok) {
+      return false;
+    }
+
+    parts.scheme = to_lower_ascii(parts.scheme);
+    parts.host = normalize_host(std::move(parts.host));
+    return true;
+  }
+
+  bool is_private_ipv4(std::uint32_t address) {
+    return address == 0xffffffffu ||
+           (address & 0xff000000u) == 0x00000000u ||
+           (address & 0xff000000u) == 0x0a000000u ||
+           (address & 0xff000000u) == 0x7f000000u ||
+           (address & 0xffc00000u) == 0x64400000u ||
+           (address & 0xffff0000u) == 0xa9fe0000u ||
+           (address & 0xfff00000u) == 0xac100000u ||
+           (address & 0xffff0000u) == 0xc0a80000u ||
+           (address & 0xffffff00u) == 0xc0000000u ||
+           (address & 0xffffff00u) == 0xc0000200u ||
+           (address & 0xffffff00u) == 0xc0586300u ||
+           (address & 0xffff0000u) == 0xc6120000u ||
+           (address & 0xffffff00u) == 0xc6336400u ||
+           (address & 0xffffff00u) == 0xcb007100u ||
+           (address & 0xf0000000u) == 0xe0000000u ||
+           (address & 0xf0000000u) == 0xf0000000u;
+  }
+
+  bool is_local_or_private_address(const boost::asio::ip::address &address) {
+    if (address.is_unspecified() || address.is_loopback() || address.is_multicast()) {
+      return true;
+    }
+
+    if (address.is_v4()) {
+      return is_private_ipv4(address.to_v4().to_uint());
+    }
+
+    const auto bytes = address.to_v6().to_bytes();
+    const bool is_v4_mapped = std::all_of(bytes.begin(), bytes.begin() + 10, [](unsigned char value) { return value == 0; }) &&
+                              bytes[10] == 0xff &&
+                              bytes[11] == 0xff;
+    if (is_v4_mapped) {
+      return true;
+    }
+
+    const auto has_prefix = [&bytes](std::initializer_list<unsigned char> prefix) {
+      return std::equal(prefix.begin(), prefix.end(), bytes.begin());
+    };
+    const auto is_zero_range = [&bytes](std::size_t begin, std::size_t end) {
+      return std::all_of(bytes.begin() + begin, bytes.begin() + end, [](unsigned char value) { return value == 0; });
+    };
+
+    const bool is_v4_compatible = is_zero_range(0, 12);
+    const bool is_nat64_well_known = has_prefix({0x00, 0x64, 0xff, 0x9b}) && is_zero_range(4, 12); // 64:ff9b::/96
+    const bool is_nat64_local_use = has_prefix({0x00, 0x64, 0xff, 0x9b, 0x00, 0x01}); // 64:ff9b:1::/48
+    const bool is_discard_only = has_prefix({0x01, 0x00}) && is_zero_range(2, 8); // 100::/64
+    const bool is_dummy_prefix = has_prefix({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}); // 100:0:0:1::/64
+    const bool is_ietf_protocol_assignment = has_prefix({0x20, 0x01}) && (bytes[2] & 0xfe) == 0x00; // 2001::/23
+    const bool is_orchid_deprecated = has_prefix({0x20, 0x01, 0x00}) && (bytes[3] & 0xf0) == 0x10; // 2001:10::/28
+    const bool is_orchid_v2 = has_prefix({0x20, 0x01, 0x00}) && (bytes[3] & 0xf0) == 0x20; // 2001:20::/28
+    const bool is_documentation_2001 = has_prefix({0x20, 0x01, 0x0d, 0xb8}); // 2001:db8::/32
+    const bool is_6to4 = has_prefix({0x20, 0x02}); // 2002::/16
+    const bool is_documentation_3fff = has_prefix({0x3f, 0xff}) && (bytes[2] & 0xf0) == 0x00; // 3fff::/20
+    const bool is_srv6_sid = has_prefix({0x5f, 0x00}); // 5f00::/16
+    const bool is_unique_local = (bytes[0] & 0xfe) == 0xfc; // fc00::/7
+    const bool is_link_or_site_local = bytes[0] == 0xfe && (bytes[1] & 0xc0) != 0x00; // fe80::/10 and deprecated fec0::/10
+    const bool is_current_global_unicast = (bytes[0] & 0xe0) == 0x20; // 2000::/3
+
+    return !is_current_global_unicast ||
+           is_v4_compatible ||
+           is_nat64_well_known ||
+           is_nat64_local_use ||
+           is_discard_only ||
+           is_dummy_prefix ||
+           is_ietf_protocol_assignment ||
+           is_orchid_deprecated ||
+           is_orchid_v2 ||
+           is_documentation_2001 ||
+           is_6to4 ||
+           is_documentation_3fff ||
+           is_srv6_sid ||
+           is_unique_local ||
+           is_link_or_site_local;
+  }
+
+  bool resolve_public_host(const std::string &host, PublicHostResolution &resolution) {
+    if (host.empty() || host == "localhost" || host.ends_with(".localhost")) {
+      return false;
+    }
+
+    boost::system::error_code ec;
+    const auto literal = boost::asio::ip::make_address(host, ec);
+    if (!ec) {
+      if (is_local_or_private_address(literal)) {
+        return false;
+      }
+      resolution.is_address_literal = true;
+      return true;
+    }
+
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::resolver resolver(io);
+    boost::asio::steady_timer timer(io);
+    boost::asio::ip::tcp::resolver::results_type results;
+    bool timed_out = false;
+
+    resolver.async_resolve(host, "443", [&](const boost::system::error_code &resolve_ec, const boost::asio::ip::tcp::resolver::results_type &resolve_results) {
+      ec = resolve_ec;
+      results = resolve_results;
+      timer.cancel();
+    });
+    timer.expires_after(COVER_DNS_TIMEOUT);
+    timer.async_wait([&](const boost::system::error_code &timer_ec) {
+      if (!timer_ec) {
+        timed_out = true;
+        resolver.cancel();
+      }
+    });
+    io.run();
+
+    if (timed_out) {
+      BOOST_LOG(warning) << "Cover host resolution timed out ["sv << host << ']';
+      return false;
+    }
+    if (ec || results.empty()) {
+      BOOST_LOG(warning) << "Cover host resolution failed or returned no addresses ["sv << host << ']';
+      return false;
+    }
+
+    for (const auto &result : results) {
+      const auto address = result.endpoint().address();
+      if (is_local_or_private_address(address)) {
+        BOOST_LOG(warning) << "Cover host resolved to a blocked address ["sv << host << " -> " << address.to_string() << ']';
+        return false;
+      }
+      resolution.addresses.push_back(address.to_string());
+    }
+
+    return !resolution.addresses.empty();
+  }
+
+  bool resolve_public_https_cover_url(const std::string &url, ParsedDownloadUrl &parts, PublicHostResolution &resolution) {
+    if (!parse_download_url(url, parts)) {
+      return false;
+    }
+
+    if (parts.scheme != "https" || parts.host.empty()) {
+      return false;
+    }
+
+    if (!parts.port.empty() && parts.port != "443") {
+      return false;
+    }
+
+    return resolve_public_host(parts.host, resolution);
+  }
+
   struct ImageCheckContext {
     std::string filename;
     std::string url;
     FILE *fp = nullptr;
     unsigned char buffer[12]; // Buffer for magic bytes
     size_t buffer_len = 0;
+    size_t bytes_received = 0;
     bool checked = false;
     bool valid = false;
 
     // Ensure buffer is large enough for our checks to avoid overflow
     static_assert(sizeof(buffer) >= 12, "Image check buffer too small");
   };
+
+  bool has_supported_image_magic(const unsigned char *magic) {
+    return (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) || // PNG
+           (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) || // JPG
+           (magic[0] == 0x42 && magic[1] == 0x4D) || // BMP
+           (memcmp(magic, "RIFF", 4) == 0 && memcmp(magic + 8, "WEBP", 4) == 0) || // WEBP
+           (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00); // ICO
+  }
+
+  bool write_image_data(ImageCheckContext &ctx, const void *data, size_t length) {
+    if (length == 0) {
+      return true;
+    }
+
+    if (fwrite(data, 1, length, ctx.fp) != length) {
+      BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx.filename << ']';
+      return false;
+    }
+    return true;
+  }
 
   size_t image_write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
     try {
@@ -410,6 +656,12 @@ namespace {
       if (total_size == 0) {
         return 0;
       }
+      if (ctx->bytes_received > COVER_DOWNLOAD_MAX_BYTES || total_size > COVER_DOWNLOAD_MAX_BYTES - ctx->bytes_received) {
+        BOOST_LOG(warning) << "Image download exceeded "sv << COVER_DOWNLOAD_MAX_BYTES << " bytes [" << ctx->url << ']';
+        return 0;
+      }
+      ctx->bytes_received += total_size;
+
       const unsigned char *data = static_cast<const unsigned char *>(ptr);
 
       // If not yet checked, accumulating bytes
@@ -423,19 +675,7 @@ namespace {
         // Have we accumulated enough?
         if (ctx->buffer_len == sizeof(ctx->buffer)) {
           ctx->checked = true;
-          unsigned char *magic = ctx->buffer;
-
-          // Perform Magic Byte Check
-          // PNG: 89 50 4E 47
-          if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) ctx->valid = true;
-          // JPG: FF D8 FF
-          else if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) ctx->valid = true;
-          // BMP: 42 4D
-          else if (magic[0] == 0x42 && magic[1] == 0x4D) ctx->valid = true;
-          // WEBP: RIFF ... WEBP
-          else if (memcmp(magic, "RIFF", 4) == 0 && memcmp(magic + 8, "WEBP", 4) == 0) ctx->valid = true;
-          // ICO: 00 00 01 00
-          else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00) ctx->valid = true;
+          ctx->valid = has_supported_image_magic(ctx->buffer);
 
           if (!ctx->valid) {
             BOOST_LOG(warning) << "Streaming validation failed: Invalid magic bytes ["sv << ctx->url << ']';
@@ -450,13 +690,18 @@ namespace {
           }
 
           // Flush buffer to file
-          fwrite(ctx->buffer, 1, ctx->buffer_len, ctx->fp);
+          if (!write_image_data(*ctx, ctx->buffer, ctx->buffer_len)) {
+            return 0;
+          }
         }
         
         // If we have leftovers in this chunk that weren't part of the buffer fill
         if (total_size > to_copy) {
           if (ctx->valid && ctx->fp) {
-            fwrite(data + to_copy, 1, total_size - to_copy, ctx->fp);
+            const size_t remaining = total_size - to_copy;
+            if (!write_image_data(*ctx, data + to_copy, remaining)) {
+              return 0;
+            }
           } else if (!ctx->valid && ctx->checked) {
              // Should have returned 0 above, but just in case logic flows here
              return 0;
@@ -465,7 +710,9 @@ namespace {
       } else {
         // Already checked and valid, just write
         if (ctx->valid && ctx->fp) {
-          fwrite(ptr, size, nmemb, ctx->fp);
+          if (!write_image_data(*ctx, ptr, total_size)) {
+            return 0;
+          }
         } else {
           return 0;
         }
@@ -477,10 +724,22 @@ namespace {
       return 0;
     }
   }
-}
 
-namespace http {
-  bool download_image_with_magic_check(const std::string &url, const std::string &file, long ssl_version) {
+  std::string format_curl_resolve_address(const std::string &address) {
+    boost::system::error_code ec;
+    const auto parsed = boost::asio::ip::make_address(address, ec);
+    if (!ec && parsed.is_v6()) {
+      return "["s + address + "]";
+    }
+    return address;
+  }
+
+  curl_slist *build_curl_resolve_list(const ParsedDownloadUrl &parts, const std::string &address) {
+    std::string entry = parts.host + ":443:" + format_curl_resolve_address(address);
+    return curl_slist_append(nullptr, entry.c_str());
+  }
+
+  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
     BOOST_LOG(info) << "Downloading external image with magic check: " << url;
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -488,8 +747,20 @@ namespace http {
       return false;
     }
 
+    curl_slist *resolve_list = nullptr;
+    if (resolved_parts && resolved_address) {
+      resolve_list = build_curl_resolve_list(*resolved_parts, *resolved_address);
+      if (!resolve_list) {
+        BOOST_LOG(error) << "Couldn't pin resolved cover host addresses ["sv << url << ']';
+        curl_easy_cleanup(curl);
+        return false;
+      }
+      curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+    }
+
     if (std::string file_dir = file_handler::get_parent_directory(file); !file_handler::make_directory(file_dir)) {
       BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << "] for ["sv << url << ']';
+      curl_slist_free_all(resolve_list);
       curl_easy_cleanup(curl);
       return false;
     }
@@ -502,9 +773,9 @@ namespace http {
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, image_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-    
+
     // Security limits
-    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)10 * 1024 * 1024); // 10MB limit
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(COVER_DOWNLOAD_MAX_BYTES));
 
     // Disable redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
@@ -515,11 +786,12 @@ namespace http {
     long response_code = 0;
     CURLcode result = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    
+
     if (ctx.fp) {
       fclose(ctx.fp);
     }
 
+    curl_slist_free_all(resolve_list);
     curl_easy_cleanup(curl);
 
     bool http_ok = (response_code == 200);
@@ -530,11 +802,11 @@ namespace http {
       } else {
         BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
       }
-      
+
       // Cleanup partial file if it exists (though usually it shouldn't be much)
       if (boost::filesystem::exists(file)) {
-        boost::system::error_code ec;
-        boost::filesystem::remove(file, ec);
+        boost::system::error_code remove_ec;
+        boost::filesystem::remove(file, remove_ec);
       }
       return false;
     }
@@ -542,16 +814,43 @@ namespace http {
     // Double check: if download finished but we never got enough bytes to check?
     // Treat as failure (empty or too small file)
     if (!ctx.checked) {
-       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
-       // Cleanup if file was created
-       if (boost::filesystem::exists(file)) {
-         boost::system::error_code ec;
-         boost::filesystem::remove(file, ec);
-       }
-       return false;
+      BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
+      // Cleanup if file was created
+      if (boost::filesystem::exists(file)) {
+        boost::system::error_code remove_ec;
+        boost::filesystem::remove(file, remove_ec);
+      }
+      return false;
     }
 
     return true;
+  }
+}
+
+namespace http {
+  bool download_image_with_magic_check(const std::string &url, const std::string &file, long ssl_version) {
+    return perform_image_download_with_magic_check(url, file, ssl_version);
+  }
+
+  bool download_public_cover_image(const std::string &url, const std::string &file, long ssl_version) {
+    ParsedDownloadUrl parts;
+    PublicHostResolution resolution;
+    if (!resolve_public_https_cover_url(url, parts, resolution)) {
+      BOOST_LOG(warning) << "Blocked cover download from non-public HTTPS URL ["sv << url << ']';
+      return false;
+    }
+
+    if (resolution.is_address_literal) {
+      return perform_image_download_with_magic_check(url, file, ssl_version);
+    }
+
+    for (const auto &address : resolution.addresses) {
+      if (perform_image_download_with_magic_check(url, file, ssl_version, &parts, &address)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }
 

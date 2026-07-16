@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { apiFetch } from '../utils/apiFetch.js'
 
 const LOG_REGEX = /(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}]):\s/g
 
@@ -28,7 +29,7 @@ export function useLogs() {
   const fetchLogs = async () => {
     try {
       // Use X-Log-Offset: 0 to get cached tail (not full file download)
-      const response = await fetch('/api/logs', { headers: { 'X-Log-Offset': '0' } })
+      const response = await apiFetch('/api/logs', { headers: { 'X-Log-Offset': '0' } })
       if (response.ok) {
         logs.value = await response.text()
         return true

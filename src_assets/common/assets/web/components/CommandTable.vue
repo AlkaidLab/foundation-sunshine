@@ -148,6 +148,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable-es'
+import { deepClone } from '../utils/helpers.js'
 
 const { t } = useI18n()
 
@@ -205,7 +206,7 @@ watch(
   () => props.commands,
   (newVal) => {
     const commands = newVal || []
-    localCommands.value = isDetachedType.value ? commands.map(normalizeCommand) : JSON.parse(JSON.stringify(commands))
+    localCommands.value = isDetachedType.value ? commands.map(normalizeCommand) : deepClone(commands)
   },
   { immediate: true, deep: true }
 )

@@ -1,5 +1,6 @@
 import { ref, computed, onUnmounted } from 'vue'
 import QRCode from 'qrcode'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 
 export function useQrPair() {
   const qrDataUrl = ref('')
@@ -45,8 +46,7 @@ export function useQrPair() {
       // Poll status every 2 ticks
       if (++pollTick % 2 === 0) {
         try {
-          const res = await fetch('/api/qr-pair')
-          const data = await res.json()
+          const data = await apiJson('/api/qr-pair')
           if (data.status === 'paired') {
             stopCountdown()
             resetQrDisplay()
@@ -62,8 +62,7 @@ export function useQrPair() {
     qrError.value = ''
     qrPaired.value = false
     try {
-      const response = await fetch('/api/qr-pair', { method: 'POST' })
-      const data = await response.json()
+      const data = await apiJson('/api/qr-pair', { method: 'POST' })
 
       if (data.status?.toString() !== 'true') {
         qrError.value = data.error || 'Failed to generate QR code'
@@ -95,7 +94,7 @@ export function useQrPair() {
     resetQrDisplay()
     qrRemaining.value = 0
     try {
-      await fetch('/api/qr-pair/cancel', { method: 'POST' })
+      await apiFetch('/api/qr-pair/cancel', { method: 'POST' })
     } catch (e) {
       // Best-effort cancel, ignore network errors
     }

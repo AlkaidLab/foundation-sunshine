@@ -150,6 +150,7 @@
 import { ref } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
 import Icon from '../components/common/Icon.vue'
+import { apiPostJson } from '../utils/apiFetch.js'
 
 const error = ref(null)
 const success = ref(false)
@@ -164,14 +165,8 @@ const passwordData = ref({
 async function save() {
   error.value = null
   try {
-    const response = await fetch('/api/password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(passwordData.value),
-    })
-
-    const result = await response.json()
-    if (response.ok && result.status?.toString() === 'true') {
+    const result = await apiPostJson('/api/password', passwordData.value)
+    if (result.status?.toString() === 'true') {
       success.value = true
       setTimeout(() => document.location.reload(), 5000)
     } else {

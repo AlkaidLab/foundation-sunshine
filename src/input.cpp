@@ -19,6 +19,7 @@ extern "C" {
 #include "config.h"
 #include "globals.h"
 #include "input.h"
+#include "input_activity.h"
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
@@ -159,12 +160,14 @@ namespace input {
 
     input_t(
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
-      platf::feedback_queue_t feedback_queue):
+      platf::feedback_queue_t feedback_queue,
+      safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
+        input_activity_event { std::move(input_activity_event) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
         accumulated_vscroll_delta {},
@@ -174,10 +177,12 @@ namespace input {
     int shortcutFlags;
 
     std::vector<gamepad_t> gamepads;
+    activity::tracker_t activity_tracker;
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
     platf::feedback_queue_t feedback_queue;
+    safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -321,6 +326,69 @@ namespace input {
   }
 
   /**
+   * @brief Prints a touchpad packet.
+   * @param packet The touchpad packet.
+   */
+  void
+  print(PSS_TOUCHPAD_PACKET packet) {
+    BOOST_LOG(debug)
+      << "--begin touchpad packet--"sv << std::endl
+      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << ']' << std::endl
+      << "buttonState ["sv << util::hex(packet->buttonState).to_string_view() << ']' << std::endl
+      << "pointerId ["sv << util::hex(packet->pointerId).to_string_view() << ']' << std::endl
+      << "x ["sv << from_netfloat(packet->x) << ']' << std::endl
+      << "y ["sv << from_netfloat(packet->y) << ']' << std::endl
+      << "pressure ["sv << from_netfloat(packet->pressure) << ']' << std::endl
+      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << ']' << std::endl
+      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << ']' << std::endl
+      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
+      << "deviceWidthMm ["sv << util::endian::little(packet->deviceWidthMm) << ']' << std::endl
+      << "deviceHeightMm ["sv << util::endian::little(packet->deviceHeightMm) << ']' << std::endl
+      << "--end touchpad packet--"sv;
+  }
+
+  /**
+   * @brief Converts a little-endian uint16 touchpad frame coordinate to a normalized float.
+   * @param value The little-endian uint16 value carried in a touchpad frame contact.
+   * @return The normalized value in the range [0.0, 1.0].
+   */
+  float
+  from_touchpad_frame_uint16(std::uint16_t value) {
+    return util::endian::little(value) / 65535.0f;
+  }
+
+  /**
+   * @brief Prints a touchpad frame packet.
+   * @param packet The touchpad frame packet.
+   */
+  void
+  print(PSS_TOUCHPAD_FRAME_PACKET packet) {
+    auto contact_count = packet->contactCount;
+    if (contact_count > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      contact_count = SS_TOUCHPAD_FRAME_MAX_CONTACTS;
+    }
+
+    BOOST_LOG(debug)
+      << "--begin touchpad frame packet--"sv << std::endl
+      << "contactCount ["sv << (uint32_t) packet->contactCount << ']' << std::endl
+      << "buttonState ["sv << util::hex(packet->buttonState).to_string_view() << ']' << std::endl
+      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
+      << "deviceWidthMm ["sv << util::endian::little(packet->deviceWidthMm) << ']' << std::endl
+      << "deviceHeightMm ["sv << util::endian::little(packet->deviceHeightMm) << ']';
+
+    for (std::uint8_t i = 0; i < contact_count; i++) {
+      BOOST_LOG(debug)
+        << "contact ["sv << (uint32_t) i << "] eventType ["sv << util::hex(packet->contacts[i].eventType).to_string_view() << ']'
+        << " pointerId ["sv << util::hex(packet->contacts[i].pointerId).to_string_view() << ']'
+        << " x ["sv << from_touchpad_frame_uint16(packet->contacts[i].x) << ']'
+        << " y ["sv << from_touchpad_frame_uint16(packet->contacts[i].y) << ']'
+        << " pressure ["sv << from_touchpad_frame_uint16(packet->contacts[i].pressure) << ']';
+    }
+
+    BOOST_LOG(debug) << "--end touchpad frame packet--"sv;
+  }
+
+  /**
    * @brief Prints a pen packet.
    * @param packet The pen packet.
    */
@@ -436,6 +504,12 @@ namespace input {
         break;
       case SS_TOUCH_MAGIC:
         print((PSS_TOUCH_PACKET) payload);
+        break;
+      case SS_TOUCHPAD_MAGIC:
+        print((PSS_TOUCHPAD_PACKET) payload);
+        break;
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        print((PSS_TOUCHPAD_FRAME_PACKET) payload);
         break;
       case SS_PEN_MAGIC:
         print((PSS_PEN_PACKET) payload);
@@ -961,6 +1035,90 @@ namespace input {
   }
 
   /**
+   * @brief Called to pass a touchpad message to the platform backend.
+   * @param input The input context pointer.
+   * @param packet The touchpad packet.
+   */
+  void
+  passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_PACKET packet) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    auto rotation = util::endian::little(packet->rotation);
+    if (rotation != LI_ROT_UNKNOWN) {
+      rotation %= 360;
+    }
+
+    platf::touchpad_input_t touchpad {
+      packet->eventType,
+      packet->buttonState,
+      rotation,
+      util::endian::little(packet->deviceWidthMm),
+      util::endian::little(packet->deviceHeightMm),
+      util::endian::little(packet->pointerId),
+      from_clamped_netfloat(packet->x, 0.0f, 1.0f),
+      from_clamped_netfloat(packet->y, 0.0f, 1.0f),
+      from_clamped_netfloat(packet->pressure, 0.0f, 1.0f),
+      from_clamped_netfloat(packet->contactAreaMajor, 0.0f, 1.0f),
+      from_clamped_netfloat(packet->contactAreaMinor, 0.0f, 1.0f),
+    };
+
+    platf::touchpad_update(input->client_context.get(), touchpad);
+  }
+
+  /**
+   * @brief Called to pass a batched touchpad frame message to the platform backend.
+   * @details Forwards a full hardware touchpad frame (all simultaneous contacts) to the
+   *          platform backend. Frame passthrough is gated on native touchpad optimization
+   *          so the toggle can fall back to per-contact updates for mixed/old clients.
+   * @param input The input context pointer.
+   * @param packet The touchpad frame packet.
+   */
+  void
+  passthrough(std::shared_ptr<input_t> &input, PSS_TOUCHPAD_FRAME_PACKET packet) {
+    if (!config::input.mouse || !config::input.native_touchpad_optimization) {
+      return;
+    }
+
+    // The platform-side contact array (platf::MAX_TOUCHPAD_FRAME_CONTACTS) must hold at
+    // least as many contacts as the wire protocol can carry, otherwise the copy loop
+    // below would write out of bounds.
+    static_assert(platf::MAX_TOUCHPAD_FRAME_CONTACTS >= SS_TOUCHPAD_FRAME_MAX_CONTACTS,
+                  "platform touchpad frame capacity must cover the protocol maximum");
+
+    auto rotation = util::endian::little(packet->rotation);
+    if (rotation != LI_ROT_UNKNOWN) {
+      rotation %= 360;
+    }
+
+    auto contact_count = packet->contactCount;
+    if (contact_count > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      BOOST_LOG(warning) << "Touchpad frame contact count out of range ["sv << (uint32_t) contact_count << ']';
+      contact_count = SS_TOUCHPAD_FRAME_MAX_CONTACTS;
+    }
+
+    platf::touchpad_frame_t touchpad {};
+    touchpad.contactCount = contact_count;
+    touchpad.buttonState = packet->buttonState;
+    touchpad.rotation = rotation;
+    touchpad.deviceWidthMm = util::endian::little(packet->deviceWidthMm);
+    touchpad.deviceHeightMm = util::endian::little(packet->deviceHeightMm);
+
+    for (std::uint8_t i = 0; i < contact_count; i++) {
+      touchpad.contacts[i] = {
+        packet->contacts[i].eventType,
+        util::endian::little(packet->contacts[i].pointerId),
+        from_touchpad_frame_uint16(packet->contacts[i].x),
+        from_touchpad_frame_uint16(packet->contacts[i].y),
+        from_touchpad_frame_uint16(packet->contacts[i].pressure),
+      };
+    }
+
+    platf::touchpad_frame_update(input->client_context.get(), touchpad);
+  }
+
+  /**
    * @brief Called to pass a pen message to the platform backend.
    * @param input The input context pointer.
    * @param packet The pen packet.
@@ -1389,6 +1547,99 @@ namespace input {
   }
 
   /**
+   * @brief Batch two touchpad messages.
+   * @param dest The original packet to batch into.
+   * @param src A later packet to attempt to batch.
+   * @return The status of the batching operation.
+   */
+  batch_result_e
+  batch(PSS_TOUCHPAD_PACKET dest, PSS_TOUCHPAD_PACKET src) {
+    // Only batch hover or move events
+    if (dest->eventType != LI_TOUCH_EVENT_MOVE &&
+        dest->eventType != LI_TOUCH_EVENT_HOVER) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Don't batch beyond state changing events
+    if (src->eventType != LI_TOUCH_EVENT_MOVE &&
+        src->eventType != LI_TOUCH_EVENT_HOVER) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Batched events must be the same pointer ID
+    if (dest->pointerId != src->pointerId) {
+      return batch_result_e::not_batchable;
+    }
+
+    // The pointer and physical button must be in the same state
+    if (dest->eventType != src->eventType || dest->buttonState != src->buttonState) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Take the latest state
+    *dest = *src;
+    return batch_result_e::batched;
+  }
+
+  /**
+   * @brief Checks whether every contact in a touchpad frame is a move-only event.
+   * @details Only move-only frames are eligible for batching, since state-changing
+   *          events (down/up/hover transitions) must be delivered without coalescing.
+   * @param packet The touchpad frame packet.
+   * @return `true` if the frame has at least one contact and all contacts are move events, `false` otherwise.
+   */
+  bool
+  touchpad_frame_is_move_only(PSS_TOUCHPAD_FRAME_PACKET packet) {
+    if (packet->contactCount == 0 || packet->contactCount > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+      return false;
+    }
+
+    for (std::uint8_t i = 0; i < packet->contactCount; i++) {
+      if (packet->contacts[i].eventType != LI_TOUCH_EVENT_MOVE) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * @brief Batch two touchpad frame messages.
+   * @details Frames are only batchable when both are move-only and share identical
+   *          contact count, button state, rotation, device dimensions, and pointer IDs.
+   * @param dest The original packet to batch into.
+   * @param src A later packet to attempt to batch.
+   * @return The status of the batching operation.
+   */
+  batch_result_e
+  batch(PSS_TOUCHPAD_FRAME_PACKET dest, PSS_TOUCHPAD_FRAME_PACKET src) {
+    if (!touchpad_frame_is_move_only(dest)) {
+      return batch_result_e::terminate_batch;
+    }
+
+    if (!touchpad_frame_is_move_only(src)) {
+      return batch_result_e::terminate_batch;
+    }
+
+    if (dest->contactCount != src->contactCount ||
+        dest->buttonState != src->buttonState ||
+        dest->rotation != src->rotation ||
+        dest->deviceWidthMm != src->deviceWidthMm ||
+        dest->deviceHeightMm != src->deviceHeightMm) {
+      return batch_result_e::terminate_batch;
+    }
+
+    for (std::uint8_t i = 0; i < dest->contactCount; i++) {
+      if (dest->contacts[i].pointerId != src->contacts[i].pointerId) {
+        return batch_result_e::not_batchable;
+      }
+    }
+
+    *dest = *src;
+    return batch_result_e::batched;
+  }
+
+  /**
    * @brief Batch two pen messages.
    * @param dest The original packet to batch into.
    * @param src A later packet to attempt to batch.
@@ -1514,6 +1765,10 @@ namespace input {
         return batch((PNV_MULTI_CONTROLLER_PACKET) dest, (PNV_MULTI_CONTROLLER_PACKET) src);
       case SS_TOUCH_MAGIC:
         return batch((PSS_TOUCH_PACKET) dest, (PSS_TOUCH_PACKET) src);
+      case SS_TOUCHPAD_MAGIC:
+        return batch((PSS_TOUCHPAD_PACKET) dest, (PSS_TOUCHPAD_PACKET) src);
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        return batch((PSS_TOUCHPAD_FRAME_PACKET) dest, (PSS_TOUCHPAD_FRAME_PACKET) src);
       case SS_PEN_MAGIC:
         return batch((PSS_PEN_PACKET) dest, (PSS_PEN_PACKET) src);
       case SS_CONTROLLER_TOUCH_MAGIC:
@@ -1577,6 +1832,10 @@ namespace input {
     // Print the final input packet
     input::print((void *) payload);
 
+    const bool should_raise_input_activity =
+      config::video.input_activity_boost &&
+      input->activity_tracker.evaluate(payload);
+
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5:
@@ -1608,6 +1867,12 @@ namespace input {
       case SS_TOUCH_MAGIC:
         passthrough(input, (PSS_TOUCH_PACKET) payload);
         break;
+      case SS_TOUCHPAD_MAGIC:
+        passthrough(input, (PSS_TOUCHPAD_PACKET) payload);
+        break;
+      case SS_TOUCHPAD_FRAME_MAGIC:
+        passthrough(input, (PSS_TOUCHPAD_FRAME_PACKET) payload);
+        break;
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);
         break;
@@ -1623,6 +1888,10 @@ namespace input {
       case SS_CONTROLLER_BATTERY_MAGIC:
         passthrough(input, (PSS_CONTROLLER_BATTERY_PACKET) payload);
         break;
+    }
+
+    if (should_raise_input_activity) {
+      input->input_activity_event->raise(std::chrono::steady_clock::now());
     }
   }
 
@@ -1695,7 +1964,8 @@ namespace input {
   alloc(safe::mail_t mail) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
-      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback));
+      mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
+      mail->event<std::chrono::steady_clock::time_point>(mail::input_activity));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

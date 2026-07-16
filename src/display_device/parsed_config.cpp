@@ -509,6 +509,40 @@ namespace display_device {
     }
   }  // namespace
 
+  bool
+  display_request_t::is_client_physical_display() const {
+    return source == source_e::client && !use_vdd;
+  }
+
+  bool
+  display_request_t::allows_vdd_fallback() const {
+    return !is_client_physical_display();
+  }
+
+  bool
+  display_request_t::requires_vdd(bool requested_device_exists, bool is_vdd_device) const {
+    return use_vdd || is_vdd_device || (!requested_device_exists && allows_vdd_fallback());
+  }
+
+  display_request_t
+  resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    display_request_t request {
+      config.output_name,
+      display_request_t::source_e::config,
+      session.use_vdd
+    };
+
+    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+      const std::string client_display_name = it->to_string();
+      if (!client_display_name.empty()) {
+        request.device_id = client_display_name;
+        request.source = display_request_t::source_e::client;
+      }
+    }
+
+    return request;
+  }
+
   int
   parsed_config_t::device_prep_from_view(std::string_view value) {
     using namespace std::string_view_literals;
@@ -604,16 +638,12 @@ namespace display_device {
     parsed_config_t parsed_config;
     
     // 优先使用客户端指定的显示器名称，如果没有则使用全局配置
-    std::string device_id_to_use = config.output_name;
-    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-      const std::string client_display_name = it->to_string();
-      if (!client_display_name.empty()) {
-        device_id_to_use = client_display_name;
-        BOOST_LOG(debug) << "使用客户端指定的显示器: " << device_id_to_use;
-      }
+    const auto display_request = resolve_display_request(config, session);
+    if (display_request.source == display_request_t::source_e::client) {
+      BOOST_LOG(debug) << "使用客户端指定的显示器: " << display_request.device_id;
     }
     
-    parsed_config.device_id = device_id_to_use;
+    parsed_config.device_id = display_request.device_id;
     parsed_config.device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
@@ -658,8 +688,23 @@ namespace display_device {
 
     // 检查是否需要使用VDD
     const auto requested_device_id = display_device::find_one_of_the_available_devices(parsed_config.device_id);
+    const bool requested_device_exists = !requested_device_id.empty();
     const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
-    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
+    if (!requested_device_exists && !display_request.allows_vdd_fallback()) {
+      BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到VDD: " << parsed_config.device_id;
+      return boost::none;
+    }
+
+    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
+    const bool automatic_vdd_fallback =
+      !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+    if (parsed_config.device_prep == parsed_config_t::device_prep_e::no_operation &&
+        automatic_vdd_fallback) {
+      BOOST_LOG(error) << "Requested display is unavailable and no_operation forbids automatic VDD fallback: " << parsed_config.device_id;
+      return boost::none;
+    }
+
+    const bool needs_vdd = explicit_vdd_request || automatic_vdd_fallback;
 
     // 不需要VDD时，使用物理模式映射
     if (!needs_vdd) {

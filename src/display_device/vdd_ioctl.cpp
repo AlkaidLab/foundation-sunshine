@@ -7,16 +7,17 @@
  */
 
 #define WIN32_LEAN_AND_MEAN
-#include "vdd_ioctl.h"
+#include <Windows.h>
 
-// Emit the storage for GUID_DEVINTERFACE_ZAKO_VDD_CONTROL exactly once
-// (DEFINE_GUID expands to extern unless INITGUID is set first).
-#define INITGUID
+#include "vdd_ioctl.h"
 #include "vdd_control_ioctl.h"
 
-#include <Windows.h>
+extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID_INIT;
+
 #include <SetupAPI.h>
 
+#include <iomanip>
+#include <algorithm>
 #include <vector>
 
 #include "src/logging.h"
@@ -165,7 +166,7 @@ namespace display_device::vdd_ioctl {
           FILE_SHARE_READ | FILE_SHARE_WRITE,
           nullptr,
           OPEN_EXISTING,
-          0,
+          SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION,
           nullptr);
 
         if (m_handle == INVALID_HANDLE_VALUE) {
@@ -194,7 +195,31 @@ namespace display_device::vdd_ioctl {
       HANDLE m_handle = INVALID_HANDLE_VALUE;
     };
 
+    void
+    close_raw_frame_channel_handles(VDD_FRAME_CHANNEL_OPEN_RESPONSE &response) {
+      auto close_if_valid = [](UINT64 handle_value) {
+        if (handle_value != 0) {
+          CloseHandle(reinterpret_cast<HANDLE>(static_cast<uintptr_t>(handle_value)));
+        }
+      };
+
+      close_if_valid(response.MetadataHandle);
+      close_if_valid(response.FrameReadyEventHandle);
+      const UINT32 slot_count = std::min<UINT32>(response.SlotCount, VDD_FRAME_CHANNEL_MAX_SLOTS);
+      for (UINT32 slot = 0; slot < slot_count; ++slot) {
+        close_if_valid(response.Slots[slot].TextureHandle);
+      }
+      response = {};
+    }
+
   }  // namespace
+
+  std::uint32_t
+  required_sealed_frame_channel_flags() {
+    return VDD_FRAME_CHANNEL_FLAG_SEALED_BORROW |
+           VDD_FRAME_CHANNEL_FLAG_UNNAMED_HANDLES |
+           VDD_FRAME_CHANNEL_FLAG_STRICT_DACL;
+  }
 
   result
   send_command(const std::wstring &command) {
@@ -262,6 +287,164 @@ namespace display_device::vdd_ioctl {
       return false;
     }
     return true;
+  }
+
+  frame_channel_status
+  query_frame_channel_caps(frame_channel_caps &caps) {
+    caps = {};
+
+    device_handle dev;
+    switch (dev.open()) {
+      case device_handle::open_result::success:
+        break;
+      case device_handle::open_result::interface_missing:
+        return frame_channel_status::interface_missing;
+      case device_handle::open_result::failed:
+        return frame_channel_status::failed;
+    }
+
+    VDD_FRAME_CHANNEL_CAPS raw_caps {};
+    raw_caps.Size = sizeof(raw_caps);
+    DWORD bytes_returned = 0;
+    const BOOL ok = DeviceIoControl(
+      dev.get(),
+      IOCTL_VDD_QUERY_FRAME_CHANNEL_CAPS,
+      nullptr, 0,
+      &raw_caps, sizeof(raw_caps),
+      &bytes_returned,
+      nullptr);
+
+    if (!ok) {
+      const DWORD err = GetLastError();
+      if (err == ERROR_INVALID_FUNCTION ||
+          err == ERROR_NOT_SUPPORTED ||
+          err == ERROR_INVALID_PARAMETER) {
+        BOOST_LOG(debug) << "vdd_ioctl: frame-channel caps unsupported by driver (err=" << err << ")";
+        return frame_channel_status::unsupported;
+      }
+      BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_QUERY_FRAME_CHANNEL_CAPS) failed (err=" << err << ")";
+      return frame_channel_status::failed;
+    }
+
+    if (bytes_returned < sizeof(VDD_FRAME_CHANNEL_CAPS) ||
+        raw_caps.Size < sizeof(VDD_FRAME_CHANNEL_CAPS) ||
+        raw_caps.Version != VDD_FRAME_CHANNEL_CAPS_VERSION) {
+      BOOST_LOG(warning) << "vdd_ioctl: invalid frame-channel caps response"
+                         << " bytes=" << bytes_returned
+                         << " size=" << raw_caps.Size
+                         << " version=" << raw_caps.Version;
+      return frame_channel_status::failed;
+    }
+
+    if ((raw_caps.Flags & VDD_FRAME_CHANNEL_FLAG_SEALED_BORROW) == 0 ||
+        (raw_caps.Flags & VDD_FRAME_CHANNEL_FLAG_UNNAMED_HANDLES) == 0 ||
+        (raw_caps.Flags & VDD_FRAME_CHANNEL_FLAG_STRICT_DACL) == 0) {
+      BOOST_LOG(warning) << "vdd_ioctl: frame-channel caps missing required security flags: 0x"
+                         << std::hex << raw_caps.Flags << std::dec;
+      return frame_channel_status::failed;
+    }
+
+    caps.version = raw_caps.Version;
+    caps.flags = raw_caps.Flags;
+    caps.max_shared_slots = raw_caps.MaxSharedSlots;
+    caps.metadata_size = raw_caps.MetadataSize;
+    return frame_channel_status::supported;
+  }
+
+  frame_channel_open_status
+  open_frame_channel(const frame_channel_open_request &request,
+                     frame_channel_open_response &response,
+                     bool log_failures) {
+    response = {};
+
+    device_handle dev;
+    switch (dev.open()) {
+      case device_handle::open_result::success:
+        break;
+      case device_handle::open_result::interface_missing:
+        return frame_channel_open_status::interface_missing;
+      case device_handle::open_result::failed:
+        return frame_channel_open_status::failed;
+    }
+
+    VDD_FRAME_CHANNEL_OPEN_REQUEST raw_request {};
+    raw_request.Size = sizeof(raw_request);
+    raw_request.Version = VDD_FRAME_CHANNEL_OPEN_VERSION;
+    raw_request.MonitorIndex = request.monitor_index;
+    raw_request.RequiredFlags = request.required_flags;
+    raw_request.TargetProcessId = GetCurrentProcessId();
+    raw_request.DesiredSlots = request.desired_slots;
+    raw_request.AdapterLuidLowPart = request.adapter_luid_low_part;
+    raw_request.AdapterLuidHighPart = request.adapter_luid_high_part;
+
+    VDD_FRAME_CHANNEL_OPEN_RESPONSE raw_response {};
+    raw_response.Size = sizeof(raw_response);
+    DWORD bytes_returned = 0;
+    const BOOL ok = DeviceIoControl(
+      dev.get(),
+      IOCTL_VDD_OPEN_FRAME_CHANNEL,
+      &raw_request, sizeof(raw_request),
+      &raw_response, sizeof(raw_response),
+      &bytes_returned,
+      nullptr);
+
+    if (!ok) {
+      const DWORD err = GetLastError();
+      if (err == ERROR_INVALID_FUNCTION ||
+          err == ERROR_NOT_SUPPORTED ||
+          err == ERROR_INVALID_PARAMETER) {
+        BOOST_LOG(debug) << "vdd_ioctl: open frame-channel unsupported by driver (err=" << err << ")";
+        return frame_channel_open_status::unsupported;
+      }
+      if (log_failures) {
+        BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_OPEN_FRAME_CHANNEL) failed (err=" << err << ")";
+      }
+      return frame_channel_open_status::failed;
+    }
+
+    if (bytes_returned < sizeof(VDD_FRAME_CHANNEL_OPEN_RESPONSE) ||
+        raw_response.Size < sizeof(VDD_FRAME_CHANNEL_OPEN_RESPONSE) ||
+        raw_response.Version != VDD_FRAME_CHANNEL_OPEN_VERSION ||
+        raw_response.SlotCount == 0 ||
+        raw_response.SlotCount > VDD_FRAME_CHANNEL_MAX_SLOTS ||
+        raw_response.MetadataHandle == 0 ||
+        raw_response.FrameReadyEventHandle == 0) {
+      BOOST_LOG(warning) << "vdd_ioctl: invalid frame-channel open response"
+                         << " bytes=" << bytes_returned
+                         << " size=" << raw_response.Size
+                         << " version=" << raw_response.Version
+                         << " slots=" << raw_response.SlotCount
+                         << " meta_handle=" << raw_response.MetadataHandle
+                         << " event_handle=" << raw_response.FrameReadyEventHandle;
+      close_raw_frame_channel_handles(raw_response);
+      return frame_channel_open_status::failed;
+    }
+
+    if ((raw_response.Flags & request.required_flags) != request.required_flags) {
+      BOOST_LOG(warning) << "vdd_ioctl: frame-channel open response missing required flags"
+                         << " required=0x" << std::hex << request.required_flags
+                         << " got=0x" << raw_response.Flags << std::dec;
+      close_raw_frame_channel_handles(raw_response);
+      return frame_channel_open_status::failed;
+    }
+
+    response.version = raw_response.Version;
+    response.flags = raw_response.Flags;
+    response.slot_count = raw_response.SlotCount;
+    response.metadata_size = raw_response.MetadataSize;
+    response.metadata_handle = raw_response.MetadataHandle;
+    response.frame_ready_event_handle = raw_response.FrameReadyEventHandle;
+    response.slots.reserve(raw_response.SlotCount);
+    for (UINT32 slot = 0; slot < raw_response.SlotCount; ++slot) {
+      if (raw_response.Slots[slot].TextureHandle == 0) {
+        BOOST_LOG(warning) << "vdd_ioctl: frame-channel open response has null texture handle for slot " << slot;
+        close_raw_frame_channel_handles(raw_response);
+        response = {};
+        return frame_channel_open_status::failed;
+      }
+      response.slots.push_back(frame_channel_slot_handle { raw_response.Slots[slot].TextureHandle });
+    }
+    return frame_channel_open_status::opened;
   }
 
 }  // namespace display_device::vdd_ioctl

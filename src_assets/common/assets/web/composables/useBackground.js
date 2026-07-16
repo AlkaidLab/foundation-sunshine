@@ -1,3 +1,4 @@
+import { getCurrentScope, onScopeDispose } from 'vue'
 import ColorThief from 'colorthief'
 
 const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
@@ -195,7 +196,19 @@ export function useBackground(options = {}) {
 
   const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
 
+  const isDevMode = () => localStorage.getItem('sunshine_dev_mode') === '1'
+
+  const clearDevBypass = () => {
+    if (localStorage.getItem('sunshine_dev_mode') === '1') {
+      localStorage.setItem('sunshine_dev_mode', '0')
+    }
+  }
+
   const setBackground = async (imageUrl) => {
+    if (isDevMode()) {
+      document.body.style.background = ''
+      return
+    }
     document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
     if (isLocalImage(imageUrl)) {
       try {
@@ -221,6 +234,7 @@ export function useBackground(options = {}) {
   const loadBackground = () => setBackground(getCurrentBackground())
 
   const saveBackground = async (imageData) => {
+    clearDevBypass()
     try {
       localStorage.setItem(storageKey, imageData)
     } catch (error) {
@@ -310,6 +324,7 @@ export function useBackground(options = {}) {
   }
 
   const clearBackground = () => {
+    clearDevBypass()
     localStorage.removeItem(storageKey)
     return setBackground(defaultBackground)
   }
@@ -321,6 +336,23 @@ export function useBackground(options = {}) {
     const observer = new MutationObserver(handleThemeChange)
     observer.observe(document.documentElement, observerConfig)
     observer.observe(document.body, observerConfig)
+
+    if (getCurrentScope()) {
+      onScopeDispose(() => observer.disconnect())
+    }
+
+    // 监听背景旁路切换
+    const onBackgroundBypass = (e) => {
+      if (e.detail?.enabled) {
+        document.body.style.background = ''
+      } else {
+        loadBackground()
+      }
+    }
+    window.addEventListener('sunshine-background-bypass', onBackgroundBypass)
+    if (getCurrentScope()) {
+      onScopeDispose(() => window.removeEventListener('sunshine-background-bypass', onBackgroundBypass))
+    }
   }
 
   return {

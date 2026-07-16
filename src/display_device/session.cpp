@@ -5,14 +5,19 @@
 #include <thread>
 
 // local includes
+#include "parsed_config.h"
 #include "session.h"
 #include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
 #include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/vulkan_hdr_bridge_session.h"
+#endif
 #include "src/rtsp.h"
 #include "to_string.h"
+#include "vdd_ioctl.h"
 #include "vdd_utils.h"
 
 namespace display_device {
@@ -129,6 +134,9 @@ namespace display_device {
   };
 
   session_t::deinit_t::~deinit_t() {
+#ifdef _WIN32
+    platf::vulkan_hdr_bridge::shutdown_cleanup();
+#endif
     // 清理事件监听器
     SessionEventListener::deinit();
     
@@ -147,6 +155,11 @@ namespace display_device {
 
   std::unique_ptr<session_t::deinit_t>
   session_t::init() {
+#ifdef _WIN32
+    // Remove a registration left behind by a terminated Sunshine process
+    // before recovering display state or accepting a new stream.
+    platf::vulkan_hdr_bridge::startup_cleanup();
+#endif
     session_t::get().settings.set_filepath(platf::appdata() / "original_display_settings.json");
     
     // 初始化会话事件监听器（用于检测解锁事件）
@@ -197,6 +210,23 @@ namespace display_device {
       }
 
       return {};
+    }
+
+    parsed_config_t::device_prep_e
+    get_effective_device_prep(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+      const auto configured_device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
+      const auto custom_screen_mode = static_cast<parsed_config_t::device_prep_e>(session.custom_screen_mode);
+
+      switch (custom_screen_mode) {
+        case parsed_config_t::device_prep_e::no_operation:
+        case parsed_config_t::device_prep_e::ensure_active:
+        case parsed_config_t::device_prep_e::ensure_primary:
+        case parsed_config_t::device_prep_e::ensure_only_display:
+        case parsed_config_t::device_prep_e::ensure_secondary:
+          return custom_screen_mode;
+        default:
+          return configured_device_prep;
+      }
     }
 
     /**
@@ -272,9 +302,51 @@ namespace display_device {
 
       return false;
     }
+
+    session_t::configure_result_t
+    make_apply_configure_result(settings_t::apply_result_t apply_result) {
+      using configure_result_e = session_t::configure_result_t::result_e;
+      using apply_result_e = settings_t::apply_result_t::result_e;
+
+      configure_result_e result { configure_result_e::success };
+      std::string hint { "Try setting the display, resolution, refresh rate, HDR, and VDD options to Auto, then start the session again." };
+
+      switch (apply_result.result) {
+        case apply_result_e::success:
+          result = configure_result_e::success;
+          hint = {};
+          break;
+        case apply_result_e::topology_fail:
+          result = configure_result_e::topology_fail;
+          hint = "Check that the target display or virtual display is available, then set display/VDD options to Auto and try again.";
+          break;
+        case apply_result_e::primary_display_fail:
+          result = configure_result_e::primary_display_fail;
+          hint = "Set the target display to Auto or choose a connected display that Windows can make primary.";
+          break;
+        case apply_result_e::modes_fail:
+          result = configure_result_e::modes_fail;
+          hint = "Choose a resolution and refresh rate supported by the display, or set resolution and FPS to Auto.";
+          break;
+        case apply_result_e::hdr_states_fail:
+          result = configure_result_e::hdr_states_fail;
+          hint = "Disable HDR for this session or make sure the selected display supports the requested HDR mode.";
+          break;
+        case apply_result_e::file_save_fail:
+          result = configure_result_e::file_save_fail;
+          hint = "Check Sunshine's app data folder permissions and free disk space, then try again.";
+          break;
+        case apply_result_e::revert_fail:
+          result = configure_result_e::revert_fail;
+          hint = "Restore Windows display settings manually or reset Sunshine display persistence before retrying.";
+          break;
+      }
+
+      return { result, apply_result.get_error_message(), hint };
+    }
   }  // namespace
 
-  void
+  session_t::configure_result_t
   session_t::configure_display(const config::video_t &config,
     const rtsp_stream::launch_session_t &session,
     bool is_reconfigure) {
@@ -298,13 +370,7 @@ namespace display_device {
     boost::optional<active_topology_t> pre_saved_initial_topology;
     
     // 检查是否会使用VDD
-    std::string device_id_to_use = config.output_name;
-    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-      const std::string client_display_name = it->to_string();
-      if (!client_display_name.empty()) {
-        device_id_to_use = client_display_name;
-      }
-    }
+    const auto display_request = resolve_display_request(config, session);
     
     // 检查VDD是否已存在
     const auto existing_vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
@@ -312,16 +378,30 @@ namespace display_device {
     
     // 如果会使用VDD且VDD当前不存在，在创建前保存拓扑
     // 如果VDD已存在，说明拓扑已被破坏，不应该保存当前拓扑
-    const auto requested_device_id = display_device::find_one_of_the_available_devices(device_id_to_use);
-    const bool is_vdd_device = (display_device::get_display_friendly_name(device_id_to_use) == ZAKO_NAME);
-    
-    const bool needs_vdd = session.use_vdd || requested_device_id.empty() || is_vdd_device;
-    
+    const auto requested_device_id = display_device::find_one_of_the_available_devices(display_request.device_id);
+    const bool requested_device_exists = !requested_device_id.empty();
+    const bool is_vdd_device = (display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME);
+    const auto effective_device_prep = get_effective_device_prep(config, session);
+    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
+    const bool automatic_vdd_fallback = !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+
+    const bool needs_vdd = explicit_vdd_request ||
+      (automatic_vdd_fallback && effective_device_prep != parsed_config_t::device_prep_e::no_operation);
+
     // - 如果不需要 VDD：跳过 VDD 相关逻辑
     // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+    const bool vulkan_hdr_bridge_requested =
+      will_use_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+    const bool vdd_will_turn_off_physical_displays =
+      will_use_vdd &&
+      parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
+
+    if (vdd_will_turn_off_physical_displays) {
+      settings.capture_audio_sink();
+    }
 
     if (will_use_vdd && !vdd_already_exists) {
 
@@ -354,8 +434,17 @@ namespace display_device {
 
     const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
+      if (vdd_will_turn_off_physical_displays) {
+        settings.release_audio_sink();
+      }
+
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
-      return;
+      restore_state_impl(revert_reason_e::config_cleanup);
+      return {
+        configure_result_t::result_e::parse_fail,
+        "Failed to parse display configuration.",
+        "Set display, VDD, resolution, refresh rate, and HDR options to Auto or valid values, then try again."
+      };
     }
 
     // 保存当前会话的配置模式（可能包含客户端的override）
@@ -364,31 +453,68 @@ namespace display_device {
     current_use_vdd = parsed_config->use_vdd;
 
     if (settings.is_changing_settings_going_to_fail()) {
-      timer->setup_timer([this, config_copy = *parsed_config, &session, pre_saved_initial_topology]() {
+      timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name,
+                           pre_saved_initial_topology, vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
           return false;
         }
 
-        if (!settings.apply_config(config_copy, session, pre_saved_initial_topology)) {
+        auto retry_session = rtsp_stream::launch_session_t {};
+        retry_session.client_name = client_name;
+        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
         }
+#ifdef _WIN32
+        else if (vulkan_hdr_bridge_requested) {
+          if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {
+            BOOST_LOG(warning) << "Vulkan HDR bridge validation or registration failed; continuing without the workaround";
+          }
+        }
+        else {
+          platf::vulkan_hdr_bridge::disable();
+        }
+#endif
         return true;
       });
 
       BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
-      return;
+      return {
+        configure_result_t::result_e::deferred_retry,
+        "Display settings cannot be changed yet; Sunshine will retry while the stream starts.",
+        "Unlock the desktop, make sure Windows display settings are available, and Sunshine will retry automatically."
+      };
     }
 
-    if (settings.apply_config(*parsed_config, session, pre_saved_initial_topology)) {
+    const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology);
+    if (apply_result) {
       timer->setup_timer(nullptr);
+#ifdef _WIN32
+      if (vulkan_hdr_bridge_requested) {
+        if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {
+          BOOST_LOG(warning) << "Vulkan HDR bridge validation or registration failed; continuing without the workaround";
+        }
+      }
+      else {
+        platf::vulkan_hdr_bridge::disable();
+      }
+#endif
+      return make_apply_configure_result(apply_result);
     }
-    else {
-      restore_state_impl(revert_reason_e::config_cleanup);
+
+    auto configure_result = make_apply_configure_result(apply_result);
+    if (apply_result.result == settings_t::apply_result_t::result_e::modes_fail ||
+        apply_result.result == settings_t::apply_result_t::result_e::hdr_states_fail) {
+      configure_result.cleanup_on_failure = true;
+      BOOST_LOG(warning) << "Display mode/HDR configuration failed; deferring cleanup so startup can probe the current display state";
+      return configure_result;
     }
+
+    restore_state_impl(revert_reason_e::config_cleanup);
+    return configure_result;
   }
 
   bool
@@ -399,6 +525,11 @@ namespace display_device {
       ? "shared_vdd"
       : client_name;
     return vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+  }
+
+  bool
+  session_t::create_vdd_monitor_noninteractive() {
+    return vdd_utils::create_vdd_monitor_noninteractive();
   }
 
   bool
@@ -420,11 +551,32 @@ namespace display_device {
   void
   session_t::update_vdd_resolution(const parsed_config_t &config,
     const vdd_utils::VddSettings &vdd_settings) {
+    if (!config.resolution || !config.refresh_rate) {
+      BOOST_LOG(debug) << "VDD session mode update skipped: resolution or refresh rate is not set";
+      return;
+    }
+
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
     if (last_vdd_setting == new_setting) {
-      BOOST_LOG(debug) << "VDD配置未变更: " << new_setting;
-      return;
+      BOOST_LOG(debug) << "VDD session mode unchanged; resyncing full driver mode list: " << new_setting;
+    }
+
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
+    switch (setmodes_result) {
+      case vdd_utils::set_vdd_result::ok:
+        last_vdd_setting = new_setting;
+        BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
+        return;
+      case vdd_utils::set_vdd_result::failed:
+        BOOST_LOG(warning) << "VDD SETMODES 更新失败，回退 XML+reload 路径: " << new_setting;
+        break;
+      case vdd_utils::set_vdd_result::invalid_config:
+        BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
+        return;
+      case vdd_utils::set_vdd_result::interface_missing:
+        // Old driver without IOCTL: fall through to persistent XML + reload path below.
+        break;
     }
 
     if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
@@ -446,6 +598,19 @@ namespace display_device {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
+
+    if (config::video.capture == "vdd") {
+      bool hardware_cursor_changed = false;
+      if (vdd_utils::ensure_hardware_cursor_disabled_for_capture(&hardware_cursor_changed)) {
+        if (hardware_cursor_changed) {
+          BOOST_LOG(info) << "VDD HardwareCursor disabled for direct capture; waiting for driver reload";
+          std::this_thread::sleep_for(1200ms);
+        }
+      }
+      else {
+        BOOST_LOG(warning) << "Failed to disable VDD HardwareCursor for direct capture; remote cursor may be invisible";
+      }
+    }
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
@@ -493,7 +658,7 @@ namespace display_device {
 
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
-      vdd_settings.needs_update && config.resolution) {
+      config.resolution && config.refresh_rate) {
       update_vdd_resolution(config, vdd_settings);
     }
 
@@ -515,13 +680,28 @@ namespace display_device {
 
     // Wait for device to be ready
     if (!wait_for_vdd_device(device_zako, 5, 200ms, 1000ms)) {
-      BOOST_LOG(error) << "VDD设备初始化失败，尝试恢复";
-      vdd_utils::disable_enable_vdd();
-      std::this_thread::sleep_for(2s);
+      // 优先走 IOCTL DESTROY/CREATE 干净路径：driver 内部会调
+      // IddCxMonitorDeparture，PnP 数据库里不会留 phantom monitor。
+      // 历史上这里曾用 vdd_utils::disable_enable_vdd()，等同于 DevManView
+      // /disable_enable 强拔 adapter，会留 CM_PROB_PHANTOM monitor，下一次
+      // CREATEMONITOR 用新 GUID 会与 phantom 同 HardwareId 冲突，监视器永远attach 不上。
+      BOOST_LOG(error) << "VDD设备初始化失败，尝试通过 IOCTL DESTROY+CREATE 恢复";
+      vdd_utils::destroy_vdd_monitor();
+      std::this_thread::sleep_for(500ms);
 
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
-        vdd_utils::disable_enable_vdd();
+
+        // last-resort：只有 IOCTL 通路彻底死掉才动 adapter，因为
+        // disable_enable_vdd() 必然会留 phantom monitor（清理需要 SetupAPI
+        // 工具函数，留作后续 PR）。
+        if (!vdd_ioctl::ping()) {
+          BOOST_LOG(warning) << "VDD IOCTL ping 失败，driver 可能已死；last-resort disable/enable adapter（注意会留 phantom monitor）";
+          vdd_utils::disable_enable_vdd();
+        }
+        else {
+          BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
+        }
         return;
       }
     }
@@ -593,6 +773,12 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
+#ifdef _WIN32
+    // Stop exposing the implicit layer before changing HDR state or removing
+    // the VDD. The layer itself is pass-through, but registration must remain
+    // scoped to the stream that requested HDR on a Zako display.
+    platf::vulkan_hdr_bridge::disable();
+#endif
     // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
@@ -706,6 +892,7 @@ namespace display_device {
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
     if (!has_persistent) {
       BOOST_LOG(info) << "apply_config 从未执行成功，跳过拓扑恢复";
+      settings.release_audio_sink();
       stop_timer_and_clear_vdd_state();
       return;
     }

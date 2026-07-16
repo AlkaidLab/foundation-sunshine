@@ -29,7 +29,9 @@
 #include "logging.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
-#include "system_tray.h"
+#include "stream.h"
+#include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "utility.h"
 
 #ifdef _WIN32
@@ -243,32 +245,31 @@ namespace proc {
       BOOST_LOG(info) << "Executing Do Cmd: ["sv << cmd.do_cmd << ']';
       auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, _env, _pipe.get(), ec, nullptr);
 
-      // Track if we hit the desktop-mode permission_denied exception,
-      // so we can also skip the wait/exit_code checks that would otherwise fail.
-      bool skip_prep_failure = false;
       if (ec) {
-        BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
         // We don't want any prep commands failing launch of the desktop.
         // This is to prevent the issue where users reboot their PC and need to log in with Sunshine.
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
-        if (_app.cmd.empty() && ec == std::errc::permission_denied) {
-          skip_prep_failure = true;
-        } else {
+        if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
+          BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
           return -1;
         }
+
+        BOOST_LOG(warning) << "Skipping Desktop prep command ["sv << cmd.do_cmd
+                           << "] because Sunshine could not run it under the user's session: "sv << ec.message()
+                           << ". Desktop streaming will continue, but this prep command's effect will not be applied."sv;
+        ec.clear();
+        continue;
       }
 
-      if (!skip_prep_failure) {
-        child.wait(ec);
-        if (ec) {
-          BOOST_LOG(error) << '[' << cmd.do_cmd << "] wait failed with error code ["sv << ec << ']';
-          return -1;
-        }
-        auto ret = child.exit_code();
-        if (ret != 0) {
-          BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
-          return -1;
-        }
+      child.wait(ec);
+      if (ec) {
+        BOOST_LOG(error) << '[' << cmd.do_cmd << "] wait failed with error code ["sv << ec << ']';
+        return -1;
+      }
+      auto ret = child.exit_code();
+      if (ret != 0) {
+        BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
+        return -1;
       }
     }
 
@@ -386,7 +387,8 @@ namespace proc {
     bool has_run = _app_id > 0;
     // Only show the Stopped notification if we actually have an app to stop
     // Since terminate() is always run when a new app has started
-    if (proc::proc.get_last_run_app_name().length() > 0 && has_run) {
+    if (proc::proc.get_last_run_app_name().length() > 0 && has_run && !stream::session::has_active_video_sessions()) {
+      tray_state::set_idle(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
 #endif
@@ -630,8 +632,7 @@ namespace proc {
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          // 使用流式校验下载，如果Magic Byte不匹配会直接中断下载
-          if (!http::download_image_with_magic_check(original_url, local_path.string())) {
+          if (!http::download_public_cover_image(original_url, local_path.string())) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }

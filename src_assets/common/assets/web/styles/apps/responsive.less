@@ -1,0 +1,177 @@
+// RESPONSIVE DESIGN
+// ============================================================================
+
+@media (max-width: 768px) {
+  .apps-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+
+  .search-container {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .search-box {
+    max-width: 100%;
+    min-width: auto;
+  }
+
+  .action-buttons {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .cute-btn {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 1.1rem;
+    animation: none;
+  }
+
+  .app-actions .btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .page-title {
+    font-size: 2rem;
+  }
+
+  .alert-toast {
+    right: 10px;
+    left: 10px;
+    top: 10px;
+  }
+
+  .app-list-item-inner {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .app-icon-container-list,
+  .app-icon-list,
+  .app-icon-placeholder-list {
+    width: 50px;
+    height: 50px;
+  }
+
+  .app-icon-placeholder-list {
+    font-size: 1.2rem;
+  }
+  .app-name-list {
+    font-size: var(--font-size-md);
+  }
+  .app-tags-list {
+    gap: 4px;
+  }
+
+  .app-tag-list {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+  }
+
+  .view-toggle-group {
+    order: -1;
+    width: auto;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 576px) {
+  .app-card {
+    min-height: 270px;
+  }
+
+  .app-card-inner {
+    padding: 16px;
+  }
+
+  .app-icon-container,
+  .app-icon,
+  .app-icon-placeholder {
+    width: 60px;
+    height: 60px;
+  }
+
+  .app-name {
+    font-size: 1.1rem;
+  }
+
+  .app-tags {
+    height: 28px;
+  }
+
+  .search-container {
+    margin-bottom: 1.5rem;
+  }
+
+  .cute-btn {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: var(--font-size-md);
+  }
+
+  .action-buttons {
+    gap: 8px;
+
+    > .cute-btn {
+      flex: 0 0 44px;
+    }
+  }
+
+  .app-list-item-inner {
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .drag-handle-list {
+    width: 24px;
+    font-size: var(--font-size-md);
+  }
+
+  .app-icon-container-list,
+  .app-icon-list,
+  .app-icon-placeholder-list {
+    width: 45px;
+    height: 45px;
+  }
+
+  .app-info-list {
+    flex: 1 1 calc(100% - 200px);
+  }
+  .app-actions-list {
+    margin-left: auto;
+  }
+
+  .app-actions-list .btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: var(--font-size-sm);
+  }
+
+  .app-command-list,
+  .app-working-dir-list {
+    font-size: var(--font-size-xs);
+  }
+
+  .view-toggle-btn {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+// ============================================================================

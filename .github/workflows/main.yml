@@ -1,5 +1,8 @@
 name: Build and Release
 
+# Published releases are owned by sign-and-repackage.yml. Keeping that event
+# out of this workflow prevents a release created below from starting another
+# build-and-release cycle.
 on:
   pull_request:
     branches:
@@ -11,8 +14,6 @@ on:
   push:
     branches:
       - master
-  release:
-    types: [published]
   workflow_dispatch:
 
 concurrency:
@@ -27,25 +28,15 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
-  github_env:
-    name: GitHub Env Debug
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dump github context
-        run: echo "$GITHUB_CONTEXT"
-        shell: bash
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-
   setup_release:
     name: Setup Release
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_release.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_release.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
-      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_release.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
-      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_release.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
-      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_release.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
-      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_release.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
+      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
+      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
+      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
+      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
+      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
+      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
       contents: write  # read does not work to check squash and merge details
     runs-on: ubuntu-latest
@@ -53,36 +44,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Debug GitHub Event
-        run: |
-          echo "GitHub Event Name: ${{ github.event_name }}"
-          echo "Has commits field: ${{ contains(toJson(github.event), 'commits') }}"
-
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch' && github.event_name != 'release'
+        if: github.event_name != 'workflow_dispatch'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Release (Release event)
-        id: setup_release_release
-        if: github.event_name == 'release'
-        env:
-          RELEASE_BODY: ${{ github.event.release.body }}
-        run: |
-          TAG="${{ github.event.release.tag_name }}"
-          SUFFIX=$([ "${{ github.event.release.target_commitish }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=true" >> $GITHUB_OUTPUT
-          {
-            echo "release_body<<RELEASE_BODY_EOF"
-            echo "$RELEASE_BODY"
-            echo "RELEASE_BODY_EOF"
-          } >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.event.release.target_commitish }}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
 
       - name: Setup Release (Manual)
         id: setup_release_manual
@@ -104,7 +71,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          ref: ${{ github.sha }}
           submodules: recursive
 
       - name: Setup Dependencies Windows
@@ -171,17 +138,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: npm-${{ hashFiles('package.json') }}
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Build Web UI
         shell: pwsh
         run: |
-          npm install
+          npm ci
+          npm run test:webui
           New-Item -ItemType Directory -Force -Path build | Out-Null
           $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
@@ -206,6 +170,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
@@ -213,6 +178,10 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
           ninja -C build
+
+      - name: Run native tests
+        shell: msys2 {0}
+        run: ctest --test-dir build --output-on-failure
 
       - name: Cache Inno Setup
         id: inno-cache
@@ -242,14 +211,14 @@ jobs:
           mkdir -p artifacts
           cd build
 
-          # package - 生成 Inno Setup 安装包和 ZIP 便携版
-          # 先安装到 staging 目录
+          # Package the Inno Setup installer and portable ZIP.
+          # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
           
-          # 运行 Inno Setup 编译器
+          # Run the Inno Setup compiler.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss
           
-          # 生成 ZIP 便携版
+          # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
 
           # move
@@ -259,7 +228,7 @@ jobs:
       - name: Generate Checksums
         shell: pwsh
         run: |
-          # 生成 SHA256 校验和
+          # Generate SHA256 checksums.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Package Windows Debug Info

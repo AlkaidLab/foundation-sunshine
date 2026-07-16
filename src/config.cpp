@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -48,6 +49,10 @@ using namespace std::literals;
 
 #define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
 namespace config {
+
+  namespace {
+    std::mutex config_file_mutex;
+  }
 
   namespace nv {
 
@@ -408,6 +413,8 @@ namespace config {
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
+    true,  // vdd_borrowed_texture
+    true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
     {
@@ -417,20 +424,23 @@ namespace config {
     },  // qsv
 
     {
-      (int) amd::usage_h264_e::ultralowlatency,  // usage (h264)
-      (int) amd::usage_hevc_e::ultralowlatency,  // usage (hevc)
-      (int) amd::usage_av1_e::ultralowlatency,  // usage (av1)
-      (int) amd::rc_h264_e::vbr_latency,  // rate control (h264)
-      (int) amd::rc_hevc_e::vbr_latency,  // rate control (hevc)
-      (int) amd::rc_av1_e::vbr_latency,  // rate control (av1)
-      0,  // enforce_hrd
-      (int) amd::quality_h264_e::balanced,  // quality (h264)
-      (int) amd::quality_hevc_e::balanced,  // quality (hevc)
-      (int) amd::quality_av1_e::balanced,  // quality (av1)
-      0,  // preanalysis
-      1,  // vbaq
+      std::nullopt,  // usage (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (h264): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (hevc): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (av1): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // enforce_hrd: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // quality (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // preanalysis: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // vbaq: unset by default, matching FFmpeg amfenc
       (int) amd::coder_e::_auto,  // coder
       23,  // qvbr_quality (1-51, default 23)
+      0,  // ltr_frames
+      0,  // slices_per_frame
+      false,  // avcodec_compat: keep clean standalone AMF path by default
     },  // amd
 
     {
@@ -450,6 +460,7 @@ namespace config {
     {},  // output_name
     {},  // capture_target (default: empty, will be set to "display" in apply_config)
     {},  // window_title
+    true,  // capture_cursor (default: composite the host mouse cursor)
     (int) display_device::parsed_config_t::device_prep_e::no_operation,  // display_device_prep
     (int) display_device::parsed_config_t::resolution_change_e::automatic,  // resolution_change
     {},  // manual_resolution
@@ -459,6 +470,9 @@ namespace config {
     {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
+    true,  // input_activity_boost
+    60,  // input_activity_boost_fps
+    150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
     false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
     "auto"s,  // capture_compute_shader (default: auto -> off until validated)
@@ -494,6 +508,8 @@ namespace config {
     platf::get_host_name(),  // sunshine_name,
     "[]",
     "sunshine_state.json"s,  // file_state
+    "[]"s,  // file_mappings
+    48020,  // file_mapping_port
     {},  // external_ip
     {
       "1280x720"s,
@@ -548,6 +564,7 @@ namespace config {
     true,  // always send scancodes
     true,  // high resolution scrolling
     true,  // native pen/touch support
+    true,  // native touchpad optimization
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
@@ -1125,7 +1142,8 @@ namespace config {
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      BOOST_LOG(info) << "config: '"sv << name << "' = "sv << val;
+      const auto log_value = name == "file_mappings" && !val.empty() ? "<redacted>"s : val;
+      BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
     }
 
@@ -1209,12 +1227,23 @@ namespace config {
     adjust_usage_for_hq_rc(video.amd.amd_rc_hevc, video.amd.amd_usage_hevc, 1, 5, "HEVC");
     adjust_usage_for_hq_rc(video.amd.amd_rc_av1, video.amd.amd_usage_av1, 2, 5, "AV1");
 
-    bool_f(vars, "amd_preanalysis", (bool &) video.amd.amd_preanalysis);
-    bool_f(vars, "amd_vbaq", (bool &) video.amd.amd_vbaq);
-    bool_f(vars, "amd_enforce_hrd", (bool &) video.amd.amd_enforce_hrd);
+    int_f(vars, "amd_preanalysis", video.amd.amd_preanalysis, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_vbaq", video.amd.amd_vbaq, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_enforce_hrd", video.amd.amd_enforce_hrd, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
+    bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
     // matches FFmpeg amfenc.c behavior of never setting the property unless
     // the user explicitly opts in). See AlkaidLab/foundation-sunshine#666 for
@@ -1247,6 +1276,21 @@ namespace config {
     
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
+    {
+      auto first = video.adapter_name.find_first_not_of(" \t\r\n");
+      auto last = video.adapter_name.find_last_not_of(" \t\r\n");
+      std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
+      std::string lower = trimmed;
+      std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); }
+      );
+      if (trimmed.empty() || lower == "default" || lower == "auto") {
+        video.adapter_name.clear();
+      }
+      else {
+        video.adapter_name = std::move(trimmed);
+      }
+    }
     string_f(vars, "output_name", video.output_name);
     
 #ifdef _WIN32
@@ -1280,12 +1324,22 @@ namespace config {
     int_f(vars, "max_bitrate", video.max_bitrate);
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
+    bool_f(vars, "input_activity_boost", video.input_activity_boost);
+    int_between_f(vars, "input_activity_boost_fps", video.input_activity_boost_fps, { 0, 1000 });
+    int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
     bool_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
+    bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
+    bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+
+    // Whether to composite the host mouse cursor into the captured frames.
+    // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
+    bool_f(vars, "capture_cursor", video.capture_cursor);
+    display_cursor = video.capture_cursor;
 
     // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
     string_f(vars, "downscaling_quality", video.downscaling_quality);
@@ -1320,6 +1374,10 @@ namespace config {
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
+    string_f(vars, "file_mappings", nvhttp.file_mappings);
+    int file_mapping_port = nvhttp.file_mapping_port;
+    int_between_f(vars, "file_mapping_port", file_mapping_port, { 1024, 65535 });
+    nvhttp.file_mapping_port = static_cast<std::uint16_t>(file_mapping_port);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
@@ -1413,6 +1471,7 @@ namespace config {
 
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
+    bool_f(vars, "native_touchpad_optimization", input.native_touchpad_optimization);
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
     bool_f(vars, "clipboard_sync", input.clipboard_sync);
@@ -1698,6 +1757,7 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 读取现有配置文件
       std::map<std::string, std::string> configMap;
@@ -1755,6 +1815,7 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {

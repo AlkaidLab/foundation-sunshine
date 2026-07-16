@@ -1,0 +1,415 @@
+// APPS GRID & LIST
+// ============================================================================
+
+.apps-grid-container {
+  padding-bottom: var(--spacing-xl);
+}
+
+.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+  gap: 20px;
+
+  .drag-handle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: grab;
+    font-size: var(--font-size-lg);
+    padding: 0;
+    border-radius: 10px;
+    touch-action: none;
+    .transition-default();
+    z-index: 10;
+
+    &:hover {
+      color: rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.1);
+    }
+  }
+}
+
+.apps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+// ============================================================================
+// 批量选择 - 工具栏 + 卡片复选框覆盖层
+// ============================================================================
+.batch-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  background: rgba(20, 24, 38, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+
+  .batch-action-info {
+    color: var(--text-secondary, #cbd5e1);
+    font-size: var(--font-size-sm, 14px);
+  }
+
+  .batch-action-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+.app-card-wrapper,
+.app-list-wrapper {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+  position: relative;
+
+  &.selection-mode {
+    cursor: pointer;
+  }
+
+  &.is-selected {
+    // 用细描边而不是 box-shadow 抢占视觉，避免和 hover 状态打架
+    outline: 2px solid var(--bs-primary, #6366f1);
+    outline-offset: 2px;
+    border-radius: 14px;
+  }
+}
+
+.apps-grid .app-card-wrapper {
+  contain-intrinsic-size: auto 280px;
+  display: flex;
+  min-width: 0;
+  height: 100%;
+}
+
+.app-select-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+  pointer-events: auto;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.9);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--bs-primary, #6366f1);
+    outline-offset: 2px;
+  }
+
+  &--list {
+    top: 50%;
+    left: 8px;
+    transform: translateY(-50%);
+  }
+}
+
+// APP CARD
+// ============================================================================
+
+.app-card {
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: var(--border-radius-xl);
+  overflow: hidden;
+  .glass-effect-light();
+  .transition-default();
+  cursor: default;
+  position: relative;
+  box-shadow: var(--box-shadow-sm);
+  animation: fadeIn 0.5s ease;
+  touch-action: pan-y;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 278px;
+
+  &:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--box-shadow-lg);
+    background: rgba(255, 255, 255, 0.82);
+    border-color: rgba(99, 102, 241, 0.22);
+  }
+
+  [data-bs-theme='dark'] & {
+    background: rgba(20, 24, 38, 0.62);
+    border-color: rgba(255, 255, 255, 0.26);
+
+    &:hover {
+      background: rgba(24, 29, 46, 0.72);
+      border-color: rgba(255, 255, 255, 0.36);
+    }
+  }
+}
+
+.app-card-inner {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 20px;
+  width: 100%;
+  height: 100%;
+}
+
+// App icon styles
+.app-icon-container {
+  .flex-center();
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 8px;
+  position: relative;
+}
+
+.app-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--border-radius-md);
+  object-fit: cover;
+  box-shadow: var(--box-shadow-md);
+}
+
+.app-icon-placeholder {
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, #ff6b6b, #ffa500);
+  border-radius: var(--border-radius-md);
+  .flex-center();
+  color: #fff;
+  font-size: var(--font-size-xxl);
+  box-shadow: var(--box-shadow-md);
+}
+
+// App info
+.app-info {
+  text-align: center;
+  margin-bottom: 15px;
+  cursor: copy;
+  position: relative;
+  padding: 8px;
+  border-radius: var(--border-radius-md);
+  .transition-default();
+  flex: 1 1 auto;
+  min-width: 0;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    .glass-effect-light();
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.98);
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  [data-bs-theme='dark'] & {
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    &:active {
+      background: rgba(255, 255, 255, 0.14);
+    }
+  }
+
+  &:not([title]),
+  &[title=''] {
+    cursor: default;
+    pointer-events: none;
+  }
+
+  &.copy-success {
+    animation: copySuccess 0.4s ease;
+  }
+}
+
+.app-name {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: #172033;
+  margin-bottom: 8px;
+  .text-ellipsis();
+
+  [data-bs-theme='dark'] & {
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+}
+
+.app-command {
+  display: inline-block;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: rgba(51, 65, 85, 0.82);
+  margin-bottom: 10px;
+  font-family: 'Courier New', monospace;
+  background: rgba(15, 23, 42, 0.08);
+  padding: 5px 10px;
+  border-radius: var(--border-radius-sm);
+  max-width: 100%;
+  .text-ellipsis();
+  .transition-default();
+
+  &:hover {
+    background: rgba(15, 23, 42, 0.12);
+    color: #172033;
+    transform: translateY(-1px);
+  }
+
+  [data-bs-theme='dark'] & {
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(0, 0, 0, 0.32);
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.35);
+      color: rgba(255, 255, 255, 0.9);
+    }
+  }
+}
+
+// ============================================================================
+// APP TAGS
+// ============================================================================
+
+.app-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 15px;
+  height: 28px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.app-tag {
+  background: rgba(255, 255, 255, 0.55);
+  color: #172033;
+  padding: 4px 8px;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  font-weight: 500;
+  max-width: 100%;
+  min-width: 0;
+  .text-ellipsis();
+}
+
+.tag-more {
+  flex: 0 0 auto;
+  background: rgba(15, 23, 42, 0.12);
+  color: #172033;
+
+  [data-bs-theme='dark'] & {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+  }
+}
+
+// Tag variants
+.tag-exclude-global-prep-cmd {
+  background: rgba(255, 105, 180, 0.6);
+  color: #fff;
+}
+.tag-menu {
+  background: rgba(147, 112, 219, 0.6);
+  color: #fff;
+}
+.tag-elevated {
+  background: rgba(255, 165, 0, 0.6);
+  color: #fff;
+}
+.tag-detach {
+  background: rgba(32, 178, 170, 0.6);
+  color: #fff;
+}
+
+// ============================================================================
+// APP ACTIONS
+// ============================================================================
+
+.app-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: auto;
+
+  .btn {
+    .btn-rounded();
+    color: #fff;
+    font-size: var(--font-size-md);
+    backdrop-filter: blur(5px);
+  }
+}
+
+// Action button variants mixin
+.action-btn-variant(@color) {
+  background: rgba(@color, 0.3);
+  border: 1px solid rgba(@color, 0.5);
+
+  &:hover {
+    background: rgba(@color, 0.5);
+    transform: scale(1.1);
+  }
+}
+
+.btn-edit {
+  .action-btn-variant(rgb(0, 123, 255));
+}
+
+.btn-delete {
+  .action-btn-variant(rgb(220, 53, 69));
+}
+
+// ============================================================================
+// DRAG STATES
+// ============================================================================
+
+.app-card-dragging {
+  opacity: 0.8;
+  transform: scale(0.98);
+}
+.app-card-ghost {
+  opacity: 0.3;
+  transform: scale(0.95);
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+.app-card-chosen {
+  transform: scale(1.02);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3) !important;
+  z-index: 1000;
+}
+.app-card-drag {
+  transform: rotate(5deg) scale(1.05);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4) !important;
+}
+
+// ============================================================================

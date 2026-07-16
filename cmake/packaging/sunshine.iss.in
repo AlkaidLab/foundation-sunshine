@@ -62,6 +62,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; 重启管理器
 CloseApplications=yes
 RestartApplications=yes
+; Driver/helper installers may return a reboot-required exit code. Do not show
+; Inno's final reboot prompt; users can reboot later if a driver needs it.
+RestartIfNeededByRun=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -71,6 +74,7 @@ Name: "chinesesimplified"; MessagesFile: "@CMAKE_SOURCE_DIR@\cmake\packaging\Chi
 ; English custom messages
 english.ComponentApplication=Sunshine main application
 english.ComponentAssets=Required assets (shaders, web UI)
+english.ComponentGUI=Sunshine GUI and tray agent (required)
 english.ComponentVDD=Zako Virtual Display Driver (HDR)
 english.ComponentAutostart=Launch on system startup
 english.ComponentFirewall=Add firewall exclusions
@@ -111,6 +115,7 @@ english.StatusStoppingProcesses=Stopping running Sunshine processes...
 ; Chinese Simplified custom messages
 chinesesimplified.ComponentApplication=Sunshine 主程序
 chinesesimplified.ComponentAssets=必要资源（着色器、Web UI）
+chinesesimplified.ComponentGUI=Sunshine GUI 与托盘代理（必需）
 chinesesimplified.ComponentVDD=Zako 虚拟显示驱动（HDR）
 chinesesimplified.ComponentAutostart=开机自动启动
 chinesesimplified.ComponentFirewall=添加防火墙规则
@@ -157,15 +162,20 @@ Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
 [Components]
 Name: "application"; Description: "{cm:ComponentApplication}"; Types: recommended full compact custom; Flags: fixed
 Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full compact custom; Flags: fixed
+Name: "gui"; Description: "{cm:ComponentGUI}"; Types: recommended full compact custom; Flags: fixed
 Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
 Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
-Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: full
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
-Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: full
+Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: recommended full
+Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[InstallDelete]
+; Remove old hashed Web UI bundles before installing the freshly built frontend.
+Type: filesandordirs; Name: "{app}\assets\web"
 
 [Files]
 ; Main application
@@ -197,8 +207,12 @@ Source: "{#MySourceDir}\scripts\IMAGE_MIGRATION.md"; DestDir: "{app}\scripts"; F
 ; PATH management
 Source: "{#MySourceDir}\scripts\update-path.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 
-; Assets (includes GUI, shaders, web UI, etc.)
-Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+; Assets (shaders, web UI, etc.)
+Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+
+; Required GUI and user-session tray agent
+Source: "{#MySourceDir}\assets\gui\{#MyAppGUIExeName}"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
+Source: "{#MySourceDir}\assets\gui\WebView2Loader.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion skipifsourcedoesntexist; Components: gui
 
 ; Helper tools
 Source: "{#MySourceDir}\tools\device-toggler.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
@@ -218,12 +232,14 @@ Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scrip
 
 ; Virtual Display Driver scripts & files
 Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\vdd-device-helper.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
 
 ; Gamepad scripts
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
 
 ; Virtual Mouse Driver scripts & files
 Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
@@ -243,13 +259,13 @@ Source: "{#MySourceDir}\tools\audio-info.exe"; DestDir: "{app}\tools"; Flags: ig
 [Icons]
 ; Start Menu shortcuts
 Name: "{group}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{group}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"
+Name: "{group}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Components: gui
 Name: "{group}\Sunshine Tools"; Filename: "{app}\tools"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Desktop shortcuts (optional, controlled by Tasks)
 Name: "{autodesktop}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{autodesktop}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Tasks: desktopicon; Components: gui
 
 ; Install dir shortcut
 Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
@@ -259,8 +275,9 @@ Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--sh
 Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
 
 [Run]
-; Post-install actions (shown on progress page)
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C /Q >nul 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden
+; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
+; attribute on files & dirs. The latter is what fixes the rare "Sunshine
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
@@ -271,12 +288,14 @@ Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallServ
 Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
 
 ; Finish page actions - user selectable
-; Use explorer.exe to launch GUI so it always runs as the non-elevated current user,
-; even though the installer itself is running with admin privileges.
-Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
-Filename: "{win}\explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
+Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
+; Launch the user-session agent with the original desktop token. The GUI then
+; owns and reconciles its HKCU autostart entry from the correct user context.
+Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent runasoriginaluser; Components: gui
 
 [UninstallRun]
+; Remove the per-user GUI startup entry before terminating the agent.
+Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveGUIAutoStart"; Check: FileExists(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'))
 ; Stop running processes first. We force-kill the service binary
 ; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
 ; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
@@ -323,6 +342,7 @@ var
   BrandTitle: TNewStaticText;
   BrandSubtitle: TNewStaticText;
   AccentBar: TBevel;
+  ExistingInnoInstall: Boolean;
 
 procedure InitializeWizard();
 var
@@ -582,11 +602,48 @@ begin
   RegDeleteKeyIfEmpty(HKLM32, 'SOFTWARE\AlkaidLab');
 end;
 
+function DetectExistingInnoInstall(): Boolean;
+var
+  InstallDir: String;
+begin
+  Result := RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  if not Result then
+    Result := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  Result := Result and (InstallDir <> '') and DirExists(InstallDir);
+end;
+
+function ShouldRepairInstallPermissions(): Boolean;
+var
+  ResultCode: Integer;
+  VerifyLog, Params: String;
+begin
+  Result := False;
+  if not ExistingInnoInstall then
+    Exit;
+
+  // Verification is read-only and substantially cheaper than rewriting every
+  // ACL. Only legacy installs with malformed/non-canonical ACLs take the slow
+  // recursive reset path.
+  VerifyLog := ExpandConstant('{tmp}\sunshine-icacls-verify.log');
+  Params := '/c icacls "' + ExpandConstant('{app}') +
+            '" /verify /T /C > "' + VerifyLog + '" 2>&1';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Result := True
+  else
+    Result := ResultCode <> 0;
+
+  if not Result then
+    DeleteFile(VerifyLog);
+end;
+
 procedure VerifyServiceInstalled();
 var
-  ExpectedPath, ImagePath, Lower, Detail: String;
-  Tries: Integer;
+  ExpectedPath, ImagePath, Lower, Detail, TmpFile, Line: String;
+  Tries, ResultCode, i: Integer;
   Found: Boolean;
+  Lines: TArrayOfString;
 begin
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
   Lower := Lowercase(ExpectedPath);
@@ -605,15 +662,44 @@ begin
   // Retry a few times: SCM can take a moment to publish ImagePath after a
   // successful `sc create`, especially when the service was just deleted
   // out of "marked for deletion" state inside install-service.bat.
+  //
+  // The Services tree under HKLM\SYSTEM is shared between registry views. Use
+  // HKLM first so the check is not sensitive to Inno/Windows 64-bit view
+  // quirks, then fall back to HKLM64 for existing installers' behaviour.
   ImagePath := '';
+  Found := False;
   for Tries := 1 to 5 do
   begin
-    Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
+    Found := RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\SunshineService',
                                  'ImagePath', ImagePath);
+    if not Found then
+      Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
+                                   'ImagePath', ImagePath);
     if Found and (Pos(Lower, Lowercase(ImagePath)) > 0) then
       Exit;  // happy path
     Sleep(500);
   end;
+
+  // Last-resort verification: query SCM and look for the expected absolute
+  // path anywhere in the output. This remains locale-safe because we do not
+  // parse localized labels such as BINARY_PATH_NAME/NOMBRE_RUTA_BINARIO.
+  TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice_verify.txt');
+  ResultCode := -1;
+  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
+  begin
+    for i := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Line := Lines[i];
+      if Pos(Lower, Lowercase(Line)) > 0 then
+      begin
+        DeleteFile(TmpFile);
+        Exit;
+      end;
+    end;
+  end;
+  DeleteFile(TmpFile);
 
   // Build a detailed diagnostic so support reports include the actual
   // mismatch rather than just the generic "could not install or verify"
@@ -625,7 +711,9 @@ begin
   else
     Detail := 'ImagePath: ' + ImagePath;
   Detail := Detail + #13#10 + 'Expected: ' + ExpectedPath;
-  RaiseException(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail);
+  Detail := Detail + #13#10 + 'sc qc exit: ' + IntToStr(ResultCode);
+  MsgBox(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK);
+  Abort();
 end;
 
 // Initialization: handle old NSIS upgrade
@@ -638,6 +726,7 @@ var
   ResultCode: Integer;
   Waited: Integer;
 begin
+  ExistingInnoInstall := DetectExistingInnoInstall();
   Result := True;
 
   if not DetectOldNSISInstall() then

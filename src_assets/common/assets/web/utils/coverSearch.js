@@ -4,6 +4,7 @@
  */
 
 import { searchSteamCovers } from './steamApi.js'
+import { isTauriEnv } from './helpers.js'
 
 // 共享缓存（模块级别，避免重复创建）
 const bucketCache = new Map()
@@ -12,20 +13,6 @@ const gameCache = new Map()
 // IGDB 相关常量
 const IGDB_BASE_URL = 'https://lizardbyte.github.io/GameDB'
 const IGDB_IMAGE_URL = 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x'
-
-// 缓存 Tauri 环境检测结果
-let _isTauriEnv = null
-
-/**
- * 检测是否在 Tauri 环境中
- * @returns {boolean} 是否在 Tauri 环境
- */
-function isTauriEnv() {
-  if (_isTauriEnv === null) {
-    _isTauriEnv = typeof window !== 'undefined' && !!(window.isTauri || window.__TAURI__)
-  }
-  return _isTauriEnv
-}
 
 /**
  * 构建代理 URL（用于绕过 CORS 限制）

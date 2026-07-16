@@ -493,6 +493,16 @@ const KeyCodeMap kKeyCodesMap[] = {
     // Unimplemented feature - platform_caps::pen_touch
   }
 
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad
+  }
+
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad_frame
+  }
+
   /**
    * @brief Sends a pen event to the OS.
    * @param input The client-specific input context.

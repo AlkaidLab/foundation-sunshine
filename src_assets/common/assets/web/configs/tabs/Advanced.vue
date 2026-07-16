@@ -24,6 +24,10 @@ const isAMDCaptureSelected = computed(() => {
   return props.platform === 'windows' && config.value.capture === 'amd'
 })
 
+const isVDDCaptureSelected = computed(() => {
+  return props.platform === 'windows' && config.value.capture === 'vdd'
+})
+
 // Sunshine 运行模式状态
 const isUserMode = ref(false)
 const isCheckingMode = ref(false)
@@ -271,7 +275,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
               <option value="ddx">Desktop Duplication API</option>
               <option value="wgc">Windows Graphics Capture</option>
               <option value="amd">AMD Display Capture {{ $t('_common.beta') }}</option>
-              <option value="vdd">ZakoVDD Direct Shared Texture {{ $t('_common.beta') }}</option>
+              <option value="vdd">{{ $t('config.capture_vdd_direct') }}</option>
             </template>
           </PlatformLayout>
         </select>
@@ -311,6 +315,24 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
           <i class="fas fa-exclamation-triangle me-1"></i>
           {{ $t('config.amd_capture_no_virtual_display') }}
         </span>
+        <span v-if="isVDDCaptureSelected" class="d-block mt-1 text-info">
+          <i class="fas fa-info-circle me-1"></i>
+          {{ $t('config.capture_vdd_direct_desc') }}
+        </span>
+      </div>
+      <div class="form-check mt-2" v-if="isVDDCaptureSelected">
+        <input
+          class="form-check-input"
+          type="checkbox"
+          id="vdd_borrowed_texture"
+          v-model="config.vdd_borrowed_texture"
+          true-value="enabled"
+          false-value="disabled"
+        />
+        <label class="form-check-label" for="vdd_borrowed_texture">
+          {{ $t('config.vdd_borrowed_texture') }}
+        </label>
+        <div class="form-text">{{ $t('config.vdd_borrowed_texture_desc') }}</div>
       </div>
     </div>
 

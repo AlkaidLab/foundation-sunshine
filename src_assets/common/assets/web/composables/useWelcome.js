@@ -1,4 +1,5 @@
 import { ref, reactive, computed } from 'vue'
+import { apiPostJson } from '../utils/apiFetch.js'
 
 /**
  * 欢迎页面组合式函数
@@ -37,15 +38,9 @@ export function useWelcome() {
     loading.value = true
 
     try {
-      const response = await fetch('/api/password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(passwordData),
-      })
+      const result = await apiPostJson('/api/password', passwordData)
 
-      const result = await response.json()
-
-      if (response.ok && result.status?.toString() === 'true') {
+      if (result.status?.toString() === 'true') {
         success.value = true
         setTimeout(() => {
           window.location.href = '/'

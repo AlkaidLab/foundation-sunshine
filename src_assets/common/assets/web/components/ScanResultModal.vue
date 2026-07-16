@@ -10,7 +10,7 @@
             <span v-if="stats.games > 0" class="badge bg-warning text-dark ms-2">
               <i class="fas fa-gamepad me-1"></i>{{ stats.games }}
             </span>
-            <span v-if="hasActiveFilter" class="badge bg-info ms-2"> {{ t('apps.scan_result_matched', { count: filteredApps.length }) }} </span>
+            <span v-if="hasActiveFilter" class="badge bg-info ms-2"> {{ t('apps.scan_result_matched', { count: filteredAppItems.length }) }} </span>
           </h5>
           <button class="btn-close" :aria-label="t('close')" @click="$emit('close')"></button>
         </div>
@@ -137,7 +137,36 @@
                 {{ gamesOnly ? t('apps.scan_result_show_all') : t('apps.scan_result_games_only') }}
                 <span class="badge bg-dark ms-1">{{ stats.games }}</span>
               </button>
+              <button
+                v-if="stats.review > 0"
+                class="btn btn-sm"
+                :class="reviewOnly ? 'btn-danger' : 'btn-outline-danger'"
+                :aria-pressed="reviewOnly ? 'true' : 'false'"
+                @click="reviewOnly = !reviewOnly"
+                type="button"
+              >
+                <i class="fas fa-triangle-exclamation me-1"></i>
+                {{ reviewLabel }}
+                <span class="badge bg-dark ms-1">{{ stats.review }}</span>
+              </button>
             </div>
+          </div>
+        </div>
+
+        <div v-if="enhancementProgress.active" class="scan-result-progress" role="status" aria-live="polite">
+          <div class="scan-progress-copy">
+            <i class="fas fa-wand-magic-sparkles"></i>
+            <span>{{ enhancementProgress.stage }}</span>
+            <small v-if="enhancementProgress.detail">{{ enhancementProgress.detail }}</small>
+          </div>
+          <div v-if="enhancementProgress.total" class="scan-progress-count">
+            {{ enhancementProgress.current }}/{{ enhancementProgress.total }}
+          </div>
+          <div
+            class="scan-progress-bar"
+            :class="{ 'scan-progress-bar--indeterminate': enhancementProgress.indeterminate }"
+          >
+            <span :style="{ width: enhancementProgress.indeterminate ? '42%' : `${enhancementProgressPercent}%` }"></span>
           </div>
         </div>
 
@@ -147,19 +176,26 @@
             <i class="fas fa-folder-open fa-3x mb-3"></i>
             <p>{{ t('apps.scan_result_no_apps') }}</p>
           </div>
-          <div v-else-if="filteredApps.length === 0" class="text-center text-muted py-4">
+          <div v-else-if="filteredAppItems.length === 0" class="text-center text-muted py-4">
             <i class="fas fa-search fa-3x mb-3"></i>
             <p>{{ t('apps.scan_result_no_matches') }}</p>
             <p class="small">{{ t('apps.scan_result_try_different_keywords') }}</p>
           </div>
           <div v-else class="scan-result-list">
-            <div v-for="app in filteredApps" :key="app.source_path" class="scan-result-item">
+            <div
+              v-for="{ app, index, review, reviewReasons } in filteredAppItems"
+              :key="`${app.source_path || app.cmd || app.name}-${index}`"
+              class="scan-result-item"
+              :class="{ 'scan-result-item--review': review }"
+            >
               <!-- 应用图标 -->
               <div class="scan-app-icon">
                 <img
                   v-if="app['image-path']"
                   :src="app['image-path']"
                   :alt="app.name"
+                  loading="lazy"
+                  decoding="async"
                   @error="$event.target.style.display = 'none'"
                 />
                 <svg v-else width="80" height="80" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -189,6 +225,31 @@
                   <span v-if="app['is-game']" class="badge bg-warning text-dark ms-2">
                     <i class="fas fa-gamepad me-1"></i>{{ t('apps.scan_result_game') }}
                   </span>
+                  <span v-if="review" class="badge bg-danger ms-2">
+                    <i class="fas fa-triangle-exclamation me-1"></i>{{ reviewLabel }}
+                  </span>
+                </div>
+                <div v-if="app['original-name'] && app['original-name'] !== app.name" class="scan-app-cmd small">
+                  Original: {{ app['original-name'] }}
+                </div>
+                <div v-if="app['canonical-name'] || hasNumericValue(app['ai-confidence'])" class="scan-app-cmd small">
+                  <i class="fas fa-wand-magic-sparkles me-1"></i>
+                  {{ app['canonical-name'] || app.name }}
+                  <span v-if="hasNumericValue(app['ai-confidence'])" class="badge bg-info ms-1">
+                    {{ Math.round(app['ai-confidence'] * 100) }}%
+                  </span>
+                </div>
+                <div v-if="app['cover-source'] || app['cover-match-name']" class="scan-app-cmd small">
+                  <i class="fas fa-image me-1"></i>
+                  {{ app['cover-source'] || 'cover' }}
+                  <span v-if="app['cover-match-name']">: {{ app['cover-match-name'] }}</span>
+                  <span v-if="hasNumericValue(app['ai-cover-confidence'])" class="badge bg-info ms-1">
+                    {{ Math.round(app['ai-cover-confidence'] * 100) }}%
+                  </span>
+                </div>
+                <div v-if="review" class="scan-app-review small">
+                  <i class="fas fa-triangle-exclamation me-1"></i>
+                  {{ reviewReasons.join(' / ') }}
                 </div>
                 <div class="scan-app-cmd small">{{ app.cmd }}</div>
                 <div class="scan-app-path small"><i class="fas fa-folder-open me-1"></i>{{ app.source_path }}</div>
@@ -201,14 +262,14 @@
                 </button>
                 <button
                   class="btn btn-sm btn-outline-success"
-                  @click="$emit('quick-add', app, apps.indexOf(app))"
+                  @click="$emit('quick-add', app, index)"
                   :title="t('apps.scan_result_quick_add_title')"
                 >
                   <i class="fas fa-plus"></i>
                 </button>
                 <button
                   class="btn btn-sm btn-outline-danger"
-                  @click="$emit('remove', apps.indexOf(app))"
+                  @click="$emit('remove', index)"
                   :title="t('apps.scan_result_remove_title')"
                 >
                   <i class="fas fa-times"></i>
@@ -234,8 +295,12 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import {
+  getGameResourceReviewReasons,
+  needsGameResourceReview,
+} from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps({
   show: {
@@ -250,6 +315,21 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  enhancementProgress: {
+    type: Object,
+    default: () => ({
+      active: false,
+      stage: '',
+      detail: '',
+      current: 0,
+      total: 0,
+      indeterminate: false,
+    }),
+  },
+  enhancementProgressPercent: {
+    type: Number,
+    default: 0,
+  },
 })
 
 defineEmits(['close', 'edit', 'quick-add', 'remove', 'add-all'])
@@ -258,6 +338,10 @@ defineEmits(['close', 'edit', 'quick-add', 'remove', 'add-all'])
 const searchQuery = ref('')
 const selectedType = ref('all')
 const gamesOnly = ref(false)
+const reviewOnly = ref(false)
+
+const isChineseLocale = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
+const reviewLabel = computed(() => (isChineseLocale.value ? '需要审核' : 'Review'))
 
 // 重置过滤器
 watch(
@@ -267,6 +351,7 @@ watch(
       searchQuery.value = ''
       selectedType.value = 'all'
       gamesOnly.value = false
+      reviewOnly.value = false
     }
   }
 )
@@ -279,73 +364,114 @@ watch(
     gamesOnly.value = hasGames
     selectedType.value = 'all'
     searchQuery.value = ''
-  }
-)
-
-// 当数组内部变化时（quick-add/remove via splice），仅做防御性校正
-watch(
-  () => [props.apps.length, ...props.apps.map((a) => a['app-type'])],
-  () => {
-    // 如果当前选中的 type 已经没有对应项了，回退到 'all'
-    if (selectedType.value !== 'all') {
-      const hasType = props.apps.some((app) => app['app-type'] === selectedType.value)
-      if (!hasType) {
-        selectedType.value = 'all'
-      }
-    }
-    // 如果游戏过滤开启但已无游戏项，关闭过滤
-    if (gamesOnly.value && !props.apps.some((app) => app['is-game'] === true)) {
-      gamesOnly.value = false
-    }
+    reviewOnly.value = false
   }
 )
 
 // 统计信息
-const stats = computed(() => ({
-  all: props.apps.length,
-  games: props.apps.filter((app) => app['is-game'] === true).length,
-  executable: props.apps.filter((app) => app['app-type'] === 'executable').length,
-  shortcut: props.apps.filter((app) => app['app-type'] === 'shortcut').length,
-  batch: props.apps.filter((app) => app['app-type'] === 'batch').length,
-  command: props.apps.filter((app) => app['app-type'] === 'command').length,
-  url: props.apps.filter((app) => app['app-type'] === 'url').length,
-  steam: props.apps.filter((app) => app['app-type'] === 'steam').length,
-  epic: props.apps.filter((app) => app['app-type'] === 'epic').length,
-  gog: props.apps.filter((app) => app['app-type'] === 'gog').length,
-}))
+const stats = computed(() => {
+  const totals = {
+    all: props.apps.length,
+    games: 0,
+    executable: 0,
+    shortcut: 0,
+    batch: 0,
+    command: 0,
+    url: 0,
+    steam: 0,
+    epic: 0,
+    gog: 0,
+    review: 0,
+  }
+
+  for (const app of props.apps) {
+    if (app['is-game'] === true) {
+      totals.games += 1
+    }
+    if (Object.prototype.hasOwnProperty.call(totals, app['app-type'])) {
+      totals[app['app-type']] += 1
+    }
+    if (needsReview(app)) {
+      totals.review += 1
+    }
+  }
+
+  return totals
+})
+
+// 当数组内部变化时（quick-add/remove via splice），仅做防御性校正
+watch(
+  () => stats.value,
+  () => {
+    // 如果当前选中的 type 已经没有对应项了，回退到 'all'
+    if (selectedType.value !== 'all' && !stats.value[selectedType.value]) {
+      selectedType.value = 'all'
+    }
+    // 如果游戏过滤开启但已无游戏项，关闭过滤
+    if (gamesOnly.value && stats.value.games === 0) {
+      gamesOnly.value = false
+    }
+    if (reviewOnly.value && stats.value.review === 0) {
+      reviewOnly.value = false
+    }
+  }
+)
 
 // 是否有激活的过滤器
-const hasActiveFilter = computed(() => searchQuery.value || gamesOnly.value || selectedType.value !== 'all')
+const hasActiveFilter = computed(() => searchQuery.value || gamesOnly.value || reviewOnly.value || selectedType.value !== 'all')
 
 // 过滤后的应用列表
-const filteredApps = computed(() => {
-  let filtered = props.apps
+const filteredAppItems = computed(() => {
+  const items = []
+  const type = selectedType.value
+  const query = searchQuery.value ? searchQuery.value.toLowerCase() : ''
 
-  // 按应用类型过滤
-  if (selectedType.value !== 'all') {
-    filtered = filtered.filter((app) => app['app-type'] === selectedType.value)
-  }
-
-  // 按游戏过滤
-  if (gamesOnly.value) {
-    filtered = filtered.filter((app) => app['is-game'] === true)
-  }
-
-  // 按搜索关键词过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter((app) => {
+  for (const [index, app] of props.apps.entries()) {
+    if (type !== 'all' && app['app-type'] !== type) {
+      continue
+    }
+    if (gamesOnly.value && app['is-game'] !== true) {
+      continue
+    }
+    const review = needsReview(app)
+    if (reviewOnly.value && !review) {
+      continue
+    }
+    if (query) {
       const name = (app.name || '').toLowerCase()
       const cmd = (app.cmd || '').toLowerCase()
       const sourcePath = (app.source_path || '').toLowerCase()
-      return name.includes(query) || cmd.includes(query) || sourcePath.includes(query)
+      if (!name.includes(query) && !cmd.includes(query) && !sourcePath.includes(query)) {
+        continue
+      }
+    }
+
+    items.push({
+      app,
+      index,
+      review,
+      reviewReasons: review ? getReviewReasons(app) : [],
     })
   }
 
-  return filtered
+  return items
 })
 
 // 应用类型标签
+function hasNumericValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string' && value.trim() === '') return false
+  return Number.isFinite(Number(value))
+}
+
+function needsReview(app) {
+  return needsGameResourceReview(app, { locale: locale.value })
+}
+
+function getReviewReasons(app) {
+  return getGameResourceReviewReasons(app, { locale: locale.value })
+}
+
 const getAppTypeLabel = (appType) => {
   const typeMap = {
     executable: t('apps.scan_result_type_executable'),

@@ -21,11 +21,12 @@
 ### ░▒▓ 核心特性
 
 - **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・完整静态元数据透传
-- **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・5 种屏幕模式・Named Pipe 通信・多客户端 GUID 会话
+- **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・Zako Direct 零拷贝借帧・5 种屏幕模式・多客户端 GUID 会话
 - **音频增强** — 7.1.4 环绕声 (12ch)・Opus DRED 丢包恢复・持续音频流・远程麦克风・虚拟扬声器位深匹配
-- **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR・编码器结果缓存 (260x)・自适应下采样・Vulkan 编码器
-- **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控
-- **智能配对** — 客户端独立配置・自动匹配设备能力・虚拟鼠标驱动 (vmouse)
+- **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR/多硬件实例・编码器结果缓存 (260x)・自适应下采样・Vulkan 编码器
+- **文件夹共享** — Windows 主机目录映射・资源管理器右键共享・只读安全默认值・已配对设备授权
+- **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控・WebUI 渲染优化
+- **输入增强** — 客户端独立配置・原生精密触摸板适配・虚拟鼠标驱动 (vmouse)
 
 ### ░▒▓ 技术细节
 
@@ -66,9 +67,10 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd) 虚拟显示器驱动：
 - 自定义分辨率和刷新率支持，10-bit HDR 色深
 - **5 种屏幕组合模式**：仅虚拟屏、仅物理屏、混合模式、镜像模式、扩展模式
-- Named Pipe 实时通信，串流开始/结束时自动创建/销毁虚拟显示器
+- IOCTL 实时通信，串流开始/结束时自动创建/销毁虚拟显示器
 - 每个客户端独立绑定 VDD 会话（GUID），支持多客户端快速切换
 - 无需重启的实时配置更改
+- **Zako Direct 零拷贝借帧**：可直接借用 VDD 共享帧纹理，转换完成后立即归还，减少 VDD 捕获链路中的 GPU 拷贝
 
 </details>
 
@@ -99,7 +101,8 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 
 **AMF (AMD)**
 - **QVBR / HQVBR / HQCBR**：高级码率控制，支持质量等级 UI 调节
-- **AV1 低延迟**：AV1 编码器无延迟影响的优化选项
+- **低延迟可控**：AMF Low Latency、输入队列大小和 AV1 编码延迟模式均可在 WebUI 显式调整，兼顾极低延迟与驱动稳定性
+- **多硬件实例编码**：支持 AMF Multi-HW Instance / Smart Access Video 相关开关，允许驱动在支持的平台上拆分编码负载
 
 **通用**
 - **编码器结果缓存**：探测结果持久化，后续连接 26s → <100ms (260x 加速)
@@ -163,6 +166,6 @@ GPU 兼容性：[NVENC](https://developer.nvidia.com/video-encode-and-decode-gpu
 
 [![加入QQ群](https://pub.idqqimg.com/wpa/images/group.png '加入QQ群')](https://qm.qq.com/cgi-bin/qm/qr?k=WC2PSZ3Q6Hk6j8U_DG9S7522GPtItk0m&jump_from=webapi&authKey=zVDLFrS83s/0Xg3hMbkMeAqI7xoHXaM3sxZIF/u9JW7qO/D8xd0npytVBC2lOS+z)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date)](https://www.star-history.com/#qiin2333/Sunshine-Foundation&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&legend=top-left&sealed_token=8GzivsLWTBiHWFj-MfIXqxD6tKYaPkTgNvC2q8IjHD2nbEypOWmB3bwOGTGtsCNg-ZKW0uy10gX845qiIMElcA4v_qbJh8OUYhiWtI0aSCvempCz97-OcUeWNrYRPz_rZ0hy7mb8Hfj8qnuVAOZ-p04lzSPXNOyVbm4U-acAHIqyQTdm8FXY-jrXzArQ)](https://www.star-history.com/?repos=AlkaidLab%2Ffoundation-sunshine&type=date&legend=top-left)
 
 </div>

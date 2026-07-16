@@ -173,8 +173,8 @@
                     :key="client.uuid"
                     :class="{ 'table-warning': editingStates[client.uuid] }"
                   >
-                    <td class="fw-medium ps-3">{{ client.name || $t('pin.unknown_client') }}</td>
-                    <td class="ps-3">
+                    <td class="fw-medium ps-3" :data-label="$t('pin.client_name')">{{ client.name || $t('pin.unknown_client') }}</td>
+                    <td class="ps-3" :data-label="$t('pin.hdr_profile')">
                       <select
                         class="form-select form-select-sm"
                         v-model="client.hdrProfile"
@@ -186,7 +186,7 @@
                         <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
                       </select>
                     </td>
-                    <td class="ps-3">
+                    <td class="ps-3" :data-label="$t('pin.device_size')">
                       <select
                         class="form-select form-select-sm"
                         v-model="client.deviceSize"
@@ -198,7 +198,7 @@
                         <option value="large">{{ $t('pin.device_size_large') }}</option>
                       </select>
                     </td>
-                    <td class="text-center">
+                    <td class="text-center client-actions-cell" :data-label="$t('pin.actions')">
                       <div class="btn-toolbar justify-content-center" role="toolbar">
                         <!-- 编辑模式按钮 -->
                         <template v-if="!editingStates[client.uuid]">
@@ -413,7 +413,9 @@ watch(clients, initTooltips, { deep: true })
 
   .table-responsive {
     border-radius: var(--border-radius-md, 8px);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
   }
 
   .table {
@@ -551,12 +553,83 @@ watch(clients, initTooltips, { deep: true })
 
 /* 响应式优化 */
 @media (max-width: 768px) {
+  .client-list-container {
+    .table-responsive {
+      overflow: visible;
+      border-radius: 0;
+    }
+
+    .table {
+      display: block;
+      border: 0;
+      background: transparent;
+
+      thead {
+        display: none;
+      }
+
+      tbody {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      tr {
+        display: block;
+        border: 1px solid var(--bs-border-color);
+        border-radius: var(--border-radius-md, 8px);
+        background: var(--bs-body-bg);
+        overflow: hidden;
+      }
+
+      td {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        width: 100%;
+        padding: 0.75rem 1rem !important;
+        border: 0;
+        border-bottom: 1px solid var(--bs-border-color);
+        text-align: right;
+
+        &::before {
+          content: attr(data-label);
+          min-width: 6.5rem;
+          color: var(--bs-secondary-color);
+          font-weight: 600;
+          text-align: left;
+        }
+
+        &:last-child {
+          border-bottom: 0;
+        }
+      }
+
+      .form-select {
+        width: min(100%, 13rem);
+        min-height: 44px;
+      }
+
+      .client-actions-cell {
+        display: block;
+        text-align: left;
+
+        &::before {
+          display: block;
+          margin-bottom: 0.5rem;
+        }
+      }
+    }
+  }
+
   .btn-toolbar {
     flex-direction: column;
+    gap: 0.5rem;
 
     .btn {
       width: 100%;
-      margin-bottom: 0.25rem;
+      min-height: 44px;
+      margin: 0;
     }
   }
 

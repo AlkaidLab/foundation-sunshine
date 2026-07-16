@@ -5,15 +5,20 @@
 #include "vdd_ioctl.h"
 
 #include <algorithm>
+#include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/process/v1.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
 #include <boost/uuid/name_generator_sha1.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <cmath>
 #include <filesystem>
 #include <future>
+#include <limits>
+#include <locale>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -25,8 +30,9 @@
 #include "src/platform/run_command.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
-#include "src/system_tray.h"
-#include "src/system_tray_i18n.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/system_tray_i18n.h"
+#include "src/tray/tray_state.h"
 #include "to_string.h"
 
 namespace pt = boost::property_tree;
@@ -269,6 +275,267 @@ namespace display_device {
       return ok;
     }
 
+    bool
+    set_hardware_cursor_enabled(bool enabled) {
+      const wchar_t *command = enabled ? L"HARDWARECURSOR true" : L"HARDWARECURSOR false";
+
+      switch (vdd_ioctl::send_command(command)) {
+        case vdd_ioctl::result::success:
+          BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (IOCTL)";
+          return true;
+        case vdd_ioctl::result::failed:
+          BOOST_LOG(error) << "VDD hardware cursor command was rejected by driver; not falling back to pipe";
+          return false;
+        case vdd_ioctl::result::interface_missing:
+          break;
+      }
+
+      std::string response;
+      const bool ok = execute_pipe_command(kVddPipeName, command, &response);
+      if (ok) {
+        BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (PIPE)";
+      }
+      return ok;
+    }
+
+    bool
+    persist_hardware_cursor_setting(bool enabled) {
+      const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
+
+      try {
+        pt::ptree root;
+        if (std::filesystem::exists(settings_path)) {
+          pt::read_xml(settings_path.string(), root);
+        }
+
+        root.put("vdd_settings.cursor.HardwareCursor", enabled ? "true" : "false");
+
+        auto setting = boost::property_tree::xml_writer_make_settings<std::string>(' ', 2);
+        pt::write_xml(settings_path.string(), root, std::locale(), setting);
+        return true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Unable to persist VDD HardwareCursor setting: " << e.what();
+        return false;
+      }
+    }
+
+    bool
+    ensure_hardware_cursor_disabled_for_capture(bool *changed) {
+      if (changed) {
+        *changed = false;
+      }
+
+      const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
+      bool needs_disable = true;
+
+      try {
+        if (std::filesystem::exists(settings_path)) {
+          pt::ptree tree;
+          pt::read_xml(settings_path.string(), tree);
+
+          if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
+            auto hardware_cursor = *value;
+            boost::algorithm::trim(hardware_cursor);
+            needs_disable = !(boost::algorithm::iequals(hardware_cursor, "false") || hardware_cursor == "0");
+          }
+        }
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request software cursor for direct capture: " << e.what();
+      }
+
+      if (!needs_disable) {
+        BOOST_LOG(debug) << "VDD HardwareCursor is already disabled for direct capture";
+        return true;
+      }
+
+      BOOST_LOG(info) << "Disabling VDD HardwareCursor because direct VDD capture only receives the shared framebuffer texture";
+      if (!set_hardware_cursor_enabled(false)) {
+        return false;
+      }
+
+      bool persisted = false;
+      for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
+        if (persist_hardware_cursor_setting(false)) {
+          persisted = true;
+          break;
+        }
+
+        std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
+      }
+
+      if (!persisted) {
+        BOOST_LOG(error) << "VDD HardwareCursor disabled in driver, but failed to persist vdd_settings.xml";
+        return false;
+      }
+
+      if (changed) {
+        *changed = true;
+      }
+      return true;
+    }
+
+    bool
+    same_resolution(const resolution_t &a, const resolution_t &b) {
+      return a.width == b.width && a.height == b.height;
+    }
+
+    void
+    append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
+      if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
+            return same_resolution(cached, resolution);
+          }) == resolutions.end()) {
+        resolutions.push_back(resolution);
+      }
+    }
+
+    void
+    append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
+      if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
+        refresh_rates_hz.push_back(refresh_hz);
+      }
+    }
+
+    boost::optional<resolution_t>
+    parse_vdd_resolution(const std::string &value) {
+      std::string trimmed = value;
+      boost::algorithm::trim(trimmed);
+      if (trimmed.empty()) {
+        return {};
+      }
+
+      std::stringstream input(trimmed);
+      unsigned int width = 0;
+      unsigned int height = 0;
+      char separator = '\0';
+      input >> width >> separator >> height;
+
+      if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
+        BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
+        return {};
+      }
+
+      return resolution_t { width, height };
+    }
+
+    boost::optional<unsigned int>
+    rounded_vdd_refresh_hz(double refresh_hz) {
+      constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
+      constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
+
+      if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
+        return {};
+      }
+
+      const auto rounded = std::lround(refresh_hz);
+      if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
+        return {};
+      }
+
+      return static_cast<unsigned int>(rounded);
+    }
+
+    boost::optional<unsigned int>
+    rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
+      if (refresh_rate.denominator == 0) {
+        return {};
+      }
+
+      const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
+      return rounded_vdd_refresh_hz(refresh_hz);
+    }
+
+    boost::optional<unsigned int>
+    parse_vdd_refresh_hz(const std::string &value) {
+      std::string trimmed = value;
+      boost::algorithm::trim(trimmed);
+      if (trimmed.empty()) {
+        return {};
+      }
+
+      try {
+        std::size_t parsed_len = 0;
+        const double refresh_hz = std::stod(trimmed, &parsed_len);
+        if (parsed_len != trimmed.size()) {
+          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+          return {};
+        }
+
+        const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
+        if (!rounded) {
+          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+          return {};
+        }
+
+        return *rounded;
+      }
+      catch (const std::exception &) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+    }
+
+    set_vdd_result
+    set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
+      if (!config.resolution || !config.refresh_rate) {
+        BOOST_LOG(debug) << "SETMODES skipped: session resolution or refresh rate is not set";
+        return set_vdd_result::invalid_config;
+      }
+
+      auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate);
+      if (!session_refresh_hz) {
+        BOOST_LOG(warning) << "SETMODES skipped: invalid refresh rate " << to_string(*config.refresh_rate);
+        return set_vdd_result::invalid_config;
+      }
+
+      auto resolutions = settings.resolution_modes;
+      auto refresh_rates_hz = settings.refresh_rates_hz;
+      append_unique_resolution(resolutions, *config.resolution);
+      append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
+
+      if (resolutions.empty() || refresh_rates_hz.empty()) {
+        BOOST_LOG(warning) << "SETMODES skipped: full VDD mode list is empty";
+        return set_vdd_result::invalid_config;
+      }
+
+      std::wstringstream command;
+      command << L"SETMODES ";
+      std::size_t mode_count = 0;
+      for (const auto &resolution : resolutions) {
+        for (const auto refresh_hz : refresh_rates_hz) {
+          if (mode_count > 0) {
+            command << L",";
+          }
+          command << resolution.width << L"x" << resolution.height << L"x" << refresh_hz;
+          ++mode_count;
+        }
+      }
+
+      const auto command_string = command.str();
+      if (command_string.size() >= 2048) {
+        BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
+                           << " wchar_t); XML fallback will be used";
+        return set_vdd_result::failed;
+      }
+
+      switch (vdd_ioctl::send_command(command_string)) {
+        case vdd_ioctl::result::success:
+          BOOST_LOG(info) << "VDD live mode list updated via SETMODES: " << mode_count
+                          << " modes; requested " << to_string(*config.resolution)
+                          << "@" << *session_refresh_hz << "Hz";
+          return set_vdd_result::ok;
+        case vdd_ioctl::result::failed:
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; XML fallback will be used";
+          return set_vdd_result::failed;
+        case vdd_ioctl::result::interface_missing:
+          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing; XML fallback will be used";
+          return set_vdd_result::interface_missing;
+      }
+
+      return set_vdd_result::failed;
+    }
+
     std::string
     generate_client_guid(const std::string &identifier) {
       if (identifier.empty()) {
@@ -375,6 +642,7 @@ namespace display_device {
       // Preferred path: IOCTL device interface. On success skip pipe entirely.
       switch (vdd_ioctl::send_command(command)) {
         case vdd_ioctl::result::success:
+          tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_vdd_menu();
 #endif
@@ -406,6 +674,7 @@ namespace display_device {
         return false;
       }
 
+      tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
@@ -447,6 +716,7 @@ namespace display_device {
       // 这是必要的，因为驱动程序卸载是异步的
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+      tray_state::set_vdd_state(false, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_vdd_menu();
 #endif
@@ -500,6 +770,47 @@ namespace display_device {
     bool
     is_display_on() {
       return !find_device_by_friendlyname(ZAKO_NAME).empty();
+    }
+
+    bool
+    create_vdd_monitor_noninteractive() {
+      std::unordered_set<std::string> physical_devices_before;
+      const auto topology_before = get_current_topology();
+      const auto all_devices_before = enum_available_devices();
+
+      for (const auto &group : topology_before) {
+        for (const auto &device_id : group) {
+          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
+            physical_devices_before.insert(device_id);
+          }
+        }
+      }
+      if (physical_devices_before.empty()) {
+        for (const auto &[device_id, device_info] : all_devices_before) {
+          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
+            physical_devices_before.insert(device_id);
+          }
+        }
+      }
+
+      if (!create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {})) {
+        return false;
+      }
+
+      auto vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
+      if (vdd_device_id.empty()) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        vdd_device_id = find_device_by_friendlyname(ZAKO_NAME);
+      }
+      if (vdd_device_id.empty()) {
+        BOOST_LOG(warning) << "VDD was created but its display device was not found for topology setup";
+        return true;
+      }
+
+      if (!ensure_vdd_extended_mode(vdd_device_id, physical_devices_before)) {
+        BOOST_LOG(warning) << "VDD was created but extended topology setup did not complete";
+      }
+      return true;
     }
 
     bool
@@ -620,6 +931,8 @@ namespace display_device {
       auto is_res_cached = false;
       auto is_fps_cached = false;
       std::ostringstream res_stream, fps_stream;
+      std::vector<resolution_t> resolution_modes;
+      std::vector<unsigned int> refresh_rates_hz;
 
       res_stream << '[';
       fps_stream << '[';
@@ -627,6 +940,9 @@ namespace display_device {
       // 检查分辨率是否已缓存
       for (const auto &res : config::nvhttp.resolutions) {
         res_stream << res << ',';
+        if (const auto parsed_resolution = parse_vdd_resolution(res)) {
+          append_unique_resolution(resolution_modes, *parsed_resolution);
+        }
         if (config.resolution && res == to_string(*config.resolution)) {
           is_res_cached = true;
         }
@@ -635,19 +951,31 @@ namespace display_device {
       // 检查帧率是否已缓存
       for (const auto &fps : config::nvhttp.fps) {
         fps_stream << fps << ',';
+        if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
+          append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
+        }
         if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
           is_fps_cached = true;
         }
       }
 
       // 如果需要更新设置
-      bool needs_update = (!is_res_cached || !is_fps_cached) && config.resolution;
+      bool needs_update = config.resolution && (!is_res_cached || (config.refresh_rate && !is_fps_cached));
       if (needs_update) {
         if (!is_res_cached) {
           res_stream << to_string(*config.resolution);
         }
         if (!is_fps_cached && config.refresh_rate) {
           fps_stream << to_string(*config.refresh_rate);
+        }
+      }
+
+      if (config.resolution) {
+        append_unique_resolution(resolution_modes, *config.resolution);
+      }
+      if (config.refresh_rate) {
+        if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
+          append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
         }
       }
 
@@ -659,7 +987,7 @@ namespace display_device {
       res_str += ']';
       fps_str += ']';
 
-      return { res_str, fps_str, needs_update };
+      return { res_str, fps_str, resolution_modes, refresh_rates_hz, needs_update };
     }
 
     bool
@@ -789,11 +1117,16 @@ namespace display_device {
       // 确保即使 VDD 创建后物理屏变 inactive 也能正确识别
       std::vector<std::string> physical_devices;
       std::string original_primary_id;
+      const auto is_active_physical_display = [](const device_info_t &info) {
+        return info.friendly_name != ZAKO_NAME &&
+               (info.device_state == device_state_e::active ||
+                info.device_state == device_state_e::primary);
+      };
 
       if (!pre_vdd_devices.empty()) {
         // 使用 VDD 创建前保存的设备信息（可靠）
         for (const auto &[device_id, info] : pre_vdd_devices) {
-          if (info.friendly_name != ZAKO_NAME) {
+          if (is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;
@@ -808,7 +1141,7 @@ namespace display_device {
         BOOST_LOG(warning) << "未提供pre-VDD设备列表，从当前设备枚举中查找物理显示器";
         const auto all_devices = enum_available_devices();
         for (const auto &[device_id, info] : all_devices) {
-          if (device_id != vdd_device_id && info.friendly_name != ZAKO_NAME) {
+          if (device_id != vdd_device_id && is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
               original_primary_id = device_id;

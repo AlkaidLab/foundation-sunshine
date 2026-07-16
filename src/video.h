@@ -9,6 +9,9 @@
 #include "thread_safe.h"
 #include "video_colorspace.h"
 
+#include <chrono>
+#include <string>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
@@ -99,6 +102,35 @@ namespace video {
       return static_cast<double>(framerate);
     }
   };
+
+  struct input_activity_boost_policy_t {
+    bool configured {};
+    bool useful {};
+    int fps {};
+    std::chrono::duration<double, std::milli> frame_time {};
+  };
+
+  struct input_activity_boost_config_t {
+    bool variable_refresh_rate {};
+    bool enabled {};
+    int stream_fps {};
+    int minimum_fps_target {};
+    int boost_fps {};
+    int window_ms {};
+  };
+
+  std::chrono::duration<double, std::milli>
+  minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target);
+
+  input_activity_boost_policy_t
+  make_input_activity_boost_policy(const input_activity_boost_config_t &config);
+
+  std::chrono::duration<double, std::milli>
+  effective_minimum_frame_time(
+    const std::chrono::duration<double, std::milli> &base_minimum_frame_time,
+    const input_activity_boost_policy_t &input_activity_boost_policy,
+    bool input_boost_active,
+    int minimum_fps_target);
 
   platf::mem_type_e
   map_base_dev_type(AVHWDeviceType type);
@@ -343,6 +375,7 @@ namespace video {
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
   };
 
   struct packet_raw_avcodec: packet_raw_t {
@@ -425,6 +458,26 @@ namespace video {
   extern int active_av1_mode;
   extern bool last_encoder_probe_supported_ref_frames_invalidation;
   extern std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
+
+  enum class probe_error_e {
+    none,
+    no_active_display,
+    configured_encoder_unavailable,
+    codec_requirements_unmet,
+    no_working_encoder
+  };
+
+  struct probe_result_t {
+    probe_error_e error;
+    std::string message;
+    std::string hint;
+
+    explicit operator bool() const {
+      return error == probe_error_e::none;
+    }
+  };
+
+  extern probe_result_t last_encoder_probe_result;
 
   void
   capture(

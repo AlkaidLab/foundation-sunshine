@@ -5,6 +5,8 @@
 
 #include "amf_d3d11.h"
 
+#include "amf_avcodec_compat.h"
+
 #include <chrono>
 #include <thread>
 
@@ -130,17 +132,172 @@ namespace amf {
     const video::sunshine_colorspace_t &colorspace) {
     auto bitrate = static_cast<int64_t>(client_config.bitrate) * 1000;
     auto framerate = AMFConstructRate(client_config.framerate, 1);
+    avcodec_compat_profile = config.avcodec_compat;
+    user_configured_rate_control = config.rc_mode.has_value();
+    hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
 
-    if (video_format == 0) {
+    auto configure_multi_hw_instance = [&](const wchar_t *multi_hw_property,
+                                           const wchar_t *sav_property,
+                                           const wchar_t *hw_instances_cap,
+                                           const wchar_t *sav_support_cap) {
+      if (!config.multi_hw_instance_encode) return;
+
+      const bool enabled = *config.multi_hw_instance_encode;
+      amf_int64 hw_instances = 0;
+      const bool hw_cap_known = hw_instances_cap && encoder->GetProperty(hw_instances_cap, &hw_instances) == AMF_OK;
+      amf_bool sav_supported = false;
+      const bool sav_cap_known = sav_support_cap && encoder->GetProperty(sav_support_cap, &sav_supported) == AMF_OK;
+
+      auto set_optional_property = [&](const wchar_t *property, bool value, const char *label) {
+        if (!property) return;
+        auto property_res = encoder->SetProperty(property, value);
+        if (property_res != AMF_OK) {
+          BOOST_LOG(warning) << "AMF: failed to " << (value ? "enable " : "disable ")
+                             << label << ", error: " << property_res;
+        }
+      };
+
+      if (enabled && hw_cap_known && hw_instances <= 1 && (!sav_property || (sav_cap_known && !sav_supported))) {
+        BOOST_LOG(info) << "AMF: multi-HW instance encode requested, but this codec reports "
+                        << hw_instances << " hardware encoder instance(s)";
+        return;
+      }
+
+      if (!enabled || !hw_cap_known || hw_instances > 1) {
+        set_optional_property(multi_hw_property, enabled, "multi-HW instance encode");
+      }
+      if (!enabled || !sav_cap_known || sav_supported) {
+        set_optional_property(sav_property, enabled, "Smart Access Video");
+      }
+    };
+
+    auto apply_standalone_feature_overlay = [&]() {
+      max_ltr_frames = config.max_ltr_frames;
+      if (max_ltr_frames > 0) {
+        if (video_format == 0) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
+          encoder->SetProperty(AMF_VIDEO_ENCODER_LTR_MODE, (amf_int64) AMF_VIDEO_ENCODER_LTR_MODE_RESET_UNUSED);
+        }
+        else if (video_format == 1) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
+          encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LTR_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_LTR_MODE_RESET_UNUSED);
+        }
+        else {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_MAX_LTR_FRAMES, (amf_int64) max_ltr_frames);
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_LTR_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_LTR_MODE_RESET_UNUSED);
+        }
+      }
+
+      if (video_format == 2) {
+        if (config.av1_screen_content_tools) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_SCREEN_CONTENT_TOOLS, *config.av1_screen_content_tools);
+        }
+        if (config.av1_palette_mode) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PALETTE_MODE, *config.av1_palette_mode);
+        }
+        if (config.av1_force_integer_mv) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FORCE_INTEGER_MV, *config.av1_force_integer_mv);
+        }
+        if (config.av1_intra_refresh_mode) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INTRA_REFRESH_MODE, (amf_int64) *config.av1_intra_refresh_mode);
+          if (config.av1_intra_refresh_stripes) {
+            encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INTRAREFRESH_STRIPES, (amf_int64) *config.av1_intra_refresh_stripes);
+          }
+        }
+        if (client_config.slicesPerFrame > 1) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TILES_PER_FRAME, (amf_int64) client_config.slicesPerFrame);
+        }
+      }
+
+      if (config.enable_statistics_feedback) {
+        set_codec_property(
+          AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK,
+          AMF_VIDEO_ENCODER_HEVC_STATISTICS_FEEDBACK,
+          AMF_VIDEO_ENCODER_AV1_STATISTICS_FEEDBACK,
+          true);
+      }
+      if (config.enable_psnr_feedback) {
+        set_codec_property(
+          AMF_VIDEO_ENCODER_PSNR_FEEDBACK,
+          AMF_VIDEO_ENCODER_HEVC_PSNR_FEEDBACK,
+          AMF_VIDEO_ENCODER_AV1_PSNR_FEEDBACK,
+          true);
+      }
+      if (config.enable_ssim_feedback) {
+        set_codec_property(
+          AMF_VIDEO_ENCODER_SSIM_FEEDBACK,
+          AMF_VIDEO_ENCODER_HEVC_SSIM_FEEDBACK,
+          AMF_VIDEO_ENCODER_AV1_SSIM_FEEDBACK,
+          true);
+      }
+    };
+
+    auto apply_avcodec_sav_latency = [&]() {
+      if (!config.multi_hw_instance_encode || !*config.multi_hw_instance_encode) return;
+
+      if (video_format == 0) {
+        if (!config.lowlatency_mode || *config.lowlatency_mode) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, true);
+        }
+      }
+      else if (video_format == 1) {
+        if (!config.lowlatency_mode) {
+          encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, true);
+        }
+      }
+      else {
+        if (!config.av1_encoding_latency_mode) {
+          encoder->SetProperty(
+            AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE,
+            (amf_int64) AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_LOWEST_LATENCY);
+        }
+      }
+    };
+
+    if (avcodec_compat_profile) {
+      auto compat = amf_avcodec_compat::configure(encoder, video_format, config, client_config, colorspace);
+      if (compat.result != AMF_OK) {
+        return false;
+      }
+      hwsurfaces_in_queue_max = compat.hwsurfaces_in_queue_max;
+      user_configured_rate_control = compat.manages_rate_control;
+
+      if (video_format == 0) {
+        configure_multi_hw_instance(
+          nullptr,
+          AMF_VIDEO_ENCODER_ENABLE_SMART_ACCESS_VIDEO,
+          AMF_VIDEO_ENCODER_CAP_NUM_OF_HW_INSTANCES,
+          AMF_VIDEO_ENCODER_CAP_SUPPORT_SMART_ACCESS_VIDEO);
+      }
+      else if (video_format == 1) {
+        configure_multi_hw_instance(
+          AMF_VIDEO_ENCODER_HEVC_MULTI_HW_INSTANCE_ENCODE,
+          AMF_VIDEO_ENCODER_HEVC_ENABLE_SMART_ACCESS_VIDEO,
+          AMF_VIDEO_ENCODER_HEVC_CAP_NUM_OF_HW_INSTANCES,
+          AMF_VIDEO_ENCODER_HEVC_CAP_SUPPORT_SMART_ACCESS_VIDEO);
+      }
+      else {
+        configure_multi_hw_instance(
+          AMF_VIDEO_ENCODER_AV1_MULTI_HW_INSTANCE_ENCODE,
+          AMF_VIDEO_ENCODER_AV1_ENABLE_SMART_ACCESS_VIDEO,
+          AMF_VIDEO_ENCODER_AV1_CAP_NUM_OF_HW_INSTANCES,
+          AMF_VIDEO_ENCODER_AV1_CAP_SUPPORT_SMART_ACCESS_VIDEO);
+      }
+
+      apply_avcodec_sav_latency();
+      apply_standalone_feature_overlay();
+    }
+    else if (video_format == 0) {
       // H.264
       if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_USAGE, (amf_int64) *config.usage);
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_FILLER_DATA_ENABLE, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, (amf_int64) 0);
       encoder->SetProperty(AMF_VIDEO_ENCODER_DE_BLOCKING_FILTER, true);
@@ -154,6 +311,11 @@ namespace amf {
       // bugs (see AlkaidLab/foundation-sunshine#666 freeze on RDNA4 26.5.x).
       if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        nullptr,
+        AMF_VIDEO_ENCODER_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64) 1);
 
       // LTR for RFI (Reference Frame Invalidation, weak-network recovery).
@@ -216,23 +378,24 @@ namespace amf {
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FILLER_DATA_ENABLE, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
-      // Match FFmpeg hevc_amf default behavior (-g -1 -> AMF default GOP size 60).
-      // A GOP size of 0 disables automatic IDRs, which leaves long-running HEVC
-      // streams without periodic encoder state refresh on RDNA4.
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) 60);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
-      // LOWLATENCY_MODE and INPUT_QUEUE_SIZE: only set when user opts in.
-      // See H.264 block above for rationale (FFmpeg-aligned default behavior).
       if (config.lowlatency_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode));
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        AMF_VIDEO_ENCODER_HEVC_MULTI_HW_INSTANCE_ENCODE,
+        AMF_VIDEO_ENCODER_HEVC_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_HEVC_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_HEVC_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT, (amf_int64) 1);
 
       if (colorspace.bit_depth == 10) {
@@ -287,10 +450,11 @@ namespace amf {
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET, (amf_int64) *config.quality_preset);
       if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FILLER_DATA, false);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) 0);
@@ -300,6 +464,11 @@ namespace amf {
       // See AlkaidLab/foundation-sunshine#666 for the RDNA4 freeze that
       // motivated stopping aggressive defaults.
       if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      configure_multi_hw_instance(
+        AMF_VIDEO_ENCODER_AV1_MULTI_HW_INSTANCE_ENCODE,
+        AMF_VIDEO_ENCODER_AV1_ENABLE_SMART_ACCESS_VIDEO,
+        AMF_VIDEO_ENCODER_AV1_CAP_NUM_OF_HW_INSTANCES,
+        AMF_VIDEO_ENCODER_AV1_CAP_SUPPORT_SMART_ACCESS_VIDEO);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT, (amf_int64) 1);
       if (config.av1_encoding_latency_mode) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, (amf_int64) *config.av1_encoding_latency_mode);
@@ -568,6 +737,9 @@ namespace amf {
       res = encoder->Init(amf_format, client_config.width, client_config.height);
     };
 
+    if (config.multi_hw_instance_encode && *config.multi_hw_instance_encode) {
+      try_with_fallback("multi-HW instance encode", [](amf_config &c) { c.multi_hw_instance_encode = std::nullopt; });
+    }
     if (config.preanalysis && *config.preanalysis) {
       try_with_fallback("PreAnalysis", [](amf_config &c) { c.preanalysis = false; });
     }
@@ -601,6 +773,12 @@ namespace amf {
       auto qt_res = encoder->GetProperty(qt_prop, &qt_val);
       query_timeout_supported = (qt_res == AMF_OK && qt_val > 0);
       BOOST_LOG(info) << "AMF: QUERY_TIMEOUT " << (query_timeout_supported ? "supported" : "not supported") << " (value=" << qt_val << ")";
+      avcodec_scheduler.configure(hwsurfaces_in_queue_max, query_timeout_supported);
+      if (avcodec_compat_profile) {
+        BOOST_LOG(info) << "AMF: AVCodec compatibility scheduler ready"
+                        << " (hwsurfaces_in_queue_max=" << hwsurfaces_in_queue_max
+                        << ", query_timeout=" << (query_timeout_supported ? "yes" : "no") << ")";
+      }
     }
 
     // Create input texture for the rendering pipeline to write to.
@@ -626,9 +804,15 @@ namespace amf {
     desc.Format = dxgi_fmt;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS;
 
     auto hr = device->CreateTexture2D(&desc, nullptr, &input_texture);
+    if (FAILED(hr)) {
+      BOOST_LOG(info) << "AMF: input texture UAV bind unavailable, falling back to render-target input, HRESULT: 0x"
+                      << std::hex << hr;
+      desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+      hr = device->CreateTexture2D(&desc, nullptr, &input_texture);
+    }
     if (FAILED(hr)) {
       BOOST_LOG(error) << "AMF: failed to create input texture, HRESULT: 0x" << std::hex << hr;
       return false;
@@ -649,6 +833,7 @@ namespace amf {
     current_ltr_slot = 0;
     rfi_pending = false;
     hwsurfaces_in_queue = 0;
+    avcodec_scheduler.reset();
     consecutive_submit_failures = 0;
     consecutive_empty_outputs = 0;
 
@@ -667,6 +852,7 @@ namespace amf {
     pending_outputs.clear();
     frame_rfi_flags.clear();
     hwsurfaces_in_queue = 0;
+    avcodec_scheduler.reset();
     if (encoder) {
       encoder->Terminate();
       encoder = nullptr;
@@ -799,13 +985,66 @@ namespace amf {
 
     frame_rfi_flags[frame_index] = frame_after_ref_frame_invalidation;
 
+    ::amf::AMFDataPtr output_data;
+    if (avcodec_compat_profile) {
+      auto compat = avcodec_scheduler.submit_and_query(encoder, surface);
+      res = compat.submit_result;
+
+      if (compat.input_exhausted) {
+        BOOST_LOG(warning) << "AMF: AVCodec scheduler SubmitInput still "
+                           << (res == AMF_INPUT_FULL ? "AMF_INPUT_FULL" : "AMF_DECODER_NO_FREE_SURFACES")
+                           << " after retries, dropping frame " << frame_index
+                           << " (in_flight=" << avcodec_scheduler.in_flight() << ")";
+        frame_rfi_flags.erase(frame_index);
+        if (++consecutive_submit_failures >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_submit_failures
+                           << " consecutive frames with AVCodec scheduler input exhaustion, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+
+      if (compat.need_more_input) {
+        consecutive_submit_failures = 0;
+        return result;
+      }
+
+      if (res != AMF_OK) {
+        BOOST_LOG(error) << "AMF: AVCodec scheduler SubmitInput failed, error: " << res;
+        frame_rfi_flags.erase(frame_index);
+        if (device) {
+          auto removed_reason = device->GetDeviceRemovedReason();
+          if (removed_reason != S_OK) {
+            BOOST_LOG(error) << "AMF: D3D11 device lost after SubmitInput, reason: 0x" << util::hex(removed_reason).to_string_view();
+            result.fatal = true;
+            return result;
+          }
+        }
+        if (++consecutive_submit_failures >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_submit_failures << " consecutive AVCodec scheduler SubmitInput failures, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+
+      consecutive_submit_failures = 0;
+      output_data = compat.output_data;
+      if (!output_data) {
+        if (++consecutive_empty_outputs >= max_consecutive_failures) {
+          BOOST_LOG(error) << "AMF: " << consecutive_empty_outputs << " consecutive frames with no AVCodec scheduler output, signaling reinit";
+          result.fatal = true;
+        }
+        return result;
+      }
+    }
+    else {
     // FFmpeg-style proactive backpressure: if we already have many surfaces
     // in flight, drain one output BEFORE SubmitInput to avoid AMF_INPUT_FULL
     // entirely. This eliminates the tight retry spin in the common overrun
     // path (4K144 HDR, transient VCN stall, DXGI scheduling jitter) which on
     // some AMD GPUs has been observed to wedge the pipeline until the client
     // disconnects (frame frozen, audio still flowing).
-    if (hwsurfaces_in_queue >= HWSURFACES_IN_QUEUE_MAX) {
+    if (hwsurfaces_in_queue >= hwsurfaces_in_queue_max) {
       ::amf::AMFDataPtr drain_data;
       encoder->QueryOutput(&drain_data);
       if (drain_data) {
@@ -890,7 +1129,6 @@ namespace amf {
     ++hwsurfaces_in_queue;
 
     // Query output — if we already drained output during SubmitInput retry, use that
-    ::amf::AMFDataPtr output_data;
     if (!pending_outputs.empty()) {
       output_data = pending_outputs.front();
       pending_outputs.pop_front();
@@ -919,6 +1157,7 @@ namespace amf {
         return result;
       }
       --hwsurfaces_in_queue;
+    }
     }
     consecutive_empty_outputs = 0;
 
@@ -1038,22 +1277,29 @@ namespace amf {
     if (!encoder) return;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
+    auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
     AMF_RESULT res;
 
     if (video_format == 0) {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
+      }
     }
     else if (video_format == 1) {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
+      }
     }
     else {
       res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
+      }
     }
 
     if (res == AMF_OK) {

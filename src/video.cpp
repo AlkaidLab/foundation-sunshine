@@ -4,10 +4,13 @@
  */
 // standard includes
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bitset>
 #include <functional>
 #include <list>
+#include <limits>
+#include <optional>
 #include <thread>
 
 #include <boost/pointer_cast.hpp>
@@ -89,9 +92,60 @@ namespace video {
       }
 
       BOOST_LOG(error) << "No display devices are active at the moment! Cannot probe the encoders.";
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "No active display devices are available for capture.",
+        "Turn on a physical display, enable a virtual display, or set Sunshine display/VDD options to Auto and try again."
+      };
       return false;
     }
   }  // namespace
+
+  std::chrono::duration<double, std::milli>
+  minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target) {
+    if (minimum_fps_target > 0) {
+      return std::chrono::duration<double, std::milli> { 1000.0 / minimum_fps_target };
+    }
+
+    return std::chrono::duration<double, std::milli> { 2000.0 / std::max(stream_fps, 1) };
+  }
+
+  input_activity_boost_policy_t
+  make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
+    input_activity_boost_policy_t policy {};
+    policy.configured =
+      config.variable_refresh_rate &&
+      config.enabled &&
+      config.boost_fps > 0 &&
+      config.window_ms > 0;
+
+    if (!policy.configured) {
+      return policy;
+    }
+
+    policy.fps = std::min(config.boost_fps, std::max(config.stream_fps, 1));
+    policy.frame_time = std::chrono::duration<double, std::milli> { 1000.0 / policy.fps };
+    policy.useful = config.minimum_fps_target == 0 || policy.fps > config.minimum_fps_target;
+
+    return policy;
+  }
+
+  std::chrono::duration<double, std::milli>
+  effective_minimum_frame_time(
+    const std::chrono::duration<double, std::milli> &base_minimum_frame_time,
+    const input_activity_boost_policy_t &input_activity_boost_policy,
+    bool input_boost_active,
+    int minimum_fps_target) {
+    if (!input_boost_active || !input_activity_boost_policy.useful) {
+      return base_minimum_frame_time;
+    }
+
+    if (minimum_fps_target > 0) {
+      return std::min(base_minimum_frame_time, input_activity_boost_policy.frame_time);
+    }
+
+    return input_activity_boost_policy.frame_time;
+  }
 
   void
   free_ctx(AVCodecContext *ctx) {
@@ -343,6 +397,48 @@ namespace video {
     ASYNC_TEARDOWN = 1 << 11,  ///< Encoder supports async teardown on a different thread
   };
 
+  class frame_timestamp_ring_t {
+  public:
+    void
+    store(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      auto &entry = entries[frame_index % entries.size()];
+      entry.frame_index = frame_index;
+      entry.timestamp = timestamp;
+      entry.pipeline_trace = std::move(pipeline_trace);
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    lookup(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      if (entry.frame_index != frame_index) {
+        return std::nullopt;
+      }
+      return entry.timestamp;
+    }
+
+    std::optional<platf::frame_pipeline_trace_t>
+    lookup_trace(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      if (entry.frame_index != frame_index) {
+        return std::nullopt;
+      }
+      return entry.pipeline_trace;
+    }
+
+  private:
+    // Encoder output can lag submission; keep recent per-frame timing data without heap churn.
+    struct entry_t {
+      uint64_t frame_index = std::numeric_limits<uint64_t>::max();
+      std::optional<std::chrono::steady_clock::time_point> timestamp;
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
+    };
+
+    std::array<entry_t, 256> entries {};
+  };
+
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
@@ -368,6 +464,7 @@ namespace video {
       device = std::move(other.device);
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
+      frame_timestamps = std::move(other.frame_timestamps);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -481,6 +578,7 @@ namespace video {
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
     std::vector<packet_raw_t::replace_t> replacements;
+    frame_timestamp_ring_t frame_timestamps;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -597,8 +695,27 @@ namespace video {
       return result;
     }
 
+    void
+    track_frame_timestamp(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    resolve_frame_timestamp(uint64_t frame_index) const {
+      return frame_timestamps.lookup(frame_index);
+    }
+
+    std::optional<platf::frame_pipeline_trace_t>
+    resolve_frame_trace(uint64_t frame_index) const {
+      return frame_timestamps.lookup_trace(frame_index);
+    }
+
   private:
     std::unique_ptr<platf::nvenc_encode_device_t> device;
+    frame_timestamp_ring_t frame_timestamps;
     bool force_idr = false;
   };
 
@@ -670,8 +787,27 @@ namespace video {
       return result;
     }
 
+    void
+    track_frame_timestamp(
+      uint64_t frame_index,
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+    }
+
+    std::optional<std::chrono::steady_clock::time_point>
+    resolve_frame_timestamp(uint64_t frame_index) const {
+      return frame_timestamps.lookup(frame_index);
+    }
+
+    std::optional<platf::frame_pipeline_trace_t>
+    resolve_frame_trace(uint64_t frame_index) const {
+      return frame_timestamps.lookup_trace(frame_index);
+    }
+
   private:
     std::unique_ptr<platf::amf_encode_device_t> device;
+    frame_timestamp_ring_t frame_timestamps;
     bool force_idr = false;
   };
 
@@ -1266,6 +1402,11 @@ namespace video {
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
   std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec = {};
+  probe_result_t last_encoder_probe_result {
+    probe_error_e::none,
+    "Encoder probe succeeded.",
+    {}
+  };
 
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
@@ -1499,6 +1640,7 @@ namespace video {
           // trim allocated but unused portion of the pool based on timeouts
           trim_imgs();
           img_out->frame_timestamp.reset();
+          img_out->pipeline_trace.reset();
           return true;
         }
         else {
@@ -1782,7 +1924,19 @@ namespace video {
   static thread_local hdr_luminance_ema_t hdr_ema_state;
 
   int
-  encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_avcodec(
+    int64_t frame_nr,
+    avcodec_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
+
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
 
@@ -1863,8 +2017,14 @@ namespace video {
           std::string_view((char *) std::begin(sps._new), sps._new.size()));
       }
 
-      if (av_packet && av_packet->pts == frame_nr) {
-        packet->frame_timestamp = frame_timestamp;
+      if (av_packet && av_packet->pts >= 0) {
+        const auto encoded_frame_index = static_cast<uint64_t>(av_packet->pts);
+        packet->frame_timestamp = session.frame_timestamps.lookup(encoded_frame_index);
+        auto encoded_trace = session.frame_timestamps.lookup_trace(encoded_frame_index);
+        if (encoded_trace) {
+          encoded_trace->packet_ready = std::chrono::steady_clock::now();
+          packet->pipeline_trace = std::move(encoded_trace);
+        }
       }
 
       packet->replacements = &session.replacements;
@@ -1876,7 +2036,19 @@ namespace video {
   }
 
   int
-  encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_nvenc(
+    int64_t frame_nr,
+    nvenc_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
+
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
       // Empty data with valid frame_index means encoder needs more input (NV_ENC_ERR_NEED_MORE_INPUT).
@@ -1896,14 +2068,31 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
-    packet->frame_timestamp = frame_timestamp;
+    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
+    if (encoded_trace) {
+      encoded_trace->packet_ready = std::chrono::steady_clock::now();
+      packet->pipeline_trace = std::move(encoded_trace);
+    }
     packets->raise(std::move(packet));
 
     return 0;
   }
 
   int
-  encode_amf(int64_t frame_nr, amf_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode_amf(
+    int64_t frame_nr,
+    amf_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
+    if (pipeline_trace) {
+      pipeline_trace->encode_submit = std::chrono::steady_clock::now();
+    }
+    session.track_frame_timestamp(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
+
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.fatal) {
       // Encoder is in unrecoverable state (device lost or repeated failures);
@@ -1933,22 +2122,33 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
-    packet->frame_timestamp = frame_timestamp;
+    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
+    if (encoded_trace) {
+      encoded_trace->packet_ready = std::chrono::steady_clock::now();
+      packet->pipeline_trace = std::move(encoded_trace);
+    }
     packets->raise(std::move(packet));
 
     return 0;
   }
 
   int
-  encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  encode(
+    int64_t frame_nr,
+    encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data,
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
+      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
-      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp);
+      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
 
     return -1;
@@ -2339,7 +2539,6 @@ namespace video {
             params.maxscl[0] = av_make_q(1, 1);
             params.maxscl[1] = av_make_q(1, 1);
             params.maxscl[2] = av_make_q(1, 1);
-            params.maxscl[3] = av_make_q(0, 1);  // Unused
 
             // Set average maxRGB to 1.0
             params.average_maxrgb = av_make_q(1, 1);
@@ -2675,17 +2874,33 @@ namespace video {
       }
     });
 
-    // set minimum frame time based on client-requested target framerate or minimum_fps_target
-    std::chrono::duration<double, std::milli> minimum_frame_time;
+    // Set the base minimum frame time based on client-requested target framerate or minimum_fps_target.
+    // This can be temporarily reduced later if VRR input activity boost is active.
+    const auto base_minimum_frame_time = minimum_frame_time_for_vrr(config.framerate, config::video.minimum_fps_target);
     if (config::video.minimum_fps_target > 0) {
-      // Use minimum_fps_target if specified
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 1000.0 / config::video.minimum_fps_target };
-      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
+      BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on minimum_fps_target "sv << config::video.minimum_fps_target << " fps."sv;
     }
     else {
-      // Default behavior: about half the stream FPS
-      minimum_frame_time = std::chrono::duration<double, std::milli> { 2000.0 / config.framerate };
-      BOOST_LOG(info) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+      BOOST_LOG(info) << "Minimum frame time set to "sv << base_minimum_frame_time.count() << "ms, based on client-requested target framerate "sv << config.framerate << "."sv;
+    }
+
+    const auto input_activity_boost_policy = make_input_activity_boost_policy({
+      config::video.variable_refresh_rate,
+      config::video.input_activity_boost,
+      config.framerate,
+      config::video.minimum_fps_target,
+      config::video.input_activity_boost_fps,
+      config::video.input_activity_boost_window_ms,
+    });
+    const auto input_activity_boost_window = std::chrono::milliseconds { config::video.input_activity_boost_window_ms };
+
+    if (input_activity_boost_policy.useful) {
+      BOOST_LOG(info) << "Input activity boost enabled: floor="sv
+                      << input_activity_boost_policy.fps
+                      << " fps, window="sv << config::video.input_activity_boost_window_ms << " ms"sv;
+    }
+    else if (input_activity_boost_policy.configured) {
+      BOOST_LOG(info) << "Input activity boost configured but not enabled because it would not raise the current VRR minimum cadence."sv;
     }
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -2693,6 +2908,41 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->event<dynamic_param_t>(mail::dynamic_param_change));
+    auto input_activity_event = mail->event<std::chrono::steady_clock::time_point>(mail::input_activity);
+    auto input_boost_until = std::chrono::steady_clock::time_point::min();
+
+    auto consume_input_activity = [&]() {
+      while (input_activity_event->peek()) {
+        if (auto activity = input_activity_event->pop(0ms)) {
+          input_boost_until = std::max(input_boost_until, *activity + input_activity_boost_window);
+        }
+      }
+    };
+
+    using image_pop_result_t = decltype(images->pop(0ms));
+    const auto input_activity_poll_interval = std::chrono::duration<double, std::milli> { 5ms };
+    auto pop_image_interruptible = [&](const std::chrono::duration<double, std::milli> &wait_time, bool allow_input_preemption) -> image_pop_result_t {
+      if (!allow_input_preemption || wait_time <= input_activity_poll_interval) {
+        return images->pop(wait_time);
+      }
+
+      auto remaining_wait = wait_time;
+      while (images->running() && remaining_wait > 0ms) {
+        auto slice_wait = std::min(remaining_wait, input_activity_poll_interval);
+        if (auto img = images->pop(slice_wait)) {
+          return img;
+        }
+
+        consume_input_activity();
+        if (std::chrono::steady_clock::now() < input_boost_until) {
+          return {};
+        }
+
+        remaining_wait -= slice_wait;
+      }
+
+      return {};
+    };
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2742,25 +2992,43 @@ namespace video {
         session->request_idr_frame();
       }
 
+      consume_input_activity();
+      auto input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
+      auto effective_frame_time = effective_minimum_frame_time(
+        base_minimum_frame_time,
+        input_activity_boost_policy,
+        input_boost_active,
+        config::video.minimum_fps_target);
+
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
       bool has_new_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(minimum_frame_time)) {
+        if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           frame_timestamp = img->frame_timestamp;
+          pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+          if (!pipeline_trace->capture_ready) {
+            pipeline_trace->capture_ready = frame_timestamp;
+          }
+          pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          pipeline_trace->convert_end = std::chrono::steady_clock::now();
           has_new_frame = true;
         }
         else if (!images->running()) {
           break;
         }
       }
+
+      consume_input_activity();
+      input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
 
       // While streaming check to see if the mouse is present and enable Mouse Keys to force the cursor to appear.
       // Run this BEFORE the VRR early-continue so a KVM switch on a static screen still recovers the cursor
@@ -2769,16 +3037,17 @@ namespace video {
 
       // If variable refresh rate is enabled, skip encoding when no new frame is available
       // This allows the stream framerate to match the render framerate for VRR support
-      // However, if minimum_fps_target is set, we still encode to maintain minimum FPS
+      // However, if minimum_fps_target is set, or input activity boost is active, we still encode
+      // to maintain a temporary minimum FPS floor for better visual input feedback.
       if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
-        // Only skip if minimum_fps_target is 0 (disabled) or we've already met the minimum
-        if (config::video.minimum_fps_target == 0) {
+        // Only skip if minimum_fps_target is 0 (disabled) and input activity boost is inactive.
+        if (config::video.minimum_fps_target == 0 && !input_boost_active) {
           continue;
         }
-        // If minimum_fps_target is set, we'll encode anyway to maintain minimum FPS
+        // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
@@ -3051,6 +3320,20 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+          std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
+          if (img) {
+            frame_timestamp = img->frame_timestamp;
+          }
+
+          if (frame_captured) {
+            pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+            if (!pipeline_trace->capture_ready) {
+              pipeline_trace->capture_ready = frame_timestamp;
+            }
+            pipeline_trace->convert_begin = std::chrono::steady_clock::now();
+          }
+
           if (frame_captured && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
@@ -3058,12 +3341,11 @@ namespace video {
             continue;
           }
 
-          std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
-          if (img) {
-            frame_timestamp = img->frame_timestamp;
+          if (frame_captured) {
+            pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
+          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -3086,6 +3368,7 @@ namespace video {
       auto pull_free_image_callback = [&img](std::shared_ptr<platf::img_t> &img_out) -> bool {
         img_out = img;
         img_out->frame_timestamp.reset();
+        img_out->pipeline_trace.reset();
         return true;
       };
 
@@ -3380,7 +3663,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {})) {
+      if (encode(1, *session, packets, nullptr, {}, {})) {
         return -1;
       }
       // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
@@ -3687,6 +3970,12 @@ namespace video {
 
   int
   probe_encoders() {
+    last_encoder_probe_result = {
+      probe_error_e::none,
+      "Encoder probe succeeded.",
+      {}
+    };
+
     if (!allow_encoder_probing()) {
       // Error already logged
       return -1;
@@ -3815,6 +4104,27 @@ namespace video {
     if (chosen_encoder == nullptr) {
       const auto output_display_name { display_device::get_display_name(config::video.output_name) };
       BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
+      if (!config::video.encoder.empty()) {
+        last_encoder_probe_result = {
+          probe_error_e::configured_encoder_unavailable,
+          "The configured video encoder is not available on this system.",
+          "Set the video encoder to Auto, update the GPU driver, or choose an encoder supported by the active GPU."
+        };
+      }
+      else if (config::video.hevc_mode >= 2 || config::video.av1_mode >= 2) {
+        last_encoder_probe_result = {
+          probe_error_e::codec_requirements_unmet,
+          "No working encoder satisfies the requested HEVC or AV1 requirements.",
+          "Set HEVC/AV1 support to Auto or Disabled, or use H.264 and try again."
+        };
+      }
+      else {
+        last_encoder_probe_result = {
+          probe_error_e::no_working_encoder,
+          "Sunshine could not find a working display capture path and video encoder.",
+          "Check that a display is connected or VDD is active, set GPU/display/encoder options to Auto, and update the GPU driver."
+        };
+      }
       if (!config::video.adapter_name.empty() || !output_display_name.empty()) {
         BOOST_LOG(error) << "Please ensure your manually chosen GPU and monitor are connected and powered on."sv;
       }

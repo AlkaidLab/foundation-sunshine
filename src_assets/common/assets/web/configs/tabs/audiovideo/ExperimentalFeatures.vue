@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
@@ -15,7 +15,7 @@ const { t } = useI18n()
 const config = ref(props.config)
 const display_mode_remapping = ref(props.display_mode_remapping || [])
 
-function getRemappingType() {
+const remappingType = computed(() => {
   if (config.value.resolution_change !== 'automatic') {
     return 'refresh_rate_only'
   }
@@ -23,7 +23,19 @@ function getRemappingType() {
     return 'resolution_only'
   }
   return ''
-}
+})
+
+const filteredRemappings = computed(() => {
+  const entries = []
+
+  display_mode_remapping.value.forEach((entry, index) => {
+    if (entry.type === remappingType.value) {
+      entries.push({ entry, index })
+    }
+  })
+
+  return entries
+})
 
 function addRemapping(type) {
   display_mode_remapping.value.push({
@@ -125,38 +137,38 @@ function addRemapping(type) {
                 <div class="d-flex flex-column">
                   <div class="form-text">
                     <p style="white-space: pre-line">{{ $tp('config.display_mode_remapping_desc') }}</p>
-                    <p v-if="getRemappingType() === ''" style="white-space: pre-line">
+                    <p v-if="remappingType === ''" style="white-space: pre-line">
                       {{ $tp('config.display_mode_remapping_default_mode_desc') }}
                     </p>
-                    <p v-if="getRemappingType() === 'resolution_only'" style="white-space: pre-line">
+                    <p v-if="remappingType === 'resolution_only'" style="white-space: pre-line">
                       {{ $tp('config.display_mode_remapping_resolution_only_mode_desc') }}
                     </p>
                   </div>
 
                   <table
                     class="table"
-                    v-if="display_mode_remapping.filter((value) => value.type === getRemappingType()).length > 0"
+                    v-if="filteredRemappings.length > 0"
                   >
                     <thead>
                       <tr>
-                        <th scope="col" v-if="getRemappingType() !== 'refresh_rate_only'">
+                        <th scope="col" v-if="remappingType !== 'refresh_rate_only'">
                           {{ $tp('config.display_mode_remapping_received_resolution') }}
                         </th>
-                        <th scope="col" v-if="getRemappingType() !== 'resolution_only'">
+                        <th scope="col" v-if="remappingType !== 'resolution_only'">
                           {{ $tp('config.display_mode_remapping_received_fps') }}
                         </th>
-                        <th scope="col" v-if="getRemappingType() !== 'refresh_rate_only'">
+                        <th scope="col" v-if="remappingType !== 'refresh_rate_only'">
                           {{ $tp('config.display_mode_remapping_final_resolution') }}
                         </th>
-                        <th scope="col" v-if="getRemappingType() !== 'resolution_only'">
+                        <th scope="col" v-if="remappingType !== 'resolution_only'">
                           {{ $tp('config.display_mode_remapping_final_refresh_rate') }}
                         </th>
                         <th scope="col"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(c, i) in display_mode_remapping" :key="i">
-                        <template v-if="c.type === '' && c.type === getRemappingType()">
+                      <tr v-for="{ entry: c, index: i } in filteredRemappings" :key="i">
+                        <template v-if="remappingType === ''">
                           <td>
                             <input
                               type="text"
@@ -195,7 +207,7 @@ function addRemapping(type) {
                             </button>
                           </td>
                         </template>
-                        <template v-if="c.type === 'resolution_only' && c.type === getRemappingType()">
+                        <template v-if="remappingType === 'resolution_only'">
                           <td>
                             <input
                               type="text"
@@ -218,7 +230,7 @@ function addRemapping(type) {
                             </button>
                           </td>
                         </template>
-                        <template v-if="c.type === 'refresh_rate_only' && c.type === getRemappingType()">
+                        <template v-if="remappingType === 'refresh_rate_only'">
                           <td>
                             <input
                               type="text"
@@ -247,7 +259,7 @@ function addRemapping(type) {
                   <button
                     class="ms-0 mt-2 btn btn-success"
                     style="margin: 0 auto"
-                    @click="addRemapping(getRemappingType())"
+                    @click="addRemapping(remappingType)"
                   >
                     &plus; Add
                   </button>

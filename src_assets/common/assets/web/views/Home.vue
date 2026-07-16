@@ -57,6 +57,7 @@ import { useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
 import { trackEvents } from '../config/firebase.js'
+import { apiJson } from '../utils/apiFetch.js'
 
 // 使用组合式函数
 const {
@@ -104,7 +105,7 @@ onMounted(async () => {
   trackEvents.pageView('home')
 
   try {
-    const config = await fetch('/api/config').then((r) => r.json())
+    const config = await apiJson('/api/config')
 
     setTimeout(() => {
       reportGPUInfo(config)

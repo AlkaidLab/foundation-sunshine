@@ -116,7 +116,7 @@ namespace nvenc {
       return false;
     }
 
-    if (!d3d_input_texture) {
+    auto create_input_texture = [&](UINT bind_flags) -> bool {
       D3D11_TEXTURE2D_DESC desc = {};
       desc.Width = encoder_params.width;
       desc.Height = encoder_params.height * 3;  // Planar YUV
@@ -125,25 +125,57 @@ namespace nvenc {
       desc.Format = dxgi_format_from_nvenc_format(encoder_params.buffer_format);
       desc.SampleDesc.Count = 1;
       desc.Usage = D3D11_USAGE_DEFAULT;
-      desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+      desc.BindFlags = bind_flags;
+      return d3d_device->CreateTexture2D(&desc, nullptr, &d3d_input_texture) == S_OK;
+    };
 
-      if (d3d_device->CreateTexture2D(&desc, nullptr, &d3d_input_texture) != S_OK) {
+    if (!d3d_input_texture) {
+      if (!create_input_texture(D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)) {
+        BOOST_LOG(info) << "NvEnc: CUDA interop input texture UAV bind unavailable, falling back to render-target input";
+        if (!create_input_texture(D3D11_BIND_RENDER_TARGET)) {
+          BOOST_LOG(error) << "NvEnc: couldn't create input texture";
+          return false;
+        }
+      }
+    }
+
+    auto register_cuda_input_texture = [&]() -> bool {
+      return cuda_succeeded(cuda_functions.cuGraphicsD3D11RegisterResource(
+        &cuda_d3d_input_texture,
+        d3d_input_texture,
+        CU_GRAPHICS_REGISTER_FLAGS_NONE));
+    };
+
+    auto recreate_without_uav = [&]() -> bool {
+      d3d_input_texture.Release();
+      cuda_d3d_input_texture = nullptr;
+      if (!create_input_texture(D3D11_BIND_RENDER_TARGET)) {
         BOOST_LOG(error) << "NvEnc: couldn't create input texture";
         return false;
       }
-    }
+      return true;
+    };
 
     {
       auto autopop_context = push_context();
       if (!autopop_context) return false;
 
       if (!cuda_d3d_input_texture) {
-        if (cuda_failed(cuda_functions.cuGraphicsD3D11RegisterResource(
-              &cuda_d3d_input_texture,
-              d3d_input_texture,
-              CU_GRAPHICS_REGISTER_FLAGS_NONE))) {
-          BOOST_LOG(error) << "NvEnc: cuGraphicsD3D11RegisterResource() failed: error " << last_cuda_error;
-          return false;
+        if (!register_cuda_input_texture()) {
+          D3D11_TEXTURE2D_DESC desc = {};
+          d3d_input_texture->GetDesc(&desc);
+          if (desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
+            BOOST_LOG(info) << "NvEnc: CUDA interop UAV input texture registration failed, falling back to render-target input: error "
+                            << last_cuda_error;
+            if (!recreate_without_uav() || !register_cuda_input_texture()) {
+              BOOST_LOG(error) << "NvEnc: cuGraphicsD3D11RegisterResource() failed: error " << last_cuda_error;
+              return false;
+            }
+          }
+          else {
+            BOOST_LOG(error) << "NvEnc: cuGraphicsD3D11RegisterResource() failed: error " << last_cuda_error;
+            return false;
+          }
         }
       }
 

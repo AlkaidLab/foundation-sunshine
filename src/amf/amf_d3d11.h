@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include "amf_avcodec_compat.h"
 #include "amf_encoder.h"
 
 #include <d3d11.h>
@@ -117,7 +118,11 @@ namespace amf {
     // 21 frames deep per FFmpeg's amfenc.c notes; we keep our soft cap well
     // below that to leave headroom for VCN stalls and DXGI scheduling jitter.
     int hwsurfaces_in_queue = 0;
-    static constexpr int HWSURFACES_IN_QUEUE_MAX = 16;
+    static constexpr int HWSURFACES_IN_QUEUE_DEFAULT = 16;
+    int hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
+    bool user_configured_rate_control = false;
+    bool avcodec_compat_profile = false;
+    amf_avcodec_scheduler avcodec_scheduler;
 
     // Statistics feedback state
     bool statistics_enabled = false;
