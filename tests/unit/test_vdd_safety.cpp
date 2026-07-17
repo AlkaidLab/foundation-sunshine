@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "src/display_device/vdd_control_ioctl.h"
+#include "src/display_device/vdd_ioctl.h"
 #include "src/platform/windows/display_device/settings_topology.h"
 #include "src/platform/windows/vdd_frame_channel.h"
 
@@ -204,6 +205,16 @@ TEST(VddFrameChannelSafety, ParsesFrameChannelModes) {
 
   EXPECT_FALSE(parse_channel_mode("host_owned"));
   EXPECT_FALSE(parse_channel_mode(""));
+}
+
+TEST(VddFrameChannelSafety, NamesFrameChannelOpenStatuses) {
+  using namespace display_device::vdd_ioctl;
+
+  EXPECT_STREQ(frame_channel_open_status_name(frame_channel_open_status::opened), "opened");
+  EXPECT_STREQ(frame_channel_open_status_name(frame_channel_open_status::not_ready), "not_ready");
+  EXPECT_STREQ(frame_channel_open_status_name(frame_channel_open_status::unsupported), "unsupported");
+  EXPECT_STREQ(frame_channel_open_status_name(frame_channel_open_status::interface_missing), "interface_missing");
+  EXPECT_STREQ(frame_channel_open_status_name(frame_channel_open_status::failed), "failed");
 }
 
 TEST(VddFrameChannelSafety, DefinesSealedChannelCapsAbi) {

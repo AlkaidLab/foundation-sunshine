@@ -511,7 +511,7 @@ namespace platf::dxgi {
       m_frameChannelSelection = vdd_frame_channel::channel_selection::sealed_required_failed;
       BOOST_LOG(error) << "[vdd_capture] SUNSHINE_VDD_FRAME_CHANNEL=sealed requested, "
                        << "but sealed frame channel open failed with status "sv
-                       << static_cast<int>(open_status);
+                       << display_device::vdd_ioctl::frame_channel_open_status_name(open_status);
       return sealed_channel_attempt::required_failed;
     }
 
@@ -520,7 +520,7 @@ namespace platf::dxgi {
         vdd_frame_channel::channel_selection::open_unsupported :
         vdd_frame_channel::channel_selection::open_failed;
     BOOST_LOG(warning) << "[vdd_capture] sealed frame channel open failed with status "sv
-                       << static_cast<int>(open_status)
+                       << display_device::vdd_ioctl::frame_channel_open_status_name(open_status)
                        << "; falling back to hardened legacy named channel"sv;
     return sealed_channel_attempt::fallback_allowed;
   }
@@ -1070,7 +1070,8 @@ namespace platf::dxgi {
 
       if (std::chrono::steady_clock::now() >= producer_discovery_deadline) {
         BOOST_LOG(error) << "[vdd] vdd_capture_t::init failed for monitor "sv << monitor_idx
-                         << " before the producer discovery deadline"sv;
+                         << " before the producer discovery deadline; last_channel_selection="sv
+                         << vdd_frame_channel::channel_selection_name(dup.frame_channel_selection());
         return -1;
       }
 

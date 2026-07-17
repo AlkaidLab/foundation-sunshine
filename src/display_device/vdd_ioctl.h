@@ -69,6 +69,23 @@ namespace display_device::vdd_ioctl {
     failed,
   };
 
+  inline const char *
+  frame_channel_open_status_name(frame_channel_open_status status) {
+    switch (status) {
+      case frame_channel_open_status::opened:
+        return "opened";
+      case frame_channel_open_status::not_ready:
+        return "not_ready";
+      case frame_channel_open_status::unsupported:
+        return "unsupported";
+      case frame_channel_open_status::interface_missing:
+        return "interface_missing";
+      case frame_channel_open_status::failed:
+        return "failed";
+    }
+    return "unknown";
+  }
+
   struct frame_channel_open_request {
     std::uint32_t monitor_index = 0;
     std::uint32_t required_flags = 0;
