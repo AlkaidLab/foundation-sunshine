@@ -95,6 +95,7 @@ namespace platf::dxgi::vdd_frame_channel {
     caps_unsupported,
     caps_failed,
     open_unsupported,
+    open_not_ready,
     open_failed,
     attach_failed,
     sealed_required_failed,
@@ -175,6 +176,8 @@ namespace platf::dxgi::vdd_frame_channel {
         return "caps_failed";
       case channel_selection::open_unsupported:
         return "open_unsupported";
+      case channel_selection::open_not_ready:
+        return "open_not_ready";
       case channel_selection::open_failed:
         return "open_failed";
       case channel_selection::attach_failed:

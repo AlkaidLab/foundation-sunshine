@@ -390,6 +390,12 @@ namespace display_device::vdd_ioctl {
 
     if (!ok) {
       const DWORD err = GetLastError();
+      if (err == ERROR_NOT_READY) {
+        if (log_failures) {
+          BOOST_LOG(debug) << "vdd_ioctl: frame-channel producer is not ready yet";
+        }
+        return frame_channel_open_status::not_ready;
+      }
       if (err == ERROR_INVALID_FUNCTION ||
           err == ERROR_NOT_SUPPORTED ||
           err == ERROR_INVALID_PARAMETER) {

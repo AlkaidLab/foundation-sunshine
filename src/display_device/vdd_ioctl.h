@@ -63,6 +63,7 @@ namespace display_device::vdd_ioctl {
 
   enum class frame_channel_open_status {
     opened,
+    not_ready,       ///< Producer is transitioning modes; retry within the caller's deadline.
     unsupported,
     interface_missing,
     failed,

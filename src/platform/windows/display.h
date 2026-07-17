@@ -636,6 +636,7 @@ namespace platf::dxgi {
     enum class sealed_channel_attempt {
       skipped,
       opened,
+      not_ready,
       fallback_allowed,
       required_failed,
     };
