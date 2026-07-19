@@ -28,7 +28,8 @@
  *
  *   `IOCTL_VDD_OPEN_FRAME_CHANNEL` asks the driver to duplicate an unnamed
  *   producer-owned frame channel into the requesting Sunshine process. The
- *   returned handle values are valid only in `TargetProcessId`.
+ *   returned handle values are valid only in `TargetProcessId`, which must be
+ *   the process that issued the IOCTL.
  *
  *   `DesiredSlots` is a compatibility guard, not a request for the driver to
  *   resize its producer ring. Use 0 for the driver default, or the exact
