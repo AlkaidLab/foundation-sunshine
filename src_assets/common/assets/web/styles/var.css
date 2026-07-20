@@ -34,6 +34,33 @@
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
 
+  /* Sunshine GUI-aligned design tokens: Gura blue light theme */
+  --ui-page-bg: #e6f2ff;
+  --ui-page-overlay: rgba(30, 41, 59, 0.12);
+  --ui-nav-bg: rgba(240, 248, 255, 0.92);
+  --ui-surface: rgba(255, 255, 255, 0.62);
+  --ui-surface-strong: rgba(240, 248, 255, 0.88);
+  --ui-surface-hover: rgba(255, 255, 255, 0.8);
+  --ui-border: rgba(74, 158, 255, 0.22);
+  --ui-border-strong: rgba(74, 158, 255, 0.42);
+  --ui-text-primary: #1e293b;
+  --ui-text-secondary: #64748b;
+  --ui-text-muted: #94a3b8;
+  --ui-accent: #4a9eff;
+  --ui-accent-rgb: 74, 158, 255;
+  --ui-accent-soft: rgba(74, 158, 255, 0.12);
+  --ui-accent-secondary: #ffc107;
+  --ui-success-text: #287d4c;
+  --ui-warning-text: #9a6700;
+  --ui-danger-text: #b4233a;
+  --ui-danger-soft: rgba(180, 35, 58, 0.1);
+  --ui-danger-border: rgba(180, 35, 58, 0.28);
+  --ui-radius-sm: 8px;
+  --ui-radius-md: 12px;
+  --ui-radius-lg: 16px;
+  --ui-shadow-sm: 0 4px 16px rgba(74, 158, 255, 0.1);
+  --ui-shadow-md: 0 12px 32px rgba(58, 126, 213, 0.14);
+
   --cute-btn-border-color: rgba(255, 255, 255, 0.3);
   --cute-btn-border-hover-color: rgba(255, 255, 255, 0.5);
 
@@ -70,6 +97,30 @@
   --spacing-md: 1rem;
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
+
+  /* Sunshine GUI-aligned design tokens: Morandi dark theme */
+  --ui-page-bg: #2d2628;
+  --ui-page-overlay: rgba(45, 38, 40, 0.5);
+  --ui-nav-bg: rgba(45, 38, 40, 0.94);
+  --ui-surface: rgba(74, 63, 66, 0.58);
+  --ui-surface-strong: rgba(61, 50, 53, 0.88);
+  --ui-surface-hover: rgba(74, 63, 66, 0.78);
+  --ui-border: rgba(230, 213, 184, 0.2);
+  --ui-border-strong: rgba(230, 213, 184, 0.42);
+  --ui-text-primary: #f7f0e3;
+  --ui-text-secondary: #d4c4a8;
+  --ui-text-muted: #a99d8a;
+  --ui-accent: #e6d5b8;
+  --ui-accent-rgb: 230, 213, 184;
+  --ui-accent-soft: rgba(230, 213, 184, 0.14);
+  --ui-accent-secondary: #d4a5a5;
+  --ui-success-text: #b8e0c2;
+  --ui-warning-text: #f1d69d;
+  --ui-danger-text: #efb9bf;
+  --ui-danger-soft: rgba(212, 165, 165, 0.12);
+  --ui-danger-border: rgba(212, 165, 165, 0.34);
+  --ui-shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.2);
+  --ui-shadow-md: 0 14px 36px rgba(0, 0, 0, 0.3);
 
   --cute-btn-border-color: rgba(0, 0, 0, 0.2);
   --cute-btn-border-hover-color: rgba(0, 0, 0, 0.1);

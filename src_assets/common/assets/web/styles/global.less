@@ -12,7 +12,7 @@
 body {
   min-height: 100vh;
   font-family: var(--font-family-base);
-  background-color: #5496dd;
+  background-color: var(--ui-page-bg, #e6f2ff);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -22,32 +22,34 @@ body {
   z-index: 0;
 
   &.bg-light {
-    background-color: #5496dd !important;
+    background-color: var(--ui-page-bg, #e6f2ff) !important;
   }
 
   &::after {
     content: '';
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.15);
+    background: var(--ui-page-overlay, rgba(30, 41, 59, 0.12));
     pointer-events: none;
     z-index: -1;
 
     [data-bs-theme='dark'] & {
-      background: rgba(0, 0, 0, 0.4);
+      background: var(--ui-page-overlay, rgba(45, 38, 40, 0.5));
     }
   }
 }
 
 // Theme variables
 [data-bs-theme='light'] {
-  --bs-body-bg: rgba(255, 255, 255, 0.41);
-  --bs-dropdown-bg: rgba(255, 255, 255, 0.7);
+  --bs-body-bg: var(--ui-surface);
+  --bs-dropdown-bg: var(--ui-surface-strong);
+  --bs-dropdown-border-color: var(--ui-border);
 }
 
 [data-bs-theme='dark'] {
-  --bs-body-bg: rgba(0, 0, 0, 0.65);
-  --bs-dropdown-bg: rgba(0, 0, 0, 0.7);
+  --bs-body-bg: var(--ui-surface);
+  --bs-dropdown-bg: var(--ui-surface-strong);
+  --bs-dropdown-border-color: var(--ui-border);
 }
 
 // Drag and drop indicator
