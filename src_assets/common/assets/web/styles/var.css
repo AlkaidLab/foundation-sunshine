@@ -55,6 +55,9 @@
   --ui-success: #2f9b62;
   --ui-warning: #c88a00;
   --ui-danger: #c94358;
+  --ui-success-contrast: #ffffff;
+  --ui-warning-contrast: #231f20;
+  --ui-danger-contrast: #ffffff;
   --ui-success-text: #287d4c;
   --ui-warning-text: #9a6700;
   --ui-danger-text: #b4233a;
@@ -124,6 +127,9 @@
   --ui-success: #5f9f74;
   --ui-warning: #c69d55;
   --ui-danger: #bd6f79;
+  --ui-success-contrast: #2d2628;
+  --ui-warning-contrast: #2d2628;
+  --ui-danger-contrast: #2d2628;
   --ui-success-text: #b8e0c2;
   --ui-warning-text: #f1d69d;
   --ui-danger-text: #efb9bf;
