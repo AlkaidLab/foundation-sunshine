@@ -532,16 +532,16 @@ onMounted(async () => {
   padding: 0.42rem 0.5rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: var(--ui-radius-md, 12px);
-  background: color-mix(in srgb, var(--ui-surface-strong) 78%, transparent);
+  background-color: color-mix(in srgb, var(--ui-surface-strong) 78%, transparent);
   color: var(--ui-text-primary, #1e293b);
   text-decoration: none;
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .quick-action:hover,
 .quick-action:focus-visible {
   border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  background: var(--ui-surface-hover, rgba(255, 255, 255, 0.8));
+  background-color: var(--ui-surface-hover, rgba(255, 255, 255, 0.8));
   color: var(--ui-text-primary, #1e293b);
   box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
   transform: translateY(-1px);
@@ -549,7 +549,7 @@ onMounted(async () => {
 
 .quick-action-primary {
   border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  background: color-mix(in srgb, var(--ui-accent-soft) 68%, var(--ui-surface-strong));
+  background-color: color-mix(in srgb, var(--ui-accent-soft) 68%, var(--ui-surface-strong));
 }
 
 .quick-action-icon {

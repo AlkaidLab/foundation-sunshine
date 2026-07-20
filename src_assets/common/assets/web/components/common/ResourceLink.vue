@@ -61,18 +61,36 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
     color-mix(in srgb, var(--ui-surface) 92%, transparent)
   );
   color: var(--ui-text-primary);
+  isolation: isolate;
+  position: relative;
   text-decoration: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.resource-link::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--ui-surface-hover) 90%, rgba(var(--link-color), 0.12));
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
 .resource-link:hover,
 .resource-link:focus-visible {
   border-color: rgba(var(--link-color), 0.4);
-  background: color-mix(in srgb, var(--ui-surface-hover) 90%, rgba(var(--link-color), 0.12));
   box-shadow: var(--ui-shadow-sm);
   color: var(--ui-text-primary);
   text-decoration: none;
   transform: translateY(-1px);
+}
+
+.resource-link:hover::before,
+.resource-link:focus-visible::before {
+  opacity: 1;
 }
 
 .resource-link--compact {
