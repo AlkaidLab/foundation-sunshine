@@ -18,12 +18,20 @@
       </div>
       
       <!-- 应用信息 -->
-      <div class="app-info" :title="app.cmd" @click="copyToClipboard(app.cmd, app.name, $event)">
+      <div class="app-info" :title="app.cmd || undefined">
         <h3 class="app-name">{{ app.name }}</h3>
-        <p class="app-command" v-if="app.cmd">
+        <button
+          v-if="app.cmd"
+          type="button"
+          class="app-command app-command-copy"
+          :title="`${$t('_common.copy')}: ${app.name}`"
+          :aria-label="`${$t('_common.copy')}: ${app.name}`"
+          @click="copyToClipboard(app.cmd, app.name, $event)"
+        >
           <i class="fas fa-terminal me-1"></i>
-          {{ truncateText(app.cmd, 50) }}
-        </p>
+          <span class="app-command-text">{{ truncateText(app.cmd, 50) }}</span>
+          <i class="fas fa-copy app-command-copy-icon" aria-hidden="true"></i>
+        </button>
         <div v-if="hasTags" class="app-tags">
           <span
             v-for="tag in visibleTags"

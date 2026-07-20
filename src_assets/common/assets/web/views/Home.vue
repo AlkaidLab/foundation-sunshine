@@ -19,17 +19,21 @@
             <h1 id="home-title" class="page-title">{{ $t('index.welcome') }}</h1>
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
-          <div
+          <component
+            :is="showVersionDetails ? 'button' : 'div'"
             class="home-status"
-            :class="`home-status-${statusState}`"
-            role="status"
+            :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
+            :type="showVersionDetails ? 'button' : undefined"
+            :role="showVersionDetails ? 'button' : 'status'"
             :aria-live="statusState === 'loading' ? 'polite' : 'off'"
             :aria-label="statusAriaLabel"
+            :aria-controls="showVersionDetails ? 'version-details' : undefined"
             :title="statusTitle"
+            @click="handleStatusClick"
           >
             <span class="home-status-dot" aria-hidden="true"></span>
             <span>{{ statusLabel }}</span>
-          </div>
+          </component>
         </div>
 
         <div class="host-overview">
@@ -93,6 +97,7 @@
       <!-- 版本信息 -->
       <VersionCard
         v-if="showVersionDetails"
+        id="version-details"
         :version="version"
         :github-version="githubVersion"
         :pre-release-version="preReleaseVersion"
@@ -199,6 +204,11 @@ const showVersionDetails = computed(
     hasStableUpdate.value ||
     hasPreReleaseUpdate.value,
 )
+
+const handleStatusClick = () => {
+  if (!showVersionDetails.value) return
+  document.getElementById('version-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 const countCollection = (payload, key) => {
   if (Array.isArray(payload)) return payload.length
@@ -384,6 +394,26 @@ onMounted(async () => {
   backdrop-filter: blur(10px);
   font-size: 0.76rem;
   font-weight: 600;
+  font-family: inherit;
+  text-align: left;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.home-status-action {
+  appearance: none;
+  cursor: pointer;
+}
+
+.home-status-action:hover,
+.home-status-action:focus-visible {
+  border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
+  box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
+  transform: translateY(-1px);
+}
+
+.home-status-action:focus-visible {
+  outline: 2px solid var(--ui-accent, #4a9eff);
+  outline-offset: 2px;
 }
 
 .home-status-dot {
@@ -603,6 +633,10 @@ onMounted(async () => {
   flex: 1 0 auto;
   flex-direction: column;
   margin-bottom: 0;
+}
+
+#version-details {
+  scroll-margin-top: 1rem;
 }
 
 @media (min-width: 1440px) {

@@ -112,9 +112,28 @@
   border-radius: var(--border-radius-sm);
   .text-ellipsis();
   .transition-default();
-  cursor: pointer;
   display: flex;
   align-items: center;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  cursor: copy;
+  appearance: none;
+
+  > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-command-copy-icon {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--ui-text-muted);
+    font-size: 0.78em;
+  }
 
   &:hover {
     background: var(--ui-surface-hover);

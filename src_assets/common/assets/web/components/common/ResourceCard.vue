@@ -55,6 +55,7 @@ const confirmHarmonyLink = async () => {
               compact
               :href="resource.href"
               :target="resource.action ? '' : '_blank'"
+              :action="resource.action === 'harmony'"
               :title="resourceTitle(resource)"
               :description="resourceDescription(resource)"
               :icon="resource.icon"

@@ -6,11 +6,11 @@
       class="btn nav-utility-button dropdown-toggle"
       data-bs-toggle="dropdown"
       aria-expanded="false"
-      :aria-label="$t('navbar.password')"
-      :title="$t('navbar.password')"
+      :aria-label="`${$t('navbar.password')} / ${$t('navbar.troubleshoot')}`"
+      :title="`${$t('navbar.password')} / ${$t('navbar.troubleshoot')}`"
     >
       <i class="fas fa-user-circle" aria-hidden="true"></i>
-      <span class="visually-hidden">{{ $t('navbar.password') }}</span>
+      <span class="visually-hidden">{{ $t('navbar.password') }} / {{ $t('navbar.troubleshoot') }}</span>
     </button>
     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbar-account-menu">
       <li>

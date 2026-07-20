@@ -203,7 +203,7 @@
 .app-info {
   text-align: center;
   margin-bottom: 15px;
-  cursor: copy;
+  cursor: default;
   position: relative;
   padding: 8px;
   border-radius: var(--border-radius-md);
@@ -222,12 +222,6 @@
     background: rgba(var(--ui-accent-rgb), 0.2);
   }
 
-  &:not([title]),
-  &[title=''] {
-    cursor: default;
-    pointer-events: none;
-  }
-
   &.copy-success {
     animation: copySuccess 0.4s ease;
   }
@@ -243,7 +237,10 @@
 }
 
 .app-command {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.2rem;
   text-align: left;
   font-size: var(--font-size-xs);
   color: var(--ui-text-secondary);
@@ -262,6 +259,28 @@
     color: var(--ui-text-primary);
     transform: translateY(-1px);
   }
+}
+
+.app-command-copy {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  font: inherit;
+  cursor: copy;
+  appearance: none;
+}
+
+.app-command-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-command-copy-icon {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+  font-size: 0.78em;
 }
 
 // ============================================================================

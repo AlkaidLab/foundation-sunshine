@@ -55,6 +55,7 @@ export const CLIENT_RESOURCES = [
     titleKey: 'resource_card.harmony_client',
     description: 'HarmonyOS NEXT',
     variant: 'harmony',
+    arrowIcon: 'fas fa-chevron-right',
     action: 'harmony',
   },
   {

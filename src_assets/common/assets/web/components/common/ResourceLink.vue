@@ -13,6 +13,7 @@ const props = defineProps({
   arrowClass: { type: String, default: '' },
   compact: { type: Boolean, default: false },
   target: { type: String, default: '_blank' },
+  action: { type: Boolean, default: false },
 })
 
 defineEmits(['activate'])
@@ -26,12 +27,15 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 </script>
 
 <template>
-  <a
+  <component
+    :is="action ? 'button' : 'a'"
     class="resource-link"
     :class="classes"
-    :href="href"
-    :target="target || undefined"
-    :rel="rel"
+    :href="action ? undefined : href"
+    :type="action ? 'button' : undefined"
+    :target="action ? undefined : target || undefined"
+    :rel="action ? undefined : rel"
+    :aria-haspopup="action ? 'dialog' : undefined"
     @click="$emit('activate', $event)"
   >
     <span class="resource-icon" :class="{ 'resource-icon--logo': imageSrc }">
@@ -43,7 +47,7 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
       <span v-if="description" class="resource-desc">{{ description }}</span>
     </span>
     <i class="resource-arrow" :class="[arrowIcon, arrowClass]" aria-hidden="true"></i>
-  </a>
+  </component>
 </template>
 
 <style scoped>
@@ -64,6 +68,10 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
   isolation: isolate;
   position: relative;
   text-decoration: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 

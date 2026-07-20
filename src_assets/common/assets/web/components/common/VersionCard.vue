@@ -1,5 +1,5 @@
 <template>
-  <div class="card shadow-sm mb-4" v-if="version">
+  <div id="version-details" class="card shadow-sm mb-4" v-if="version">
     <div class="card-header version-card-header">
       <h5 class="card-title mb-0">
         <i class="fas fa-code-branch me-2"></i>
