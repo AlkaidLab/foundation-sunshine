@@ -46,7 +46,7 @@ import { useBackground } from '../../composables/useBackground.js'
 // 导航项配置
 const navItems = Object.freeze([
   { path: '/', icon: 'fa-home', label: 'navbar.home' },
-  { path: '/pin', icon: 'fa-unlock', label: 'navbar.pin' },
+  { path: '/pin', icon: 'fa-qrcode', label: 'navbar.pin' },
   { path: '/apps', icon: 'fa-stream', label: 'navbar.applications' },
   { path: '/config', icon: 'fa-cog', label: 'navbar.configuration' },
 ])
@@ -150,16 +150,47 @@ onUnmounted(() => {
   min-width: 13rem;
 }
 
-.header .nav-link {
+.header .navbar-nav > .nav-item > .nav-link {
+  position: relative;
+  background: transparent;
   color: var(--ui-text-secondary, #64748b) !important;
-  border-radius: var(--ui-radius-sm, 8px);
-  transition: color 0.2s ease, background-color 0.2s ease, font-weight 0.2s ease;
+  border-radius: 0;
+  transition: color 0.2s ease;
 }
 
-.header .nav-link:hover,
-.header .nav-link.active {
+.header .navbar-nav > .nav-item > .nav-link::after {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.3rem;
+  left: 0.75rem;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--ui-accent, #4a9eff);
+  content: '';
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+
+.header .navbar-nav > .nav-item > .nav-link:hover,
+.header .navbar-nav > .nav-item > .nav-link.active,
+.header .navbar-nav > .nav-item > .nav-link:focus-visible {
   color: var(--ui-accent, #4a9eff) !important;
-  background-color: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  background: transparent;
+}
+
+.header .navbar-nav > .nav-item > .nav-link.active::after,
+.header .navbar-nav > .nav-item > .nav-link:focus-visible::after {
+  transform: scaleX(1);
+}
+
+.header .navbar-nav > .nav-item > .nav-link:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.header .navbar-nav > .nav-item > .nav-link:focus-visible::after {
+  height: 3px;
 }
 
 .header .navbar-toggler {

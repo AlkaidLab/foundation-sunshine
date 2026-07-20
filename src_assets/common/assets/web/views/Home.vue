@@ -45,7 +45,7 @@
         <div class="host-metrics" aria-label="Host summary">
           <div class="host-metric">
             <span class="metric-value">{{ clientsCount ?? '—' }}</span>
-            <span class="metric-label">{{ $t('navbar.pin') }}</span>
+            <span class="metric-label">{{ $t('navbar.clients') }}</span>
           </div>
           <div class="host-metric">
             <span class="metric-value">{{ appsCount ?? '—' }}</span>
@@ -126,7 +126,7 @@ const quickActions = [
     id: 'pin',
     href: '/pin',
     icon: 'fas fa-link',
-    labelKey: 'navbar.pin',
+    labelKey: 'navbar.clients',
     descriptionKey: 'pin.pin_pairing',
     primary: true,
   },
