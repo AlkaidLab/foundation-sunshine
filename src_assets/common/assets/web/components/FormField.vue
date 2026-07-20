@@ -26,7 +26,7 @@ export default {
 <style scoped>
 .required-field::after {
   content: ' *';
-  color: #dc3545;
+  color: var(--ui-danger);
 }
 
 .invalid-feedback,
@@ -37,10 +37,10 @@ export default {
 }
 
 .invalid-feedback {
-  color: #dc3545;
+  color: var(--ui-danger-text);
 }
 
 .valid-feedback {
-  color: #198754;
+  color: var(--ui-success-text);
 }
 </style>

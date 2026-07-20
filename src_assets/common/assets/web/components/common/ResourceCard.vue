@@ -2,9 +2,9 @@
   <div class="resource-section">
     <!-- Resources Card -->
     <div class="card shadow-sm">
-      <div class="card-header bg-primary bg-opacity-10 border-bottom-0">
+      <div class="card-header resource-card-header">
         <h5 class="card-title mb-0">
-          <i class="fas fa-book-open text-primary me-2"></i>
+          <i class="fas fa-book-open me-2"></i>
           {{ $t('resource_card.resources') }}
         </h5>
       </div>
@@ -190,7 +190,7 @@
         <!-- 友情链接 -->
         <div v-if="!compact || showExtendedResources" class="resource-group">
           <h6 class="resource-group-title">
-            <i class="fas fa-code-branch text-dark me-2"></i>
+            <i class="fas fa-code-branch me-2"></i>
             {{ $t('resource_card.third_party_moonlight') }}
           </h6>
           <div class="row g-3">
@@ -233,7 +233,7 @@
 
     <!-- Legal Card -->
     <div v-if="!compact || showExtendedResources" class="card shadow-sm mt-4">
-      <div class="card-header bg-danger bg-opacity-10 border-bottom-0">
+      <div class="card-header resource-card-header resource-card-header-danger">
         <h5 class="card-title mb-0">
           <i class="fas fa-gavel text-danger me-2"></i>
           {{ $t('resource_card.legal') }}
@@ -360,7 +360,7 @@ export default {
 <style scoped>
 .resource-group {
   padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .resource-group:last-child {
@@ -371,7 +371,7 @@ export default {
 .resource-group-title {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 1rem;
@@ -385,9 +385,9 @@ export default {
   margin-top: -0.35rem;
   padding: 0.75rem 0;
   border: 0;
-  border-top: 1px solid rgba(128, 128, 128, 0.15);
+  border-top: 1px solid var(--ui-border);
   background: transparent;
-  color: var(--bs-primary);
+  color: var(--ui-accent);
   font-size: 0.85rem;
   font-weight: 600;
   text-align: left;
@@ -395,7 +395,8 @@ export default {
 
 .resource-expand-toggle:hover,
 .resource-expand-toggle:focus-visible {
-  color: var(--bs-link-hover-color, var(--bs-primary));
+  color: var(--ui-accent);
+  background: var(--ui-accent-soft);
 }
 
 /* Resource Link Base */
@@ -403,16 +404,16 @@ export default {
   display: flex;
   align-items: center;
   padding: 1rem;
-  border-radius: 10px;
+  border-radius: var(--ui-radius-sm);
   text-decoration: none;
-  background: var(--bs-tertiary-bg, #f8f9fa);
-  border: 1px solid transparent;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .resource-link:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-sm);
   text-decoration: none;
 }
 
@@ -438,19 +439,19 @@ export default {
   display: block;
   font-weight: 600;
   font-size: 0.95rem;
-  color: var(--bs-body-color, #2c3e50);
+  color: var(--ui-text-primary);
   margin-bottom: 2px;
 }
 
 .resource-desc {
   display: block;
   font-size: 0.8rem;
-  color: var(--bs-body-color, #495057);
+  color: var(--ui-text-secondary);
 }
 
 .resource-arrow {
   font-size: 0.875rem;
-  color: var(--bs-secondary-color, #adb5bd);
+  color: var(--ui-text-muted);
   margin-left: 0.5rem;
   transition: transform 0.2s ease;
 }
@@ -557,13 +558,13 @@ export default {
 }
 
 .gpl-badge .text-muted {
-  color: var(--bs-secondary-color, rgba(255, 255, 255, 0.7)) !important;
+  color: var(--ui-text-secondary) !important;
 }
 
 /* GPL Violation Warning */
 .violation-warning {
-  background: linear-gradient(135deg, rgba(220, 53, 69, 0.1) 0%, rgba(220, 53, 69, 0.05) 100%);
-  border: 1px solid rgba(220, 53, 69, 0.3);
+  background: var(--ui-danger-soft);
+  border: 1px solid var(--ui-danger-border);
   border-radius: 12px;
   padding: 1.25rem;
 }
@@ -577,12 +578,12 @@ export default {
 .violation-title {
   font-size: 1rem;
   font-weight: 700;
-  color: #dc3545;
+  color: var(--ui-danger-text);
 }
 
 .violation-desc {
   font-size: 0.875rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
   margin-bottom: 1rem;
 }
 
@@ -597,9 +598,9 @@ export default {
   display: flex;
   align-items: flex-start;
   padding: 0.875rem;
-  background: rgba(220, 53, 69, 0.08);
+  background: color-mix(in srgb, var(--ui-danger) 8%, var(--ui-surface));
   border-radius: 8px;
-  border-left: 3px solid #dc3545;
+  border-left: 3px solid var(--ui-danger);
 }
 
 .violation-icon {
@@ -625,22 +626,22 @@ export default {
   display: block;
   font-weight: 600;
   font-size: 0.9rem;
-  color: #dc3545;
+  color: var(--ui-danger-text);
   margin-bottom: 2px;
 }
 
 .violation-reason {
   display: block;
   font-size: 0.8rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
 }
 
 .violation-notice {
   font-size: 0.8rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
   margin-bottom: 0;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--ui-surface);
   border-radius: 8px;
 }
 
@@ -681,8 +682,13 @@ export default {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-[data-bs-theme='dark'] .resource-group {
-  border-bottom-color: rgba(255, 255, 255, 0.1);
+.resource-card-header .card-title i,
+.resource-group-title i {
+  color: var(--ui-accent) !important;
+}
+
+.resource-card-header-danger .card-title i {
+  color: var(--ui-danger) !important;
 }
 
 /* Harmony Modal */
@@ -695,7 +701,7 @@ export default {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(45, 38, 40, 0.72);
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
@@ -705,27 +711,17 @@ export default {
   overflow: hidden;
 }
 
-[data-bs-theme='light'] .harmony-modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
-}
-
 .harmony-modal {
-  background: rgba(30, 30, 50, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 500px;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--ui-shadow-md);
   animation: harmonyModalSlideUp 0.3s ease;
-}
-
-[data-bs-theme='light'] .harmony-modal {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
 }
 
 @keyframes harmonyModalSlideUp {
@@ -738,33 +734,21 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .harmony-modal-header h5 {
   margin: 0;
-  color: #fff;
+  color: var(--ui-text-primary);
   font-size: 1.1rem;
   font-weight: 600;
-}
-
-[data-bs-theme='light'] .harmony-modal-header {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-[data-bs-theme='light'] .harmony-modal-header h5 {
-  color: #000;
 }
 
 .harmony-modal-body {
   padding: 24px;
   font-size: 0.95rem;
   line-height: 1.5;
-  color: #fff;
-}
-
-[data-bs-theme='light'] .harmony-modal-body {
-  color: #000;
+  color: var(--ui-text-primary);
 }
 
 .harmony-modal-footer {
@@ -772,11 +756,8 @@ export default {
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-[data-bs-theme='light'] .harmony-modal-footer {
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  border-top: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
 }
 
 .fade-enter-active,

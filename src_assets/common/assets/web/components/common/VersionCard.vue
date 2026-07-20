@@ -1,8 +1,8 @@
 <template>
   <div class="card shadow-sm mb-4" v-if="version">
-    <div class="card-header bg-info bg-opacity-10 border-bottom-0">
+    <div class="card-header version-card-header">
       <h5 class="card-title mb-0">
-        <i class="fas fa-code-branch text-info me-2"></i>
+        <i class="fas fa-code-branch me-2"></i>
         Version {{ version.version }}
       </h5>
     </div>
@@ -259,48 +259,44 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 1rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
   font-size: 0.95rem;
 }
 
 /* Version Alerts */
 .version-alert {
-  border-radius: 8px;
+  border-radius: var(--ui-radius-sm);
   font-size: 0.9rem;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
   display: flex;
   align-items: center;
-  border: none;
+  border: 1px solid transparent;
 }
 
 .version-alert-success {
-  background: rgba(40, 167, 69, 0.1);
-  color: #155724;
-  border-left: 4px solid #28a745;
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success-text);
+  border-color: color-mix(in srgb, var(--ui-success) 30%, transparent);
+  border-left: 4px solid var(--ui-success);
 }
 
 .version-alert-info {
-  background: rgba(0, 123, 255, 0.1);
-  color: #004085;
-  border-left: 4px solid #007bff;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  border-color: var(--ui-border);
+  border-left: 4px solid var(--ui-accent);
 }
 
-[data-bs-theme='dark'] .version-alert-success {
-  background: rgba(40, 167, 69, 0.2);
-  color: #6cff8f;
-}
-
-[data-bs-theme='dark'] .version-alert-info {
-  background: rgba(0, 123, 255, 0.2);
-  color: #6cb2ff;
+.version-card-header .card-title i {
+  color: var(--ui-accent);
 }
 
 /* Version Update Section */
 .version-update {
-  background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 193, 7, 0.05) 100%);
-  border: 1px solid rgba(255, 193, 7, 0.3);
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--ui-warning) 10%, var(--ui-surface));
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 30%, transparent);
+  border-radius: var(--ui-radius-md);
   padding: 1.25rem;
   margin-top: 1rem;
 }
@@ -319,7 +315,7 @@ onBeforeUnmount(() => {
   align-items: center;
   font-size: 1rem;
   font-weight: 600;
-  color: var(--bs-body-color, #2c3e50);
+  color: var(--ui-text-primary);
   flex: 1;
   min-width: 200px;
 }
@@ -337,7 +333,7 @@ onBeforeUnmount(() => {
   align-items: center;
   margin-left: 0.55rem;
   padding: 0.12rem 0.4rem;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 600;
@@ -345,30 +341,25 @@ onBeforeUnmount(() => {
 }
 
 .btn-download:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .version-release-name {
   font-size: 1.3rem;
   font-weight: 600;
   margin: 1rem 0 0.75rem 0;
-  color: var(--bs-body-color, #2c3e50);
+  color: var(--ui-text-primary);
 }
 
 /* Markdown Content */
 .markdown-content {
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 8px;
+  background: var(--ui-surface);
+  border-radius: var(--ui-radius-sm);
   padding: 1.25rem;
   margin-top: 1rem;
   line-height: 1.6;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-[data-bs-theme='dark'] .markdown-content {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--ui-border);
 }
 
 .markdown-content h1,
@@ -381,7 +372,7 @@ onBeforeUnmount(() => {
   margin-bottom: 0.75rem;
   font-weight: 600;
   line-height: 1.25;
-  color: var(--bs-body-color, #2c3e50);
+  color: var(--ui-text-primary);
 }
 
 .markdown-content h1:first-child,
@@ -405,7 +396,7 @@ onBeforeUnmount(() => {
 .markdown-content p {
   margin-bottom: 0.75rem;
   white-space: pre-line;
-  color: var(--bs-body-color, #495057);
+  color: var(--ui-text-secondary);
 }
 
 .markdown-content ul,
@@ -416,35 +407,25 @@ onBeforeUnmount(() => {
 
 .markdown-content li {
   margin-bottom: 0.5rem;
-  color: var(--bs-body-color, #495057);
+  color: var(--ui-text-secondary);
 }
 
 .markdown-content code {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--ui-accent-soft);
   padding: 0.2em 0.4em;
   border-radius: 4px;
   font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
   font-size: 0.9em;
-  color: #e83e8c;
-}
-
-[data-bs-theme='dark'] .markdown-content code {
-  background: rgba(255, 255, 255, 0.15);
-  color: #ff6b9d;
+  color: var(--ui-accent);
 }
 
 .markdown-content pre {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--ui-surface-strong);
   padding: 1rem;
   border-radius: 8px;
   overflow-x: auto;
   margin: 1rem 0;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-[data-bs-theme='dark'] .markdown-content pre {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--ui-border);
 }
 
 .markdown-content pre code {
@@ -454,22 +435,22 @@ onBeforeUnmount(() => {
 }
 
 .markdown-content blockquote {
-  border-left: 4px solid #007bff;
+  border-left: 4px solid var(--ui-accent);
   margin: 1rem 0;
   padding-left: 1rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
   font-style: italic;
 }
 
 .markdown-content a {
-  color: #007bff;
+  color: var(--ui-accent);
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease;
 }
 
 .markdown-content a:hover {
-  color: #0056b3;
+  color: var(--ui-accent);
   text-decoration: underline;
 }
 
@@ -483,37 +464,14 @@ onBeforeUnmount(() => {
 
 .markdown-content th,
 .markdown-content td {
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--ui-border);
   padding: 0.75rem 1rem;
   text-align: left;
 }
 
-[data-bs-theme='dark'] .markdown-content th,
-[data-bs-theme='dark'] .markdown-content td {
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
 .markdown-content th {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--ui-surface-strong);
   font-weight: 600;
-}
-
-[data-bs-theme='dark'] .markdown-content th {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-/* Dark Mode Adjustments */
-[data-bs-theme='dark'] .version-update {
-  background: linear-gradient(135deg, rgba(255, 193, 7, 0.15) 0%, rgba(255, 193, 7, 0.08) 100%);
-  border-color: rgba(255, 193, 7, 0.3);
-}
-
-[data-bs-theme='dark'] .version-update-title {
-  color: #e0e0e0;
-}
-
-[data-bs-theme='dark'] .version-release-name {
-  color: #e0e0e0;
 }
 
 /* Download Confirm Modal（与 AudioVideo 一致） */
@@ -526,37 +484,27 @@ onBeforeUnmount(() => {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  background: rgba(45, 38, 40, 0.72);
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-lg, 20px);
+  padding: 20px;
   overflow: hidden;
 }
 
-[data-bs-theme='light'] .download-confirm-overlay {
-  background: rgba(0, 0, 0, 0.5);
-}
-
 .download-confirm-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 500px;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  box-shadow: var(--ui-shadow-md);
   animation: modalSlideUp 0.3s ease;
-}
-
-[data-bs-theme='light'] .download-confirm-modal {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
 }
 
 .download-confirm-header {
@@ -564,31 +512,27 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-}
-
-[data-bs-theme='light'] .download-confirm-header {
-  border-bottom-color: rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .download-confirm-header h5 {
   margin: 0;
   font-size: 1.125rem;
   font-weight: 600;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
   display: flex;
   align-items: center;
 }
 
 .download-confirm-header h5 i {
-  color: var(--bs-primary);
+  color: var(--ui-accent);
 }
 
 .download-confirm-header .btn-close {
   background: none;
   border: none;
   font-size: 1.5rem;
-  color: var(--bs-secondary-color);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   padding: 0;
   width: 1.5rem;
@@ -610,7 +554,7 @@ onBeforeUnmount(() => {
 
 .download-confirm-body {
   padding: 1.5rem;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
 }
 
 .download-confirm-body p {
@@ -624,11 +568,8 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 1.25rem 1.5rem;
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-}
-
-[data-bs-theme='light'] .download-confirm-footer {
-  border-top-color: rgba(0, 0, 0, 0.1);
+  border-top: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
 }
 
 @keyframes modalSlideUp {
