@@ -1,5 +1,5 @@
 <template>
-  <nav class="navbar navbar-light navbar-expand-lg navbar-background header">
+  <nav class="navbar navbar-light navbar-expand-md navbar-background header">
     <div class="container-fluid">
       <a class="navbar-brand brand-enhanced" href="/" title="Sunshine">
         <img src="/images/logo-sunshine-256.png" height="50" alt="Sunshine-Foundation" class="brand-logo" />
@@ -16,7 +16,7 @@
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
-        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <ul class="navbar-nav me-auto mb-2 mb-md-0">
           <li v-for="item in navItems" :key="item.path" class="nav-item">
             <a
               class="nav-link"
@@ -28,7 +28,7 @@
             </a>
           </li>
         </ul>
-        <div class="navbar-utilities ms-lg-2">
+        <div class="navbar-utilities ms-md-2">
           <ThemeToggle />
           <AccountMenu />
         </div>
@@ -214,7 +214,7 @@ onUnmounted(() => {
   opacity: 0.5;
 }
 
-@media (max-width: 991.98px) {
+@media (max-width: 767.98px) {
   .header .navbar-utilities {
     align-items: stretch;
     flex-direction: column;
