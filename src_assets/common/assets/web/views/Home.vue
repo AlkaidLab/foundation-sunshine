@@ -54,20 +54,16 @@
         </div>
 
         <nav class="quick-actions" :aria-label="$t('resource_card.quick_start')">
-          <a class="quick-action quick-action-primary" href="/pin">
-            <i class="fas fa-link" aria-hidden="true"></i>
-            <span>{{ $t('navbar.pin') }}</span>
-            <small>{{ $t('pin.pin_pairing') }}</small>
-          </a>
-          <a class="quick-action" href="/apps">
-            <i class="fas fa-gamepad" aria-hidden="true"></i>
-            <span>{{ $t('navbar.applications') }}</span>
-            <small>{{ $t('apps.applications_title') }}</small>
-          </a>
-          <a class="quick-action" href="/config">
-            <i class="fas fa-sliders-h" aria-hidden="true"></i>
-            <span>{{ $t('navbar.configuration') }}</span>
-            <small>{{ $t('config.configuration') }}</small>
+          <a
+            v-for="action in quickActions"
+            :key="action.id"
+            class="quick-action"
+            :class="{ 'quick-action-primary': action.primary }"
+            :href="action.href"
+          >
+            <i :class="action.icon" aria-hidden="true"></i>
+            <span>{{ $t(action.labelKey) }}</span>
+            <small>{{ $t(action.descriptionKey) }}</small>
           </a>
         </nav>
       </section>
@@ -124,6 +120,31 @@ const hostConfig = ref(null)
 const hostStatus = ref('loading')
 const appsCount = ref(null)
 const clientsCount = ref(null)
+
+const quickActions = [
+  {
+    id: 'pin',
+    href: '/pin',
+    icon: 'fas fa-link',
+    labelKey: 'navbar.pin',
+    descriptionKey: 'pin.pin_pairing',
+    primary: true,
+  },
+  {
+    id: 'apps',
+    href: '/apps',
+    icon: 'fas fa-gamepad',
+    labelKey: 'navbar.applications',
+    descriptionKey: 'apps.applications_title',
+  },
+  {
+    id: 'config',
+    href: '/config',
+    icon: 'fas fa-sliders-h',
+    labelKey: 'navbar.configuration',
+    descriptionKey: 'config.configuration',
+  },
+]
 
 const statusLabel = computed(() => {
   if (hostStatus.value === 'loading') return t('index.loading_latest')

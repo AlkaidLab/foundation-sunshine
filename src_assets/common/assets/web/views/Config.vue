@@ -72,75 +72,59 @@
       </div>
     </div>
 
-    <Teleport to="body">
-      <Transition name="risk-modal">
-        <div v-if="showRiskConfirm" class="risk-confirm-overlay" @click.self="cancelRiskConfirm">
-          <div
-            ref="riskDialogRef"
-            class="risk-confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="risk-confirm-title"
-            tabindex="-1"
-            @keydown.esc.prevent="cancelRiskConfirm"
-            @keydown.tab="trapRiskFocus"
-          >
-            <div class="risk-confirm-header">
-              <div>
-                <h5 id="risk-confirm-title">
-                  <i class="fas fa-exclamation-triangle me-2"></i>
-                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.title_apply' : 'config.risk_confirm.title_save') }}
-                </h5>
-                <p>
-                  {{ $t(riskAction === 'apply' ? 'config.risk_confirm.intro_apply' : 'config.risk_confirm.intro_save') }}
-                </p>
-              </div>
-              <button type="button" class="btn-close" @click="cancelRiskConfirm" :aria-label="$t('_common.close')"></button>
-            </div>
-
-            <div class="risk-confirm-body">
-              <div
-                v-for="risk in riskItems"
-                :key="risk.id"
-                class="risk-item"
-                :class="risk.severity"
-              >
-                <div class="risk-item-header">
-                  <span class="risk-badge" :class="risk.severity">
-                    {{ $t(`config.risk_confirm.severity_${risk.severity}`) }}
-                  </span>
-                  <strong>{{ $t(risk.titleKey) }}</strong>
-                </div>
-                <p>{{ $t(risk.descriptionKey) }}</p>
-                <div v-if="risk.currentValue" class="risk-detail">
-                  <span>{{ $t('config.risk_confirm.value_label') }}</span>
-                  <code>{{ risk.currentValue }}</code>
-                </div>
-                <div v-if="risk.recoveryKey" class="risk-recovery">
-                  <span>{{ $t('config.risk_confirm.recovery_label') }}</span>
-                  <p>{{ $t(risk.recoveryKey) }}</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="risk-confirm-footer">
-              <button type="button" class="btn btn-secondary" @click="cancelRiskConfirm" :disabled="riskActionRunning">
-                {{ $t('_common.cancel') }}
-              </button>
-              <button
-                type="button"
-                class="btn btn-danger"
-                @click="confirmRiskAction"
-                :disabled="riskActionRunning"
-              >
-                <i v-if="riskActionRunning" class="fas fa-spinner fa-spin me-1"></i>
-                {{ $t(riskAction === 'apply' ? 'config.risk_confirm.confirm_apply' : 'config.risk_confirm.confirm_save') }}
-              </button>
-            </div>
+    <ConfirmDialog
+      :show="showRiskConfirm"
+      dialog-id="risk-confirm"
+      :title="$t(riskAction === 'apply' ? 'config.risk_confirm.title_apply' : 'config.risk_confirm.title_save')"
+      title-icon="fas fa-exclamation-triangle"
+      tone="danger"
+      max-width="720px"
+      :close-label="$t('_common.close')"
+      @close="cancelRiskConfirm"
+    >
+      <p class="risk-confirm-intro">
+        {{ $t(riskAction === 'apply' ? 'config.risk_confirm.intro_apply' : 'config.risk_confirm.intro_save') }}
+      </p>
+      <div class="risk-confirm-list">
+        <div
+          v-for="risk in riskItems"
+          :key="risk.id"
+          class="risk-item"
+          :class="risk.severity"
+        >
+          <div class="risk-item-header">
+            <span class="risk-badge" :class="risk.severity">
+              {{ $t(`config.risk_confirm.severity_${risk.severity}`) }}
+            </span>
+            <strong>{{ $t(risk.titleKey) }}</strong>
+          </div>
+          <p>{{ $t(risk.descriptionKey) }}</p>
+          <div v-if="risk.currentValue" class="risk-detail">
+            <span>{{ $t('config.risk_confirm.value_label') }}</span>
+            <code>{{ risk.currentValue }}</code>
+          </div>
+          <div v-if="risk.recoveryKey" class="risk-recovery">
+            <span>{{ $t('config.risk_confirm.recovery_label') }}</span>
+            <p>{{ $t(risk.recoveryKey) }}</p>
           </div>
         </div>
-      </Transition>
-    </Teleport>
+      </div>
+
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="cancelRiskConfirm" :disabled="riskActionRunning">
+          {{ $t('_common.cancel') }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-danger"
+          @click="confirmRiskAction"
+          :disabled="riskActionRunning"
+        >
+          <i v-if="riskActionRunning" class="fas fa-spinner fa-spin me-1"></i>
+          {{ $t(riskAction === 'apply' ? 'config.risk_confirm.confirm_apply' : 'config.risk_confirm.confirm_save') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
     <div class="container">
       <h1 class="my-4 page-title">{{ $t('config.configuration') }}</h1>
@@ -247,6 +231,7 @@
 <script setup>
 import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useConfig } from '../composables/useConfig.js'
 import { initFirebase, trackEvents } from '../config/firebase.js'
 
@@ -289,8 +274,6 @@ const showRiskConfirm = ref(false)
 const riskAction = ref('save')
 const riskItems = ref([])
 const riskActionRunning = ref(false)
-const riskDialogRef = ref(null)
-const lastFocusedElement = ref(null)
 const configTabsRef = ref(null)
 
 const hasUnsaved = computed(() => {
@@ -345,62 +328,6 @@ const showToast = (toastRef, duration = 5000) => {
   }, duration)
 }
 
-const getRiskFocusableElements = () => {
-  const root = riskDialogRef.value
-  if (!root) return []
-
-  return Array.from(
-    root.querySelectorAll(
-      [
-        'button:not([disabled])',
-        '[href]',
-        'input:not([disabled])',
-        'select:not([disabled])',
-        'textarea:not([disabled])',
-        '[tabindex]:not([tabindex="-1"])',
-      ].join(','),
-    ),
-  ).filter((element) => element.offsetParent !== null)
-}
-
-const focusRiskDialog = async () => {
-  await nextTick()
-  const focusable = getRiskFocusableElements()
-  const target = focusable[0] || riskDialogRef.value
-  target?.focus?.()
-}
-
-const restoreRiskFocus = () => {
-  const target = lastFocusedElement.value
-  lastFocusedElement.value = null
-
-  if (target && document.contains(target)) {
-    target.focus?.()
-  }
-}
-
-const trapRiskFocus = (event) => {
-  const focusable = getRiskFocusableElements()
-  if (!focusable.length) {
-    event.preventDefault()
-    riskDialogRef.value?.focus?.()
-    return
-  }
-
-  const currentIndex = focusable.indexOf(document.activeElement)
-  const lastIndex = focusable.length - 1
-  let nextIndex = currentIndex + 1
-
-  if (event.shiftKey) {
-    nextIndex = currentIndex <= 0 ? lastIndex : currentIndex - 1
-  } else if (currentIndex === -1 || currentIndex >= lastIndex) {
-    nextIndex = 0
-  }
-
-  event.preventDefault()
-  focusable[nextIndex].focus()
-}
-
 const runConfigAction = async (action) => {
   if (riskActionRunning.value) return
 
@@ -421,7 +348,6 @@ const requestConfigAction = async (action) => {
 
   const risks = getRiskyChanges(action)
   if (risks.length > 0) {
-    lastFocusedElement.value = document.activeElement
     riskAction.value = action
     riskItems.value = risks
     showRiskConfirm.value = true
@@ -445,15 +371,6 @@ const confirmRiskAction = async () => {
   await runConfigAction(action)
   riskItems.value = []
 }
-
-watch(showRiskConfirm, async (isOpen) => {
-  if (isOpen) {
-    await focusRiskDialog()
-    return
-  }
-
-  restoreRiskFocus()
-})
 
 watch(currentTab, scrollActiveTabIntoView)
 
@@ -495,7 +412,6 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('hashchange', handleHash)
   document.removeEventListener('click', handleOutsideClick)
-  lastFocusedElement.value = null
 })
 </script>
 
@@ -897,85 +813,14 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-.risk-modal-enter-active,
-.risk-modal-leave-active {
-  transition: opacity @transition-fast ease;
-
-  .risk-confirm-modal {
-    transition: transform @transition-fast @cubic-smooth, opacity @transition-fast ease;
-  }
+.risk-confirm-intro {
+  margin: 0 0 1rem;
+  color: var(--ui-text-secondary);
 }
 
-.risk-modal-enter-from,
-.risk-modal-leave-to {
-  opacity: 0;
-
-  .risk-confirm-modal {
-    opacity: 0;
-    transform: translateY(16px) scale(0.98);
-  }
-}
-
-.risk-confirm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 1.5rem);
-  background: var(--ui-overlay);
-  backdrop-filter: blur(8px);
-}
-
-.risk-confirm-modal {
-  width: min(720px, 100%);
-  max-height: min(760px, calc(100vh - 2.5rem));
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: var(--ui-radius-lg);
-  border: 1px solid var(--ui-border);
-  background: var(--ui-surface-strong);
-  backdrop-filter: blur(20px);
-  box-shadow: var(--ui-shadow-md);
-  color: var(--ui-text-primary);
-}
-
-.risk-confirm-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
-  border-bottom: 1px solid var(--ui-border);
-
-  h5 {
-    margin: 0 0 0.35rem;
-    font-size: var(--font-size-lg, 1.25rem);
-    font-weight: 600;
-    color: var(--ui-text-primary);
-
-    i {
-      color: var(--ui-danger);
-    }
-  }
-
-  p {
-    margin: 0;
-    color: var(--ui-text-secondary);
-    line-height: 1.5;
-  }
-
-  .btn-close {
-    flex: 0 0 auto;
-  }
-
-}
-
-.risk-confirm-body {
-  overflow-y: auto;
-  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
+.risk-confirm-list {
+  display: grid;
+  gap: 0.75rem;
 }
 
 .risk-item {
@@ -983,10 +828,6 @@ onUnmounted(() => {
   border: 1px solid var(--ui-border);
   border-radius: @border-radius-md;
   background: var(--ui-surface);
-
-  & + & {
-    margin-top: 0.75rem;
-  }
 
   &.critical {
     border-color: var(--ui-danger-border);
@@ -1073,39 +914,11 @@ onUnmounted(() => {
     background: var(--ui-accent-soft);
   }
 
-  [data-bs-theme='light'] & {
-    border-top-color: var(--ui-border);
-
-    span {
-      color: var(--ui-text-secondary);
-    }
-
-    code {
-      color: var(--ui-text-primary);
-      background: var(--ui-accent-soft);
-    }
-  }
 }
 
 .risk-recovery p {
   margin: 0;
   color: var(--ui-text-secondary);
-
-  [data-bs-theme='light'] & {
-    color: var(--ui-text-secondary);
-  }
-}
-
-.risk-confirm-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: var(--spacing-md, 1rem) var(--spacing-lg, 1.5rem);
-  border-top: 1px solid var(--ui-border);
-
-  [data-bs-theme='light'] & {
-    border-top-color: var(--ui-border);
-  }
 }
 
 .config-floating-buttons {

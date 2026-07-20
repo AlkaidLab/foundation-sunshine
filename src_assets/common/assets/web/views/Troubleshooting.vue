@@ -169,77 +169,55 @@
       @diagnose="handleDiagnose"
     />
 
-    <!-- Boom Confirm Modal -->
-    <Transition name="fade">
-      <div v-if="showBoomConfirmModal" class="boom-confirm-overlay" @click.self="closeBoomModal">
-        <div class="boom-confirm-modal">
-          <div class="boom-confirm-header">
-            <h5>
-              <i class="fas fa-bomb me-2"></i>{{ $t('troubleshooting.confirm_boom') }}
-            </h5>
-            <button class="btn-close" @click="closeBoomModal"></button>
-          </div>
-          <div class="boom-confirm-body">
-            <p>{{ $t('troubleshooting.confirm_boom_desc') }}</p>
-          </div>
-          <div class="boom-confirm-footer">
-            <button type="button" class="btn btn-secondary" @click="closeBoomModal">
-              {{ $t('_common.cancel') }}
-            </button>
-            <button type="button" class="btn btn-danger" @click="confirmBoom">
-              <i class="fas fa-bomb me-2"></i>{{ $t('troubleshooting.boom_sunshine') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showBoomConfirmModal"
+      dialog-id="boom-confirm"
+      :title="$t('troubleshooting.confirm_boom')"
+      title-icon="fas fa-bomb"
+      tone="danger"
+      :close-label="$t('_common.close')"
+      @close="closeBoomModal"
+    >
+      <p>{{ $t('troubleshooting.confirm_boom_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeBoomModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-danger" @click="confirmBoom">
+          <i class="fas fa-bomb me-2"></i>{{ $t('troubleshooting.boom_sunshine') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Logout Confirm Modal -->
-    <Transition name="fade">
-      <div v-if="showLogoutConfirmModal" class="boom-confirm-overlay" @click.self="closeLogoutModal">
-        <div class="boom-confirm-modal">
-          <div class="boom-confirm-header">
-            <h5>
-              <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.confirm_logout') }}
-            </h5>
-            <button class="btn-close" @click="closeLogoutModal"></button>
-          </div>
-          <div class="boom-confirm-body">
-            <p>{{ $t('troubleshooting.confirm_logout_desc') }}</p>
-          </div>
-          <div class="boom-confirm-footer">
-            <button type="button" class="btn btn-secondary" @click="closeLogoutModal">
-              {{ $t('_common.cancel') }}
-            </button>
-            <button type="button" class="btn btn-danger" @click="confirmLogout">
-              <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.logout') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showLogoutConfirmModal"
+      dialog-id="logout-confirm"
+      :title="$t('troubleshooting.confirm_logout')"
+      title-icon="fas fa-sign-out-alt"
+      tone="danger"
+      :close-label="$t('_common.close')"
+      @close="closeLogoutModal"
+    >
+      <p>{{ $t('troubleshooting.confirm_logout_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeLogoutModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-danger" @click="confirmLogout">
+          <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.logout') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Localhost 登出提醒弹窗（200 时显示） -->
-    <Transition name="fade">
-      <div v-if="showLocalhostLogoutModal" class="boom-confirm-overlay" @click.self="closeLocalhostLogoutModal">
-        <div class="boom-confirm-modal">
-          <div class="boom-confirm-header">
-            <h5>
-              <i class="fas fa-info-circle me-2"></i>{{ $t('troubleshooting.logout') }}
-            </h5>
-            <button class="btn-close" @click="closeLocalhostLogoutModal"></button>
-          </div>
-          <div class="boom-confirm-body">
-            <p>{{ $t('troubleshooting.logout_localhost_tip') }}</p>
-          </div>
-          <div class="boom-confirm-footer">
-            <button type="button" class="btn btn-primary" @click="closeLocalhostLogoutModal">
-              {{ $t('_common.close') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showLocalhostLogoutModal"
+      dialog-id="localhost-logout-notice"
+      :title="$t('troubleshooting.logout')"
+      title-icon="fas fa-info-circle"
+      :close-label="$t('_common.close')"
+      @close="closeLocalhostLogoutModal"
+    >
+      <p>{{ $t('troubleshooting.logout_localhost_tip') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-primary" @click="closeLocalhostLogoutModal">{{ $t('_common.close') }}</button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -250,6 +228,7 @@ import Navbar from '../components/layout/Navbar.vue'
 import TroubleshootingCard from '../components/TroubleshootingCard.vue'
 import LogsSection from '../components/LogsSection.vue'
 import LogDiagnosisModal from '../components/LogDiagnosisModal.vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useTroubleshooting } from '../composables/useTroubleshooting.js'
 import { useLogout } from '../composables/useLogout.js'
 import { useAiDiagnosis } from '../composables/useAiDiagnosis.js'
@@ -390,109 +369,6 @@ onMounted(async () => {
   border-radius: 8px;
   font-size: 0.9rem;
   padding: 0.75rem 1rem;
-}
-
-/* Boom Confirm Modal - 使用 ScanResultModal 样式 */
-.boom-confirm-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: rgba(45, 38, 40, 0.72);
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 20px);
-  overflow: hidden;
-  
-}
-
-.boom-confirm-modal {
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  width: 100%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--ui-shadow-md);
-  animation: modalSlideUp 0.3s ease;
-  
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.boom-confirm-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--ui-border);
-
-  h5 {
-    margin: 0;
-    color: var(--ui-text-primary);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm, 8px);
-  }
-  
-}
-
-.boom-confirm-body {
-  padding: var(--spacing-lg, 24px);
-  font-size: var(--font-size-md, 0.95rem);
-  line-height: 1.5;
-  overflow-y: auto;
-  flex: 1;
-  color: var(--ui-text-primary);
-}
-
-.boom-confirm-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--ui-border);
-  background: var(--ui-surface);
-}
-
-.boom-confirm-footer button {
-  padding: 8px 16px;
-  font-size: 0.9rem;
-}
-
-/* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
 }
 
 @media (max-width: 991.98px) {

@@ -224,32 +224,16 @@
                   {{ $t('setup.featured_services') }}
                 </h5>
                 <div class="promo-service-links">
-                  <a class="resource-link resource-link-primary"
-                     href="https://www.alkaidlab.com/"
-                     target="_blank"
-                     rel="noopener noreferrer">
-                    <div class="resource-icon resource-logo-icon">
-                      <img src="/images/logo-alkaidlab.png" alt="AlkaidLab" class="resource-logo-image">
-                    </div>
-                    <div class="resource-content">
-                      <span class="resource-title">{{ $t('resource_card.official_website_title') }}</span>
-                      <span class="resource-desc">{{ $t('resource_card.official_website_desc') }}</span>
-                    </div>
-                    <i class="fas fa-external-link-alt resource-arrow"></i>
-                  </a>
-                  <a class="resource-link resource-link-moonlink"
-                     href="https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE"
-                     target="_blank"
-                     rel="noopener noreferrer">
-                    <div class="resource-icon resource-logo-icon">
-                      <img src="/images/logo-natpierce.png" alt="皎月连" class="resource-logo-image">
-                    </div>
-                    <div class="resource-content">
-                      <span class="resource-title">{{ $t('resource_card.jiaoyuelian_title') }}</span>
-                      <span class="resource-desc">{{ $t('resource_card.jiaoyuelian_desc') }}</span>
-                    </div>
-                    <i class="fas fa-external-link-alt resource-arrow"></i>
-                  </a>
+                  <ResourceLink
+                    v-for="resource in FEATURED_RESOURCES"
+                    :key="resource.id"
+                    :href="resource.href"
+                    :title="resourceTitle(resource)"
+                    :description="resourceDescription(resource)"
+                    :image-src="resource.imageSrc"
+                    :image-alt="resource.imageAlt"
+                    :variant="resource.variant"
+                  />
                 </div>
               </div>
 
@@ -262,57 +246,17 @@
                 <div class="client-download-layout">
                   <!-- 左侧：应用下载链接 -->
                   <div class="client-links">
-                    <a class="resource-link resource-link-android"
-                       href="https://github.com/qiin2333/moonlight-vplus"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-android"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.android_vplus_title') }}</span>
-                        <span class="resource-desc">Android / Android TV</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-harmony"
-                       href="javascript:void(0)"
-                       @click.prevent="openHarmonyModal">
-                      <div class="resource-icon"><i class="fas fa-mobile-alt"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.harmony_client') }}</span>
-                        <span class="resource-desc">HarmonyOS NEXT</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-apple"
-                       href="https://apps.apple.com/cn/app/voidlink/id6747717070"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.voidlink_title') }}</span>
-                        <span class="resource-desc">iOS / iPadOS</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-apple"
-                       href="https://github.com/skyhua0224/moonlight-macos-enhanced"
-                       target="_blank"
-                       rel="noopener noreferrer">
-                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.moonlight_macos_enhanced') }}</span>
-                        <span class="resource-desc">{{ $t('resource_card.moonlight_macos_enhanced_desc') }}</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-desktop"
-                       href="https://github.com/qiin2333/moonlight-qt"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fas fa-desktop"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.moonlight_pc_title') }}</span>
-                        <span class="resource-desc">Windows / macOS / Linux</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
+                    <ResourceLink
+                      v-for="resource in setupClientResources"
+                      :key="resource.id"
+                      :href="resource.href"
+                      :target="resource.action ? '' : '_blank'"
+                      :title="resourceTitle(resource)"
+                      :description="resourceDescription(resource)"
+                      :icon="resource.icon"
+                      :variant="resource.variant"
+                      @activate="handleResourceActivate(resource, $event)"
+                    />
                   </div>
                   <!-- 右侧：二维码 -->
                   <div class="client-qrcodes">
@@ -378,78 +322,65 @@
           </button>
       </div>
     </div>
-    <!-- Skip Wizard Modal -->
-    <Transition name="fade">
-      <div v-if="showSkipModal" class="skip-wizard-overlay" @click.self="closeSkipModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>{{ $t('setup.skip_confirm_title')}}</h5>
-            <button class="btn-close" @click="closeSkipModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.skip_confirm') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showSkipModal"
+      dialog-id="skip-wizard-confirm"
+      :title="$t('setup.skip_confirm_title')"
+      title-icon="fas fa-forward"
+      tone="warning"
+      :close-label="$t('_common.close')"
+      @close="closeSkipModal"
+    >
+      <p>{{ $t('setup.skip_confirm') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Harmony Link Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showHarmonyModal" class="skip-wizard-overlay" @click.self="closeHarmonyModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>鸿蒙Moonlight V+</h5>
-            <button class="btn-close" @click="closeHarmonyModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
-            <p>{{ $t('setup.harmony_modal_desc') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
-              <i class="fas fa-external-link-alt me-1"></i>
-              {{ $t('setup.harmony_goto_repo') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-    </Teleport>
+    <ConfirmDialog
+      :show="showHarmonyModal"
+      dialog-id="setup-harmony-link"
+      :title="$t('resource_card.harmony_client')"
+      title-icon="fas fa-mobile-alt"
+      :close-label="$t('_common.close')"
+      @close="closeHarmonyModal"
+    >
+      <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
+      <p>{{ $t('setup.harmony_modal_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
+          <i class="fas fa-external-link-alt me-1"></i>
+          {{ $t('setup.harmony_goto_repo') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Restart Countdown Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showRestartModal" class="skip-wizard-overlay">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5><i class="fas fa-sync-alt me-2"></i>{{ $t('setup.restart_title') }}</h5>
-          </div>
-          <div class="skip-wizard-body text-center">
-            <p>{{ $t('setup.restart_desc') }}</p>
-            <div class="restart-countdown my-3">
-              <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
-              <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
-            </div>
-            <div class="progress" style="height: 6px;">
-              <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
-            </div>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
-              <i class="fas fa-arrow-right me-1"></i>
-              {{ $t('setup.restart_go_now') }}
-            </button>
-          </div>
+    <ConfirmDialog
+      :show="showRestartModal"
+      dialog-id="setup-restart-countdown"
+      :title="$t('setup.restart_title')"
+      title-icon="fas fa-sync-alt"
+      :dismissible="false"
+    >
+      <div class="text-center">
+        <p>{{ $t('setup.restart_desc') }}</p>
+        <div class="restart-countdown my-3">
+          <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
+          <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
+        </div>
+        <div class="progress" style="height: 6px;">
+          <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
         </div>
       </div>
-    </Transition>
-    </Teleport>
+      <template #actions>
+        <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
+          <i class="fas fa-arrow-right me-1"></i>
+          {{ $t('setup.restart_go_now') }}
+        </button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -459,6 +390,22 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
 import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
+import ResourceLink from './common/ResourceLink.vue'
+import ConfirmDialog from './common/ConfirmDialog.vue'
+import {
+  CLIENT_RESOURCES,
+  FEATURED_RESOURCES,
+  HARMONY_CLIENT_URL,
+  resolveResourceText,
+} from '../config/resources.js'
+
+const SETUP_CLIENT_RESOURCE_ORDER = [
+  'android-vplus',
+  'harmony-vplus',
+  'voidlink',
+  'moonlight-macos',
+  'moonlight-desktop',
+]
 
 // 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
 // 因此把系统语言探测结果折叠到这两者之一即可
@@ -478,6 +425,7 @@ function markLanguageSavedForReload() {
 
 export default {
   name: 'SetupWizard',
+  components: { ConfirmDialog, ResourceLink },
   props: {
     adapters: {
       type: Array,
@@ -515,7 +463,7 @@ export default {
     }
   },
   setup() {
-    return {}
+    return { FEATURED_RESOURCES }
   },
   mounted() {
     // 记录进入设置向导
@@ -570,9 +518,24 @@ export default {
         seen.add(name)
         return true
       })
+    },
+    setupClientResources() {
+      const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
+      return SETUP_CLIENT_RESOURCE_ORDER.map((id) => resourcesById.get(id)).filter(Boolean)
     }
   },
   methods: {
+    resourceTitle(resource) {
+      return resolveResourceText(this.$t, resource, 'title')
+    },
+    resourceDescription(resource) {
+      return resolveResourceText(this.$t, resource, 'description')
+    },
+    handleResourceActivate(resource, event) {
+      if (resource.action !== 'harmony') return
+      event.preventDefault()
+      this.openHarmonyModal()
+    },
     previousStep() {
       if (this.currentStep > 1) {
         this.currentStep--
@@ -697,7 +660,7 @@ export default {
     async confirmHarmonyLink() {
       this.closeHarmonyModal()
       try {
-        await openExternalUrl('https://github.com/AlkaidLab/moonlight-harmony')
+        await openExternalUrl(HARMONY_CLIENT_URL)
       } catch (error) {
         console.error('Failed to open URL:', error)
       }
@@ -1271,117 +1234,6 @@ export default {
   min-width: 0;
 }
 
-/* Resource link styles (from ResourceCard) */
-.resource-link {
-  display: flex;
-  align-items: center;
-  padding: 0.6em 0.8em;
-  border-radius: 8px;
-  text-decoration: none;
-  background: linear-gradient(135deg, rgba(var(--link-color), 0.15) 0%, rgba(var(--link-color), 0.08) 100%);
-  border: 1px solid var(--ui-border);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.resource-link:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--ui-shadow-sm);
-  text-decoration: none;
-  border-color: rgba(var(--link-color), 0.4);
-}
-
-.resource-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.1rem;
-  flex-shrink: 0;
-  margin-right: 0.8em;
-  color: white;
-  background: var(--icon-gradient);
-}
-
-.resource-logo-icon {
-  width: 86px;
-  height: 44px;
-  padding: 4px;
-  background: #fff;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
-  overflow: visible;
-}
-
-.resource-logo-image {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  border-radius: 0;
-}
-
-.resource-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.resource-title {
-  display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--ui-text-primary);
-  margin-bottom: 1px;
-}
-
-.resource-desc {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--ui-text-secondary);
-}
-
-.resource-arrow {
-  font-size: 0.8rem;
-  color: var(--ui-text-secondary);
-  margin-left: 0.5rem;
-  transition: transform 0.2s ease;
-}
-
-.resource-link:hover .resource-arrow {
-  transform: translateX(3px);
-}
-
-.resource-link-android {
-  --link-color: 61, 220, 132;
-  --icon-gradient: linear-gradient(135deg, #3ddc84 0%, #00c853 100%);
-}
-
-.resource-link-apple {
-  --link-color: 128, 128, 128;
-  --icon-gradient: linear-gradient(135deg, #555 0%, #777 100%);
-}
-
-.resource-link-desktop {
-  --link-color: 108, 117, 125;
-  --icon-gradient: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-}
-
-.resource-link-harmony {
-  --link-color: 206, 48, 48;
-  --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
-}
-
-.resource-link-primary {
-  --link-color: 13, 110, 253;
-  --icon-gradient: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
-}
-
-.resource-link-moonlink {
-  --link-color: 111, 66, 193;
-  --icon-gradient: linear-gradient(135deg, #6f42c1 0%, #4c2f8f 100%);
-}
-
 .qr-code-item {
   display: flex;
   flex-direction: column;
@@ -1439,122 +1291,12 @@ export default {
   margin-bottom: 1rem;
 }
 
-/* Skip Wizard Modal - 使用 ScanResultModal 样式 */
-.skip-wizard-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: rgba(45, 38, 40, 0.72);
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  overflow: hidden;
-}
-
-.skip-wizard-modal {
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  width: 100%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--ui-shadow-md);
-  animation: modalSlideUp 0.3s ease;
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.skip-wizard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--ui-border);
-
-  h5 {
-    margin: 0;
-    color: var(--ui-text-primary);
-    font-size: 1.1rem;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-}
-
-.skip-wizard-body {
-  padding: 24px;
-  font-size: 0.95rem;
-  line-height: 1.5;
-  overflow-y: auto;
-  flex: 1;
-  color: var(--ui-text-primary);
-}
-
-.skip-wizard-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 20px 24px;
-  border-top: 1px solid var(--ui-border);
-  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
-}
-
-.skip-wizard-footer button {
-  padding: 8px 16px;
-  font-size: 0.9rem;
-}
-
-.skip-wizard-footer .btn-warning {
-  background: var(--ui-warning);
-  border-color: var(--ui-warning);
-  color: var(--ui-accent-contrast);
-}
-
-.skip-wizard-footer .btn-warning:hover {
-  filter: brightness(1.06);
-}
-
 .restart-countdown .text-primary {
   color: var(--ui-accent) !important;
 }
 
 .restart-countdown + .progress .progress-bar {
   background: var(--ui-accent) !important;
-}
-
-/* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
 }
 
 @media (max-width: 768px) {
@@ -1642,16 +1384,6 @@ export default {
 
   .client-qrcodes {
     width: 100%;
-  }
-
-  .skip-wizard-overlay {
-    padding: 1rem;
-  }
-
-  .skip-wizard-header,
-  .skip-wizard-body,
-  .skip-wizard-footer {
-    padding: 1rem;
   }
 
   .promo-service-links {

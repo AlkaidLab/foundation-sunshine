@@ -12,6 +12,7 @@ import ExperimentalFeatures from './audiovideo/ExperimentalFeatures.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
 import Checkbox from '../../components/Checkbox.vue'
+import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
 const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'display_mode_remapping', 'min_fps_factor'])
 
@@ -185,30 +186,22 @@ const cancelDownload = () => {
 
     <ExperimentalFeatures :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
 
-    <!-- 下载确认对话框 -->
-    <Teleport to="body">
-      <Transition name="fade">
-        <div v-if="showDownloadConfirm" class="download-confirm-overlay" @click.self="cancelDownload">
-          <div class="download-confirm-modal">
-            <div class="download-confirm-header">
-              <h5>
-                <i class="fas fa-external-link-alt me-2"></i>{{ $t('_common.download') }}
-              </h5>
-              <button class="btn-close" :aria-label="$t('_common.close') || '关闭'" @click="cancelDownload"></button>
-            </div>
-            <div class="download-confirm-body">
-              <p>{{ $t('config.stream_mic_download_confirm') }}</p>
-            </div>
-            <div class="download-confirm-footer">
-              <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
-              <button type="button" class="btn btn-primary" @click="confirmDownload">
-                <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <ConfirmDialog
+      :show="showDownloadConfirm"
+      dialog-id="stream-mic-download-confirm"
+      :title="$t('_common.download')"
+      title-icon="fas fa-external-link-alt"
+      :close-label="$t('_common.close')"
+      @close="cancelDownload"
+    >
+      <p>{{ $t('config.stream_mic_download_confirm') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="cancelDownload">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" @click="confirmDownload">
+          <i class="fas fa-download me-1"></i>{{ $t('_common.download') }}
+        </button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -295,146 +288,6 @@ const cancelDownload = () => {
 
   .stream-mic-download-btn {
     width: 100%;
-  }
-}
-
-/* Download Confirm Modal - teleported to body, styles must not be scoped */
-</style>
-
-<style>
-.download-confirm-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--ui-overlay);
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 1.5rem);
-  overflow: hidden;
-}
-
-.download-confirm-modal {
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  width: 100%;
-  max-width: 500px;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  color: var(--ui-text-primary);
-  box-shadow: var(--ui-shadow-md);
-  animation: modalSlideUp 0.3s ease;
-}
-
-.download-confirm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--ui-border);
-
-  h5 {
-    margin: 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--ui-text-primary);
-    display: flex;
-    align-items: center;
-
-    i {
-      color: var(--ui-accent);
-    }
-  }
-
-  .btn-close {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    color: var(--ui-text-secondary);
-    cursor: pointer;
-    padding: 0;
-    width: 1.5rem;
-    height: 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-
-    &:hover {
-      opacity: 1;
-    }
-
-    &::before {
-      content: '×';
-    }
-  }
-}
-
-.download-confirm-body {
-  padding: 1.5rem;
-  color: var(--ui-text-secondary);
-
-  p {
-    margin: 0;
-    line-height: 1.6;
-  }
-}
-
-.download-confirm-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 1.25rem 1.5rem;
-  border-top: 1px solid var(--ui-border);
-  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-@media (max-width: 575.98px) {
-  .download-confirm-overlay {
-    align-items: flex-end;
-    padding: 0.75rem;
-  }
-
-  .download-confirm-modal {
-    border-radius: var(--ui-radius-md);
-  }
-
-  .download-confirm-header,
-  .download-confirm-body,
-  .download-confirm-footer {
-    padding: 1rem;
   }
 }
 

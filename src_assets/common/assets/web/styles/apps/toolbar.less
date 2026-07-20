@@ -415,47 +415,6 @@
   color: var(--ui-text-secondary);
 }
 
-.cute-btn-success {
-  .cute-btn-variant(var(--ui-success), var(--ui-success));
-  color: var(--ui-success-contrast);
-  position: relative;
-
-  &.has-changes {
-    animation: pulse 2s infinite;
-    box-shadow: 0 4px 15px rgba(var(--ui-warning-rgb), 0.48);
-
-    .unsaved-indicator {
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      width: 8px;
-      height: 8px;
-      background: var(--ui-warning);
-      border-radius: 50%;
-      box-shadow: 0 0 8px rgba(var(--ui-warning-rgb), 0.62);
-      animation: blink 1.5s infinite;
-    }
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none !important;
-  }
-}
-
-.cute-btn-info {
-  .cute-btn-variant(var(--ui-info-soft), rgba(var(--ui-info-rgb), 0.2));
-  border-color: var(--ui-info-border);
-  color: var(--ui-info-text);
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none !important;
-  }
-}
-
 .cute-btn-warning {
   .cute-btn-variant(var(--ui-warning), var(--ui-warning));
   color: var(--ui-warning-contrast);

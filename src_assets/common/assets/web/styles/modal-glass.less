@@ -1,65 +1,20 @@
 /* 统一模态框样式 */
 :root {
   /* 背景与边框 */
-  --modal-backdrop-bg: rgba(45, 38, 40, 0.72);
+  --modal-backdrop-bg: var(--ui-overlay);
   --modal-content-bg: var(--ui-surface-strong);
   --modal-border-color: var(--ui-border);
   --modal-text-color: var(--ui-text-primary);
   --modal-text-secondary: var(--ui-text-secondary);
   --modal-text-muted: var(--ui-text-muted);
-  --modal-shadow: rgba(0, 0, 0, 0.28);
   --modal-footer-bg: var(--ui-surface);
 
   /* 按钮渐变 */
-  --btn-primary-gradient: var(--ui-accent);
-  --btn-primary-gradient-hover: var(--ui-accent);
-  --btn-secondary-gradient: var(--ui-surface-strong);
-  --btn-secondary-gradient-hover: var(--ui-surface-hover);
-  --btn-danger-gradient: var(--ui-danger);
-  --btn-danger-gradient-hover: var(--ui-danger);
-  --btn-success-gradient: var(--ui-success);
-  --btn-success-gradient-hover: var(--ui-success);
   --btn-outline-primary-border: var(--ui-border-strong);
   --btn-outline-primary-hover: var(--ui-accent-soft);
 
   /* 玻璃效果 */
   --glass-light: var(--ui-surface);
-  --glass-medium: var(--ui-surface-hover);
-  --glass-border: var(--ui-border);
-  --glass-dark: var(--ui-accent-soft);
-}
-
-[data-bs-theme='light'] {
-  --modal-content-bg: var(--ui-surface-strong);
-  --modal-border-color: var(--ui-border);
-  --modal-shadow: rgba(74, 158, 255, 0.14);
-  --modal-footer-bg: var(--ui-surface);
-  --modal-text-color: var(--ui-text-primary);
-  --modal-text-secondary: var(--ui-text-secondary);
-  --modal-text-muted: var(--ui-text-muted);
-
-  --glass-light: var(--ui-surface);
-  --glass-medium: var(--ui-surface-hover);
-  --glass-border: var(--ui-border);
-  --glass-dark: var(--ui-accent-soft);
-
-  --btn-secondary-gradient: var(--ui-surface-strong);
-  --btn-secondary-gradient-hover: var(--ui-surface-hover);
-  --btn-outline-primary-border: var(--ui-border-strong);
-  --btn-outline-primary-hover: var(--ui-accent-soft);
-}
-
-[data-bs-theme='dark'] {
-  --modal-content-bg: var(--ui-surface-strong);
-  --modal-border-color: var(--ui-border);
-  --modal-shadow: rgba(0, 0, 0, 0.34);
-  --modal-footer-bg: var(--ui-surface);
-  --modal-text-color: var(--ui-text-primary);
-  --modal-text-secondary: var(--ui-text-secondary);
-  --modal-text-muted: var(--ui-text-muted);
-
-  --glass-light: var(--ui-surface);
-  --glass-medium: var(--ui-surface-hover);
   --glass-border: var(--ui-border);
 }
 
