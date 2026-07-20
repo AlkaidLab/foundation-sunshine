@@ -215,21 +215,78 @@ onUnmounted(() => {
 }
 
 @media (max-width: 767.98px) {
-  .header .navbar-utilities {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0;
-    padding-top: 0.25rem;
+  .header .navbar-collapse {
+    flex-basis: 100%;
+    padding: 0.5rem 0 0.25rem;
+    border-top: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   }
 
-  .header .navbar-utilities .dropdown,
-  .header .navbar-utilities .nav-link,
-  .header .navbar-utilities .nav-utility-button {
+  .header .navbar-nav {
     width: 100%;
+    margin-right: 0 !important;
+    gap: 0.25rem;
+  }
+
+  .header .navbar-nav > .nav-item,
+  .header .navbar-nav > .nav-item > .nav-link {
+    width: 100%;
+  }
+
+  .header .navbar-nav > .nav-item > .nav-link {
+    display: flex;
+    align-items: center;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--ui-radius-md, 12px);
+    gap: 0.5rem;
+  }
+
+  .header .navbar-nav > .nav-item > .nav-link:hover,
+  .header .navbar-nav > .nav-item > .nav-link.active,
+  .header .navbar-nav > .nav-item > .nav-link:focus-visible {
+    background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  }
+
+  .header .navbar-utilities {
+    align-items: center;
+    flex-direction: row;
+    gap: 0.5rem;
+    width: 100%;
+    margin-left: 0 !important;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  }
+
+  .header .navbar-utilities .bd-mode-toggle {
+    flex: 1 1 auto;
+  }
+
+  .header .navbar-utilities .bd-mode-toggle .nav-link {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 2.5rem;
+    gap: 0.35rem;
+  }
+
+  .header .navbar-utilities .account-menu {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .header .navbar-utilities .account-menu .nav-utility-button {
+    width: auto;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
   }
 
   .header .navbar-utilities .dropdown-menu {
-    width: 100%;
+    width: max-content;
+    max-width: calc(100vw - 1.5rem);
+  }
+
+  .header .navbar-toggler {
+    border-radius: var(--ui-radius-md, 12px);
   }
 }
 </style>
