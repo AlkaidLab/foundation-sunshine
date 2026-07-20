@@ -705,24 +705,6 @@ onMounted(async () => {
     font-size: 0.68rem;
   }
 
-  .home-resources .resource-card-header {
-    padding: 0.7rem 0.9rem;
-  }
-
-  .home-resources .resource-card-header .card-title {
-    font-size: 0.98rem;
-  }
-
-  .home-resources .resource-card-header .card-title i {
-    width: 1.9rem;
-    height: 1.9rem;
-    font-size: 0.78rem;
-  }
-
-  .home-resources .resource-section > .card > .card-body {
-    padding: 0.58rem;
-  }
-
   .home-resources .resource-groups {
     gap: 0.58rem;
   }
@@ -731,9 +713,9 @@ onMounted(async () => {
     padding: 0.5rem 0.55rem 0.55rem;
   }
 
-  .home-resources .resource-group .row {
-    --bs-gutter-x: 0.55rem;
-    --bs-gutter-y: 0.55rem;
+  .home-resources .resource-items {
+    grid-auto-rows: 3.1rem;
+    gap: 0.55rem;
   }
 
   .home-resources .resource-group-title {
@@ -760,7 +742,7 @@ onMounted(async () => {
   }
 
   .home-resources .legal-footer {
-    padding-top: 0.8rem;
+    padding-top: 0.9rem;
     font-size: 0.72rem;
   }
 }

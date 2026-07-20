@@ -107,28 +107,24 @@ export const HOME_RESOURCE_GROUPS = [
     id: 'official',
     titleKey: 'resource_card.official_website',
     icon: 'fas fa-globe',
-    itemClass: 'col-md-6',
     items: OFFICIAL_RESOURCES,
   },
   {
     id: 'quick-start',
     titleKey: 'resource_card.quick_start',
     icon: 'fas fa-rocket',
-    itemClass: 'col-md-6',
     items: QUICK_START_RESOURCES,
   },
   {
     id: 'clients',
     titleKey: 'resource_card.client_downloads',
     icon: 'fas fa-download',
-    itemClass: 'col-md-6 col-lg-4',
     items: CLIENT_RESOURCES,
   },
   {
     id: 'community',
     titleKey: 'resource_card.third_party_moonlight',
     icon: 'fas fa-code-branch',
-    itemClass: 'col-12',
     items: COMMUNITY_RESOURCES,
   },
 ]

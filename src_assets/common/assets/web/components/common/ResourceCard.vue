@@ -39,73 +39,57 @@ const confirmHarmonyLink = async () => {
 
 <template>
   <div class="resource-section">
-    <div class="card shadow-sm resource-library-card">
-      <div class="card-header resource-card-header">
-        <h5 class="card-title mb-0">
-          <i class="fas fa-book-open me-2" aria-hidden="true"></i>
-          {{ $t('resource_card.resources') }}
-        </h5>
-      </div>
-      <div class="card-body">
-        <div class="resource-groups">
-          <section
-            v-for="group in HOME_RESOURCE_GROUPS"
-            :key="group.id"
-            class="resource-group"
-            :class="`resource-group--${group.id}`"
-          >
-            <h6 class="resource-group-title">
-              <i :class="group.icon" class="me-2" aria-hidden="true"></i>
-              {{ $t(group.titleKey) }}
-            </h6>
-            <div class="row">
-              <div v-for="resource in group.items" :key="resource.id" :class="group.itemClass">
-                <ResourceLink
-                  compact
-                  :href="resource.href"
-                  :target="resource.action ? '' : '_blank'"
-                  :title="resourceTitle(resource)"
-                  :description="resourceDescription(resource)"
-                  :icon="resource.icon"
-                  :variant="resource.variant"
-                  :arrow-icon="resource.arrowIcon"
-                  :arrow-class="resource.arrowClass"
-                  @activate="handleResourceActivate(resource, $event)"
-                />
-              </div>
-            </div>
-          </section>
+    <div class="resource-groups">
+      <section
+        v-for="group in HOME_RESOURCE_GROUPS"
+        :key="group.id"
+        class="resource-group"
+      >
+        <h6 class="resource-group-title">
+          <i :class="group.icon" aria-hidden="true"></i>
+          {{ $t(group.titleKey) }}
+        </h6>
+        <div class="resource-items">
+          <div v-for="resource in group.items" :key="resource.id" class="resource-item">
+            <ResourceLink
+              compact
+              :href="resource.href"
+              :target="resource.action ? '' : '_blank'"
+              :title="resourceTitle(resource)"
+              :description="resourceDescription(resource)"
+              :icon="resource.icon"
+              :variant="resource.variant"
+              :arrow-icon="resource.arrowIcon"
+              :arrow-class="resource.arrowClass"
+              @activate="handleResourceActivate(resource, $event)"
+            />
+          </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <footer class="legal-footer">
-      <div class="legal-footer-copy">
-        <span class="legal-title">
-          <i class="fas fa-gavel" aria-hidden="true"></i>
-          {{ $t('resource_card.legal') }}
-        </span>
-        <span class="legal-description">{{ $t('resource_card.legal_desc') }}</span>
+      <div class="legal-footer-heading">
+        <span class="legal-title">{{ $t('resource_card.legal') }}</span>
       </div>
+      <p class="legal-description">{{ $t('resource_card.legal_desc') }}</p>
 
-      <nav class="legal-footer-links" :aria-label="$t('resource_card.legal')">
-        <span class="legal-license">
-          <i class="fas fa-balance-scale" aria-hidden="true"></i>
-          GNU GPL v3.0
-        </span>
-        <a
-          v-for="resource in LEGAL_RESOURCES"
-          :key="resource.id"
-          class="legal-link"
-          :href="resource.href"
-          target="_blank"
-          rel="noopener noreferrer"
-          :title="resourceDescription(resource)"
-        >
-          {{ resourceTitle(resource) }}
-          <i class="fas fa-external-link-alt" aria-hidden="true"></i>
-        </a>
-      </nav>
+      <div class="legal-footer-meta">
+        <span class="legal-license">GNU GPL v3.0</span>
+        <nav class="legal-footer-links" :aria-label="$t('resource_card.legal')">
+          <a
+            v-for="resource in LEGAL_RESOURCES"
+            :key="resource.id"
+            class="legal-link"
+            :href="resource.href"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="resourceDescription(resource)"
+          >
+            {{ resourceTitle(resource) }}
+          </a>
+        </nav>
+      </div>
     </footer>
 
     <ConfirmDialog
@@ -135,63 +119,13 @@ const confirmHarmonyLink = async () => {
 .resource-section {
   display: flex;
   min-height: 0;
+  flex: 1;
   flex-direction: column;
-}
-
-.resource-library-card {
-  overflow: hidden;
-  border-radius: calc(var(--ui-radius-lg) + 1px);
-}
-
-.resource-card-header {
-  position: relative;
-  padding: 0.55rem 0.7rem;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--ui-surface-strong) 88%, var(--ui-accent-soft)),
-    var(--ui-surface-strong)
-  );
-}
-
-.resource-card-header::after {
-  position: absolute;
-  top: 50%;
-  right: 0.85rem;
-  width: 0.34rem;
-  height: 0.34rem;
-  border-radius: 50%;
-  background: var(--ui-accent);
-  box-shadow: -0.65rem 0 0 -0.05rem var(--ui-accent-secondary), -1.25rem 0 0 -0.1rem var(--ui-accent-soft);
-  content: '';
-  opacity: 0.55;
-  transform: translateY(-50%);
-}
-
-.resource-card-header .card-title {
-  display: flex;
-  align-items: center;
-  color: var(--ui-text-primary);
-  font-size: 0.88rem;
-}
-
-.resource-card-header .card-title i {
-  display: inline-flex;
-  width: 1.65rem;
-  height: 1.65rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.58rem;
-  background: var(--ui-accent-soft);
-  font-size: 0.72rem;
-}
-
-.resource-section > .card > .card-body {
-  padding: 0.42rem;
 }
 
 .resource-groups {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.42rem;
 }
 
@@ -208,22 +142,21 @@ const confirmHarmonyLink = async () => {
   );
 }
 
-.resource-group--official,
-.resource-group--quick-start {
-  grid-column: span 6;
+.resource-items {
+  display: grid;
+  grid-auto-rows: 2.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
 }
 
-.resource-group--clients {
-  grid-column: span 8;
+.resource-item {
+  display: flex;
+  min-width: 0;
 }
 
-.resource-group--community {
-  grid-column: span 4;
-}
-
-.resource-group .row {
-  --bs-gutter-x: 0.42rem;
-  --bs-gutter-y: 0.42rem;
+.resource-group :deep(.resource-link) {
+  width: 100%;
+  height: 100%;
 }
 
 .resource-group-title {
@@ -248,74 +181,83 @@ const confirmHarmonyLink = async () => {
   font-size: 0.58rem;
 }
 
-.resource-card-header .card-title i,
 .resource-group-title i {
   color: var(--ui-accent);
 }
 
 .legal-footer {
   display: flex;
+  width: 100%;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1.25rem;
+  gap: 0.2rem;
   margin-top: auto;
-  padding: 0.55rem 0.65rem 0.35rem;
-  border-top: 1px solid color-mix(in srgb, var(--ui-border) 72%, transparent);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ui-surface-strong) 52%, transparent) 8%,
-    color-mix(in srgb, var(--ui-surface-strong) 52%, transparent) 92%,
-    transparent
-  );
-  color: var(--ui-text-secondary);
-  backdrop-filter: blur(6px);
-  font-size: 0.68rem;
+  padding: 0.85rem 0.2rem 0.18rem;
+  flex-direction: column;
+  color: var(--ui-text-primary);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  text-align: center;
 }
 
-.legal-footer-copy,
-.legal-footer-links {
+.legal-footer-heading {
   display: flex;
+  width: min(100%, 22rem);
   align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
+  gap: 0.7rem;
 }
 
-.legal-title,
-.legal-license {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.32rem;
-  font-weight: 650;
+.legal-footer-heading::before,
+.legal-footer-heading::after {
+  height: 1px;
+  flex: 1;
+  background: color-mix(in srgb, var(--ui-text-muted) 38%, transparent);
+  content: '';
 }
 
 .legal-title {
   color: var(--ui-text-primary);
-}
-
-.legal-title i,
-.legal-license i {
-  color: var(--ui-accent);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
 }
 
 .legal-description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 44rem;
+  margin: 0;
+  color: var(--ui-text-primary);
+}
+
+.legal-footer-meta,
+.legal-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem 0.7rem;
+  flex-wrap: wrap;
 }
 
 .legal-license {
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.legal-footer-links::before {
+  color: var(--ui-text-muted);
+  content: '·';
 }
 
 .legal-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-primary);
   text-decoration: none;
   transition: color 0.2s ease;
+}
+
+.legal-link + .legal-link::before {
+  margin-right: 0.7rem;
+  color: var(--ui-text-muted);
+  content: '·';
 }
 
 .legal-link:hover,
@@ -325,32 +267,20 @@ const confirmHarmonyLink = async () => {
   text-underline-offset: 0.18rem;
 }
 
-.legal-link i {
-  font-size: 0.52rem;
-}
-
 @media (max-width: 991.98px) {
-  .resource-group--official,
-  .resource-group--quick-start,
-  .resource-group--clients,
-  .resource-group--community {
-    grid-column: span 12;
-  }
-
-  .legal-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-
-  .legal-footer-links {
-    flex-wrap: wrap;
+  .resource-groups {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 575.98px) {
   .resource-groups {
     display: block;
+  }
+
+  .resource-items {
+    grid-auto-rows: minmax(2.75rem, auto);
+    grid-template-columns: 1fr;
   }
 
   .resource-group + .resource-group {
