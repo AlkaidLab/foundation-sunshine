@@ -1,7 +1,7 @@
 <template>
   <div class="apps-page">
     <Navbar />
-    <div class="container-fluid px-4">
+    <div class="container-fluid px-3">
       <div class="my-4">
         <h1 class="page-title">{{ $t('apps.applications_title') }}</h1>
         <p class="page-subtitle">{{ $t('apps.applications_desc') }}</p>

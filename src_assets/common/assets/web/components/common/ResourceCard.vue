@@ -191,7 +191,7 @@ const confirmHarmonyLink = async () => {
   align-items: center;
   gap: 0.2rem;
   margin-top: auto;
-  padding: 0.85rem 0.2rem 0.18rem;
+  padding: 0.85rem 0.2rem 0.55rem;
   flex-direction: column;
   color: var(--ui-text-primary);
   font-size: 0.7rem;

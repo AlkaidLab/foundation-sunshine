@@ -2,7 +2,7 @@
   <div class="pin-page">
     <Navbar />
     <div id="content" class="container">
-      <h1 class="my-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
+      <h1 class="mt-2 mb-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
 
       <!-- QR Code Pairing -->
       <div class="card mb-4 qr-pair-card">

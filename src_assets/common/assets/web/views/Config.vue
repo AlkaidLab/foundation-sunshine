@@ -127,7 +127,7 @@
     </ConfirmDialog>
 
     <div class="container">
-      <h1 class="my-4 page-title">{{ $t('config.configuration') }}</h1>
+      <h1 class="mt-2 mb-4 page-title">{{ $t('config.configuration') }}</h1>
 
       <div v-if="!config" class="form card config-skeleton">
         <div class="card-header skeleton-header">
