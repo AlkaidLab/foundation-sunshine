@@ -178,11 +178,8 @@ const confirmHarmonyLink = async () => {
   justify-content: center;
   border-radius: 0.48rem;
   background: var(--ui-accent-soft);
-  font-size: 0.58rem;
-}
-
-.resource-group-title i {
   color: var(--ui-accent);
+  font-size: 0.58rem;
 }
 
 .legal-footer {
@@ -243,7 +240,7 @@ const confirmHarmonyLink = async () => {
 
 .legal-footer-links::before {
   color: var(--ui-text-muted);
-  content: '·';
+  content: '\00b7';
 }
 
 .legal-link {
@@ -257,7 +254,7 @@ const confirmHarmonyLink = async () => {
 .legal-link + .legal-link::before {
   margin-right: 0.7rem;
   color: var(--ui-text-muted);
-  content: '·';
+  content: '\00b7';
 }
 
 .legal-link:hover,

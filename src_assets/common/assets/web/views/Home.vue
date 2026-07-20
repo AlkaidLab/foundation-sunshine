@@ -724,7 +724,6 @@ onMounted(async () => {
   }
 
   .home-resources .resource-link--compact {
-    min-height: 3.1rem;
     padding: 0.42rem 0.55rem;
   }
 
@@ -741,10 +740,6 @@ onMounted(async () => {
     font-size: 0.68rem;
   }
 
-  .home-resources .legal-footer {
-    padding-top: 0.9rem;
-    font-size: 0.72rem;
-  }
 }
 
 @media (max-width: 1199.98px) {
