@@ -241,10 +241,10 @@ export default {
     },
 
     abortPendingSearch() {
-      if (this.searchAbortController) {
-        this.searchAbortController.abort()
-        this.searchAbortController = null
-      }
+      const controller = this.searchAbortController
+      this.searchAbortController = null
+      controller?.abort()
+      this.loading = false
     },
 
     clearSearch() {
@@ -284,33 +284,43 @@ export default {
 
     async searchCovers() {
       if (!this.localSearchTerm) {
+        this.abortPendingSearch()
         this.igdbCovers = []
         this.steamCovers = []
         return
       }
 
       this.abortPendingSearch()
-      this.searchAbortController = new AbortController()
+      const currentController = new AbortController()
+      this.searchAbortController = currentController
 
       this.loading = true
       this.igdbCovers = []
       this.steamCovers = []
 
       try {
-        const results = await searchAllCovers(this.localSearchTerm, this.searchAbortController.signal)
+        const results = await searchAllCovers(this.localSearchTerm, currentController.signal)
+        if (this.searchAbortController !== currentController) return
         this.igdbCovers = results.igdb
         this.steamCovers = results.steam
       } catch (error) {
-        if (error.name === 'AbortError') return
+        if (error.name === 'AbortError' || this.searchAbortController !== currentController) return
         console.error('Cover search failed:', error)
         this.$emit('error', this.$t('apps.cover_search_failed'))
       } finally {
-        this.loading = false
+        if (this.searchAbortController === currentController) {
+          this.searchAbortController = null
+          this.loading = false
+        }
       }
     },
 
     handleImageError(event) {
-      event.target.src = createPlaceholderImage(this.$t('apps.cover_image_unavailable'))
+      const image = event.target
+      if (image.dataset.coverFallbackApplied === 'true') return
+
+      image.dataset.coverFallbackApplied = 'true'
+      image.src = createPlaceholderImage(this.$t('apps.cover_image_unavailable'))
     },
 
     async selectCover(cover) {
