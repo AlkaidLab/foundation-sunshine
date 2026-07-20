@@ -684,15 +684,15 @@ onBeforeUnmount(cleanup)
 }
 
 .is-invalid {
-  border-color: #ef4444;
+  border-color: var(--ui-danger);
 }
 
 .is-valid {
-  border-color: #22c55e;
+  border-color: var(--ui-success);
 }
 
 .monospace {
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .cmd-examples {

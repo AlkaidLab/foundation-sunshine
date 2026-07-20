@@ -3,105 +3,136 @@
 
 .delete-app-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
-  backdrop-filter: blur(8px);
+  inset: 0;
   z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-lg, 20px);
+  width: 100vw;
+  min-height: 100dvh;
+  padding: 1.25rem;
   overflow: hidden;
-
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
+  background: var(--ui-overlay);
+  backdrop-filter: blur(6px);
 }
 
 .delete-app-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
-  width: 100%;
-  max-width: 500px;
   display: flex;
   flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
-  animation: modalSlideUp 0.3s ease;
-
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
+  width: min(460px, 100%);
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-danger-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-lg);
+  animation: modalSlideUp 0.22s ease;
 }
 
 .delete-app-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--ui-border);
 
   h5 {
-    margin: 0;
-    color: var(--text-primary, #fff);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
     display: flex;
     align-items: center;
-  }
+    margin: 0;
+    color: var(--ui-text-primary);
+    font-size: 1.05rem;
+    font-weight: 650;
 
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-
-    h5 {
-      color: #000000;
+    i {
+      color: var(--ui-danger-text);
     }
   }
 }
 
-.delete-app-body {
-  padding: var(--spacing-lg, 24px);
-  font-size: var(--font-size-md, 0.95rem);
-  line-height: 1.5;
-  color: var(--text-primary, #fff);
+.delete-app-close {
+  flex: 0 0 auto;
+  margin: 0;
+  opacity: 0.72;
 
-  [data-bs-theme='light'] & {
-    color: #000000;
+  &:hover {
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 3px solid var(--ui-danger-soft);
+    outline-offset: 3px;
+  }
+}
+
+.delete-app-body {
+  padding: 1.25rem;
+  color: var(--ui-text-primary);
+  font-size: 0.95rem;
+  line-height: 1.6;
+
+  p {
+    margin: 0;
   }
 }
 
 .delete-app-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
+  gap: 0.65rem;
+  padding: 0.9rem 1.25rem;
+  background: var(--ui-surface);
+  border-top: 1px solid var(--ui-border);
 
   button {
-    padding: 8px 16px;
+    min-width: 84px;
+    padding: 0.55rem 1rem;
     font-size: 0.9rem;
   }
 }
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity 0.2s ease;
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 576px) {
+  .delete-app-overlay {
+    align-items: flex-end;
+    padding: 0.75rem;
+  }
+
+  .delete-app-modal {
+    width: 100%;
+  }
+
+  .delete-app-header,
+  .delete-app-body,
+  .delete-app-footer {
+    padding-right: 1rem;
+    padding-left: 1rem;
+  }
+
+  .delete-app-footer {
+    flex-direction: column-reverse;
+
+    button {
+      width: 100%;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delete-app-modal,
+  .fade-enter-active,
+  .fade-leave-active {
+    animation: none;
+    transition: none;
+  }
 }
