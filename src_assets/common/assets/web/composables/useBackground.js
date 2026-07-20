@@ -1,5 +1,5 @@
 import { getCurrentScope, onScopeDispose } from 'vue'
-import ColorThief from 'colorthief'
+import { extractColors, rgbToHsl as rgbToHslValues, selectAccentColor } from '../utils/colorPalette.js'
 
 const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'
@@ -7,12 +7,13 @@ const STORAGE_KEY = 'customBackground'
 const COLOR_CONFIG = {
   textLightnessRange: { min: 15, max: 95 },
   brightnessThreshold: 50,
-  paletteSize: 5,
+  paletteSize: 6,
 }
 
 const DEFAULT_COLOR_INFO = {
   dominantColor: { r: 128, g: 128, b: 128 },
   hsl: { h: 0, s: 0, l: 50 },
+  palette: [],
 }
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
@@ -28,29 +29,8 @@ const loadImage = (imageUrl) =>
   })
 
 const rgbToHsl = (r, g, b) => {
-  r /= 255
-  g /= 255
-  b /= 255
-
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  const l = (max + min) / 2
-  const d = max - min
-
-  if (d === 0) return { h: 0, s: 0, l: Math.round(l * 100) }
-
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-  let h = 0
-
-  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6
-  else if (max === g) h = ((b - r) / d + 2) / 6
-  else h = ((r - g) / d + 4) / 6
-
-  return {
-    h: Math.round(h * 360),
-    s: Math.round(s * 100),
-    l: Math.round(l * 100),
-  }
+  const [h, s, l] = rgbToHslValues(r, g, b)
+  return { h: Math.round(h), s: Math.round(s), l: Math.round(l) }
 }
 
 const hslToRgb = (h, s, l) => {
@@ -88,38 +68,27 @@ const rgbToHex = (r, g, b) => {
 }
 
 const analyzeImageColors = (img) => {
-  if (!img.complete) return { ...DEFAULT_COLOR_INFO }
+  if (!img.complete || !img.width || !img.height) return { ...DEFAULT_COLOR_INFO }
 
   try {
-    const colorThief = new ColorThief()
-    const dominantColorArray = colorThief.getColor(img)
+    const canvas = document.createElement('canvas')
+    const scale = Math.min(1, 200 / Math.max(img.width, img.height))
+    canvas.width = Math.max(1, Math.round(img.width * scale))
+    canvas.height = Math.max(1, Math.round(img.height * scale))
 
-    if (dominantColorArray?.length !== 3) return { ...DEFAULT_COLOR_INFO }
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return { ...DEFAULT_COLOR_INFO }
 
-    let selectedColor = dominantColorArray
-
-    try {
-      const palette = colorThief.getPalette(img, COLOR_CONFIG.paletteSize)
-      if (palette?.length > 0) {
-        let maxSaturation = 0
-        for (const color of palette) {
-          if (color?.length === 3) {
-            const hsl = rgbToHsl(color[0], color[1], color[2])
-            if (hsl.s > maxSaturation) {
-              maxSaturation = hsl.s
-              selectedColor = color
-            }
-          }
-        }
-      }
-    } catch {
-      // 使用主要颜色
-    }
+    context.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const palette = extractColors(context.getImageData(0, 0, canvas.width, canvas.height), COLOR_CONFIG.paletteSize)
+    const selectedColor = selectAccentColor(palette)
+    if (!selectedColor?.length) return { ...DEFAULT_COLOR_INFO }
 
     const [r, g, b] = selectedColor
     return {
       dominantColor: { r, g, b },
       hsl: rgbToHsl(r, g, b),
+      palette,
     }
   } catch {
     return { ...DEFAULT_COLOR_INFO }
