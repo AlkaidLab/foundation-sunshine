@@ -193,7 +193,7 @@ function addRemapping(type) {
                   {{ $tp('config.display_device_options_note') }}
                 </label>
                 <div class="form-text">
-                  <p style="white-space: pre-line">{{ $tp('config.display_device_options_note_desc') }}</p>
+                  <p class="display-options-note pre-line">{{ $tp('config.display_device_options_note_desc') }}</p>
                 </div>
               </div>
 
@@ -234,7 +234,7 @@ function addRemapping(type) {
                 </div>
 
                 <!-- Manual resolution -->
-                <div class="mt-2 ps-4" v-if="config.resolution_change === 'manual'">
+                <div class="nested-setting mt-2" v-if="config.resolution_change === 'manual'">
                   <div class="form-text">
                     {{ $tp('config.resolution_change_manual_desc') }}
                   </div>
@@ -260,7 +260,7 @@ function addRemapping(type) {
                 </select>
 
                 <!-- Manual refresh rate -->
-                <div class="mt-2 ps-4" v-if="config.refresh_rate_change === 'manual'">
+                <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
                   <div class="form-text">
                     {{ $tp('config.refresh_rate_change_manual_desc') }}
                   </div>
@@ -364,19 +364,44 @@ function addRemapping(type) {
 </template>
 
 <style scoped>
+.display-options-note {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-text-secondary);
+}
+
+.nested-setting {
+  margin-left: 0.75rem;
+  padding: 0.75rem;
+  border-left: 3px solid var(--ui-border-strong);
+  border-radius: 0 var(--ui-radius-sm) var(--ui-radius-sm) 0;
+  background: var(--ui-surface);
+}
+
 .vulkan-hdr-card {
   padding: 1rem;
-  border: 1px solid var(--bs-border-color);
-  border-left: 3px solid var(--bs-primary);
-  border-radius: var(--bs-border-radius);
-  background: color-mix(in srgb, var(--bs-body-bg) 90%, var(--bs-primary) 10%);
+  border: 1px solid var(--ui-border);
+  border-left: 3px solid var(--ui-accent);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-soft);
   transition:
     border-color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease,
     opacity 0.2s ease;
 }
 
+.vulkan-hdr-card:hover {
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
+}
+
 .vulkan-hdr-card.is-disabled {
-  border-left-color: var(--bs-secondary-color);
+  border-left-color: var(--ui-text-muted);
+  background: var(--ui-surface);
   opacity: 0.78;
 }
 
@@ -398,22 +423,34 @@ function addRemapping(type) {
 }
 
 .vulkan-hdr-status.is-muted {
-  color: var(--bs-secondary-color);
+  color: var(--ui-text-muted);
 }
 
 .vulkan-hdr-status.is-ready {
-  color: var(--bs-primary);
+  color: var(--ui-accent);
 }
 
 .vulkan-hdr-status.is-info {
-  color: var(--bs-info-text-emphasis);
+  color: var(--ui-accent);
 }
 
 .vulkan-hdr-status.is-success {
-  color: var(--bs-success-text-emphasis);
+  color: var(--ui-success-text);
 }
 
 .vulkan-hdr-status.is-warning {
-  color: var(--bs-warning-text-emphasis);
+  color: var(--ui-warning-text);
+}
+
+@media (max-width: 575.98px) {
+  .display-options-note,
+  .nested-setting,
+  .vulkan-hdr-card {
+    padding: 0.75rem;
+  }
+
+  .nested-setting {
+    margin-left: 0;
+  }
 }
 </style>

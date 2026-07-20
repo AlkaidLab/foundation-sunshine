@@ -648,6 +648,54 @@ onUnmounted(() => {
     box-shadow: var(--ui-shadow-sm);
   }
 
+  .config-page {
+    .accordion-item {
+      overflow: hidden;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--ui-radius-md);
+      background: var(--ui-surface);
+      box-shadow: var(--ui-shadow-sm);
+    }
+
+    .accordion-button {
+      border: 0;
+      background: var(--ui-surface-strong);
+      color: var(--ui-text-primary);
+      font-weight: 600;
+      transition: color 0.2s ease, background-color 0.2s ease;
+
+      &:hover,
+      &:not(.collapsed) {
+        background: var(--ui-accent-soft);
+        color: var(--ui-accent);
+      }
+
+      &:focus {
+        box-shadow: inset 0 0 0 2px var(--ui-accent-soft);
+      }
+    }
+
+    .accordion-body {
+      background: transparent;
+    }
+
+    pre {
+      max-width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.75rem 1rem;
+      overflow: auto;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--ui-radius-sm);
+      background: var(--ui-surface);
+      color: var(--ui-text-secondary);
+      font-size: 0.82rem;
+    }
+
+    .pre-line {
+      white-space: pre-line;
+    }
+  }
+
   .nav-tabs {
     border: none;
   }

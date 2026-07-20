@@ -136,19 +136,17 @@ function addRemapping(type) {
                 </label>
                 <div class="d-flex flex-column">
                   <div class="form-text">
-                    <p style="white-space: pre-line">{{ $tp('config.display_mode_remapping_desc') }}</p>
-                    <p v-if="remappingType === ''" style="white-space: pre-line">
+                    <p class="pre-line">{{ $tp('config.display_mode_remapping_desc') }}</p>
+                    <p v-if="remappingType === ''" class="pre-line">
                       {{ $tp('config.display_mode_remapping_default_mode_desc') }}
                     </p>
-                    <p v-if="remappingType === 'resolution_only'" style="white-space: pre-line">
+                    <p v-if="remappingType === 'resolution_only'" class="pre-line">
                       {{ $tp('config.display_mode_remapping_resolution_only_mode_desc') }}
                     </p>
                   </div>
 
-                  <table
-                    class="table"
-                    v-if="filteredRemappings.length > 0"
-                  >
+                  <div class="remapping-table-shell" v-if="filteredRemappings.length > 0">
+                  <table class="table remapping-table">
                     <thead>
                       <tr>
                         <th scope="col" v-if="remappingType !== 'refresh_rate_only'">
@@ -202,7 +200,13 @@ function addRemapping(type) {
                             />
                           </td>
                           <td>
-                            <button class="btn btn-danger" @click="display_mode_remapping.splice(i, 1)">
+                            <button
+                              type="button"
+                              class="remapping-delete"
+                              :aria-label="$t('_common.delete')"
+                              :title="$t('_common.delete')"
+                              @click="display_mode_remapping.splice(i, 1)"
+                            >
                               <i class="fas fa-trash"></i>
                             </button>
                           </td>
@@ -225,7 +229,13 @@ function addRemapping(type) {
                             />
                           </td>
                           <td>
-                            <button class="btn btn-danger" @click="display_mode_remapping.splice(i, 1)">
+                            <button
+                              type="button"
+                              class="remapping-delete"
+                              :aria-label="$t('_common.delete')"
+                              :title="$t('_common.delete')"
+                              @click="display_mode_remapping.splice(i, 1)"
+                            >
                               <i class="fas fa-trash"></i>
                             </button>
                           </td>
@@ -248,7 +258,13 @@ function addRemapping(type) {
                             />
                           </td>
                           <td>
-                            <button class="btn btn-danger" @click="display_mode_remapping.splice(i, 1)">
+                            <button
+                              type="button"
+                              class="remapping-delete"
+                              :aria-label="$t('_common.delete')"
+                              :title="$t('_common.delete')"
+                              @click="display_mode_remapping.splice(i, 1)"
+                            >
                               <i class="fas fa-trash"></i>
                             </button>
                           </td>
@@ -256,9 +272,10 @@ function addRemapping(type) {
                       </tr>
                     </tbody>
                   </table>
+                  </div>
                   <button
-                    class="ms-0 mt-2 btn btn-success"
-                    style="margin: 0 auto"
+                    type="button"
+                    class="remapping-add mt-2 btn btn-primary"
                     @click="addRemapping(remappingType)"
                   >
                     &plus; Add
@@ -274,3 +291,87 @@ function addRemapping(type) {
     <template #macos> </template>
   </PlatformLayout>
 </template>
+
+<style scoped>
+.pre-line {
+  white-space: pre-line;
+}
+
+.remapping-table-shell {
+  margin-top: 0.75rem;
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.remapping-table {
+  min-width: 720px;
+  margin: 0;
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--ui-text-secondary);
+  --bs-table-border-color: var(--ui-border);
+  --bs-table-hover-bg: var(--ui-surface-hover);
+  --bs-table-hover-color: var(--ui-text-primary);
+}
+
+.remapping-table th {
+  padding: 0.75rem;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.remapping-table td {
+  min-width: 150px;
+  padding: 0.65rem;
+  vertical-align: middle;
+}
+
+.remapping-table td:last-child,
+.remapping-table th:last-child {
+  width: 52px;
+  min-width: 52px;
+  text-align: center;
+}
+
+.monospace {
+  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.remapping-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--ui-danger-border);
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-danger-text);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.remapping-delete:hover,
+.remapping-delete:focus-visible {
+  background: var(--ui-danger-soft);
+  box-shadow: 0 0 0 3px var(--ui-danger-soft);
+}
+
+.remapping-add {
+  align-self: flex-start;
+}
+
+@media (max-width: 575.98px) {
+  .remapping-table {
+    min-width: 640px;
+  }
+
+  .remapping-add {
+    width: 100%;
+  }
+}
+</style>
