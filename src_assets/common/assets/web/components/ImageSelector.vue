@@ -15,13 +15,16 @@
     </div>
 
     <!-- 图片路径输入 -->
-    <div v-if="!isDesktopImage" class="input-group">
+    <div
+      v-if="!isDesktopImage"
+      class="input-group image-input-group"
+      :class="{ 'is-dragging': dragCounter > 0 }"
+    >
       <input
         type="file"
-        class="form-control"
+        class="form-control image-file-input"
         @change="handleFileSelect"
         accept="image/png,image/jpg,image/jpeg,image/gif,image/bmp,image/webp"
-        style="width: 90px; flex: none"
       />
       <input
         type="text"
@@ -280,112 +283,134 @@ export default {
 
 <style scoped>
 .monospace {
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.image-file-input {
+  flex: 0 0 132px !important;
+  max-width: 132px;
+}
+
+.image-input-group .form-control[type='file'] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.image-input-group .form-control:not([type='file']) {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.image-input-group .btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.image-input-group.is-dragging .form-control-enhanced {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .image-preview-container {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .image-preview {
-  max-width: 300px;
-  max-height: 200px;
-  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 320px);
+  min-height: 172px;
   padding: 1rem;
   text-align: center;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
 }
 
 .image-preview img {
   max-width: 100%;
-  max-height: 150px;
+  max-height: 148px;
   object-fit: contain;
-  border-radius: 0.25rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: var(--ui-radius-sm);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .image-preview-circle {
-  width: 150px;
-  height: 150px;
-  border-radius: 50%;
-  padding: 1px;
-  text-align: center;
-  overflow: hidden;
   position: relative;
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
+  width: 132px;
+  height: 132px;
+  padding: 3px;
+  overflow: hidden;
+  text-align: center;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 50%;
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .image-preview-circle img {
-  width: 98%;
-  height: 98%;
-  object-fit: cover;
-  border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   position: absolute;
   top: 50%;
   left: 50%;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  object-fit: cover;
+  border-radius: 50%;
   transform: translate(-50%, -50%);
 }
 
 .image-preview-circle::after {
-  content: '';
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 15%;
-  height: 15%;
-  background-color: #f8f9fa;
-  transform: translate(-50%, -50%);
+  width: 16%;
+  height: 16%;
+  content: '';
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 50%;
+  transform: translate(-50%, -50%);
 }
 
-.input-group .form-control[type='file'] {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.input-group .form-control:not([type='file']) {
-  border-left: none;
-  border-right: none;
-  border-radius: 0;
-}
-
-.input-group .btn {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* 拖拽状态样式 */
-.form-control-enhanced[data-dragging='true'] {
-  border-color: #0d6efd;
-  background-color: #e7f1ff;
-}
-
-/* 响应式设计 */
 @media (max-width: 768px) {
-  .input-group {
+  .image-input-group {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .image-input-group .form-control,
+  .image-input-group .btn,
+  .image-file-input {
+    width: 100% !important;
+    max-width: none;
+    margin: 0;
+    border: 1px solid var(--ui-border) !important;
+    border-radius: var(--ui-radius-sm) !important;
+  }
+
+  .image-preview-container {
+    align-items: stretch;
     flex-direction: column;
   }
 
-  .input-group .form-control,
-  .input-group .btn {
-    border-radius: 0.375rem !important;
-    margin-bottom: 0.5rem;
-  }
-
-  .input-group .form-control:not(:last-child) {
-    margin-bottom: 0.5rem;
-  }
-
   .image-preview {
-    max-width: 100%;
+    width: 100%;
+  }
+
+  .image-preview-circle {
+    align-self: center;
   }
 }
 </style>
