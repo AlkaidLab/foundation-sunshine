@@ -13,59 +13,68 @@
 
     <!-- 正常首页内容 -->
     <main v-if="!showSetupWizard" id="content" class="container home-content">
-      <div class="page-header home-intro">
-        <div>
-          <p class="home-eyebrow">
-            <i class="fas fa-satellite-dish me-2" aria-hidden="true"></i>
-            Sunshine WebUI
-          </p>
-          <h1 class="page-title">{{ $t('index.welcome') }}</h1>
-          <p class="page-subtitle">{{ $t('index.description') }}</p>
-        </div>
-        <div class="home-status" :class="`home-status-${hostStatus}`" role="status" :aria-live="hostStatus === 'loading' ? 'polite' : 'off'">
-          <span class="home-status-dot" aria-hidden="true"></span>
-          <span>{{ statusLabel }}</span>
-        </div>
-      </div>
-
-      <section class="host-overview card shadow-sm" aria-labelledby="host-overview-title">
-        <div class="host-overview-main">
-          <div class="section-kicker" id="host-overview-title">
-            <i class="fas fa-server me-2" aria-hidden="true"></i>
-            {{ $t('navbar.home') }}
+      <section class="home-hero" aria-labelledby="home-title">
+        <div class="page-header home-intro">
+          <div class="home-intro-copy">
+            <p class="home-eyebrow">
+              <i class="fas fa-satellite-dish me-2" aria-hidden="true"></i>
+              Sunshine WebUI
+            </p>
+            <h1 id="home-title" class="page-title">{{ $t('index.welcome') }}</h1>
+            <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
-          <h2 class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
-          <p class="host-meta">
-            <span v-if="hostConfig?.platform">{{ hostConfig.platform }}</span>
-            <span v-if="hostConfig?.platform" aria-hidden="true"> · </span>
-            <span>{{ versionLabel }}</span>
-          </p>
-        </div>
-
-        <div class="host-metrics" aria-label="Host summary">
-          <div class="host-metric">
-            <span class="metric-value">{{ clientsCount ?? '—' }}</span>
-            <span class="metric-label">{{ $t('navbar.clients') }}</span>
-          </div>
-          <div class="host-metric">
-            <span class="metric-value">{{ appsCount ?? '—' }}</span>
-            <span class="metric-label">{{ $t('navbar.applications') }}</span>
+          <div class="home-status" :class="`home-status-${hostStatus}`" role="status" :aria-live="hostStatus === 'loading' ? 'polite' : 'off'">
+            <span class="home-status-dot" aria-hidden="true"></span>
+            <span>{{ statusLabel }}</span>
           </div>
         </div>
 
-        <nav class="quick-actions" :aria-label="$t('resource_card.quick_start')">
-          <a
-            v-for="action in quickActions"
-            :key="action.id"
-            class="quick-action"
-            :class="{ 'quick-action-primary': action.primary }"
-            :href="action.href"
-          >
-            <i :class="action.icon" aria-hidden="true"></i>
-            <span>{{ $t(action.labelKey) }}</span>
-            <small>{{ $t(action.descriptionKey) }}</small>
-          </a>
-        </nav>
+        <div class="host-overview" aria-labelledby="host-overview-title">
+          <div class="host-overview-main">
+            <span class="host-mark" aria-hidden="true">
+              <i class="fas fa-server"></i>
+            </span>
+            <div class="host-summary">
+              <div class="section-kicker" id="host-overview-title">{{ $t('navbar.home') }}</div>
+              <h2 class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
+              <p class="host-meta">
+                <span v-if="hostConfig?.platform">{{ hostConfig.platform }}</span>
+                <span v-if="hostConfig?.platform" aria-hidden="true"> · </span>
+                <span>{{ versionLabel }}</span>
+              </p>
+            </div>
+          </div>
+
+          <div class="host-metrics" aria-label="Host summary">
+            <div class="host-metric">
+              <span class="metric-icon" aria-hidden="true"><i class="fas fa-display"></i></span>
+              <span class="metric-value">{{ clientsCount ?? '—' }}</span>
+              <span class="metric-label">{{ $t('navbar.clients') }}</span>
+            </div>
+            <div class="host-metric">
+              <span class="metric-icon" aria-hidden="true"><i class="fas fa-gamepad"></i></span>
+              <span class="metric-value">{{ appsCount ?? '—' }}</span>
+              <span class="metric-label">{{ $t('navbar.applications') }}</span>
+            </div>
+          </div>
+
+          <nav class="quick-actions" :aria-label="$t('resource_card.quick_start')">
+            <a
+              v-for="action in quickActions"
+              :key="action.id"
+              class="quick-action"
+              :class="{ 'quick-action-primary': action.primary }"
+              :href="action.href"
+            >
+              <span class="quick-action-icon" aria-hidden="true"><i :class="action.icon"></i></span>
+              <span class="quick-action-copy">
+                <span>{{ $t(action.labelKey) }}</span>
+                <small>{{ $t(action.descriptionKey) }}</small>
+              </span>
+              <i class="fas fa-chevron-right quick-action-arrow" aria-hidden="true"></i>
+            </a>
+          </nav>
+        </div>
       </section>
 
       <div v-if="hostStatus === 'error'" class="home-alert" role="alert">
@@ -263,37 +272,81 @@ onMounted(async () => {
 
 .home-content {
   max-width: 1180px;
-  padding-top: 0.5rem;
+  padding-top: 0.45rem;
+}
+
+.home-hero {
+  position: relative;
+  margin: 0.45rem 0 0.7rem;
+  overflow: hidden;
+  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  border-radius: calc(var(--ui-radius-lg, 16px) + 2px);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--ui-surface-strong) 94%, var(--ui-accent-soft)),
+    color-mix(in srgb, var(--ui-surface) 92%, transparent)
+  );
+  box-shadow: var(--ui-shadow-md, 0 12px 32px rgba(58, 126, 213, 0.14));
+  backdrop-filter: blur(18px);
+}
+
+.home-hero::before,
+.home-hero::after {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  content: '';
+  pointer-events: none;
+}
+
+.home-hero::before {
+  top: -3.2rem;
+  right: 11rem;
+  width: 8rem;
+  height: 8rem;
+  opacity: 0.65;
+}
+
+.home-hero::after {
+  top: 1.25rem;
+  right: 8.5rem;
+  width: 0.65rem;
+  height: 0.65rem;
+  box-shadow: 1.1rem -0.75rem 0 -0.12rem var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
 }
 
 .home-intro {
+  position: relative;
+  z-index: 1;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  margin: 0.5rem 0 0.75rem;
+  gap: 1rem;
+  margin: 0;
+  padding: 0.72rem 1rem 0.65rem 1.1rem;
 }
 
 .home-eyebrow,
 .section-kicker {
   margin: 0 0 0.2rem;
   color: var(--ui-accent, #4a9eff);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .home-intro .page-title {
-  margin-bottom: 0.25rem;
-  font-size: 1.65rem;
+  margin-bottom: 0.18rem;
+  font-size: 1.55rem;
   line-height: 1.15;
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: -0.03em;
 }
 
 .home-intro .page-subtitle {
   max-width: 48rem;
+  font-size: 0.86rem;
 }
 
 .home-status {
@@ -301,20 +354,19 @@ onMounted(async () => {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
-  padding: 0.55rem 0.85rem;
+  padding: 0.45rem 0.7rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: 999px;
-  background: var(--ui-surface, rgba(255, 255, 255, 0.62));
-  box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
+  border-radius: var(--ui-radius-md, 12px);
+  background: color-mix(in srgb, var(--ui-surface) 88%, transparent);
   color: var(--ui-text-primary, #1e293b);
-  backdrop-filter: blur(12px);
-  font-size: 0.8rem;
+  backdrop-filter: blur(10px);
+  font-size: 0.76rem;
   font-weight: 600;
 }
 
 .home-status-dot {
-  width: 0.55rem;
-  height: 0.55rem;
+  width: 0.48rem;
+  height: 0.48rem;
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 0 0.2rem var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
@@ -333,20 +385,40 @@ onMounted(async () => {
 }
 
 .host-overview {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-columns: minmax(12rem, 1fr) auto minmax(29rem, 2.2fr);
+  grid-template-columns: minmax(13rem, 1.1fr) auto minmax(29rem, 2fr);
   align-items: center;
-  gap: 1rem 1.5rem;
-  padding: 0.9rem 1.15rem;
-  margin-bottom: 0.75rem;
-  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: var(--ui-radius-md, 12px);
-  background: var(--ui-surface-strong, rgba(240, 248, 255, 0.88));
-  box-shadow: var(--ui-shadow-md, 0 12px 32px rgba(58, 126, 213, 0.14));
-  backdrop-filter: blur(16px);
+  gap: 0.75rem 1rem;
+  padding: 0.68rem 0.78rem;
+  border-top: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  background: color-mix(in srgb, var(--ui-surface) 76%, transparent);
 }
 
 .host-overview-main {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.host-mark {
+  display: inline-flex;
+  width: 2.55rem;
+  height: 2.55rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ui-border-strong, rgba(74, 158, 255, 0.42));
+  border-radius: 0.9rem;
+  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  color: var(--ui-accent, #4a9eff);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
+  font-size: 1rem;
+}
+
+.host-summary {
   min-width: 0;
 }
 
@@ -354,64 +426,82 @@ onMounted(async () => {
   margin: 0;
   overflow: hidden;
   color: var(--ui-text-primary, #1e293b);
-  font-size: clamp(1.25rem, 2.5vw, 1.75rem);
+  font-size: clamp(1.2rem, 2.3vw, 1.55rem);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .host-meta {
-  margin: 0.35rem 0 0;
+  margin: 0.22rem 0 0;
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.85rem;
+  font-size: 0.76rem;
 }
 
 .host-metrics {
   display: flex;
   align-items: stretch;
-  gap: 1rem;
+  gap: 0.38rem;
 }
 
 .host-metric {
-  display: flex;
-  min-width: 4.25rem;
-  flex-direction: column;
+  display: grid;
+  min-width: 5.3rem;
+  grid-template-columns: 1.6rem auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.45rem;
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  border-radius: var(--ui-radius-md, 12px);
+  background: color-mix(in srgb, var(--ui-surface-strong) 76%, transparent);
+}
+
+.metric-icon {
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  grid-row: 1 / 3;
+  align-items: center;
   justify-content: center;
-  padding-left: 1rem;
-  border-left: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  border-radius: 0.55rem;
+  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  color: var(--ui-accent, #4a9eff);
+  font-size: 0.7rem;
 }
 
 .metric-value {
   color: var(--ui-text-primary, #1e293b);
-  font-size: 1.5rem;
+  font-size: 1.05rem;
   font-weight: 700;
   line-height: 1;
 }
 
 .metric-label {
-  margin-top: 0.35rem;
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.75rem;
+  font-size: 0.64rem;
+  line-height: 1.1;
 }
 
 .quick-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
+  gap: 0.38rem;
 }
 
 .quick-action {
   display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr);
-  column-gap: 0.5rem;
+  min-width: 0;
+  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+  column-gap: 0.45rem;
   align-items: center;
-  padding: 0.65rem 0.75rem;
+  padding: 0.42rem 0.5rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: var(--ui-radius-md, 12px);
-  background: var(--ui-surface, rgba(255, 255, 255, 0.62));
+  background: color-mix(in srgb, var(--ui-surface-strong) 78%, transparent);
   color: var(--ui-text-primary, #1e293b);
   text-decoration: none;
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .quick-action:hover,
@@ -419,28 +509,59 @@ onMounted(async () => {
   border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
   background: var(--ui-surface-hover, rgba(255, 255, 255, 0.8));
   color: var(--ui-text-primary, #1e293b);
-  transform: translateY(-2px);
+  box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
+  transform: translateY(-1px);
 }
 
 .quick-action-primary {
   border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
+  background: color-mix(in srgb, var(--ui-accent-soft) 68%, var(--ui-surface-strong));
+}
+
+.quick-action-icon {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.62rem;
   background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-}
-
-.quick-action > i {
-  grid-row: span 2;
   color: var(--ui-accent, #4a9eff);
-  font-size: 1rem;
-  text-align: center;
+  font-size: 0.75rem;
 }
 
-.quick-action span {
+.quick-action-copy {
+  display: block;
+  min-width: 0;
+}
+
+.quick-action-copy > span,
+.quick-action-copy > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-action-copy > span {
+  font-size: 0.76rem;
   font-weight: 650;
 }
 
-.quick-action small {
+.quick-action-copy > small {
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.75rem;
+  font-size: 0.62rem;
+}
+
+.quick-action-arrow {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 0.58rem;
+  transition: transform 0.2s ease;
+}
+
+.quick-action:hover .quick-action-arrow,
+.quick-action:focus-visible .quick-action-arrow {
+  transform: translateX(2px);
 }
 
 .home-resources {
@@ -480,35 +601,44 @@ onMounted(async () => {
 }
 
 @media (max-width: 767.98px) {
+  .home-hero::before {
+    right: -2.5rem;
+  }
+
+  .home-hero::after {
+    display: none;
+  }
+
   .home-intro {
     align-items: flex-start;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 0.65rem;
+    padding: 0.85rem;
   }
 
   .home-intro .page-title {
-    font-size: 1.8rem;
+    font-size: 1.55rem;
+  }
+
+  .home-status {
+    align-self: stretch;
+    justify-content: center;
   }
 
   .host-overview {
     grid-template-columns: 1fr;
-    gap: 1rem;
-    padding: 1rem;
+    gap: 0.65rem;
+    padding: 0.75rem;
   }
 
   .host-metrics {
-    gap: 0;
+    gap: 0.4rem;
   }
 
   .host-metric {
     flex: 1;
     min-width: 0;
-    padding-left: 0;
-  }
-
-  .host-metric + .host-metric {
-    padding-left: 1rem;
-    border-left: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+    padding: 0.45rem 0.55rem;
   }
 
   .quick-actions {

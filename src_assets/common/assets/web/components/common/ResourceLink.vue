@@ -49,21 +49,26 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 <style scoped>
 .resource-link {
   --link-color: var(--ui-accent-rgb);
-  --icon-gradient: linear-gradient(135deg, var(--ui-accent), var(--ui-accent-secondary));
+  --link-foreground: var(--ui-accent);
   display: flex;
   align-items: center;
   padding: 0.6em 0.8em;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
-  background: linear-gradient(135deg, rgba(var(--link-color), 0.15), rgba(var(--link-color), 0.08));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ui-surface-strong) 86%, rgba(var(--link-color), 0.18)),
+    color-mix(in srgb, var(--ui-surface) 92%, transparent)
+  );
   color: var(--ui-text-primary);
   text-decoration: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .resource-link:hover,
 .resource-link:focus-visible {
   border-color: rgba(var(--link-color), 0.4);
+  background: color-mix(in srgb, var(--ui-surface-hover) 90%, rgba(var(--link-color), 0.12));
   box-shadow: var(--ui-shadow-sm);
   color: var(--ui-text-primary);
   text-decoration: none;
@@ -71,8 +76,8 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 }
 
 .resource-link--compact {
-  min-height: 2.75rem;
-  padding: 0.35rem 0.45rem;
+  min-height: 2.6rem;
+  padding: 0.3rem 0.4rem;
 }
 
 .resource-icon {
@@ -84,17 +89,18 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
   justify-content: center;
   margin-right: 0.8em;
   border-radius: 8px;
-  background: var(--icon-gradient);
-  color: #fff;
+  border: 1px solid rgba(var(--link-color), 0.2);
+  background: rgba(var(--link-color), 0.12);
+  color: var(--link-foreground);
   font-size: 1.1rem;
 }
 
 .resource-link--compact .resource-icon {
-  width: 28px;
-  height: 28px;
-  margin-right: 0.5rem;
-  border-radius: 7px;
-  font-size: 0.85rem;
+  width: 27px;
+  height: 27px;
+  margin-right: 0.45rem;
+  border-radius: 0.56rem;
+  font-size: 0.76rem;
 }
 
 .resource-icon--logo {
@@ -137,13 +143,13 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 }
 
 .resource-link--compact .resource-title {
-  margin-bottom: 2px;
-  font-size: 0.76rem;
+  margin-bottom: 1px;
+  font-size: 0.72rem;
 }
 
 .resource-link--compact .resource-desc {
   overflow: hidden;
-  font-size: 0.65rem;
+  font-size: 0.61rem;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -162,66 +168,47 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 }
 
 .resource-link--accent-alt {
-  --icon-gradient: linear-gradient(135deg, var(--ui-accent-secondary), var(--ui-accent));
+  --link-color: var(--ui-info-rgb);
+  --link-foreground: var(--ui-info-text);
 }
 
 .resource-link--android {
-  --link-color: 61, 220, 132;
-  --icon-gradient: linear-gradient(135deg, #3ddc84, #00c853);
+  --link-color: var(--ui-success-rgb);
+  --link-foreground: var(--ui-success-text);
 }
 
 .resource-link--apple {
-  --link-color: 128, 128, 128;
-  --icon-gradient: linear-gradient(135deg, #555, #777);
+  --link-color: 100, 116, 139;
+  --link-foreground: var(--ui-text-secondary);
 }
 
 .resource-link--desktop,
 .resource-link--github {
-  --link-color: 108, 117, 125;
-}
-
-.resource-link--desktop {
-  --icon-gradient: linear-gradient(135deg, #6c757d, #495057);
-}
-
-.resource-link--github {
-  --icon-gradient: linear-gradient(135deg, #6c757d, #868e96);
+  --link-color: 100, 116, 139;
+  --link-foreground: var(--ui-text-secondary);
 }
 
 .resource-link--harmony {
-  --link-color: 206, 48, 48;
-  --icon-gradient: linear-gradient(135deg, #ce3030, #e74c3c);
+  --link-color: var(--ui-info-rgb);
+  --link-foreground: var(--ui-info-text);
 }
 
 .resource-link--moonlink {
-  --link-color: 111, 66, 193;
-  --icon-gradient: linear-gradient(135deg, #6f42c1, #4c2f8f);
+  --link-color: 142, 126, 173;
+  --link-foreground: var(--ui-text-secondary);
 }
 
 [data-bs-theme='dark'] .resource-link {
-  background: linear-gradient(135deg, rgba(var(--link-color), 0.2), rgba(var(--link-color), 0.1));
+  background: linear-gradient(135deg, rgba(var(--link-color), 0.13), color-mix(in srgb, var(--ui-surface) 86%, transparent));
 }
 
 [data-bs-theme='dark'] .resource-link--apple {
-  --link-color: 170, 170, 170;
-  --icon-gradient: linear-gradient(135deg, #aaa, #ccc);
-}
-
-[data-bs-theme='dark'] .resource-link--apple .resource-icon {
-  color: #222;
+  --link-color: 184, 171, 154;
 }
 
 [data-bs-theme='dark'] .resource-link--desktop,
 [data-bs-theme='dark'] .resource-link--github {
-  --link-color: 150, 160, 170;
-}
-
-[data-bs-theme='dark'] .resource-link--desktop {
-  --icon-gradient: linear-gradient(135deg, #8c959d, #6c757d);
-}
-
-[data-bs-theme='dark'] .resource-link--github {
-  --icon-gradient: linear-gradient(135deg, #8c959d, #adb5bd);
+  --link-color: 184, 171, 154;
 }
 
 @media (max-width: 575.98px) {

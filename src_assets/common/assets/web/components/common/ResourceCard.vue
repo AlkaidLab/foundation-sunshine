@@ -39,7 +39,7 @@ const confirmHarmonyLink = async () => {
 
 <template>
   <div class="resource-section">
-    <div class="card shadow-sm">
+    <div class="card shadow-sm resource-library-card">
       <div class="card-header resource-card-header">
         <h5 class="card-title mb-0">
           <i class="fas fa-book-open me-2" aria-hidden="true"></i>
@@ -142,23 +142,75 @@ const confirmHarmonyLink = async () => {
 </template>
 
 <style scoped>
+.resource-library-card,
+.legal-card {
+  overflow: hidden;
+  border-radius: calc(var(--ui-radius-lg) + 1px);
+}
+
+.resource-card-header {
+  position: relative;
+  padding: 0.55rem 0.7rem;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ui-surface-strong) 88%, var(--ui-accent-soft)),
+    var(--ui-surface-strong)
+  );
+}
+
+.resource-card-header::after {
+  position: absolute;
+  top: 50%;
+  right: 0.85rem;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  box-shadow: -0.65rem 0 0 -0.05rem var(--ui-accent-secondary), -1.25rem 0 0 -0.1rem var(--ui-accent-soft);
+  content: '';
+  opacity: 0.55;
+  transform: translateY(-50%);
+}
+
+.resource-card-header .card-title {
+  display: flex;
+  align-items: center;
+  color: var(--ui-text-primary);
+  font-size: 0.88rem;
+}
+
+.resource-card-header .card-title i {
+  display: inline-flex;
+  width: 1.65rem;
+  height: 1.65rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.58rem;
+  background: var(--ui-accent-soft);
+  font-size: 0.72rem;
+}
+
 .resource-section > .card > .card-body {
-  padding: 0.5rem;
+  padding: 0.42rem;
 }
 
 .resource-groups {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 0.5rem;
+  gap: 0.42rem;
 }
 
 .resource-group {
   min-width: 0;
   margin: 0;
-  padding: 0.4rem;
+  padding: 0.38rem 0.42rem 0.42rem;
   border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
+  border-radius: var(--ui-radius-md);
+  background: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--ui-surface-strong) 78%, transparent),
+    color-mix(in srgb, var(--ui-surface) 68%, transparent)
+  );
 }
 
 .resource-group--official,
@@ -176,17 +228,30 @@ const confirmHarmonyLink = async () => {
 
 .resource-group .row,
 .legal-links {
-  --bs-gutter-x: 0.5rem;
-  --bs-gutter-y: 0.5rem;
+  --bs-gutter-x: 0.42rem;
+  --bs-gutter-y: 0.42rem;
 }
 
 .resource-group-title {
-  margin-bottom: 0.35rem;
-  color: var(--ui-text-secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.1rem 0.32rem;
+  color: var(--ui-text-primary);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+
+.resource-group-title i {
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.48rem;
+  background: var(--ui-accent-soft);
+  font-size: 0.58rem;
 }
 
 .resource-card-header .card-title i,
@@ -197,47 +262,66 @@ const confirmHarmonyLink = async () => {
 
 .resource-legal-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) auto minmax(20rem, 1.15fr);
+  grid-template-columns: minmax(0, 0.9fr) auto minmax(19rem, 1.1fr);
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.5rem 0.65rem !important;
+  gap: 0.55rem;
+  padding: 0.45rem 0.55rem !important;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ui-surface-strong) 82%, transparent),
+    color-mix(in srgb, var(--ui-surface) 72%, transparent)
+  );
 }
 
 .legal-title {
-  margin: 0 0 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  margin: 0 0 0.18rem;
   color: var(--ui-text-primary);
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.legal-title i {
+  display: inline-flex;
+  width: 1.55rem;
+  height: 1.55rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  background: var(--ui-accent-soft);
+  font-size: 0.64rem;
 }
 
 .legal-copy {
   margin: 0;
   color: var(--ui-text-secondary);
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: 0.66rem;
+  line-height: 1.3;
 }
 
 .gpl-badge {
-  min-width: 16rem;
+  min-width: 15rem;
 }
 
 .badge-gpl {
   display: inline-flex;
   align-items: center;
-  padding: 0.4rem 0.7rem;
-  border: 1px solid var(--ui-border-strong);
+  padding: 0.33rem 0.6rem;
+  border: 1px solid var(--ui-border);
   border-radius: 50px;
   background: var(--ui-accent-soft);
-  color: var(--ui-accent);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  color: var(--ui-info-text);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
 }
 
 .gpl-badge p {
   color: var(--ui-text-muted);
-  font-size: 0.65rem;
-  line-height: 1.25;
+  font-size: 0.58rem;
+  line-height: 1.2;
 }
 
 .legal-links {
