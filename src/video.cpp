@@ -3993,6 +3993,7 @@ namespace video {
     // If we already have a good encoder, check to see if another probe is required
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
       BOOST_LOG(info) << "Using cached encoder validation results";
+      active_encoder_for_status.store(chosen_encoder, std::memory_order_release);
       return 0;
     }
 

@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "S’ouvre dans une nouvelle fenêtre",
     "apply": "Appliquer",
     "auto": "Automatique",
     "autodetect": "Détection automatique (recommandé)",
@@ -33,6 +34,19 @@
     "warning": "Attention !"
   },
   "apps": {
+    "cover_search_placeholder": "Rechercher par titre de jeu...",
+    "cover_image_unavailable": "Image indisponible",
+    "clear_search": "Effacer la recherche",
+    "search_cover": "Rechercher des jaquettes",
+    "cover_search_loading": "Recherche de jaquettes...",
+    "cover_search_empty": "Aucune jaquette trouvée",
+    "cover_search_empty_desc": "Essayez avec d’autres mots-clés",
+    "cover_search_hint": "Cliquez sur une jaquette pour l’appliquer",
+    "cover_search_tab_all": "Toutes",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "La recherche de jaquettes a échoué. Veuillez réessayer plus tard.",
+    "cover_apply_failed": "L’application de la jaquette a échoué. Veuillez réessayer plus tard.",
     "actions": "Actions",
     "add_cmds": "Ajouter des commandes",
     "add_new": "Ajouter une application",

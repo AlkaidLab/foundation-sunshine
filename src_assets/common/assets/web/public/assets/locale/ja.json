@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "新しいウィンドウで開きます",
     "apply": "適用",
     "auto": "自動",
     "autodetect": "自動検出 (推奨)",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "ゲームタイトルで検索...",
+    "cover_image_unavailable": "画像を利用できません",
+    "clear_search": "検索をクリア",
+    "search_cover": "カバーを検索",
+    "cover_search_loading": "カバーを検索中...",
+    "cover_search_empty": "カバーが見つかりません",
+    "cover_search_empty_desc": "別のキーワードで検索してみてください",
+    "cover_search_hint": "カバーをクリックして適用",
+    "cover_search_tab_all": "すべて",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "カバーの検索に失敗しました。後でもう一度お試しください。",
+    "cover_apply_failed": "カバーの適用に失敗しました。後でもう一度お試しください。",
     "actions": "アクション",
     "add_cmds": "コマンドを追加",
     "add_new": "新規追加",

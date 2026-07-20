@@ -68,7 +68,7 @@ const confirmHarmonyLink = async () => {
       </section>
     </div>
 
-    <footer class="legal-footer">
+    <footer class="legal-footer" :aria-label="$t('resource_card.legal')">
       <div class="legal-footer-heading">
         <span class="legal-title">{{ $t('resource_card.legal') }}</span>
       </div>
@@ -84,6 +84,7 @@ const confirmHarmonyLink = async () => {
             :href="resource.href"
             target="_blank"
             rel="noopener noreferrer"
+            :aria-label="`${resourceTitle(resource)} (${$t('_common.opens_new_tab')})`"
             :title="resourceDescription(resource)"
           >
             {{ resourceTitle(resource) }}

@@ -15,6 +15,20 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 const dialog = ref(null)
 let previousFocus = null
+let previousBodyOverflow = null
+
+const setBodyScrollLock = (locked) => {
+  if (locked) {
+    if (previousBodyOverflow === null) previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return
+  }
+
+  if (previousBodyOverflow !== null) {
+    document.body.style.overflow = previousBodyOverflow
+    previousBodyOverflow = null
+  }
+}
 
 const close = () => {
   if (props.dismissible) emit('close')
@@ -56,17 +70,23 @@ watch(
   () => props.show,
   async (show) => {
     if (show) {
+      setBodyScrollLock(true)
       previousFocus = document.activeElement
       await nextTick()
       dialog.value?.focus()
-    } else if (previousFocus instanceof HTMLElement) {
-      previousFocus.focus()
-      previousFocus = null
+    } else {
+      setBodyScrollLock(false)
+      if (previousFocus instanceof HTMLElement) {
+        previousFocus.focus()
+        previousFocus = null
+      }
     }
   },
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {
+  setBodyScrollLock(false)
   if (previousFocus instanceof HTMLElement) previousFocus.focus()
 })
 </script>

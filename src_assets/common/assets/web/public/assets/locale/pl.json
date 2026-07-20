@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Otwiera się w nowym oknie",
     "apply": "Zastosuj",
     "auto": "Automatyczny",
     "autodetect": "Autowykrywanie (zalecane)",
@@ -33,6 +34,19 @@
     "warning": "Ostrzeżenie!"
   },
   "apps": {
+    "cover_search_placeholder": "Szukaj po tytule gry...",
+    "cover_image_unavailable": "Obraz niedostępny",
+    "clear_search": "Wyczyść wyszukiwanie",
+    "search_cover": "Szukaj okładek",
+    "cover_search_loading": "Wyszukiwanie okładek...",
+    "cover_search_empty": "Nie znaleziono okładek",
+    "cover_search_empty_desc": "Spróbuj wyszukać za pomocą innych słów kluczowych",
+    "cover_search_hint": "Kliknij okładkę, aby ją zastosować",
+    "cover_search_tab_all": "Wszystkie",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Wyszukiwanie okładek nie powiodło się. Spróbuj ponownie później.",
+    "cover_apply_failed": "Nie udało się zastosować okładki. Spróbuj ponownie później.",
     "actions": "Działania",
     "add_cmds": "Dodaj polecenia",
     "add_new": "Dodaj nowy",

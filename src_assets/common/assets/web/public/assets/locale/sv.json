@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Öppnas i ett nytt fönster",
     "apply": "Tillämpa",
     "auto": "Automatisk",
     "autodetect": "Autodetektera (rekommenderas)",
@@ -33,6 +34,19 @@
     "warning": "Varning!"
   },
   "apps": {
+    "cover_search_placeholder": "Sök efter speltitel...",
+    "cover_image_unavailable": "Bilden är inte tillgänglig",
+    "clear_search": "Rensa sökning",
+    "search_cover": "Sök omslag",
+    "cover_search_loading": "Söker efter omslag...",
+    "cover_search_empty": "Inga omslag hittades",
+    "cover_search_empty_desc": "Försök söka med andra nyckelord",
+    "cover_search_hint": "Klicka på ett omslag för att tillämpa det",
+    "cover_search_tab_all": "Alla",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Det gick inte att söka efter omslag. Försök igen senare.",
+    "cover_apply_failed": "Det gick inte att tillämpa omslaget. Försök igen senare.",
     "actions": "Åtgärder",
     "add_cmds": "Lägg till kommandon",
     "add_new": "Lägg till ny",

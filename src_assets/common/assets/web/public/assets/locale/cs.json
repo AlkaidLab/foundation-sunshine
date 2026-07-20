@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Otevře se v novém okně",
     "apply": "Použít",
     "auto": "Automaticky",
     "autodetect": "Automatická detekce (doporučeno)",
@@ -33,6 +34,19 @@
     "warning": "Varování!"
   },
   "apps": {
+    "cover_search_placeholder": "Hledat podle názvu hry...",
+    "cover_image_unavailable": "Obrázek není k dispozici",
+    "clear_search": "Vymazat hledání",
+    "search_cover": "Hledat obaly",
+    "cover_search_loading": "Hledání obalů...",
+    "cover_search_empty": "Nebyly nalezeny žádné obaly",
+    "cover_search_empty_desc": "Zkuste hledat pomocí jiných klíčových slov",
+    "cover_search_hint": "Kliknutím na obal jej použijete",
+    "cover_search_tab_all": "Vše",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Vyhledávání obalů selhalo. Zkuste to znovu později.",
+    "cover_apply_failed": "Použití obalu selhalo. Zkuste to znovu později.",
     "actions": "Akce",
     "add_cmds": "Přidat příkazy",
     "add_new": "Přidat nový",

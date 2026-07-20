@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Відкриється в новому вікні",
     "apply": "Застосувати",
     "auto": "Автоматично",
     "autodetect": "Автовизначення (рекомендовано)",
@@ -33,6 +34,19 @@
     "warning": "Попередження!"
   },
   "apps": {
+    "cover_search_placeholder": "Пошук за назвою гри...",
+    "cover_image_unavailable": "Зображення недоступне",
+    "clear_search": "Очистити пошук",
+    "search_cover": "Шукати обкладинки",
+    "cover_search_loading": "Пошук обкладинок...",
+    "cover_search_empty": "Обкладинки не знайдено",
+    "cover_search_empty_desc": "Спробуйте пошук за іншими ключовими словами",
+    "cover_search_hint": "Натисніть обкладинку, щоб застосувати її",
+    "cover_search_tab_all": "Усі",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Не вдалося виконати пошук обкладинок. Повторіть спробу пізніше.",
+    "cover_apply_failed": "Не вдалося застосувати обкладинку. Повторіть спробу пізніше.",
     "actions": "Дії",
     "add_cmds": "Додати команди",
     "add_new": "Додати новий",

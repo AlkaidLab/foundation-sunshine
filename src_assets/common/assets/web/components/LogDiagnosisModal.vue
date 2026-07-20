@@ -279,7 +279,7 @@ function renderMarkdown(text) {
   right: 0;
   bottom: 0;
   padding: 1rem;
-  background: rgba(45, 38, 40, 0.72);
+  background: var(--ui-overlay);
   display: flex;
   align-items: center;
   justify-content: center;

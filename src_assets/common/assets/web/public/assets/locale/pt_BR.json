@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Abre em uma nova janela",
     "apply": "Aplicar",
     "auto": "Automático",
     "autodetect": "Autodetecção (recomendado)",
@@ -33,6 +34,19 @@
     "warning": "Atenção!"
   },
   "apps": {
+    "cover_search_placeholder": "Pesquisar pelo título do jogo...",
+    "cover_image_unavailable": "Imagem indisponível",
+    "clear_search": "Limpar busca",
+    "search_cover": "Pesquisar capas",
+    "cover_search_loading": "Pesquisando capas...",
+    "cover_search_empty": "Nenhuma capa encontrada",
+    "cover_search_empty_desc": "Tente pesquisar com palavras-chave diferentes",
+    "cover_search_hint": "Clique em uma capa para aplicá-la",
+    "cover_search_tab_all": "Todas",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Falha ao pesquisar capas. Tente novamente mais tarde.",
+    "cover_apply_failed": "Falha ao aplicar a capa. Tente novamente mais tarde.",
     "actions": "Ações",
     "add_cmds": "Adicionar comandos",
     "add_new": "Adicionar novo",

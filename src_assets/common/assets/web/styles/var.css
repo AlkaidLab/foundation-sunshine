@@ -49,6 +49,7 @@
   /* Keep secondary copy readable on translucent GUI surfaces (4.5:1 on white). */
   --ui-text-muted: #68788e;
   --ui-accent: #4a9eff;
+  --ui-accent-text: #306fae;
   --ui-accent-rgb: 74, 158, 255;
   --ui-accent-soft: rgba(74, 158, 255, 0.12);
   --ui-accent-contrast: #ffffff;
@@ -119,6 +120,7 @@
   --ui-text-secondary: #d4c4a8;
   --ui-text-muted: #a99d8a;
   --ui-accent: #d4a5a5;
+  --ui-accent-text: #f2e3c9;
   --ui-accent-rgb: 212, 165, 165;
   --ui-accent-soft: rgba(212, 165, 165, 0.14);
   --ui-accent-contrast: #2d2628;

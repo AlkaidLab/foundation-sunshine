@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Apre in una nuova finestra",
     "apply": "Applica",
     "auto": "Automatico",
     "autodetect": "Rilevamento automatico (consigliato)",
@@ -33,6 +34,19 @@
     "warning": "Attenzione!"
   },
   "apps": {
+    "cover_search_placeholder": "Cerca per titolo del gioco...",
+    "cover_image_unavailable": "Immagine non disponibile",
+    "clear_search": "Cancella ricerca",
+    "search_cover": "Cerca copertine",
+    "cover_search_loading": "Ricerca copertine...",
+    "cover_search_empty": "Nessuna copertina trovata",
+    "cover_search_empty_desc": "Prova a cercare con parole chiave diverse",
+    "cover_search_hint": "Fai clic su una copertina per applicarla",
+    "cover_search_tab_all": "Tutte",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Ricerca copertine non riuscita. Riprova più tardi.",
+    "cover_apply_failed": "Applicazione della copertina non riuscita. Riprova più tardi.",
     "actions": "Azioni",
     "add_cmds": "Aggiungi comandi",
     "add_new": "Aggiungi nuovo",

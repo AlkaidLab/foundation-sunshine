@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "새 창에서 열립니다",
     "apply": "적용",
     "auto": "자동 설정",
     "autodetect": "자동 감지 (권장)",
@@ -33,6 +34,19 @@
     "warning": "경고!"
   },
   "apps": {
+    "cover_search_placeholder": "게임 제목으로 검색...",
+    "cover_image_unavailable": "이미지를 사용할 수 없습니다",
+    "clear_search": "검색 지우기",
+    "search_cover": "커버 검색",
+    "cover_search_loading": "커버 검색 중...",
+    "cover_search_empty": "커버를 찾을 수 없습니다",
+    "cover_search_empty_desc": "다른 키워드로 검색해 보세요",
+    "cover_search_hint": "커버를 클릭하여 적용하세요",
+    "cover_search_tab_all": "전체",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "커버 검색에 실패했습니다. 나중에 다시 시도해 주세요.",
+    "cover_apply_failed": "커버 적용에 실패했습니다. 나중에 다시 시도해 주세요.",
     "actions": "작업",
     "add_cmds": "명령어 추가",
     "add_new": "신규 추가",

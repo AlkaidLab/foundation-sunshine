@@ -3,6 +3,7 @@
     <Transition name="finder-fade">
       <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
         <div
+          ref="panel"
           class="cover-finder-panel"
           role="dialog"
           aria-modal="true"
@@ -10,6 +11,7 @@
           tabindex="-1"
           @click.stop
           @keydown.esc="closeFinder"
+          @keydown.tab="handleTabKeydown"
         >
           <!-- 头部 -->
           <div class="cover-finder__header">
@@ -20,7 +22,7 @@
             <button
               type="button"
               class="cover-finder__close"
-              :aria-label="$t('_common.close') || '关闭'"
+              :aria-label="$t('_common.close')"
               @click="closeFinder"
             >
               <i class="fas fa-times"></i>
@@ -36,14 +38,14 @@
                 v-model="localSearchTerm"
                 type="text"
                 class="cover-finder__search-input"
-                placeholder="输入游戏名称搜索..."
+                :placeholder="$t('apps.cover_search_placeholder')"
                 @keydown.enter="searchCovers"
               />
               <button
                 v-if="localSearchTerm"
                 class="cover-finder__search-clear"
                 type="button"
-                aria-label="清空搜索"
+                :aria-label="$t('apps.clear_search')"
                 @click="clearSearch"
               >
                 <i class="fas fa-times"></i>
@@ -51,7 +53,7 @@
               <button
                 class="cover-finder__search-btn"
                 type="button"
-                aria-label="搜索封面"
+                :aria-label="$t('apps.search_cover')"
                 :disabled="!localSearchTerm || loading"
                 @click="searchCovers"
               >
@@ -72,7 +74,7 @@
               @click.stop.prevent="coverFilter = tab.key"
             >
               <i :class="tab.icon"></i>
-              <span>{{ tab.label }}</span>
+              <span>{{ $t(tab.labelKey) }}</span>
               <span class="cover-finder__tab-badge" v-if="getTabCount(tab.key) > 0">
                 {{ getTabCount(tab.key) }}
               </span>
@@ -84,7 +86,7 @@
             <!-- 加载状态 -->
             <div v-if="loading" class="cover-finder__loading" role="status" aria-live="polite">
               <div class="cover-finder__loading-spinner"></div>
-              <p class="cover-finder__loading-text">正在搜索封面...</p>
+              <p class="cover-finder__loading-text">{{ $t('apps.cover_search_loading') }}</p>
             </div>
 
             <!-- 封面网格 -->
@@ -116,8 +118,8 @@
               <div class="cover-finder__empty-icon">
                 <i class="fas fa-search"></i>
               </div>
-              <h4>未找到相关封面</h4>
-              <p>尝试使用不同的关键词搜索</p>
+              <h4>{{ $t('apps.cover_search_empty') }}</h4>
+              <p>{{ $t('apps.cover_search_empty_desc') }}</p>
             </div>
           </div>
 
@@ -125,7 +127,7 @@
           <div class="cover-finder__footer">
             <span class="cover-finder__footer-hint">
               <i class="fas fa-info-circle me-1"></i>
-              点击封面即可应用
+              {{ $t('apps.cover_search_hint') }}
             </span>
           </div>
         </div>
@@ -138,12 +140,12 @@
 import { searchAllCovers } from '../utils/coverSearch.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 
-const PLACEHOLDER_IMAGE =
+const createPlaceholderImage = (label) =>
   'data:image/svg+xml,' +
   encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
     <rect fill="#1a1a2e" width="200" height="300"/>
-    <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">无法加载</text>
+    <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">${label}</text>
   </svg>
 `)
 
@@ -168,10 +170,11 @@ export default {
       steamCovers: [],
       localSearchTerm: '',
       searchAbortController: null,
+      previousFocus: null,
       tabs: [
-        { key: 'all', icon: 'fas fa-globe', label: '全部' },
-        { key: 'igdb', icon: 'fas fa-gamepad', label: 'IGDB' },
-        { key: 'steam', icon: 'fab fa-steam', label: 'Steam' },
+        { key: 'all', icon: 'fas fa-globe', labelKey: 'apps.cover_search_tab_all' },
+        { key: 'igdb', icon: 'fas fa-gamepad', labelKey: 'apps.cover_search_tab_igdb' },
+        { key: 'steam', icon: 'fab fa-steam', labelKey: 'apps.cover_search_tab_steam' },
       ],
     }
   },
@@ -200,6 +203,7 @@ export default {
         this.onOpen()
       } else {
         this.abortPendingSearch()
+        this.$nextTick(() => this.restoreFocus())
       }
       document.body.style.overflow = newVal ? 'hidden' : ''
     },
@@ -207,6 +211,7 @@ export default {
   beforeUnmount() {
     document.body.style.overflow = ''
     this.abortPendingSearch()
+    this.restoreFocus()
   },
   methods: {
     getTabCount(key) {
@@ -219,6 +224,7 @@ export default {
     },
 
     onOpen() {
+      this.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
       this.localSearchTerm = this.searchTerm
       this.$nextTick(() => {
         this.$refs.searchInput?.focus()
@@ -244,6 +250,41 @@ export default {
       this.$refs.searchInput?.focus()
     },
 
+    getFocusableElements() {
+      return Array.from(
+        this.$refs.panel?.querySelectorAll(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) || [],
+      ).filter((element) => element.offsetParent !== null)
+    },
+
+    handleTabKeydown(event) {
+      const focusable = this.getFocusableElements()
+      if (!focusable.length) {
+        event.preventDefault()
+        this.$refs.panel?.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const panel = this.$refs.panel
+      if (event.shiftKey && (document.activeElement === first || !panel?.contains(document.activeElement))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (document.activeElement === last || !panel?.contains(document.activeElement))) {
+        event.preventDefault()
+        first.focus()
+      }
+    },
+
+    restoreFocus() {
+      if (this.previousFocus instanceof HTMLElement) {
+        this.previousFocus.focus()
+        this.previousFocus = null
+      }
+    },
+
     async searchCovers() {
       if (!this.localSearchTerm) {
         this.igdbCovers = []
@@ -264,15 +305,15 @@ export default {
         this.steamCovers = results.steam
       } catch (error) {
         if (error.name === 'AbortError') return
-        console.error('搜索封面失败:', error)
-        this.$emit('error', '搜索封面失败，请稍后重试')
+        console.error('Cover search failed:', error)
+        this.$emit('error', this.$t('apps.cover_search_failed'))
       } finally {
         this.loading = false
       }
     },
 
     handleImageError(event) {
-      event.target.src = PLACEHOLDER_IMAGE
+      event.target.src = createPlaceholderImage(this.$t('apps.cover_image_unavailable'))
     },
 
     async selectCover(cover) {
@@ -283,8 +324,8 @@ export default {
         this.$emit('cover-selected', { path, source: cover.source })
         this.closeFinder()
       } catch (error) {
-        console.error('使用封面失败:', error)
-        this.$emit('error', '使用封面失败，请稍后重试')
+        console.error('Failed to apply cover:', error)
+        this.$emit('error', this.$t('apps.cover_apply_failed'))
       } finally {
         this.$emit('loading', false)
       }
@@ -767,9 +808,14 @@ export default {
   .cover-finder__card,
   .cover-finder__card-overlay,
   .cover-finder__search-btn,
+  .cover-finder__loading-spinner,
   .finder-fade-enter-active,
   .finder-fade-leave-active {
     transition: none;
+  }
+
+  .cover-finder__loading-spinner {
+    animation: none;
   }
 }
 </style>

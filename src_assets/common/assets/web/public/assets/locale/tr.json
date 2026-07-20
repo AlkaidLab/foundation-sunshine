@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Yeni pencerede açılır",
     "apply": "Uygula",
     "auto": "Otomatik",
     "autodetect": "Otomatik Algıla (önerilir)",
@@ -33,6 +34,19 @@
     "warning": "Uyarı!"
   },
   "apps": {
+    "cover_search_placeholder": "Oyun adına göre ara...",
+    "cover_image_unavailable": "Görsel kullanılamıyor",
+    "clear_search": "Aramayı temizle",
+    "search_cover": "Kapak ara",
+    "cover_search_loading": "Kapaklar aranıyor...",
+    "cover_search_empty": "Kapak bulunamadı",
+    "cover_search_empty_desc": "Farklı anahtar kelimelerle aramayı deneyin",
+    "cover_search_hint": "Uygulamak için bir kapağa tıklayın",
+    "cover_search_tab_all": "Tümü",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Kapak araması başarısız oldu. Lütfen daha sonra tekrar deneyin.",
+    "cover_apply_failed": "Kapak uygulanamadı. Lütfen daha sonra tekrar deneyin.",
     "actions": "Eylemler",
     "add_cmds": "Komutlar Ekle",
     "add_new": "Yeni Ekle",

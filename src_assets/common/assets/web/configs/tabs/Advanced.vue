@@ -452,6 +452,12 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
   color: var(--ui-accent);
 }
 
+.status-note.is-warning {
+  border-color: color-mix(in srgb, var(--ui-warning) 34%, transparent);
+  background: color-mix(in srgb, var(--ui-warning) 11%, transparent);
+  color: var(--ui-warning-text);
+}
+
 @media (max-width: 575.98px) {
   .capture-control-row {
     align-items: stretch;

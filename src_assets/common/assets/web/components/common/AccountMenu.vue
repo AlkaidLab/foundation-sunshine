@@ -33,19 +33,47 @@
         </button>
       </li>
     </ul>
+
+    <ConfirmDialog
+      :show="showLogoutDialog"
+      dialog-id="account-logout-confirm"
+      :title="$t('troubleshooting.confirm_logout')"
+      title-icon="fas fa-sign-out-alt"
+      tone="danger"
+      :close-label="$t('_common.close')"
+      @close="closeLogoutDialog"
+    >
+      <p>{{ $t('troubleshooting.confirm_logout_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeLogoutDialog">
+          {{ $t('_common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-danger" @click="confirmLogout">
+          <i class="fas fa-sign-out-alt me-2" aria-hidden="true"></i>{{ $t('troubleshooting.logout') }}
+        </button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup>
-import { useI18n } from 'vue-i18n'
+import { ref } from 'vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 import { useLogout } from '../../composables/useLogout.js'
 
-const { t } = useI18n()
 const { logout } = useLogout()
+const showLogoutDialog = ref(false)
 
 const handleLogout = () => {
-  const confirmation = `${t('troubleshooting.confirm_logout')}\n\n${t('troubleshooting.confirm_logout_desc')}`
-  if (typeof window.confirm === 'function' && !window.confirm(confirmation)) return
+  showLogoutDialog.value = true
+}
+
+const closeLogoutDialog = () => {
+  showLogoutDialog.value = false
+}
+
+const confirmLogout = () => {
+  closeLogoutDialog()
 
   logout({
     onLocalhost: () => {

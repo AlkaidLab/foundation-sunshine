@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Wird in einem neuen Fenster geöffnet",
     "apply": "Übernehmen",
     "auto": "Automatisch",
     "autodetect": "AutoDetection (empfohlen)",
@@ -33,6 +34,19 @@
     "warning": "Warnung!"
   },
   "apps": {
+    "cover_search_placeholder": "Nach Spieltitel suchen...",
+    "cover_image_unavailable": "Bild nicht verfügbar",
+    "clear_search": "Suche löschen",
+    "search_cover": "Cover suchen",
+    "cover_search_loading": "Suche nach Covern...",
+    "cover_search_empty": "Keine Cover gefunden",
+    "cover_search_empty_desc": "Versuchen Sie es mit anderen Suchbegriffen",
+    "cover_search_hint": "Klicken Sie auf ein Cover, um es anzuwenden",
+    "cover_search_tab_all": "Alle",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Die Cover-Suche ist fehlgeschlagen. Bitte versuchen Sie es später erneut.",
+    "cover_apply_failed": "Das Anwenden des Covers ist fehlgeschlagen. Bitte versuchen Sie es später erneut.",
     "actions": "Aktionen",
     "add_cmds": "Befehle hinzufügen",
     "add_new": "Neu hinzufügen",

@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Открывается в новом окне",
     "apply": "Применить",
     "auto": "Автоматически",
     "autodetect": "Автоопределение (рекомендуется)",
@@ -33,6 +34,19 @@
     "warning": "Предупреждение!"
   },
   "apps": {
+    "cover_search_placeholder": "Поиск по названию игры...",
+    "cover_image_unavailable": "Изображение недоступно",
+    "clear_search": "Очистить поиск",
+    "search_cover": "Искать обложки",
+    "cover_search_loading": "Поиск обложек...",
+    "cover_search_empty": "Обложки не найдены",
+    "cover_search_empty_desc": "Попробуйте использовать другие ключевые слова",
+    "cover_search_hint": "Нажмите на обложку, чтобы применить её",
+    "cover_search_tab_all": "Все",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Не удалось найти обложки. Повторите попытку позже.",
+    "cover_apply_failed": "Не удалось применить обложку. Повторите попытку позже.",
     "actions": "Действия",
     "add_cmds": "Добавить команды",
     "add_new": "Добавить новое",

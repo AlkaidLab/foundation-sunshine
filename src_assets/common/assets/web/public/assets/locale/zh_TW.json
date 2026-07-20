@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "在新視窗開啟",
     "apply": "套用",
     "auto": "自動",
     "autodetect": "自動偵測（建議）",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "輸入遊戲名稱搜尋...",
+    "cover_image_unavailable": "圖片無法載入",
+    "clear_search": "清除搜尋",
+    "search_cover": "搜尋封面",
+    "cover_search_loading": "正在搜尋封面...",
+    "cover_search_empty": "找不到相關封面",
+    "cover_search_empty_desc": "請嘗試使用不同的關鍵字搜尋",
+    "cover_search_hint": "點擊封面即可套用",
+    "cover_search_tab_all": "全部",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "搜尋封面失敗，請稍後再試",
+    "cover_apply_failed": "套用封面失敗，請稍後再試",
     "actions": "行動",
     "add_cmds": "新增指令",
     "add_new": "新增",

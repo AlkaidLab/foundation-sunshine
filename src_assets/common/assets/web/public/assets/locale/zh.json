@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "在新窗口打开",
     "apply": "应用",
     "auto": "自动",
     "autodetect": "自动检测（推荐）",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "输入游戏名称搜索...",
+    "cover_image_unavailable": "图片无法加载",
+    "clear_search": "清空搜索",
+    "search_cover": "搜索封面",
+    "cover_search_loading": "正在搜索封面...",
+    "cover_search_empty": "未找到相关封面",
+    "cover_search_empty_desc": "尝试使用不同的关键词搜索",
+    "cover_search_hint": "点击封面即可应用",
+    "cover_search_tab_all": "全部",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "搜索封面失败，请稍后重试",
+    "cover_apply_failed": "使用封面失败，请稍后重试",
     "actions": "Clients",
     "add_cmds": "添加命令",
     "add_new": "添加新应用",

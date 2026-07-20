@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Opens in a new window",
     "apply": "Apply",
     "auto": "Automatic",
     "autodetect": "Autodetect (recommended)",
@@ -33,6 +34,19 @@
     "warning": "Warning!"
   },
   "apps": {
+    "cover_search_placeholder": "Search by game title...",
+    "cover_image_unavailable": "Image unavailable",
+    "clear_search": "Clear search",
+    "search_cover": "Search covers",
+    "cover_search_loading": "Searching for covers...",
+    "cover_search_empty": "No covers found",
+    "cover_search_empty_desc": "Try searching with different keywords",
+    "cover_search_hint": "Click a cover to apply it",
+    "cover_search_tab_all": "All",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Cover search failed. Please try again later.",
+    "cover_apply_failed": "Failed to apply cover. Please try again later.",
     "actions": "Actions",
     "add_cmds": "Add Commands",
     "add_new": "Add New",

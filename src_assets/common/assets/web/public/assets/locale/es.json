@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Se abre en una ventana nueva",
     "apply": "Aplicar",
     "auto": "Automático",
     "autodetect": "Autodetectar (recomendado)",
@@ -33,6 +34,19 @@
     "warning": "¡Advertencia!"
   },
   "apps": {
+    "cover_search_placeholder": "Buscar por título del juego...",
+    "cover_image_unavailable": "Imagen no disponible",
+    "clear_search": "Borrar búsqueda",
+    "search_cover": "Buscar carátulas",
+    "cover_search_loading": "Buscando carátulas...",
+    "cover_search_empty": "No se encontraron carátulas",
+    "cover_search_empty_desc": "Prueba a buscar con otras palabras clave",
+    "cover_search_hint": "Haz clic en una carátula para aplicarla",
+    "cover_search_tab_all": "Todas",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "La búsqueda de carátulas ha fallado. Inténtalo de nuevo más tarde.",
+    "cover_apply_failed": "No se pudo aplicar la carátula. Inténtalo de nuevo más tarde.",
     "actions": "Acciones",
     "add_cmds": "Añadir comandos",
     "add_new": "Añadir nuevo",

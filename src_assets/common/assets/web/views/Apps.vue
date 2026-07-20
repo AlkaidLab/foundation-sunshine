@@ -82,8 +82,8 @@
             type="button"
             data-bs-toggle="modal"
             data-bs-target="#envVarsModal"
-            title="环境变量说明"
-            aria-label="环境变量说明"
+            :title="$t('apps.env_vars_about')"
+            :aria-label="$t('apps.env_vars_about')"
           >
             <i class="fas fa-info-circle"></i>
           </button>
