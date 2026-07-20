@@ -102,8 +102,8 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 }
 
 .resource-link--compact {
-  min-height: 2.6rem;
-  padding: 0.3rem 0.4rem;
+  min-height: 3.3rem;
+  padding: 0.45rem 0.6rem;
 }
 
 .resource-icon {
@@ -122,8 +122,8 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 }
 
 .resource-link--compact .resource-icon {
-  width: 27px;
-  height: 27px;
+  width: 32px;
+  height: 32px;
   margin-right: 0.45rem;
   border-radius: 0.56rem;
   font-size: 0.76rem;
@@ -170,12 +170,12 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 
 .resource-link--compact .resource-title {
   margin-bottom: 1px;
-  font-size: 0.72rem;
+  font-size: 0.875rem;
 }
 
 .resource-link--compact .resource-desc {
   overflow: hidden;
-  font-size: 0.61rem;
+  font-size: 0.75rem;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;

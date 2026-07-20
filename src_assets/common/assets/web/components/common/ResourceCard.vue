@@ -128,13 +128,13 @@ const confirmHarmonyLink = async () => {
 .resource-groups {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.42rem;
+  gap: 0.6rem;
 }
 
 .resource-group {
   min-width: 0;
   margin: 0;
-  padding: 0.38rem 0.42rem 0.42rem;
+  padding: 0.55rem 0.6rem 0.6rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
   background: linear-gradient(
@@ -146,9 +146,9 @@ const confirmHarmonyLink = async () => {
 
 .resource-items {
   display: grid;
-  grid-auto-rows: 2.75rem;
+  grid-auto-rows: 3.4rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.42rem;
+  gap: 0.6rem;
 }
 
 .resource-item {
@@ -165,9 +165,9 @@ const confirmHarmonyLink = async () => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0 0.1rem 0.32rem;
+  margin: 0 0.1rem 0.45rem;
   color: var(--ui-text-primary);
-  font-size: 0.7rem;
+  font-size: 0.875rem;
   font-weight: 650;
   letter-spacing: 0.03em;
 }
@@ -278,7 +278,7 @@ const confirmHarmonyLink = async () => {
   }
 
   .resource-items {
-    grid-auto-rows: minmax(2.75rem, auto);
+    grid-auto-rows: minmax(3.25rem, auto);
     grid-template-columns: 1fr;
   }
 
