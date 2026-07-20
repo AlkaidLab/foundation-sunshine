@@ -3,19 +3,23 @@
     <Navbar />
     <div class="config-floating-buttons">
       <button
+        type="button"
         class="cute-btn cute-btn-primary"
         :class="{ 'has-unsaved': hasUnsaved }"
         @click="requestConfigAction('save')"
         :disabled="riskActionRunning"
+        :aria-label="$t('_common.save')"
         :title="hasUnsaved ? $t('config.unsaved_changes_tooltip') : $t('_common.save')"
       >
         <i class="fas fa-save"></i>
       </button>
       <button
         v-if="saved && !restarted"
+        type="button"
         class="cute-btn cute-btn-success"
         @click="requestConfigAction('apply')"
         :disabled="riskActionRunning"
+        :aria-label="$t('_common.apply')"
         :title="$t('_common.apply')"
       >
         <i class="fas fa-check"></i>
@@ -503,7 +507,7 @@ onUnmounted(() => {
 @border-radius-sm: 2px;
 @border-radius-md: 10px;
 @border-radius-lg: 12px;
-@btn-size: 56px;
+@btn-size: 52px;
 @btn-size-mobile: 48px;
 @cubic-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
 @cubic-smooth: cubic-bezier(0.4, 0, 0.2, 1);
@@ -524,8 +528,13 @@ onUnmounted(() => {
   transition: @properties @transition-fast @cubic-smooth;
 }
 
-.skeleton-gradient(@light: 0.08, @mid: 0.12) {
-  background: linear-gradient(90deg, rgba(0, 0, 0, @light) 25%, rgba(0, 0, 0, @mid) 50%, rgba(0, 0, 0, @light) 75%);
+.skeleton-gradient() {
+  background: linear-gradient(
+    90deg,
+    var(--ui-skeleton-base) 25%,
+    var(--ui-skeleton-highlight) 50%,
+    var(--ui-skeleton-base) 75%
+  );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
 }
@@ -591,7 +600,7 @@ onUnmounted(() => {
   .skeleton-label {
     width: 120px;
     height: 16px;
-    .skeleton-gradient(0.06, 0.1);
+    .skeleton-gradient();
     border-radius: 4px;
     flex-shrink: 0;
   }
@@ -599,7 +608,7 @@ onUnmounted(() => {
   .skeleton-input {
     flex: 1;
     height: 38px;
-    .skeleton-gradient(0.06, 0.1);
+    .skeleton-gradient();
     border-radius: 6px;
     max-width: 300px;
   }
@@ -611,22 +620,6 @@ onUnmounted(() => {
   }
   100% {
     background-position: -200% 0;
-  }
-}
-
-[data-bs-theme='dark'] .config-skeleton {
-  .skeleton-tab,
-  .skeleton-title,
-  .skeleton-label,
-  .skeleton-input {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.06) 25%,
-      rgba(255, 255, 255, 0.1) 50%,
-      rgba(255, 255, 255, 0.06) 75%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.5s infinite;
   }
 }
 
@@ -1148,47 +1141,22 @@ onUnmounted(() => {
     font-size: 1.25rem;
     cursor: pointer;
     position: relative;
-    overflow: hidden;
     .transition();
     .flex-center();
 
-    &::before {
-      content: '';
-      position: absolute;
-      top: -50%;
-      left: -50%;
-      width: 200%;
-      height: 200%;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, transparent 70%);
-      opacity: 0;
-      .transition(opacity);
-    }
-
-    &::after {
-      content: '';
-      position: absolute;
-      top: 20%;
-      left: 20%;
-      width: 30%;
-      height: 30%;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
-      border-radius: 50%;
-      opacity: 0.8;
-    }
-
     &:hover {
-      transform: translateY(-2px);
+      transform: translateY(-1px);
       box-shadow: var(--ui-shadow-md);
-
-      &::before,
-      &::after {
-        opacity: 1;
-      }
     }
 
     &:active {
-      transform: scale(0.95) translateY(0);
+      transform: scale(0.97) translateY(0);
       transition: transform 0.1s @cubic-bounce;
+    }
+
+    &:focus-visible {
+      outline: none;
+      box-shadow: var(--ui-shadow-sm), 0 0 0 3px var(--ui-accent-soft);
     }
 
     &-primary {
@@ -1230,7 +1198,7 @@ onUnmounted(() => {
     }
 
     &:hover i {
-      transform: scale(1.2) rotate(5deg);
+      transform: scale(1.06);
     }
 
     &:disabled {
@@ -1239,10 +1207,9 @@ onUnmounted(() => {
       transform: none;
       box-shadow: none;
       animation: none;
-
-      &::before {
-        opacity: 0;
-      }
+      border-color: var(--ui-border);
+      background: var(--ui-surface-strong);
+      color: var(--ui-text-muted);
 
       i {
         transform: none;

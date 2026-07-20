@@ -12,7 +12,7 @@
 body {
   min-height: 100vh;
   font-family: var(--font-family-base);
-  background-color: var(--ui-page-bg, #e6f2ff);
+  background-color: var(--ui-page-bg);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -22,20 +22,16 @@ body {
   z-index: 0;
 
   &.bg-light {
-    background-color: var(--ui-page-bg, #e6f2ff) !important;
+    background-color: var(--ui-page-bg) !important;
   }
 
   &::after {
     content: '';
     position: fixed;
     inset: 0;
-    background: var(--ui-page-overlay, rgba(30, 41, 59, 0.12));
+    background: var(--ui-page-overlay);
     pointer-events: none;
     z-index: -1;
-
-    [data-bs-theme='dark'] & {
-      background: var(--ui-page-overlay, rgba(45, 38, 40, 0.5));
-    }
   }
 }
 
@@ -54,8 +50,8 @@ body {
 
 // Drag and drop indicator
 .dragover {
-  outline: 4px dashed #ffc400;
-  outline-offset: -20px;
+  outline: 3px dashed var(--ui-warning);
+  outline-offset: -8px;
 }
 
 // Layout
@@ -69,7 +65,7 @@ body {
   font-weight: 100;
   margin-bottom: 0.5rem;
   letter-spacing: -0.02em;
-  color: var(--text-title-color, #333);
+  color: var(--text-title-color, var(--ui-text-primary));
   transition: color 0.5s ease;
 
   [data-bs-theme='dark'] &,
@@ -102,7 +98,7 @@ body {
   box-shadow: var(--ui-shadow-sm);
 
   &-header {
-    border-radius: 12px 12px 0 0 !important;
+    border-radius: var(--ui-radius-md) var(--ui-radius-md) 0 0 !important;
     padding: 1rem 1.25rem;
     background: var(--ui-surface-strong);
     border-bottom: 1px solid var(--ui-border);
