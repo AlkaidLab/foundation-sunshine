@@ -139,6 +139,7 @@
 <script>
 import { searchAllCovers } from '../utils/coverSearch.js'
 import { apiPostJson } from '../utils/apiFetch.js'
+import { getFocusableElements } from '../utils/focus.js'
 
 const createPlaceholderImage = (label) =>
   'data:image/svg+xml,' +
@@ -148,6 +149,12 @@ const createPlaceholderImage = (label) =>
     <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">${label}</text>
   </svg>
 `)
+
+const COVER_FINDER_TABS = [
+  { key: 'all', icon: 'fas fa-globe', labelKey: 'apps.cover_search_tab_all' },
+  { key: 'igdb', icon: 'fas fa-gamepad', labelKey: 'apps.cover_search_tab_igdb' },
+  { key: 'steam', icon: 'fab fa-steam', labelKey: 'apps.cover_search_tab_steam' },
+]
 
 export default {
   name: 'CoverFinder',
@@ -171,14 +178,12 @@ export default {
       localSearchTerm: '',
       searchAbortController: null,
       previousFocus: null,
-      tabs: [
-        { key: 'all', icon: 'fas fa-globe', labelKey: 'apps.cover_search_tab_all' },
-        { key: 'igdb', icon: 'fas fa-gamepad', labelKey: 'apps.cover_search_tab_igdb' },
-        { key: 'steam', icon: 'fab fa-steam', labelKey: 'apps.cover_search_tab_steam' },
-      ],
     }
   },
   computed: {
+    tabs() {
+      return COVER_FINDER_TABS
+    },
     allCovers() {
       const result = []
       const maxLen = Math.max(this.igdbCovers.length, this.steamCovers.length)
@@ -250,16 +255,8 @@ export default {
       this.$refs.searchInput?.focus()
     },
 
-    getFocusableElements() {
-      return Array.from(
-        this.$refs.panel?.querySelectorAll(
-          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) || [],
-      ).filter((element) => element.offsetParent !== null)
-    },
-
     handleTabKeydown(event) {
-      const focusable = this.getFocusableElements()
+      const focusable = getFocusableElements(this.$refs.panel)
       if (!focusable.length) {
         event.preventDefault()
         this.$refs.panel?.focus()
