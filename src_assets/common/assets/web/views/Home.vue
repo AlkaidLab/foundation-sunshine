@@ -378,7 +378,6 @@ onMounted(async () => {
 
 .home-intro .page-subtitle {
   max-width: 48rem;
-  font-size: 1rem;
 }
 
 .home-status {
@@ -392,7 +391,7 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--ui-surface) 88%, transparent);
   color: var(--ui-text-primary, #1e293b);
   backdrop-filter: blur(10px);
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   font-family: inherit;
   text-align: left;
@@ -499,7 +498,7 @@ onMounted(async () => {
 .host-meta {
   margin: 0.22rem 0 0;
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
 }
 
 .host-metrics {
@@ -543,7 +542,7 @@ onMounted(async () => {
 
 .metric-label {
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   line-height: 1.1;
 }
 
@@ -608,13 +607,13 @@ onMounted(async () => {
 }
 
 .quick-action-copy > span {
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   font-weight: 650;
 }
 
 .quick-action-copy > small {
   color: var(--ui-text-secondary, #64748b);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
 }
 
 .quick-action-arrow {
@@ -660,17 +659,8 @@ onMounted(async () => {
     padding: 1rem 1.25rem 0.9rem 1.35rem;
   }
 
-  .home-intro .page-title {
-    font-size: 1.9rem;
-  }
-
-  .home-intro .page-subtitle {
-    font-size: 1rem;
-  }
-
   .home-status {
     padding: 0.55rem 0.9rem;
-    font-size: 0.875rem;
   }
 
   .host-overview {
@@ -687,10 +677,6 @@ onMounted(async () => {
 
   .host-name {
     font-size: 1.7rem;
-  }
-
-  .host-meta {
-    font-size: 0.875rem;
   }
 
   .host-metrics,
@@ -715,10 +701,6 @@ onMounted(async () => {
     font-size: 1.2rem;
   }
 
-  .metric-label {
-    font-size: 0.75rem;
-  }
-
   .quick-action {
     grid-template-columns: 2.1rem minmax(0, 1fr) auto;
     column-gap: 0.58rem;
@@ -729,14 +711,6 @@ onMounted(async () => {
     width: 2.1rem;
     height: 2.1rem;
     font-size: 0.82rem;
-  }
-
-  .quick-action-copy > span {
-    font-size: 0.875rem;
-  }
-
-  .quick-action-copy > small {
-    font-size: 0.75rem;
   }
 
 }

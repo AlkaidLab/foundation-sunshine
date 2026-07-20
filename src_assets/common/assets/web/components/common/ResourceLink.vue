@@ -170,12 +170,12 @@ const rel = computed(() => (props.target === '_blank' ? 'noopener noreferrer' : 
 
 .resource-link--compact .resource-title {
   margin-bottom: 1px;
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
 }
 
 .resource-link--compact .resource-desc {
   overflow: hidden;
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;

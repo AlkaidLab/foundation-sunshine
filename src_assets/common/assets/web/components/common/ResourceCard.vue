@@ -168,7 +168,7 @@ const confirmHarmonyLink = async () => {
   gap: 0.35rem;
   margin: 0 0.1rem 0.45rem;
   color: var(--ui-text-primary);
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   font-weight: 650;
   letter-spacing: 0.03em;
 }

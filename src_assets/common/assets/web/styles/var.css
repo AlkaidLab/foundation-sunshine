@@ -21,7 +21,15 @@
   --border-radius-xl: var(--ui-radius-lg);
   --border-radius-pill: 50rem;
   --border-radius-circle: 50%;
-  --font-family-base: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  /* Match the desktop GUI while keeping native CJK rendering on every platform. */
+  --font-family-sans: Inter, 'Segoe UI Variable Text', 'Segoe UI Variable', -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC',
+    'Noto Sans SC', 'Noto Sans', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-family-base: var(--font-family-sans);
+  --font-family-mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  --font-mono: var(--font-family-mono);
+  --bs-body-font-family: var(--font-family-base);
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
