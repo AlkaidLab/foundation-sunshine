@@ -4,10 +4,10 @@
 @keyframes pulse {
   0%,
   100% {
-    box-shadow: 0 4px 15px rgba(255, 193, 7, 0.4);
+    box-shadow: 0 4px 15px rgba(var(--ui-warning-rgb), 0.32);
   }
   50% {
-    box-shadow: 0 4px 20px rgba(255, 193, 7, 0.8);
+    box-shadow: 0 4px 20px rgba(var(--ui-warning-rgb), 0.56);
   }
 }
 
@@ -67,7 +67,7 @@
   }
   50% {
     transform: translateY(-3px) scale(1.02);
-    background: rgba(40, 167, 69, 0.3);
+    background: var(--ui-success-soft);
   }
   100% {
     transform: translateY(-1px) scale(1);

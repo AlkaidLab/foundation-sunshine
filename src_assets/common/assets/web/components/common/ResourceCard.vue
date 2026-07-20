@@ -462,13 +462,13 @@ export default {
 
 /* Color Variants - Using CSS Custom Properties */
 .resource-link-primary {
-  --link-color: 40, 167, 69;
-  --icon-gradient: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  --link-color: var(--ui-success-rgb);
+  --icon-gradient: linear-gradient(135deg, var(--ui-success) 0%, var(--ui-success-text) 100%);
 }
 
 .resource-link-info {
-  --link-color: 0, 123, 255;
-  --icon-gradient: linear-gradient(135deg, #007bff 0%, #17a2b8 100%);
+  --link-color: var(--ui-info-rgb);
+  --icon-gradient: linear-gradient(135deg, var(--ui-info) 0%, var(--ui-info-text) 100%);
 }
 
 .resource-link-android {
@@ -500,8 +500,8 @@ export default {
 }
 
 .resource-link-danger {
-  --link-color: 220, 53, 69;
-  --icon-gradient: linear-gradient(135deg, #dc3545 0%, #e94560 100%);
+  --link-color: var(--ui-danger-rgb);
+  --icon-gradient: linear-gradient(135deg, var(--ui-danger) 0%, var(--ui-danger-text) 100%);
 }
 
 /* Apply variant styles */
@@ -547,13 +547,13 @@ export default {
 .badge-gpl {
   display: inline-flex;
   align-items: center;
-  background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
-  color: white;
+  background: var(--ui-danger);
+  color: var(--ui-danger-contrast);
   font-size: 1.1rem;
   font-weight: 700;
   padding: 0.75rem 1.5rem;
   border-radius: 50px;
-  box-shadow: 0 4px 15px rgba(233, 69, 96, 0.4);
+  box-shadow: 0 4px 15px var(--ui-danger-soft);
   letter-spacing: 0.5px;
 }
 
@@ -607,11 +607,11 @@ export default {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #dc3545 0%, #e94560 100%);
+  background: var(--ui-danger);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--ui-danger-contrast);
   font-size: 0.875rem;
   flex-shrink: 0;
   margin-right: 0.875rem;

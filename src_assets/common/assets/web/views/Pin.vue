@@ -456,7 +456,7 @@ watch(clients, initTooltips, { deep: true })
 }
 
 .table-warning {
-  background-color: rgba(255, 193, 7, 0.1) !important;
+  background-color: var(--ui-warning-soft) !important;
 }
 
 /* Delete Client Modal - 使用 ScanResultModal 样式 */

@@ -180,12 +180,15 @@
 }
 
 .btn-delete-list {
-  background: rgba(220, 53, 69, 0.3);
-  border: 1px solid rgba(220, 53, 69, 0.5);
+  background: var(--ui-danger-soft);
+  border: 1px solid var(--ui-danger-border);
+  color: var(--ui-danger-text) !important;
   .hover-scale();
 
   &:hover {
-    background: rgba(220, 53, 69, 0.5);
+    background: rgba(var(--ui-danger-rgb), 0.22);
+    border-color: var(--ui-danger-border);
+    color: var(--ui-danger-text) !important;
   }
 }
 

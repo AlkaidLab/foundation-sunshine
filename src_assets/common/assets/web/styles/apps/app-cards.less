@@ -301,20 +301,24 @@
 
 // Tag variants
 .tag-exclude-global-prep-cmd {
-  background: rgba(255, 105, 180, 0.6);
-  color: #fff;
+  background: var(--ui-danger-soft);
+  border: 1px solid var(--ui-danger-border);
+  color: var(--ui-danger-text);
 }
 .tag-menu {
-  background: rgba(147, 112, 219, 0.6);
-  color: #fff;
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-border-strong);
+  color: var(--ui-accent);
 }
 .tag-elevated {
-  background: rgba(255, 165, 0, 0.6);
-  color: #fff;
+  background: var(--ui-warning-soft);
+  border: 1px solid var(--ui-warning-border);
+  color: var(--ui-warning-text);
 }
 .tag-detach {
-  background: rgba(32, 178, 170, 0.6);
-  color: #fff;
+  background: var(--ui-info-soft);
+  border: 1px solid var(--ui-info-border);
+  color: var(--ui-info-text);
 }
 
 // ============================================================================
@@ -335,17 +339,6 @@
   }
 }
 
-// Action button variants mixin
-.action-btn-variant(@color) {
-  background: rgba(@color, 0.3);
-  border: 1px solid rgba(@color, 0.5);
-
-  &:hover {
-    background: rgba(@color, 0.5);
-    transform: scale(1.1);
-  }
-}
-
 .btn-edit {
   background: var(--ui-accent-soft);
   border: 1px solid var(--ui-border-strong);
@@ -358,7 +351,16 @@
 }
 
 .btn-delete {
-  .action-btn-variant(rgb(220, 53, 69));
+  background: var(--ui-danger-soft);
+  border: 1px solid var(--ui-danger-border);
+  color: var(--ui-danger-text) !important;
+
+  &:hover {
+    background: rgba(var(--ui-danger-rgb), 0.22);
+    border-color: var(--ui-danger-border);
+    color: var(--ui-danger-text) !important;
+    transform: scale(1.08);
+  }
 }
 
 // ============================================================================

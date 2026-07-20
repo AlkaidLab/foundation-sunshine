@@ -199,13 +199,13 @@
                   @error="$event.target.style.display = 'none'"
                 />
                 <svg v-else width="80" height="80" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-                  <rect width="100" height="100" fill="#667eea" />
+                  <rect width="100" height="100" fill="var(--ui-accent)" />
                   <text
                     x="50"
                     y="50"
                     font-size="40"
                     font-weight="bold"
-                    fill="#fff"
+                    fill="var(--ui-accent-contrast)"
                     text-anchor="middle"
                     dominant-baseline="central"
                   >

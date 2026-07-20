@@ -376,12 +376,12 @@ function renderMarkdown(text) {
 .local-finding--fatal,
 .local-suggestion--error,
 .local-suggestion--fatal {
-  border-left-color: #dc3545;
+  border-left-color: var(--ui-danger);
 }
 
 .local-finding--warning,
 .local-suggestion--warning {
-  border-left-color: #ffc107;
+  border-left-color: var(--ui-warning);
 }
 
 .local-finding-title {
