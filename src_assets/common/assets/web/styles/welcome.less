@@ -1,53 +1,35 @@
-/* 导入手写字体 */
-@import url('../fonts/fonts.css');
+@import './var.css';
 
-/* 手绘风格颜色变量 */
-:root {
-  --sketch-black: #2c2c2c;
-  --sketch-blue: #4169e1;
-  --sketch-green: #3cb371;
-  --sketch-red: #dc143c;
-  --sketch-yellow: #ffd700;
-  --paper-bg: #fffef9;
-  --paper-bg-alt: #faf9f6;
-  --pencil-gray: #8b8b8b;
-  --texture-opacity: 0.02;
-  --texture-size: 2px;
+html,
+body,
+#app {
+  min-height: 100%;
 }
 
-/* 纸张背景效果 */
 body {
-  background: linear-gradient(to bottom, var(--paper-bg), var(--paper-bg-alt));
-  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  margin: 0;
+  background: var(--ui-page-bg, #e6f2ff);
+  color: var(--ui-text-primary, #1e293b);
+  font-family: var(--font-family-base, 'Microsoft YaHei', 'Segoe UI', sans-serif);
   position: relative;
   min-height: 100vh;
 
-  /* 纸张纹理 */
   &::before {
     content: '';
     position: fixed;
     inset: 0;
-    background-image: 
-      repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent var(--texture-size),
-        rgba(0, 0, 0, var(--texture-opacity)) var(--texture-size),
-        rgba(0, 0, 0, var(--texture-opacity)) calc(var(--texture-size) * 2)
-      ),
-      repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent var(--texture-size),
-        rgba(0, 0, 0, var(--texture-opacity)) var(--texture-size),
-        rgba(0, 0, 0, var(--texture-opacity)) calc(var(--texture-size) * 2)
-      );
+    background:
+      radial-gradient(circle at 12% 0%, rgba(var(--ui-accent-rgb), 0.2), transparent 34rem),
+      linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.07), transparent 30rem);
     pointer-events: none;
     z-index: 0;
   }
 }
 
-/* 打印样式优化 */
+[data-bs-theme='dark'] {
+  color-scheme: dark;
+}
+
 @media print {
   body::before {
     display: none;
