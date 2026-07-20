@@ -479,6 +479,13 @@ namespace video {
 
   extern probe_result_t last_encoder_probe_result;
 
+  /**
+   * @brief Return the encoder selected by the latest successful probe.
+   * @return Encoder identifier, or an empty string when no encoder is active.
+   */
+  std::string
+  active_encoder_name();
+
   void
   capture(
     safe::mail_t mail,

@@ -1822,6 +1822,7 @@ namespace config {
         "status",           // API响应状态，不是配置项
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
+        "active_encoder",   // 运行时探测后实际使用的编码器，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
         "pair_name",        // 配对名称，由系统生成，只读

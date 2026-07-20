@@ -232,6 +232,7 @@
 import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
+import { getPreferredEncoderTab } from '../config/encoderTabs.js'
 import { useConfig } from '../composables/useConfig.js'
 import { initFirebase, trackEvents } from '../config/firebase.js'
 
@@ -290,6 +291,16 @@ const isEncoderCurrentTab = computed(() => ENCODER_TAB_IDS.has(currentTab.value)
 
 const isEncoderTabActive = (tab) => tab.type === 'group' && tab.children?.some((child) => child.id === currentTab.value)
 
+const preferredEncoderTab = (children = []) =>
+  getPreferredEncoderTab({
+    activeEncoder: config.value?.active_encoder,
+    configuredEncoder: config.value?.encoder,
+    selectedAdapter: config.value?.adapter_name,
+    adapters: config.value?.adapters,
+    platform: platform.value,
+    availableTabIds: children.map((child) => child.id),
+  })
+
 const scrollActiveTabIntoView = async () => {
   await nextTick()
   const activeTab = configTabsRef.value?.querySelector('.nav-link.active')
@@ -311,7 +322,7 @@ const toggleEncoderDropdown = (tabId, event) => {
   const children = encoderGroup?.children
 
   if (children?.length && !children.some((child) => child.id === currentTab.value)) {
-    currentTab.value = children[0].id
+    currentTab.value = preferredEncoderTab(children)
   }
 }
 
@@ -398,19 +409,29 @@ const handleOutsideClick = (event) => {
   }
 }
 
+const handleConfigHash = () => {
+  handleHash()
+
+  if (currentTab.value === 'encoders') {
+    const encoderGroup = tabs.value.find((tab) => tab.id === 'encoders')
+    currentTab.value = preferredEncoderTab(encoderGroup?.children)
+  }
+}
+
 onMounted(async () => {
   trackEvents.pageView('configuration')
   initTabs()
   await loadConfig()
-  handleHash()
+  handleConfigHash()
+
   await scrollActiveTabIntoView()
 
-  window.addEventListener('hashchange', handleHash)
+  window.addEventListener('hashchange', handleConfigHash)
   document.addEventListener('click', handleOutsideClick)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('hashchange', handleHash)
+  window.removeEventListener('hashchange', handleConfigHash)
   document.removeEventListener('click', handleOutsideClick)
 })
 </script>

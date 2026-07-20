@@ -1203,6 +1203,7 @@ namespace confighttp {
       outputTree.put(std::move(name), std::move(value));
     }
 
+    outputTree.put("active_encoder", video::active_encoder_name());
     outputTree.put("pair_name", nvhttp::get_pair_name());
   }
 
