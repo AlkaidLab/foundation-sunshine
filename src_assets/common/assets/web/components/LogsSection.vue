@@ -1,9 +1,9 @@
 <template>
   <div class="card shadow-sm mb-4">
-    <div class="card-header bg-dark bg-opacity-10 border-bottom-0">
+    <div class="card-header logs-card-header">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="card-title mb-0">
-          <i class="fas fa-file-alt text-dark me-2"></i>
+          <i class="fas fa-file-alt me-2"></i>
           {{ $t('troubleshooting.logs') }}
         </h5>
         <div class="d-flex align-items-center gap-2">
@@ -237,25 +237,26 @@ const handleDevTap = () => {
 }
 
 .match-mode-btn:hover {
-  background-color: rgba(108, 117, 125, 0.1);
-  border-color: #6c757d;
+  background-color: var(--ui-accent-soft);
+  border-color: var(--ui-border-strong);
 }
 
 .btn-check:checked + .match-mode-btn {
-  background-color: #6c757d;
-  border-color: #6c757d;
-  color: #fff;
+  background-color: var(--ui-accent);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-check:checked + .match-mode-btn:hover {
-  background-color: #5a6268;
-  border-color: #545b62;
+  background-color: var(--ui-accent);
+  border-color: var(--ui-accent);
 }
 
 .logs-container {
   position: relative;
   background: #1e1e1e;
-  border-radius: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   overflow: hidden;
 }
 
@@ -300,17 +301,17 @@ const handleDevTap = () => {
   right: 12px;
   padding: 8px 12px;
   cursor: pointer;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  border-radius: 6px;
+  color: var(--ui-accent-contrast);
+  background: var(--ui-accent);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
   transition: all 0.2s ease;
   z-index: 10;
 }
 
 .copy-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  transform: scale(1.05);
+  background: var(--ui-accent);
+  transform: translateY(-1px);
 }
 
 .copy-btn:active {
@@ -319,12 +320,9 @@ const handleDevTap = () => {
 
 .input-group-text {
   border-right: none;
-  background-color: #fff;
-  
-  [data-bs-theme='dark'] & {
-    background-color: #212529;
-    color: #fff;
-  }
+  border-color: var(--ui-border);
+  background-color: var(--ui-surface-strong);
+  color: var(--ui-text-muted);
 }
 
 .input-group .form-control {
@@ -333,18 +331,22 @@ const handleDevTap = () => {
 }
 
 .input-group .form-control:focus {
-  border-color: #ced4da;
+  border-color: var(--ui-border);
   box-shadow: none;
 }
 
 .input-group:focus-within {
-  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-  border-radius: 0.375rem;
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  border-radius: var(--ui-radius-sm);
 }
 
 .input-group:focus-within .input-group-text,
 .input-group:focus-within .form-control {
-  border-color: #86b7fe;
+  border-color: var(--ui-border-strong);
+}
+
+.logs-card-header .card-title i {
+  color: var(--ui-accent);
 }
 
 @media (max-width: 991.98px) {

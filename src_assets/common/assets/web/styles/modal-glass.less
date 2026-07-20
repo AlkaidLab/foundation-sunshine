@@ -1,66 +1,66 @@
 /* 统一模态框样式 */
 :root {
   /* 背景与边框 */
-  --modal-backdrop-bg: rgba(0, 0, 0, 0.7);
-  --modal-content-bg: rgba(30, 30, 50, 0.95);
-  --modal-border-color: rgba(255, 255, 255, 0.2);
-  --modal-text-color: #fff;
-  --modal-text-secondary: rgba(255, 255, 255, 0.85);
-  --modal-text-muted: rgba(255, 255, 255, 0.6);
-  --modal-shadow: rgba(0, 0, 0, 0.5);
-  --modal-footer-bg: rgba(0, 0, 0, 0.2);
+  --modal-backdrop-bg: rgba(45, 38, 40, 0.72);
+  --modal-content-bg: var(--ui-surface-strong);
+  --modal-border-color: var(--ui-border);
+  --modal-text-color: var(--ui-text-primary);
+  --modal-text-secondary: var(--ui-text-secondary);
+  --modal-text-muted: var(--ui-text-muted);
+  --modal-shadow: rgba(0, 0, 0, 0.28);
+  --modal-footer-bg: var(--ui-surface);
 
   /* 按钮渐变 */
-  --btn-primary-gradient: linear-gradient(135deg, #667eea, #764ba2);
-  --btn-primary-gradient-hover: linear-gradient(135deg, #764ba2, #667eea);
-  --btn-secondary-gradient: rgba(255, 255, 255, 0.2);
-  --btn-secondary-gradient-hover: rgba(255, 255, 255, 0.3);
-  --btn-danger-gradient: linear-gradient(135deg, #dc3545, #c82333);
-  --btn-danger-gradient-hover: linear-gradient(135deg, #c82333, #dc3545);
-  --btn-success-gradient: linear-gradient(135deg, #28a745, #20c997);
-  --btn-success-gradient-hover: linear-gradient(135deg, #20c997, #28a745);
-  --btn-outline-primary-border: rgba(102, 126, 234, 0.5);
-  --btn-outline-primary-hover: rgba(102, 126, 234, 0.2);
+  --btn-primary-gradient: var(--ui-accent);
+  --btn-primary-gradient-hover: var(--ui-accent);
+  --btn-secondary-gradient: var(--ui-surface-strong);
+  --btn-secondary-gradient-hover: var(--ui-surface-hover);
+  --btn-danger-gradient: var(--ui-danger);
+  --btn-danger-gradient-hover: var(--ui-danger);
+  --btn-success-gradient: var(--ui-success);
+  --btn-success-gradient-hover: var(--ui-success);
+  --btn-outline-primary-border: var(--ui-border-strong);
+  --btn-outline-primary-hover: var(--ui-accent-soft);
 
   /* 玻璃效果 */
-  --glass-light: rgba(255, 255, 255, 0.06);
-  --glass-medium: rgba(255, 255, 255, 0.1);
-  --glass-border: rgba(255, 255, 255, 0.2);
-  --glass-dark: rgba(0, 0, 0, 0.3);
+  --glass-light: var(--ui-surface);
+  --glass-medium: var(--ui-surface-hover);
+  --glass-border: var(--ui-border);
+  --glass-dark: var(--ui-accent-soft);
 }
 
 [data-bs-theme='light'] {
-  --modal-content-bg: #f0f4ff;
-  --modal-border-color: rgba(99, 102, 241, 0.25);
-  --modal-shadow: rgba(99, 102, 241, 0.15);
-  --modal-footer-bg: #e0e7ff;
-  --modal-text-color: #1e293b;
-  --modal-text-secondary: #475569;
-  --modal-text-muted: #64748b;
+  --modal-content-bg: var(--ui-surface-strong);
+  --modal-border-color: var(--ui-border);
+  --modal-shadow: rgba(74, 158, 255, 0.14);
+  --modal-footer-bg: var(--ui-surface);
+  --modal-text-color: var(--ui-text-primary);
+  --modal-text-secondary: var(--ui-text-secondary);
+  --modal-text-muted: var(--ui-text-muted);
 
-  --glass-light: #f5f8ff;
-  --glass-medium: #e8efff;
-  --glass-border: rgba(99, 102, 241, 0.2);
-  --glass-dark: rgba(99, 102, 241, 0.08);
+  --glass-light: var(--ui-surface);
+  --glass-medium: var(--ui-surface-hover);
+  --glass-border: var(--ui-border);
+  --glass-dark: var(--ui-accent-soft);
 
-  --btn-secondary-gradient: #fff;
-  --btn-secondary-gradient-hover: #f5f8ff;
-  --btn-outline-primary-border: rgba(99, 102, 241, 0.4);
-  --btn-outline-primary-hover: rgba(99, 102, 241, 0.12);
+  --btn-secondary-gradient: var(--ui-surface-strong);
+  --btn-secondary-gradient-hover: var(--ui-surface-hover);
+  --btn-outline-primary-border: var(--ui-border-strong);
+  --btn-outline-primary-hover: var(--ui-accent-soft);
 }
 
 [data-bs-theme='dark'] {
-  --modal-content-bg: rgba(20, 20, 35, 0.98);
-  --modal-border-color: rgba(255, 255, 255, 0.15);
-  --modal-shadow: rgba(0, 0, 0, 0.6);
-  --modal-footer-bg: rgba(0, 0, 0, 0.3);
-  --modal-text-color: #fff;
-  --modal-text-secondary: rgba(255, 255, 255, 0.9);
-  --modal-text-muted: rgba(255, 255, 255, 0.65);
+  --modal-content-bg: var(--ui-surface-strong);
+  --modal-border-color: var(--ui-border);
+  --modal-shadow: rgba(0, 0, 0, 0.34);
+  --modal-footer-bg: var(--ui-surface);
+  --modal-text-color: var(--ui-text-primary);
+  --modal-text-secondary: var(--ui-text-secondary);
+  --modal-text-muted: var(--ui-text-muted);
 
-  --glass-light: rgba(255, 255, 255, 0.05);
-  --glass-medium: rgba(255, 255, 255, 0.08);
-  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-light: var(--ui-surface);
+  --glass-medium: var(--ui-surface-hover);
+  --glass-border: var(--ui-border);
 }
 
 /* 背景遮罩 */
@@ -73,9 +73,9 @@
 .modal-content {
   background: var(--modal-content-bg);
   border: 1px solid var(--modal-border-color);
-  border-radius: 20px;
+  border-radius: var(--ui-radius-lg);
   backdrop-filter: blur(20px);
-  box-shadow: 0 20px 40px var(--modal-shadow);
+  box-shadow: var(--ui-shadow-md);
   color: var(--modal-text-color);
 
   small,
@@ -101,7 +101,7 @@
 .modal-footer {
   border-top: 1px solid var(--modal-border-color);
   background: var(--modal-footer-bg);
-  border-radius: 0 0 20px 20px;
+  border-radius: 0 0 var(--ui-radius-lg) var(--ui-radius-lg);
 }
 
 /* 关闭按钮 */
@@ -123,15 +123,16 @@
   padding: 0 20px;
 
   .btn {
-    color: #6366f1;
-    border: 1.5px solid var(--glass-border);
+    color: var(--ui-text-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--ui-radius-sm);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: none;
     background: transparent;
     font-weight: 500;
 
     &:hover {
-      background-color: rgba(102, 126, 234, 0.15);
+      background-color: var(--ui-accent-soft);
     }
 
     &:active {
@@ -139,23 +140,15 @@
     }
 
     &-primary {
-      border-color: rgba(102, 126, 234, 0.6);
-      color: #667eea;
+      border-color: var(--ui-accent);
+      background: var(--ui-accent);
+      color: var(--ui-accent-contrast);
 
       &:hover {
-        background: rgba(102, 126, 234, 0.15);
-        border-color: rgba(102, 126, 234, 0.8);
-      }
-
-      [data-bs-theme='dark'] & {
-        color: #8b9aff;
-        border-color: rgba(139, 154, 255, 0.6);
-
-        &:hover {
-          background: rgba(139, 154, 255, 0.15);
-          border-color: rgba(139, 154, 255, 0.8);
-          color: #a8b4ff;
-        }
+        background: var(--ui-accent);
+        border-color: var(--ui-accent);
+        color: var(--ui-accent-contrast);
+        box-shadow: 0 0 0 3px var(--ui-accent-soft);
       }
     }
 
@@ -165,45 +158,28 @@
 
     &-outline-primary {
       border-color: var(--btn-outline-primary-border);
-      color: #667eea;
+      color: var(--ui-accent);
 
       &:hover {
         background: var(--btn-outline-primary-hover);
-        border-color: rgba(102, 126, 234, 0.7);
-      }
-
-      [data-bs-theme='dark'] & {
-        color: #8b9aff;
-
-        &:hover {
-          color: var(--modal-text-color);
-        }
+        border-color: var(--ui-border-strong);
+        color: var(--ui-accent);
       }
     }
 
     &-secondary {
-      border: 1.5px solid var(--glass-border);
+      border: 1px solid var(--glass-border);
+      background: var(--ui-surface-strong);
       color: var(--modal-text-secondary);
 
       &:hover {
-        background: rgba(108, 117, 125, 0.15);
-        border-color: rgba(108, 117, 125, 0.6);
+        background: var(--ui-surface-hover);
+        border-color: var(--ui-border-strong);
         color: var(--modal-text-color);
       }
 
       &:focus {
-        box-shadow: 0 0 0 0.25rem rgba(108, 117, 125, 0.25);
-      }
-
-      [data-bs-theme='dark'] & {
-        border-color: rgba(255, 255, 255, 0.4);
-        color: rgba(255, 255, 255, 0.85);
-
-        &:hover {
-          background: rgba(255, 255, 255, 0.12);
-          border-color: rgba(255, 255, 255, 0.6);
-          color: #fff;
-        }
+        box-shadow: 0 0 0 3px var(--ui-accent-soft);
       }
     }
 
@@ -253,19 +229,20 @@
   /* 表单元素 */
   .form-control,
   .form-select {
-    background: var(--glass-light);
+    background: var(--ui-surface-strong);
     border: 1px solid var(--glass-border);
+    border-radius: var(--ui-radius-sm);
     color: var(--modal-text-color);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
     &:hover {
-      background: var(--glass-medium);
+      background: var(--ui-surface-hover);
     }
 
     &:focus {
-      background: var(--glass-medium);
-      border-color: rgba(102, 126, 234, 0.6);
-      box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.15);
+      background: var(--ui-surface-hover);
+      border-color: var(--ui-border-strong);
+      box-shadow: 0 0 0 3px var(--ui-accent-soft);
       color: var(--modal-text-color);
     }
 
@@ -334,94 +311,63 @@
       }
 
       &.active {
-        background: var(--glass-medium);
-        color: var(--modal-text-color);
+        background: var(--ui-accent-soft);
+        color: var(--ui-accent);
       }
     }
   }
 
   /* 手风琴 */
   .accordion-item {
-    background: var(--glass-light);
+    background: var(--ui-surface);
     border: 1px solid var(--modal-border-color);
-    border-radius: 12px;
+    border-radius: var(--ui-radius-md);
     overflow: hidden;
     margin-bottom: 0.75rem;
 
-    [data-bs-theme='light'] & {
-      background: #f5f8ff;
-      border-color: rgba(99, 102, 241, 0.2);
-      box-shadow: 0 3px 8px rgba(99, 102, 241, 0.08);
-    }
+    box-shadow: var(--ui-shadow-sm);
   }
 
   .accordion-button {
-    background: var(--glass-light);
+    background: var(--ui-surface-strong);
     color: var(--modal-text-color);
-    border-radius: 12px !important;
+    border-radius: var(--ui-radius-md) !important;
     font-weight: 500;
 
     &:hover {
-      background: var(--glass-medium);
+      background: var(--ui-surface-hover);
     }
 
     &:not(.collapsed) {
-      background: var(--glass-medium);
-    }
-
-    [data-bs-theme='light'] & {
-      background: #e8efff;
-      color: #1e293b;
-
-      &:hover {
-        background: #dce4ff;
-      }
-
-      &:not(.collapsed) {
-        background: #dce4ff;
-        color: #6366f1;
-        font-weight: 600;
-      }
+      background: var(--ui-accent-soft);
+      color: var(--ui-accent);
+      font-weight: 600;
     }
   }
 
   /* 代码块 */
   pre,
   code {
-    background: var(--glass-light);
+    background: var(--ui-surface);
     color: var(--modal-text-color);
     border: 1px solid var(--modal-border-color);
-    border-radius: 8px;
-
-    [data-bs-theme='light'] & {
-      background: #e8efff;
-      color: #6366f1;
-      border-color: rgba(99, 102, 241, 0.2);
-    }
+    border-radius: var(--ui-radius-sm);
   }
 
   pre[data-bs-theme='light'] {
     padding: 1rem;
-    color: #475569;
+    color: var(--ui-text-secondary);
   }
 
   /* 表格 */
   .table {
     color: var(--modal-text-color);
 
-    [data-bs-theme='light'] & {
-      color: #1e293b;
-    }
-
     th {
-      background: var(--glass-medium);
-
-      [data-bs-theme='light'] & {
-        background: #e0e7ff;
-        color: #6366f1;
-        font-weight: 600;
-        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
-      }
+      background: var(--ui-surface-strong);
+      color: var(--ui-text-secondary);
+      font-weight: 600;
+      border-bottom: 1px solid var(--ui-border);
     }
 
     td[data-bs-theme='light'] {

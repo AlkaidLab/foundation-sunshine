@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="troubleshooting-page">
     <Navbar />
     <div class="container py-4">
       <div class="page-header mb-4">
@@ -359,6 +359,22 @@ onMounted(async () => {
 </style>
 
 <style scoped>
+.troubleshooting-page {
+  min-height: 100vh;
+  padding-bottom: var(--spacing-xl);
+  color: var(--ui-text-primary);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
+}
+
+.page-title {
+  color: var(--ui-text-primary) !important;
+  font-weight: 600;
+}
+
+.page-title i {
+  color: var(--ui-accent);
+}
+
 .btn {
   border-radius: 8px;
   padding: 0.5rem 1rem;
@@ -386,7 +402,7 @@ onMounted(async () => {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  background: rgba(45, 38, 40, 0.72);
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
@@ -395,29 +411,21 @@ onMounted(async () => {
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
   
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
 }
 
 .boom-confirm-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  box-shadow: var(--ui-shadow-md);
   animation: modalSlideUp 0.3s ease;
   
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
 }
 
 @keyframes modalSlideUp {
@@ -436,11 +444,11 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  border-bottom: 1px solid var(--ui-border);
 
   h5 {
     margin: 0;
-    color: var(--text-primary, #fff);
+    color: var(--ui-text-primary);
     font-size: var(--font-size-lg, 1.1rem);
     font-weight: 600;
     display: flex;
@@ -448,13 +456,6 @@ onMounted(async () => {
     gap: var(--spacing-sm, 8px);
   }
   
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
-    h5 {
-      color: #000000;
-    }
-  }
 }
 
 .boom-confirm-body {
@@ -463,11 +464,7 @@ onMounted(async () => {
   line-height: 1.5;
   overflow-y: auto;
   flex: 1;
-  color: var(--text-primary, #fff);
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
+  color: var(--ui-text-primary);
 }
 
 .boom-confirm-footer {
@@ -475,11 +472,8 @@ onMounted(async () => {
   justify-content: flex-end;
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface);
 }
 
 .boom-confirm-footer button {

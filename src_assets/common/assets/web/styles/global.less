@@ -84,7 +84,7 @@ body {
   font-size: 1rem;
   font-weight: 100;
   margin-bottom: 0;
-  color: var(--text-primary-color, #fff);
+  color: var(--ui-text-secondary);
   transition: color 0.5s ease;
 }
 
@@ -95,13 +95,17 @@ body {
 
 // Card component
 .card {
-  border: none;
-  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-sm);
 
   &-header {
     border-radius: 12px 12px 0 0 !important;
     padding: 1rem 1.25rem;
-    background: rgba(var(--bs-body-bg-rgb), 0.6);
+    background: var(--ui-surface-strong);
+    border-bottom: 1px solid var(--ui-border);
   }
 
   &-title {
@@ -111,7 +115,7 @@ body {
 
   &-body {
     padding: 1.25rem;
-    background: rgba(var(--bs-body-bg-rgb), 0.4);
+    background: transparent;
 
     p {
       font-size: 0.9rem;
@@ -121,5 +125,88 @@ body {
         white-space: pre-line;
       }
     }
+  }
+}
+
+// Shared Bootstrap component contract
+.form-control,
+.form-select {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background-color: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+
+  &:hover {
+    border-color: var(--ui-border-strong);
+  }
+
+  &:focus {
+    border-color: var(--ui-border-strong);
+    background-color: var(--ui-surface-hover);
+    color: var(--ui-text-primary);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  }
+
+  &::placeholder {
+    color: var(--ui-text-muted);
+  }
+
+  &:disabled,
+  &[readonly] {
+    background-color: var(--ui-surface);
+    color: var(--ui-text-muted);
+  }
+}
+
+.form-label,
+.form-check-label {
+  color: var(--ui-text-secondary);
+}
+
+.text-muted {
+  color: var(--ui-text-muted) !important;
+}
+
+.btn-primary {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+
+  &:hover,
+  &:focus-visible,
+  &:active {
+    border-color: var(--ui-accent);
+    background: var(--ui-accent);
+    color: var(--ui-accent-contrast);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  }
+}
+
+.btn-outline-primary {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-accent);
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-accent-soft);
+    color: var(--ui-accent);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  }
+}
+
+.btn-secondary,
+.btn-outline-secondary {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-secondary);
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-surface-hover);
+    color: var(--ui-text-primary);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
   }
 }
