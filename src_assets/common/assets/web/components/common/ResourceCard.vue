@@ -79,44 +79,34 @@ const confirmHarmonyLink = async () => {
       </div>
     </div>
 
-    <div class="card shadow-sm mt-2 legal-card">
-      <div class="card-body resource-legal-body">
-        <div class="legal-summary">
-          <h5 class="legal-title">
-            <i class="fas fa-gavel me-2" aria-hidden="true"></i>
-            {{ $t('resource_card.legal') }}
-          </h5>
-          <p class="legal-copy">{{ $t('resource_card.legal_desc') }}</p>
-        </div>
-
-        <div class="gpl-badge">
-          <div class="d-flex align-items-center justify-content-center">
-            <span class="badge-gpl">
-              <i class="fas fa-balance-scale me-2" aria-hidden="true"></i>
-              GNU General Public License v3.0
-            </span>
-          </div>
-          <p class="text-center mt-2 mb-0">
-            {{ $t('resource_card.gpl_license_text_1') }}
-            <br />
-            {{ $t('resource_card.gpl_license_text_2') }}
-          </p>
-        </div>
-
-        <div class="row legal-links">
-          <div v-for="resource in LEGAL_RESOURCES" :key="resource.id" class="col-md-6">
-            <ResourceLink
-              compact
-              :href="resource.href"
-              :title="resourceTitle(resource)"
-              :description="resourceDescription(resource)"
-              :icon="resource.icon"
-              :variant="resource.variant"
-            />
-          </div>
-        </div>
+    <footer class="legal-footer">
+      <div class="legal-footer-copy">
+        <span class="legal-title">
+          <i class="fas fa-gavel" aria-hidden="true"></i>
+          {{ $t('resource_card.legal') }}
+        </span>
+        <span class="legal-description">{{ $t('resource_card.legal_desc') }}</span>
       </div>
-    </div>
+
+      <nav class="legal-footer-links" :aria-label="$t('resource_card.legal')">
+        <span class="legal-license">
+          <i class="fas fa-balance-scale" aria-hidden="true"></i>
+          GNU GPL v3.0
+        </span>
+        <a
+          v-for="resource in LEGAL_RESOURCES"
+          :key="resource.id"
+          class="legal-link"
+          :href="resource.href"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="resourceDescription(resource)"
+        >
+          {{ resourceTitle(resource) }}
+          <i class="fas fa-external-link-alt" aria-hidden="true"></i>
+        </a>
+      </nav>
+    </footer>
 
     <ConfirmDialog
       :show="showHarmonyModal"
@@ -142,8 +132,13 @@ const confirmHarmonyLink = async () => {
 </template>
 
 <style scoped>
-.resource-library-card,
-.legal-card {
+.resource-section {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.resource-library-card {
   overflow: hidden;
   border-radius: calc(var(--ui-radius-lg) + 1px);
 }
@@ -226,8 +221,7 @@ const confirmHarmonyLink = async () => {
   grid-column: span 4;
 }
 
-.resource-group .row,
-.legal-links {
+.resource-group .row {
   --bs-gutter-x: 0.42rem;
   --bs-gutter-y: 0.42rem;
 }
@@ -255,77 +249,84 @@ const confirmHarmonyLink = async () => {
 }
 
 .resource-card-header .card-title i,
-.resource-group-title i,
-.legal-title i {
+.resource-group-title i {
   color: var(--ui-accent);
 }
 
-.resource-legal-body {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) auto minmax(19rem, 1.1fr);
+.legal-footer {
+  display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.45rem 0.55rem !important;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  margin-top: auto;
+  padding: 0.55rem 0.65rem 0.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--ui-border) 72%, transparent);
   background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--ui-surface-strong) 82%, transparent),
-    color-mix(in srgb, var(--ui-surface) 72%, transparent)
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ui-surface-strong) 52%, transparent) 8%,
+    color-mix(in srgb, var(--ui-surface-strong) 52%, transparent) 92%,
+    transparent
   );
+  color: var(--ui-text-secondary);
+  backdrop-filter: blur(6px);
+  font-size: 0.68rem;
+}
+
+.legal-footer-copy,
+.legal-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.legal-title,
+.legal-license {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.32rem;
+  font-weight: 650;
 }
 
 .legal-title {
-  display: flex;
-  align-items: center;
-  gap: 0.42rem;
-  margin: 0 0 0.18rem;
   color: var(--ui-text-primary);
-  font-size: 0.78rem;
-  font-weight: 650;
 }
 
-.legal-title i {
-  display: inline-flex;
-  width: 1.55rem;
-  height: 1.55rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.55rem;
-  background: var(--ui-accent-soft);
-  font-size: 0.64rem;
+.legal-title i,
+.legal-license i {
+  color: var(--ui-accent);
 }
 
-.legal-copy {
-  margin: 0;
+.legal-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legal-license {
   color: var(--ui-text-secondary);
-  font-size: 0.66rem;
-  line-height: 1.3;
 }
 
-.gpl-badge {
-  min-width: 15rem;
-}
-
-.badge-gpl {
+.legal-link {
   display: inline-flex;
   align-items: center;
-  padding: 0.33rem 0.6rem;
-  border: 1px solid var(--ui-border);
-  border-radius: 50px;
-  background: var(--ui-accent-soft);
-  color: var(--ui-info-text);
-  font-size: 0.64rem;
-  font-weight: 650;
-  letter-spacing: 0.03em;
+  gap: 0.25rem;
+  color: var(--ui-text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
 }
 
-.gpl-badge p {
-  color: var(--ui-text-muted);
-  font-size: 0.58rem;
-  line-height: 1.2;
+.legal-link:hover,
+.legal-link:focus-visible {
+  color: var(--ui-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
 }
 
-.legal-links {
-  margin: 0;
+.legal-link i {
+  font-size: 0.52rem;
 }
 
 @media (max-width: 991.98px) {
@@ -336,12 +337,14 @@ const confirmHarmonyLink = async () => {
     grid-column: span 12;
   }
 
-  .resource-legal-body {
-    grid-template-columns: 1fr;
+  .legal-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 
-  .gpl-badge {
-    min-width: 0;
+  .legal-footer-links {
+    flex-wrap: wrap;
   }
 }
 

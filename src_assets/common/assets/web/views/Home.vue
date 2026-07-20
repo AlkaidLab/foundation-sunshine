@@ -298,8 +298,13 @@ onMounted(async () => {
 @import '../styles/global.less';
 
 .home-content {
+  display: flex;
+  min-height: calc(100vh - 77px);
   max-width: 1180px;
+  box-sizing: border-box;
+  flex-direction: column;
   padding-top: 0.45rem;
+  padding-bottom: 0.35rem;
 }
 
 .home-hero {
@@ -594,7 +599,10 @@ onMounted(async () => {
 }
 
 .home-resources {
-  margin-bottom: 0.25rem;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  margin-bottom: 0;
 }
 
 @media (min-width: 1440px) {
@@ -723,8 +731,7 @@ onMounted(async () => {
     padding: 0.5rem 0.55rem 0.55rem;
   }
 
-  .home-resources .resource-group .row,
-  .home-resources .legal-links {
+  .home-resources .resource-group .row {
     --bs-gutter-x: 0.55rem;
     --bs-gutter-y: 0.55rem;
   }
@@ -752,9 +759,9 @@ onMounted(async () => {
     font-size: 0.68rem;
   }
 
-  .home-resources .resource-legal-body {
-    gap: 0.75rem;
-    padding: 0.65rem 0.8rem !important;
+  .home-resources .legal-footer {
+    padding-top: 0.8rem;
+    font-size: 0.72rem;
   }
 }
 
