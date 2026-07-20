@@ -597,6 +597,167 @@ onMounted(async () => {
   margin-bottom: 0.25rem;
 }
 
+@media (min-width: 1440px) {
+  .home-content {
+    width: calc(100% - 2rem);
+    max-width: 1760px;
+  }
+}
+
+@media (min-width: 1440px) and (min-height: 820px) {
+  .home-content {
+    padding-top: 0.75rem;
+  }
+
+  .home-hero {
+    margin-bottom: 0.9rem;
+  }
+
+  .home-intro {
+    gap: 1.5rem;
+    padding: 1rem 1.25rem 0.9rem 1.35rem;
+  }
+
+  .home-intro .page-title {
+    font-size: 1.85rem;
+  }
+
+  .home-intro .page-subtitle {
+    font-size: 0.95rem;
+  }
+
+  .home-status {
+    padding: 0.55rem 0.9rem;
+    font-size: 0.82rem;
+  }
+
+  .host-overview {
+    grid-template-columns: minmax(16rem, 1.2fr) auto minmax(38rem, 2.3fr);
+    gap: 1rem 1.25rem;
+    padding: 0.9rem 1rem;
+  }
+
+  .host-mark {
+    width: 3rem;
+    height: 3rem;
+    font-size: 1.1rem;
+  }
+
+  .host-name {
+    font-size: 1.7rem;
+  }
+
+  .host-meta {
+    font-size: 0.82rem;
+  }
+
+  .host-metrics,
+  .quick-actions {
+    gap: 0.55rem;
+  }
+
+  .host-metric {
+    min-width: 6.25rem;
+    grid-template-columns: 1.9rem auto;
+    column-gap: 0.55rem;
+    padding: 0.58rem 0.7rem;
+  }
+
+  .metric-icon {
+    width: 1.9rem;
+    height: 1.9rem;
+    font-size: 0.78rem;
+  }
+
+  .metric-value {
+    font-size: 1.2rem;
+  }
+
+  .metric-label {
+    font-size: 0.7rem;
+  }
+
+  .quick-action {
+    grid-template-columns: 2.1rem minmax(0, 1fr) auto;
+    column-gap: 0.58rem;
+    padding: 0.58rem 0.68rem;
+  }
+
+  .quick-action-icon {
+    width: 2.1rem;
+    height: 2.1rem;
+    font-size: 0.82rem;
+  }
+
+  .quick-action-copy > span {
+    font-size: 0.84rem;
+  }
+
+  .quick-action-copy > small {
+    font-size: 0.68rem;
+  }
+
+  .home-resources .resource-card-header {
+    padding: 0.7rem 0.9rem;
+  }
+
+  .home-resources .resource-card-header .card-title {
+    font-size: 0.98rem;
+  }
+
+  .home-resources .resource-card-header .card-title i {
+    width: 1.9rem;
+    height: 1.9rem;
+    font-size: 0.78rem;
+  }
+
+  .home-resources .resource-section > .card > .card-body {
+    padding: 0.58rem;
+  }
+
+  .home-resources .resource-groups {
+    gap: 0.58rem;
+  }
+
+  .home-resources .resource-group {
+    padding: 0.5rem 0.55rem 0.55rem;
+  }
+
+  .home-resources .resource-group .row,
+  .home-resources .legal-links {
+    --bs-gutter-x: 0.55rem;
+    --bs-gutter-y: 0.55rem;
+  }
+
+  .home-resources .resource-group-title {
+    margin-bottom: 0.42rem;
+    font-size: 0.78rem;
+  }
+
+  .home-resources .resource-link--compact {
+    min-height: 3.1rem;
+    padding: 0.42rem 0.55rem;
+  }
+
+  .home-resources .resource-link--compact .resource-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .home-resources .resource-link--compact .resource-title {
+    font-size: 0.8rem;
+  }
+
+  .home-resources .resource-link--compact .resource-desc {
+    font-size: 0.68rem;
+  }
+
+  .home-resources .resource-legal-body {
+    gap: 0.75rem;
+    padding: 0.65rem 0.8rem !important;
+  }
+}
+
 @media (max-width: 1199.98px) {
   .host-overview {
     grid-template-columns: minmax(0, 1fr) auto;

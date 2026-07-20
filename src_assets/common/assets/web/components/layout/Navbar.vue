@@ -1,5 +1,8 @@
 <template>
-  <nav class="navbar navbar-light navbar-expand-md navbar-background header">
+  <nav
+    class="navbar navbar-light navbar-expand-md navbar-background header"
+    :class="{ 'navbar-embedded': isEmbeddedGui }"
+  >
     <div class="container-fluid">
       <a class="navbar-brand brand-enhanced" href="/" title="Sunshine">
         <img src="/images/logo-sunshine-256.png" height="50" alt="Sunshine-Foundation" class="brand-logo" />
@@ -53,6 +56,11 @@ const navItems = Object.freeze([
 
 // 使用背景管理 composable
 const { loadBackground, addDragListeners } = useBackground()
+const isEmbeddedGui = window.isTauri === true && window.parent !== window
+
+if (isEmbeddedGui) {
+  document.documentElement.dataset.sunshineGui = 'true'
+}
 
 // 当前路径（响应式）
 const currentPath = ref(window.location.pathname)
@@ -112,6 +120,17 @@ onUnmounted(() => {
   backdrop-filter: blur(14px);
 }
 
+.navbar-background.navbar-embedded {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1030;
+  margin-bottom: 0;
+}
+
+.navbar-embedded > .container-fluid {
+  padding-right: 9rem;
+}
+
 .brand-enhanced {
   transition: transform 0.3s ease;
 }
@@ -128,6 +147,10 @@ onUnmounted(() => {
 </style>
 
 <style>
+html[data-sunshine-gui='true'] body {
+  padding-top: 77px !important;
+}
+
 .header .navbar-utilities .nav-link,
 .header .navbar-utilities .nav-utility-button {
   color: var(--ui-text-secondary, #64748b) !important;
