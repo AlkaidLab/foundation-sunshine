@@ -768,7 +768,7 @@
     "step0_title": "Språk",
     "step1_description": "Välj skärmen att strömma",
     "step1_title": "Skärmval",
-    "step1_vdd_intro": "Basdisplayen (VDD) är Sunshine Foundations inbyggda smarta virtuella display som stöder valfri upplösning, bildfrekvens och HDR-optimering. Det är det föredragna valet för streaming med avstängd skärm och utökad display-streaming.",
+    "step1_vdd_intro": "Basdisplayen (VDD) är Foundation Sunshines inbyggda smarta virtuella display som stöder valfri upplösning, bildfrekvens och HDR-optimering. Det är det föredragna valet för streaming med avstängd skärm och utökad display-streaming.",
     "step2_description": "Välj din grafikadapter",
     "step2_title": "Välj adapter",
     "step3_description": "Välj förberedelsestrategi för bildskärmsenhet",
@@ -788,7 +788,7 @@
     "unknown_display": "Okänd skärm",
     "virtual_display": "Virtuell skärm (ZakoHDR)",
     "virtual_display_desc": "Strömma med en virtuell bildskärmsenhet (kräver installation av ZakoVDD-drivrutin)",
-    "welcome": "Välkommen till Sunshine Foundation"
+    "welcome": "Välkommen till Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Avancerat",
@@ -872,7 +872,7 @@
     "create_creds_alert": "Användaruppgifterna nedan behövs för att komma åt Sunshines webbgränssnitt. Håll dem säkra, eftersom du aldrig kommer att se dem igen!",
     "creds_local_only": "Dina autentiseringsuppgifter lagras lokalt offline och laddas aldrig upp till någon server.",
     "error": "Fel!",
-    "greeting": "Välkommen till Sunshine Foundation!",
+    "greeting": "Välkommen till Foundation Sunshine!",
     "hide_password": "Dölj lösenord",
     "login": "Inloggning",
     "network_error": "Nätverksfel, kontrollera din anslutning",

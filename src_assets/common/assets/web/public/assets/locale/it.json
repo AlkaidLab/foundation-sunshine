@@ -768,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "Il display base (VDD) è il display virtuale intelligente integrato di Sunshine Foundation, che supporta qualsiasi risoluzione, frame rate e ottimizzazione HDR. È la scelta preferita per lo streaming a schermo spento e lo streaming con display esteso.",
+    "step1_vdd_intro": "Il display base (VDD) è il display virtuale intelligente integrato di Foundation Sunshine, che supporta qualsiasi risoluzione, frame rate e ottimizzazione HDR. È la scelta preferita per lo streaming a schermo spento e lo streaming con display esteso.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -788,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Display virtuale (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Advanced",
@@ -872,7 +872,7 @@
     "create_creds_alert": "Le credenziali in basso sono necessarie per accedere all'interfaccia web di Sunshine. Tienile al sicuro, poichè non potrai più visualizzarle!",
     "creds_local_only": "Le tue credenziali vengono archiviate localmente offline e non verranno mai caricate su alcun server.",
     "error": "Errore!",
-    "greeting": "Benvenuto in Sunshine Foundation!",
+    "greeting": "Benvenuto in Foundation Sunshine!",
     "hide_password": "Nascondi password",
     "login": "Login",
     "network_error": "Errore di rete, controlla la connessione",

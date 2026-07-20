@@ -1,4 +1,4 @@
-# Sunshine Foundation Edition
+# Foundation Sunshine Edition
 
 ## 🌐 Mehrsprachige Unterstützung / Multi-language Support
 
@@ -194,4 +194,4 @@ Wir begrüßen die Teilnahme an Diskussionen und Code-Beiträgen!
 
 ---
 
-**Sunshine Foundation Edition - Macht Game-Streaming eleganter**
+**Foundation Sunshine Edition - Macht Game-Streaming eleganter**

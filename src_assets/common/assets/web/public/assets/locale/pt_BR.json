@@ -768,7 +768,7 @@
     "step0_title": "Idioma",
     "step1_description": "Escolha a tela para transmitir",
     "step1_title": "Seleção de Tela",
-    "step1_vdd_intro": "A tela base (VDD) é a tela virtual inteligente integrada do Sunshine Foundation, que suporta qualquer resolução, taxa de quadros e otimização HDR. É a escolha preferida para streaming com tela desligada e streaming de tela estendida.",
+    "step1_vdd_intro": "A tela base (VDD) é a tela virtual inteligente integrada do Foundation Sunshine, que suporta qualquer resolução, taxa de quadros e otimização HDR. É a escolha preferida para streaming com tela desligada e streaming de tela estendida.",
     "step2_description": "Escolha seu adaptador gráfico",
     "step2_title": "Selecionar Adaptador",
     "step3_description": "Escolha a estratégia de preparação do dispositivo de exibição",
@@ -788,7 +788,7 @@
     "unknown_display": "Tela Desconhecida",
     "virtual_display": "Tela Virtual (ZakoHDR)",
     "virtual_display_desc": "Transmitir usando um dispositivo de exibição virtual (requer instalação do driver ZakoVDD)",
-    "welcome": "Bem-vindo à Sunshine Foundation"
+    "welcome": "Bem-vindo ao Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Avançado",
@@ -872,7 +872,7 @@
     "create_creds_alert": "As credenciais abaixo são necessárias para acessar a interface de usuário da Web do Sunshine. Mantenha-as em segurança, pois você nunca mais as verá!",
     "creds_local_only": "Suas credenciais são armazenadas localmente offline e nunca serão enviadas para nenhum servidor.",
     "error": "Erro!",
-    "greeting": "Bem-vindo ao Sunshine Foundation!",
+    "greeting": "Bem-vindo ao Foundation Sunshine!",
     "hide_password": "Ocultar senha",
     "login": "Login",
     "network_error": "Erro de rede, verifique sua conexão",

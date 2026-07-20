@@ -1,4 +1,4 @@
-# Sunshine Foundation
+# Foundation Sunshine
 
 ## 🌐 Support multilingue / Multi-language Support
 
@@ -190,5 +190,5 @@ Nous accueillons favorablement les discussions et les contributions de code !
 
 ---
 
-**Sunshine Foundation - Rendre le streaming de jeux plus élégant**
+**Foundation Sunshine - Rendre le streaming de jeux plus élégant**
 ```

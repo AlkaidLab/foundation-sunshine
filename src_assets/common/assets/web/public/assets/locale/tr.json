@@ -768,7 +768,7 @@
     "step0_title": "Dil",
     "step1_description": "Yayınlanacak ekranı seçin",
     "step1_title": "Ekran Seçimi",
-    "step1_vdd_intro": "Temel Ekran (VDD), Sunshine Foundation'ın yerleşik akıllı sanal ekranıdır ve herhangi bir çözünürlük, kare hızı ve HDR optimizasyonunu destekler. Ekran kapalı akış ve genişletilmiş ekran akışı için tercih edilen seçenektir.",
+    "step1_vdd_intro": "Temel Ekran (VDD), Foundation Sunshine'ın yerleşik akıllı sanal ekranıdır ve herhangi bir çözünürlük, kare hızı ve HDR optimizasyonunu destekler. Ekran kapalı akış ve genişletilmiş ekran akışı için tercih edilen seçenektir.",
     "step2_description": "Grafik adaptörünüzü seçin",
     "step2_title": "Adaptör Seç",
     "step3_description": "Görüntü cihazı hazırlık stratejisini seçin",
@@ -788,7 +788,7 @@
     "unknown_display": "Bilinmeyen Ekran",
     "virtual_display": "Sanal Ekran (ZakoHDR)",
     "virtual_display_desc": "Sanal bir görüntü cihazı kullanarak yayın yapın (ZakoVDD sürücüsü kurulumu gerektirir)",
-    "welcome": "Sunshine Foundation'a Hoş Geldiniz"
+    "welcome": "Foundation Sunshine'a Hoş Geldiniz"
   },
   "tabs": {
     "advanced": "Gelişmiş",
@@ -872,7 +872,7 @@
     "create_creds_alert": "Sunshine'ın Web kullanıcı arayüzüne erişmek için aşağıdaki kimlik bilgileri gereklidir. Onları güvende tutun, çünkü bir daha asla görmeyeceksiniz!",
     "creds_local_only": "Kimlik bilgileriniz çevrimdışı olarak yerel olarak depolanır ve hiçbir zaman bir sunucuya yüklenmez.",
     "error": "Hata!",
-    "greeting": "Sunshine Foundation'a Hoş Geldiniz!",
+    "greeting": "Foundation Sunshine'a Hoş Geldiniz!",
     "hide_password": "Şifreyi gizle",
     "login": "Giriş",
     "network_error": "Ağ hatası, lütfen bağlantınızı kontrol edin",

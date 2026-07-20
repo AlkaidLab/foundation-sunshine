@@ -25,7 +25,7 @@ const curlCommand = computed(() => {
   const payload = JSON.stringify({
     msgtype: 'text',
     text: {
-      content: 'Hello, Sunshine Foundation Webhook'
+      content: 'Hello, Foundation Sunshine Webhook'
     }
   })
   

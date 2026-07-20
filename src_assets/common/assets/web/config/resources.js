@@ -12,7 +12,7 @@ export const OFFICIAL_RESOURCES = [
     id: 'foundation-github',
     href: 'https://github.com/AlkaidLab/foundation-sunshine',
     icon: 'fab fa-github',
-    title: 'Sunshine Foundation',
+    title: 'Foundation Sunshine',
     descriptionKey: 'resource_card.open_source_desc',
     variant: 'github',
     arrowIcon: 'fas fa-star',
