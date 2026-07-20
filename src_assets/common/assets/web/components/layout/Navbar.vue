@@ -104,6 +104,8 @@ onUnmounted(() => {
 
 <style scoped>
 .navbar-background {
+  position: relative;
+  z-index: 1030;
   background-color: var(--ui-nav-bg, rgba(240, 248, 255, 0.92));
   border-bottom: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
@@ -148,6 +150,7 @@ onUnmounted(() => {
 
 .header .navbar-utilities .dropdown-menu {
   min-width: 13rem;
+  z-index: 1060;
 }
 
 .header .navbar-nav > .nav-item > .nav-link {
