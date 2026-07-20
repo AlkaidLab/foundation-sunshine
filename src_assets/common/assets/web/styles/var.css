@@ -46,7 +46,8 @@
   --ui-border-strong: rgba(74, 158, 255, 0.42);
   --ui-text-primary: #1e293b;
   --ui-text-secondary: #64748b;
-  --ui-text-muted: #94a3b8;
+  /* Keep secondary copy readable on translucent GUI surfaces (4.5:1 on white). */
+  --ui-text-muted: #68788e;
   --ui-accent: #4a9eff;
   --ui-accent-rgb: 74, 158, 255;
   --ui-accent-soft: rgba(74, 158, 255, 0.12);

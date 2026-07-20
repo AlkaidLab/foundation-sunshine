@@ -19,7 +19,14 @@
             <h1 id="home-title" class="page-title">{{ $t('index.welcome') }}</h1>
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
-          <div class="home-status" :class="`home-status-${hostStatus}`" role="status" :aria-live="hostStatus === 'loading' ? 'polite' : 'off'">
+          <div
+            class="home-status"
+            :class="`home-status-${statusState}`"
+            role="status"
+            :aria-live="statusState === 'loading' ? 'polite' : 'off'"
+            :aria-label="statusAriaLabel"
+            :title="statusTitle"
+          >
             <span class="home-status-dot" aria-hidden="true"></span>
             <span>{{ statusLabel }}</span>
           </div>
@@ -113,7 +120,7 @@ import SetupWizard from '../components/SetupWizard.vue'
 import ResourceCard from '../components/common/ResourceCard.vue'
 import ErrorLogs from '../components/common/ErrorLogs.vue'
 import VersionCard from '../components/common/VersionCard.vue'
-import { useVersion } from '../composables/useVersion.js'
+import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
 import { trackEvents } from '../config/firebase.js'
@@ -150,11 +157,35 @@ const quickActions = [
   },
 ]
 
+const hasStableUpdate = computed(() => stableBuildAvailable.value)
+const hasPreReleaseUpdate = computed(() => notifyPreReleases.value && preReleaseBuildAvailable.value)
+
+const statusState = computed(() => {
+  if (hostStatus.value === 'error' || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'error'
+  if (
+    hostStatus.value === 'loading' ||
+    versionCheckStatus.value === VERSION_CHECK_STATUS.IDLE ||
+    versionCheckStatus.value === VERSION_CHECK_STATUS.CHECKING
+  ) {
+    return 'loading'
+  }
+  if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
+  return 'ready'
+})
+
 const statusLabel = computed(() => {
-  if (hostStatus.value === 'loading') return t('index.loading_latest')
-  if (hostStatus.value === 'error') return t('_common.error')
+  if (statusState.value === 'loading') return t('index.loading_latest')
+  if (statusState.value === 'error') return t('_common.error')
+  if (hasStableUpdate.value) return t('index.new_stable')
+  if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
   return t('index.version_latest')
 })
+
+const statusTitle = computed(() =>
+  versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR ? t('welcome.network_error') : undefined,
+)
+
+const statusAriaLabel = computed(() => statusTitle.value || statusLabel.value)
 
 const versionLabel = computed(() => {
   const currentVersion = version.value?.version || hostConfig.value?.version
@@ -165,8 +196,8 @@ const showVersionDetails = computed(
   () =>
     buildVersionIsDirty.value ||
     installedVersionNotStable.value ||
-    stableBuildAvailable.value ||
-    (notifyPreReleases.value && preReleaseBuildAvailable.value),
+    hasStableUpdate.value ||
+    hasPreReleaseUpdate.value,
 )
 
 const countCollection = (payload, key) => {
@@ -182,6 +213,7 @@ const {
   githubVersion,
   preReleaseVersion,
   notifyPreReleases,
+  versionCheckStatus,
   loading,
   installedVersionNotStable,
   stableBuildAvailable,
@@ -354,19 +386,31 @@ onMounted(async () => {
   height: 0.48rem;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 0.2rem var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, currentColor 16%, transparent);
 }
 
 .home-status-ready {
+  border-color: var(--ui-success-border, rgba(78, 205, 196, 0.34));
+  background: var(--ui-success-soft, rgba(78, 205, 196, 0.12));
   color: var(--ui-success-text, #287d4c);
 }
 
 .home-status-loading {
+  border-color: var(--ui-warning-border, rgba(255, 193, 7, 0.38));
+  background: var(--ui-warning-soft, rgba(255, 193, 7, 0.13));
   color: var(--ui-warning-text, #9a6700);
 }
 
 .home-status-error {
+  border-color: var(--ui-danger-border, rgba(255, 107, 107, 0.34));
+  background: var(--ui-danger-soft, rgba(255, 107, 107, 0.12));
   color: var(--ui-danger-text, #b4233a);
+}
+
+.home-status-update {
+  border-color: var(--ui-info-border, rgba(122, 184, 255, 0.34));
+  background: var(--ui-info-soft, rgba(122, 184, 255, 0.12));
+  color: var(--ui-info-text, #306fae);
 }
 
 .host-overview {
