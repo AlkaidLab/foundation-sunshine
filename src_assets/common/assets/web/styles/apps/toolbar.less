@@ -391,6 +391,23 @@
 .cute-btn-primary {
   .cute-btn-variant(var(--ui-accent), var(--ui-accent));
   color: var(--ui-accent-contrast);
+
+  &.has-changes {
+    animation: pulse 2s infinite;
+    box-shadow: 0 4px 15px rgba(var(--ui-warning-rgb), 0.48);
+
+    .unsaved-indicator {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 8px;
+      height: 8px;
+      background: var(--ui-warning);
+      border-radius: 50%;
+      box-shadow: 0 0 8px rgba(var(--ui-warning-rgb), 0.62);
+      animation: blink 1.5s infinite;
+    }
+  }
 }
 
 .cute-btn-secondary {

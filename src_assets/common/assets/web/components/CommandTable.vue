@@ -120,7 +120,7 @@
                   <button
                     v-if="isMenuType"
                     type="button"
-                    class="btn btn-success btn-sm me-1"
+                    class="btn btn-primary btn-sm me-1"
                     :title="$t('apps.test_menu_cmd')"
                     :disabled="!command.cmd"
                     @click="testCommand(index)"

@@ -9,9 +9,10 @@
         </h5>
       </div>
       <div class="card-body">
+        <div class="resource-groups">
 
         <!-- 基地官网 -->
-        <div class="resource-group mb-4">
+        <div class="resource-group resource-group--official">
           <h6 class="resource-group-title">
             <i class="fas fa-globe text-primary me-2"></i>
             {{ $t('resource_card.official_website') }}
@@ -48,9 +49,9 @@
         </div>
 
         <!-- 快速入门 -->
-        <div class="resource-group mb-4">
+        <div class="resource-group resource-group--quick-start">
           <h6 class="resource-group-title">
-            <i class="fas fa-rocket text-success me-2"></i>
+            <i class="fas fa-rocket me-2"></i>
             {{ $t('resource_card.quick_start') }}
           </h6>
           <div class="row g-3">
@@ -85,19 +86,8 @@
           </div>
         </div>
 
-        <button
-          v-if="compact"
-          type="button"
-          class="resource-expand-toggle"
-          :aria-expanded="showExtendedResources"
-          @click="toggleExtendedResources"
-        >
-          <span>{{ showExtendedResources ? $t('_common.close') : $t('_common.see_more') }}</span>
-          <i :class="['fas', showExtendedResources ? 'fa-chevron-up' : 'fa-chevron-down']" aria-hidden="true"></i>
-        </button>
-
         <!-- 客户端下载 -->
-        <div v-if="!compact || showExtendedResources" class="resource-group mb-4">
+        <div class="resource-group resource-group--clients">
           <h6 class="resource-group-title">
             <i class="fas fa-download text-primary me-2"></i>
             {{ $t('resource_card.client_downloads') }}
@@ -188,7 +178,7 @@
         </div>
 
         <!-- 友情链接 -->
-        <div v-if="!compact || showExtendedResources" class="resource-group">
+        <div class="resource-group resource-group--community">
           <h6 class="resource-group-title">
             <i class="fas fa-code-branch me-2"></i>
             {{ $t('resource_card.third_party_moonlight') }}
@@ -228,22 +218,23 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
     </div>
 
     <!-- Legal Card -->
-    <div v-if="!compact || showExtendedResources" class="card shadow-sm mt-4">
-      <div class="card-header resource-card-header resource-card-header-danger">
-        <h5 class="card-title mb-0">
-          <i class="fas fa-gavel text-danger me-2"></i>
-          {{ $t('resource_card.legal') }}
-        </h5>
-      </div>
-      <div class="card-body">
-        <p class="mb-4">{{ $t('resource_card.legal_desc') }}</p>
+    <div class="card shadow-sm mt-2 legal-card">
+      <div class="card-body resource-legal-body">
+        <div class="legal-summary">
+          <h5 class="legal-title">
+            <i class="fas fa-gavel me-2"></i>
+            {{ $t('resource_card.legal') }}
+          </h5>
+          <p class="legal-copy">{{ $t('resource_card.legal_desc') }}</p>
+        </div>
 
         <!-- GPL v3.0 Badge -->
-        <div class="gpl-badge mb-4">
+        <div class="gpl-badge">
           <div class="d-flex align-items-center justify-content-center">
             <span class="badge-gpl">
               <i class="fas fa-balance-scale me-2"></i>
@@ -257,10 +248,10 @@
           </p>
         </div>
 
-        <div class="row g-3">
+        <div class="row g-2 legal-links">
           <div class="col-md-6">
             <a
-              class="resource-link resource-link-danger"
+              class="resource-link resource-link-primary"
               href="https://github.com/qiin2333/Sunshine/blob/master/LICENSE"
               target="_blank"
             >
@@ -276,7 +267,7 @@
           </div>
           <div class="col-md-6">
             <a
-              class="resource-link resource-link-danger"
+              class="resource-link resource-link-primary"
               href="https://github.com/qiin2333/Sunshine/blob/master/NOTICE"
               target="_blank"
             >
@@ -322,16 +313,9 @@
 <script>
 export default {
   name: 'ResourceCard',
-  props: {
-    compact: {
-      type: Boolean,
-      default: false,
-    },
-  },
   data() {
     return {
       showHarmonyModal: false,
-      showExtendedResources: false,
     }
   },
   computed: {
@@ -340,9 +324,6 @@ export default {
     }
   },
   methods: {
-    toggleExtendedResources() {
-      this.showExtendedResources = !this.showExtendedResources
-    },
     openHarmonyModal() {
       this.showHarmonyModal = true
     },
@@ -358,52 +339,58 @@ export default {
 </script>
 
 <style scoped>
-.resource-group {
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--ui-border);
+.resource-section > .card > .card-body {
+  padding: 0.5rem;
 }
 
-.resource-group:last-child {
-  padding-bottom: 0;
-  border-bottom: none;
+.resource-groups {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.resource-group {
+  min-width: 0;
+  margin: 0 !important;
+  padding: 0.4rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
+}
+
+.resource-group--official,
+.resource-group--quick-start {
+  grid-column: span 6;
+}
+
+.resource-group--clients {
+  grid-column: span 8;
+}
+
+.resource-group--community {
+  grid-column: span 4;
+}
+
+.resource-group .row {
+  --bs-gutter-x: 0.5rem;
+  --bs-gutter-y: 0.5rem;
 }
 
 .resource-group-title {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--ui-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 1rem;
-}
-
-.resource-expand-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: -0.35rem;
-  padding: 0.75rem 0;
-  border: 0;
-  border-top: 1px solid var(--ui-border);
-  background: transparent;
-  color: var(--ui-accent);
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-align: left;
-}
-
-.resource-expand-toggle:hover,
-.resource-expand-toggle:focus-visible {
-  color: var(--ui-accent);
-  background: var(--ui-accent-soft);
+  margin-bottom: 0.35rem;
 }
 
 /* Resource Link Base */
 .resource-link {
   display: flex;
   align-items: center;
-  padding: 1rem;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.45rem;
   border-radius: var(--ui-radius-sm);
   text-decoration: none;
   background: var(--ui-surface);
@@ -418,15 +405,15 @@ export default {
 }
 
 .resource-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
+  font-size: 0.85rem;
   flex-shrink: 0;
-  margin-right: 1rem;
+  margin-right: 0.5rem;
   color: white;
 }
 
@@ -438,14 +425,18 @@ export default {
 .resource-title {
   display: block;
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.76rem;
   color: var(--ui-text-primary);
   margin-bottom: 2px;
 }
 
 .resource-desc {
   display: block;
-  font-size: 0.8rem;
+  overflow: hidden;
+  font-size: 0.65rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ui-text-secondary);
 }
 
@@ -462,13 +453,13 @@ export default {
 
 /* Color Variants - Using CSS Custom Properties */
 .resource-link-primary {
-  --link-color: var(--ui-success-rgb);
-  --icon-gradient: linear-gradient(135deg, var(--ui-success) 0%, var(--ui-success-text) 100%);
+  --link-color: var(--ui-accent-rgb);
+  --icon-gradient: linear-gradient(135deg, var(--ui-accent) 0%, var(--ui-accent-secondary) 100%);
 }
 
 .resource-link-info {
-  --link-color: var(--ui-info-rgb);
-  --icon-gradient: linear-gradient(135deg, var(--ui-info) 0%, var(--ui-info-text) 100%);
+  --link-color: var(--ui-accent-rgb);
+  --icon-gradient: linear-gradient(135deg, var(--ui-accent-secondary) 0%, var(--ui-accent) 100%);
 }
 
 .resource-link-android {
@@ -540,20 +531,21 @@ export default {
 
 /* GPL Badge */
 .gpl-badge {
-  border-radius: 12px;
-  padding: 1.25rem;
+  min-width: 16rem;
+  padding: 0;
 }
 
 .badge-gpl {
   display: inline-flex;
   align-items: center;
-  background: var(--ui-danger);
-  color: var(--ui-danger-contrast);
-  font-size: 1.1rem;
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 0.75rem 1.5rem;
+  padding: 0.4rem 0.7rem;
   border-radius: 50px;
-  box-shadow: 0 4px 15px var(--ui-danger-soft);
+  box-shadow: none;
   letter-spacing: 0.5px;
 }
 
@@ -687,8 +679,71 @@ export default {
   color: var(--ui-accent) !important;
 }
 
-.resource-card-header-danger .card-title i {
-  color: var(--ui-danger) !important;
+.gpl-badge p {
+  color: var(--ui-text-muted);
+  font-size: 0.65rem;
+  line-height: 1.25;
+}
+
+.resource-legal-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto minmax(20rem, 1.15fr);
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem !important;
+}
+
+.legal-title {
+  margin: 0 0 0.25rem;
+  color: var(--ui-text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.legal-title i {
+  color: var(--ui-accent);
+}
+
+.legal-copy {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.legal-links {
+  margin: 0;
+}
+
+@media (max-width: 991.98px) {
+  .resource-group--official,
+  .resource-group--quick-start,
+  .resource-group--clients,
+  .resource-group--community {
+    grid-column: span 12;
+  }
+
+  .resource-legal-body {
+    grid-template-columns: 1fr;
+  }
+
+  .gpl-badge {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .resource-groups {
+    display: block;
+  }
+
+  .resource-group + .resource-group {
+    margin-top: 0.65rem !important;
+  }
+
+  .resource-desc {
+    white-space: normal;
+  }
 }
 
 /* Harmony Modal */

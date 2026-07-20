@@ -116,7 +116,7 @@
               <div class="me-2">
                 <b>{{ $t('_common.success') }}</b> {{ $t('troubleshooting.unpair_single_success') }}
               </div>
-              <button class="btn btn-success ms-auto apply" @click="clickedApplyBanner">
+              <button class="btn btn-secondary ms-auto apply" @click="clickedApplyBanner">
                 {{ $t('_common.dismiss') }}
               </button>
             </div>
@@ -214,7 +214,7 @@
                         <!-- 保存/取消按钮 -->
                         <template v-else>
                           <button
-                            class="btn btn-sm btn-success me-1"
+                            class="btn btn-sm btn-primary me-1"
                             @click="handleSave(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             :title="$t('pin.save_changes')"

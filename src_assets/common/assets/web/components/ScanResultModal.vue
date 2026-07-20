@@ -47,7 +47,7 @@
                 <button
                   v-if="stats.shortcut > 0"
                   class="btn"
-                  :class="selectedType === 'shortcut' ? 'btn-info' : 'btn-outline-info'"
+                  :class="selectedType === 'shortcut' ? 'btn-primary' : 'btn-outline-primary'"
                   @click="selectedType = 'shortcut'"
                   type="button"
                   :title="t('apps.scan_result_filter_shortcut_title')"
@@ -82,7 +82,7 @@
                 <button
                   v-if="stats.url > 0"
                   class="btn"
-                  :class="selectedType === 'url' ? 'btn-success' : 'btn-outline-success'"
+                  :class="selectedType === 'url' ? 'btn-primary' : 'btn-outline-primary'"
                   @click="selectedType = 'url'"
                   type="button"
                   :title="t('apps.scan_result_filter_url_title')"
@@ -129,7 +129,7 @@
               <button
                 v-if="stats.games > 0"
                 class="btn btn-sm"
-                :class="gamesOnly ? 'btn-warning' : 'btn-outline-warning'"
+                :class="gamesOnly ? 'btn-primary' : 'btn-outline-primary'"
                 @click="gamesOnly = !gamesOnly"
                 type="button"
               >
@@ -140,7 +140,7 @@
               <button
                 v-if="stats.review > 0"
                 class="btn btn-sm"
-                :class="reviewOnly ? 'btn-danger' : 'btn-outline-danger'"
+                :class="reviewOnly ? 'btn-warning' : 'btn-outline-warning'"
                 :aria-pressed="reviewOnly ? 'true' : 'false'"
                 @click="reviewOnly = !reviewOnly"
                 type="button"

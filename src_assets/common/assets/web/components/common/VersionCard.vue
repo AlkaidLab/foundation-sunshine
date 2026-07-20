@@ -43,7 +43,7 @@
           </div>
           <button
             type="button"
-            class="btn btn-success btn-download"
+            class="btn btn-primary btn-download"
             :disabled="pendingNativeChannel !== ''"
             :aria-busy="pendingNativeChannel === 'prerelease'"
             @click="handleDownloadClick(preReleaseVersion.release.html_url, 'prerelease')"
@@ -66,7 +66,7 @@
           </div>
           <button
             type="button"
-            class="btn btn-success btn-download"
+            class="btn btn-primary btn-download"
             :disabled="pendingNativeChannel !== ''"
             :aria-busy="pendingNativeChannel === 'stable'"
             @click="handleDownloadClick(githubVersion.release.html_url, 'stable')"

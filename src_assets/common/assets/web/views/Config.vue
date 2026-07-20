@@ -16,7 +16,7 @@
       <button
         v-if="saved && !restarted"
         type="button"
-        class="cute-btn cute-btn-success"
+        class="cute-btn cute-btn-primary"
         @click="requestConfigAction('apply')"
         :disabled="riskActionRunning"
         :aria-label="$t('_common.apply')"

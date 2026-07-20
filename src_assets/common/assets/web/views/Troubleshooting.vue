@@ -15,11 +15,11 @@
           <TroubleshootingCard
             class="flex-fill"
             icon="fa-magic"
-            color="success"
+            color="primary"
             :title="$t('troubleshooting.reopen_setup_wizard')"
             :description="$t('troubleshooting.reopen_setup_wizard_desc')"
           >
-            <button class="btn btn-success" @click="handleReopenSetupWizard">
+            <button class="btn btn-primary" @click="handleReopenSetupWizard">
               <i class="fas fa-redo me-2"></i>
               {{ $t('troubleshooting.reopen_setup_wizard') }}
             </button>
@@ -95,7 +95,7 @@
           <TroubleshootingCard
             class="flex-fill"
             icon="fa-desktop"
-            color="info"
+            color="primary"
             :title="$t('troubleshooting.reset_display_device_windows')"
             :description="$t('troubleshooting.reset_display_device_desc_windows')"
             pre-line
@@ -111,7 +111,7 @@
               </div>
             </template>
             <button
-              class="btn btn-info text-white"
+              class="btn btn-primary"
               :disabled="resetDisplayDevicePressed"
               @click="resetDisplayDevicePersistence"
             >
@@ -124,7 +124,7 @@
           <TroubleshootingCard
             class="flex-fill"
             icon="fa-sync-alt"
-            color="info"
+            color="primary"
             :title="$t('troubleshooting.restart_sunshine')"
             :description="$t('troubleshooting.restart_sunshine_desc')"
           >
@@ -134,7 +134,7 @@
                 {{ $t('troubleshooting.restart_sunshine_success') }}
               </div>
             </template>
-            <button class="btn btn-info text-white" :disabled="restartPressed" @click="restart">
+            <button class="btn btn-primary" :disabled="restartPressed" @click="restart">
               <i class="fas fa-redo me-2"></i>
               {{ $t('troubleshooting.restart_sunshine') }}
             </button>

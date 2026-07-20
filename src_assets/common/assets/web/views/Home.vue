@@ -85,6 +85,7 @@
 
       <!-- 版本信息 -->
       <VersionCard
+        v-if="showVersionDetails"
         :version="version"
         :github-version="githubVersion"
         :pre-release-version="preReleaseVersion"
@@ -99,9 +100,7 @@
       />
 
       <!-- 资源卡片 -->
-      <div class="my-4">
-        <ResourceCard :compact="true" />
-      </div>
+      <ResourceCard class="home-resources" />
     </main>
   </div>
 </template>
@@ -136,6 +135,14 @@ const versionLabel = computed(() => {
   const currentVersion = version.value?.version || hostConfig.value?.version
   return currentVersion ? `Ver ${currentVersion}` : t('index.loading_latest')
 })
+
+const showVersionDetails = computed(
+  () =>
+    buildVersionIsDirty.value ||
+    installedVersionNotStable.value ||
+    stableBuildAvailable.value ||
+    (notifyPreReleases.value && preReleaseBuildAvailable.value),
+)
 
 const countCollection = (payload, key) => {
   if (Array.isArray(payload)) return payload.length
@@ -235,6 +242,7 @@ onMounted(async () => {
 
 .home-content {
   max-width: 1180px;
+  padding-top: 0.5rem;
 }
 
 .home-intro {
@@ -242,12 +250,12 @@ onMounted(async () => {
   align-items: flex-end;
   justify-content: space-between;
   gap: 1.5rem;
-  margin: 0.75rem 0 1.5rem;
+  margin: 0.5rem 0 0.75rem;
 }
 
 .home-eyebrow,
 .section-kicker {
-  margin: 0 0 0.4rem;
+  margin: 0 0 0.2rem;
   color: var(--ui-accent, #4a9eff);
   font-size: 0.75rem;
   font-weight: 700;
@@ -257,6 +265,8 @@ onMounted(async () => {
 
 .home-intro .page-title {
   margin-bottom: 0.25rem;
+  font-size: 1.65rem;
+  line-height: 1.15;
   font-weight: 600;
   letter-spacing: -0.03em;
 }
@@ -303,10 +313,11 @@ onMounted(async () => {
 
 .host-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1.25rem 2rem;
-  padding: 1.35rem;
-  margin-bottom: 1.25rem;
+  grid-template-columns: minmax(12rem, 1fr) auto minmax(29rem, 2.2fr);
+  align-items: center;
+  gap: 1rem 1.5rem;
+  padding: 0.9rem 1.15rem;
+  margin-bottom: 0.75rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: var(--ui-radius-md, 12px);
   background: var(--ui-surface-strong, rgba(240, 248, 255, 0.88));
@@ -322,7 +333,7 @@ onMounted(async () => {
   margin: 0;
   overflow: hidden;
   color: var(--ui-text-primary, #1e293b);
-  font-size: clamp(1.35rem, 3vw, 2rem);
+  font-size: clamp(1.25rem, 2.5vw, 1.75rem);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -337,15 +348,15 @@ onMounted(async () => {
 .host-metrics {
   display: flex;
   align-items: stretch;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .host-metric {
   display: flex;
-  min-width: 5rem;
+  min-width: 4.25rem;
   flex-direction: column;
   justify-content: center;
-  padding-left: 1.5rem;
+  padding-left: 1rem;
   border-left: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
 }
 
@@ -364,19 +375,16 @@ onMounted(async () => {
 
 .quick-actions {
   display: grid;
-  grid-column: 1 / -1;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
-  padding-top: 1.15rem;
-  border-top: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
+  gap: 0.5rem;
 }
 
 .quick-action {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr);
-  column-gap: 0.75rem;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  column-gap: 0.5rem;
   align-items: center;
-  padding: 0.85rem 1rem;
+  padding: 0.65rem 0.75rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: var(--ui-radius-md, 12px);
   background: var(--ui-surface, rgba(255, 255, 255, 0.62));
@@ -401,7 +409,7 @@ onMounted(async () => {
 .quick-action > i {
   grid-row: span 2;
   color: var(--ui-accent, #4a9eff);
-  font-size: 1.2rem;
+  font-size: 1rem;
   text-align: center;
 }
 
@@ -412,6 +420,20 @@ onMounted(async () => {
 .quick-action small {
   color: var(--ui-text-secondary, #64748b);
   font-size: 0.75rem;
+}
+
+.home-resources {
+  margin-bottom: 0.25rem;
+}
+
+@media (max-width: 1199.98px) {
+  .host-overview {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .quick-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 .home-alert {

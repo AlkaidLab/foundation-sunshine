@@ -58,7 +58,7 @@
           </button>
           <button
             class="cute-btn"
-            :class="selectionMode ? 'cute-btn-warning' : 'cute-btn-secondary'"
+            :class="selectionMode ? 'cute-btn-primary' : 'cute-btn-secondary'"
             type="button"
             :aria-pressed="selectionMode"
             :aria-label="$t('apps.batch_select_toggle')"
@@ -69,7 +69,7 @@
           </button>
           <button
             v-if="isTauriEnv()"
-            class="cute-btn cute-btn-info"
+            class="cute-btn cute-btn-secondary"
             @click="openScanOptions"
             :disabled="isScanning || scanProgress.active"
             title="扫描游戏平台库 (Steam/Epic/GOG)"
@@ -88,7 +88,7 @@
             <i class="fas fa-info-circle"></i>
           </button>
           <button 
-            class="cute-btn cute-btn-success" 
+            class="cute-btn cute-btn-primary"
             :class="{ 'has-changes': hasUnsavedChanges }"
             @click="save" 
             :disabled="!hasUnsavedChanges || isSaving"
