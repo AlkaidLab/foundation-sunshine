@@ -3,6 +3,13 @@ import { extractColors, rgbToHsl as rgbToHslValues, selectAccentColor } from '..
 
 const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'
+const THUMBNAIL_MAX_SIZE = 200
+const TEXT_COLOR_PROPERTIES = [
+  '--text-primary-color',
+  '--text-secondary-color',
+  '--text-muted-color',
+  '--text-title-color',
+]
 
 const COLOR_CONFIG = {
   textLightnessRange: { min: 15, max: 95 },
@@ -10,15 +17,16 @@ const COLOR_CONFIG = {
   paletteSize: 6,
 }
 
-const DEFAULT_COLOR_INFO = {
+const createDefaultColorInfo = () => ({
   dominantColor: { r: 128, g: 128, b: 128 },
   hsl: { h: 0, s: 0, l: 50 },
   palette: [],
-}
+})
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
-const isLocalImage = (imageUrl) => imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')
+const isLocalImage = (imageUrl) =>
+  typeof imageUrl === 'string' && (imageUrl.startsWith('data:') || imageUrl.startsWith('blob:'))
 
 const loadImage = (imageUrl) =>
   new Promise((resolve, reject) => {
@@ -28,7 +36,7 @@ const loadImage = (imageUrl) =>
     img.src = imageUrl
   })
 
-const rgbToHsl = (r, g, b) => {
+const rgbToRoundedHsl = (r, g, b) => {
   const [h, s, l] = rgbToHslValues(r, g, b)
   return { h: Math.round(h), s: Math.round(s), l: Math.round(l) }
 }
@@ -68,30 +76,30 @@ const rgbToHex = (r, g, b) => {
 }
 
 const analyzeImageColors = (img) => {
-  if (!img.complete || !img.width || !img.height) return { ...DEFAULT_COLOR_INFO }
+  if (!img.complete || !img.width || !img.height) return createDefaultColorInfo()
 
   try {
     const canvas = document.createElement('canvas')
-    const scale = Math.min(1, 200 / Math.max(img.width, img.height))
+    const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(img.width, img.height))
     canvas.width = Math.max(1, Math.round(img.width * scale))
     canvas.height = Math.max(1, Math.round(img.height * scale))
 
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) return { ...DEFAULT_COLOR_INFO }
+    if (!context) return createDefaultColorInfo()
 
     context.drawImage(img, 0, 0, canvas.width, canvas.height)
     const palette = extractColors(context.getImageData(0, 0, canvas.width, canvas.height), COLOR_CONFIG.paletteSize)
-    const selectedColor = selectAccentColor(palette)
-    if (!selectedColor?.length) return { ...DEFAULT_COLOR_INFO }
+    const accentColor = selectAccentColor(palette)
+    if (!accentColor) return createDefaultColorInfo()
 
-    const [r, g, b] = selectedColor
+    const [r, g, b] = accentColor
     return {
       dominantColor: { r, g, b },
-      hsl: rgbToHsl(r, g, b),
+      hsl: rgbToRoundedHsl(r, g, b),
       palette,
     }
   } catch {
-    return { ...DEFAULT_COLOR_INFO }
+    return createDefaultColorInfo()
   }
 }
 
@@ -100,7 +108,7 @@ const detectImageColorInfo = async (imageUrl) => {
     const img = await loadImage(imageUrl)
     return analyzeImageColors(img)
   } catch {
-    return { ...DEFAULT_COLOR_INFO }
+    return createDefaultColorInfo()
   }
 }
 
@@ -151,6 +159,13 @@ const setTextColorTheme = (colorInfo) => {
   setTimeout(() => root.classList.remove('text-color-transitioning'), 500)
 }
 
+const resetTextColorTheme = () => {
+  const root = document.documentElement
+  TEXT_COLOR_PROPERTIES.forEach((property) => root.style.removeProperty(property))
+  root.classList.remove('text-color-transitioning')
+  document.body.classList.remove('bg-light', 'bg-dark')
+}
+
 /**
  * 背景图片管理组合式函数
  */
@@ -173,31 +188,36 @@ export function useBackground(options = {}) {
     }
   }
 
-  const setBackground = async (imageUrl) => {
-    if (isDevMode()) {
-      document.body.style.background = ''
+  let colorUpdateId = 0
+
+  const refreshTextColorTheme = async (imageUrl) => {
+    const updateId = ++colorUpdateId
+    if (!isLocalImage(imageUrl)) {
+      resetTextColorTheme()
       return
     }
-    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
-    if (isLocalImage(imageUrl)) {
-      try {
-        const colorInfo = await detectImageColorInfo(imageUrl)
-        setTextColorTheme(colorInfo)
-      } catch {
-        // 静默失败
-      }
-    }
-  }
 
-  const recheckBackgroundBrightness = async () => {
-    const currentBg = getCurrentBackground()
-    if (!isLocalImage(currentBg)) return
     try {
-      const colorInfo = await detectImageColorInfo(currentBg)
-      setTextColorTheme(colorInfo)
+      const colorInfo = await detectImageColorInfo(imageUrl)
+      if (updateId === colorUpdateId) setTextColorTheme(colorInfo)
     } catch {
       // 静默失败
     }
+  }
+
+  const setBackground = async (imageUrl) => {
+    if (isDevMode()) {
+      colorUpdateId++
+      document.body.style.background = ''
+      resetTextColorTheme()
+      return
+    }
+    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
+    await refreshTextColorTheme(imageUrl)
+  }
+
+  const recheckBackgroundBrightness = async () => {
+    await refreshTextColorTheme(getCurrentBackground())
   }
 
   const loadBackground = () => setBackground(getCurrentBackground())

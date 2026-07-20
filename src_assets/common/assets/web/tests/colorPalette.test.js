@@ -42,8 +42,18 @@ test('extractColors ignores transparent pixels', () => {
   assert(colors.every((color) => !isNearColor(color, [255, 0, 0])))
 })
 
+test('extractColors handles empty images and invalid cluster counts', () => {
+  assert.deepEqual(extractColors({ data: new Uint8ClampedArray() }, 3), [])
+  assert.deepEqual(extractColors(imageDataFrom([[255, 0, 0]]), 0), [])
+})
+
 test('selectAccentColor prefers saturated colors with usable lightness', () => {
   assert.deepEqual(selectAccentColor([[255, 255, 255], [0, 128, 255], [128, 128, 128]]), [0, 128, 255])
+})
+
+test('selectAccentColor returns null for empty or invalid palettes', () => {
+  assert.equal(selectAccentColor(), null)
+  assert.equal(selectAccentColor([null, undefined, []]), null)
 })
 
 test('rgbToHsl returns the expected hue, saturation, and lightness', () => {
