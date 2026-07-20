@@ -85,8 +85,19 @@
           </div>
         </div>
 
+        <button
+          v-if="compact"
+          type="button"
+          class="resource-expand-toggle"
+          :aria-expanded="showExtendedResources"
+          @click="toggleExtendedResources"
+        >
+          <span>{{ showExtendedResources ? $t('_common.close') : $t('_common.see_more') }}</span>
+          <i :class="['fas', showExtendedResources ? 'fa-chevron-up' : 'fa-chevron-down']" aria-hidden="true"></i>
+        </button>
+
         <!-- 客户端下载 -->
-        <div class="resource-group mb-4">
+        <div v-if="!compact || showExtendedResources" class="resource-group mb-4">
           <h6 class="resource-group-title">
             <i class="fas fa-download text-primary me-2"></i>
             {{ $t('resource_card.client_downloads') }}
@@ -177,7 +188,7 @@
         </div>
 
         <!-- 友情链接 -->
-        <div class="resource-group">
+        <div v-if="!compact || showExtendedResources" class="resource-group">
           <h6 class="resource-group-title">
             <i class="fas fa-code-branch text-dark me-2"></i>
             {{ $t('resource_card.third_party_moonlight') }}
@@ -221,7 +232,7 @@
     </div>
 
     <!-- Legal Card -->
-    <div class="card shadow-sm mt-4">
+    <div v-if="!compact || showExtendedResources" class="card shadow-sm mt-4">
       <div class="card-header bg-danger bg-opacity-10 border-bottom-0">
         <h5 class="card-title mb-0">
           <i class="fas fa-gavel text-danger me-2"></i>
@@ -311,9 +322,16 @@
 <script>
 export default {
   name: 'ResourceCard',
+  props: {
+    compact: {
+      type: Boolean,
+      default: false,
+    },
+  },
   data() {
     return {
-      showHarmonyModal: false
+      showHarmonyModal: false,
+      showExtendedResources: false,
     }
   },
   computed: {
@@ -322,6 +340,9 @@ export default {
     }
   },
   methods: {
+    toggleExtendedResources() {
+      this.showExtendedResources = !this.showExtendedResources
+    },
     openHarmonyModal() {
       this.showHarmonyModal = true
     },
@@ -354,6 +375,27 @@ export default {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 1rem;
+}
+
+.resource-expand-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: -0.35rem;
+  padding: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.15);
+  background: transparent;
+  color: var(--bs-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.resource-expand-toggle:hover,
+.resource-expand-toggle:focus-visible {
+  color: var(--bs-link-hover-color, var(--bs-primary));
 }
 
 /* Resource Link Base */

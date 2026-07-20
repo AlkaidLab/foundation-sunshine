@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="home-page">
     <Navbar v-if="!showSetupWizard" />
 
     <!-- 首次设置向导 -->
@@ -12,12 +12,72 @@
     />
 
     <!-- 正常首页内容 -->
-    <div v-if="!showSetupWizard" id="content" class="container">
-      <div class="page-header mt-2 mb-4">
-        <h1 class="page-title">
-          {{ $t('index.welcome') }}
-        </h1>
-        <p class="page-subtitle">{{ $t('index.description') }}</p>
+    <main v-if="!showSetupWizard" id="content" class="container home-content">
+      <div class="page-header home-intro">
+        <div>
+          <p class="home-eyebrow">
+            <i class="fas fa-satellite-dish me-2" aria-hidden="true"></i>
+            Sunshine WebUI
+          </p>
+          <h1 class="page-title">{{ $t('index.welcome') }}</h1>
+          <p class="page-subtitle">{{ $t('index.description') }}</p>
+        </div>
+        <div class="home-status" :class="`home-status-${hostStatus}`" role="status" :aria-live="hostStatus === 'loading' ? 'polite' : 'off'">
+          <span class="home-status-dot" aria-hidden="true"></span>
+          <span>{{ statusLabel }}</span>
+        </div>
+      </div>
+
+      <section class="host-overview card shadow-sm" aria-labelledby="host-overview-title">
+        <div class="host-overview-main">
+          <div class="section-kicker" id="host-overview-title">
+            <i class="fas fa-server me-2" aria-hidden="true"></i>
+            {{ $t('navbar.home') }}
+          </div>
+          <h2 class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
+          <p class="host-meta">
+            <span v-if="hostConfig?.platform">{{ hostConfig.platform }}</span>
+            <span v-if="hostConfig?.platform" aria-hidden="true"> · </span>
+            <span>{{ versionLabel }}</span>
+          </p>
+        </div>
+
+        <div class="host-metrics" aria-label="Host summary">
+          <div class="host-metric">
+            <span class="metric-value">{{ clientsCount ?? '—' }}</span>
+            <span class="metric-label">{{ $t('navbar.pin') }}</span>
+          </div>
+          <div class="host-metric">
+            <span class="metric-value">{{ appsCount ?? '—' }}</span>
+            <span class="metric-label">{{ $t('navbar.applications') }}</span>
+          </div>
+        </div>
+
+        <nav class="quick-actions" :aria-label="$t('resource_card.quick_start')">
+          <a class="quick-action quick-action-primary" href="/pin">
+            <i class="fas fa-link" aria-hidden="true"></i>
+            <span>{{ $t('navbar.pin') }}</span>
+            <small>{{ $t('pin.pin_pairing') }}</small>
+          </a>
+          <a class="quick-action" href="/apps">
+            <i class="fas fa-gamepad" aria-hidden="true"></i>
+            <span>{{ $t('navbar.applications') }}</span>
+            <small>{{ $t('apps.applications_title') }}</small>
+          </a>
+          <a class="quick-action" href="/config">
+            <i class="fas fa-sliders-h" aria-hidden="true"></i>
+            <span>{{ $t('navbar.configuration') }}</span>
+            <small>{{ $t('config.configuration') }}</small>
+          </a>
+        </nav>
+      </section>
+
+      <div v-if="hostStatus === 'error'" class="home-alert" role="alert">
+        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+        <div>
+          <strong>{{ $t('_common.error') }}</strong>
+          <p>{{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}</p>
+        </div>
       </div>
 
       <!-- 错误日志 -->
@@ -40,14 +100,15 @@
 
       <!-- 资源卡片 -->
       <div class="my-4">
-        <ResourceCard />
+        <ResourceCard :compact="true" />
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Navbar from '../components/layout/Navbar.vue'
 import SetupWizard from '../components/SetupWizard.vue'
 import ResourceCard from '../components/common/ResourceCard.vue'
@@ -58,6 +119,30 @@ import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
 import { trackEvents } from '../config/firebase.js'
 import { apiJson } from '../utils/apiFetch.js'
+
+const { t } = useI18n()
+const hostConfig = ref(null)
+const hostStatus = ref('loading')
+const appsCount = ref(null)
+const clientsCount = ref(null)
+
+const statusLabel = computed(() => {
+  if (hostStatus.value === 'loading') return t('index.loading_latest')
+  if (hostStatus.value === 'error') return t('_common.error')
+  return t('index.version_latest')
+})
+
+const versionLabel = computed(() => {
+  const currentVersion = version.value?.version || hostConfig.value?.version
+  return currentVersion ? `Ver ${currentVersion}` : t('index.loading_latest')
+})
+
+const countCollection = (payload, key) => {
+  if (Array.isArray(payload)) return payload.length
+  if (Array.isArray(payload?.[key])) return payload[key].length
+  if (key === 'clients' && Array.isArray(payload?.named_certs)) return payload.named_certs.length
+  return null
+}
 
 // 使用组合式函数
 const {
@@ -106,6 +191,8 @@ onMounted(async () => {
 
   try {
     const config = await apiJson('/api/config')
+    hostConfig.value = config
+    hostStatus.value = 'ready'
 
     setTimeout(() => {
       reportGPUInfo(config)
@@ -116,17 +203,22 @@ onMounted(async () => {
       return
     }
 
-    // 获取版本信息
-    await fetchVersions(config)
+    const [appsResult, clientsResult] = await Promise.allSettled([
+      apiJson('/api/apps'),
+      apiJson('/api/clients/list'),
+    ])
+    if (appsResult.status === 'fulfilled') appsCount.value = countCollection(appsResult.value, 'apps')
+    if (clientsResult.status === 'fulfilled') clientsCount.value = countCollection(clientsResult.value, 'clients')
 
-    // 获取日志
-    await fetchLogs()
+    // 版本和日志互不阻塞，避免外部版本检查拖延本机状态提示
+    await Promise.allSettled([fetchVersions(config), fetchLogs()])
 
     // 更新页面标题
     if (version.value) {
       document.title += ` Ver ${version.value.version}`
     }
   } catch (e) {
+    hostStatus.value = 'error'
     // 在预览模式下，API 不可用是正常的，只记录警告
     if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) {
       console.warn('API not available in preview mode:', e.message)
@@ -140,4 +232,239 @@ onMounted(async () => {
 
 <style>
 @import '../styles/global.less';
+
+.home-content {
+  max-width: 1180px;
+}
+
+.home-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin: 0.75rem 0 1.5rem;
+}
+
+.home-eyebrow,
+.section-kicker {
+  margin: 0 0 0.4rem;
+  color: var(--bs-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.home-intro .page-title {
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.home-intro .page-subtitle {
+  max-width: 48rem;
+}
+
+.home-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-primary-color, #fff);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.home-status-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.12);
+}
+
+.home-status-ready {
+  color: #b8f2c4;
+}
+
+.home-status-loading {
+  color: #ffe08a;
+}
+
+.home-status-error {
+  color: #ffb3b3;
+}
+
+.host-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.25rem 2rem;
+  padding: 1.35rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 26, 46, 0.82);
+}
+
+.host-overview-main {
+  min-width: 0;
+}
+
+.host-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-title-color, #fff);
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-meta {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary-color, rgba(255, 255, 255, 0.68));
+  font-size: 0.85rem;
+}
+
+.host-metrics {
+  display: flex;
+  align-items: stretch;
+  gap: 1.5rem;
+}
+
+.host-metric {
+  display: flex;
+  min-width: 5rem;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: 1.5rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.metric-value {
+  color: var(--text-title-color, #fff);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.metric-label {
+  margin-top: 0.35rem;
+  color: var(--text-secondary-color, rgba(255, 255, 255, 0.68));
+  font-size: 0.75rem;
+}
+
+.quick-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding-top: 1.15rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.quick-action {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-title-color, #fff);
+  text-decoration: none;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.quick-action:hover,
+.quick-action:focus-visible {
+  border-color: rgba(255, 216, 107, 0.7);
+  background: rgba(255, 216, 107, 0.14);
+  color: var(--text-title-color, #fff);
+  transform: translateY(-2px);
+}
+
+.quick-action-primary {
+  border-color: rgba(255, 216, 107, 0.55);
+  background: rgba(255, 216, 107, 0.18);
+}
+
+.quick-action > i {
+  grid-row: span 2;
+  color: #f9d86b;
+  font-size: 1.2rem;
+  text-align: center;
+}
+
+.quick-action span {
+  font-weight: 650;
+}
+
+.quick-action small {
+  color: var(--text-secondary-color, rgba(255, 255, 255, 0.68));
+  font-size: 0.75rem;
+}
+
+.home-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(255, 115, 115, 0.4);
+  border-radius: 0.75rem;
+  background: rgba(120, 20, 30, 0.45);
+  color: #ffe2e2;
+}
+
+.home-alert > i {
+  margin-top: 0.15rem;
+  color: #ff9f9f;
+}
+
+.home-alert p {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 767.98px) {
+  .home-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  .home-intro .page-title {
+    font-size: 1.8rem;
+  }
+
+  .host-overview {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .host-metrics {
+    gap: 0;
+  }
+
+  .host-metric {
+    flex: 1;
+    min-width: 0;
+    padding-left: 0;
+  }
+
+  .host-metric + .host-metric {
+    padding-left: 1rem;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

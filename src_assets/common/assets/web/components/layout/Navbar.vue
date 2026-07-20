@@ -18,14 +18,20 @@
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
           <li v-for="item in navItems" :key="item.path" class="nav-item">
-            <a class="nav-link" :class="{ active: isActive(item.path) }" :href="item.path">
-              <i :class="['fas', 'fa-fw', item.icon]"></i> {{ $t(item.label) }}
+            <a
+              class="nav-link"
+              :class="{ active: isActive(item.path) }"
+              :href="item.path"
+              :aria-current="isActive(item.path) ? 'page' : undefined"
+            >
+              <i :class="['fas', 'fa-fw', item.icon]" aria-hidden="true"></i> {{ $t(item.label) }}
             </a>
           </li>
-          <li class="nav-item">
-            <ThemeToggle />
-          </li>
         </ul>
+        <div class="navbar-utilities ms-lg-2">
+          <ThemeToggle />
+          <AccountMenu />
+        </div>
       </div>
     </div>
   </nav>
@@ -34,6 +40,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import ThemeToggle from '../common/ThemeToggle.vue'
+import AccountMenu from '../common/AccountMenu.vue'
 import { useBackground } from '../../composables/useBackground.js'
 
 // 导航项配置
@@ -42,8 +49,6 @@ const navItems = Object.freeze([
   { path: '/pin', icon: 'fa-unlock', label: 'navbar.pin' },
   { path: '/apps', icon: 'fa-stream', label: 'navbar.applications' },
   { path: '/config', icon: 'fa-cog', label: 'navbar.configuration' },
-  { path: '/password', icon: 'fa-user-shield', label: 'navbar.password' },
-  { path: '/troubleshooting', icon: 'fa-info', label: 'navbar.troubleshoot' },
 ])
 
 // 使用背景管理 composable
@@ -110,9 +115,38 @@ onUnmounted(() => {
 .brand-enhanced:hover {
   transform: scale(1.05) rotate(-5deg);
 }
+
+.navbar-utilities {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
 </style>
 
 <style>
+.header .navbar-utilities .nav-link,
+.header .navbar-utilities .nav-utility-button {
+  color: rgba(0, 0, 0, 0.65) !important;
+  border: 0;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.header .navbar-utilities .nav-link:hover,
+.header .navbar-utilities .nav-link:focus,
+.header .navbar-utilities .nav-utility-button:hover,
+.header .navbar-utilities .nav-utility-button:focus {
+  color: rgb(0, 0, 0) !important;
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+.header .navbar-utilities .nav-utility-button {
+  padding: 0.5rem 0.75rem;
+}
+
+.header .navbar-utilities .dropdown-menu {
+  min-width: 13rem;
+}
+
 .header .nav-link {
   color: rgba(0, 0, 0, 0.65) !important;
   transition: color 0.2s ease, font-weight 0.2s ease;
@@ -134,5 +168,24 @@ onUnmounted(() => {
 
 .form-control::placeholder {
   opacity: 0.5;
+}
+
+@media (max-width: 991.98px) {
+  .header .navbar-utilities {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0;
+    padding-top: 0.25rem;
+  }
+
+  .header .navbar-utilities .dropdown,
+  .header .navbar-utilities .nav-link,
+  .header .navbar-utilities .nav-utility-button {
+    width: 100%;
+  }
+
+  .header .navbar-utilities .dropdown-menu {
+    width: 100%;
+  }
 }
 </style>
