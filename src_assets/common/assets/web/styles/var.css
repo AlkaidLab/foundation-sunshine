@@ -49,7 +49,11 @@
   --ui-accent: #4a9eff;
   --ui-accent-rgb: 74, 158, 255;
   --ui-accent-soft: rgba(74, 158, 255, 0.12);
+  --ui-accent-contrast: #ffffff;
   --ui-accent-secondary: #ffc107;
+  --ui-success: #2f9b62;
+  --ui-warning: #c88a00;
+  --ui-danger: #c94358;
   --ui-success-text: #287d4c;
   --ui-warning-text: #9a6700;
   --ui-danger-text: #b4233a;
@@ -113,7 +117,11 @@
   --ui-accent: #e6d5b8;
   --ui-accent-rgb: 230, 213, 184;
   --ui-accent-soft: rgba(230, 213, 184, 0.14);
+  --ui-accent-contrast: #2d2628;
   --ui-accent-secondary: #d4a5a5;
+  --ui-success: #5f9f74;
+  --ui-warning: #c69d55;
+  --ui-danger: #bd6f79;
   --ui-success-text: #b8e0c2;
   --ui-warning-text: #f1d69d;
   --ui-danger-text: #efb9bf;
