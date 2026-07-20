@@ -127,6 +127,7 @@ const confirmHarmonyLink = async () => {
 
 .resource-groups {
   display: grid;
+  align-items: start;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
 }
