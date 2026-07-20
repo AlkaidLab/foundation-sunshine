@@ -16,10 +16,6 @@
       <section class="home-hero" aria-labelledby="home-title">
         <div class="page-header home-intro">
           <div class="home-intro-copy">
-            <p class="home-eyebrow">
-              <i class="fas fa-satellite-dish me-2" aria-hidden="true"></i>
-              Sunshine WebUI
-            </p>
             <h1 id="home-title" class="page-title">{{ $t('index.welcome') }}</h1>
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
@@ -29,13 +25,12 @@
           </div>
         </div>
 
-        <div class="host-overview" aria-labelledby="host-overview-title">
+        <div class="host-overview">
           <div class="host-overview-main">
             <span class="host-mark" aria-hidden="true">
               <i class="fas fa-server"></i>
             </span>
             <div class="host-summary">
-              <div class="section-kicker" id="host-overview-title">{{ $t('navbar.home') }}</div>
               <h2 class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
               <p class="host-meta">
                 <span v-if="hostConfig?.platform">{{ hostConfig.platform }}</span>
@@ -324,16 +319,6 @@ onMounted(async () => {
   gap: 1rem;
   margin: 0;
   padding: 0.72rem 1rem 0.65rem 1.1rem;
-}
-
-.home-eyebrow,
-.section-kicker {
-  margin: 0 0 0.2rem;
-  color: var(--ui-accent, #4a9eff);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
 
 .home-intro .page-title {
