@@ -21,6 +21,7 @@ $deviceClassPath = 'SYSTEM\CurrentControlSet\Control\Class'
 $dnStarted = 0x00000008
 $crInvalidDevnode = 0x00000005
 $crNoSuchDevnode = 0x0000000D
+$deviceTimeoutSeconds = 120
 
 function Initialize-CfgMgr32 {
     if ('SunshineVddCfgMgr32' -as [type]) {
@@ -313,7 +314,7 @@ function Invoke-NefconRemoval([string] $Path) {
     return $LASTEXITCODE
 }
 
-function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = 120) {
+function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $deviceTimeoutSeconds) {
     $devices = @(Get-VddDevices)
     if ($devices.Count -eq 0) {
         return
@@ -323,7 +324,10 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = 120) {
     }
 
     Write-Output "Removing VDD device nodes ($($devices.Count) found)..."
-    [void] (Invoke-NefconRemoval $NefconPath)
+    $exitCode = Invoke-NefconRemoval $NefconPath
+    if ($exitCode -notin @(0, 3010)) {
+        throw "nefcon failed to remove VDD device nodes (exit code $exitCode)."
+    }
 
     # Nefcon removes every matching node in one call, but Windows can finish
     # the PnP removal asynchronously after nefcon returns.
@@ -519,7 +523,7 @@ function Install-VddDevice([object] $Payload, [string] $ExpectedVersion) {
             $devices[0].Status -eq 'OK' -and
             $devices[0].Version -eq $ExpectedVersion -and
             $devices[0].InfName -match '(?i)^oem\d+\.inf$'
-    } 10)) {
+    } $deviceTimeoutSeconds)) {
         throw "VDD did not become ready at version $ExpectedVersion."
     }
 }
@@ -561,7 +565,7 @@ function Invoke-VddInstall([string] $Directory, [string] $InstallMode) {
 
     Stage-VddPayload $payload
     if ($decision.CleanupRequired) {
-        Remove-AllVddDevices $payload.Paths.Nefcon 120
+        Remove-AllVddDevices $payload.Paths.Nefcon
         Remove-VddRegistry
     }
 
@@ -586,7 +590,7 @@ function Invoke-VddUninstall([string] $Directory) {
     $failure = ''
     try {
         Write-Output 'Removing all VDD device nodes...'
-        Remove-AllVddDevices $paths.Nefcon 120
+        Remove-AllVddDevices $paths.Nefcon
     }
     catch {
         $failure = $_.Exception.Message

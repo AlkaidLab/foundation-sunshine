@@ -228,13 +228,28 @@ try {
     }
     $removalFailedClosed = $false
     try {
+        [void] (Remove-AllVddDevices $HelperScript 30)
+    }
+    catch {
+        $removalFailedClosed = $_.Exception.Message -like '*exit code 1*'
+    }
+    Assert-Equal $true $removalFailedClosed 'A failed nefcon request must abort immediately.'
+    Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
+
+    $script:removalCalls = 0
+    function Invoke-NefconRemoval {
+        $script:removalCalls++
+        return 0
+    }
+    $removalTimedOut = $false
+    try {
         [void] (Remove-AllVddDevices $HelperScript 1)
     }
     catch {
-        $removalFailedClosed = $_.Exception.Message -like '*timed out*'
+        $removalTimedOut = $_.Exception.Message -like '*timed out*'
     }
-    Assert-Equal $true $removalFailedClosed 'A failed removal must abort before creating another node.'
-    Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
+    Assert-Equal $true $removalTimedOut 'A successful request without PnP progress must time out.'
+    Assert-Equal 1 $script:removalCalls 'A timed-out removal must not repeatedly invoke nefcon.'
 }
 finally {
     ${function:Get-VddDevices} = $originalGetVddDevices
@@ -242,6 +257,7 @@ finally {
     Remove-Variable -Name fakeDevices -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name removalCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name pollsAfterRemoval -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name removalTimedOut -ErrorAction SilentlyContinue
 }
 
 $originalResolveVddPayload = ${function:Resolve-VddPayload}
