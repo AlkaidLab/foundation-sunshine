@@ -1,4 +1,5 @@
 import i18n from './config/i18n.js'
+import { isTauriEnv } from './utils/helpers.js'
 
 // must import even if not implicitly using here
 // https://github.com/aurelia/skeleton-navigation/issues/894
@@ -11,15 +12,9 @@ if (typeof window !== 'undefined') {
   window.bootstrap = bootstrap
 }
 
-const enableTopLevelViewTransitions = () => {
-    let embedded = false
-    try {
-        embedded = window.self !== window.top
-    } catch {
-        embedded = true
-    }
-
-    if (embedded || document.querySelector('style[data-sunshine-view-transition]')) return
+const enableStandaloneViewTransitions = () => {
+    const isEmbeddedGui = isTauriEnv() && window.parent !== window
+    if (isEmbeddedGui || document.querySelector('style[data-sunshine-view-transition]')) return
 
     const style = document.createElement('style')
     style.dataset.sunshineViewTransition = 'true'
@@ -28,7 +23,7 @@ const enableTopLevelViewTransitions = () => {
 }
 
 export function initApp(app, config) {
-    enableTopLevelViewTransitions()
+    enableStandaloneViewTransitions()
     //Wait for locale initialization, then render
     i18n().then(i18n => {
         app.use(i18n);
