@@ -18,12 +18,27 @@ let initializationScheduled = false
 let analyticsDisabled = false
 const pendingEvents = []
 
+const normalizeParamValue = (value) => {
+  let normalizedValue = value
+
+  if (Array.isArray(value)) {
+    normalizedValue = value.join(', ')
+  } else if (typeof value === 'object' && value) {
+    try {
+      normalizedValue = JSON.stringify(value)
+    } catch {
+      normalizedValue = '[unserializable]'
+    }
+  }
+
+  if (typeof normalizedValue === 'string' && normalizedValue.length > 100) {
+    return `${normalizedValue.substring(0, 97)}...`
+  }
+  return normalizedValue
+}
+
 const sanitizeParams = (params = {}) => Object.fromEntries(
-  Object.entries(params).map(([key, value]) => {
-    let nextValue = Array.isArray(value) ? value.join(', ') : typeof value === 'object' && value ? JSON.stringify(value) : value
-    if (typeof nextValue === 'string' && nextValue.length > 100) nextValue = `${nextValue.substring(0, 97)}...`
-    return [key, nextValue]
-  })
+  Object.entries(params ?? {}).map(([key, value]) => [key, normalizeParamValue(value)])
 )
 
 const sendEvent = ({ eventName, params }) => {
