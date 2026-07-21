@@ -8,7 +8,7 @@ param(
     [string] $NefconPath,
     [switch] $KeepActivePackage,
 
-    [ValidateRange(1, 60)]
+    [ValidateRange(1, 120)]
     [int] $TimeoutSeconds = 10
 )
 
@@ -18,6 +18,8 @@ $displayClassGuid = '4d36e968-e325-11ce-bfc1-08002be10318'
 $deviceEnumPath = 'SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY'
 $deviceClassPath = 'SYSTEM\CurrentControlSet\Control\Class'
 $dnStarted = 0x00000008
+$crInvalidDevnode = 0x00000005
+$crNoSuchDevnode = 0x0000000D
 
 function Initialize-CfgMgr32 {
     if ('SunshineVddCfgMgr32' -as [type]) {
@@ -56,6 +58,9 @@ function Get-VddDeviceStatus([string] $InstanceId) {
         [ref] $deviceInstance,
         $InstanceId,
         0)
+    if ($locateResult -in @($crInvalidDevnode, $crNoSuchDevnode)) {
+        return 'MISSING'
+    }
     if ($locateResult -ne 0) {
         return 'ERROR'
     }
@@ -65,6 +70,9 @@ function Get-VddDeviceStatus([string] $InstanceId) {
         [ref] $problem,
         $deviceInstance,
         0)
+    if ($statusResult -in @($crInvalidDevnode, $crNoSuchDevnode)) {
+        return 'MISSING'
+    }
     if ($statusResult -eq 0 -and $problem -eq 0 -and ($status -band $dnStarted)) {
         return 'OK'
     }
@@ -105,6 +113,12 @@ function Get-VddDevices {
                     continue
                 }
 
+                $instanceId = "ROOT\DISPLAY\$instanceName"
+                $deviceStatus = Get-VddDeviceStatus $instanceId
+                if ($deviceStatus -eq 'MISSING') {
+                    continue
+                }
+
                 $driverVersion = ''
                 $publishedInf = ''
                 $driverKeyName = [string] $deviceKey.GetValue('Driver', '')
@@ -116,12 +130,11 @@ function Get-VddDevices {
                     }
                 }
 
-                $instanceId = "ROOT\DISPLAY\$instanceName"
                 [pscustomobject]@{
                     InstanceId = $instanceId
                     Version = $driverVersion
                     InfName = $publishedInf
-                    Status = Get-VddDeviceStatus $instanceId
+                    Status = $deviceStatus
                 }
             }
             finally {
@@ -204,30 +217,21 @@ function Remove-AllVddDevices {
         throw "nefcon is unavailable: $NefconPath"
     }
 
+    Write-Output "Removing VDD device nodes ($($devices.Count) found)..."
+    [void] (Invoke-NefconRemoval)
+
+    # Nefcon removes every matching node in one call, but Windows can finish
+    # the PnP removal asynchronously after nefcon returns.
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    $stalledPasses = 0
     do {
-        $beforeCount = $devices.Count
-        Write-Output "Removing VDD device node ($beforeCount remaining)..."
-        [void] (Invoke-NefconRemoval)
         Start-Sleep -Milliseconds 250
         $devices = @(Get-VddDevices)
-
         if ($devices.Count -eq 0) {
             return
         }
-        if ($devices.Count -lt $beforeCount) {
-            $stalledPasses = 0
-        }
-        else {
-            $stalledPasses++
-            if ($stalledPasses -ge 8) {
-                break
-            }
-        }
     } while ([DateTime]::UtcNow -lt $deadline)
 
-    throw ("VDD device removal made no progress. Remaining instances: " +
+    throw ("VDD device removal timed out. Remaining instances: " +
         ($devices.InstanceId -join ', '))
 }
 

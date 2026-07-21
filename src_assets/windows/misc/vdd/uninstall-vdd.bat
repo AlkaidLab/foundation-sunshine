@@ -14,7 +14,7 @@ set "UNINSTALL_RESULT=0"
 
 if exist "!VDD_HELPER!" (
     echo Removing all VDD device nodes...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Remove -NefconPath "!NEFCON!" -TimeoutSeconds 30
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Remove -NefconPath "!NEFCON!" -TimeoutSeconds 120
     if errorlevel 1 (
         echo WARNING: Failed to remove every VDD device node; driver packages will be preserved.
         set "UNINSTALL_RESULT=1"
