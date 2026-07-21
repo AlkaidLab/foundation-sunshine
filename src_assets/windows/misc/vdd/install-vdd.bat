@@ -29,6 +29,7 @@ call :stage_payload || exit /b 1
 if "!VDD_CLEANUP_REQUIRED!"=="1" (
     call :remove_vdd || exit /b 1
 )
+call :cleanup_vdd_packages || exit /b 1
 call :configure_vdd || exit /b 1
 if "!VDD_INSTALL_REQUIRED!"=="1" (
     call :install_vdd || exit /b 1
@@ -108,34 +109,44 @@ if not exist "!VDD_HELPER!" (
     exit /b 1
 )
 
-set "VDD_DEVICE_PRESENT=0"
+set "VDD_DEVICE_COUNT="
+set "VDD_CLEANUP_REQUIRED="
+set "VDD_INSTALL_REQUIRED="
 set "CURRENT_VDD_VERSION="
 set "CURRENT_VDD_STATUS="
+set "CURRENT_VDD_INF="
 set "BUNDLED_VDD_VERSION="
 for /f "tokens=1,* delims==" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Probe -InfPath "!DRIVER_DIR!\ZakoVDD.inf"') do set "%%A=%%B"
 if not defined VDD_PROBE_OK (
     echo ERROR: Failed to inspect the VDD device and driver versions.
     exit /b 1
 )
+if not defined VDD_DEVICE_COUNT (
+    echo ERROR: VDD probe did not return a device count.
+    exit /b 1
+)
+if not defined VDD_CLEANUP_REQUIRED (
+    echo ERROR: VDD probe did not return a cleanup decision.
+    exit /b 1
+)
+if not defined VDD_INSTALL_REQUIRED (
+    echo ERROR: VDD probe did not return an install decision.
+    exit /b 1
+)
 
-echo Existing VDD device: !VDD_DEVICE_PRESENT!
+echo Existing VDD devices: !VDD_DEVICE_COUNT!
 if defined CURRENT_VDD_VERSION echo Installed VDD version: !CURRENT_VDD_VERSION!
 if defined CURRENT_VDD_STATUS echo Installed VDD status: !CURRENT_VDD_STATUS!
+if defined CURRENT_VDD_INF echo Active VDD package: !CURRENT_VDD_INF!
 echo Bundled VDD version: !BUNDLED_VDD_VERSION!
 exit /b 0
 
 :choose_action
-set "VDD_CLEANUP_REQUIRED=!VDD_DEVICE_PRESENT!"
-set "VDD_INSTALL_REQUIRED=1"
-
-if not "!CURRENT_VDD_STATUS!"=="OK" exit /b 0
-if not defined CURRENT_VDD_VERSION exit /b 0
-if not defined BUNDLED_VDD_VERSION exit /b 0
-if /i not "!CURRENT_VDD_VERSION!"=="!BUNDLED_VDD_VERSION!" exit /b 0
-
-set "VDD_CLEANUP_REQUIRED=0"
-set "VDD_INSTALL_REQUIRED=0"
-echo Matching VDD driver is already active; skipping driver reinstall.
+if "!VDD_INSTALL_REQUIRED!"=="0" (
+    echo Exactly one matching VDD device is active; skipping driver reinstall.
+) else (
+    echo VDD state requires reconciliation before installation.
+)
 exit /b 0
 
 :stage_payload
@@ -153,21 +164,28 @@ if errorlevel 1 (
 exit /b 0
 
 :remove_vdd
-echo Existing VDD installation detected; removing its device node...
-"!NEFCON!" --remove-device-node --hardware-id !VDD_HARDWARE_ID! --class-guid !VDD_CLASS_GUID!
-call :wait_vdd Removed 10
-if not errorlevel 1 goto :vdd_removed
-
-echo Device still present; retrying removal once...
-"!NEFCON!" --remove-device-node --hardware-id !VDD_HARDWARE_ID! --class-guid !VDD_CLASS_GUID! 2>nul
-call :wait_vdd Removed 10
+echo Existing VDD installation detected; removing all of its device nodes...
+powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Remove -NefconPath "!NEFCON!" -TimeoutSeconds 30
 if errorlevel 1 (
-    echo ERROR: VDD device remained present after removal.
+    echo ERROR: Failed to remove every VDD device node.
     exit /b 1
 )
 
-:vdd_removed
 reg delete "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" /f >nul 2>&1
+exit /b 0
+
+:cleanup_vdd_packages
+if "!VDD_INSTALL_REQUIRED!"=="1" (
+    echo Removing superseded VDD driver packages before installation...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action CleanupPackages
+) else (
+    echo Pruning stale VDD driver packages...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action CleanupPackages -KeepActivePackage -ExpectedVersion "!BUNDLED_VDD_VERSION!"
+)
+if errorlevel 1 (
+    echo ERROR: Failed to clean up VDD driver packages.
+    exit /b 1
+)
 exit /b 0
 
 :configure_vdd
