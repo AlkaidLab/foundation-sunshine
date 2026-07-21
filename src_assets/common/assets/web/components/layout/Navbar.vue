@@ -159,6 +159,10 @@ html[data-sunshine-gui='true'] body {
   transition: color 0.2s ease, background-color 0.2s ease;
 }
 
+.header {
+  view-transition-name: sunshine-navbar;
+}
+
 .header .navbar-utilities .nav-link:hover,
 .header .navbar-utilities .nav-link:focus,
 .header .navbar-utilities .nav-utility-button:hover,

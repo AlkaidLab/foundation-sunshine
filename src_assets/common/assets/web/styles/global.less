@@ -1,5 +1,71 @@
 @import './var.css';
 
+// Cross-document navigation motion. The WebUI uses separate HTML entry points,
+// so this progressive enhancement keeps the shared shell calm while the page
+// content changes. Browsers without View Transitions simply use normal links.
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-group(root) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: sunshine-page-out;
+}
+
+::view-transition-new(root) {
+  animation-name: sunshine-page-in;
+}
+
+::view-transition-group(sunshine-navbar) {
+  animation-duration: 1ms;
+}
+
+::view-transition-old(sunshine-navbar),
+::view-transition-new(sunshine-navbar) {
+  animation: none;
+}
+
+@keyframes sunshine-page-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.98;
+  }
+}
+
+@keyframes sunshine-page-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(sunshine-navbar),
+  ::view-transition-old(sunshine-navbar),
+  ::view-transition-new(sunshine-navbar) {
+    animation-duration: 1ms !important;
+  }
+}
+
 // Scrollbar stability
 // html {
 //   scrollbar-gutter: stable;
