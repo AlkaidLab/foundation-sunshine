@@ -165,7 +165,7 @@ exit /b 0
 
 :remove_vdd
 echo Existing VDD installation detected; removing all of its device nodes...
-powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Remove -NefconPath "!NEFCON!" -TimeoutSeconds 30
+powershell -NoProfile -ExecutionPolicy Bypass -File "!VDD_HELPER!" -Action Remove -NefconPath "!NEFCON!" -TimeoutSeconds 120
 if errorlevel 1 (
     echo ERROR: Failed to remove every VDD device node.
     exit /b 1

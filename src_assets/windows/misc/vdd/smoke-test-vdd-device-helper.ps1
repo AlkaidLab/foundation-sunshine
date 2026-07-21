@@ -199,11 +199,19 @@ try {
     $secondFakeDevice = New-TestDevice '100.0.16.6' 'OK' 'oem42.inf'
     $secondFakeDevice.InstanceId = 'ROOT\DISPLAY\0043'
     $script:fakeDevices = @($firstFakeDevice, $secondFakeDevice)
+    $script:removalCalls = 0
+    $script:pollsAfterRemoval = 0
     function Get-VddDevices {
+        if ($script:removalCalls -gt 0) {
+            $script:pollsAfterRemoval++
+            if ($script:pollsAfterRemoval -ge 3) {
+                $script:fakeDevices = @()
+            }
+        }
         return @($script:fakeDevices)
     }
     function Invoke-NefconRemoval {
-        $script:fakeDevices = @($script:fakeDevices | Select-Object -Skip 1)
+        $script:removalCalls++
         return 0
     }
 
@@ -211,24 +219,34 @@ try {
     $TimeoutSeconds = 2
     [void] (Remove-AllVddDevices)
     Assert-Equal 0 $script:fakeDevices.Count 'All duplicate device nodes must be removed.'
+    Assert-Equal 1 $script:removalCalls 'An asynchronous removal must not receive overlapping requests.'
 
     $script:fakeDevices = @(New-TestDevice '100.0.16.6')
+    $script:removalCalls = 0
+    function Get-VddDevices {
+        return @($script:fakeDevices)
+    }
     function Invoke-NefconRemoval {
+        $script:removalCalls++
         return 1
     }
+    $TimeoutSeconds = 1
     $removalFailedClosed = $false
     try {
         [void] (Remove-AllVddDevices)
     }
     catch {
-        $removalFailedClosed = $_.Exception.Message -like '*made no progress*'
+        $removalFailedClosed = $_.Exception.Message -like '*timed out*'
     }
     Assert-Equal $true $removalFailedClosed 'A failed removal must abort before creating another node.'
+    Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
 }
 finally {
     ${function:Get-VddDevices} = $originalGetVddDevices
     ${function:Invoke-NefconRemoval} = $originalInvokeNefconRemoval
     Remove-Variable -Name fakeDevices -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name removalCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name pollsAfterRemoval -Scope Script -ErrorAction SilentlyContinue
 }
 
 $results | Format-Table -AutoSize
