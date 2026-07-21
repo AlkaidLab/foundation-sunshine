@@ -19,7 +19,7 @@
 AppId={{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName=Sunshine Foundation Game Streaming Server v{#MyAppVersion}
+AppVerName=Foundation Sunshine Game Streaming Server v{#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/support
@@ -48,7 +48,7 @@ WizardImageAlphaFormat=defined
 WizardSizePercent=120
 ; 版本信息 (VersionInfoVersion requires X.X.X.X format, use AppVersion for display)
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription=Sunshine Foundation Game Streaming Server
+VersionInfoDescription=Foundation Sunshine Game Streaming Server
 VersionInfoProductName={#MyAppName}
 ; 其他
 LicenseFile={#MyLicenseFile}

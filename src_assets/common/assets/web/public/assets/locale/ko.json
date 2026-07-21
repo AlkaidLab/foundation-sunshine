@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "새 창에서 열립니다",
     "apply": "적용",
     "auto": "자동 설정",
     "autodetect": "자동 감지 (권장)",
@@ -33,6 +34,19 @@
     "warning": "경고!"
   },
   "apps": {
+    "cover_search_placeholder": "게임 제목으로 검색...",
+    "cover_image_unavailable": "이미지를 사용할 수 없습니다",
+    "clear_search": "검색 지우기",
+    "search_cover": "커버 검색",
+    "cover_search_loading": "커버 검색 중...",
+    "cover_search_empty": "커버를 찾을 수 없습니다",
+    "cover_search_empty_desc": "다른 키워드로 검색해 보세요",
+    "cover_search_hint": "커버를 클릭하여 적용하세요",
+    "cover_search_tab_all": "전체",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "커버 검색에 실패했습니다. 나중에 다시 시도해 주세요.",
+    "cover_apply_failed": "커버 적용에 실패했습니다. 나중에 다시 시도해 주세요.",
     "actions": "작업",
     "add_cmds": "명령어 추가",
     "add_new": "신규 추가",
@@ -613,6 +627,7 @@
     "home": "홈",
     "password": "비밀번호 변경",
     "pin": "새 기기 연결",
+    "clients": "클라이언트",
     "theme_auto": "자동",
     "theme_dark": "다크 테마",
     "theme_light": "라이트 테마",
@@ -753,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "기지 디스플레이(VDD)는 Sunshine Foundation에 내장된 스마트 가상 디스플레이로, 모든 해상도, 프레임 레이트 및 HDR 최적화를 지원합니다. 화면 끄기 스트리밍 및 확장 디스플레이 스트리밍에 최적의 선택입니다.",
+    "step1_vdd_intro": "기지 디스플레이(VDD)는 Foundation Sunshine에 내장된 스마트 가상 디스플레이로, 모든 해상도, 프레임 레이트 및 HDR 최적화를 지원합니다. 화면 끄기 스트리밍 및 확장 디스플레이 스트리밍에 최적의 선택입니다.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -773,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Advanced",
@@ -857,7 +872,7 @@
     "create_creds_alert": "Sunshine의 웹 UI에 액세스하려면 아래 자격 증명이 필요합니다. 다시는 볼 수 없으니 안전하게 보관하세요!\n(잊어버리면 이 화면을 또 볼 수 있을꺼에요!)",
     "creds_local_only": "자격 증명은 로컬에 오프라인으로 저장되며 어떤 서버에도 업로드되지 않습니다.",
     "error": "오류!",
-    "greeting": "Sunshine Foundation에 오신 것을 환영합니다!",
+    "greeting": "Foundation Sunshine에 오신 것을 환영합니다!",
     "hide_password": "비밀번호 숨기기",
     "login": "로그인",
     "network_error": "네트워크 오류, 연결을 확인하세요",

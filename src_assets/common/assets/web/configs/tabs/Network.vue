@@ -25,7 +25,7 @@ const curlCommand = computed(() => {
   const payload = JSON.stringify({
     msgtype: 'text',
     text: {
-      content: 'Hello, Sunshine Foundation Webhook'
+      content: 'Hello, Foundation Sunshine Webhook'
     }
   })
   
@@ -201,7 +201,8 @@ const testWebhook = async () => {
       <div class="alert alert-danger" v-if="(+effectivePort + 21) > 65535">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_alert_2') }}
       </div>
-      <table class="table">
+      <div class="port-table-shell">
+      <table class="table port-table">
         <thead>
         <tr>
           <th scope="col">{{ $t('config.port_protocol') }}</th>
@@ -246,6 +247,7 @@ const testWebhook = async () => {
         </tr>
         </tbody>
       </table>
+      </div>
       <div class="alert alert-warning" v-if="config.origin_web_ui_allowed === 'wan'">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_warning') }}
       </div>
@@ -335,7 +337,7 @@ const testWebhook = async () => {
     </div>
 
     <!-- Webhook Settings -->
-    <div class="accordion">
+    <div class="accordion webhook-settings">
       <div class="accordion-item">
         <h2 class="accordion-header">
           <button class="accordion-button" type="button" data-bs-toggle="collapse"
@@ -360,10 +362,10 @@ const testWebhook = async () => {
               <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
               <div class="input-group">
                 <input type="url" class="form-control" id="webhook_url" placeholder="https://example.com/webhook" v-model="config.webhook_url" />
-                <button class="btn btn-outline-info" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
+                <button class="btn btn-outline-primary" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
                   <i class="fas fa-paper-plane me-1"></i>{{ $t('config.webhook_test') }}
                 </button>
-                <button class="btn btn-outline-info" type="button" @click="showCurlCommand" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
+                <button class="btn btn-outline-primary" type="button" @click="showCurlCommand" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
                   <i class="fas fa-terminal me-1"></i>{{ $t('config.webhook_curl_command') }}
                 </button>
               </div>
@@ -401,7 +403,7 @@ const testWebhook = async () => {
           <h5>
             <i class="fas fa-terminal me-2"></i>{{ $t('config.webhook_curl_command') || 'Curl 命令' }}
           </h5>
-          <button class="btn-close" @click="closeCurlModal"></button>
+          <button class="btn-close" :aria-label="$t('_common.close') || '关闭'" @click="closeCurlModal"></button>
         </div>
         <div class="curl-command-body">
           <p class="text-muted mb-3">{{ $t('config.webhook_curl_command_desc') || '复制以下命令到终端中执行，可以测试 webhook 是否正常工作：' }}</p>
@@ -413,7 +415,7 @@ const testWebhook = async () => {
           </div>
         </div>
         <div class="curl-command-footer">
-          <button class="copy-btn" @click="copyCurlCommand" type="button">
+          <button class="btn btn-primary" @click="copyCurlCommand" type="button">
             <i class="fas fa-copy me-1"></i>{{ $t('_common.copy') }}
           </button>
           <button type="button" class="btn btn-secondary" @click="closeCurlModal">{{ $t('_common.close') || '关闭' }}</button>
@@ -424,7 +426,72 @@ const testWebhook = async () => {
 </template>
 
 <style scoped>
-/* Curl Command Modal - 使用 ScanResultModal 样式 */
+.port-table-shell {
+  margin-top: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.port-table {
+  min-width: 540px;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--ui-text-secondary);
+  --bs-table-border-color: var(--ui-border);
+  --bs-table-hover-bg: var(--ui-surface-hover);
+  --bs-table-hover-color: var(--ui-text-primary);
+}
+
+.port-table thead th {
+  padding: 0.8rem 1rem;
+  border-bottom-color: var(--ui-border);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.port-table td {
+  padding: 0.75rem 1rem;
+  vertical-align: middle;
+}
+
+.port-table .alert {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.webhook-settings .accordion-item {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.webhook-settings .accordion-button {
+  border: 0;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.webhook-settings .accordion-button:hover,
+.webhook-settings .accordion-button:not(.collapsed) {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.webhook-settings .accordion-button:focus {
+  box-shadow: inset 0 0 0 2px var(--ui-accent-soft);
+}
+
+.webhook-settings .accordion-body {
+  background: transparent;
+}
+
 .curl-command-overlay {
   position: fixed;
   top: 0;
@@ -434,38 +501,29 @@ const testWebhook = async () => {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  background: var(--ui-overlay);
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-lg, 20px);
+  padding: var(--spacing-lg, 1.5rem);
   overflow: hidden;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
 }
 
 .curl-command-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 700px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-md);
   animation: modalSlideUp 0.3s ease;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
 }
 
 @keyframes modalSlideUp {
@@ -483,97 +541,66 @@ const testWebhook = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--ui-border);
 
   h5 {
     margin: 0;
-    color: var(--text-primary, #fff);
-    font-size: var(--font-size-lg, 1.1rem);
+    color: var(--ui-text-primary);
+    font-size: 1.1rem;
     font-weight: 600;
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm, 8px);
-  }
-  
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
-    h5 {
-      color: #000000;
-    }
+    gap: 0.5rem;
   }
 }
 
+.curl-command-header h5 i {
+  color: var(--ui-accent);
+}
+
+.curl-command-header .btn-close {
+  opacity: 0.62;
+}
+
+.curl-command-header .btn-close:hover,
+.curl-command-header .btn-close:focus-visible {
+  opacity: 1;
+}
+
 .curl-command-body {
-  padding: var(--spacing-lg, 24px);
+  padding: 1.25rem;
   overflow-y: auto;
   flex: 1;
-  color: var(--text-primary, #fff);
-  
-  p, span, div {
-    color: var(--text-primary, #fff);
-  }
-  
-  .text-muted {
-    color: rgba(255, 255, 255, 0.6);
-  }
-  
-  .alert {
-    color: var(--text-primary, #fff);
-  }
+  color: var(--ui-text-primary);
+}
 
-  .alert-info {
-    background: rgba(23, 162, 184, 0.2);
-    border-color: rgba(23, 162, 184, 0.5);
-  }
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-    
-    p, span, div {
-      color: #000000;
-    }
-    
-    .text-muted {
-      color: rgba(0, 0, 0, 0.6);
-    }
-    
-    .alert {
-      color: #000000;
-    }
+.curl-command-body .text-muted {
+  color: var(--ui-text-secondary) !important;
+}
 
-    .alert-info {
-      background: rgba(23, 162, 184, 0.15);
-      border-color: rgba(23, 162, 184, 0.4);
-    }
-  }
+.curl-command-body .alert-info {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
 }
 
 .curl-command-footer {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
 }
 
 .curl-command-container {
   position: relative;
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  border-radius: 4px;
-  padding: 15px;
-  
-  [data-bs-theme='light'] & {
-    background-color: rgba(248, 249, 250, 0.8);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-  }
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  padding: 1rem;
 }
 
 .curl-command {
@@ -581,7 +608,7 @@ const testWebhook = async () => {
   padding: 0;
   font-family: 'Courier New', monospace;
   font-size: 0.9rem;
-  color: var(--text-primary, #fff);
+  color: var(--ui-text-primary);
   background: transparent;
   border: none;
   white-space: pre-wrap;
@@ -589,10 +616,6 @@ const testWebhook = async () => {
   overflow-x: auto;
   max-height: 300px;
   overflow-y: auto;
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
 }
 
 
@@ -608,5 +631,42 @@ const testWebhook = async () => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 575.98px) {
+  .webhook-settings .input-group {
+    gap: 0.5rem;
+  }
+
+  .webhook-settings .input-group .form-control {
+    flex: 1 0 100%;
+    width: 100%;
+    border-radius: var(--ui-radius-sm) !important;
+  }
+
+  .webhook-settings .input-group .btn {
+    flex: 1 1 calc(50% - 0.25rem);
+    border-radius: var(--ui-radius-sm) !important;
+  }
+
+  .curl-command-overlay {
+    align-items: flex-end;
+    padding: 0.75rem;
+  }
+
+  .curl-command-modal {
+    max-height: calc(100vh - 1.5rem);
+    border-radius: var(--ui-radius-md);
+  }
+
+  .curl-command-header,
+  .curl-command-body,
+  .curl-command-footer {
+    padding: 1rem;
+  }
+
+  .curl-command-footer {
+    flex-wrap: wrap;
+  }
 }
 </style>

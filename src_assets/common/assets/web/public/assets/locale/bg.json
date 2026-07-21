@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Отваря се в нов прозорец",
     "apply": "Прилагане",
     "auto": "Автоматично",
     "autodetect": "Автоматично откриване (препоръчително)",
@@ -33,6 +34,19 @@
     "warning": "Внимание!"
   },
   "apps": {
+    "cover_search_placeholder": "Търсене по заглавие на играта...",
+    "cover_image_unavailable": "Изображението не е налично",
+    "clear_search": "Изчистване на търсенето",
+    "search_cover": "Търсене на обложки",
+    "cover_search_loading": "Търсене на обложки...",
+    "cover_search_empty": "Няма намерени обложки",
+    "cover_search_empty_desc": "Опитайте с други ключови думи",
+    "cover_search_hint": "Щракнете върху обложка, за да я приложите",
+    "cover_search_tab_all": "Всички",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Търсенето на обложки не бе успешно. Опитайте отново по-късно.",
+    "cover_apply_failed": "Неуспешно прилагане на обложката. Опитайте отново по-късно.",
     "actions": "Действия",
     "add_cmds": "Добавяне на команди",
     "add_new": "Добавяне на ново",
@@ -613,6 +627,7 @@
     "home": "Начало",
     "password": "Промяна на паролата",
     "pin": "ПИН",
+    "clients": "Клиенти",
     "theme_auto": "Автоматично",
     "theme_dark": "Тъмна",
     "theme_light": "Светла",
@@ -753,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "Базовият дисплей (VDD) е вграденият интелигентен виртуален дисплей на Sunshine Foundation, поддържащ произволна резолюция, кадрова честота и HDR оптимизация. Той е предпочитаният избор за стрийминг с изключен екран и стрийминг на разширен дисплей.",
+    "step1_vdd_intro": "Базовият дисплей (VDD) е вграденият интелигентен виртуален дисплей на Foundation Sunshine, поддържащ произволна резолюция, кадрова честота и HDR оптимизация. Той е предпочитаният избор за стрийминг с изключен екран и стрийминг на разширен дисплей.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -773,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Разширени",
@@ -857,7 +872,7 @@
     "create_creds_alert": "Данните по-долу ще са необходими за достъп до уеб интерфейса на Sunshine. Пазете ги, тъй като няма да ги видите отново!",
     "creds_local_only": "Вашите идентификационни данни се съхраняват локално офлайн и никога не се качват на сървър.",
     "error": "Грешка!",
-    "greeting": "Добре дошли в Sunshine Foundation!",
+    "greeting": "Добре дошли във Foundation Sunshine!",
     "hide_password": "Скриване на парола",
     "login": "Вписване",
     "network_error": "Мрежова грешка, моля проверете връзката",

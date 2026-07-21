@@ -1,14 +1,5 @@
 <template>
-  <div id="content" class="container">
-    <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0">
-      <defs>
-        <filter id="pencilTexture">
-          <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="1" xChannelSelector="R" yChannelSelector="G" />
-        </filter>
-      </defs>
-    </svg>
-
+  <div id="content" class="container welcome-page">
     <div class="row justify-content-center my-4">
       <div class="col-lg-10">
         <!-- 语言选择器 -->
@@ -172,6 +163,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWelcome } from '../composables/useWelcome.js'
 import { apiJson } from '../utils/apiFetch.js'
+import { loadAutoTheme } from '../utils/theme.js'
 
 const { locale, setLocaleMessage } = useI18n()
 const selectedLocale = ref('en')
@@ -179,6 +171,8 @@ const selectedLocale = ref('en')
 const { error, success, loading, passwordData, passwordsMatch, isFormValid, save } = useWelcome()
 const showPassword = ref(false)
 const showConfirmPassword = ref(false)
+
+loadAutoTheme()
 
 // 加载语言（使用静态嵌入的翻译数据）
 const loadLanguage = (lang) => {
@@ -220,63 +214,58 @@ const changeLanguage = () => {
 </script>
 
 <style scoped>  
-:root {
-  --sketch-black: #2c2c2c;
-  --sketch-blue: #4169e1;
-  --sketch-green: #3cb371;
-  --sketch-red: #dc143c;
-  --sketch-yellow: #ffd700;
-  --paper-bg: #fffef9;
-  --pencil-gray: #8b8b8b;
+.welcome-page {
+  --sketch-black: var(--ui-text-primary);
+  --sketch-blue: var(--ui-accent);
+  --sketch-green: var(--ui-success);
+  --sketch-red: var(--ui-danger);
+  --sketch-yellow: var(--ui-warning);
+  --paper-bg: var(--ui-surface-strong);
+  --pencil-gray: var(--ui-text-secondary);
 }
 
 /* 容器定位 */
 #content {
   position: relative;
   z-index: 1;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
 }
 
-/* 手绘风格卡片 */
+/* 主认证卡片 */
 .card {
-  background: #fff;
-  border: 3px solid var(--sketch-black);
-  border-radius: 15px;
-  box-shadow: 6px 6px 0px rgba(0, 0, 0, 0.1), 3px 3px 0px rgba(0, 0, 0, 0.05);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-md);
   position: relative;
-  transform: rotate(-0.5deg);
-  filter: url(#pencilTexture);
+  transform: none;
+  filter: none;
+  backdrop-filter: blur(20px);
+  overflow: hidden;
 }
 
-/* 手绘边框效果 */
+.card-body {
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+}
+
+/* 旧装饰层已停用 */
 .card::before {
-  content: '';
-  position: absolute;
-  top: -3px;
-  left: -3px;
-  right: -3px;
-  bottom: -3px;
-  border: 2px dashed rgba(0, 0, 0, 0.1);
-  border-radius: 15px;
-  pointer-events: none;
+  display: none;
 }
 
-/* 装饰性涂鸦 */
+/* 旧装饰层已停用 */
 .card::after {
-  content: '✨';
-  position: absolute;
-  top: -15px;
-  right: 20px;
-  font-size: 2rem;
-  transform: rotate(15deg);
+  display: none;
 }
 
-/* 手写标题 */
+/* 页面标题 */
 h1 {
-  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   color: var(--sketch-black);
   font-weight: 700;
-  text-shadow: 2px 2px 0px rgba(0, 0, 0, 0.05);
-  transform: rotate(-1deg);
+  text-shadow: none;
+  transform: none;
   position: relative;
 }
 
@@ -284,13 +273,13 @@ h1 {
 h1::after {
   content: '';
   position: absolute;
-  bottom: -5px;
-  left: 10%;
-  right: 10%;
-  height: 3px;
+  bottom: -0.55rem;
+  left: 34%;
+  right: 34%;
+  height: 2px;
   background: var(--sketch-blue);
-  border-radius: 50%;
-  opacity: 0.3;
+  border-radius: 999px;
+  opacity: 0.75;
 }
 
 /* Logo 效果 */
@@ -300,39 +289,39 @@ header img {
 
 /* 副标题 */
 .lead {
-  font-family: 'Indie Flower', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   color: var(--pencil-gray);
   font-size: 1.1rem;
-  transform: rotate(0.5deg);
+  transform: none;
 }
 
-/* 手绘警告框 */
+/* 安全提示 */
 .alert-warning {
-  background: linear-gradient(135deg, #fff9e6 0%, #fffaeb 100%);
-  border: 3px solid #ff8c00;
-  border-radius: 12px;
-  box-shadow: 5px 5px 0px rgba(255, 140, 0, 0.4), 3px 3px 0px rgba(255, 140, 0, 0.2), 0 0 20px rgba(255, 140, 0, 0.15);
-  transform: rotate(-0.3deg);
+  background: color-mix(in srgb, var(--ui-warning) 12%, var(--ui-surface-strong));
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 34%, transparent);
+  border-radius: var(--ui-radius-md);
+  box-shadow: none;
+  transform: none;
   position: relative;
-  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
-  color: #d97706;
-  font-size: 1.05rem;
-  font-weight: 600;
+  font-family: inherit;
+  color: var(--ui-warning-text);
+  font-size: 0.95rem;
+  font-weight: 500;
   padding: 1rem 1.25rem;
 }
 
 .alert-warning i {
-  color: var(--sketch-yellow);
-  filter: drop-shadow(1px 1px 0px rgba(0, 0, 0, 0.2));
+  color: var(--ui-warning);
+  filter: none;
 }
 
-/* 手绘表单标签 */
+/* 表单标签 */
 .form-label {
-  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   color: var(--sketch-black);
-  font-size: 1.1rem;
-  font-weight: 700;
-  transform: rotate(-0.5deg);
+  font-size: 0.95rem;
+  font-weight: 600;
+  transform: none;
   display: inline-block;
   position: relative;
 }
@@ -361,11 +350,11 @@ header img {
 }
 
 .toggle-password {
-  border: 2px solid var(--sketch-black) !important;
-  border-left: none !important;
+  border: 1px solid var(--ui-border) !important;
+  border-left: 0 !important;
   border-radius: 0 8px 8px 0 !important;
-  background: #fff !important;
-  color: var(--pencil-gray) !important;
+  background: var(--ui-surface) !important;
+  color: var(--ui-text-secondary) !important;
   padding: 0 14px;
   transition: all 0.2s ease;
   outline: none !important;
@@ -375,9 +364,9 @@ header img {
 .toggle-password:hover,
 .toggle-password:focus,
 .toggle-password:active {
-  background: var(--paper-bg-alt, #faf9f6) !important;
-  color: var(--sketch-black) !important;
-  border-color: var(--sketch-black) !important;
+  background: var(--ui-accent-soft) !important;
+  color: var(--ui-accent) !important;
+  border-color: var(--ui-border-strong) !important;
   border-left: none !important;
   outline: none !important;
   box-shadow: none !important;
@@ -388,16 +377,16 @@ header img {
   border-right: none;
 }
 
-/* 手绘输入框 */
+/* 输入控件 */
 .form-control {
-  background: #fff;
-  border: 2px solid var(--sketch-black);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   padding: 12px 16px;
-  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   font-size: 1rem;
   color: var(--sketch-black);
-  box-shadow: inset 2px 2px 0px rgba(0, 0, 0, 0.05), 2px 2px 0px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
   transition: all 0.3s ease;
   position: relative;
 }
@@ -405,9 +394,9 @@ header img {
 .form-control:focus {
   outline: none;
   border-color: var(--sketch-blue);
-  background: #f0f8ff;
-  box-shadow: inset 2px 2px 0px rgba(65, 105, 225, 0.1), 3px 3px 0px rgba(65, 105, 225, 0.2);
-  transform: translateY(-2px);
+  background: var(--ui-surface-hover);
+  box-shadow: 0 0 0 0.2rem var(--ui-accent-soft);
+  transform: none;
 }
 
 .form-control::placeholder {
@@ -418,7 +407,7 @@ header img {
 /* 验证状态 */
 .form-control.is-invalid {
   border-color: var(--sketch-red);
-  background: #fff5f5;
+  background: var(--ui-danger-soft);
   animation: shake 0.5s;
 }
 
@@ -437,7 +426,7 @@ header img {
 
 .form-control:focus.is-invalid {
   border-color: var(--sketch-red);
-  box-shadow: inset 2px 2px 0px rgba(220, 20, 60, 0.1), 3px 3px 0px rgba(220, 20, 60, 0.2);
+  box-shadow: 0 0 0 0.2rem var(--ui-danger-soft);
 }
 
 /* 反馈信息 */
@@ -445,7 +434,7 @@ header img {
 .valid-feedback {
   display: block;
   margin-top: 0.5rem;
-  font-family: 'Kalam', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -463,18 +452,18 @@ header img {
   display: inline-block;
 }
 
-/* 手绘按钮 */
+/* 主要操作 */
 .btn-primary {
   background: var(--sketch-blue);
-  border: 3px solid var(--sketch-black);
+  border: 1px solid var(--sketch-blue);
   border-radius: 10px;
-  padding: 14px 32px;
-  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
-  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.2), inset -2px -2px 0px rgba(0, 0, 0, 0.1);
+  padding: 12px 28px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ui-accent-contrast);
+  text-shadow: none;
+  box-shadow: var(--ui-shadow-sm);
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
@@ -482,25 +471,17 @@ header img {
 
 /* 按钮装饰线条 */
 .btn-primary::before {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  right: 3px;
-  bottom: 3px;
-  border: 1px dashed rgba(255, 255, 255, 0.3);
-  border-radius: 7px;
-  pointer-events: none;
+  display: none;
 }
 
 .btn-primary:hover:not(:disabled) {
-  transform: rotate(-0.5deg) translateY(-3px);
-  box-shadow: 6px 6px 0px rgba(0, 0, 0, 0.25), inset -2px -2px 0px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .btn-primary:active:not(:disabled) {
-  transform: rotate(-0.5deg) translateY(0);
-  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2), inset -2px -2px 0px rgba(0, 0, 0, 0.1);
+  transform: translateY(0);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .btn-primary:disabled {
@@ -519,14 +500,14 @@ header img {
   border-right-color: #fff;
 }
 
-/* 手绘错误提示 */
+/* 错误提示 */
 .alert-danger {
-  background: #fff0f0;
-  border: 2px solid var(--sketch-red);
+  background: var(--ui-danger-soft);
+  border: 1px solid var(--ui-danger-border);
   border-radius: 10px;
-  color: var(--sketch-red);
-  box-shadow: 3px 3px 0px rgba(220, 20, 60, 0.2);
-  transform: rotate(0.5deg);
+  color: var(--ui-danger-text);
+  box-shadow: none;
+  transform: none;
   animation: errorPop 0.5s ease;
   position: relative;
 }
@@ -553,14 +534,14 @@ header img {
   font-size: 1.5rem;
 }
 
-/* 手绘成功提示 */
+/* 成功提示 */
 .alert-success {
-  background: #f0fff4;
-  border: 2px solid var(--sketch-green);
+  background: color-mix(in srgb, var(--ui-success) 12%, var(--ui-surface-strong));
+  border: 1px solid color-mix(in srgb, var(--ui-success) 34%, transparent);
   border-radius: 10px;
-  color: var(--sketch-green);
-  box-shadow: 3px 3px 0px rgba(60, 179, 113, 0.2);
-  transform: rotate(-0.5deg);
+  color: var(--ui-success-text);
+  box-shadow: none;
+  transform: none;
   animation: successPop 0.6s ease;
   position: relative;
 }
@@ -589,6 +570,11 @@ header img {
   color: var(--sketch-green);
 }
 
+.alert-danger::before,
+.alert-success::before {
+  display: none;
+}
+
 /* Vue 过渡动画 */
 .fade-enter-active {
   animation: sketchIn 0.5s ease;
@@ -601,22 +587,22 @@ header img {
 @keyframes sketchIn {
   0% {
     opacity: 0;
-    transform: translateY(20px) rotate(-2deg) scale(0.95);
+    transform: translateY(12px) scale(0.98);
   }
   100% {
     opacity: 1;
-    transform: translateY(0) rotate(0deg) scale(1);
+    transform: translateY(0) scale(1);
   }
 }
 
 @keyframes sketchOut {
   0% {
     opacity: 1;
-    transform: translateY(0) rotate(0deg);
+    transform: translateY(0);
   }
   100% {
     opacity: 0;
-    transform: translateY(-20px) rotate(2deg);
+    transform: translateY(-12px);
   }
 }
 
@@ -656,7 +642,7 @@ svg {
 }
 
 .language-selector .form-label {
-  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
+  font-family: inherit;
   color: var(--sketch-black);
   font-size: 1rem;
   font-weight: 600;
@@ -665,14 +651,14 @@ svg {
 }
 
 .language-selector .form-select-sm {
-  font-family: 'Patrick Hand', 'KaiTi', 'STXingkai', 'Kaiti SC', cursive;
-  border: 2px solid var(--sketch-black);
+  font-family: inherit;
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   padding: 6px 12px;
   font-size: 0.95rem;
-  color: var(--sketch-black);
-  background: #fff;
-  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.1);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  box-shadow: var(--ui-shadow-sm);
   transition: all 0.3s ease;
   cursor: pointer;
 }
@@ -680,14 +666,14 @@ svg {
 .language-selector .form-select-sm:focus {
   outline: none;
   border-color: var(--sketch-blue);
-  background: #f0f8ff;
-  box-shadow: 3px 3px 0px rgba(65, 105, 225, 0.2);
-  transform: translateY(-1px);
+  background: var(--ui-surface-hover);
+  box-shadow: 0 0 0 0.2rem var(--ui-accent-soft);
+  transform: none;
 }
 
 .language-selector .form-select-sm:hover {
   transform: translateY(-1px);
-  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--ui-shadow-md);
 }
 
 /* 打印样式优化 */

@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Se abre en una ventana nueva",
     "apply": "Aplicar",
     "auto": "Automático",
     "autodetect": "Autodetectar (recomendado)",
@@ -33,6 +34,19 @@
     "warning": "¡Advertencia!"
   },
   "apps": {
+    "cover_search_placeholder": "Buscar por título del juego...",
+    "cover_image_unavailable": "Imagen no disponible",
+    "clear_search": "Borrar búsqueda",
+    "search_cover": "Buscar carátulas",
+    "cover_search_loading": "Buscando carátulas...",
+    "cover_search_empty": "No se encontraron carátulas",
+    "cover_search_empty_desc": "Prueba a buscar con otras palabras clave",
+    "cover_search_hint": "Haz clic en una carátula para aplicarla",
+    "cover_search_tab_all": "Todas",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "La búsqueda de carátulas ha fallado. Inténtalo de nuevo más tarde.",
+    "cover_apply_failed": "No se pudo aplicar la carátula. Inténtalo de nuevo más tarde.",
     "actions": "Acciones",
     "add_cmds": "Añadir comandos",
     "add_new": "Añadir nuevo",
@@ -613,6 +627,7 @@
     "home": "Inicio",
     "password": "Cambiar contraseña",
     "pin": "Pin",
+    "clients": "Clientes",
     "theme_auto": "Auto",
     "theme_dark": "Oscuro",
     "theme_light": "Claro",
@@ -753,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "La pantalla base (VDD) es la pantalla virtual inteligente integrada de Sunshine Foundation, compatible con cualquier resolución, frecuencia de cuadros y optimización HDR. Es la opción preferida para streaming con pantalla apagada y streaming de pantalla extendida.",
+    "step1_vdd_intro": "La pantalla base (VDD) es la pantalla virtual inteligente integrada de Foundation Sunshine, compatible con cualquier resolución, frecuencia de cuadros y optimización HDR. Es la opción preferida para streaming con pantalla apagada y streaming de pantalla extendida.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -773,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Pantalla virtual (ZakoHDR)",
     "virtual_display_desc": "Transmitir usando un dispositivo de pantalla virtual (requiere instalación del controlador ZakoVDD)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Avanzado",
@@ -857,7 +872,7 @@
     "create_creds_alert": "Las credenciales a continuación son necesarias para acceder a la interfaz web de Sunshine. Manténgalas seguras, ¡ya que nunca volverá a verlas!",
     "creds_local_only": "Sus credenciales se almacenan localmente sin conexión y nunca se cargarán en ningún servidor.",
     "error": "¡Error!",
-    "greeting": "¡Bienvenido a Sunshine Foundation!",
+    "greeting": "¡Bienvenido a Foundation Sunshine!",
     "hide_password": "Ocultar contraseña",
     "login": "Iniciar sesión",
     "network_error": "Error de red, por favor verifique su conexión",

@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Otevře se v novém okně",
     "apply": "Použít",
     "auto": "Automaticky",
     "autodetect": "Automatická detekce (doporučeno)",
@@ -33,6 +34,19 @@
     "warning": "Varování!"
   },
   "apps": {
+    "cover_search_placeholder": "Hledat podle názvu hry...",
+    "cover_image_unavailable": "Obrázek není k dispozici",
+    "clear_search": "Vymazat hledání",
+    "search_cover": "Hledat obaly",
+    "cover_search_loading": "Hledání obalů...",
+    "cover_search_empty": "Nebyly nalezeny žádné obaly",
+    "cover_search_empty_desc": "Zkuste hledat pomocí jiných klíčových slov",
+    "cover_search_hint": "Kliknutím na obal jej použijete",
+    "cover_search_tab_all": "Vše",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Vyhledávání obalů selhalo. Zkuste to znovu později.",
+    "cover_apply_failed": "Použití obalu selhalo. Zkuste to znovu později.",
     "actions": "Akce",
     "add_cmds": "Přidat příkazy",
     "add_new": "Přidat nový",
@@ -613,6 +627,7 @@
     "home": "Domů",
     "password": "Změnit heslo",
     "pin": "PIN",
+    "clients": "Klienti",
     "theme_auto": "Automaticky",
     "theme_dark": "Tmavý",
     "theme_light": "Světlý",
@@ -753,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "Základní displej (VDD) je vestavěný inteligentní virtuální displej Sunshine Foundation, který podporuje libovolné rozlišení, snímkovou frekvenci a optimalizaci HDR. Je preferovanou volbou pro streaming s vypnutou obrazovkou a streaming na rozšířený displej.",
+    "step1_vdd_intro": "Základní displej (VDD) je vestavěný inteligentní virtuální displej Foundation Sunshine, který podporuje libovolné rozlišení, snímkovou frekvenci a optimalizaci HDR. Je preferovanou volbou pro streaming s vypnutou obrazovkou a streaming na rozšířený displej.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -773,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Pokročilé",
@@ -857,7 +872,7 @@
     "create_creds_alert": "Níže uvedené přihlašovací údaje jsou potřebné pro přístup k webovému rozhraní Sunshine. Uchovávejte je v bezpečí, protože je už nikdy nebudete vidět!",
     "creds_local_only": "Vaše přihlašovací údaje jsou uloženy lokálně offline a nikdy nebudou nahrány na žádný server.",
     "error": "Chyba!",
-    "greeting": "Vítejte v Sunshine Foundation!",
+    "greeting": "Vítejte ve Foundation Sunshine!",
     "hide_password": "Skrýt heslo",
     "login": "Přihlásit se",
     "network_error": "Chyba sítě, zkontrolujte připojení",

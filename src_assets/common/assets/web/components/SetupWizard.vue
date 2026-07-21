@@ -224,32 +224,16 @@
                   {{ $t('setup.featured_services') }}
                 </h5>
                 <div class="promo-service-links">
-                  <a class="resource-link resource-link-primary"
-                     href="https://www.alkaidlab.com/"
-                     target="_blank"
-                     rel="noopener noreferrer">
-                    <div class="resource-icon resource-logo-icon">
-                      <img src="/images/logo-alkaidlab.png" alt="AlkaidLab" class="resource-logo-image">
-                    </div>
-                    <div class="resource-content">
-                      <span class="resource-title">{{ $t('resource_card.official_website_title') }}</span>
-                      <span class="resource-desc">{{ $t('resource_card.official_website_desc') }}</span>
-                    </div>
-                    <i class="fas fa-external-link-alt resource-arrow"></i>
-                  </a>
-                  <a class="resource-link resource-link-moonlink"
-                     href="https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE"
-                     target="_blank"
-                     rel="noopener noreferrer">
-                    <div class="resource-icon resource-logo-icon">
-                      <img src="/images/logo-natpierce.png" alt="皎月连" class="resource-logo-image">
-                    </div>
-                    <div class="resource-content">
-                      <span class="resource-title">{{ $t('resource_card.jiaoyuelian_title') }}</span>
-                      <span class="resource-desc">{{ $t('resource_card.jiaoyuelian_desc') }}</span>
-                    </div>
-                    <i class="fas fa-external-link-alt resource-arrow"></i>
-                  </a>
+                  <ResourceLink
+                    v-for="resource in FEATURED_RESOURCES"
+                    :key="resource.id"
+                    :href="resource.href"
+                    :title="resourceTitle(resource)"
+                    :description="resourceDescription(resource)"
+                    :image-src="resource.imageSrc"
+                    :image-alt="resource.imageAlt"
+                    :variant="resource.variant"
+                  />
                 </div>
               </div>
 
@@ -262,57 +246,17 @@
                 <div class="client-download-layout">
                   <!-- 左侧：应用下载链接 -->
                   <div class="client-links">
-                    <a class="resource-link resource-link-android"
-                       href="https://github.com/qiin2333/moonlight-vplus"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-android"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.android_vplus_title') }}</span>
-                        <span class="resource-desc">Android / Android TV</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-harmony"
-                       href="javascript:void(0)"
-                       @click.prevent="openHarmonyModal">
-                      <div class="resource-icon"><i class="fas fa-mobile-alt"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.harmony_client') }}</span>
-                        <span class="resource-desc">HarmonyOS NEXT</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-apple"
-                       href="https://apps.apple.com/cn/app/voidlink/id6747717070"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.voidlink_title') }}</span>
-                        <span class="resource-desc">iOS / iPadOS</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-apple"
-                       href="https://github.com/skyhua0224/moonlight-macos-enhanced"
-                       target="_blank"
-                       rel="noopener noreferrer">
-                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.moonlight_macos_enhanced') }}</span>
-                        <span class="resource-desc">{{ $t('resource_card.moonlight_macos_enhanced_desc') }}</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-desktop"
-                       href="https://github.com/qiin2333/moonlight-qt"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fas fa-desktop"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">{{ $t('resource_card.moonlight_pc_title') }}</span>
-                        <span class="resource-desc">Windows / macOS / Linux</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
+                    <ResourceLink
+                      v-for="resource in setupClientResources"
+                      :key="resource.id"
+                      :href="resource.href"
+                      :target="resource.action ? '' : '_blank'"
+                      :title="resourceTitle(resource)"
+                      :description="resourceDescription(resource)"
+                      :icon="resource.icon"
+                      :variant="resource.variant"
+                      @activate="handleResourceActivate(resource, $event)"
+                    />
                   </div>
                   <!-- 右侧：二维码 -->
                   <div class="client-qrcodes">
@@ -378,78 +322,65 @@
           </button>
       </div>
     </div>
-    <!-- Skip Wizard Modal -->
-    <Transition name="fade">
-      <div v-if="showSkipModal" class="skip-wizard-overlay" @click.self="closeSkipModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>{{ $t('setup.skip_confirm_title')}}</h5>
-            <button class="btn-close" @click="closeSkipModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.skip_confirm') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showSkipModal"
+      dialog-id="skip-wizard-confirm"
+      :title="$t('setup.skip_confirm_title')"
+      title-icon="fas fa-forward"
+      tone="warning"
+      :close-label="$t('_common.close')"
+      @close="closeSkipModal"
+    >
+      <p>{{ $t('setup.skip_confirm') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Harmony Link Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showHarmonyModal" class="skip-wizard-overlay" @click.self="closeHarmonyModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>鸿蒙Moonlight V+</h5>
-            <button class="btn-close" @click="closeHarmonyModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
-            <p>{{ $t('setup.harmony_modal_desc') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
-              <i class="fas fa-external-link-alt me-1"></i>
-              {{ $t('setup.harmony_goto_repo') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-    </Teleport>
+    <ConfirmDialog
+      :show="showHarmonyModal"
+      dialog-id="setup-harmony-link"
+      :title="$t('resource_card.harmony_client')"
+      title-icon="fas fa-mobile-alt"
+      :close-label="$t('_common.close')"
+      @close="closeHarmonyModal"
+    >
+      <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
+      <p>{{ $t('setup.harmony_modal_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
+          <i class="fas fa-external-link-alt me-1"></i>
+          {{ $t('setup.harmony_goto_repo') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Restart Countdown Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showRestartModal" class="skip-wizard-overlay">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5><i class="fas fa-sync-alt me-2"></i>{{ $t('setup.restart_title') }}</h5>
-          </div>
-          <div class="skip-wizard-body text-center">
-            <p>{{ $t('setup.restart_desc') }}</p>
-            <div class="restart-countdown my-3">
-              <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
-              <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
-            </div>
-            <div class="progress" style="height: 6px;">
-              <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
-            </div>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
-              <i class="fas fa-arrow-right me-1"></i>
-              {{ $t('setup.restart_go_now') }}
-            </button>
-          </div>
+    <ConfirmDialog
+      :show="showRestartModal"
+      dialog-id="setup-restart-countdown"
+      :title="$t('setup.restart_title')"
+      title-icon="fas fa-sync-alt"
+      :dismissible="false"
+    >
+      <div class="text-center">
+        <p>{{ $t('setup.restart_desc') }}</p>
+        <div class="restart-countdown my-3">
+          <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
+          <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
+        </div>
+        <div class="progress" style="height: 6px;">
+          <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
         </div>
       </div>
-    </Transition>
-    </Teleport>
+      <template #actions>
+        <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
+          <i class="fas fa-arrow-right me-1"></i>
+          {{ $t('setup.restart_go_now') }}
+        </button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -459,6 +390,22 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
 import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
+import ResourceLink from './common/ResourceLink.vue'
+import ConfirmDialog from './common/ConfirmDialog.vue'
+import {
+  CLIENT_RESOURCES,
+  FEATURED_RESOURCES,
+  HARMONY_CLIENT_URL,
+  resolveResourceText,
+} from '../config/resources.js'
+
+const SETUP_CLIENT_RESOURCE_ORDER = [
+  'android-vplus',
+  'harmony-vplus',
+  'voidlink',
+  'moonlight-macos',
+  'moonlight-desktop',
+]
 
 // 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
 // 因此把系统语言探测结果折叠到这两者之一即可
@@ -478,6 +425,7 @@ function markLanguageSavedForReload() {
 
 export default {
   name: 'SetupWizard',
+  components: { ConfirmDialog, ResourceLink },
   props: {
     adapters: {
       type: Array,
@@ -515,7 +463,7 @@ export default {
     }
   },
   setup() {
-    return {}
+    return { FEATURED_RESOURCES }
   },
   mounted() {
     // 记录进入设置向导
@@ -570,9 +518,24 @@ export default {
         seen.add(name)
         return true
       })
+    },
+    setupClientResources() {
+      const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
+      return SETUP_CLIENT_RESOURCE_ORDER.map((id) => resourcesById.get(id)).filter(Boolean)
     }
   },
   methods: {
+    resourceTitle(resource) {
+      return resolveResourceText(this.$t, resource, 'title')
+    },
+    resourceDescription(resource) {
+      return resolveResourceText(this.$t, resource, 'description')
+    },
+    handleResourceActivate(resource, event) {
+      if (resource.action !== 'harmony') return
+      event.preventDefault()
+      this.openHarmonyModal()
+    },
     previousStep() {
       if (this.currentStep > 1) {
         this.currentStep--
@@ -697,7 +660,7 @@ export default {
     async confirmHarmonyLink() {
       this.closeHarmonyModal()
       try {
-        await openExternalUrl('https://github.com/AlkaidLab/moonlight-harmony')
+        await openExternalUrl(HARMONY_CLIENT_URL)
       } catch (error) {
         console.error('Failed to open URL:', error)
       }
@@ -850,12 +813,18 @@ export default {
   flex-direction: column;
   align-items: center;
   z-index: 1000;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--ui-accent-rgb), 0.18), transparent 34rem),
+    var(--ui-page-bg);
+  color: var(--ui-text-primary);
 }
 
 .setup-card {
-  background: var(--bs-body-bg);
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-md);
+  backdrop-filter: blur(22px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -866,22 +835,28 @@ export default {
 }
 
 .setup-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
   padding: 1.2em;
   text-align: center;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.setup-header img {
+  filter: drop-shadow(0 6px 14px rgba(var(--ui-accent-rgb), 0.18));
 }
 
 .setup-header h1 {
   margin: 0.3em 0 0 0;
   font-size: 1.5em;
   font-weight: 600;
+  color: var(--ui-accent);
 }
 
 .setup-header p {
   margin: 0.3em 0 0 0;
-  opacity: 0.9;
+  color: var(--ui-text-secondary);
   font-size: 0.95em;
 }
 
@@ -892,6 +867,7 @@ export default {
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  background: color-mix(in srgb, var(--ui-surface) 74%, transparent);
 }
 
 .step-indicator {
@@ -908,6 +884,7 @@ export default {
   align-items: center;
   gap: 0.3em;
   font-size: 0.85em;
+  color: var(--ui-text-secondary);
 }
 
 .step-number {
@@ -919,27 +896,34 @@ export default {
   justify-content: center;
   font-weight: 600;
   font-size: 0.9em;
-  background: var(--bs-secondary-bg);
-  color: var(--bs-secondary-color);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  border: 1px solid var(--ui-border);
   transition: all 0.3s ease;
   flex-shrink: 0;
 }
 
 .step.active .step-number {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+  border-color: var(--ui-accent);
   transform: scale(1.05);
 }
 
+.step.active {
+  color: var(--ui-text-primary);
+}
+
 .step.completed .step-number {
-  background: #28a745;
+  background: var(--ui-success);
   color: white;
+  border-color: var(--ui-success);
 }
 
 .step-connector {
   width: 30px;
   height: 2px;
-  background: var(--bs-secondary-bg);
+  background: var(--ui-border);
   flex-shrink: 0;
 }
 
@@ -953,45 +937,47 @@ export default {
 .step-content h3 {
   font-size: 1.1em;
   margin-bottom: 0.8em;
+  color: var(--ui-text-primary);
 }
 
 .option-card {
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
   padding: 0.8em 1em;
   margin-bottom: 0.6em;
   cursor: pointer;
   transition: all 0.3s ease;
-  background: var(--bs-body-bg);
+  background: var(--ui-surface);
 }
 
 .option-card:hover {
-  border-color: #667eea;
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(102, 126, 234, 0.2);
+  box-shadow: var(--ui-shadow-sm);
+  background: var(--ui-surface-hover);
 }
 
 .option-card.selected {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
 }
 
 .option-card .option-icon {
   font-size: 1.8em;
   margin-bottom: 0.3em;
-  color: #667eea;
+  color: var(--ui-accent);
 }
 
 .option-card h4 {
   margin: 0.3em 0;
   font-weight: 600;
   font-size: 1em;
+  color: var(--ui-text-primary);
 }
 
 .option-card p {
   margin: 0;
-  color: var(--bs-body-color);
-  opacity: 0.85;
+  color: var(--ui-text-secondary);
   font-size: 0.85em;
   line-height: 1.3;
 }
@@ -1000,30 +986,31 @@ export default {
 .option-card-compact {
   display: flex;
   align-items: center;
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   padding: 0.5em 0.8em;
   margin-bottom: 0.4em;
   cursor: pointer;
   transition: all 0.3s ease;
-  background: var(--bs-body-bg);
+  background: var(--ui-surface);
   gap: 0.7em;
 }
 
 .option-card-compact:hover {
-  border-color: #667eea;
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+  box-shadow: var(--ui-shadow-sm);
+  background: var(--ui-surface-hover);
 }
 
 .option-card-compact.selected {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
 }
 
 .option-icon-compact {
   font-size: 1.2em;
-  color: #667eea;
+  color: var(--ui-accent);
   flex-shrink: 0;
   width: 2em;
   text-align: center;
@@ -1033,12 +1020,12 @@ export default {
   margin: 0;
   font-weight: 600;
   font-size: 0.9em;
+  color: var(--ui-text-primary);
 }
 
 .option-card-compact .option-text p {
   margin: 0;
-  color: var(--bs-body-color);
-  opacity: 0.75;
+  color: var(--ui-text-secondary);
   font-size: 0.85em;
   line-height: 1.3;
 }
@@ -1047,7 +1034,9 @@ export default {
   padding: 0.7em;
   font-size: 1em;
   border-radius: 8px;
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
+  background-color: var(--ui-surface);
+  color: var(--ui-text-primary);
   transition: all 0.3s ease;
 }
 
@@ -1055,16 +1044,18 @@ export default {
 .adapter-label {
   font-size: 1.05em;
   font-weight: 600;
+  color: var(--ui-text-primary);
 }
 
 /* 物理显示器标题 */
 .physical-display-title {
   font-size: 0.95em;
+  color: var(--ui-text-primary);
 }
 
 .form-select-large:focus {
-  border-color: #667eea;
-  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 0.2rem var(--ui-accent-soft);
 }
 
 .action-buttons {
@@ -1073,8 +1064,8 @@ export default {
   gap: 0.8em;
   flex-shrink: 0;
   padding: 1em 1.5em;
-  border-top: 1px solid var(--bs-border-color);
-  background: var(--bs-body-bg);
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface-strong);
 }
 
 .btn-setup {
@@ -1086,45 +1077,47 @@ export default {
 }
 
 .btn-setup-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-  color: white;
+  background: var(--ui-accent);
+  border: 1px solid var(--ui-accent);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-setup-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  color: white;
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-md);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-setup-secondary {
-  background: var(--bs-secondary-bg);
-  border: none;
-  color: var(--bs-body-color);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text-primary);
 }
 
 .btn-setup-secondary:hover:not(:disabled) {
-  background: var(--bs-tertiary-bg);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
 }
 
 .btn-setup-skip {
-  background: rgba(255, 255, 255, 0.95);
-  border: 2px solid rgba(102, 126, 234, 0.7);
-  color: rgba(70, 90, 200, 1);
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-border-strong);
+  color: var(--ui-accent);
   font-weight: 500;
 }
 
 .btn-setup-skip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 1);
-  border-color: rgba(102, 126, 234, 0.9);
-  color: rgba(50, 70, 180, 1);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .adapter-info {
-  background: var(--bs-secondary-bg);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   padding: 0.8em;
   border-radius: 8px;
   margin-top: 0.8em;
@@ -1143,27 +1136,27 @@ export default {
 
 /* GPU选择提示框样式 */
 .adapter-hint-box {
-  background: rgba(102, 126, 234, 0.08);
+  background: var(--ui-accent-soft);
   padding: 0.8em 1em;
   border-radius: 8px;
-  border-left: 3px solid #667eea;
+  border-left: 3px solid var(--ui-accent);
   font-size: 0.9em;
   line-height: 1.5;
-  color: var(--bs-body-color);
+  color: var(--ui-text-secondary);
   font-weight: 500;
 }
 
 /* VDD 介绍文字样式 */
 .vdd-intro-text {
-  color: var(--bs-body-color);
-  opacity: 0.75;
+  color: var(--ui-text-secondary);
   font-size: 0.95em;
 }
 
 .adapter-vdd-hint {
   margin: 0.5em 0 0 0;
   padding: 0.5em 0.8em;
-  background: rgba(40, 167, 69, 0.1);
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success-text);
   border-radius: 4px;
   font-size: 0.95em;
   white-space: pre-wrap;
@@ -1180,18 +1173,18 @@ export default {
 }
 
 .step-content::-webkit-scrollbar-thumb {
-  background: rgba(102, 126, 234, 0.3);
+  background: var(--ui-border-strong);
   border-radius: 3px;
 }
 
 .step-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(102, 126, 234, 0.5);
+  background: var(--ui-accent);
 }
 
 /* 完成页面标题 */
 .setup-complete-icon {
   font-size: 1.2em;
-  color: #28a745;
+  color: var(--ui-success);
   margin-right: 0.3em;
   vertical-align: middle;
 }
@@ -1199,7 +1192,8 @@ export default {
 /* 完成页资源区样式 */
 .client-download-section,
 .promo-service-section {
-  background: var(--bs-secondary-bg);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   padding: 1em;
   border-radius: 10px;
 }
@@ -1208,7 +1202,7 @@ export default {
 .promo-service-section h5 {
   font-size: 1em;
   margin-bottom: 0.8em;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
 }
 
 .promo-service-links {
@@ -1240,117 +1234,6 @@ export default {
   min-width: 0;
 }
 
-/* Resource link styles (from ResourceCard) */
-.resource-link {
-  display: flex;
-  align-items: center;
-  padding: 0.6em 0.8em;
-  border-radius: 8px;
-  text-decoration: none;
-  background: linear-gradient(135deg, rgba(var(--link-color), 0.15) 0%, rgba(var(--link-color), 0.08) 100%);
-  border: 1px solid transparent;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.resource-link:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
-  text-decoration: none;
-  border-color: rgba(var(--link-color), 0.4);
-}
-
-.resource-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.1rem;
-  flex-shrink: 0;
-  margin-right: 0.8em;
-  color: white;
-  background: var(--icon-gradient);
-}
-
-.resource-logo-icon {
-  width: 86px;
-  height: 44px;
-  padding: 4px;
-  background: #fff;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
-  overflow: visible;
-}
-
-.resource-logo-image {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  border-radius: 0;
-}
-
-.resource-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.resource-title {
-  display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--bs-body-color);
-  margin-bottom: 1px;
-}
-
-.resource-desc {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--bs-secondary-color);
-}
-
-.resource-arrow {
-  font-size: 0.8rem;
-  color: var(--bs-secondary-color);
-  margin-left: 0.5rem;
-  transition: transform 0.2s ease;
-}
-
-.resource-link:hover .resource-arrow {
-  transform: translateX(3px);
-}
-
-.resource-link-android {
-  --link-color: 61, 220, 132;
-  --icon-gradient: linear-gradient(135deg, #3ddc84 0%, #00c853 100%);
-}
-
-.resource-link-apple {
-  --link-color: 128, 128, 128;
-  --icon-gradient: linear-gradient(135deg, #555 0%, #777 100%);
-}
-
-.resource-link-desktop {
-  --link-color: 108, 117, 125;
-  --icon-gradient: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-}
-
-.resource-link-harmony {
-  --link-color: 206, 48, 48;
-  --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
-}
-
-.resource-link-primary {
-  --link-color: 13, 110, 253;
-  --icon-gradient: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
-}
-
-.resource-link-moonlink {
-  --link-color: 111, 66, 193;
-  --icon-gradient: linear-gradient(135deg, #6f42c1 0%, #4c2f8f 100%);
-}
-
 .qr-code-item {
   display: flex;
   flex-direction: column;
@@ -1363,7 +1246,7 @@ export default {
   background: white;
   padding: 0.4em;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--ui-shadow-sm);
   width: 100%;
 }
 
@@ -1376,7 +1259,7 @@ export default {
 .qr-code-label {
   font-size: 0.8em;
   font-weight: 500;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
 }
 
 .qr-code-label i {
@@ -1386,7 +1269,7 @@ export default {
 /* 小图标样式 */
 .option-icon-small {
   font-size: 1.5em;
-  color: #667eea;
+  color: var(--ui-accent);
   margin-right: 0.8em;
   flex-shrink: 0;
 }
@@ -1408,132 +1291,101 @@ export default {
   margin-bottom: 1rem;
 }
 
-/* Skip Wizard Modal - 使用 ScanResultModal 样式 */
-.skip-wizard-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 20px);
-  overflow: hidden;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
+.restart-countdown .text-primary {
+  color: var(--ui-accent) !important;
 }
 
-.skip-wizard-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
-  width: 100%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
-  animation: modalSlideUp 0.3s ease;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.skip-wizard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  h5 {
-    margin: 0;
-    color: var(--text-primary, #fff);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm, 8px);
-  }
-  
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
-    h5 {
-      color: #000000;
-    }
-  }
-}
-
-.skip-wizard-body {
-  padding: var(--spacing-lg, 24px);
-  font-size: var(--font-size-md, 0.95rem);
-  line-height: 1.5;
-  overflow-y: auto;
-  flex: 1;
-  color: var(--text-primary, #fff);
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
-}
-
-.skip-wizard-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
-}
-
-.skip-wizard-footer button {
-  padding: 8px 16px;
-  font-size: 0.9rem;
-}
-
-/* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.restart-countdown + .progress .progress-bar {
+  background: var(--ui-accent) !important;
 }
 
 @media (max-width: 768px) {
+  .setup-container {
+    padding: 0;
+  }
+
+  .setup-card {
+    max-width: none;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .setup-header {
+    padding: 0.85rem 1rem;
+  }
+
+  .setup-header img {
+    height: 44px;
+  }
+
+  .setup-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .setup-header p {
+    font-size: 0.82rem;
+  }
+
+  .setup-content {
+    padding: 1rem;
+  }
+
+  .step-indicator {
+    gap: 0.35rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .step span {
+    display: none;
+  }
+
+  .step-number {
+    width: 26px;
+    height: 26px;
+  }
+
+  .step-connector {
+    width: auto;
+    min-width: 12px;
+    flex: 1;
+  }
+
+  .step-content {
+    padding-right: 0.25rem;
+  }
+
+  .option-card,
+  .option-card-compact {
+    padding: 0.75rem;
+  }
+
+  .action-buttons {
+    padding: 0.85rem 1rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-setup {
+    flex: 1 1 auto;
+    padding: 0.65rem 0.85rem;
+    white-space: nowrap;
+  }
+
+  .client-download-layout {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .client-links {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .client-qrcodes {
+    width: 100%;
+  }
+
   .promo-service-links {
     grid-template-columns: 1fr;
   }

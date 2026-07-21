@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "Opens in a new window",
     "apply": "Apply",
     "auto": "Automatic",
     "autodetect": "Autodetect (recommended)",
@@ -33,6 +34,19 @@
     "warning": "Warning!"
   },
   "apps": {
+    "cover_search_placeholder": "Search by game title...",
+    "cover_image_unavailable": "Image unavailable",
+    "clear_search": "Clear search",
+    "search_cover": "Search covers",
+    "cover_search_loading": "Searching for covers...",
+    "cover_search_empty": "No covers found",
+    "cover_search_empty_desc": "Try searching with different keywords",
+    "cover_search_hint": "Click a cover to apply it",
+    "cover_search_tab_all": "All",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "Cover search failed. Please try again later.",
+    "cover_apply_failed": "Failed to apply cover. Please try again later.",
     "actions": "Actions",
     "add_cmds": "Add Commands",
     "add_new": "Add New",
@@ -625,6 +639,7 @@
     "home": "Home",
     "password": "Change Password",
     "pin": "PIN",
+    "clients": "Clients",
     "theme_auto": "Auto",
     "theme_dark": "Dark",
     "theme_light": "Light",
@@ -765,7 +780,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "The Base Display (VDD) is Sunshine Foundation's built-in smart virtual display, supporting any resolution, frame rate, and HDR optimization. It is the preferred choice for screen-off streaming and extended display streaming.",
+    "step1_vdd_intro": "The Base Display (VDD) is Foundation Sunshine's built-in smart virtual display, supporting any resolution, frame rate, and HDR optimization. It is the preferred choice for screen-off streaming and extended display streaming.",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -785,7 +800,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Advanced",
@@ -869,7 +884,7 @@
     "create_creds_alert": "The credentials below are needed to access Sunshine's Web UI. Keep them safe, since you will never see them again!",
     "creds_local_only": "Your credentials are stored locally offline and will never be uploaded to any server.",
     "error": "Error!",
-    "greeting": "Welcome to Sunshine Foundation!",
+    "greeting": "Welcome to Foundation Sunshine!",
     "hide_password": "Hide password",
     "login": "Login",
     "network_error": "Network error, please check your connection",

@@ -278,7 +278,8 @@ function renderMarkdown(text) {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 1rem;
+  background: var(--ui-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -287,14 +288,16 @@ function renderMarkdown(text) {
 }
 
 .diagnosis-modal {
-  background: var(--bs-body-bg, #fff);
-  border-radius: 12px;
-  width: 90%;
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  width: 100%;
   max-width: 700px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--ui-shadow-md);
+  color: var(--ui-text-primary);
 }
 
 .diagnosis-header {
@@ -302,7 +305,7 @@ function renderMarkdown(text) {
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .diagnosis-header h5 {
@@ -317,16 +320,17 @@ function renderMarkdown(text) {
 }
 
 .config-form {
-  background: var(--bs-tertiary-bg, #f8f9fa);
-  border-radius: 8px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   padding: 1rem;
 }
 
 .local-diagnostics {
-  border: 1px solid var(--bs-border-color, #dee2e6);
-  border-radius: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   padding: 0.75rem;
-  background: var(--bs-tertiary-bg, #f8f9fa);
+  background: var(--ui-surface);
 }
 
 .local-diagnostics-header {
@@ -348,36 +352,36 @@ function renderMarkdown(text) {
 }
 
 .local-finding {
-  border-left: 4px solid #0dcaf0;
+  border-left: 4px solid var(--ui-accent);
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  background: var(--bs-body-bg, #fff);
+  background: var(--ui-surface-strong);
 }
 
 .local-suggestions {
-  border: 1px solid var(--bs-border-color, #dee2e6);
-  border-radius: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   padding: 0.75rem;
-  background: var(--bs-tertiary-bg, #f8f9fa);
+  background: var(--ui-surface);
 }
 
 .local-suggestion {
-  border-left: 4px solid #0dcaf0;
+  border-left: 4px solid var(--ui-accent);
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  background: var(--bs-body-bg, #fff);
+  background: var(--ui-surface-strong);
 }
 
 .local-finding--error,
 .local-finding--fatal,
 .local-suggestion--error,
 .local-suggestion--fatal {
-  border-left-color: #dc3545;
+  border-left-color: var(--ui-danger);
 }
 
 .local-finding--warning,
 .local-suggestion--warning {
-  border-left-color: #ffc107;
+  border-left-color: var(--ui-warning);
 }
 
 .local-finding-title {
@@ -391,8 +395,8 @@ function renderMarkdown(text) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--bs-secondary-color, #6c757d);
-  background: rgba(0, 0, 0, 0.06);
+  color: var(--ui-text-secondary);
+  background: var(--ui-accent-soft);
   padding: 0.25rem 0.4rem;
   border-radius: 4px;
 }
@@ -400,7 +404,7 @@ function renderMarkdown(text) {
 .local-suggestion-actions {
   margin: 0.4rem 0 0;
   padding-left: 1.25rem;
-  color: var(--bs-secondary-color, #6c757d);
+  color: var(--ui-text-secondary);
 }
 
 .local-suggestion-actions li {
@@ -413,8 +417,9 @@ function renderMarkdown(text) {
 }
 
 .result-content {
-  background: var(--bs-tertiary-bg, #f8f9fa);
-  border-radius: 8px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   padding: 1rem 1.25rem;
   font-size: 0.9rem;
   line-height: 1.6;
@@ -423,7 +428,8 @@ function renderMarkdown(text) {
 }
 
 .result-content :deep(code) {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--ui-accent-soft);
+  color: var(--ui-text-primary);
   padding: 0.15em 0.4em;
   border-radius: 3px;
   font-size: 0.85em;

@@ -1,8 +1,8 @@
 <template>
-  <div>
+  <div class="pin-page">
     <Navbar />
     <div id="content" class="container">
-      <h1 class="my-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
+      <h1 class="mt-2 mb-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
 
       <!-- QR Code Pairing -->
       <div class="card mb-4 qr-pair-card">
@@ -116,7 +116,7 @@
               <div class="me-2">
                 <b>{{ $t('_common.success') }}</b> {{ $t('troubleshooting.unpair_single_success') }}
               </div>
-              <button class="btn btn-success ms-auto apply" @click="clickedApplyBanner">
+              <button class="btn btn-secondary ms-auto apply" @click="clickedApplyBanner">
                 {{ $t('_common.dismiss') }}
               </button>
             </div>
@@ -214,7 +214,7 @@
                         <!-- 保存/取消按钮 -->
                         <template v-else>
                           <button
-                            class="btn btn-sm btn-success me-1"
+                            class="btn btn-sm btn-primary me-1"
                             @click="handleSave(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             :title="$t('pin.save_changes')"
@@ -408,6 +408,36 @@ watch(clients, initTooltips, { deep: true })
 </style>
 
 <style scoped lang="less">
+.pin-page {
+  min-height: 100vh;
+  padding-bottom: var(--spacing-xl);
+  color: var(--ui-text-primary);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
+
+  .page-title {
+    color: var(--ui-text-primary) !important;
+    font-weight: 600;
+  }
+
+  #form > .card {
+    width: min(100%, 480px);
+  }
+
+  .table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--ui-text-primary);
+    --bs-table-border-color: var(--ui-border);
+    --bs-table-hover-bg: var(--ui-accent-soft);
+    --bs-table-hover-color: var(--ui-text-primary);
+  }
+
+  .table-dark {
+    --bs-table-bg: var(--ui-surface-strong);
+    --bs-table-color: var(--ui-text-secondary);
+    --bs-table-border-color: var(--ui-border);
+  }
+}
+
 .client-list-container {
   margin-top: 1rem;
 
@@ -426,7 +456,7 @@ watch(clients, initTooltips, { deep: true })
 }
 
 .table-warning {
-  background-color: rgba(255, 193, 7, 0.1) !important;
+  background-color: var(--ui-warning-soft) !important;
 }
 
 /* Delete Client Modal - 使用 ScanResultModal 样式 */
@@ -439,7 +469,7 @@ watch(clients, initTooltips, { deep: true })
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  background: var(--modal-backdrop-bg, rgba(45, 38, 40, 0.72));
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
@@ -448,29 +478,21 @@ watch(clients, initTooltips, { deep: true })
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
 
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
 }
 
 .delete-client-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  box-shadow: var(--ui-shadow-md);
   animation: modalSlideUp 0.3s ease;
 
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
 }
 
 @keyframes modalSlideUp {
@@ -489,11 +511,11 @@ watch(clients, initTooltips, { deep: true })
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  border-bottom: 1px solid var(--ui-border);
 
   h5 {
     margin: 0;
-    color: var(--text-primary, #fff);
+    color: var(--ui-text-primary);
     font-size: var(--font-size-lg, 1.1rem);
     font-weight: 600;
     display: flex;
@@ -501,13 +523,6 @@ watch(clients, initTooltips, { deep: true })
     gap: var(--spacing-sm, 8px);
   }
 
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-
-    h5 {
-      color: #000000;
-    }
-  }
 }
 
 .delete-client-body {
@@ -516,11 +531,7 @@ watch(clients, initTooltips, { deep: true })
   line-height: 1.5;
   overflow-y: auto;
   flex: 1;
-  color: var(--text-primary, #fff);
-
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
+  color: var(--ui-text-primary);
 }
 
 .delete-client-footer {
@@ -528,11 +539,8 @@ watch(clients, initTooltips, { deep: true })
   justify-content: flex-end;
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface);
 
   button {
     padding: 8px 16px;
@@ -575,9 +583,9 @@ watch(clients, initTooltips, { deep: true })
 
       tr {
         display: block;
-        border: 1px solid var(--bs-border-color);
+        border: 1px solid var(--ui-border);
         border-radius: var(--border-radius-md, 8px);
-        background: var(--bs-body-bg);
+        background: var(--ui-surface);
         overflow: hidden;
       }
 
@@ -589,13 +597,13 @@ watch(clients, initTooltips, { deep: true })
         width: 100%;
         padding: 0.75rem 1rem !important;
         border: 0;
-        border-bottom: 1px solid var(--bs-border-color);
+        border-bottom: 1px solid var(--ui-border);
         text-align: right;
 
         &::before {
           content: attr(data-label);
           min-width: 6.5rem;
-          color: var(--bs-secondary-color);
+          color: var(--ui-text-secondary);
           font-weight: 600;
           text-align: left;
         }
@@ -664,25 +672,19 @@ watch(clients, initTooltips, { deep: true })
   display: flex;
   align-items: center;
   text-align: center;
-  color: var(--bs-body-color, #dee2e6);
+  color: var(--ui-text-muted);
   font-size: 0.875rem;
 
   &::before,
   &::after {
     content: '';
     flex: 1;
-    border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.15));
+    border-bottom: 1px solid var(--ui-border);
   }
 
   span {
     padding: 0 1rem;
   }
 
-  [data-bs-theme='light'] & {
-    &::before,
-    &::after {
-      border-bottom-color: rgba(0, 0, 0, 0.15);
-    }
-  }
 }
 </style>

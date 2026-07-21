@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "在新視窗開啟",
     "apply": "套用",
     "auto": "自動",
     "autodetect": "自動偵測（建議）",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "輸入遊戲名稱搜尋...",
+    "cover_image_unavailable": "圖片無法載入",
+    "clear_search": "清除搜尋",
+    "search_cover": "搜尋封面",
+    "cover_search_loading": "正在搜尋封面...",
+    "cover_search_empty": "找不到相關封面",
+    "cover_search_empty_desc": "請嘗試使用不同的關鍵字搜尋",
+    "cover_search_hint": "點擊封面即可套用",
+    "cover_search_tab_all": "全部",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "搜尋封面失敗，請稍後再試",
+    "cover_apply_failed": "套用封面失敗，請稍後再試",
     "actions": "行動",
     "add_cmds": "新增指令",
     "add_new": "新增",
@@ -638,6 +652,7 @@
     "home": "首頁",
     "password": "變更密碼",
     "pin": "Pin 碼",
+    "clients": "客戶端",
     "theme_auto": "自動",
     "theme_dark": "深色主題",
     "theme_light": "淺色主題",
@@ -798,7 +813,7 @@
     "unknown_display": "未知顯示器",
     "virtual_display": "基地顯示器 (ZakoHDR)",
     "virtual_display_desc": "使用基地顯示器裝置進行串流（需要安裝 ZakoVDD 驅動程式）",
-    "welcome": "歡迎來到 Sunshine Foundation"
+    "welcome": "歡迎來到 Foundation Sunshine"
   },
   "tabs": {
     "advanced": "進階",
@@ -882,7 +897,7 @@
     "create_creds_alert": "以下的憑證是存取 Sunshine 網頁介面所需的。請妥善保管，因為您將無法再查看這些憑證！",
     "creds_local_only": "帳號密碼僅離線儲存在本地，不會上傳到任何伺服器。",
     "error": "錯誤！",
-    "greeting": "歡迎使用 Sunshine Foundation！",
+    "greeting": "歡迎使用 Foundation Sunshine！",
     "hide_password": "隱藏密碼",
     "login": "登入",
     "network_error": "網路錯誤，請檢查連線",

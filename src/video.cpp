@@ -1398,6 +1398,7 @@ namespace video {
   };
 
   static encoder_t *chosen_encoder;
+  static std::atomic<const encoder_t *> active_encoder_for_status { nullptr };
   int active_hevc_mode;
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
@@ -1407,6 +1408,12 @@ namespace video {
     "Encoder probe succeeded.",
     {}
   };
+
+  std::string
+  active_encoder_name() {
+    const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
+    return encoder ? std::string { encoder->name } : std::string {};
+  }
 
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
@@ -3977,6 +3984,7 @@ namespace video {
     };
 
     if (!allow_encoder_probing()) {
+      active_encoder_for_status.store(nullptr, std::memory_order_release);
       // Error already logged
       return -1;
     }
@@ -3985,12 +3993,14 @@ namespace video {
     // If we already have a good encoder, check to see if another probe is required
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
       BOOST_LOG(info) << "Using cached encoder validation results";
+      active_encoder_for_status.store(chosen_encoder, std::memory_order_release);
       return 0;
     }
 
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;
     chosen_encoder = nullptr;
+    active_encoder_for_status.store(nullptr, std::memory_order_release);
     active_hevc_mode = config::video.hevc_mode;
     active_av1_mode = config::video.av1_mode;
     last_encoder_probe_supported_ref_frames_invalidation = false;
@@ -4137,6 +4147,7 @@ namespace video {
     BOOST_LOG(info) << "Ignore any errors, Encoder testing completed (忽略任何错误，编码器测试完成)";
 
     auto &encoder = *chosen_encoder;
+    active_encoder_for_status.store(chosen_encoder, std::memory_order_release);
 
     last_encoder_probe_supported_ref_frames_invalidation = (encoder.flags & REF_FRAMES_INVALIDATION);
     last_encoder_probe_supported_yuv444_for_codec[0] = encoder.h264[encoder_t::PASSED] &&

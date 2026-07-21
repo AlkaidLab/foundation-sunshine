@@ -1,7 +1,7 @@
 <template>
   <div class="apps-page">
     <Navbar />
-    <div class="container-fluid px-4">
+    <div class="container-fluid px-3">
       <div class="my-4">
         <h1 class="page-title">{{ $t('apps.applications_title') }}</h1>
         <p class="page-subtitle">{{ $t('apps.applications_desc') }}</p>
@@ -58,7 +58,7 @@
           </button>
           <button
             class="cute-btn"
-            :class="selectionMode ? 'cute-btn-warning' : 'cute-btn-secondary'"
+            :class="selectionMode ? 'cute-btn-primary' : 'cute-btn-secondary'"
             type="button"
             :aria-pressed="selectionMode"
             :aria-label="$t('apps.batch_select_toggle')"
@@ -69,7 +69,7 @@
           </button>
           <button
             v-if="isTauriEnv()"
-            class="cute-btn cute-btn-info"
+            class="cute-btn cute-btn-secondary"
             @click="openScanOptions"
             :disabled="isScanning || scanProgress.active"
             title="扫描游戏平台库 (Steam/Epic/GOG)"
@@ -79,14 +79,16 @@
           </button>
           <button
             class="cute-btn cute-btn-secondary"
+            type="button"
             data-bs-toggle="modal"
             data-bs-target="#envVarsModal"
-            title="环境变量说明"
+            :title="$t('apps.env_vars_about')"
+            :aria-label="$t('apps.env_vars_about')"
           >
             <i class="fas fa-info-circle"></i>
           </button>
           <button 
-            class="cute-btn cute-btn-success" 
+            class="cute-btn cute-btn-primary"
             :class="{ 'has-changes': hasUnsavedChanges }"
             @click="save" 
             :disabled="!hasUnsavedChanges || isSaving"
@@ -449,14 +451,19 @@
       </Transition>
 
       <!-- 环境变量说明模态框 -->
-      <div id="envVarsModal" class="modal fade" tabindex="-1">
+      <div id="envVarsModal" class="modal fade" tabindex="-1" aria-labelledby="envVarsModalLabel">
         <div class="modal-dialog modal-lg env-vars-modal">
           <div class="modal-content">
             <div class="modal-header">
               <h5 id="envVarsModalLabel" class="modal-title">
                 <i class="fas fa-info-circle me-2"></i>{{ $t('apps.env_vars_about') }}
               </h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              <button
+                type="button"
+                class="btn-close"
+                data-bs-dismiss="modal"
+                :aria-label="$t('_common.close') || '关闭'"
+              ></button>
             </div>
             <div class="modal-body">
               <div class="alert alert-info">
@@ -522,12 +529,13 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
               <a
                 href="https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2app__examples.html"
                 target="_blank"
+                rel="noopener noreferrer"
                 class="btn btn-outline-primary"
               >
                 <i class="fas fa-external-link-alt me-1"></i>{{ $t('_common.see_more') }}
               </a>
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                <i class="fas fa-times me-1"></i>关闭
+                <i class="fas fa-times me-1"></i>{{ $t('_common.close') || '关闭' }}
               </button>
             </div>
           </div>
@@ -538,12 +546,17 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
     <!-- 删除确认对话框 -->
     <Transition name="fade">
       <div v-if="deleteConfirmIndex !== null" class="delete-app-overlay" @click.self="cancelDeleteApp">
-        <div class="delete-app-modal">
+        <div class="delete-app-modal" role="dialog" aria-modal="true" aria-labelledby="deleteAppTitle">
           <div class="delete-app-header">
-            <h5>
+            <h5 id="deleteAppTitle">
               <i class="fas fa-exclamation-triangle me-2"></i>{{ $t('_common.delete') }}
             </h5>
-            <button class="btn-close" @click="cancelDeleteApp"></button>
+            <button
+              type="button"
+              class="btn-close delete-app-close"
+              :aria-label="$t('_common.close') || '关闭'"
+              @click="cancelDeleteApp"
+            ></button>
           </div>
           <div class="delete-app-body">
             <p>{{ $t('apps.delete_confirm', { name: apps[deleteConfirmIndex]?.name || '' }) }}</p>
@@ -560,12 +573,17 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
     <!-- 批量删除确认对话框 -->
     <Transition name="fade">
       <div v-if="batchDeleteConfirm" class="delete-app-overlay" @click.self="cancelBatchDelete">
-        <div class="delete-app-modal">
+        <div class="delete-app-modal" role="dialog" aria-modal="true" aria-labelledby="batchDeleteAppTitle">
           <div class="delete-app-header">
-            <h5>
+            <h5 id="batchDeleteAppTitle">
               <i class="fas fa-exclamation-triangle me-2"></i>{{ $t('apps.batch_delete') }}
             </h5>
-            <button class="btn-close" @click="cancelBatchDelete"></button>
+            <button
+              type="button"
+              class="btn-close delete-app-close"
+              :aria-label="$t('_common.close') || '关闭'"
+              @click="cancelBatchDelete"
+            ></button>
           </div>
           <div class="delete-app-body">
             <p>{{ $t('apps.batch_delete_confirm', { count: selectedIndices.size }) }}</p>

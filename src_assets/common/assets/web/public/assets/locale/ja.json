@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "新しいウィンドウで開きます",
     "apply": "適用",
     "auto": "自動",
     "autodetect": "自動検出 (推奨)",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "ゲームタイトルで検索...",
+    "cover_image_unavailable": "画像を利用できません",
+    "clear_search": "検索をクリア",
+    "search_cover": "カバーを検索",
+    "cover_search_loading": "カバーを検索中...",
+    "cover_search_empty": "カバーが見つかりません",
+    "cover_search_empty_desc": "別のキーワードで検索してみてください",
+    "cover_search_hint": "カバーをクリックして適用",
+    "cover_search_tab_all": "すべて",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "カバーの検索に失敗しました。後でもう一度お試しください。",
+    "cover_apply_failed": "カバーの適用に失敗しました。後でもう一度お試しください。",
     "actions": "アクション",
     "add_cmds": "コマンドを追加",
     "add_new": "新規追加",
@@ -613,6 +627,7 @@
     "home": "ホーム",
     "password": "パスワードの変更",
     "pin": "Pin",
+    "clients": "クライアント",
     "theme_auto": "自動",
     "theme_dark": "ダーク",
     "theme_light": "ライト",
@@ -753,7 +768,7 @@
     "step0_title": "Language",
     "step1_description": "Choose the display to stream",
     "step1_title": "Display Selection",
-    "step1_vdd_intro": "ベースディスプレイ（VDD）はSunshine Foundation内蔵のスマート仮想ディスプレイで、任意の解像度・フレームレート・HDR最適化をサポートします。画面オフストリーミングや拡張ディスプレイストリーミングに最適です。",
+    "step1_vdd_intro": "ベースディスプレイ（VDD）はFoundation Sunshine内蔵のスマート仮想ディスプレイで、任意の解像度・フレームレート・HDR最適化をサポートします。画面オフストリーミングや拡張ディスプレイストリーミングに最適です。",
     "step2_description": "Choose your graphics adapter",
     "step2_title": "Select Adapter",
     "step3_description": "Choose display device preparation strategy",
@@ -773,7 +788,7 @@
     "unknown_display": "Unknown Display",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Sunshine Foundation"
+    "welcome": "Welcome to Foundation Sunshine"
   },
   "tabs": {
     "advanced": "Advanced",
@@ -857,7 +872,7 @@
     "create_creds_alert": "以下の資格情報は、SunshineのWeb UIにアクセスするために必要です。あなたが二度と見ることはありませんので、安全に保管してください！",
     "creds_local_only": "認証情報はローカルにオフラインで保存され、サーバーにアップロードされることはありません。",
     "error": "エラー！",
-    "greeting": "Sunshine Foundation へようこそ！",
+    "greeting": "Foundation Sunshine へようこそ！",
     "hide_password": "パスワードを隠す",
     "login": "ログイン",
     "network_error": "ネットワークエラー、接続を確認してください",

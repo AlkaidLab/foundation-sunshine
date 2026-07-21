@@ -411,7 +411,7 @@ onBeforeUnmount(() => {
             <div class="mb-3" v-if="config.controller === 'enabled' && vigem.available">
               <label class="form-label">
                 {{ $t('config.vigem_label') }}
-                <span class="badge bg-info text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">ViGEmBus</span>
+                <span class="driver-badge driver-badge-info ms-1">ViGEmBus</span>
               </label>
               <div class="form-text mb-2">{{ $t('config.vigem_desc') }}</div>
               <div class="vmouse-panel">
@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
                        v-model="config.virtual_mouse" true-value="enabled" false-value="disabled">
                 <label class="form-check-label" for="virtual_mouse">
                   {{ $t('config.virtual_mouse') }}
-                  <span class="badge bg-warning text-dark ms-1" style="font-size: 0.7em; vertical-align: middle;">{{ $t('config.experimental') }}</span>
+                  <span class="driver-badge driver-badge-warning ms-1">{{ $t('config.experimental') }}</span>
                 </label>
               </div>
               <div class="form-text">{{ $t('config.virtual_mouse_desc') }}</div>
@@ -498,7 +498,7 @@ onBeforeUnmount(() => {
 
               <!-- 非 Tauri 环境：显示提示信息 -->
               <div v-else class="vmouse-helper mt-2">
-                <i class="fas fa-info-circle me-1 text-info"></i>
+                <i class="fas fa-info-circle me-1"></i>
                 <span>{{ $t('config.vmouse_note') }}</span>
               </div>
             </div>
@@ -516,36 +516,53 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 0.5rem 0.75rem;
-  background: var(--bs-secondary-bg);
-  border-radius: 8px;
-  border: 1px solid var(--bs-border-color);
-  color: var(--bs-secondary-color);
+  background: var(--ui-accent-soft);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text-secondary);
   font-size: 0.85rem;
 }
 
-[data-bs-theme='dark'] .vmouse-helper {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
+.vmouse-helper i {
+  color: var(--ui-accent);
+}
+
+.driver-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7em;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.driver-badge-info {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.driver-badge-warning {
+  border-color: color-mix(in srgb, var(--ui-warning) 36%, transparent);
+  background: color-mix(in srgb, var(--ui-warning) 12%, transparent);
+  color: var(--ui-warning-text);
 }
 
 /* 驱动管理面板 */
 .vmouse-panel {
-  border-radius: 10px;
-  border: 1px solid var(--bs-border-color);
+  border-radius: var(--ui-radius-md);
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
   overflow: hidden;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .vmouse-panel:hover {
-  border-color: var(--bs-primary);
-}
-
-[data-bs-theme='dark'] .vmouse-panel {
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-[data-bs-theme='dark'] .vmouse-panel:hover {
-  border-color: rgba(var(--bs-primary-rgb), 0.5);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 /* 面板头部 */
@@ -554,11 +571,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.6rem 0.85rem;
-  background: var(--bs-tertiary-bg);
-}
-
-[data-bs-theme='dark'] .vmouse-panel-header {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--ui-surface-strong);
+  border-bottom: 1px solid var(--ui-border);
 }
 
 /* 状态指示器 */
@@ -576,18 +590,18 @@ onBeforeUnmount(() => {
 }
 
 .vmouse-dot.dot-active {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  background: var(--ui-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-success) 16%, transparent);
   animation: vmouse-pulse 2s ease-in-out infinite;
 }
 
 .vmouse-dot.dot-warning {
-  background: #f59e0b;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+  background: var(--ui-warning);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-warning) 16%, transparent);
 }
 
 .vmouse-dot.dot-inactive {
-  background: #9ca3af;
+  background: var(--ui-text-muted);
 }
 
 @keyframes vmouse-pulse {
@@ -598,8 +612,7 @@ onBeforeUnmount(() => {
 .vmouse-status-label {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--bs-body-color);
-  opacity: 0.85;
+  color: var(--ui-text-secondary);
 }
 
 /* 刷新按钮 */
@@ -612,14 +625,19 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--bs-secondary-color);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .vmouse-refresh-btn:hover:not(:disabled) {
-  background: var(--bs-secondary-bg);
-  color: var(--bs-body-color);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.vmouse-refresh-btn:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 .vmouse-refresh-btn:disabled {
@@ -633,6 +651,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.6rem 0.85rem;
+  background: var(--ui-surface);
 }
 
 /* 操作按钮 */
@@ -655,24 +674,24 @@ onBeforeUnmount(() => {
 }
 
 .vmouse-install-btn {
-  background: var(--bs-primary);
-  color: #fff;
-  border-color: var(--bs-primary);
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+  border-color: var(--ui-accent);
 }
 
 .vmouse-install-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
 }
 
 .vmouse-uninstall-btn {
   background: transparent;
-  color: var(--bs-danger);
-  border-color: var(--bs-danger);
+  color: var(--ui-danger-text);
+  border-color: var(--ui-danger-border);
 }
 
 .vmouse-uninstall-btn:hover:not(:disabled) {
-  background: var(--bs-danger);
-  color: #fff;
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger-text);
 }
 
 /* 操作中 spinner */
@@ -687,5 +706,47 @@ onBeforeUnmount(() => {
 
 @keyframes vmouse-spin {
   to { transform: rotate(360deg); }
+}
+
+#input > hr,
+#input .accordion-body > hr {
+  margin-block: 1.25rem;
+  border-color: var(--ui-border);
+  opacity: 1;
+}
+
+#input .accordion-item {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+#input .accordion-button {
+  border: 0;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+#input .accordion-button:hover,
+#input .accordion-button:not(.collapsed) {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+#input .accordion-button:focus {
+  box-shadow: inset 0 0 0 2px var(--ui-accent-soft);
+}
+
+@media (max-width: 575.98px) {
+  .vmouse-panel-body {
+    flex-direction: column;
+  }
+
+  .vmouse-action-btn {
+    justify-content: center;
+    width: 100%;
+  }
 }
 </style>

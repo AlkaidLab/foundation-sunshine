@@ -13,8 +13,8 @@
   font-size: var(--font-size-lg);
   font-weight: 600;
   margin-bottom: var(--spacing-md);
-  color: #495057;
-  border-bottom: 2px solid #e9ecef;
+  color: var(--ui-text-primary);
+  border-bottom: 1px solid var(--ui-border);
   padding-bottom: var(--spacing-xs);
 }
 
@@ -25,17 +25,19 @@
 .form-label-enhanced {
   font-weight: 600;
   margin-bottom: var(--spacing-xs);
-  color: #7b8188;
+  color: var(--ui-text-secondary);
 }
 
 .form-control-enhanced {
-  border-radius: var(--border-radius-sm);
-  border: 1px solid #ced4da;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
 
   &:focus {
-    border-color: #80bdff;
-    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+    border-color: var(--ui-border-strong);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
   }
 }
 
@@ -47,12 +49,12 @@
 .field-hint {
   margin-top: var(--spacing-xs);
   font-size: var(--font-size-sm);
-  color: var(--secondary-color);
+  color: var(--ui-text-muted);
 }
 
 .form-check-label {
   font-size: var(--font-size-md);
-  color: var(--secondary-color);
+  color: var(--ui-text-secondary);
 }
 
 .command-table {
@@ -95,7 +97,7 @@
 }
 
 .modal-footer-enhanced {
-  border-top: 1px solid #dee2e6;
+  border-top: 1px solid var(--ui-border);
   padding: var(--spacing-md) var(--spacing-lg);
   display: flex;
   justify-content: space-between;
@@ -104,43 +106,43 @@
 
 .save-status {
   font-size: var(--font-size-sm);
-  color: var(--secondary-color);
+  color: var(--ui-text-muted);
 }
 
 .accordion-button {
   &:not(.collapsed) {
-    color: #0c63e4;
-    background-color: #e7f1ff;
-    border-bottom-color: #86b7fe;
+    color: var(--ui-accent);
+    background-color: var(--ui-accent-soft);
+    border-bottom-color: var(--ui-border-strong);
   }
 
   &:focus {
     z-index: 3;
-    border-color: #86b7fe;
+    border-color: var(--ui-border-strong);
     outline: 0;
-    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
   }
 }
 
 // Validation states
 .is-invalid {
-  border-color: #dc3545;
+  border-color: var(--ui-danger);
 }
 .is-valid {
-  border-color: #198754;
+  border-color: var(--ui-success);
 }
 
 .invalid-feedback {
   display: block;
   font-size: 0.875rem;
-  color: #dc3545;
+  color: var(--ui-danger-text);
   margin-top: 0.25rem;
 }
 
 .valid-feedback {
   display: block;
   font-size: 0.875rem;
-  color: #198754;
+  color: var(--ui-success-text);
   margin-top: 0.25rem;
 }
 

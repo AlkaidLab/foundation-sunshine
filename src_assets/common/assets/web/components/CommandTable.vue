@@ -120,7 +120,7 @@
                   <button
                     v-if="isMenuType"
                     type="button"
-                    class="btn btn-success btn-sm me-1"
+                    class="btn btn-primary btn-sm me-1"
                     :title="$t('apps.test_menu_cmd')"
                     :disabled="!command.cmd"
                     @click="testCommand(index)"
@@ -238,6 +238,10 @@ const onDragEnd = () => emitOrderChanged()
 <style scoped lang="less">
 .command-table {
   margin-bottom: var(--spacing-md);
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
 }
 
 .monospace {
@@ -257,17 +261,19 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .table {
-  color: var(--bs-secondary-color);
-  border-color: var(--modal-border-color, rgba(255, 255, 255, 0.15));
+  min-width: 620px;
+  color: var(--ui-text-secondary);
+  border-color: var(--ui-border);
   margin-bottom: 0;
 
   th {
     border-top: none;
-    border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
+    border-bottom: 1px solid var(--ui-border);
     font-weight: 600;
     font-size: 0.875rem;
     padding: 1rem 0.75rem;
-    background: var(--glass-medium, rgba(255, 255, 255, 0.2));
+    background: var(--ui-surface-strong);
+    color: var(--ui-text-primary);
   }
 
   thead th {
@@ -287,15 +293,15 @@ const onDragEnd = () => emitOrderChanged()
 
   td {
     vertical-align: middle;
-    border-color: var(--modal-border-color, rgba(255, 255, 255, 0.1));
+    border-color: var(--ui-border);
     padding: 0.75rem;
-    background: var(--glass-light, rgba(255, 255, 255, 0.1));
+    background: var(--ui-surface);
     transition: background 0.3s ease;
   }
 
   tbody tr {
     &:hover td {
-      background: var(--glass-medium, rgba(255, 255, 255, 0.2));
+      background: var(--ui-surface-hover);
     }
 
     &:last-child td {
@@ -320,20 +326,21 @@ const onDragEnd = () => emitOrderChanged()
 
 .form-control-sm {
   font-size: 0.875rem;
-  background: var(--glass-light, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text-primary);
   border-radius: 8px;
   backdrop-filter: blur(5px);
   transition: all 0.3s ease;
 
   &:focus {
-    background: var(--glass-medium, rgba(255, 255, 255, 0.15));
-    border-color: var(--btn-outline-primary-border, rgba(255, 255, 255, 0.4));
-    box-shadow: 0 0 0 0.2rem var(--btn-outline-primary-hover, rgba(255, 255, 255, 0.25));
+    background: var(--ui-surface-hover);
+    border-color: var(--ui-accent);
+    box-shadow: 0 0 0 0.2rem var(--ui-accent-soft);
   }
 
   &::placeholder {
-    color: var(--modal-text-muted, rgba(255, 255, 255, 0.6));
+    color: var(--ui-text-muted);
   }
 }
 
@@ -354,6 +361,12 @@ const onDragEnd = () => emitOrderChanged()
   font-size: 0.875rem;
   font-weight: 500;
   margin-left: 0.5rem;
+  color: var(--ui-text-secondary);
+}
+
+.form-check-input:checked {
+  background-color: var(--ui-accent);
+  border-color: var(--ui-accent);
 }
 
 .action-buttons-group {
@@ -372,7 +385,7 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .drag-handle {
-  color: var(--modal-text-muted, rgba(255, 255, 255, 0.5));
+  color: var(--ui-text-muted);
   font-size: 1.2rem;
   display: inline-block;
   padding: 0.5rem;
@@ -381,7 +394,7 @@ const onDragEnd = () => emitOrderChanged()
   transition: opacity 0.3s ease, color 0.3s ease;
 
   &:hover {
-    color: var(--modal-text-secondary, rgba(255, 255, 255, 0.9));
+    color: var(--ui-accent);
   }
 
   &.drag-disabled {
@@ -397,7 +410,7 @@ const onDragEnd = () => emitOrderChanged()
 }
 
 .command-row-chosen {
-  background: var(--glass-medium, rgba(255, 255, 255, 0.15));
+  background: var(--ui-accent-soft);
   z-index: 1000;
   position: relative;
 }
@@ -405,14 +418,13 @@ const onDragEnd = () => emitOrderChanged()
 .command-row-drag {
   opacity: 0.95;
   transform: rotate(2deg);
-  box-shadow: 0 10px 30px var(--modal-shadow, rgba(0, 0, 0, 0.3));
+  box-shadow: var(--ui-shadow-md);
   z-index: 1001;
   position: relative;
 }
 
 @media (max-width: 768px) {
   .command-table {
-    padding: 1rem;
     margin-top: 0.5rem;
   }
 

@@ -1,121 +1,160 @@
 <template>
-  <Transition name="finder-fade">
-    <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
-      <div class="cover-finder-panel" @click.stop>
-        <!-- 头部 -->
-        <div class="cover-finder__header">
-          <div class="cover-finder__title">
-            <i class="fas fa-image me-2"></i>
-            <span>{{ $t('apps.find_cover') }}</span>
-          </div>
-          <button type="button" class="cover-finder__close" @click="closeFinder">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-
-        <!-- 搜索框 -->
-        <div class="cover-finder__search">
-          <div class="cover-finder__search-wrapper">
-            <i class="fas fa-search cover-finder__search-icon"></i>
-            <input
-              ref="searchInput"
-              v-model="localSearchTerm"
-              type="text"
-              class="cover-finder__search-input"
-              placeholder="输入游戏名称搜索..."
-              @keydown.enter="searchCovers"
-            />
-            <button v-if="localSearchTerm" class="cover-finder__search-clear" @click="clearSearch" type="button">
+  <Teleport to="body">
+    <Transition name="finder-fade">
+      <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
+        <div
+          ref="panel"
+          class="cover-finder-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="coverFinderTitle"
+          tabindex="-1"
+          @click.stop
+          @keydown.esc="closeFinder"
+          @keydown.tab="handleTabKeydown"
+        >
+          <!-- 头部 -->
+          <div class="cover-finder__header">
+            <div id="coverFinderTitle" class="cover-finder__title">
+              <i class="fas fa-image me-2"></i>
+              <span>{{ $t('apps.find_cover') }}</span>
+            </div>
+            <button
+              type="button"
+              class="cover-finder__close"
+              :aria-label="$t('_common.close')"
+              @click="closeFinder"
+            >
               <i class="fas fa-times"></i>
             </button>
-            <button class="cover-finder__search-btn" @click="searchCovers" :disabled="!localSearchTerm || loading" type="button">
-              <i class="fas fa-arrow-right"></i>
+          </div>
+
+          <!-- 搜索框 -->
+          <div class="cover-finder__search">
+            <div class="cover-finder__search-wrapper">
+              <i class="fas fa-search cover-finder__search-icon"></i>
+              <input
+                ref="searchInput"
+                v-model="localSearchTerm"
+                type="text"
+                class="cover-finder__search-input"
+                :placeholder="$t('apps.cover_search_placeholder')"
+                @keydown.enter="searchCovers"
+              />
+              <button
+                v-if="localSearchTerm"
+                class="cover-finder__search-clear"
+                type="button"
+                :aria-label="$t('apps.clear_search')"
+                @click="clearSearch"
+              >
+                <i class="fas fa-times"></i>
+              </button>
+              <button
+                class="cover-finder__search-btn"
+                type="button"
+                :aria-label="$t('apps.search_cover')"
+                :disabled="!localSearchTerm || loading"
+                @click="searchCovers"
+              >
+                <i class="fas fa-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- 数据源筛选 -->
+          <div class="cover-finder__tabs">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              class="cover-finder__tab"
+              type="button"
+              :class="{ 'cover-finder__tab--active': coverFilter === tab.key }"
+              :aria-pressed="coverFilter === tab.key"
+              @click.stop.prevent="coverFilter = tab.key"
+            >
+              <i :class="tab.icon"></i>
+              <span>{{ $t(tab.labelKey) }}</span>
+              <span class="cover-finder__tab-badge" v-if="getTabCount(tab.key) > 0">
+                {{ getTabCount(tab.key) }}
+              </span>
             </button>
           </div>
-        </div>
 
-        <!-- 数据源筛选 -->
-        <div class="cover-finder__tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            class="cover-finder__tab"
-            :class="{ 'cover-finder__tab--active': coverFilter === tab.key }"
-            @click.stop.prevent="coverFilter = tab.key"
-          >
-            <i :class="tab.icon"></i>
-            <span>{{ tab.label }}</span>
-            <span class="cover-finder__tab-badge" v-if="getTabCount(tab.key) > 0">
-              {{ getTabCount(tab.key) }}
+          <!-- 内容区域 -->
+          <div class="cover-finder__content">
+            <!-- 加载状态 -->
+            <div v-if="loading" class="cover-finder__loading" role="status" aria-live="polite">
+              <div class="cover-finder__loading-spinner"></div>
+              <p class="cover-finder__loading-text">{{ $t('apps.cover_search_loading') }}</p>
+            </div>
+
+            <!-- 封面网格 -->
+            <div v-else-if="filteredCovers.length > 0" class="cover-finder__grid">
+              <button
+                v-for="(cover, index) in filteredCovers"
+                :key="cover.key || `cover-${index}`"
+                type="button"
+                class="cover-finder__card"
+                @click="selectCover(cover)"
+              >
+                <div class="cover-finder__card-image">
+                  <img :src="cover.url" :alt="cover.name" loading="lazy" @error="handleImageError" />
+                  <div class="cover-finder__card-overlay">
+                    <i class="fas fa-check-circle"></i>
+                  </div>
+                  <div class="cover-finder__card-badge" :class="`cover-finder__card-badge--${cover.source}`">
+                    <i :class="cover.source === 'steam' ? 'fab fa-steam' : 'fas fa-gamepad'"></i>
+                  </div>
+                </div>
+                <div class="cover-finder__card-info">
+                  <p class="cover-finder__card-name" :title="cover.name">{{ cover.name }}</p>
+                </div>
+              </button>
+            </div>
+
+            <!-- 无结果 -->
+            <div v-else class="cover-finder__empty">
+              <div class="cover-finder__empty-icon">
+                <i class="fas fa-search"></i>
+              </div>
+              <h4>{{ $t('apps.cover_search_empty') }}</h4>
+              <p>{{ $t('apps.cover_search_empty_desc') }}</p>
+            </div>
+          </div>
+
+          <!-- 底部提示 -->
+          <div class="cover-finder__footer">
+            <span class="cover-finder__footer-hint">
+              <i class="fas fa-info-circle me-1"></i>
+              {{ $t('apps.cover_search_hint') }}
             </span>
-          </button>
-        </div>
-
-        <!-- 内容区域 -->
-        <div class="cover-finder__content">
-          <!-- 加载状态 -->
-          <div v-if="loading" class="cover-finder__loading">
-            <div class="cover-finder__loading-spinner"></div>
-            <p class="cover-finder__loading-text">正在搜索封面...</p>
           </div>
-
-          <!-- 封面网格 -->
-          <div v-else-if="filteredCovers.length > 0" class="cover-finder__grid">
-            <div
-              v-for="(cover, index) in filteredCovers"
-              :key="cover.key || `cover-${index}`"
-              class="cover-finder__card"
-              @click="selectCover(cover)"
-            >
-              <div class="cover-finder__card-image">
-                <img :src="cover.url" :alt="cover.name" loading="lazy" @error="handleImageError" />
-                <div class="cover-finder__card-overlay">
-                  <i class="fas fa-check-circle"></i>
-                </div>
-                <div class="cover-finder__card-badge" :class="`cover-finder__card-badge--${cover.source}`">
-                  <i :class="cover.source === 'steam' ? 'fab fa-steam' : 'fas fa-gamepad'"></i>
-                </div>
-              </div>
-              <div class="cover-finder__card-info">
-                <p class="cover-finder__card-name" :title="cover.name">{{ cover.name }}</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- 无结果 -->
-          <div v-else class="cover-finder__empty">
-            <div class="cover-finder__empty-icon">
-              <i class="fas fa-search"></i>
-            </div>
-            <h4>未找到相关封面</h4>
-            <p>尝试使用不同的关键词搜索</p>
-          </div>
-        </div>
-
-        <!-- 底部提示 -->
-        <div class="cover-finder__footer">
-          <span class="cover-finder__footer-hint">
-            <i class="fas fa-info-circle me-1"></i>
-            点击封面即可应用
-          </span>
         </div>
       </div>
-    </div>
-  </Transition>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
 import { searchAllCovers } from '../utils/coverSearch.js'
 import { apiPostJson } from '../utils/apiFetch.js'
+import { getFocusableElements } from '../utils/focus.js'
 
-const PLACEHOLDER_IMAGE =
+const createPlaceholderImage = (label) =>
   'data:image/svg+xml,' +
   encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
     <rect fill="#1a1a2e" width="200" height="300"/>
-    <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">无法加载</text>
+    <text x="100" y="150" text-anchor="middle" fill="#4a4a6a" font-size="14">${label}</text>
   </svg>
 `)
+
+const COVER_FINDER_TABS = [
+  { key: 'all', icon: 'fas fa-globe', labelKey: 'apps.cover_search_tab_all' },
+  { key: 'igdb', icon: 'fas fa-gamepad', labelKey: 'apps.cover_search_tab_igdb' },
+  { key: 'steam', icon: 'fab fa-steam', labelKey: 'apps.cover_search_tab_steam' },
+]
 
 export default {
   name: 'CoverFinder',
@@ -138,14 +177,13 @@ export default {
       steamCovers: [],
       localSearchTerm: '',
       searchAbortController: null,
-      tabs: [
-        { key: 'all', icon: 'fas fa-globe', label: '全部' },
-        { key: 'igdb', icon: 'fas fa-gamepad', label: 'IGDB' },
-        { key: 'steam', icon: 'fab fa-steam', label: 'Steam' },
-      ],
+      previousFocus: null,
     }
   },
   computed: {
+    tabs() {
+      return COVER_FINDER_TABS
+    },
     allCovers() {
       const result = []
       const maxLen = Math.max(this.igdbCovers.length, this.steamCovers.length)
@@ -170,6 +208,7 @@ export default {
         this.onOpen()
       } else {
         this.abortPendingSearch()
+        this.$nextTick(() => this.restoreFocus())
       }
       document.body.style.overflow = newVal ? 'hidden' : ''
     },
@@ -177,6 +216,7 @@ export default {
   beforeUnmount() {
     document.body.style.overflow = ''
     this.abortPendingSearch()
+    this.restoreFocus()
   },
   methods: {
     getTabCount(key) {
@@ -189,6 +229,7 @@ export default {
     },
 
     onOpen() {
+      this.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
       this.localSearchTerm = this.searchTerm
       this.$nextTick(() => {
         this.$refs.searchInput?.focus()
@@ -200,10 +241,10 @@ export default {
     },
 
     abortPendingSearch() {
-      if (this.searchAbortController) {
-        this.searchAbortController.abort()
-        this.searchAbortController = null
-      }
+      const controller = this.searchAbortController
+      this.searchAbortController = null
+      controller?.abort()
+      this.loading = false
     },
 
     clearSearch() {
@@ -214,35 +255,72 @@ export default {
       this.$refs.searchInput?.focus()
     },
 
+    handleTabKeydown(event) {
+      const focusable = getFocusableElements(this.$refs.panel)
+      if (!focusable.length) {
+        event.preventDefault()
+        this.$refs.panel?.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const panel = this.$refs.panel
+      if (event.shiftKey && (document.activeElement === first || !panel?.contains(document.activeElement))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (document.activeElement === last || !panel?.contains(document.activeElement))) {
+        event.preventDefault()
+        first.focus()
+      }
+    },
+
+    restoreFocus() {
+      if (this.previousFocus instanceof HTMLElement) {
+        this.previousFocus.focus()
+        this.previousFocus = null
+      }
+    },
+
     async searchCovers() {
       if (!this.localSearchTerm) {
+        this.abortPendingSearch()
         this.igdbCovers = []
         this.steamCovers = []
         return
       }
 
       this.abortPendingSearch()
-      this.searchAbortController = new AbortController()
+      const currentController = new AbortController()
+      this.searchAbortController = currentController
 
       this.loading = true
       this.igdbCovers = []
       this.steamCovers = []
 
       try {
-        const results = await searchAllCovers(this.localSearchTerm, this.searchAbortController.signal)
+        const results = await searchAllCovers(this.localSearchTerm, currentController.signal)
+        if (this.searchAbortController !== currentController) return
         this.igdbCovers = results.igdb
         this.steamCovers = results.steam
       } catch (error) {
-        if (error.name === 'AbortError') return
-        console.error('搜索封面失败:', error)
-        this.$emit('error', '搜索封面失败，请稍后重试')
+        if (error.name === 'AbortError' || this.searchAbortController !== currentController) return
+        console.error('Cover search failed:', error)
+        this.$emit('error', this.$t('apps.cover_search_failed'))
       } finally {
-        this.loading = false
+        if (this.searchAbortController === currentController) {
+          this.searchAbortController = null
+          this.loading = false
+        }
       }
     },
 
     handleImageError(event) {
-      event.target.src = PLACEHOLDER_IMAGE
+      const image = event.target
+      if (image.dataset.coverFallbackApplied === 'true') return
+
+      image.dataset.coverFallbackApplied = 'true'
+      image.src = createPlaceholderImage(this.$t('apps.cover_image_unavailable'))
     },
 
     async selectCover(cover) {
@@ -253,8 +331,8 @@ export default {
         this.$emit('cover-selected', { path, source: cover.source })
         this.closeFinder()
       } catch (error) {
-        console.error('使用封面失败:', error)
-        this.$emit('error', '使用封面失败，请稍后重试')
+        console.error('Failed to apply cover:', error)
+        this.$emit('error', this.$t('apps.cover_apply_failed'))
       } finally {
         this.$emit('loading', false)
       }
@@ -268,192 +346,161 @@ export default {
 </script>
 
 <style scoped lang="less">
-@purple-dark: #7c3aed;
-@purple-dark-deep: #5b21b6;
-@purple-light: #6366f1;
-@purple-light-deep: #4f46e5;
-
 .cover-finder-overlay {
   position: fixed;
   inset: 0;
+  z-index: 1070;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1050;
   padding: 2rem;
+  background: var(--ui-overlay);
+  backdrop-filter: blur(6px);
 }
 
 .cover-finder-panel {
-  background: linear-gradient(145deg, #1e1e2e, #16161e);
-  border-radius: 16px;
-  width: 100%;
-  max-width: 900px;
-  max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  width: min(900px, 100%);
+  max-height: min(85vh, 760px);
   overflow: hidden;
-
-  [data-bs-theme='light'] & {
-    background: linear-gradient(145deg, #f8faff, #f0f4ff);
-    box-shadow: 0 25px 50px -12px rgba(99, 102, 241, 0.15);
-  }
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-lg);
 }
 
 .cover-finder__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-
-  [data-bs-theme='light'] & {
-    border-bottom-color: rgba(99, 102, 241, 0.1);
-  }
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .cover-finder__title {
   display: flex;
   align-items: center;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #e0e0e0;
+  min-width: 0;
+  color: var(--ui-text-primary);
+  font-size: 1.05rem;
+  font-weight: 650;
 
   i {
-    color: @purple-dark;
+    color: var(--ui-accent);
   }
+}
 
-  [data-bs-theme='light'] & {
-    color: #1e293b;
+.cover-finder__close,
+.cover-finder__search-clear,
+.cover-finder__search-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--ui-radius-sm);
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
 
-    i {
-      color: @purple-light;
-    }
+  &:focus-visible {
+    outline: 3px solid var(--ui-accent-soft);
+    outline-offset: 2px;
   }
 }
 
 .cover-finder__close {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: none;
-  background: rgba(255, 255, 255, 0.05);
-  color: #888;
-  cursor: pointer;
-  transition: all 0.2s;
+  color: var(--ui-text-secondary);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
 
   &:hover {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-  }
-
-  [data-bs-theme='light'] & {
-    background: rgba(99, 102, 241, 0.08);
-    color: #64748b;
-
-    &:hover {
-      background: rgba(239, 68, 68, 0.15);
-    }
+    color: var(--ui-danger-text);
+    background: var(--ui-danger-soft);
+    border-color: var(--ui-danger-border);
   }
 }
 
 .cover-finder__search {
-  padding: 1rem 1.5rem;
+  padding: 1rem 1.25rem 0.85rem;
 
   &-wrapper {
     display: flex;
     align-items: center;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 0 0.5rem;
+    min-width: 0;
+    padding: 0 0.45rem;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-md);
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      background-color 0.18s ease;
 
     &:focus-within {
-      border-color: rgba(124, 58, 237, 0.5);
-    }
-
-    [data-bs-theme='light'] & {
-      background: #fff;
-      border-color: rgba(99, 102, 241, 0.2);
-
-      &:focus-within {
-        border-color: rgba(99, 102, 241, 0.5);
-        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-      }
+      background: var(--ui-surface-hover);
+      border-color: var(--ui-accent);
+      box-shadow: 0 0 0 3px var(--ui-accent-soft);
     }
   }
 
   &-icon {
-    color: #666;
-    padding: 0 0.75rem;
-
-    [data-bs-theme='light'] & {
-      color: #94a3b8;
-    }
+    padding: 0 0.7rem;
+    color: var(--ui-text-muted);
   }
 
   &-input {
     flex: 1;
+    min-width: 0;
+    padding: 0.8rem 0.25rem;
+    color: var(--ui-text-primary);
+    font: inherit;
     background: transparent;
-    border: none;
-    outline: none;
-    color: #e0e0e0;
-    padding: 0.85rem 0.25rem;
+    border: 0;
+    outline: 0;
 
     &::placeholder {
-      color: #555;
+      color: var(--ui-text-muted);
     }
-
-    [data-bs-theme='light'] & {
-      color: #1e293b;
-
-      &::placeholder {
-        color: #94a3b8;
-      }
-    }
-  }
-
-  &-clear,
-  &-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
   }
 
   &-clear {
+    color: var(--ui-text-muted);
     background: transparent;
-    color: #666;
+    border: 0;
 
     &:hover {
-      color: #aaa;
-    }
-
-    [data-bs-theme='light'] & {
-      color: #94a3b8;
-
-      &:hover {
-        color: #64748b;
-      }
+      color: var(--ui-text-primary);
+      background: var(--ui-surface-hover);
     }
   }
 
   &-btn {
-    background: linear-gradient(135deg, @purple-dark, @purple-dark-deep);
-    color: white;
+    color: var(--ui-accent-contrast);
+    background: var(--ui-accent);
+    border: 1px solid var(--ui-accent);
 
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+    &:hover:not(:disabled) {
+      transform: translateY(-1px);
     }
 
-    [data-bs-theme='light'] & {
-      background: linear-gradient(135deg, @purple-light, @purple-light-deep);
+    &:active:not(:disabled) {
+      transform: scale(0.96);
+    }
+
+    &:disabled {
+      color: var(--ui-text-muted);
+      cursor: not-allowed;
+      background: var(--ui-surface);
+      border-color: var(--ui-border);
     }
   }
 }
@@ -461,71 +508,75 @@ export default {
 .cover-finder__tabs {
   display: flex;
   gap: 0.5rem;
-  padding: 0 1.5rem 1rem;
+  padding: 0 1.25rem 1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .cover-finder__tab {
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1.2rem;
-  border-radius: 10px;
-  border: none;
-  background: rgba(255, 255, 255, 0.03);
-  color: #888;
+  gap: 0.45rem;
+  min-height: 38px;
+  padding: 0.5rem 0.9rem;
+  color: var(--ui-text-secondary);
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.2s;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--ui-text-primary);
+    background: var(--ui-surface-hover);
+    border-color: var(--ui-border-strong);
+  }
+
+  &:focus-visible {
+    outline: 3px solid var(--ui-accent-soft);
+    outline-offset: 2px;
   }
 
   &--active {
-    background: linear-gradient(135deg, @purple-dark, @purple-dark-deep);
-    color: white;
-  }
-
-  [data-bs-theme='light'] & {
-    background: rgba(99, 102, 241, 0.06);
-    color: #64748b;
-
-    &:hover {
-      background: rgba(99, 102, 241, 0.1);
-    }
-
-    &--active {
-      background: linear-gradient(135deg, @purple-light, @purple-light-deep);
-      color: white;
-    }
+    color: var(--ui-accent-contrast);
+    background: var(--ui-accent);
+    border-color: var(--ui-accent);
   }
 
   &-badge {
-    background: rgba(255, 255, 255, 0.2);
-    padding: 0.1rem 0.5rem;
-    border-radius: 10px;
-    font-size: 0.75rem;
+    min-width: 1.25rem;
+    padding: 0.08rem 0.4rem;
+    color: inherit;
+    font-size: 0.72rem;
+    text-align: center;
+    background: var(--ui-accent-soft);
+    border-radius: 999px;
   }
 }
 
 .cover-finder__content {
   flex: 1;
-  overflow-y: auto;
-  padding: 1.5rem;
   min-height: 300px;
+  padding: 1.25rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--ui-border);
 
   &::-webkit-scrollbar {
     width: 8px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-  }
-
-  [data-bs-theme='light'] & {
-    &::-webkit-scrollbar-thumb {
-      background: rgba(99, 102, 241, 0.2);
-    }
+    background: var(--ui-border-strong);
+    border-radius: 999px;
   }
 }
 
@@ -539,24 +590,15 @@ export default {
   &-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid rgba(124, 58, 237, 0.2);
-    border-top-color: @purple-dark;
+    border: 3px solid var(--ui-accent-soft);
+    border-top-color: var(--ui-accent);
     border-radius: 50%;
     animation: cover-finder-spin 1s linear infinite;
-
-    [data-bs-theme='light'] & {
-      border-color: rgba(99, 102, 241, 0.2);
-      border-top-color: @purple-light;
-    }
   }
 
   &-text {
-    margin-top: 1rem;
-    color: #888;
-
-    [data-bs-theme='light'] & {
-      color: #64748b;
-    }
+    margin: 1rem 0 0;
+    color: var(--ui-text-secondary);
   }
 }
 
@@ -569,68 +611,80 @@ export default {
 .cover-finder__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
 .cover-finder__card {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  text-align: left;
   cursor: pointer;
-  transition: transform 0.2s;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 
   &:hover {
-    transform: translateY(-4px);
+    border-color: var(--ui-border-strong);
+    box-shadow: var(--ui-shadow-sm);
+    transform: translateY(-2px);
 
     .cover-finder__card-overlay {
       opacity: 1;
     }
   }
 
+  &:focus-visible {
+    outline: 3px solid var(--ui-accent-soft);
+    outline-offset: 2px;
+  }
+
   &-image {
     position: relative;
-    aspect-ratio: 2/3;
-    border-radius: 10px;
+    aspect-ratio: 2 / 3;
     overflow: hidden;
-    background: #0d0d14;
+    background: var(--ui-surface-hover);
+    border-bottom: 1px solid var(--ui-border);
 
     img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
-
-    [data-bs-theme='light'] & {
-      background: #e8efff;
-    }
   }
 
   &-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(124, 58, 237, 0.85);
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
-    color: white;
+    color: var(--ui-accent-contrast);
     font-size: 2rem;
-
-    [data-bs-theme='light'] & {
-      background: rgba(99, 102, 241, 0.85);
-    }
+    background: rgba(var(--ui-accent-rgb), 0.82);
+    opacity: 0;
+    transition: opacity 0.18s ease;
   }
 
   &-badge {
     position: absolute;
     top: 8px;
     right: 8px;
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.7rem;
-    color: white;
+    width: 26px;
+    height: 26px;
+    color: #fff;
+    font-size: 0.72rem;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 7px;
+    box-shadow: var(--ui-shadow-sm);
 
     &--steam {
       background: #1b2838;
@@ -642,20 +696,17 @@ export default {
   }
 
   &-info {
-    padding: 0.5rem 0;
+    padding: 0.65rem 0.75rem;
   }
 
   &-name {
-    font-size: 0.8rem;
-    color: #d0d0d0;
     margin: 0;
     overflow: hidden;
+    color: var(--ui-text-primary);
+    font-size: 0.82rem;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
-
-    [data-bs-theme='light'] & {
-      color: #475569;
-    }
   }
 }
 
@@ -667,79 +718,51 @@ export default {
   text-align: center;
 
   h4 {
-    color: #aaa;
     margin: 0 0 0.5rem;
+    color: var(--ui-text-primary);
   }
 
   p {
-    color: #666;
     margin: 0;
-  }
-
-  [data-bs-theme='light'] & {
-    h4 {
-      color: #475569;
-    }
-
-    p {
-      color: #94a3b8;
-    }
+    color: var(--ui-text-secondary);
   }
 
   &-icon {
-    width: 80px;
-    height: 80px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.03);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 1.5rem;
+    width: 72px;
+    height: 72px;
+    margin-bottom: 1.25rem;
+    color: var(--ui-accent);
+    background: var(--ui-accent-soft);
+    border: 1px solid var(--ui-border);
+    border-radius: 50%;
 
     i {
-      font-size: 2rem;
-      color: #4a4a6a;
-    }
-
-    [data-bs-theme='light'] & {
-      background: rgba(99, 102, 241, 0.08);
-
-      i {
-        color: #94a3b8;
-      }
+      font-size: 1.8rem;
     }
   }
 }
 
 .cover-finder__footer {
-  padding: 0.75rem 1.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-
-  [data-bs-theme='light'] & {
-    border-top-color: rgba(99, 102, 241, 0.1);
-  }
+  padding: 0.75rem 1.25rem;
+  background: var(--ui-surface);
+  border-top: 1px solid var(--ui-border);
 
   &-hint {
+    color: var(--ui-text-secondary);
     font-size: 0.8rem;
-    color: #666;
 
     i {
-      color: @purple-dark;
-    }
-
-    [data-bs-theme='light'] & {
-      color: #64748b;
-
-      i {
-        color: @purple-light;
-      }
+      color: var(--ui-accent);
     }
   }
 }
 
 .finder-fade-enter-active,
 .finder-fade-leave-active {
-  transition: opacity 0.3s;
+  transition: opacity 0.2s ease;
 }
 
 .finder-fade-enter-from,
@@ -749,12 +772,57 @@ export default {
 
 @media (max-width: 768px) {
   .cover-finder-overlay {
+    align-items: stretch;
+    padding: 0.5rem;
+  }
+
+  .cover-finder-panel {
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .cover-finder__header {
+    padding: 0.9rem 1rem;
+  }
+
+  .cover-finder__search {
+    padding: 0.8rem 1rem 0.7rem;
+  }
+
+  .cover-finder__tabs {
+    padding: 0 1rem 0.8rem;
+  }
+
+  .cover-finder__content {
+    min-height: 0;
     padding: 1rem;
   }
 
   .cover-finder__grid {
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .cover-finder__empty {
+    padding: 2.5rem 1rem;
+  }
+
+  .cover-finder__footer {
+    padding: 0.7rem 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cover-finder__card,
+  .cover-finder__card-overlay,
+  .cover-finder__search-btn,
+  .cover-finder__loading-spinner,
+  .finder-fade-enter-active,
+  .finder-fade-leave-active {
+    transition: none;
+  }
+
+  .cover-finder__loading-spinner {
+    animation: none;
   }
 }
 </style>

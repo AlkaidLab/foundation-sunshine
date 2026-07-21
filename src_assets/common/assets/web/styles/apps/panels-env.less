@@ -1,124 +1,99 @@
-// GLASS PANEL & TABLE
+// ENVIRONMENT VARIABLES MODAL
 // ============================================================================
 
-.glass-panel {
-  background: rgba(255, 255, 255, 0.1) !important;
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: var(--border-radius-md) !important;
-  backdrop-filter: blur(10px) !important;
-  color: #fff !important;
-}
-
-.table-glass {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: var(--border-radius-md);
-  overflow: hidden;
-  .glass-effect();
-
-  th {
-    background: rgba(255, 255, 255, 0.2);
-    color: #fff;
-    font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  }
-
-  td {
-    color: #fff;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-}
-
-// ============================================================================
-// CODE & ENV STYLES
-// ============================================================================
 .env-vars-modal {
   .env-vars-table {
     margin-top: 1rem;
+    overflow: hidden;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-md);
+
+    .table-responsive {
+      margin: 0;
+    }
 
     .table {
-      color: var(--modal-text-color, #fff);
-      border-color: var(--modal-border-color, rgba(255, 255, 255, 0.15));
+      --bs-table-bg: transparent;
+      --bs-table-color: var(--ui-text-primary);
+      --bs-table-border-color: var(--ui-border);
+      --bs-table-hover-bg: var(--ui-surface-hover);
+      --bs-table-hover-color: var(--ui-text-primary);
+
+      min-width: 560px;
       margin-bottom: 0;
+      color: var(--ui-text-primary);
+      border-color: var(--ui-border);
 
       th {
-        border-top: none;
-        border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
-        font-weight: 600;
+        padding: 0.9rem 0.8rem;
+        color: var(--ui-text-primary);
         font-size: 0.875rem;
-        padding: 1rem 0.75rem;
-        background: var(--glass-medium, rgba(255, 255, 255, 0.1));
-        color: var(--modal-text-color, #fff);
-      }
-
-      thead th {
-        &:first-child {
-          border-radius: 12px 0 0 0;
-        }
-
-        &:last-child {
-          border-radius: 0 12px 0 0;
-        }
-      }
-
-      tr:last-child td {
-        border-bottom: none;
+        font-weight: 650;
+        background: var(--ui-surface-strong);
+        border-top: 0;
+        border-bottom: 1px solid var(--ui-border);
       }
 
       td {
+        padding: 0.75rem 0.8rem;
+        color: var(--ui-text-primary);
         vertical-align: middle;
-        border-color: var(--modal-border-color, rgba(255, 255, 255, 0.1));
-        padding: 0.75rem;
-        background: var(--glass-light, rgba(255, 255, 255, 0.05));
-        transition: background 0.3s ease;
+        background: transparent;
+        border-color: var(--ui-border);
+        transition: background-color 0.18s ease;
       }
 
-      tbody tr {
-        &:hover td {
-          background: var(--glass-medium, rgba(255, 255, 255, 0.1));
-        }
+      tbody tr:hover td {
+        background: var(--ui-surface-hover);
+      }
 
-        &:last-child td {
-          &:first-child {
-            border-radius: 0 0 0 12px;
-          }
-
-          &:last-child {
-            border-radius: 0 0 12px 0;
-          }
-        }
+      tbody tr:last-child td {
+        border-bottom: 0;
       }
     }
   }
 
   .env-var-name {
-    background: rgba(0, 0, 0, 0.3) !important;
-    color: var(--warning-color) !important;
-    padding: 4px 8px !important;
-    border-radius: 6px !important;
-    font-family: 'Courier New', monospace !important;
-    font-weight: 600;
-
-    [data-bs-theme='light'] & {
-      background: #e0e7ff !important;
-      color: #6366f1 !important;
-      border: 1px solid rgba(99, 102, 241, 0.3) !important;
-    }
+    display: inline-block;
+    padding: 0.28rem 0.5rem !important;
+    color: var(--ui-accent-text) !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 0.8rem;
+    font-weight: 650;
+    white-space: nowrap;
+    background: var(--ui-accent-soft) !important;
+    border: 1px solid var(--ui-border-strong) !important;
+    border-radius: var(--ui-radius-sm) !important;
   }
 
   .code-example {
-    margin-top: 1rem;
-    background: rgba(0, 0, 0, 0.3) !important;
-    color: #fff !important;
-    padding: 15px !important;
-    border-radius: var(--border-radius-md) !important;
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    font-family: 'Courier New', monospace !important;
+    display: block;
+    max-width: 100%;
+    margin: 0.65rem 0 0;
+    padding: 0.9rem 1rem !important;
+    overflow-x: auto;
+    color: var(--ui-text-primary) !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
     font-size: var(--font-size-sm) !important;
+    line-height: 1.55;
+    white-space: pre;
+    background: var(--ui-surface) !important;
+    border: 1px solid var(--ui-border) !important;
+    border-radius: var(--ui-radius-md) !important;
+    box-shadow: var(--ui-shadow-sm);
+  }
+}
 
-    [data-bs-theme='light'] & {
-      background: #f5f8ff !important;
-      color: #475569 !important;
-      border: 1px solid rgba(99, 102, 241, 0.2) !important;
+@media (max-width: 768px) {
+  .env-vars-modal {
+    .env-vars-table .table {
+      min-width: 520px;
+    }
+
+    .code-example {
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
     }
   }
 }

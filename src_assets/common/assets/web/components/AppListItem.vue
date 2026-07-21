@@ -41,10 +41,18 @@
             </span>
           </div>
         </div>
-        <p class="app-command-list" v-if="app.cmd" :title="app.cmd" @click="copyToClipboard(app.cmd, app.name, $event)">
+        <button
+          v-if="app.cmd"
+          type="button"
+          class="app-command-list"
+          :title="`${$t('_common.copy')}: ${app.name}`"
+          :aria-label="`${$t('_common.copy')}: ${app.name}`"
+          @click="copyToClipboard(app.cmd, app.name, $event)"
+        >
           <i class="fas fa-terminal me-2"></i>
           <span>{{ app.cmd }}</span>
-        </p>
+          <i class="fas fa-copy app-command-copy-icon" aria-hidden="true"></i>
+        </button>
         <p v-if="app['working-dir']" class="app-working-dir-list">
           <i class="fas fa-folder me-2"></i>
           <span>{{ app['working-dir'] }}</span>

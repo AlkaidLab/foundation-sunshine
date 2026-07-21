@@ -170,22 +170,24 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
 
 <template>
   <div class="config-page">
-    <!-- FEC Percentage -->
-    <div class="mb-3">
-      <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
-      <input type="text" class="form-control" id="fec_percentage" placeholder="20" v-model="config.fec_percentage" />
-      <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
-    </div>
+    <div class="settings-grid">
+      <!-- FEC Percentage -->
+      <div class="settings-field">
+        <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
+        <input type="text" class="form-control" id="fec_percentage" placeholder="20" v-model="config.fec_percentage" />
+        <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
+      </div>
 
-    <!-- Min Threads -->
-    <div class="mb-3">
-      <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
-      <input type="number" class="form-control" id="min_threads" placeholder="2" min="1" v-model="config.min_threads" />
-      <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
+      <!-- Min Threads -->
+      <div class="settings-field">
+        <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
+        <input type="number" class="form-control" id="min_threads" placeholder="2" min="1" v-model="config.min_threads" />
+        <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
+      </div>
     </div>
 
     <!-- Codec Strategy (整合 HEVC + AV1) -->
-    <div class="mb-3">
+    <div class="settings-panel settings-panel--accent mt-3">
       <label for="codec_strategy" class="form-label">{{ $t('config.codec_strategy') }}</label>
       <select id="codec_strategy" class="form-select" v-model="codecStrategy">
         <option value="auto">{{ $t('config.codec_strategy_auto') }}</option>
@@ -216,7 +218,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
       <div class="form-text">{{ $t('config.codec_strategy_desc') }}</div>
 
       <!-- 偏离推荐值时给出温和提示 -->
-      <div class="alert alert-warning py-2 mt-2 mb-0" v-if="codecStrategy !== 'auto'">
+      <div class="strategy-warning mt-2" v-if="codecStrategy !== 'auto'">
         <small>{{ $t('config.codec_strategy_non_default_warning') }}</small>
       </div>
 
@@ -224,7 +226,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
       <div class="mt-2">
         <button
           type="button"
-          class="btn btn-sm btn-outline-secondary"
+          class="settings-disclosure"
           :aria-expanded="showCodecAdvanced"
           aria-controls="codec-advanced-panel"
           @click="showCodecAdvanced = !showCodecAdvanced"
@@ -233,7 +235,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
         </button>
       </div>
 
-      <div v-if="showCodecAdvanced" id="codec-advanced-panel" class="mt-3 ps-3 border-start">
+      <div v-if="showCodecAdvanced" id="codec-advanced-panel" class="settings-subpanel mt-3">
         <div class="mb-3">
           <label for="hevc_mode" class="form-label">{{ $t('config.hevc_mode') }}</label>
           <select id="hevc_mode" class="form-select" v-model="config.hevc_mode">
@@ -259,9 +261,9 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
     </div>
 
     <!-- Capture -->
-    <div class="mb-3" v-if="platform !== 'macos'">
+    <div class="settings-panel mt-3" v-if="platform !== 'macos'">
       <label for="capture" class="form-label">{{ $t('config.capture') }}</label>
-      <div class="d-flex align-items-center gap-2">
+      <div class="capture-control-row">
         <select id="capture" class="form-select flex-grow-1" v-model="config.capture">
           <option value="">{{ $t('_common.autodetect') }}</option>
           <PlatformLayout :platform="platform">
@@ -282,8 +284,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
         <button
           v-if="isWGCSelected && isTauri"
           type="button"
-          :class="['btn', isUserMode ? 'btn-success' : 'btn-warning']"
-          style="white-space: nowrap"
+          :class="['mode-switch-button', isUserMode ? 'is-success' : 'is-warning']"
           @click="toggleSunshineMode"
           :disabled="isCheckingMode"
           :title="
@@ -305,39 +306,41 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
       </div>
       <div class="form-text">
         {{ $t('config.capture_desc') }}
-        <span v-if="isWGCSelected && isTauri" :class="['d-block mt-1', isUserMode ? 'text-success' : 'text-warning']">
+        <span v-if="isWGCSelected && isTauri" :class="['status-note mt-2', isUserMode ? 'is-success' : 'is-warning']">
           <i :class="['me-1', isUserMode ? 'fas fa-check-circle' : 'fas fa-exclamation-triangle']"></i>
           <span v-if="isCheckingMode">{{ $t('config.wgc_checking_running_mode') }}</span>
           <span v-else-if="isUserMode">{{ $t('config.wgc_user_mode_available') }}</span>
           <span v-else>{{ $t('config.wgc_service_mode_warning') }}</span>
         </span>
-        <span v-if="isAMDCaptureSelected" class="d-block mt-1 text-warning">
+        <span v-if="isAMDCaptureSelected" class="status-note is-warning mt-2">
           <i class="fas fa-exclamation-triangle me-1"></i>
           {{ $t('config.amd_capture_no_virtual_display') }}
         </span>
-        <span v-if="isVDDCaptureSelected" class="d-block mt-1 text-info">
+        <span v-if="isVDDCaptureSelected" class="status-note is-info mt-2">
           <i class="fas fa-info-circle me-1"></i>
           {{ $t('config.capture_vdd_direct_desc') }}
         </span>
       </div>
-      <div class="form-check mt-2" v-if="isVDDCaptureSelected">
-        <input
-          class="form-check-input"
-          type="checkbox"
-          id="vdd_borrowed_texture"
-          v-model="config.vdd_borrowed_texture"
-          true-value="enabled"
-          false-value="disabled"
-        />
-        <label class="form-check-label" for="vdd_borrowed_texture">
-          {{ $t('config.vdd_borrowed_texture') }}
-        </label>
+      <div class="settings-subpanel mt-3" v-if="isVDDCaptureSelected">
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            id="vdd_borrowed_texture"
+            v-model="config.vdd_borrowed_texture"
+            true-value="enabled"
+            false-value="disabled"
+          />
+          <label class="form-check-label" for="vdd_borrowed_texture">
+            {{ $t('config.vdd_borrowed_texture') }}
+          </label>
+        </div>
         <div class="form-text">{{ $t('config.vdd_borrowed_texture_desc') }}</div>
       </div>
     </div>
 
     <!-- Encoder -->
-    <div class="mb-3">
+    <div class="settings-field mt-3">
       <label for="encoder" class="form-label">{{ $t('config.encoder') }}</label>
       <select id="encoder" class="form-select" v-model="config.encoder">
         <option value="">{{ $t('_common.autodetect') }}</option>
@@ -362,4 +365,109 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.strategy-warning,
+.status-note {
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 34%, transparent);
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--ui-warning) 11%, transparent);
+  color: var(--ui-warning-text);
+}
+
+.strategy-warning {
+  padding: 0.65rem 0.75rem;
+}
+
+.settings-disclosure {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-accent);
+  font-size: 0.84rem;
+  font-weight: 600;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.settings-disclosure:hover,
+.settings-disclosure:focus-visible {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+}
+
+.capture-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mode-switch-button {
+  flex: 0 0 auto;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.8rem;
+  white-space: nowrap;
+  border: 1px solid;
+  border-radius: var(--ui-radius-sm);
+  font-weight: 600;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mode-switch-button.is-success {
+  border-color: color-mix(in srgb, var(--ui-success) 42%, transparent);
+  background: color-mix(in srgb, var(--ui-success) 14%, transparent);
+  color: var(--ui-success-text);
+}
+
+.mode-switch-button.is-warning {
+  border-color: color-mix(in srgb, var(--ui-warning) 42%, transparent);
+  background: color-mix(in srgb, var(--ui-warning) 14%, transparent);
+  color: var(--ui-warning-text);
+}
+
+.mode-switch-button:hover:not(:disabled),
+.mode-switch-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+}
+
+.status-note {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.55rem 0.65rem;
+}
+
+.status-note.is-success {
+  border-color: color-mix(in srgb, var(--ui-success) 34%, transparent);
+  background: color-mix(in srgb, var(--ui-success) 11%, transparent);
+  color: var(--ui-success-text);
+}
+
+.status-note.is-info {
+  border-color: color-mix(in srgb, var(--ui-accent) 30%, transparent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.status-note.is-warning {
+  border-color: color-mix(in srgb, var(--ui-warning) 34%, transparent);
+  background: color-mix(in srgb, var(--ui-warning) 11%, transparent);
+  color: var(--ui-warning-text);
+}
+
+@media (max-width: 575.98px) {
+  .capture-control-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mode-switch-button,
+  .settings-disclosure {
+    justify-content: center;
+    width: 100%;
+  }
+}
+</style>

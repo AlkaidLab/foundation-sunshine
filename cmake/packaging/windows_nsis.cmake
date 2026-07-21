@@ -109,7 +109,7 @@ set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bm
 # set(CPACK_NSIS_MUI_HEADERIMAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")
 
 # Custom branding
-set(CPACK_NSIS_BRANDING_TEXT "Sunshine Foundation Game Streaming Server v${CPACK_PACKAGE_VERSION}")
+set(CPACK_NSIS_BRANDING_TEXT "Foundation Sunshine Game Streaming Server v${CPACK_PACKAGE_VERSION}")
 set(CPACK_NSIS_BRANDING_TEXT_TRIM_POSITION "LEFT")
 
 # ==============================================================================
@@ -117,12 +117,12 @@ set(CPACK_NSIS_BRANDING_TEXT_TRIM_POSITION "LEFT")
 # ==============================================================================
 
 # Custom welcome page text
-set(CPACK_NSIS_WELCOME_TITLE "Welcome to Sunshine Foundation Game Streaming Server Install Wizard")
+set(CPACK_NSIS_WELCOME_TITLE "Welcome to Foundation Sunshine Game Streaming Server Install Wizard")
 set(CPACK_NSIS_WELCOME_TITLE_3LINES "ON")
 
 # Custom finish page configuration
 set(CPACK_NSIS_FINISH_TITLE "安装完成！")
-set(CPACK_NSIS_FINISH_TEXT "Sunshine Foundation Game Streaming Server 已成功安装到您的系统中。\\r\\n\\r\\n点击 '完成' 开始使用这个强大的游戏流媒体服务器。")
+set(CPACK_NSIS_FINISH_TEXT "Foundation Sunshine Game Streaming Server 已成功安装到您的系统中。\\r\\n\\r\\n点击 '完成' 开始使用这个强大的游戏流媒体服务器。")
 
 # ==============================================================================
 # Installation Progress and User Feedback
@@ -165,7 +165,7 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         Delete '\$INSTDIR\\\\*.old'
         
         ; 显示安装进度信息
-        DetailPrint '🎯 正在配置 Sunshine Foundation Game Streaming Server...'
+        DetailPrint '🎯 正在配置 Foundation Sunshine Game Streaming Server...'
                 
         ; 系统配置
         DetailPrint '🔧 配置系统权限...'
@@ -204,7 +204,7 @@ SET(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
 set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
         "${CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS}
         ; 显示卸载进度信息
-        DetailPrint '正在卸载 Sunshine Foundation Game Streaming Server...'
+        DetailPrint '正在卸载 Foundation Sunshine Game Streaming Server...'
         
         ; 停止运行的程序
         DetailPrint '停止运行的程序...'
@@ -353,5 +353,5 @@ set(CPACK_NSIS_MANIFEST_DPI_AWARE true)
 set(CPACK_NSIS_REQUEST_EXECUTION_LEVEL "admin")
 
 # Custom installer appearance
-set(CPACK_NSIS_DISPLAY_NAME "Sunshine Foundation Game Streaming Server v${CPACK_PACKAGE_VERSION}")
+set(CPACK_NSIS_DISPLAY_NAME "Foundation Sunshine Game Streaming Server v${CPACK_PACKAGE_VERSION}")
 set(CPACK_NSIS_PACKAGE_NAME "Sunshine")

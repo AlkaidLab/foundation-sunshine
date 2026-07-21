@@ -1,5 +1,6 @@
 {
   "_common": {
+    "opens_new_tab": "在新窗口打开",
     "apply": "应用",
     "auto": "自动",
     "autodetect": "自动检测（推荐）",
@@ -33,6 +34,19 @@
     "warning": "警告！"
   },
   "apps": {
+    "cover_search_placeholder": "输入游戏名称搜索...",
+    "cover_image_unavailable": "图片无法加载",
+    "clear_search": "清空搜索",
+    "search_cover": "搜索封面",
+    "cover_search_loading": "正在搜索封面...",
+    "cover_search_empty": "未找到相关封面",
+    "cover_search_empty_desc": "尝试使用不同的关键词搜索",
+    "cover_search_hint": "点击封面即可应用",
+    "cover_search_tab_all": "全部",
+    "cover_search_tab_igdb": "IGDB",
+    "cover_search_tab_steam": "Steam",
+    "cover_search_failed": "搜索封面失败，请稍后重试",
+    "cover_apply_failed": "使用封面失败，请稍后重试",
     "actions": "Clients",
     "add_cmds": "添加命令",
     "add_new": "添加新应用",
@@ -758,7 +772,7 @@
     "window_title_placeholder": "例如：yuanshen"
   },
   "index": {
-    "description": "桑帅 - 杂鱼们一起搞的串流服务",
+    "description": "摇光所至，皆为现场。",
     "download": "下崽",
     "installed_version_not_stable": "你正在用 Sunshine 的测试版呢！可能会遇到各种小问题，记得报告给咱哦～感谢帮忙让 Sunshine 变得更好！",
     "loading_latest": "正在检查最新版本...",
@@ -769,7 +783,7 @@
     "version_dirty": "感谢杂鱼帮忙让 Sunshine 变得更好！",
     "version_latest": "杂鱼用的是最新版的 Sunshine 呢～",
     "view_logs": "查看日志",
-    "welcome": "你好，Sunshine Foundation！"
+    "welcome": "你好，Foundation Sunshine！"
   },
   "navbar": {
     "applications": "应用程序",
@@ -777,6 +791,7 @@
     "home": "首页",
     "password": "更改密码",
     "pin": "PIN 码",
+    "clients": "客户端",
     "theme_auto": "自动操作",
     "theme_dark": "深色",
     "theme_light": "浅色",
@@ -937,7 +952,7 @@
     "unknown_display": "未知显示器",
     "virtual_display": "基地显示器 (ZakoHDR)",
     "virtual_display_desc": "使用Zako Display Adapter进行串流, 使用前请确保已安装杂鱼VDD驱动",
-    "welcome": "欢迎使用 Sunshine Foundation"
+    "welcome": "欢迎使用 Foundation Sunshine"
   },
   "tabs": {
     "advanced": "高级",
@@ -1021,7 +1036,7 @@
     "create_creds_alert": "以下账户信息用于访问 Sunshine Web UI，请妥善保存，设置后将无法再次查看",
     "creds_local_only": "账号密码仅离线存储在本地，不会上传到任何服务器上。",
     "error": "错误！",
-    "greeting": "欢迎使用 Sunshine Foundation！",
+    "greeting": "欢迎使用 Foundation Sunshine！",
     "hide_password": "隐藏密码",
     "login": "登录",
     "network_error": "网络错误，请检查连接",

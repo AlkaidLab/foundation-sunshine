@@ -54,6 +54,3 @@ const config = ref(props.config)
   />
 
 </template>
-
-<style scoped>
-</style>
