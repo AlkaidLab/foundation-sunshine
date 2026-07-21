@@ -153,7 +153,8 @@ namespace display_device {
           0,
           NULL,
           OPEN_EXISTING,
-          FILE_FLAG_OVERLAPPED,  // 使用异步IO
+          // Never let a squatted legacy pipe impersonate the LocalSystem client.
+          FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
           NULL);
 
         if (hPipe != INVALID_HANDLE_VALUE) {
@@ -741,7 +742,8 @@ namespace display_device {
       HANDLE hPipe = CreateFileW(
         kVddPipeName,
         GENERIC_READ | GENERIC_WRITE,
-        0, NULL, OPEN_EXISTING, 0, NULL);
+        0, NULL, OPEN_EXISTING,
+        SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, NULL);
       if (hPipe != INVALID_HANDLE_VALUE) {
         DWORD mode = PIPE_READMODE_MESSAGE;
         SetNamedPipeHandleState(hPipe, &mode, NULL, NULL);
