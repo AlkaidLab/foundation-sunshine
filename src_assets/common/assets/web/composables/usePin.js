@@ -1,4 +1,5 @@
 import { ref, reactive } from 'vue'
+import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
 
 const STATUS_RESET_DELAY = 5000
@@ -251,7 +252,7 @@ export function usePin() {
 
   const loadConfig = async () => {
     try {
-      const data = await apiJson('/api/config')
+      const data = await getBootstrapConfig()
       config.value = data
       pairingDeviceName.value = data.pair_name ?? ''
     } catch (error) {

@@ -129,6 +129,7 @@ import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
 import { trackEvents } from '../config/firebase.js'
+import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiJson } from '../utils/apiFetch.js'
 
 const { t } = useI18n()
@@ -264,7 +265,7 @@ onMounted(async () => {
   trackEvents.pageView('home')
 
   try {
-    const config = await apiJson('/api/config')
+    const config = await getBootstrapConfig()
     hostConfig.value = config
     hostStatus.value = 'ready'
 

@@ -1,4 +1,5 @@
 import {createI18n} from "vue-i18n";
+import { getBootstrapConfig, getBootstrapLocale } from './bootstrapData.js'
 
 // Import only the fallback language files
 import en from '../public/assets/locale/en.json'
@@ -40,15 +41,15 @@ export default async function() {
     // 全都拿不到才走系统语言探测，最后回退 en
     let locale = null;
     try {
-        let config = await (await fetch("/api/config")).json();
+        const config = await getBootstrapConfig();
         locale = config.locale || null;
     } catch (e) {
         console.warn("Failed to get /api/config", e);
     }
     if (!locale) {
         try {
-            let r = await (await fetch("/api/configLocale")).json();
-            locale = r.locale || null;
+            const configLocale = await getBootstrapLocale();
+            locale = configLocale.locale || null;
         } catch (e2) {
             console.error("Failed to get /api/configLocale", e2);
         }

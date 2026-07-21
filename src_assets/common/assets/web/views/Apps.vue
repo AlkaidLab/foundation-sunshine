@@ -611,7 +611,7 @@ import AppCard from '../components/AppCard.vue'
 import AppListItem from '../components/AppListItem.vue'
 import ScanResultModal from '../components/ScanResultModal.vue'
 import { useApps } from '../composables/useApps.js'
-import { initFirebase, trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/firebase.js'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -703,7 +703,6 @@ const initEnvVarsModal = () => {
 }
 
 onMounted(async () => {
-  initFirebase()
   trackEvents.pageView('applications')
   init(t)
   initEnvVarsModal()

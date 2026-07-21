@@ -1,4 +1,5 @@
 import { ref, computed, onUnmounted } from 'vue'
+import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 
 const LOG_REFRESH_INTERVAL = 5000
@@ -199,7 +200,7 @@ export function useTroubleshooting() {
 
   const loadPlatform = async () => {
     try {
-      const data = await apiJson('/api/config')
+      const data = await getBootstrapConfig()
       platform.value = data.platform || ''
     } catch {}
   }
