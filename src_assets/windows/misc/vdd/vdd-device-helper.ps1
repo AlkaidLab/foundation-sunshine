@@ -1,20 +1,21 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Probe', 'Ready', 'Remove', 'CleanupPackages')]
+    [ValidateSet('Install', 'Uninstall')]
     [string] $Action,
 
-    [string] $InfPath,
-    [string] $ExpectedVersion,
-    [string] $NefconPath,
-    [switch] $KeepActivePackage,
+    [ValidateSet('Run', 'ProbeOnly', 'ResolveOnly')]
+    [string] $Mode = 'Run',
 
-    [ValidateRange(1, 120)]
-    [int] $TimeoutSeconds = 10
+    [string] $ScriptDirectory
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $ScriptDirectory) {
+    $ScriptDirectory = $PSScriptRoot
+}
 $hardwareId = 'Root\ZakoVDD'
 $displayClassGuid = '4d36e968-e325-11ce-bfc1-08002be10318'
+$serviceName = 'ZAKO_HDR_FOR_SUNSHINE'
 $deviceEnumPath = 'SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY'
 $deviceClassPath = 'SYSTEM\CurrentControlSet\Control\Class'
 $dnStarted = 0x00000008
@@ -189,8 +190,112 @@ function Get-VddDecision([object[]] $Devices, [string] $BundledVersion) {
     }
 }
 
-function Wait-Until([scriptblock] $Condition) {
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+function Get-VddPaths([string] $Directory) {
+    if (-not $Directory) {
+        throw 'ScriptDirectory is required.'
+    }
+
+    $scripts = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    $root = [IO.Path]::GetFullPath((Join-Path $scripts '..'))
+    $dist = Join-Path $root 'tools\vdd'
+    $nefcon = Join-Path $root 'tools\nefconw.exe'
+    if (-not (Test-Path -LiteralPath $nefcon)) {
+        $nefcon = Join-Path $dist 'nefconw.exe'
+    }
+
+    return [pscustomobject]@{
+        Scripts = $scripts
+        Root = $root
+        DriverRoot = Join-Path $scripts 'driver'
+        Dist = $dist
+        ConfigDir = Join-Path $root 'config'
+        Nefcon = $nefcon
+    }
+}
+
+function Resolve-VddPayload([string] $Directory, [string] $BuildOverride) {
+    $paths = Get-VddPaths $Directory
+    $rawBuild = $BuildOverride
+    if (-not $rawBuild) {
+        $registryView = if ([Environment]::Is64BitOperatingSystem) {
+            [Microsoft.Win32.RegistryView]::Registry64
+        }
+        else {
+            [Microsoft.Win32.RegistryView]::Default
+        }
+        $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            $registryView)
+        $versionKey = $baseKey.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion')
+        try {
+            if ($versionKey) {
+                $rawBuild = [string] $versionKey.GetValue('CurrentBuildNumber', '')
+                if (-not $rawBuild) {
+                    $rawBuild = [string] $versionKey.GetValue('CurrentBuild', '')
+                }
+            }
+        }
+        finally {
+            if ($versionKey) {
+                $versionKey.Dispose()
+            }
+            $baseKey.Dispose()
+        }
+    }
+
+    [int] $buildNumber = 0
+    $hasBuildNumber = [int]::TryParse($rawBuild, [ref] $buildNumber)
+    if (-not $rawBuild) {
+        Write-Warning 'Could not detect Windows build; defaulting to Win10 payload.'
+    }
+    elseif (-not $hasBuildNumber) {
+        Write-Warning "Ignoring non-numeric Windows build '$rawBuild'; defaulting to Win10 payload."
+    }
+
+    $latest = Join-Path $paths.DriverRoot 'latest'
+    $driverDir = Join-Path $paths.DriverRoot 'win10'
+    if (-not (Test-Path -LiteralPath (Join-Path $driverDir 'ZakoVDD.inf'))) {
+        $driverDir = $latest
+    }
+    if ($hasBuildNumber -and $buildNumber -ge 22000 -and
+        (Test-Path -LiteralPath (Join-Path $latest 'ZakoVDD.inf'))) {
+        $driverDir = $latest
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $driverDir 'ZakoVDD.inf'))) {
+        $driverDir = $paths.DriverRoot
+    }
+
+    $configSource = Join-Path $paths.DriverRoot 'vdd_settings.xml'
+    if (Test-Path -LiteralPath (Join-Path $driverDir 'vdd_settings.xml')) {
+        $configSource = Join-Path $driverDir 'vdd_settings.xml'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $driverDir 'ZakoVDD.inf'))) {
+        throw "VDD driver payload not found in $driverDir"
+    }
+    if (-not (Test-Path -LiteralPath $configSource)) {
+        throw "VDD configuration template not found at $configSource"
+    }
+
+    return [pscustomobject]@{
+        Paths = $paths
+        RawBuild = $rawBuild
+        BuildNumber = $(if ($hasBuildNumber) { $buildNumber } else { $null })
+        DriverDir = $driverDir
+        ConfigSource = $configSource
+    }
+}
+
+function Get-VddState([string] $InfPath) {
+    $devices = @(Get-VddDevices)
+    $bundledVersion = Get-BundledVersion $InfPath
+    return [pscustomobject]@{
+        BundledVersion = $bundledVersion
+        Decision = Get-VddDecision $devices $bundledVersion
+    }
+}
+
+function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
     do {
         if (& $Condition) {
             return $true
@@ -200,15 +305,15 @@ function Wait-Until([scriptblock] $Condition) {
     return $false
 }
 
-function Invoke-NefconRemoval {
-    & $NefconPath `
+function Invoke-NefconRemoval([string] $Path) {
+    & $Path `
         --remove-device-node `
         --hardware-id $hardwareId `
         --class-guid $displayClassGuid
     return $LASTEXITCODE
 }
 
-function Remove-AllVddDevices {
+function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = 120) {
     $devices = @(Get-VddDevices)
     if ($devices.Count -eq 0) {
         return
@@ -218,11 +323,11 @@ function Remove-AllVddDevices {
     }
 
     Write-Output "Removing VDD device nodes ($($devices.Count) found)..."
-    [void] (Invoke-NefconRemoval)
+    [void] (Invoke-NefconRemoval $NefconPath)
 
     # Nefcon removes every matching node in one call, but Windows can finish
     # the PnP removal asynchronously after nefcon returns.
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
     do {
         Start-Sleep -Milliseconds 250
         $devices = @(Get-VddDevices)
@@ -283,14 +388,11 @@ function Remove-VddPackages([object[]] $Packages) {
     }
 }
 
-function Cleanup-VddPackages {
+function Cleanup-VddPackages([string] $ExpectedVersion = '') {
     $devices = @(Get-VddDevices)
     $keepInfName = ''
 
-    if ($KeepActivePackage) {
-        if (-not $ExpectedVersion) {
-            throw 'ExpectedVersion is required when keeping the active VDD package.'
-        }
+    if ($ExpectedVersion) {
         if ($devices.Count -ne 1 -or
             $devices[0].Status -ne 'OK' -or
             $devices[0].Version -ne $ExpectedVersion -or
@@ -320,42 +422,204 @@ function Cleanup-VddPackages {
     Write-Output ('VDD_DRIVER_PACKAGE_COUNT=' + $remaining.Count)
 }
 
-function Invoke-VddDeviceHelper {
-    switch ($Action) {
-        'Probe' {
-            $devices = @(Get-VddDevices)
-            $bundledVersion = Get-BundledVersion $InfPath
-            $decision = Get-VddDecision $devices $bundledVersion
-
-            Write-Output 'VDD_PROBE_OK=1'
-            Write-Output ('VDD_DEVICE_COUNT=' + $decision.DeviceCount)
-            Write-Output ('VDD_CLEANUP_REQUIRED=' + $decision.CleanupRequired)
-            Write-Output ('VDD_INSTALL_REQUIRED=' + $decision.InstallRequired)
-            Write-Output ('CURRENT_VDD_VERSION=' + $decision.CurrentVersion)
-            Write-Output ('CURRENT_VDD_STATUS=' + $decision.CurrentStatus)
-            Write-Output ('CURRENT_VDD_INF=' + $decision.CurrentInf)
-            Write-Output ('BUNDLED_VDD_VERSION=' + $bundledVersion)
-        }
-        'Ready' {
-            if (-not (Wait-Until {
-                $devices = @(Get-VddDevices)
-                $devices.Count -eq 1 -and
-                    $devices[0].Status -eq 'OK' -and
-                    $devices[0].Version -eq $ExpectedVersion -and
-                    $devices[0].InfName -match '(?i)^oem\d+\.inf$'
-            })) {
-                throw "VDD did not become ready at version $ExpectedVersion."
+function Stage-VddPayload([object] $Payload) {
+    $destination = $Payload.Paths.Dist
+    if (Test-Path -LiteralPath $destination) {
+        $preservedNefcon = [IO.Path]::GetFullPath($Payload.Paths.Nefcon)
+        foreach ($item in @(Get-ChildItem -LiteralPath $destination -Force)) {
+            if (-not [string]::Equals(
+                $item.FullName,
+                $preservedNefcon,
+                [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force
             }
         }
-        'Remove' {
-            Remove-AllVddDevices
+    }
+    [void] [IO.Directory]::CreateDirectory($destination)
+    foreach ($file in @(Get-ChildItem -LiteralPath $Payload.DriverDir -File)) {
+        Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $destination 'ZakoVDD.inf'))) {
+        throw "Failed to stage the VDD payload in $destination"
+    }
+}
+
+function Remove-VddRegistry([switch] $All) {
+    $subKey = if ($All) { 'SOFTWARE\ZakoTech' } else { 'SOFTWARE\ZakoTech\ZakoDisplayAdapter' }
+    [Microsoft.Win32.Registry]::LocalMachine.DeleteSubKeyTree($subKey, $false)
+}
+
+function Set-VddConfiguration([object] $Payload) {
+    [void] [IO.Directory]::CreateDirectory($Payload.Paths.ConfigDir)
+    $target = Join-Path $Payload.Paths.ConfigDir 'vdd_settings.xml'
+    if (-not (Test-Path -LiteralPath $target)) {
+        Copy-Item -LiteralPath $Payload.ConfigSource -Destination $target
+    }
+    if (-not (Test-Path -LiteralPath $target)) {
+        throw "Failed to create VDD configuration file $target"
+    }
+
+    $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey(
+        'SOFTWARE\ZakoTech\ZakoDisplayAdapter')
+    try {
+        $key.SetValue(
+            'VDDPATH',
+            $Payload.Paths.ConfigDir,
+            [Microsoft.Win32.RegistryValueKind]::String)
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Install-VddDevice([object] $Payload, [string] $ExpectedVersion) {
+    $certificate = Join-Path $Payload.Paths.Dist 'ZakoVDD.cer'
+    $inf = Join-Path $Payload.Paths.Dist 'ZakoVDD.inf'
+    $nefcon = $Payload.Paths.Nefcon
+    foreach ($requiredPath in @($certificate, $inf, $nefcon)) {
+        if (-not (Test-Path -LiteralPath $requiredPath)) {
+            throw "Required VDD installer file is unavailable: $requiredPath"
         }
-        'CleanupPackages' {
+    }
+
+    & (Join-Path $env:SystemRoot 'System32\certutil.exe') -addstore -f root $certificate
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to import the VDD certificate (exit code $LASTEXITCODE)."
+    }
+
+    Write-Output 'Staging VDD driver package...'
+    & (Join-Path $env:SystemRoot 'System32\pnputil.exe') /add-driver $inf
+    $pnputilExitCode = $LASTEXITCODE
+    if ($pnputilExitCode -notin @(0, 3010)) {
+        throw "Failed to stage the VDD driver package (exit code $pnputilExitCode)."
+    }
+    if ($pnputilExitCode -eq 3010) {
+        Write-Output 'VDD driver package staged; Windows reports that a reboot is required.'
+    }
+
+    Write-Output 'Creating VDD adapter...'
+    & $nefcon `
+        --create-device-node `
+        --hardware-id $hardwareId `
+        --service-name $serviceName `
+        --class-name Display `
+        --class-guid $displayClassGuid
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create the VDD device node (exit code $LASTEXITCODE)."
+    }
+
+    & $nefcon --install-driver --inf-path $inf
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to bind the VDD driver (exit code $LASTEXITCODE)."
+    }
+
+    if (-not (Wait-Until {
+        $devices = @(Get-VddDevices)
+        $devices.Count -eq 1 -and
+            $devices[0].Status -eq 'OK' -and
+            $devices[0].Version -eq $ExpectedVersion -and
+            $devices[0].InfName -match '(?i)^oem\d+\.inf$'
+    } 10)) {
+        throw "VDD did not become ready at version $ExpectedVersion."
+    }
+}
+
+function Invoke-VddInstall([string] $Directory, [string] $InstallMode) {
+    $payload = Resolve-VddPayload $Directory $env:VDD_TEST_WIN_BUILD
+    if ($null -ne $payload.BuildNumber) {
+        Write-Output "Detected Windows build: $($payload.BuildNumber)"
+    }
+    elseif ($payload.RawBuild) {
+        Write-Output "Detected Windows build (raw): $($payload.RawBuild)"
+    }
+    Write-Output "Using VDD payload: $($payload.DriverDir)"
+
+    if ($InstallMode -eq 'ResolveOnly') {
+        Write-Output ('RESOLVED_WIN_BUILD=' + $payload.RawBuild)
+        Write-Output ('RESOLVED_WIN_BUILD_NUM=' + $(if ($null -ne $payload.BuildNumber) { $payload.BuildNumber } else { '' }))
+        Write-Output ('RESOLVED_DRIVER_DIR=' + $payload.DriverDir)
+        Write-Output ('RESOLVED_CONFIG_SOURCE=' + $payload.ConfigSource)
+        return
+    }
+
+    $state = Get-VddState (Join-Path $payload.DriverDir 'ZakoVDD.inf')
+    $decision = $state.Decision
+    Write-Output "Existing VDD devices: $($decision.DeviceCount)"
+    if ($decision.CurrentVersion) { Write-Output "Installed VDD version: $($decision.CurrentVersion)" }
+    if ($decision.CurrentStatus) { Write-Output "Installed VDD status: $($decision.CurrentStatus)" }
+    if ($decision.CurrentInf) { Write-Output "Active VDD package: $($decision.CurrentInf)" }
+    Write-Output "Bundled VDD version: $($state.BundledVersion)"
+    if ($decision.InstallRequired) {
+        Write-Output 'VDD state requires reconciliation before installation.'
+    }
+    else {
+        Write-Output 'Exactly one matching VDD device is active; skipping driver reinstall.'
+    }
+    if ($InstallMode -eq 'ProbeOnly') {
+        return
+    }
+
+    Stage-VddPayload $payload
+    if ($decision.CleanupRequired) {
+        Remove-AllVddDevices $payload.Paths.Nefcon 120
+        Remove-VddRegistry
+    }
+
+    if ($decision.InstallRequired) {
+        Write-Output 'Removing superseded VDD driver packages before installation...'
+        Cleanup-VddPackages
+    }
+    else {
+        Write-Output 'Pruning stale VDD driver packages...'
+        Cleanup-VddPackages $state.BundledVersion
+    }
+
+    Set-VddConfiguration $payload
+    if ($decision.InstallRequired) {
+        Install-VddDevice $payload $state.BundledVersion
+    }
+    Write-Output 'VDD installation completed.'
+}
+
+function Invoke-VddUninstall([string] $Directory) {
+    $paths = Get-VddPaths $Directory
+    $failure = ''
+    try {
+        Write-Output 'Removing all VDD device nodes...'
+        Remove-AllVddDevices $paths.Nefcon 120
+    }
+    catch {
+        $failure = $_.Exception.Message
+        Write-Warning 'Failed to remove every VDD device node; driver packages will be preserved.'
+    }
+
+    if (-not $failure) {
+        try {
+            Write-Output 'Removing all VDD driver packages...'
             Cleanup-VddPackages
         }
-        default {
-            throw 'Action is required.'
+        catch {
+            $failure = $_.Exception.Message
+            Write-Warning 'Failed to remove every VDD driver package.'
         }
+    }
+
+    Write-Output 'Cleaning VDD files and registry...'
+    Remove-VddRegistry -All
+    if (Test-Path -LiteralPath $paths.Dist) {
+        Remove-Item -LiteralPath $paths.Dist -Recurse -Force
+    }
+    if ($failure) {
+        throw $failure
+    }
+    Write-Output 'VDD uninstall completed.'
+}
+
+function Invoke-VddDeviceHelper {
+    switch ($Action) {
+        'Install' { Invoke-VddInstall $ScriptDirectory $Mode }
+        'Uninstall' { Invoke-VddUninstall $ScriptDirectory }
+        default { throw 'Action is required.' }
     }
 }
 

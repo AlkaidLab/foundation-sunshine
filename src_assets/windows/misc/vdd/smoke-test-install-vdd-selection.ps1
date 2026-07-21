@@ -1,5 +1,6 @@
 param(
-    [string]$InstallScript = (Join-Path $PSScriptRoot 'install-vdd.bat')
+    [string]$InstallScript = (Join-Path $PSScriptRoot 'install-vdd.bat'),
+    [string]$HelperScript = (Join-Path $PSScriptRoot 'vdd-device-helper.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,6 +98,9 @@ function Get-ResolvedDriverDir {
 if (-not (Test-Path $InstallScript)) {
     throw "install-vdd.bat not found: $InstallScript"
 }
+if (-not (Test-Path $HelperScript)) {
+    throw "vdd-device-helper.ps1 not found: $HelperScript"
+}
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sunshine-vdd-smoke-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -121,7 +125,7 @@ try {
         },
         @{
             Name = 'Future build still selects latest'
-            Build = '26100'
+            Build = '26200'
             ExpectRelative = 'driver\latest'
             IncludeLatest = $true
             IncludeWin10 = $true
@@ -152,6 +156,7 @@ try {
 
         $scriptCopy = Join-Path $sandbox 'install-vdd.bat'
         Copy-Item -Path $InstallScript -Destination $scriptCopy -Force
+        Copy-Item -Path $HelperScript -Destination (Join-Path $sandbox 'vdd-device-helper.ps1') -Force
 
         New-TestLayout -Root $sandbox `
             -IncludeLatest $case.IncludeLatest `

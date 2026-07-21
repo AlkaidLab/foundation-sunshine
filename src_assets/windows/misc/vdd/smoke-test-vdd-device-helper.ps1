@@ -179,9 +179,7 @@ try {
 
     $probeFailedClosed = $false
     try {
-        $Action = 'Probe'
-        $InfPath = $HelperScript
-        [void] (Invoke-VddDeviceHelper)
+        [void] (Get-VddState $HelperScript)
     }
     catch {
         $probeFailedClosed = $_.Exception.Message -like '*simulated device enumeration failure*'
@@ -215,9 +213,7 @@ try {
         return 0
     }
 
-    $NefconPath = $HelperScript
-    $TimeoutSeconds = 2
-    [void] (Remove-AllVddDevices)
+    [void] (Remove-AllVddDevices $HelperScript 2)
     Assert-Equal 0 $script:fakeDevices.Count 'All duplicate device nodes must be removed.'
     Assert-Equal 1 $script:removalCalls 'An asynchronous removal must not receive overlapping requests.'
 
@@ -230,10 +226,9 @@ try {
         $script:removalCalls++
         return 1
     }
-    $TimeoutSeconds = 1
     $removalFailedClosed = $false
     try {
-        [void] (Remove-AllVddDevices)
+        [void] (Remove-AllVddDevices $HelperScript 1)
     }
     catch {
         $removalFailedClosed = $_.Exception.Message -like '*timed out*'
@@ -247,6 +242,91 @@ finally {
     Remove-Variable -Name fakeDevices -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name removalCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name pollsAfterRemoval -Scope Script -ErrorAction SilentlyContinue
+}
+
+$originalResolveVddPayload = ${function:Resolve-VddPayload}
+$originalGetVddPaths = ${function:Get-VddPaths}
+$originalGetVddState = ${function:Get-VddState}
+$originalStageVddPayload = ${function:Stage-VddPayload}
+$originalRemoveAllVddDevices = ${function:Remove-AllVddDevices}
+$originalRemoveVddRegistry = ${function:Remove-VddRegistry}
+$originalCleanupVddPackages = ${function:Cleanup-VddPackages}
+$originalSetVddConfiguration = ${function:Set-VddConfiguration}
+$originalInstallVddDevice = ${function:Install-VddDevice}
+try {
+    function Resolve-VddPayload {
+        return [pscustomobject]@{
+            RawBuild = '22000'
+            BuildNumber = 22000
+            DriverDir = $PSScriptRoot
+            ConfigSource = $HelperScript
+            Paths = [pscustomobject]@{ Nefcon = $HelperScript }
+        }
+    }
+    function Get-VddPaths {
+        return [pscustomobject]@{
+            Nefcon = $HelperScript
+            Dist = Join-Path $PSScriptRoot 'missing-test-dist'
+        }
+    }
+    function Get-VddState {
+        return [pscustomobject]@{
+            BundledVersion = '100.0.16.6'
+            Decision = $script:workflowDecision
+        }
+    }
+    function Stage-VddPayload { $script:workflowCalls += 'Stage' }
+    function Remove-AllVddDevices { $script:workflowCalls += 'Remove' }
+    function Remove-VddRegistry { $script:workflowCalls += 'Registry' }
+    function Cleanup-VddPackages([string] $ExpectedVersion = '') {
+        $script:workflowCalls += "Cleanup:$ExpectedVersion"
+    }
+    function Set-VddConfiguration { $script:workflowCalls += 'Configure' }
+    function Install-VddDevice { $script:workflowCalls += 'Install' }
+
+    $script:workflowCalls = @()
+    $script:workflowDecision = [pscustomobject]@{
+        DeviceCount = 1
+        CleanupRequired = 0
+        InstallRequired = 0
+        CurrentVersion = '100.0.16.6'
+        CurrentStatus = 'OK'
+        CurrentInf = 'oem42.inf'
+    }
+    Invoke-VddInstall $PSScriptRoot 'Run'
+    Assert-Equal 'Stage,Cleanup:100.0.16.6,Configure' ($script:workflowCalls -join ',') `
+        'A healthy matching device must keep its package and skip reinstall.'
+
+    $script:workflowCalls = @()
+    $script:workflowDecision = [pscustomobject]@{
+        DeviceCount = 1
+        CleanupRequired = 1
+        InstallRequired = 1
+        CurrentVersion = '100.0.16.5'
+        CurrentStatus = 'OK'
+        CurrentInf = 'oem40.inf'
+    }
+    Invoke-VddInstall $PSScriptRoot 'Run'
+    Assert-Equal 'Stage,Remove,Registry,Cleanup:,Configure,Install' ($script:workflowCalls -join ',') `
+        'An upgrade must remove, prune, configure, and install in order.'
+
+    $script:workflowCalls = @()
+    Invoke-VddUninstall $PSScriptRoot
+    Assert-Equal 'Remove,Cleanup:,Registry' ($script:workflowCalls -join ',') `
+        'Uninstall must remove devices before packages and always clean the registry.'
+}
+finally {
+    ${function:Resolve-VddPayload} = $originalResolveVddPayload
+    ${function:Get-VddPaths} = $originalGetVddPaths
+    ${function:Get-VddState} = $originalGetVddState
+    ${function:Stage-VddPayload} = $originalStageVddPayload
+    ${function:Remove-AllVddDevices} = $originalRemoveAllVddDevices
+    ${function:Remove-VddRegistry} = $originalRemoveVddRegistry
+    ${function:Cleanup-VddPackages} = $originalCleanupVddPackages
+    ${function:Set-VddConfiguration} = $originalSetVddConfiguration
+    ${function:Install-VddDevice} = $originalInstallVddDevice
+    Remove-Variable -Name workflowCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowDecision -Scope Script -ErrorAction SilentlyContinue
 }
 
 $results | Format-Table -AutoSize
