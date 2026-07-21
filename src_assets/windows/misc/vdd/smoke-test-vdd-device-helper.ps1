@@ -115,6 +115,62 @@ catch {
 }
 Assert-Equal $true $invalidKeepWasRejected 'Package pruning must reject a non-published INF name.'
 
+$originalGetChildItem = ${function:Get-ChildItem}
+$originalSelectString = ${function:Select-String}
+try {
+    $script:fakeInfFiles = @(
+        [pscustomobject]@{ Name = 'oem40.inf'; FullName = 'C:\fake\oem40.inf' },
+        [pscustomobject]@{ Name = 'oem42.inf'; FullName = 'C:\fake\oem42.inf' },
+        [pscustomobject]@{ Name = 'oem43.inf'; FullName = 'C:\fake\oem43.inf' }
+    )
+    function Get-ChildItem {
+        [CmdletBinding()]
+        param([string] $LiteralPath, [string] $Filter, [switch] $File)
+        return @($script:fakeInfFiles)
+    }
+    function Select-String {
+        [CmdletBinding()]
+        param(
+            [string] $LiteralPath,
+            [string] $SimpleMatch,
+            [switch] $Quiet
+        )
+        if ($LiteralPath -like '*oem40.inf') {
+            throw 'simulated unreadable INF'
+        }
+        return $LiteralPath -like '*oem42.inf'
+    }
+
+    $foundPackages = @(Get-PublishedVddPackages `
+        -RequiredInfNames @('oem42.inf'))
+    Assert-Equal 1 $foundPackages.Count 'An unreadable unrelated INF must not abort the package scan.'
+    Assert-Equal 'oem42.inf' $foundPackages[0].InfName 'The readable VDD package must still be detected.'
+
+    $activeReadFailedClosed = $false
+    try {
+        [void] (Get-PublishedVddPackages -RequiredInfNames @('oem40.inf'))
+    }
+    catch {
+        $activeReadFailedClosed = $_.Exception.Message -like '*active VDD package oem40.inf*'
+    }
+    Assert-Equal $true $activeReadFailedClosed 'An unreadable active VDD package must abort the scan.'
+}
+finally {
+    if ($originalGetChildItem) {
+        ${function:Get-ChildItem} = $originalGetChildItem
+    }
+    else {
+        Remove-Item Function:\Get-ChildItem -ErrorAction SilentlyContinue
+    }
+    if ($originalSelectString) {
+        ${function:Select-String} = $originalSelectString
+    }
+    else {
+        Remove-Item Function:\Select-String -ErrorAction SilentlyContinue
+    }
+    Remove-Variable -Name fakeInfFiles -Scope Script -ErrorAction SilentlyContinue
+}
+
 $originalGetVddDevices = ${function:Get-VddDevices}
 try {
     function Get-VddDevices {

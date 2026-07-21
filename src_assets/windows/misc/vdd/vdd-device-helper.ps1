@@ -231,11 +231,27 @@ function Remove-AllVddDevices {
         ($devices.InstanceId -join ', '))
 }
 
-function Get-PublishedVddPackages {
+function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
     # Match the exact hardware ID instead of parsing localized pnputil output.
     $infDirectory = Join-Path $env:SystemRoot 'INF'
     $packages = foreach ($inf in @(Get-ChildItem -LiteralPath $infDirectory -Filter 'oem*.inf' -File)) {
-        if (Select-String -LiteralPath $inf.FullName -SimpleMatch $hardwareId -Quiet -ErrorAction Stop) {
+        $matched = $false
+        try {
+            $matched = [bool] (Select-String `
+                -LiteralPath $inf.FullName `
+                -SimpleMatch $hardwareId `
+                -Quiet `
+                -ErrorAction Stop)
+        }
+        catch {
+            if ($RequiredInfNames -icontains $inf.Name) {
+                throw "Failed to inspect active VDD package $($inf.Name): $($_.Exception.Message)"
+            }
+            Write-Warning "Skipping unreadable unrelated INF $($inf.Name): $($_.Exception.Message)"
+            continue
+        }
+
+        if ($matched) {
             [pscustomobject]@{
                 InfName = $inf.Name
                 Path = $inf.FullName
@@ -283,10 +299,11 @@ function Cleanup-VddPackages {
         throw "Refusing to purge VDD packages while $($devices.Count) device node(s) remain."
     }
 
-    $packages = @(Get-PublishedVddPackages)
+    $requiredInfNames = if ($keepInfName) { @($keepInfName) } else { @() }
+    $packages = @(Get-PublishedVddPackages -RequiredInfNames $requiredInfNames)
     Remove-VddPackages @(Get-VddPackagesToRemove $packages $keepInfName)
 
-    $remaining = @(Get-PublishedVddPackages)
+    $remaining = @(Get-PublishedVddPackages -RequiredInfNames $requiredInfNames)
     if ($keepInfName) {
         if ($remaining.Count -ne 1 -or $remaining[0].InfName -ine $keepInfName) {
             throw "Expected only active VDD package $keepInfName; found: $($remaining.InfName -join ', ')"
