@@ -40,6 +40,7 @@
 build/
 cmake-*/
 docs/doxyconfig*
+output/
 
 # Build logs
 build.log
@@ -50,7 +51,6 @@ CMakeUserPresets.json
 
 # npm
 node_modules/
-package-lock.json
 
 # Translations
 *.mo
@@ -61,12 +61,19 @@ package-lock.json
 
 # Python
 *.pyc
+.venv/
 venv/
+
+# Environment files
+.env
+.env.*
 
 # Dev notes (analysis docs, guide generation, images)
 _dev_notes/
+_draft/
 instructions/
 skills/
+.codex/
 
 # Temp HID trace files
 temphidtrace*

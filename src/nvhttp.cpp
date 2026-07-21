@@ -6,6 +6,8 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -14,12 +16,14 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 // lib includes
 #include <Simple-Web-Server/server_http.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -30,31 +34,36 @@
 
 // local includes
 #include "config.h"
-#include "clipboard_http.h"
 #include "confighttp.h"
-#include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "file_handler.h"
+#include "file_mapping/file_mapping_http.h"
+#include "file_mapping/service.h"
 #include "globals.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvhttp/abr_api.h"
+#include "nvhttp/ai_api.h"
+#include "nvhttp/apps.h"
+#include "nvhttp/clipboard_api.h"
+#include "nvhttp/display_control.h"
+#include "nvhttp/display_scale.h"
+#include "nvhttp/dynamic_params.h"
+#include "nvhttp/pairing.h"
+#include "nvhttp/sessions.h"
+#include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "process.h"
 #include "rtsp.h"
 #include "stream.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
-#include "abr.h"
 #include "video.h"
 #include "webhook.h"
-
-#ifdef _WIN32
-#include "platform/windows/display_device/windows_utils.h"
-#endif
 
 using json = nlohmann::json;
 
@@ -63,7 +72,6 @@ namespace nvhttp {
 
   static constexpr std::string_view EMPTY_PROPERTY_TREE_ERROR_MSG = "Property tree is empty. Probably, control flow got interrupted by an unexpected C++ exception. This is a bug in Sunshine. Moonlight-qt will report Malformed XML (missing root element)."sv;
 
-  namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
 
   static const std::unordered_set<std::string> blocked_paths = {
@@ -71,96 +79,7 @@ namespace nvhttp {
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
 
-  crypto::cert_chain_t cert_chain;
-
-  struct named_cert_t {
-    std::string name;
-    std::string uuid;
-    std::string cert;
-  };
-
-  struct client_t {
-    std::vector<named_cert_t> named_devices;
-  };
-
-  // uniqueID, session
-  std::unordered_map<std::string, pair_session_t> map_id_sess;
-  client_t client_root;
   std::atomic<uint32_t> session_id_counter;
-
-  static std::string last_pair_name;
-
-  // Protects map_id_sess and last_pair_name. Pairing is rare and short-lived,
-  // a plain mutex is fine. The pair() request handler holds this for its full
-  // critical section (incl. nested calls to remove_session / fail_pair).
-  std::mutex map_id_sess_mutex;
-
-  // Protects both client_root and cert_chain. cert_chain is just a derived
-  // index built from client_root.named_devices and is always updated alongside
-  // it, so a single mutex covers both. Reads (SSL verify on every TLS
-  // handshake: client_root iteration + cert_chain.verify) take shared_lock,
-  // writes (load_state / add_authorized_client / clientpairingsecret /
-  // erase_all_clients / unpair_client / rename_client) take unique_lock.
-  // NEVER call save_state() while holding this mutex with unique ownership:
-  // save_state() takes a shared lock and std::shared_mutex does not support
-  // recursive locking.
-  std::shared_mutex client_state_mutex;
-
-  // Preset PIN for QR code pairing
-  static struct {
-    std::string pin;
-    std::string name;
-    std::chrono::steady_clock::time_point expires_at;
-    bool paired = false;
-    std::mutex mutex;
-  } preset_pin_state;
-
-  // Rate limiting for pairing attempts per IP
-  struct pair_rate_limiter_t {
-    std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> attempts;
-    std::mutex mutex;
-
-    bool
-    check_and_record(const std::string &ip) {
-      const int max_attempts = config::nvhttp.pair_max_attempts;
-      constexpr int window_seconds = 60;
-      // 0 disables rate limiting
-      if (max_attempts <= 0) {
-        return true;
-      }
-      std::lock_guard lock { mutex };
-      auto now = std::chrono::steady_clock::now();
-      auto &entry = attempts[ip];
-
-      // Reset window if expired
-      if (now - entry.second > std::chrono::seconds(window_seconds)) {
-        entry = { 0, now };
-      }
-
-      if (entry.first >= max_attempts) {
-        return false;  // rate limited
-      }
-
-      entry.first++;
-      return true;
-    }
-
-    void
-    cleanup() {
-      constexpr int window_seconds = 60;
-      std::lock_guard lock { mutex };
-      auto now = std::chrono::steady_clock::now();
-      for (auto it = attempts.begin(); it != attempts.end();) {
-        if (now - it->second.second > std::chrono::seconds(window_seconds * 2)) {
-          it = attempts.erase(it);
-        }
-        else {
-          ++it;
-        }
-      }
-    }
-  };
-  static pair_rate_limiter_t pair_rate_limit;
 
   // Map to store certificate UUIDs keyed by request pointer
   // Using weak_ptr to track request lifetime and prevent memory leaks
@@ -236,30 +155,25 @@ namespace nvhttp {
                   };
                   if (x509) {
                     std::string client_cert_pem = crypto::pem(x509);
-                    // Find matching certificate UUID
-                    std::shared_lock<std::shared_mutex> cl(client_state_mutex);
-                    for (const auto &named_cert : client_root.named_devices) {
-                      if (named_cert.cert == client_cert_pem) {
-                        // Store UUID in map using request pointer as key.
-                        // Opportunistically sweep expired entries on every
-                        // insert so that requests which never reach
-                        // get_client_cert_uuid_from_request() (e.g. serverinfo
-                        // polling, applist) and never trigger on_error don't
-                        // accumulate forever. This bounds the map size at
-                        // ~(live requests + recently completed requests).
-                        std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
-                        for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
-                          if (it->second.first.expired()) {
-                            it = request_cert_uuid_map.erase(it);
-                          }
-                          else {
-                            ++it;
-                          }
+                    if (auto uuid = pairing::client_uuid_for_cert(client_cert_pem); !uuid.empty()) {
+                      // Store UUID in map using request pointer as key.
+                      // Opportunistically sweep expired entries on every
+                      // insert so that requests which never reach
+                      // get_client_cert_uuid_from_request() (e.g. serverinfo
+                      // polling, applist) and never trigger on_error don't
+                      // accumulate forever. This bounds the map size at
+                      // ~(live requests + recently completed requests).
+                      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
+                      for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
+                        if (it->second.first.expired()) {
+                          it = request_cert_uuid_map.erase(it);
                         }
-                        request_cert_uuid_map[session->request.get()] =
-                          std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), named_cert.uuid);
-                        break;
+                        else {
+                          ++it;
+                        }
                       }
+                      request_cert_uuid_map[session->request.get()] =
+                        std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), std::move(uuid));
                     }
                   }
                 }
@@ -285,11 +199,6 @@ namespace nvhttp {
 
   using https_server_t = SunshineHTTPSServer;
   using http_server_t = SimpleWeb::Server<SimpleWeb::HTTP>;
-
-  struct conf_intern_t {
-    std::string servercert;
-    std::string pkey;
-  } conf_intern;
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
@@ -320,15 +229,10 @@ namespace nvhttp {
       }
     }
     catch (const std::exception &e) {
-      BOOST_LOG(debug) << "获取客户端证书UUID失败: " << e.what();
+      BOOST_LOG(debug) << "Failed to get client certificate UUID: " << e.what();
     }
     return "";
   }
-
-  enum class op_e {
-    ADD,  ///< Add certificate
-    REMOVE  ///< Remove certificate
-  };
 
   std::string
   get_arg(const args_t &args, const char *name, const char *default_value = nullptr) {
@@ -341,133 +245,6 @@ namespace nvhttp {
       throw std::out_of_range(name);
     }
     return it->second;
-  }
-
-  void
-  save_state() {
-    pt::ptree root;
-
-    if (fs::exists(config::nvhttp.file_state)) {
-      try {
-        pt::read_json(config::nvhttp.file_state, root);
-      }
-      catch (std::exception &e) {
-        BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
-        return;
-      }
-    }
-
-    root.erase("root"s);
-
-    root.put("root.uniqueid", http::unique_id);
-    pt::ptree node;
-
-    pt::ptree named_cert_nodes;
-    {
-      std::shared_lock<std::shared_mutex> cl(client_state_mutex);
-      for (auto &named_cert : client_root.named_devices) {
-        pt::ptree named_cert_node;
-        named_cert_node.put("name"s, named_cert.name);
-        named_cert_node.put("cert"s, named_cert.cert);
-        named_cert_node.put("uuid"s, named_cert.uuid);
-        named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
-      }
-    }
-    root.add_child("root.named_devices"s, named_cert_nodes);
-
-    try {
-      pt::write_json(config::nvhttp.file_state, root);
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't write "sv << config::nvhttp.file_state << ": "sv << e.what();
-      return;
-    }
-  }
-
-  void
-  load_state() {
-    if (!fs::exists(config::nvhttp.file_state)) {
-      BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
-      http::unique_id = uuid_util::uuid_t::generate().string();
-      return;
-    }
-
-    pt::ptree tree;
-    try {
-      pt::read_json(config::nvhttp.file_state, tree);
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
-
-      return;
-    }
-
-    auto unique_id_p = tree.get_optional<std::string>("root.uniqueid");
-    if (!unique_id_p) {
-      // This file doesn't contain moonlight credentials
-      http::unique_id = uuid_util::uuid_t::generate().string();
-      return;
-    }
-    http::unique_id = std::move(*unique_id_p);
-
-    auto root = tree.get_child("root");
-    client_t client;
-
-    // Import from old format
-    if (root.get_child_optional("devices")) {
-      auto device_nodes = root.get_child("devices");
-      for (auto &[_, device_node] : device_nodes) {
-        auto uniqID = device_node.get<std::string>("uniqueid");
-
-        if (device_node.count("certs")) {
-          for (auto &[_, el] : device_node.get_child("certs")) {
-            named_cert_t named_cert;
-            named_cert.name = ""s;
-            named_cert.cert = el.get_value<std::string>();
-            named_cert.uuid = uuid_util::uuid_t::generate().string();
-            client.named_devices.emplace_back(named_cert);
-          }
-        }
-      }
-    }
-
-    if (root.count("named_devices")) {
-      for (auto &[_, el] : root.get_child("named_devices")) {
-        named_cert_t named_cert;
-        named_cert.name = el.get_child("name").get_value<std::string>();
-        named_cert.cert = el.get_child("cert").get_value<std::string>();
-        named_cert.uuid = el.get_child("uuid").get_value<std::string>();
-        client.named_devices.emplace_back(named_cert);
-      }
-    }
-
-    // Empty certificate chain and import certs from file, then move client.
-    // cert_chain is a derived index of client.named_devices, so update both
-    // under the same exclusive lock to keep them consistent.
-    {
-      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-      cert_chain.clear();
-      for (auto &named_cert : client.named_devices) {
-        cert_chain.add(crypto::x509(named_cert.cert));
-      }
-      client_root = std::move(client);
-    }
-  }
-
-  void
-  add_authorized_client(const std::string &name, std::string &&cert) {
-    named_cert_t named_cert;
-    named_cert.name = name;
-    named_cert.cert = std::move(cert);
-    named_cert.uuid = uuid_util::uuid_t::generate().string();
-    {
-      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-      client_root.named_devices.emplace_back(std::move(named_cert));
-    }
-
-    if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
-      save_state();
-    }
   }
 
   std::shared_ptr<rtsp_stream::launch_session_t>
@@ -568,178 +345,25 @@ namespace nvhttp {
     return launch_session;
   }
 
-  void
-  remove_session(const pair_session_t &sess) {
-    // Caller MUST hold map_id_sess_mutex (called from fail_pair /
-    // clientpairingsecret, both invoked inside the pair() handler critical
-    // section).
-    map_id_sess.erase(sess.client.uniqueID);
-  }
-
-  void
-  fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
-    tree.put("root.paired", 0);
-    tree.put("root.<xmlattr>.status_code", 400);
-    tree.put("root.<xmlattr>.status_message", status_msg);
-    remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
-  }
-
-  void
-  getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin, const std::string &client_name) {
-    if (sess.last_phase != PAIR_PHASE::NONE) {
-      fail_pair(sess, tree, "Out of order call to getservercert");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::GETSERVERCERT;
-
-    if (sess.async_insert_pin.salt.size() < 32) {
-      fail_pair(sess, tree, "Salt too short");
-      return;
+  bool
+  register_launch_ticket(pt::ptree &tree,
+                         const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+                         std::string_view result_node) {
+    const auto result = rtsp_stream::launch_session_raise(launch_session);
+    if (result == rtsp_stream::launch_ticket_register_e::accepted ||
+        result == rtsp_stream::launch_ticket_register_e::replaced) {
+      return true;
     }
 
-    std::string_view salt_view { sess.async_insert_pin.salt.data(), 32 };
-
-    auto salt = util::from_hex<std::array<uint8_t, 16>>(salt_view, true);
-
-    auto key = crypto::gen_aes_key(salt, pin);
-    sess.cipher_key = std::make_unique<crypto::aes_t>(key);
-
-    tree.put("root.paired", 1);
-    // 增加自定义客户端名字告诉客户端
-    tree.put("root.pairname", client_name);
-    tree.put("root.plaincert", util::hex_vec(conf_intern.servercert, true));
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void
-  clientchallenge(pair_session_t &sess, pt::ptree &tree, const std::string &challenge) {
-    if (sess.last_phase != PAIR_PHASE::GETSERVERCERT) {
-      fail_pair(sess, tree, "Out of order call to clientchallenge");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::CLIENTCHALLENGE;
-
-    if (!sess.cipher_key) {
-      fail_pair(sess, tree, "Cipher key not set");
-      return;
-    }
-
-    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
-
-    std::vector<uint8_t> decrypted;
-    cipher.decrypt(challenge, decrypted);
-
-    auto x509 = crypto::x509(conf_intern.servercert);
-    auto sign = crypto::signature(x509);
-    auto serversecret = crypto::rand(16);
-
-    decrypted.insert(std::end(decrypted), std::begin(sign), std::end(sign));
-    decrypted.insert(std::end(decrypted), std::begin(serversecret), std::end(serversecret));
-
-    auto hash = crypto::hash({ (char *) decrypted.data(), decrypted.size() });
-    auto serverchallenge = crypto::rand(16);
-
-    std::string plaintext;
-    plaintext.reserve(hash.size() + serverchallenge.size());
-
-    plaintext.insert(std::end(plaintext), std::begin(hash), std::end(hash));
-    plaintext.insert(std::end(plaintext), std::begin(serverchallenge), std::end(serverchallenge));
-
-    std::vector<uint8_t> encrypted;
-    cipher.encrypt(plaintext, encrypted);
-
-    sess.serversecret = std::move(serversecret);
-    sess.serverchallenge = std::move(serverchallenge);
-
-    tree.put("root.paired", 1);
-    tree.put("root.challengeresponse", util::hex_vec(encrypted, true));
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void
-  serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const std::string &encrypted_response) {
-    if (sess.last_phase != PAIR_PHASE::CLIENTCHALLENGE) {
-      fail_pair(sess, tree, "Out of order call to serverchallengeresp");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::SERVERCHALLENGERESP;
-
-    if (!sess.cipher_key || sess.serversecret.empty()) {
-      fail_pair(sess, tree, "Cipher key or serversecret not set");
-      return;
-    }
-
-    std::vector<uint8_t> decrypted;
-    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
-
-    cipher.decrypt(encrypted_response, decrypted);
-
-    sess.clienthash = std::move(decrypted);
-
-    auto serversecret = sess.serversecret;
-    auto sign = crypto::sign256(crypto::pkey(conf_intern.pkey), serversecret);
-
-    serversecret.insert(std::end(serversecret), std::begin(sign), std::end(sign));
-
-    tree.put("root.pairingsecret", util::hex_vec(serversecret, true));
-    tree.put("root.paired", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void
-  clientpairingsecret(pair_session_t &sess, pt::ptree &tree, const std::string &client_pairing_secret) {
-    if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
-      fail_pair(sess, tree, "Out of order call to clientpairingsecret");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::CLIENTPAIRINGSECRET;
-
-    auto &client = sess.client;
-
-    if (client_pairing_secret.size() <= 16) {
-      fail_pair(sess, tree, "Client pairing secret too short");
-      return;
-    }
-
-    std::string_view secret { client_pairing_secret.data(), 16 };
-    std::string_view sign { client_pairing_secret.data() + secret.size(), client_pairing_secret.size() - secret.size() };
-
-    auto x509 = crypto::x509(client.cert);
-    if (!x509) {
-      fail_pair(sess, tree, "Invalid client certificate");
-      return;
-    }
-    auto x509_sign = crypto::signature(x509);
-
-    std::string data;
-    data.reserve(sess.serverchallenge.size() + x509_sign.size() + secret.size());
-
-    data.insert(std::end(data), std::begin(sess.serverchallenge), std::end(sess.serverchallenge));
-    data.insert(std::end(data), std::begin(x509_sign), std::end(x509_sign));
-    data.insert(std::end(data), std::begin(secret), std::end(secret));
-
-    auto hash = crypto::hash(data);
-
-    // if hash not correct, probably MITM
-    bool same_hash = hash.size() == sess.clienthash.size() && std::equal(hash.begin(), hash.end(), sess.clienthash.begin());
-    auto verify = crypto::verify256(crypto::x509(client.cert), secret, sign);
-    if (same_hash && verify) {
-      tree.put("root.paired", 1);
-
-      // Add cert to chain directly under exclusive lock
-      {
-        std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-        cert_chain.add(crypto::x509(client.cert));
-      }
-
-      // The client is now successfully paired and will be authorized to connect
-      add_authorized_client(client.name, std::move(client.cert));
-    }
-    else {
-      tree.put("root.paired", 0);
-    }
-    remove_session(sess);
-    tree.put("root.<xmlattr>.status_code", 200);
+    const auto busy = result == rtsp_stream::launch_ticket_register_e::client_busy;
+    tree.put("root.<xmlattr>.status_code", busy ? 409 : 503);
+    tree.put("root.<xmlattr>.status_message",
+             busy ? "A streaming handshake is already in progress for this client" :
+                    "The host has no capacity for another pending streaming handshake");
+    tree.put(std::string { "root." } + std::string { result_node }, 0);
+    BOOST_LOG(warning) << "Unable to register RTSP launch ticket for client "sv
+                       << launch_session->client_name << ": result="sv << static_cast<int>(result);
+    return false;
   }
 
   template <class T>
@@ -827,190 +451,8 @@ namespace nvhttp {
     std::ostringstream data;
 
     pt::write_xml(data, tree);
-    response->write(data.str());
-
-    *response
-      << "HTTP/1.1 404 NOT FOUND\r\n"
-      << data.str();
-
+    response->write(SimpleWeb::StatusCode::client_error_not_found, data.str());
     response->close_connection_after_response = true;
-  }
-
-  template <class T>
-  void
-  pair(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
-    print_req<T>(request);
-
-    // Rate limit pairing attempts per IP
-    auto client_ip = request->remote_endpoint().address().to_string();
-    if (!pair_rate_limit.check_and_record(client_ip)) {
-      BOOST_LOG(warning) << "Pairing rate limited for IP: " << client_ip;
-      pt::ptree rate_tree;
-      rate_tree.put("root.<xmlattr>.status_code", 429);
-      rate_tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
-      rate_tree.put("root.paired", 0);
-      std::ostringstream data;
-      pt::write_xml(data, rate_tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-      return;
-    }
-
-    // Periodically clean up stale rate limit entries
-    pair_rate_limit.cleanup();
-
-    pt::ptree tree;
-
-    auto fg = util::fail_guard([&]() {
-      std::ostringstream data;
-
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    auto args = request->parse_query_string();
-    if (args.find("uniqueid"s) == std::end(args)) {
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing uniqueid parameter");
-
-      return;
-    }
-
-    auto uniqID { get_arg(args, "uniqueid") };
-
-    // Serialize all access to map_id_sess and last_pair_name. The pair flow is
-    // multi-step (emplace -> later access via iterator -> later erase) and the
-    // map / iterators must not be touched by another worker thread mid-flight.
-    // Holding this for the whole handler is fine: pairing is rare and crypto
-    // is CPU-bound (no async waits).
-    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
-
-    args_t::const_iterator it;
-    if (it = args.find("phrase"); it != std::end(args)) {
-      if (it->second == "getservercert"sv) {
-        pair_session_t sess;
-
-        sess.client.uniqueID = std::move(uniqID);
-        sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
-        last_pair_name = get_arg(args, "clientname", "Named Zako");
-
-        BOOST_LOG(verbose) << "Client cert: " << sess.client.cert.substr(0, 100) << "...";
-        auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
-
-        ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
-        if (config::sunshine.flags[config::flag::PIN_STDIN]) {
-          std::string pin;
-
-          std::cout << "Please insert pin: "sv;
-          std::getline(std::cin, pin);
-
-          getservercert(ptr->second, tree, pin, last_pair_name);
-        }
-        else {
-          // Check for preset PIN (from QR code pairing)
-          // Only allow preset PIN for LAN/localhost clients
-          auto remote_addr = request->remote_endpoint().address();
-          auto nettype = net::from_address(remote_addr.to_string());
-          auto preset = (nettype == net::net_e::PC || nettype == net::net_e::LAN) ? consume_preset_pin() : std::string {};
-          if (!preset.empty()) {
-            BOOST_LOG(info) << "Using preset PIN for QR code pairing with " << last_pair_name
-                            << " from " << remote_addr.to_string();
-            ptr->second.client.name = last_pair_name;
-            getservercert(ptr->second, tree, preset, last_pair_name);
-          }
-          else {
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-            system_tray::update_tray_require_pin(last_pair_name);
-#endif
-            ptr->second.async_insert_pin.response = std::move(response);
-
-            fg.disable();
-            return;
-          }
-        }
-      }
-      else if (it->second == "pairchallenge"sv) {
-        tree.put("root.paired", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
-        return;
-      }
-    }
-
-    auto sess_it = map_id_sess.find(uniqID);
-    if (sess_it == std::end(map_id_sess)) {
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Invalid uniqueid");
-
-      return;
-    }
-
-    if (it = args.find("clientchallenge"); it != std::end(args)) {
-      auto challenge = util::from_hex_vec(it->second, true);
-      clientchallenge(sess_it->second, tree, challenge);
-    }
-    else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
-      auto encrypted_response = util::from_hex_vec(it->second, true);
-      serverchallengeresp(sess_it->second, tree, encrypted_response);
-    }
-    else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
-      auto pairingsecret = util::from_hex_vec(it->second, true);
-      clientpairingsecret(sess_it->second, tree, pairingsecret);
-    }
-    else {
-      tree.put("root.<xmlattr>.status_code", 404);
-      tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
-    }
-  }
-
-  bool
-  pin(std::string pin, std::string name) {
-    pt::ptree tree;
-    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
-    if (map_id_sess.empty()) {
-      return false;
-    }
-
-    // ensure pin is 4 digits
-    if (pin.size() != 4) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put(
-        "root.<xmlattr>.status_message", "Pin must be 4 digits, " + std::to_string(pin.size()) + " provided");
-      return false;
-    }
-
-    // ensure all pin characters are numeric
-    if (!std::all_of(pin.begin(), pin.end(), ::isdigit)) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Pin must be numeric");
-      return false;
-    }
-
-    auto &sess = std::begin(map_id_sess)->second;
-    getservercert(sess, tree, pin, name);
-    sess.client.name = name;
-
-    // response to the request for pin
-    std::ostringstream data;
-    pt::write_xml(data, tree);
-
-    auto &async_response = sess.async_insert_pin.response;
-    if (async_response.has_left() && async_response.left()) {
-      async_response.left()->write(data.str());
-    }
-    else if (async_response.has_right() && async_response.right()) {
-      async_response.right()->write(data.str());
-    }
-    else {
-      return false;
-    }
-
-    // reset async_response
-    async_response = std::decay_t<decltype(async_response.left())>();
-    // response to the current request
-    return true;
   }
 
   template <class T>
@@ -1113,671 +555,6 @@ namespace nvhttp {
     response->write(data.str());
   }
 
-  nlohmann::json
-  get_all_clients() {
-    nlohmann::json named_cert_nodes = nlohmann::json::array();
-    std::shared_lock<std::shared_mutex> cl(client_state_mutex);
-    for (auto &named_cert : client_root.named_devices) {
-      nlohmann::json named_cert_node;
-      named_cert_node["name"] = named_cert.name;
-      named_cert_node["uuid"] = named_cert.uuid;
-      named_cert_nodes.push_back(named_cert_node);
-    }
-
-    return named_cert_nodes;
-  }
-
-  std::string
-  get_pair_name() {
-    std::lock_guard<std::mutex> map_lock(map_id_sess_mutex);
-    return last_pair_name;
-  }
-
-  bool
-  set_preset_pin(const std::string &pin, const std::string &name, int timeout_seconds) {
-    if (pin.size() != 4 || !std::all_of(pin.begin(), pin.end(), ::isdigit)) {
-      BOOST_LOG(warning) << "Invalid preset PIN: must be 4 digits";
-      return false;
-    }
-
-    std::lock_guard lock { preset_pin_state.mutex };
-    preset_pin_state.pin = pin;
-    preset_pin_state.name = name;
-    preset_pin_state.expires_at = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
-    preset_pin_state.paired = false;
-    BOOST_LOG(info) << "Preset PIN set for QR pairing, expires in " << timeout_seconds << "s";
-    return true;
-  }
-
-  std::string
-  consume_preset_pin() {
-    std::lock_guard lock { preset_pin_state.mutex };
-    if (preset_pin_state.pin.empty()) {
-      return std::string {};
-    }
-    if (std::chrono::steady_clock::now() > preset_pin_state.expires_at) {
-      preset_pin_state.pin.clear();
-      preset_pin_state.name.clear();
-      return std::string {};
-    }
-    std::string pin = std::move(preset_pin_state.pin);
-    preset_pin_state.pin.clear();
-    preset_pin_state.name.clear();
-    return pin;
-  }
-
-  void
-  clear_preset_pin() {
-    std::lock_guard lock { preset_pin_state.mutex };
-    preset_pin_state.pin.clear();
-    preset_pin_state.name.clear();
-    preset_pin_state.paired = true;
-  }
-
-  std::string
-  get_qr_pair_status() {
-    std::lock_guard lock { preset_pin_state.mutex };
-    if (preset_pin_state.paired) return "paired";
-    if (preset_pin_state.pin.empty()) return "inactive";
-    if (std::chrono::steady_clock::now() > preset_pin_state.expires_at) {
-      preset_pin_state.pin.clear();
-      preset_pin_state.name.clear();
-      return "expired";
-    }
-    return "active";
-  }
-
-  // Use keep-alive connection
-  void
-  applist(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-
-      pt::write_xml(data, tree);
-      response->write(data.str());
-    });
-
-    auto &apps = tree.add_child("root", pt::ptree {});
-
-    apps.put("<xmlattr>.status_code", 200);
-
-    for (auto &proc : proc::proc.get_apps()) {
-      pt::ptree app;
-
-      app.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
-      app.put("AppTitle"s, proc.name);
-      app.put("ID"s, proc.id);
-
-      json json_cmds;
-
-      for (auto &cmd : proc.menu_cmds) {
-        json json_cmd;
-        json_cmd["id"] = cmd.id;
-        json_cmd["name"] = cmd.name;
-        // do_cmd and elevated intentionally omitted for security
-
-        json_cmds.push_back(json_cmd);
-      }
-
-      app.put("SuperCmds"s, json_cmds.dump(4));
-
-      apps.push_back(std::make_pair("App", std::move(app)));
-    }
-  }
-
-  void
-  changeBitrate(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    try {
-      auto args = request->parse_query_string();
-      auto bitrate_param = args.find("bitrate");
-      auto clientname_param = args.find("clientname");
-
-      if (bitrate_param == args.end()) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing bitrate parameter");
-        return;
-      }
-
-      if (clientname_param == args.end()) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Missing clientname parameter");
-        return;
-      }
-
-      int bitrate = std::stoi(bitrate_param->second);
-      std::string client_name = clientname_param->second;
-
-      if (bitrate <= 0 || bitrate > 800000) {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 400);
-        tree.put("root.<xmlattr>.status_message", "Invalid bitrate value. Must be between 1 and 800000 Kbps");
-        return;
-      }
-
-      video::dynamic_param_t param;
-      param.type = video::dynamic_param_type_e::BITRATE;
-      param.value.int_value = bitrate;
-      param.valid = true;
-
-      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
-
-      if (success) {
-        tree.put("root.bitrate", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
-        tree.put("root.<xmlattr>.bitrate", bitrate);
-        tree.put("root.<xmlattr>.clientname", client_name);
-        tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '"
-                        << client_name << "': " << bitrate << " Kbps";
-      }
-      else {
-        tree.put("root.bitrate", 0);
-        tree.put("root.<xmlattr>.status_code", 404);
-        tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
-      }
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "ChangeBitrate: "sv << e.what();
-      tree.put("root.bitrate", 0);
-      tree.put("root.<xmlattr>.status_code", 500);
-      tree.put("root.<xmlattr>.status_message", e.what());
-    }
-  }
-
-  void
-  changeDynamicParam(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    pt::ptree tree;
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    auto set_error = [&tree](int code, const std::string &message) {
-      tree.put("root.success", 0);
-      tree.put("root.<xmlattr>.status_code", code);
-      tree.put("root.<xmlattr>.status_message", message);
-    };
-
-    try {
-      auto args = request->parse_query_string();
-      auto param_type_param = args.find("type");
-      auto param_value_param = args.find("value");
-      auto clientname_param = args.find("clientname");
-
-      if (param_type_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss type");
-        set_error(400, "Missing param_type parameter");
-        return;
-      }
-
-      if (param_value_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss value");
-        set_error(400, "Missing param_value parameter");
-        return;
-      }
-
-      if (clientname_param == args.end()) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: miss clientname");
-        set_error(400, "Missing clientname parameter");
-        return;
-      }
-
-      int param_type = std::stoi(param_type_param->second);
-      std::string param_value = param_value_param->second;
-      std::string client_name = clientname_param->second;
-
-      if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid type");
-        set_error(400, "Invalid param_type value");
-        return;
-      }
-
-      video::dynamic_param_t param;
-      param.type = static_cast<video::dynamic_param_type_e>(param_type);
-      param.valid = true;
-
-      switch (param.type) {
-        case video::dynamic_param_type_e::RESOLUTION: {
-          print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: resolution change should be sent via control stream protocol, not HTTP API");
-          set_error(400, "Resolution change should be sent via control stream protocol, not HTTP API");
-          return;
-        }
-        case video::dynamic_param_type_e::FPS: {
-          float fps = std::stof(param_value);
-          if (fps <= 0.0f || fps > 1000.0f) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FPS value");
-            set_error(400, "Invalid FPS value. Must be between 0 and 1000");
-            return;
-          }
-          param.value.float_value = fps;
-          break;
-        }
-        case video::dynamic_param_type_e::BITRATE: {
-          int bitrate = std::stoi(param_value);
-          if (bitrate <= 0 || bitrate > 800000) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid bitrate value");
-            set_error(400, "Invalid bitrate value. Must be between 1 and 800000 Kbps");
-            return;
-          }
-          param.value.int_value = bitrate;
-          break;
-        }
-        case video::dynamic_param_type_e::QP: {
-          int qp = std::stoi(param_value);
-          if (qp < 0 || qp > 51) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid QP value");
-            set_error(400, "Invalid QP value. Must be between 0 and 51");
-            return;
-          }
-          param.value.int_value = qp;
-          break;
-        }
-        case video::dynamic_param_type_e::FEC_PERCENTAGE: {
-          int fec = std::stoi(param_value);
-          if (fec < 0 || fec > 100) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid FEC percentage value");
-            set_error(400, "Invalid FEC percentage. Must be between 0 and 100");
-            return;
-          }
-          param.value.int_value = fec;
-          break;
-        }
-        case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
-          param.value.bool_value = (param_value == "true" || param_value == "1");
-          break;
-        }
-        case video::dynamic_param_type_e::MULTI_PASS: {
-          int multi_pass = std::stoi(param_value);
-          if (multi_pass < 0 || multi_pass > 2) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid multi-pass value");
-            set_error(400, "Invalid multi-pass value. Must be between 0 and 2");
-            return;
-          }
-          param.value.int_value = multi_pass;
-          break;
-        }
-        case video::dynamic_param_type_e::VBV_BUFFER_SIZE: {
-          int vbv = std::stoi(param_value);
-          if (vbv <= 0) {
-            print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: invalid VBV buffer size value");
-            set_error(400, "Invalid VBV buffer size. Must be greater than 0");
-            return;
-          }
-          param.value.int_value = vbv;
-          break;
-        }
-        default:
-          set_error(400, "Unsupported parameter type");
-          return;
-      }
-
-      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
-
-      if (success) {
-        tree.put("root.success", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
-        tree.put("root.<xmlattr>.param_type", param_type);
-        tree.put("root.<xmlattr>.param_value", param_value);
-        tree.put("root.<xmlattr>.clientname", client_name);
-        tree.put("root.<xmlattr>.status_message", "Dynamic parameter change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '"
-                        << client_name << "': type=" << param_type << ", value=" << param_value;
-      }
-      else {
-        print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: no active streaming session found for client");
-        set_error(404, "No active streaming session found for client: " + client_name);
-      }
-    }
-    catch (std::exception &e) {
-      print_request_warning_ip<SunshineHTTPS>(request, "Change dynamic param error: "s + e.what());
-      set_error(500, e.what());
-    }
-  }
-
-  void
-  getSessionsInfo(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    // 限制只允许 localhost 访问
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    if (ip_type != net::PC) {
-      json response_json;
-      response_json["success"] = false;
-      response_json["status_code"] = 403;
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      response_json["status_message"] = msg_stream.str();
-
-      response->write(response_json.dump());
-      response->close_connection_after_response = true;
-      return;
-    }
-
-    try {
-      auto sessions_info = stream::session::get_all_sessions_info();
-
-      json response_json;
-      response_json["success"] = true;
-      response_json["status_code"] = 200;
-      response_json["status_message"] = "Success";
-      response_json["total_sessions"] = sessions_info.size();
-
-      json sessions_array = json::array();
-
-      for (const auto &session_info : sessions_info) {
-        json session_obj;
-        session_obj["client_name"] = session_info.client_name;
-        session_obj["client_address"] = session_info.client_address;
-        session_obj["state"] = session_info.state;
-        session_obj["session_id"] = session_info.session_id;
-        session_obj["width"] = session_info.width;
-        session_obj["height"] = session_info.height;
-        session_obj["fps"] = session_info.fps;
-        session_obj["host_audio"] = session_info.host_audio;
-        session_obj["enable_hdr"] = session_info.enable_hdr;
-        session_obj["enable_mic"] = session_info.enable_mic;
-        session_obj["app_name"] = session_info.app_name;
-        session_obj["app_id"] = session_info.app_id;
-
-        sessions_array.push_back(session_obj);
-      }
-
-      response_json["sessions"] = sessions_array;
-
-      BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
-
-      response->write(response_json.dump());
-      response->close_connection_after_response = true;
-    }
-    catch (std::exception &e) {
-      BOOST_LOG(warning) << "GetSessionsInfo: "sv << e.what();
-
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = e.what();
-
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
-    }
-  }
-
-  // ============================================================================
-  // ABR (Adaptive Bitrate) API handlers
-  // ============================================================================
-
-  /**
-   * @brief Resolve the client name from the HTTPS request's source IP.
-   * Matches the connecting client's address against active streaming sessions.
-   * @return {client_name, bitrate, app_name} or empty client_name on failure.
-   */
-  struct resolved_client_t {
-    std::string name;
-    int bitrate = 0;
-    std::string app_name;
-  };
-
-  static resolved_client_t
-  resolve_client(req_https_t request) {
-    auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
-    try {
-      auto sessions_info = stream::session::get_all_sessions_info();
-      for (const auto &si : sessions_info) {
-        if (si.client_address == client_addr && si.state == "RUNNING") {
-          return { si.client_name, si.bitrate, si.app_name };
-        }
-      }
-    }
-    catch (...) {}
-    return {};
-  }
-
-  /**
-   * @brief GET /api/abr/capabilities — Query server ABR support.
-   */
-  void
-  getAbrCapabilities(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    auto caps = abr::get_capabilities();
-
-    json resp_json;
-    resp_json["supported"] = caps.supported;
-    resp_json["version"] = caps.version;
-    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold" });
-    resp_json["llmEnabled"] = confighttp::isAiEnabled();
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-    response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-  }
-
-  /**
-   * @brief POST /api/abr — Enable/disable ABR, set mode and bitrate range.
-   *
-   * Request body (JSON):
-   * {
-   *   "enabled": true,
-   *   "minBitrate": 2000,
-   *   "maxBitrate": 150000,
-   *   "mode": "balanced"
-   * }
-   *
-   * Client identity is resolved from the TLS connection's source IP.
-   */
-  void
-  configureAbr(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-    try {
-      auto client = resolve_client(request);
-      if (client.name.empty()) {
-        json err;
-        err["success"] = false;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
-
-      bool enabled = body.value("enabled", false);
-
-      if (!enabled) {
-        abr::disable(client.name);
-        json resp_json;
-        resp_json["success"] = true;
-        resp_json["enabled"] = false;
-        response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-        return;
-      }
-
-      // Parse and validate mode
-      std::string mode_str = body.value("mode", "balanced");
-      abr::mode_e mode;
-      if (mode_str == "balanced") {
-        mode = abr::mode_e::BALANCED;
-      }
-      else if (mode_str == "quality") {
-        mode = abr::mode_e::QUALITY;
-      }
-      else if (mode_str == "lowLatency") {
-        mode = abr::mode_e::LOW_LATENCY;
-      }
-      else {
-        json err;
-        err["success"] = false;
-        err["error"] = "Invalid mode: must be 'balanced', 'quality', or 'lowLatency'";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      abr::config_t cfg;
-      cfg.enabled = true;
-      cfg.min_bitrate_kbps = body.value("minBitrate", 0);
-      cfg.max_bitrate_kbps = body.value("maxBitrate", 0);
-      cfg.mode = mode;
-
-      // Validate bitrate range
-      if (cfg.min_bitrate_kbps < 0 || cfg.max_bitrate_kbps < 0) {
-        json err;
-        err["success"] = false;
-        err["error"] = "minBitrate and maxBitrate must be non-negative";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-      if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0 && cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
-        json err;
-        err["success"] = false;
-        err["error"] = "minBitrate must not exceed maxBitrate";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      int initial_bitrate = client.bitrate > 0 ? client.bitrate
-                            : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
-                            : 20000;
-
-      abr::enable(client.name, cfg, initial_bitrate, client.app_name);
-
-      json resp_json;
-      resp_json["success"] = true;
-      resp_json["enabled"] = true;
-      resp_json["mode"] = mode_str;
-      resp_json["minBitrate"] = cfg.min_bitrate_kbps;
-      resp_json["maxBitrate"] = cfg.max_bitrate_kbps;
-      resp_json["initialBitrate"] = initial_bitrate;
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-    }
-    catch (const json::exception &e) {
-      BOOST_LOG(warning) << "ABR configure: JSON parse error: " << e.what();
-      json err;
-      err["success"] = false;
-      err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "ABR configure: " << e.what();
-      json err;
-      err["success"] = false;
-      err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
-    }
-  }
-
-  /**
-   * @brief POST /api/abr/feedback — Client sends network metrics, server returns bitrate decision.
-   *
-   * Request body (JSON):
-   * {
-   *   "packetLoss": 1.5,
-   *   "rttMs": 25.0,
-   *   "decodeFps": 59.8,
-   *   "droppedFrames": 2,
-   *   "currentBitrate": 15000
-   * }
-   *
-   * Response (JSON):
-   * {
-   *   "newBitrate": 14000,
-   *   "reason": "moderate_drop: packet_loss=1.5%"
-   * }
-   *
-   * Client identity is resolved from the TLS connection's source IP.
-   */
-  void
-  abrFeedback(resp_https_t response, req_https_t request) {
-    // No verbose logging for per-second feedback to avoid spam
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-
-    try {
-      auto client_name = resolve_client(request).name;
-      if (client_name.empty()) {
-        json err;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      if (!abr::is_enabled(client_name)) {
-        json err;
-        err["error"] = "ABR not enabled for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
-
-      abr::network_feedback_t feedback;
-      feedback.packet_loss = body.value("packetLoss", 0.0);
-      feedback.rtt_ms = body.value("rttMs", 0.0);
-      feedback.decode_fps = body.value("decodeFps", 0.0);
-      feedback.dropped_frames = body.value("droppedFrames", 0);
-      feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
-
-      auto action = abr::process_feedback(client_name, feedback);
-
-      // If server decided on a new bitrate, apply it to the encoder
-      if (action.new_bitrate_kbps > 0) {
-        video::dynamic_param_t param;
-        param.type = video::dynamic_param_type_e::BITRATE;
-        param.value.int_value = action.new_bitrate_kbps;
-        param.valid = true;
-
-        stream::session::change_dynamic_param_for_client(client_name, param);
-      }
-
-      json resp_json;
-      if (action.new_bitrate_kbps > 0) {
-        resp_json["newBitrate"] = action.new_bitrate_kbps;
-      }
-      resp_json["reason"] = action.reason;
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
-    }
-    catch (const json::exception &e) {
-      json err;
-      err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "ABR feedback: " << e.what();
-      json err;
-      err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
-    }
-  }
-
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -1838,10 +615,12 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
-    // 获取客户端证书UUID（稳定的客户端标识符）
+    // Store the stable client certificate UUID in the launch environment.
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
@@ -1849,18 +628,10 @@ namespace nvhttp {
       // We want to prepare display only if there are no active sessions at
       // the moment. This should to be done before probing encoders as it could
       // change display device's state.
-      display_device::session_t::get().configure_display(config::video, *launch_session, true);
-
       // The display should be restored by the fail guard in case something happens.
       need_to_restore_display_state = true;
 
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+      if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, true)) {
         tree.put("root.gamesession", 0);
 
         return;
@@ -1889,13 +660,20 @@ namespace nvhttp {
       }
     }
 
+    if (!register_launch_ticket(tree, launch_session, "gamesession")) {
+      // The application was started solely for this launch request. Roll it
+      // back if the bounded ticket registry cannot publish the handshake.
+      if (appid > 0 && proc::proc.running() == appid) {
+        proc::proc.terminate();
+      }
+      return;
+    }
+
     tree.put("root.<xmlattr>.status_code", 200);
     tree.put("root.sessionUrl0", launch_session->rtsp_url_scheme +
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.gamesession", 1);
-
-    rtsp_stream::launch_session_raise(launch_session);
 
     // Send webhook notification for successful launch
     webhook::send_event_async(webhook::event_t {
@@ -1930,6 +708,7 @@ namespace nvhttp {
     }
 
     pt::ptree tree;
+    bool need_to_restore_display_state { false };
     auto g = util::fail_guard([&]() {
       std::ostringstream data;
 
@@ -1940,13 +719,25 @@ namespace nvhttp {
       pt::write_xml(data, tree);
       response->write(data.str());
       response->close_connection_after_response = true;
+
+      if (need_to_restore_display_state) {
+        display_device::session_t::get().restore_state();
+      }
     });
 
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 503);
-      tree.put("root.<xmlattr>.status_message", "No running app to resume");
+      stream_start::set_sunshine_error(
+        tree,
+        503,
+        "There is no running app to resume. Start the app again from the client.",
+        "NO_APP_TO_RESUME",
+        "The previous session is no longer active or was already stopped.",
+        "relaunch_app_from_client",
+        "session",
+        "resume",
+        true);
 
       return;
     }
@@ -1970,39 +761,37 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
+      launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
 
     if (no_active_sessions) {
-      // We want to prepare display only if there are no active sessions at
-      // the moment. This should be done before probing encoders as it could
-      // change the active displays.
-      display_device::session_t::get().configure_display(config::video, *launch_session, false);
-
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
+      // Prepare before publishing the ticket so the handshake expiration
+      // window starts only when the host is ready to accept RTSP.
+      if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, false)) {
         tree.put("root.resume", 0);
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-
         return;
       }
+      need_to_restore_display_state = true;
     }
+
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
       BOOST_LOG(error) << "Rejecting client that cannot comply with mandatory encryption requirement"sv;
 
       tree.put("root.<xmlattr>.status_code", 403);
       tree.put("root.<xmlattr>.status_message", "Encryption is mandatory for this host but unsupported by the client");
-      tree.put("root.gamesession", 0);
+      tree.put("root.resume", 0);
 
+      return;
+    }
+
+    if (!register_launch_ticket(tree, launch_session, "resume")) {
       return;
     }
 
@@ -2011,8 +800,7 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.resume", 1);
-
-    rtsp_stream::launch_session_raise(launch_session);
+    need_to_restore_display_state = false;
 
     // Send webhook notification for successful resume
     webhook::send_event_async(webhook::event_t {
@@ -2046,17 +834,30 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
+    const auto client_cert_uuid = get_client_cert_uuid_from_request(request);
+    if (client_cert_uuid.empty()) {
+      tree.put("root.cancel", 0);
+      tree.put("root.<xmlattr>.status_code", 401);
+      tree.put("root.<xmlattr>.status_message", "Unable to identify the authenticated client");
+      return;
+    }
+
+    const auto result = rtsp_stream::cancel_client_sessions(client_cert_uuid);
+    BOOST_LOG(info) << "Client-scoped cancel [client_uuid="sv << client_cert_uuid
+                    << ", cancelled="sv << result.cancelled_sessions
+                    << ", remaining="sv << result.remaining_sessions << ']';
+
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
-    rtsp_stream::terminate_sessions();
+    if (result.remaining_sessions == 0) {
+      if (proc::proc.running() > 0) {
+        proc::proc.terminate();
+      }
 
-    if (proc::proc.running() > 0) {
-      proc::proc.terminate();
+      // Preserve the legacy single-client behavior once no other session is using the host.
+      display_device::session_t::get().restore_state();
     }
-
-    // The state needs to be restored regardless of whether "proc::proc.terminate()" was called or not.
-    display_device::session_t::get().restore_state();
   }
 
   void
@@ -2095,228 +896,10 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-  void
-  execSuperCmd(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    auto args = request->parse_query_string();
-    auto cmdId = get_arg(args, "cmdId", "");
-    proc::proc.run_menu_cmd(cmdId);
-
-    pt::ptree tree;
-    tree.put("root.supercmd", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
-
-    std::ostringstream data;
-
-    pt::write_xml(data, tree);
-    response->write(data.str());
-    response->close_connection_after_response = true;
-  }
-
-  // Use keep-alive connection
-  void
-  appasset(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    try {
-      auto args = request->parse_query_string();
-      auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
-
-      std::ifstream in(app_image, std::ios::binary);
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "image/png");
-      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
-    } catch (const std::exception &e) {
-      print_request_warning_ip<SunshineHTTPS>(request, "AppAsset error: "s + e.what());
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Missing or invalid parameters");
-    }
-  }
-
-  // Use keep-alive connection
-  void
-  get_displays(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    try {
-      std::vector<std::string> display_names;
-
-#ifdef _WIN32
-      display_names = platf::display_names(platf::mem_type_e::dxgi);
-#elif defined(__linux__)
-      for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
-        display_names = platf::display_names(mem_type);
-        if (!display_names.empty()) break;
-      }
-#elif defined(__APPLE__)
-      display_names = platf::display_names(platf::mem_type_e::videotoolbox);
-#else
-      display_names = platf::display_names(platf::mem_type_e::system);
-#endif
-
-      json displays_array = json::array();
-
-#ifdef _WIN32
-      // Build GDI name -> (device_id, friendly_name) mapping
-      std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
-      try {
-        for (const auto &[device_id, device_info] : display_device::enum_available_devices()) {
-          if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
-            display_info_map[gdi_name] = { device_id, display_device::get_display_friendly_name(device_id) };
-          }
-        }
-      }
-      catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Failed to get display friendly names: " << e.what();
-      }
-
-      for (size_t i = 0; i < display_names.size(); ++i) {
-        const auto &name = display_names[i];
-        auto it = display_info_map.find(name);
-        bool found = (it != display_info_map.end());
-        displays_array.push_back({ { "index", static_cast<int>(i) },
-          { "display_name", name },
-          { "device_id", found ? it->second.first : name },
-          { "friendly_name", (found && !it->second.second.empty()) ? it->second.second : name } });
-      }
-#else
-      for (size_t i = 0; i < display_names.size(); ++i) {
-        const auto &name = display_names[i];
-        displays_array.push_back({ { "index", static_cast<int>(i) },
-          { "display_name", name },
-          { "device_id", name },
-          { "friendly_name", name } });
-      }
-#endif
-
-      response_json["displays"] = std::move(displays_array);
-      response_json["count"] = static_cast<int>(display_names.size());
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error getting display list: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error";
-      response_json["displays"] = json::array();
-      response_json["count"] = 0;
-    }
-
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/json");
-    response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
-  }
-
-  void
-  rotate_display(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
-
-    json response_json;
-    response_json["status_code"] = 200;
-    response_json["status_message"] = "OK";
-
-    auto send_response = [&](SimpleWeb::StatusCode status_code = SimpleWeb::StatusCode::success_ok) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "application/json");
-      response->write(status_code, response_json.dump(), headers);
-      response->close_connection_after_response = true;
-    };
-
-    try {
-      auto args = request->parse_query_string();
-      auto angle_param = args.find("angle");
-
-      if (angle_param == args.end()) {
-        response_json["status_code"] = 400;
-        response_json["status_message"] = "Missing angle parameter";
-        response_json["success"] = false;
-        BOOST_LOG(warning) << "rotate_display: Missing angle parameter";
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
-        return;
-      }
-
-      int angle = std::stoi(angle_param->second);
-
-      if (angle != 0 && angle != 90 && angle != 180 && angle != 270) {
-        response_json["status_code"] = 400;
-        response_json["status_message"] = "Invalid angle value. Must be 0, 90, 180, or 270";
-        response_json["success"] = false;
-        BOOST_LOG(warning) << "rotate_display: Invalid angle value: " << angle;
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
-        return;
-      }
-
-      auto display_name_param = args.find("display_name");
-      std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
-
-      // URL-decode the display_name parameter
-      if (!display_name.empty()) {
-        std::string decoded_name;
-        decoded_name.reserve(display_name.size());
-        for (size_t i = 0; i < display_name.size(); ++i) {
-          if (display_name[i] == '%' && i + 2 < display_name.size()) {
-            int hex_val;
-            std::istringstream hex_stream(display_name.substr(i + 1, 2));
-            if (hex_stream >> std::hex >> hex_val) {
-              decoded_name += static_cast<char>(hex_val);
-              i += 2;
-              continue;
-            }
-          }
-          decoded_name += display_name[i];
-        }
-        display_name = std::move(decoded_name);
-      }
-
-      // 如果没有指定显示器名称，使用当前捕获的显示器
-      if (display_name.empty() && !config::video.output_name.empty()) {
-        display_name = display_device::get_display_name(config::video.output_name);
-        if (display_name.empty()) {
-          // 如果转换失败，尝试直接使用配置值（可能已经是显示器名称）
-          display_name = config::video.output_name;
-        }
-        BOOST_LOG(debug) << "rotate_display: Using current capture display: " << display_name << " (from config: " << config::video.output_name << ")";
-      }
-
-      BOOST_LOG(info) << "rotate_display: Requested angle=" << angle << ", display_name=" << (display_name.empty() ? "(primary)" : display_name);
-
-#ifdef _WIN32
-      bool success = display_device::w_utils::rotate_display(angle, display_name);
-      if (success) {
-        response_json["success"] = true;
-        response_json["angle"] = angle;
-        response_json["message"] = "Display rotation changed successfully";
-        BOOST_LOG(info) << "rotate_display: Display rotation changed to " << angle << " degrees";
-      }
-      else {
-        response_json["status_code"] = 500;
-        response_json["status_message"] = "Failed to change display rotation";
-        response_json["success"] = false;
-        BOOST_LOG(error) << "rotate_display: Failed to change display rotation to " << angle << " degrees";
-      }
-#else
-      response_json["status_code"] = 501;
-      response_json["status_message"] = "Display rotation is not supported on this platform";
-      response_json["success"] = false;
-      BOOST_LOG(warning) << "rotate_display: Display rotation is not supported on this platform";
-#endif
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(error) << "Error rotating display: " << e.what();
-      response_json["status_code"] = 500;
-      response_json["status_message"] = "Internal server error: " + std::string(e.what());
-      response_json["success"] = false;
-    }
-
-    send_response();
-  }
 
   void
   setup(const std::string &pkey, const std::string &cert) {
-    conf_intern.pkey = pkey;
-    conf_intern.servercert = cert;
+    pairing::set_credentials(pkey, cert);
   }
 
   void
@@ -2334,7 +917,7 @@ namespace nvhttp {
     }
 
     if (!clean_slate) {
-      load_state();
+      pairing::load_state();
     }
 
     auto pkey = file_handler::read_file(config::nvhttp.pkey.c_str());
@@ -2344,6 +927,31 @@ namespace nvhttp {
     // resume doesn't always get the parameter "localAudioPlayMode"
     // launch will store it in host_audio
     bool host_audio {};
+
+    auto bind_address = net::get_bind_address(address_family);
+    auto is_file_mapping_client_paired = [](std::string_view client_uuid) {
+      if (client_uuid.empty()) {
+        return false;
+      }
+
+      const auto clients = nvhttp::get_all_clients();
+      for (const auto &client : clients) {
+        if (client.contains("uuid") && client["uuid"].is_string() && std::string_view { client["uuid"].get_ref<const std::string &>() } == client_uuid) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    file_mapping::service_t file_mapping_service;
+    file_mapping::service_t::config_t file_mapping_config;
+    file_mapping_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
+    file_mapping_config.port = config::nvhttp.file_mapping_port;
+    file_mapping_config.certificate_file = config::nvhttp.cert;
+    file_mapping_config.private_key_file = config::nvhttp.pkey;
+    file_mapping_config.mappings_json = config::nvhttp.file_mappings;
+    file_mapping_config.authorize_client = is_file_mapping_client_paired;
+    file_mapping_service.start(std::move(file_mapping_config));
 
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
@@ -2372,19 +980,7 @@ namespace nvhttp {
         BOOST_LOG(debug) << subject_name << " -- "sv << (verified ? "verified"sv : "denied"sv);
       });
 
-      // Verify the client certificate under shared lock.
-      // New certs are added directly in clientpairingsecret() under exclusive lock,
-      // so the verify callback is read-only and can run concurrently.
-      const char *err_str;
-      {
-        std::shared_lock<std::shared_mutex> sl(client_state_mutex);
-        if (!close_verify_safe) {
-          err_str = cert_chain.verify_safe(x509.get());  // default
-        }
-        else {
-          err_str = cert_chain.verify(x509.get());
-        }
-      }
+      const char *err_str = pairing::verify_client_certificate(x509.get(), close_verify_safe);
       if (err_str) {
         BOOST_LOG(warning) << "SSL Verification error :: "sv << err_str;
 
@@ -2413,93 +1009,62 @@ namespace nvhttp {
 
     https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
-    https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) { pair<SunshineHTTPS>(resp, req); };
-    https_server.resource["^/applist$"]["GET"] = applist;
-    https_server.resource["^/appasset$"]["GET"] = appasset;
-    https_server.resource["^/displays$"]["GET"] = get_displays;
-    https_server.resource["^/rotate-display$"]["GET"] = rotate_display;
+    https_server.resource["^/pair$"]["GET"] = pairing::pair_https;
+    https_server.resource["^/applist$"]["GET"] = apps::list;
+    https_server.resource["^/appasset$"]["GET"] = apps::asset;
+    https_server.resource["^/displays$"]["GET"] = display_control::get_displays;
+    https_server.resource["^/display-scale-options$"]["GET"] = display_scale::get_options;
+    https_server.resource["^/display-scale$"]["POST"] = display_scale::set;
+    https_server.resource["^/rotate-display$"]["GET"] = display_control::rotate;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) { launch(host_audio, resp, req); };
     https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) { resume(host_audio, resp, req); };
     https_server.resource["^/cancel$"]["GET"] = cancel;
     https_server.resource["^/pcsleep$"]["GET"] = sleep;
-    https_server.resource["^/supercmd$"]["GET"] = execSuperCmd;
-    https_server.resource["^/bitrate$"]["GET"] = changeBitrate;
-    https_server.resource["^/stream/settings$"]["GET"] = changeDynamicParam;
-    https_server.resource["^/sessions$"]["GET"] = getSessionsInfo;
+    https_server.resource["^/supercmd$"]["GET"] = apps::exec_super_cmd;
+    https_server.resource["^/bitrate$"]["GET"] = dynamic_params::change_bitrate;
+    https_server.resource["^/stream/settings$"]["GET"] = dynamic_params::change;
+    https_server.resource["^/sessions$"]["GET"] = sessions::get;
 
     // Clipboard blob routes are mirrored onto nvhttp so paired Moonlight
     // clients can reuse their existing certificate-authenticated GameStream
     // channel for large clipboard payloads. The local GUI agent continues to
     // use the confighttp /api/v1/clipboard/* endpoints on loopback.
-    https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = [](resp_https_t response, req_https_t request) {
-      auto out = clipboard_http::process_blob_upload(request);
-      response->write(out.status, out.body, out.headers);
-    };
-    https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = [](resp_https_t response, req_https_t request) {
-      auto out = clipboard_http::process_blob_get(request);
-      response->write(out.status, out.body, out.headers);
-    };
+    https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = clipboard_api::upload_blob;
+    https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = clipboard_api::get_blob;
+
+    https_server.resource["^/api/v1/file-mapping/capability$"]["GET"] =
+      [&](resp_https_t resp, req_https_t req) {
+        auto header_value = [](const SimpleWeb::CaseInsensitiveMultimap &headers, const std::string &name) {
+          auto it = headers.find(name);
+          return it == headers.end() ? std::string {} : it->second;
+        };
+        auto write_response = [](resp_https_t response, const file_mapping_http::http_response_t &out) {
+          response->write(out.status, out.body, out.headers);
+        };
+
+        write_response(
+          std::move(resp),
+          file_mapping_service.make_capability_response(
+            get_client_cert_uuid_from_request(req),
+            header_value(req->header, "host")));
+      };
+
+    https_server.resource["^/api/v1/file-mapping/session$"]["GET"] =
+      [](resp_https_t resp, req_https_t req) {
+        auto out = file_mapping_http::make_session_placeholder_response(req->header);
+        resp->write(out.status, out.body, out.headers);
+      };
 
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
-    https_server.resource["^/api/abr/capabilities$"]["GET"] = getAbrCapabilities;
-    https_server.resource["^/api/abr$"]["POST"] = configureAbr;
-    https_server.resource["^/api/abr/feedback$"]["POST"] = abrFeedback;
+    https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
+    https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
+    https_server.resource["^/api/abr/feedback$"]["POST"] = abr_api::feedback;
 
-    // AI LLM proxy route — uses client cert auth from pairing
-    https_server.resource["^/ai/completions$"]["POST"] = [](resp_https_t response, req_https_t request) {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      std::string requestBody = ss.str();
-
-      bool isStream = false;
-      try {
-        auto reqJson = nlohmann::json::parse(requestBody);
-        isStream = reqJson.value("stream", false);
-      } catch (...) {}
-
-      if (isStream) {
-        bool headerSent = false;
-        auto result = confighttp::processAiChatStream(requestBody, [&](const char *data, size_t len) {
-          if (!headerSent) {
-            *response << "HTTP/1.1 200 OK\r\n";
-            *response << "Content-Type: text/event-stream\r\n";
-            *response << "Cache-Control: no-cache\r\n";
-            *response << "Connection: keep-alive\r\n";
-            *response << "\r\n";
-            response->send();
-            headerSent = true;
-          }
-          std::string chunk(data, len);
-          *response << chunk;
-          response->send();
-        });
-
-        if (result.httpCode != 200 && !headerSent) {
-          std::string errorResp = result.body;
-          *response << "HTTP/1.1 502 Bad Gateway\r\n";
-          *response << "Content-Type: application/json\r\n";
-          *response << "Content-Length: " << errorResp.size() << "\r\n";
-          *response << "\r\n";
-          *response << errorResp;
-          response->send();
-        }
-      } else {
-        auto result = confighttp::processAiChat(requestBody);
-
-        SimpleWeb::CaseInsensitiveMultimap headers;
-        headers.emplace("Content-Type", result.contentType);
-
-        auto statusCode = SimpleWeb::StatusCode::success_ok;
-        if (result.httpCode == 403) statusCode = SimpleWeb::StatusCode::client_error_forbidden;
-        else if (result.httpCode == 400) statusCode = SimpleWeb::StatusCode::client_error_bad_request;
-        else if (result.httpCode >= 500) statusCode = SimpleWeb::StatusCode::server_error_bad_gateway;
-
-        response->write(statusCode, result.body, headers);
-      }
-    };
+    // AI LLM proxy route uses client cert auth from pairing.
+    https_server.resource["^/ai/completions$"]["POST"] = ai_api::completions;
 
     https_server.config.reuse_address = true;
-    https_server.config.address = net::get_bind_address(address_family);
+    https_server.config.address = bind_address;
     https_server.config.port = port_https;
     // Run nvhttps server with a small thread pool. The HTTPS endpoint serves
     // SSL handshakes + request handlers on the same io_service. With the default
@@ -2527,7 +1092,7 @@ namespace nvhttp {
 
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
     http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
-    http_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) { pair<SimpleWeb::HTTP>(resp, req); };
+    http_server.resource["^/pair$"]["GET"] = pairing::pair_http;
 
     http_server.config.reuse_address = true;
     http_server.config.address = net::get_bind_address(address_family);
@@ -2571,6 +1136,7 @@ namespace nvhttp {
     // Wait for any event
     shutdown_event->view();
 
+    file_mapping_service.stop();
     https_server.stop();
     http_server.stop();
 
@@ -2578,54 +1144,4 @@ namespace nvhttp {
     tcp.join();
   }
 
-  void
-  erase_all_clients() {
-    {
-      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-      client_root = client_t {};
-      cert_chain.clear();
-    }
-    save_state();
-  }
-
-  int
-  unpair_client(std::string uuid) {
-    bool removed = false;
-    {
-      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-      auto &devices = client_root.named_devices;
-      for (auto it = devices.begin(); it != devices.end();) {
-        if (it->uuid == uuid) {
-          it = devices.erase(it);
-          removed = true;
-        }
-        else {
-          ++it;
-        }
-      }
-    }
-
-    save_state();
-    load_state();
-    return removed;
-  }
-
-  bool
-  rename_client(const std::string &uuid, const std::string &new_name) {
-    bool renamed = false;
-    {
-      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
-      for (auto &named_cert : client_root.named_devices) {
-        if (named_cert.uuid == uuid) {
-          named_cert.name = new_name;
-          renamed = true;
-          break;
-        }
-      }
-    }
-    if (renamed) {
-      save_state();
-    }
-    return renamed;
-  }
 }  // namespace nvhttp

@@ -69,6 +69,7 @@ namespace mail {
   MAIL(gamepad_feedback);
   MAIL(hdr);
   MAIL(dynamic_param_change);
+  MAIL(input_activity);
   MAIL(resolution_change);
 #undef MAIL
 

@@ -34,7 +34,7 @@ namespace nvenc {
       return false;
     }
 
-    if (!d3d_input_texture) {
+    auto create_input_texture = [&](UINT bind_flags) -> bool {
       D3D11_TEXTURE2D_DESC desc = {};
       desc.Width = encoder_params.width;
       desc.Height = encoder_params.height;
@@ -43,14 +43,21 @@ namespace nvenc {
       desc.Format = dxgi_format_from_nvenc_format(encoder_params.buffer_format);
       desc.SampleDesc.Count = 1;
       desc.Usage = D3D11_USAGE_DEFAULT;
-      desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-      if (d3d_device->CreateTexture2D(&desc, nullptr, &d3d_input_texture) != S_OK) {
-        BOOST_LOG(error) << "NvEnc: couldn't create input texture";
-        return false;
+      desc.BindFlags = bind_flags;
+      return d3d_device->CreateTexture2D(&desc, nullptr, &d3d_input_texture) == S_OK;
+    };
+
+    if (!d3d_input_texture) {
+      if (!create_input_texture(D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)) {
+        BOOST_LOG(info) << "NvEnc: input texture UAV bind unavailable, falling back to render-target input";
+        if (!create_input_texture(D3D11_BIND_RENDER_TARGET)) {
+          BOOST_LOG(error) << "NvEnc: couldn't create input texture";
+          return false;
+        }
       }
     }
 
-    if (!registered_input_buffer) {
+    auto register_input_texture = [&]() -> bool {
       NV_ENC_REGISTER_RESOURCE register_resource = { NV_ENC_REGISTER_RESOURCE_VER };
       register_resource.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX;
       register_resource.width = encoder_params.width;
@@ -60,11 +67,36 @@ namespace nvenc {
       register_resource.bufferUsage = NV_ENC_INPUT_IMAGE;
 
       if (nvenc_failed(nvenc->nvEncRegisterResource(encoder, &register_resource))) {
-        BOOST_LOG(error) << "NvEnc: NvEncRegisterResource() failed: " << last_nvenc_error_string;
         return false;
       }
 
       registered_input_buffer = register_resource.registeredResource;
+      return true;
+    };
+
+    if (!registered_input_buffer) {
+      if (!register_input_texture()) {
+        D3D11_TEXTURE2D_DESC desc = {};
+        d3d_input_texture->GetDesc(&desc);
+        if (desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
+          BOOST_LOG(info) << "NvEnc: input texture UAV registration failed, falling back to render-target input: "
+                          << last_nvenc_error_string;
+          d3d_input_texture.Release();
+          if (!create_input_texture(D3D11_BIND_RENDER_TARGET) || !register_input_texture()) {
+            BOOST_LOG(error) << "NvEnc: NvEncRegisterResource() failed: " << last_nvenc_error_string;
+            return false;
+          }
+        }
+        else {
+          BOOST_LOG(error) << "NvEnc: NvEncRegisterResource() failed: " << last_nvenc_error_string;
+          return false;
+        }
+      }
+
+      if (!registered_input_buffer) {
+        BOOST_LOG(error) << "NvEnc: input texture registration returned no handle";
+        return false;
+      }
     }
 
     return true;

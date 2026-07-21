@@ -78,7 +78,8 @@ if(BUILD_DOCS)
 endif()
 
 # tests
-if(BUILD_TESTS)
+if(BUILD_TESTS OR BUILD_TRAY_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
@@ -94,11 +95,6 @@ endif()
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/upnp.cpp"
         DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
         PROPERTIES COMPILE_FLAGS -Wno-pedantic)
-
-# third-party/nanors
-set_source_files_properties("${CMAKE_SOURCE_DIR}/src/rswrapper.c"
-        DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
-        PROPERTIES COMPILE_FLAGS "-ftree-vectorize -funroll-loops")
 
 # third-party/ViGEmClient
 set(VIGEM_COMPILE_FLAGS "")

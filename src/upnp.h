@@ -33,8 +33,9 @@ namespace upnp {
    * @return The UPnP Status.
    * @retval 0 No IGD found.
    * @retval 1 A valid connected IGD has been found.
-   * @retval 2 A valid IGD has been found but it reported as not connected.
-   * @retval 3 An UPnP device has been found but was not recognized as an IGD.
+   * @retval 2 A valid connected IGD has been found but it has a private/non-routable WAN address.
+   * @retval 3 A valid IGD has been found but it reported as not connected.
+   * @retval 4 An UPnP device has been found but was not recognized as an IGD.
    */
   int
   UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr);

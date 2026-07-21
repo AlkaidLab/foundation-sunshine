@@ -63,7 +63,7 @@ namespace webhook {
     headers.emplace("X-Client-ID", "Sunshine_Foundation");
     headers.emplace("X-Auth-Token", "Sunshine_Foundation_" + std::to_string(timestamp % 10000));
     headers.emplace("X-API-Version", "v1.0");
-    headers.emplace("X-Client-Info", "Sunshine Foundation");
+    headers.emplace("X-Client-Info", "Foundation Sunshine");
     headers.emplace("X-Trace-ID", "sf_" + std::to_string(timestamp) + "_" + std::to_string(rand() % 1000));
     headers.emplace("X-Service-Name", "Sunshine_Foundation_Service");
     headers.emplace("X-Component", "Sunshine_Foundation_Component");

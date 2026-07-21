@@ -34,6 +34,11 @@ namespace amf {
    * Integer values correspond directly to AMF SDK enum values.
    */
   struct amf_config {
+    // Optional compatibility adapter for the standalone AMF encoder. When
+    // enabled, AMF properties are derived from AVCodecContext-like state and
+    // FFmpeg amfenc behavior; when disabled, the standalone path stays clean.
+    bool avcodec_compat = false;
+
     // Usage preset (AMF_VIDEO_ENCODER_USAGE_ENUM values)
     std::optional<int> usage;
 
@@ -49,8 +54,11 @@ namespace amf {
     // VBAQ enable
     std::optional<int> vbaq;
 
-    // H.264 entropy coding (0=CAVLC, 1=CABAC)
+    // H.264 entropy coding used by the standalone path (0=CAVLC, 1=CABAC).
     int h264_cabac = 1;
+    // H.264 AVCodec-style coding mode. Nullopt means coder=auto, so the
+    // compatibility adapter does not set AMF_VIDEO_ENCODER_CABAC_ENABLE.
+    std::optional<int> h264_coding_mode;
 
     // Enforce HRD
     std::optional<int> enforce_hrd;
@@ -83,6 +91,12 @@ namespace amf {
     // For QVBR rate control mode: quality level 1-51 (lower=better)
     std::optional<int> qvbr_quality_level;
 
+    // --- Multi-HW instance encode / Smart Access Video ---
+    // Default nullopt = do not set the property, let the driver decide.
+    // H.264 exposes only Smart Access Video; HEVC/AV1 expose both SAV and
+    // explicit multi-HW instance encode properties.
+    std::optional<bool> multi_hw_instance_encode;
+
     // --- AV1 Encoding Latency Mode ---
     // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_ENUM: 0=none, 1=power saving RT, 2=RT, 3=lowest latency
     std::optional<int> av1_encoding_latency_mode;
@@ -106,7 +120,26 @@ namespace amf {
     bool enable_ssim_feedback = false;
 
     // --- High Motion Quality Boost (encoder-level, separate from PA) ---
+    // Default nullopt = do not set the property, let the AMD driver decide
+    // (FFmpeg amfenc.c never sets this property either). Some AMD driver
+    // releases (e.g. Adrenalin 26.5.x on RDNA4) appear to expose latent VCN
+    // bugs when this is enabled, leading to encoder freezes after ~minutes.
     std::optional<bool> high_motion_quality_boost_enable;
+
+    // --- Low Latency Mode (encoder-level) ---
+    // Default nullopt = do not set the property, let the driver default decide.
+    // Matches FFmpeg amfenc behavior (only set when user opts in or Smart
+    // Access Video is enabled). Streaming workloads usually want this true,
+    // but exposing it lets users disable it as a workaround for driver bugs.
+    std::optional<bool> lowlatency_mode;
+
+    // --- Input Queue Size / async_depth ---
+    // Standalone path: optional AMF INPUT_QUEUE_SIZE property.
+    // AVCodec compatibility path: FFmpeg-style async_depth / in-flight surface
+    // cap, default 16, with no AMF INPUT_QUEUE_SIZE property set. Sunshine
+    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency, but that
+    // is the most fragile code path inside the driver.
+    std::optional<int> input_queue_size;
   };
 
 }  // namespace amf

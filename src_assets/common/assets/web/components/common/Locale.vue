@@ -3,6 +3,7 @@
 
 <script>
 import { createI18n } from "vue-i18n";
+import { apiJson } from "../../utils/apiFetch.js";
 
 // Import translation files
 import de from '../../public/assets/locale/de.json'
@@ -43,13 +44,9 @@ export default {
         this.fetchLocale();
     },
     methods: {
-        fetchLocale() {
-            fetch("/api/configLocale$")
-                .then((r) => r.json())
-                .then((r) => {
-                    this.response = r;
-                    i18n.locale = this.response.locale;
-                });
+        async fetchLocale() {
+            this.response = await apiJson("/api/configLocale$");
+            i18n.locale = this.response.locale;
         },
     },
 };

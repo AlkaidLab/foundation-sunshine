@@ -97,7 +97,7 @@ function removeFps(index) {
           class="form-control add-input"
           placeholder="1920x1080"
         />
-        <button v-if="resolutions.length < MAX_RESOLUTIONS" class="btn btn-success add-btn" type="submit">
+        <button v-if="resolutions.length < MAX_RESOLUTIONS" class="btn btn-primary add-btn" type="submit">
           <i class="fas fa-plus"></i>
         </button>
       </form>
@@ -134,7 +134,7 @@ function removeFps(index) {
           class="form-control add-input add-input-fps"
           placeholder="例如: 120 或 119.88"
         />
-        <button v-if="fps.length < MAX_FPS" class="btn btn-success add-btn" type="submit">
+        <button v-if="fps.length < MAX_FPS" class="btn btn-primary add-btn" type="submit">
           <i class="fas fa-plus"></i>
         </button>
       </form>
@@ -156,11 +156,12 @@ function removeFps(index) {
 }
 
 .settings-section {
-  background: var(--bs-body-bg);
-  border: 1px solid var(--bs-border-color);
-  border-radius: 8px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   padding: 1rem;
   margin-bottom: 1rem;
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .section-header {
@@ -170,7 +171,7 @@ function removeFps(index) {
 }
 
 .section-icon {
-  color: var(--bs-primary);
+  color: var(--ui-accent);
   margin-right: 0.5rem;
   font-size: 1rem;
 }
@@ -178,7 +179,7 @@ function removeFps(index) {
 .section-title {
   font-weight: 600;
   font-size: 0.95rem;
-  color: var(--bs-heading-color);
+  color: var(--ui-text-primary);
   margin: 0;
 }
 
@@ -196,23 +197,26 @@ function removeFps(index) {
 .tag-item {
   display: inline-flex;
   align-items: center;
-  background: linear-gradient(135deg, var(--bs-primary) 0%, var(--bs-info) 100%);
-  color: white;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  border: 1px solid var(--ui-border-strong);
   padding: 0.35rem 0.5rem 0.35rem 0.75rem;
-  border-radius: 20px;
+  border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 500;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .tag-item:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  background: var(--ui-surface-hover);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .tag-fps {
-  background: linear-gradient(135deg, var(--bs-success) 0%, var(--bs-teal, #20c997) 100%);
+  border-color: color-mix(in srgb, var(--ui-success) 34%, transparent);
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success-text);
 }
 
 .tag-text {
@@ -226,9 +230,9 @@ function removeFps(index) {
   justify-content: center;
   width: 20px;
   height: 20px;
-  border: none;
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
+  border: 1px solid currentColor;
+  background: var(--ui-surface-strong);
+  color: inherit;
   border-radius: 50%;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -237,12 +241,17 @@ function removeFps(index) {
 }
 
 .tag-remove:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--ui-surface-hover);
   transform: scale(1.1);
 }
 
+.tag-remove:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .empty-hint {
-  color: var(--bs-secondary-color);
+  color: var(--ui-text-muted);
   font-size: 0.85rem;
   font-style: italic;
   padding: 0.5rem 0;
@@ -272,7 +281,7 @@ function removeFps(index) {
 }
 
 .limit-hint {
-  color: var(--bs-warning);
+  color: var(--ui-warning-text);
   font-size: 0.8rem;
   margin-top: 0.5rem;
 }
@@ -282,13 +291,15 @@ function removeFps(index) {
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.75rem;
-  background: var(--bs-tertiary-bg);
-  border-radius: 6px;
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
   margin-top: 0.5rem;
 }
 
 .description-text i {
-  color: var(--bs-info);
+  color: var(--ui-accent);
   margin-top: 0.15rem;
 }
 
@@ -302,5 +313,18 @@ function removeFps(index) {
 .tag-fade-leave-to {
   opacity: 0;
   transform: scale(0.8);
+}
+
+@media (max-width: 575.98px) {
+  .add-form {
+    width: 100%;
+  }
+
+  .add-input,
+  .add-input-fps {
+    width: auto;
+    min-width: 0;
+    flex: 1;
+  }
 }
 </style>

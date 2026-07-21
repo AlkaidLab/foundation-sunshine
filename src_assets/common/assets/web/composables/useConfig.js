@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 import { trackEvents } from '../config/firebase.js'
+import { getBootstrapConfig } from '../config/bootstrapData.js'
+import { apiFetch } from '../utils/apiFetch.js'
+import { deepClone, safeJsonParse } from '../utils/helpers.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -42,7 +45,9 @@ const DEFAULT_TABS = [
       mouse: 'enabled',
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
+      native_touchpad_optimization: 'enabled',
       virtual_mouse: 'enabled',
+      capture_cursor: true,
       amf_draw_mouse_cursor: false,
       enable_dsu_server: 'disabled',
       dsu_server_port: 26760,
@@ -60,6 +65,8 @@ const DEFAULT_TABS = [
       output_name: '',
       capture_target: 'display',
       capture_compute_shader: 'auto',
+      vdd_borrowed_texture: 'enabled',
+      vdd_vulkan_hdr_bridge: 'enabled',
       window_title: '',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
@@ -161,13 +168,22 @@ const DEFAULT_TABS = [
         id: 'amd',
         name: 'AMD AMF Encoder',
         options: {
-          amd_usage: 'ultralowlatency',
-          amd_rc: 'vbr_latency',
-          amd_enforce_hrd: 'disabled',
-          amd_quality: 'balanced',
-          amd_preanalysis: 'disabled',
-          amd_vbaq: 'enabled',
+          amd_usage: '',
+          amd_rc: '',
+          amd_enforce_hrd: '',
+          amd_quality: '',
+          amd_preanalysis: '',
+          amd_vbaq: '',
           amd_coder: 'auto',
+          amd_avcodec_compat: 'disabled',
+          // AMF advanced (driver workarounds): empty string = driver default
+          // (FFmpeg-aligned). Users can override per-property if troubleshooting
+          // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).
+          amd_high_motion_qb: '',
+          amd_lowlatency_mode: '',
+          amd_multi_hw_instance: '',
+          amd_input_queue_size: '',
+          amd_av1_latency_mode: '',
         },
       },
       {
@@ -192,19 +208,11 @@ const DEFAULT_TABS = [
 ]
 
 /**
- * 深拷贝对象
- */
-const deepClone = (obj) => JSON.parse(JSON.stringify(obj))
-
-/**
  * 安全解析 JSON
  */
 const safeParseJSON = (str, fallback = []) => {
-  try {
-    return JSON.parse(str || JSON.stringify(fallback))
-  } catch {
-    return fallback
-  }
+  if (!str) return fallback
+  return safeJsonParse(str, fallback)
 }
 
 /**
@@ -241,18 +249,18 @@ const forEachTabOption = (tabs, callback) => {
 /**
  * 序列化分辨率数组
  */
-const serializeResolutions = (resolutions) =>
+export const serializeResolutions = (resolutions) =>
   JSON.stringify(resolutions).replace(/","/g, ',').replace(/^\["/, '[').replace(/"\]$/, ']')
 
 /**
  * 序列化 FPS 数组
  */
-const serializeFps = (fps) => JSON.stringify(fps).replace(/"/g, '')
+export const serializeFps = (fps) => JSON.stringify(fps).replace(/"/g, '')
 
 /**
  * 解析分辨率字符串
  */
-const parseResolutions = (resStr) => {
+export const parseResolutions = (resStr) => {
   try {
     return JSON.parse((resStr || '').replace(/(\d+)x(\d+)/g, '"$1x$2"'))
   } catch {
@@ -263,7 +271,64 @@ const parseResolutions = (resStr) => {
 /**
  * 过滤有效的 FPS 值
  */
-const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
+export const filterValidFps = (fps) => fps.filter((item) => +item >= 30 && +item <= 500)
+
+export const normalizeEnabledDisabledValue = (value) => {
+  if (value === undefined || value === null || value === '') return value
+
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', 'yes', 'enable', 'enabled', 'on', '1'].includes(normalized)) return 'enabled'
+  if (['false', 'no', 'disable', 'disabled', 'off', '0'].includes(normalized)) return 'disabled'
+
+  return value
+}
+
+const RISK_SEVERITY_WEIGHT = {
+  critical: 3,
+  high: 2,
+  medium: 1,
+}
+
+const isEnabledValue = (value) => value === true || value === 'true' || value === 'enabled' || value === 1 || value === '1'
+
+const hasCommandText = (cmd) => {
+  if (!cmd) return false
+  if (typeof cmd === 'string') return cmd.trim().length > 0
+  return Boolean(String(cmd.do || cmd.cmd || cmd.undo || '').trim())
+}
+
+const hasElevatedCommand = (commands) => commands.some((cmd) => isEnabledValue(cmd?.elevated))
+
+const compactValue = (value) => {
+  if (Array.isArray(value)) return `${value.length}`
+  if (value === undefined || value === null || value === '') return ''
+  return String(value)
+}
+
+const riskLocaleKey = (id, field) => `config.risk_confirm.items.${id}.${field}`
+
+const createRisk = (
+  id,
+  severity,
+  { descriptionField = 'description', recoveryField = 'recovery', recoveryId = id, currentValue } = {},
+) => {
+  const risk = {
+    id,
+    severity,
+    titleKey: riskLocaleKey(id, 'title'),
+    descriptionKey: riskLocaleKey(id, descriptionField),
+  }
+
+  if (recoveryField) {
+    risk.recoveryKey = riskLocaleKey(recoveryId, recoveryField)
+  }
+
+  if (currentValue !== undefined && currentValue !== null && currentValue !== '') {
+    risk.currentValue = currentValue
+  }
+
+  return risk
+}
 
 /**
  * 配置管理组合式函数
@@ -357,13 +422,13 @@ export function useConfig() {
    */
   const loadConfig = async () => {
     try {
-      const response = await fetch('/api/config')
-      const data = await response.json()
+      const data = await getBootstrapConfig()
 
       platform.value = data.platform || ''
       filterTabsByPlatform(platform.value)
 
       const { platform: _, status, version, ...configData } = data
+      configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       config.value = configData
 
       fillDefaultValues()
@@ -383,6 +448,172 @@ export function useConfig() {
     config.value.fps = serializeFps(fps.value)
     config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
     config.value.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
+  }
+
+  /**
+   * 构建当前配置的序列化快照，不修改响应式状态。
+   */
+  const buildCurrentSnapshot = () => {
+    const currentConfig = deepClone(config.value || {})
+    currentConfig.resolutions = serializeResolutions(resolutions.value)
+    currentConfig.fps = serializeFps(filterValidFps([...fps.value]))
+    currentConfig.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
+    currentConfig.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
+
+    return {
+      config: currentConfig,
+      global_prep_cmd: deepClone(global_prep_cmd.value),
+      display_mode_remapping: deepClone(display_mode_remapping.value),
+    }
+  }
+
+  const addRisk = (risks, risk) => {
+    if (risks.some((item) => item.id === risk.id)) return
+    risks.push(risk)
+  }
+
+  const valueChanged = (currentConfig, key) => !isEqual(currentConfig[key], snapshots.value.config?.[key])
+
+  const listChanged = (currentList, originalList) =>
+    !isEqual(JSON.stringify(currentList), JSON.stringify(originalList || []))
+
+  /**
+   * 返回保存/应用前需要用户二次确认的风险项。
+   */
+  const getRiskyChanges = (action = 'save') => {
+    if (!config.value || !snapshots.value.config) {
+      return []
+    }
+
+    const current = buildCurrentSnapshot()
+    const currentConfig = current.config
+    const risks = []
+
+    if (action === 'apply') {
+      addRisk(risks, createRisk('restart', 'high'))
+    }
+
+    if (valueChanged(currentConfig, 'origin_web_ui_allowed') && currentConfig.origin_web_ui_allowed === 'wan') {
+      addRisk(risks, createRisk('web_ui_wan', 'critical', { currentValue: currentConfig.origin_web_ui_allowed }))
+    }
+
+    if (valueChanged(currentConfig, 'upnp') && isEnabledValue(currentConfig.upnp)) {
+      addRisk(risks, createRisk('upnp_enabled', 'high', { currentValue: currentConfig.upnp }))
+    }
+
+    if (valueChanged(currentConfig, 'wan_encryption_mode') && String(currentConfig.wan_encryption_mode) === '0') {
+      addRisk(
+        risks,
+        createRisk('wan_encryption_disabled', 'critical', { currentValue: currentConfig.wan_encryption_mode }),
+      )
+    }
+
+    if (
+      valueChanged(currentConfig, 'webhook_skip_ssl_verify') &&
+      isEnabledValue(currentConfig.webhook_skip_ssl_verify)
+    ) {
+      addRisk(
+        risks,
+        createRisk('webhook_skip_ssl_verify', 'high', { currentValue: currentConfig.webhook_skip_ssl_verify }),
+      )
+    }
+
+    if (
+      (valueChanged(currentConfig, 'webhook_enabled') || valueChanged(currentConfig, 'webhook_url')) &&
+      isEnabledValue(currentConfig.webhook_enabled) &&
+      currentConfig.webhook_url
+    ) {
+      addRisk(risks, createRisk('webhook_enabled', 'medium', { currentValue: currentConfig.webhook_url }))
+    }
+
+    if (valueChanged(currentConfig, 'pair_max_attempts') && Number(currentConfig.pair_max_attempts) === 0) {
+      addRisk(risks, createRisk('pair_limit_disabled', 'high', { currentValue: currentConfig.pair_max_attempts }))
+    }
+
+    if (listChanged(current.global_prep_cmd, snapshots.value.global_prep_cmd)) {
+      const commands = current.global_prep_cmd.filter(hasCommandText)
+      if (commands.length > 0) {
+        const elevated = hasElevatedCommand(commands)
+        addRisk(
+          risks,
+          createRisk(elevated ? 'elevated_global_commands' : 'global_prep_commands', elevated ? 'critical' : 'high', {
+            recoveryId: 'global_prep_commands',
+            currentValue: String(commands.length),
+          }),
+        )
+      }
+    }
+
+    const sensitiveFileKeys = ['credentials_file', 'pkey', 'cert', 'file_state']
+    const changedSensitiveFiles = sensitiveFileKeys.filter((key) => valueChanged(currentConfig, key))
+    if (changedSensitiveFiles.length > 0) {
+      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.join(', ') }))
+    }
+
+    if (
+      valueChanged(currentConfig, 'display_device_prep') &&
+      currentConfig.display_device_prep &&
+      currentConfig.display_device_prep !== 'no_operation'
+    ) {
+      const onlyDisplay = currentConfig.display_device_prep === 'ensure_only_display'
+      addRisk(
+        risks,
+        createRisk('display_device_prep', onlyDisplay ? 'critical' : 'high', {
+          descriptionField: onlyDisplay ? 'only_display_description' : 'description',
+          currentValue: currentConfig.display_device_prep,
+        }),
+      )
+    }
+
+    const displayModeKeys = ['resolution_change', 'manual_resolution', 'refresh_rate_change', 'manual_refresh_rate']
+    if (displayModeKeys.some((key) => valueChanged(currentConfig, key))) {
+      const resolutionActive = currentConfig.resolution_change && currentConfig.resolution_change !== 'no_operation'
+      const refreshActive = currentConfig.refresh_rate_change && currentConfig.refresh_rate_change !== 'no_operation'
+
+      if (resolutionActive || refreshActive) {
+        addRisk(
+          risks,
+          createRisk('display_mode_change', 'medium', {
+            currentValue: [
+              compactValue(currentConfig.resolution_change),
+              compactValue(currentConfig.manual_resolution),
+              compactValue(currentConfig.refresh_rate_change),
+              compactValue(currentConfig.manual_refresh_rate),
+            ].filter(Boolean).join(' / '),
+          }),
+        )
+      }
+    }
+
+    if (
+      listChanged(current.display_mode_remapping, snapshots.value.display_mode_remapping) &&
+      current.display_mode_remapping.length > 0
+    ) {
+      addRisk(
+        risks,
+        createRisk('display_mode_remapping', 'medium', {
+          currentValue: String(current.display_mode_remapping.length),
+        }),
+      )
+    }
+
+    if (
+      valueChanged(currentConfig, 'wgc_disable_secure_desktop') &&
+      isEnabledValue(currentConfig.wgc_disable_secure_desktop)
+    ) {
+      addRisk(
+        risks,
+        createRisk('wgc_disable_secure_desktop', 'high', {
+          currentValue: compactValue(currentConfig.wgc_disable_secure_desktop),
+        }),
+      )
+    }
+
+    if (valueChanged(currentConfig, 'capture') && ['amd'].includes(currentConfig.capture)) {
+      addRisk(risks, createRisk('experimental_capture', 'medium', { currentValue: currentConfig.capture }))
+    }
+
+    return risks.sort((a, b) => RISK_SEVERITY_WEIGHT[b.severity] - RISK_SEVERITY_WEIGHT[a.severity])
   }
 
   /**
@@ -410,10 +641,9 @@ export function useConfig() {
     removeDefaultValues(configData)
 
     try {
-      const response = await fetch('/api/config', {
+      const response = await apiFetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(configData),
+        body: configData,
       })
 
       saved.value = response.ok
@@ -448,7 +678,7 @@ export function useConfig() {
     }, 5000)
 
     try {
-      await fetch('/api/restart', { method: 'POST' })
+      await apiFetch('/api/restart', { method: 'POST' })
       trackEvents.userAction('config_applied')
     } catch (error) {
       console.error('Failed to restart:', error)
@@ -551,6 +781,7 @@ export function useConfig() {
     loadConfig,
     save,
     apply,
+    getRiskyChanges,
     handleHash,
     hasUnsavedChanges,
   }

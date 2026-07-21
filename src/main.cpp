@@ -9,6 +9,9 @@
 #include <fstream>
 #include <iostream>
 
+// lib includes
+#include <rs.h>
+
 // local includes
 #include "confighttp.h"
 #include "display_device/session.h"
@@ -19,7 +22,7 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
 #include "video.h"
@@ -28,10 +31,6 @@
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
 #endif
-
-extern "C" {
-#include "rswrapper.h"
-}
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -420,6 +419,17 @@ main(int argc, char *argv[]) {
   std::thread configThread { confighttp::start };
   std::thread rtspThread { rtsp_stream::start };
 
+#if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
+  // The service wrapper owns user-session agent startup in service mode.
+  // Standalone and portable runs need to reconcile the same bundled agent here.
+  if (!platf::is_running_as_system()) {
+    const auto gui_agent_error = platf::launch_gui_agent();
+    if (gui_agent_error) {
+      BOOST_LOG(warning) << "Failed to launch bundled GUI agent: "sv << gui_agent_error.message();
+    }
+  }
+#endif
+
 #ifdef _WIN32
   // If we're using the default port and GameStream is enabled, warn the user
   if (config::sunshine.port == 47989 && is_gamestream_enabled()) {
@@ -446,7 +456,9 @@ main(int argc, char *argv[]) {
 
   mainThreadLoop(shutdown_event);
 
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   system_tray::end_tray();
+#endif
   try {
     display_device::session_t::get().restore_state();
   }

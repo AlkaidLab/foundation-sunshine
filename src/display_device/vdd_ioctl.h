@@ -18,7 +18,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace display_device::vdd_ioctl {
 
@@ -37,6 +39,76 @@ namespace display_device::vdd_ioctl {
     interface_missing, ///< No registered device interface (driver too old / not installed). Safe to fall back.
     failed,            ///< Driver was reached but rejected the IOCTL or returned an error. Do NOT fall back.
   };
+
+  /**
+   * @brief Host-side view of the sealed frame-channel capability probe.
+   *
+   * Kept separate from `result` because a driver can fully support the command
+   * IOCTL transport while still being an older legacy named-texture frame
+   * producer.
+   */
+  enum class frame_channel_status {
+    supported,
+    unsupported,
+    interface_missing,
+    failed,
+  };
+
+  struct frame_channel_caps {
+    std::uint32_t version = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t max_shared_slots = 0;
+    std::uint32_t metadata_size = 0;
+  };
+
+  enum class frame_channel_open_status {
+    opened,
+    not_ready,       ///< Producer is transitioning modes; retry within the caller's deadline.
+    unsupported,
+    interface_missing,
+    failed,
+  };
+
+  inline const char *
+  frame_channel_open_status_name(frame_channel_open_status status) {
+    switch (status) {
+      case frame_channel_open_status::opened:
+        return "opened";
+      case frame_channel_open_status::not_ready:
+        return "not_ready";
+      case frame_channel_open_status::unsupported:
+        return "unsupported";
+      case frame_channel_open_status::interface_missing:
+        return "interface_missing";
+      case frame_channel_open_status::failed:
+        return "failed";
+    }
+    return "unknown";
+  }
+
+  struct frame_channel_open_request {
+    std::uint32_t monitor_index = 0;
+    std::uint32_t required_flags = 0;
+    std::uint32_t desired_slots = 0;
+    std::uint32_t adapter_luid_low_part = 0;
+    std::int32_t adapter_luid_high_part = 0;
+  };
+
+  struct frame_channel_slot_handle {
+    std::uint64_t texture_handle = 0;
+  };
+
+  struct frame_channel_open_response {
+    std::uint32_t version = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t slot_count = 0;
+    std::uint32_t metadata_size = 0;
+    std::uint64_t metadata_handle = 0;
+    std::uint64_t frame_ready_event_handle = 0;
+    std::vector<frame_channel_slot_handle> slots;
+  };
+
+  std::uint32_t required_sealed_frame_channel_flags();
 
   /**
    * @brief Send a UTF-16 command buffer to the VDD driver via IOCTL.
@@ -59,5 +131,27 @@ namespace display_device::vdd_ioctl {
    * @return `true` if `IOCTL_VDD_PING` round-trips successfully.
    */
   bool ping();
+
+  /**
+   * @brief Probe whether the installed driver supports the v2 sealed frame
+   *        channel negotiation IOCTL.
+   *
+   * `unsupported` means the control device is present but the driver does not
+   * implement `IOCTL_VDD_QUERY_FRAME_CHANNEL_CAPS`; callers should keep using
+   * the hardened legacy named shared-texture path.
+   */
+  frame_channel_status query_frame_channel_caps(frame_channel_caps &caps);
+
+  /**
+   * @brief Ask a v2 driver to duplicate an unnamed producer-owned frame
+   *        channel into this Sunshine process.
+   *
+   * This is the host side of sealed borrow. Older drivers return
+   * `unsupported`, and callers must not treat `query_frame_channel_caps()`
+   * support as proof that this open path is usable until this call succeeds.
+   */
+  frame_channel_open_status open_frame_channel(const frame_channel_open_request &request,
+                                               frame_channel_open_response &response,
+                                               bool log_failures = true);
 
 }  // namespace display_device::vdd_ioctl

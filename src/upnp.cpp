@@ -3,6 +3,7 @@
  * @brief Definitions for UPnP port mapping.
  */
 #include <cstddef>
+#include <string>
 #include <miniupnpc/miniupnpc.h>
 #include <miniupnpc/upnpcommands.h>
 
@@ -31,20 +32,22 @@ namespace upnp {
     std::string description;
   };
 
-  static std::string_view
+  static std::string
   status_string(int status) {
     switch (status) {
-      case 0:
-        return "No IGD device found"sv;
-      case 1:
-        return "Valid IGD device found"sv;
-      case 2:
-        return "Valid IGD device found,  but it isn't connected"sv;
-      case 3:
-        return "A UPnP device has been found,  but it wasn't recognized as an IGD"sv;
+      case UPNP_NO_IGD:
+        return "No IGD device found"s;
+      case UPNP_CONNECTED_IGD:
+        return "Valid connected IGD device found"s;
+      case UPNP_PRIVATEIP_IGD:
+        return "Valid connected IGD device found, but its WAN address is private/non-routable"s;
+      case UPNP_DISCONNECTED_IGD:
+        return "Valid IGD device found, but it isn't connected"s;
+      case UPNP_UNKNOWN_DEVICE:
+        return "UPnP device found, but it wasn't recognized as an IGD"s;
     }
 
-    return "Unknown status"sv;
+    return "Unknown IGD status: "s + std::to_string(status);
   }
 
   /**

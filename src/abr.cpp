@@ -35,8 +35,24 @@ using json = nlohmann::json;
 
 namespace abr {
 
-  static std::mutex sessions_mutex;
-  static std::unordered_map<std::string, session_state_t> sessions;
+  // NOTE: sessions are keyed by client_name (the device display name), which is the
+  // identifier that bridges the stateless HTTPS REST endpoints (abrFeedback/
+  // configureAbr resolve the client by source IP) and the streaming layer
+  // (stream::session::change_dynamic_param_for_client also routes by client_name).
+  // Limitation: two concurrently-running sessions that share the same device name
+  // would collide on a single entry and cross-contaminate state. This is acceptable
+  // because single-session deployments are immune and normally-paired devices have
+  // distinct names; supporting multi-session-same-name would require a coordinated
+  // rekey to a session-level id across resolve_client, this map, and
+  // change_dynamic_param_for_client.
+  //
+  // The LLM worker runs on a detached thread and may still be in flight (its HTTP
+  // call has a 300s timeout) when the process begins shutting down. To avoid a
+  // static-destruction-order crash — where the worker reacquires the lock and
+  // touches these globals after they have been destroyed — both are allocated with
+  // process lifetime and intentionally never freed, so a late worker is always safe.
+  static std::mutex &sessions_mutex = *new std::mutex();
+  static std::unordered_map<std::string, session_state_t> &sessions = *new std::unordered_map<std::string, session_state_t>();
 
   /**
    * @brief Sanitize client-provided network feedback values.
@@ -549,22 +565,31 @@ namespace abr {
       state.last_fg_detect = std::chrono::steady_clock::now();
     }
 
-    // Apply mode presets if min/max not explicitly configured
-    if (cfg.min_bitrate_kbps <= 0 || cfg.max_bitrate_kbps <= 0) {
+    // Apply mode presets only for bounds that were not explicitly configured.
+    // This preserves a client/host maxBitrate cap when minBitrate is omitted.
+    if (state.config.min_bitrate_kbps <= 0 || state.config.max_bitrate_kbps <= 0) {
+      int preset_min_bitrate_kbps = 0;
+      int preset_max_bitrate_kbps = 0;
       switch (cfg.mode) {
         case mode_e::QUALITY:
-          state.config.min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
+          preset_min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
           break;
         case mode_e::LOW_LATENCY:
-          state.config.min_bitrate_kbps = 2000;
-          state.config.max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
+          preset_min_bitrate_kbps = 2000;
+          preset_max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
           break;
         case mode_e::BALANCED:
         default:
-          state.config.min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
+          preset_min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
           break;
+      }
+      if (state.config.min_bitrate_kbps <= 0) {
+        state.config.min_bitrate_kbps = preset_min_bitrate_kbps;
+      }
+      if (state.config.max_bitrate_kbps <= 0) {
+        state.config.max_bitrate_kbps = preset_max_bitrate_kbps;
       }
       // Guard against inverted range when initial_bitrate is very low
       if (state.config.min_bitrate_kbps > state.config.max_bitrate_kbps) {
@@ -611,6 +636,14 @@ namespace abr {
 
     std::lock_guard lock(sessions_mutex);
     auto it = sessions.find(client_name);
+    // The BOOST_LOG calls below touch the global severity loggers, which (unlike
+    // sessions/sessions_mutex) are destroyed at static teardown. A late worker
+    // logging after logging::deinit() would be a use-after-free. This is safe in
+    // practice: on shutdown the stream session is torn down first, which calls
+    // abr::cleanup() and erases this entry, so the lookup below fails and the
+    // worker returns *before* reaching any BOOST_LOG. The only residual exposure
+    // is an extremely narrow race (entry not yet erased while logging is mid-
+    // deinit), deemed acceptable rather than coupling abr to the shutdown sequence.
     if (it == sessions.end() || it->second.generation != generation) {
       return;  // Session was cleaned up or re-created while LLM was in flight
     }
@@ -854,6 +887,30 @@ TEST(AbrLlmParseTests, DetectsTruncatedReasoningWhenFinishReasonLength) {
   EXPECT_EQ(action.new_bitrate_kbps, 0);
   EXPECT_EQ(action.target_bitrate_kbps, 0);
   EXPECT_EQ(action.reason, "llm_truncated: reasoning exceeded max_tokens");
+}
+
+TEST(AbrConfigTests, PreservesExplicitMaxBitrateWhenMinIsOmitted) {
+  abr::config_t cfg;
+  cfg.enabled = true;
+  cfg.min_bitrate_kbps = 0;
+  cfg.max_bitrate_kbps = 15000;
+  cfg.mode = abr::mode_e::BALANCED;
+
+  const std::string client_name = "abr-max-cap-test";
+  abr::enable(client_name, cfg, 50000, "Test Game");
+
+  auto action = abr::process_feedback(client_name, {
+    .packet_loss = 6.0,
+    .rtt_ms = 10.0,
+    .decode_fps = 60.0,
+    .dropped_frames = 0,
+    .current_bitrate_kbps = 50000,
+  });
+
+  EXPECT_GT(action.new_bitrate_kbps, 0);
+  EXPECT_LE(action.new_bitrate_kbps, cfg.max_bitrate_kbps);
+
+  abr::cleanup(client_name);
 }
 
 #endif

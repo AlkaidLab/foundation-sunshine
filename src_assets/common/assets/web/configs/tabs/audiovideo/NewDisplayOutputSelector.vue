@@ -51,7 +51,7 @@ const displayDevices = computed(() => {
       </option>
     </select>
     <div class="form-text">
-      <p style="white-space: pre-line">{{ $tp("config.output_name_desc") }}</p>
+      <p class="pre-line">{{ $tp("config.output_name_desc") }}</p>
       <PlatformLayout :platform="platform">
         <template #windows></template>
         <template #linux> </template>
@@ -92,7 +92,7 @@ const displayDevices = computed(() => {
     <div class="form-text">
       {{ $t("config.output_name_desc_unix") }}<br />
       <br />
-      <pre style="white-space: pre-line" v-if="platform === 'linux'">
+      <pre class="pre-line" v-if="platform === 'linux'">
               Info: Detecting displays
               Info: Detected display: DVI-D-0 (id: 0) connected: false
               Info: Detected display: HDMI-0 (id: 1) connected: true
@@ -101,7 +101,7 @@ const displayDevices = computed(() => {
               Info: Detected display: DVI-D-1 (id: 4) connected: false
             </pre
       >
-      <pre style="white-space: pre-line" v-if="platform === 'macos'">
+      <pre class="pre-line" v-if="platform === 'macos'">
               Info: Detecting displays
               Info: Detected display: Monitor-0 (id: 3) connected: true
               Info: Detected display: Monitor-1 (id: 2) connected: true

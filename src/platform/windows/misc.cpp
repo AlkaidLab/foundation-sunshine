@@ -9,6 +9,10 @@
 #include <sstream>
 #include <vector>
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/process/v1.hpp>
@@ -1165,6 +1169,43 @@ namespace platf {
     return create_boost_child_from_results(ret, cmd, ec, process_info);
   }
 
+  std::error_code
+  launch_gui_agent() {
+    std::wstring executable(32768, L'\0');
+    const auto executable_length = GetModuleFileNameW(
+      nullptr,
+      executable.data(),
+      static_cast<DWORD>(executable.size()));
+    if (executable_length == 0) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (executable_length >= executable.size()) {
+      return { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+    }
+    executable.resize(executable_length);
+
+    const boost::filesystem::path sunshine_path { executable };
+    const auto gui_dir = sunshine_path.parent_path() / L"assets" / L"gui";
+    const auto gui_path = gui_dir / L"sunshine-gui.exe";
+    const auto attributes = GetFileAttributesW(gui_path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+      return std::make_error_code(std::errc::no_such_file_or_directory);
+    }
+
+    auto environment = boost::this_process::environment();
+    auto working_dir = gui_dir;
+    std::error_code ec;
+    const auto command = "\"" + to_utf8(gui_path.wstring()) + "\" --hidden";
+    auto child = run_command(false, false, command, working_dir, environment, nullptr, ec, nullptr);
+    if (!ec) {
+      child.detach();
+    }
+    return ec;
+  }
+
   /**
    * @brief Open a url in the default web browser.
    * @param url The url to open.
@@ -1670,10 +1711,128 @@ namespace platf {
     return saddr_v6;
   }
 
+  // --- Source address pinning resilience (handles host NIC IP changes mid-stream) ---
+  //
+  // The video transport pins a fixed source IP via IP_PKTINFO/IPV6_PKTINFO on every
+  // packet (to ensure correct routing on multi-homed hosts). If the host's interface
+  // IP changes during a stream (DHCP renewal, Wi-Fi reconnect, VPN toggle, sleep/wake,
+  // energy-efficient-ethernet blips, etc.), that pinned source address becomes invalid
+  // and WSASendMsg() fails with WSAEINVAL on every send, flooding the log and dropping
+  // all video traffic until the client gives up.
+  //
+  // To stay resilient we detect that failure, stop pinning the (now invalid) source
+  // address so the OS picks one by routing, and re-enable pinning when the host's
+  // address table changes (i.e. the network has stabilized).
+  static std::atomic<bool> source_pin_disabled { false };
+
+  // Whether to add the PKTINFO control message. Skipped when pinning is disabled or
+  // the source address is unspecified (in which case the OS chooses the source).
+  static bool
+  should_pin_source_address(const boost::asio::ip::address &addr) {
+    return !addr.is_unspecified() && !source_pin_disabled.load(std::memory_order_relaxed);
+  }
+
+  // Writes an IP_PKTINFO / IPV6_PKTINFO control message into cm that pins the source
+  // address (letting the OS pick the interface via ipi_ifindex=0). Returns the number
+  // of control-buffer bytes consumed (WSA_CMSG_SPACE for the option).
+  static ULONG
+  write_source_pktinfo(WSACMSGHDR *cm, const boost::asio::ip::address &source_address) {
+    if (source_address.is_v6()) {
+      IN6_PKTINFO pktInfo;
+
+      SOCKADDR_IN6 saddr_v6 = to_sockaddr(source_address.to_v6(), 0);
+      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
+      pktInfo.ipi6_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IPV6;
+      cm->cmsg_type = IPV6_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+    else {
+      IN_PKTINFO pktInfo;
+
+      SOCKADDR_IN saddr_v4 = to_sockaddr(source_address.to_v4(), 0);
+      pktInfo.ipi_addr = saddr_v4.sin_addr;
+      pktInfo.ipi_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IP;
+      cm->cmsg_type = IP_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+  }
+
+  // Rate-limited logging for the WSASendMsg() failure flood (up to 3x per video frame).
+  // Emits at most one line per second and reports how many were suppressed.
+  static void
+  log_wsasendmsg_failure(int winerr) {
+    static std::atomic<int64_t> last_log_ms { 0 };
+    static std::atomic<uint64_t> suppressed { 0 };
+
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+    auto prev = last_log_ms.load(std::memory_order_relaxed);
+    if (now_ms - prev >= 1000 &&
+        last_log_ms.compare_exchange_strong(prev, now_ms)) {
+      auto dropped = suppressed.exchange(0);
+      if (dropped) {
+        BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr
+                           << " ("sv << dropped << " similar errors suppressed in the last second)"sv;
+      }
+      else {
+        BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr;
+      }
+    }
+    else {
+      suppressed.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+
+  // Called when WSASendMsg() fails. If the pinned source address is no longer valid
+  // (WSAEINVAL), disable source pinning so subsequent sends fall back to OS routing.
+  static void
+  handle_wsasendmsg_failure(int winerr) {
+    if (winerr == WSAEINVAL && !source_pin_disabled.exchange(true)) {
+      BOOST_LOG(warning) << "Pinned source address is no longer valid (likely a host network change); "
+                            "disabling source address pinning and letting the OS choose the source interface"sv;
+    }
+    log_wsasendmsg_failure(winerr);
+  }
+
+  // Network address change watcher: when the host's unicast address table changes,
+  // re-enable source pinning so a healthy/multi-homed configuration can resume pinning
+  // (new sessions resolve a fresh, valid source address from their control connection).
+  static void NETIOAPI_API_
+  on_unicast_address_change(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
+    if (source_pin_disabled.exchange(false)) {
+      BOOST_LOG(info) << "Host network address change detected; re-enabling source address pinning"sv;
+    }
+  }
+
+  // Lazily register the address-change watcher on first send. The notification handle
+  // is intentionally leaked for the lifetime of the process.
+  static void
+  ensure_address_change_watcher() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+      HANDLE handle = nullptr;
+      auto err = NotifyUnicastIpAddressChange(AF_UNSPEC, on_unicast_address_change, nullptr, FALSE, &handle);
+      if (err != NO_ERROR) {
+        BOOST_LOG(warning) << "NotifyUnicastIpAddressChange() failed: "sv << err;
+      }
+    });
+  }
+
   // Use UDP segmentation offload if it is supported by the OS. If the NIC is capable, this will use
   // hardware acceleration to reduce CPU usage. Support for USO was introduced in Windows 10 20H1.
   bool
   send_batch(batched_send_info_t &send_info) {
+    ensure_address_change_watcher();
+
     WSAMSG msg;
 
     // Convert the target address into a SOCKADDR
@@ -1733,40 +1892,22 @@ namespace platf {
     msg.Control.buf = cmbuf;
     msg.Control.len = sizeof(cmbuf);
 
-    auto cm = WSA_CMSG_FIRSTHDR(&msg);
-    if (send_info.source_address.is_v6()) {
-      IN6_PKTINFO pktInfo;
+    WSACMSGHDR *cm = WSA_CMSG_FIRSTHDR(&msg);
+    bool have_cmsg = false;
 
-      SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-      pktInfo.ipi6_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IPV6;
-      cm->cmsg_type = IPV6_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-    }
-    else {
-      IN_PKTINFO pktInfo;
-
-      SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-      pktInfo.ipi_addr = saddr_v4.sin_addr;
-      pktInfo.ipi_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IP;
-      cm->cmsg_type = IP_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+    // Only pin the source address while it is known to be valid. If a prior send failed
+    // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
+    // OS pick the source interface so the stream keeps flowing.
+    if (should_pin_source_address(send_info.source_address)) {
+      cmbuflen += write_source_pktinfo(cm, send_info.source_address);
+      have_cmsg = true;
     }
 
     if (send_info.block_count > 1) {
       cmbuflen += WSA_CMSG_SPACE(sizeof(DWORD));
 
-      cm = WSA_CMSG_NXTHDR(&msg, cm);
+      // The USO option becomes the first control message if PKTINFO was skipped.
+      cm = have_cmsg ? WSA_CMSG_NXTHDR(&msg, cm) : WSA_CMSG_FIRSTHDR(&msg);
       cm->cmsg_level = IPPROTO_UDP;
       cm->cmsg_type = UDP_SEND_MSG_SIZE;
       cm->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD));
@@ -1776,12 +1917,17 @@ namespace platf {
     msg.Control.len = cmbuflen;
 
     // If USO is not supported, this will fail and the caller will fall back to unbatched sends.
+    // We intentionally do NOT treat a batch failure as a source-pinning failure, because an
+    // unsupported-USO error is indistinguishable from an invalid-source error here; the
+    // self-heal logic lives in the unbatched send() fallback path instead.
     DWORD bytes_sent;
     return WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
   }
 
   bool
   send(send_info_t &send_info) {
+    ensure_address_change_watcher();
+
     WSAMSG msg;
 
     // Convert the target address into a SOCKADDR
@@ -1821,42 +1967,18 @@ namespace platf {
     msg.Control.buf = cmbuf;
     msg.Control.len = sizeof(cmbuf);
 
-    auto cm = WSA_CMSG_FIRSTHDR(&msg);
-    if (send_info.source_address.is_v6()) {
-      IN6_PKTINFO pktInfo;
-
-      SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-      pktInfo.ipi6_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IPV6;
-      cm->cmsg_type = IPV6_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-    }
-    else {
-      IN_PKTINFO pktInfo;
-
-      SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-      pktInfo.ipi_addr = saddr_v4.sin_addr;
-      pktInfo.ipi_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IP;
-      cm->cmsg_type = IP_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+    // Only pin the source address while it is known to be valid. If a prior send failed
+    // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
+    // OS pick the source interface so the stream keeps flowing.
+    if (should_pin_source_address(send_info.source_address)) {
+      cmbuflen += write_source_pktinfo(WSA_CMSG_FIRSTHDR(&msg), send_info.source_address);
     }
 
     msg.Control.len = cmbuflen;
 
     DWORD bytes_sent;
     if (WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) == SOCKET_ERROR) {
-      auto winerr = WSAGetLastError();
-      BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr;
+      handle_wsasendmsg_failure(WSAGetLastError());
       return false;
     }
 

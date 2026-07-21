@@ -8,6 +8,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 #include <windows.h>
 
 #include "parsed_config.h"
@@ -51,6 +52,8 @@ namespace display_device::vdd_utils {
   struct VddSettings {
     std::string resolutions;
     std::string fps;
+    std::vector<resolution_t> resolution_modes;
+    std::vector<unsigned int> refresh_rates_hz;
     bool needs_update = false;
   };
 
@@ -72,6 +75,40 @@ namespace display_device::vdd_utils {
   // 驱动重载函数
   bool
   reload_driver();
+
+  /**
+   * @brief Ensure ZakoVDD renders the cursor into the framebuffer instead of exposing a hardware cursor plane.
+   * @details Sunshine's direct VDD capture backend consumes only the shared frame texture exported by ZakoVDD.
+   *          Hardware cursor planes are not part of that texture, so they would be invisible to remote clients.
+   * @param changed Optional output set to true when this call had to update the driver setting.
+   * @return True when the setting is already safe or was updated successfully.
+   */
+  bool
+  ensure_hardware_cursor_disabled_for_capture(bool *changed = nullptr);
+
+  /**
+   * @brief Outcome of attempting a live SETMODES update.
+   * @details Lets callers distinguish "driver accepted" / "driver rejected" /
+   *          "feature not present" / "config is unusable" so the persistent
+   *          XML fallback can be used when the live path is not available.
+   */
+  enum class set_vdd_result {
+    ok,                 ///< Driver accepted the live mode update.
+    failed,             ///< Driver reachable but rejected the IOCTL.
+    interface_missing,  ///< IOCTL interface not present (old driver) -> safe to XML-fallback.
+    invalid_config,     ///< Resolution/refresh rate missing or unusable; nothing was sent.
+  };
+
+  /**
+   * @brief Push the complete session mode list to ZakoVDD in-memory mode list.
+   * @details Uses the SETMODES IOCTL command exposed by newer ZakoVDD builds.
+   *          This does not persist the session resolution to vdd_settings.xml.
+   * @param config Parsed display configuration containing the requested session mode.
+   * @param settings Full standard mode list plus the requested session mode.
+   * @return Typed outcome; callers can XML-fallback when the live path is unavailable.
+   */
+  set_vdd_result
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);
 
   /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）
@@ -98,6 +135,13 @@ namespace display_device::vdd_utils {
    */
   bool
   create_vdd_monitor(const std::string &client_identifier = "", const hdr_brightness_t &hdr_brightness = {}, const physical_size_t &physical_size = {});
+
+  /**
+   * Create a VDD for a user-session provider without displaying Core UI.
+   * The provider owns confirmation; Core performs bounded topology setup.
+   */
+  bool
+  create_vdd_monitor_noninteractive();
 
   bool
   destroy_vdd_monitor();

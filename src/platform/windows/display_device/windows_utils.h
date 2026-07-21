@@ -29,6 +29,38 @@ namespace display_device::w_utils {
     std::string device_id; /**< A device id (made up by us) that is identifies the device. */
   };
 
+  struct display_scale_info_t {
+    std::string display_name;
+    std::string device_id;
+    std::string friendly_name;
+    bool is_primary {};
+    boost::optional<int> current_scale_percent;
+    boost::optional<int> recommended_scale_percent;
+    std::vector<int> supported_scale_percents;
+    bool scale_set_supported {};
+  };
+
+  enum class display_scale_error_e {
+    none,
+    display_not_found,
+    unsupported_scale,
+    permission_denied,
+    apply_failed
+  };
+
+  struct set_display_scale_result_t {
+    bool success {};
+    display_scale_error_e error { display_scale_error_e::none };
+    std::string display_name;
+    std::string device_id;
+    boost::optional<int> previous_scale_percent;
+    boost::optional<int> current_scale_percent;
+    std::vector<int> supported_scale_percents;
+    bool restart_required {};
+    bool effective_immediately {};
+    std::string message;
+  };
+
   /**
    * @brief Stringify the error code from Windows API.
    * @param error_code Error code to stringify.
@@ -434,6 +466,15 @@ namespace display_device::w_utils {
    */
   boost::optional<path_and_mode_data_t>
   query_display_config(bool active_only);
+
+  std::vector<display_scale_info_t>
+  list_display_scale_info();
+
+  boost::optional<display_scale_info_t>
+  get_display_scale_info(const std::string &display_name, const std::string &device_id);
+
+  set_display_scale_result_t
+  set_display_scale(const std::string &display_name, const std::string &device_id, int scale_percent);
 
   /**
    * @brief Get the active path matching the device id.

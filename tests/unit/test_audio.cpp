@@ -27,14 +27,30 @@ constexpr std::bitset<config_t::MAX_FLAGS> config_flags(const int flag = -1) {
   return result;
 }
 
+config_t
+make_config(int packet_duration,
+            int channels,
+            int mask,
+            std::bitset<config_t::MAX_FLAGS> flags,
+            stream_params_t custom_stream_params = {}) {
+  config_t config {};
+  config.packetDuration = packet_duration;
+  config.channels = channels;
+  config.mask = mask;
+  config.codec = CODEC_OPUS;
+  config.customStreamParams = custom_stream_params;
+  config.flags = flags;
+  return config;
+}
+
 INSTANTIATE_TEST_SUITE_P(
   Configurations,
   AudioTest,
   testing::Values(
-    std::make_tuple("HIGH_STEREO", config_t { 5, 2, 0x3, { 0 }, config_flags(config_t::HIGH_QUALITY) }),
-    std::make_tuple("SURROUND51", config_t { 5, 6, 0x3F, { 0 }, config_flags() }),
-    std::make_tuple("SURROUND71", config_t { 5, 8, 0x63F, { 0 }, config_flags() }),
-    std::make_tuple("SURROUND51_CUSTOM", config_t { 5, 6, 0x3F, { 6, 4, 2, { 0, 1, 4, 5, 2, 3 } }, config_flags(config_t::CUSTOM_SURROUND_PARAMS) })),
+    std::make_tuple("HIGH_STEREO", make_config(5, 2, 0x3, config_flags(config_t::HIGH_QUALITY))),
+    std::make_tuple("SURROUND51", make_config(5, 6, 0x3F, config_flags())),
+    std::make_tuple("SURROUND71", make_config(5, 8, 0x63F, config_flags())),
+    std::make_tuple("SURROUND51_CUSTOM", make_config(5, 6, 0x3F, config_flags(config_t::CUSTOM_SURROUND_PARAMS), { 6, 4, 2, { 0, 1, 4, 5, 2, 3 } }))),
   [](const auto &info) { return std::string(std::get<0>(info.param)); });
 
 TEST_P(AudioTest, TestEncode) {

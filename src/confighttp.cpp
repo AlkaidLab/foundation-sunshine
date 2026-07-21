@@ -21,6 +21,7 @@
 #include <sstream>
 #include <cstdio>
 #include <ctime>
+#include <thread>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -29,8 +30,6 @@
 #include <boost/property_tree/xml_parser.hpp>
 
 #include <boost/algorithm/string.hpp>
-
-#include <boost/asio/ssl/context.hpp>
 
 #include <boost/filesystem.hpp>
 #include <nlohmann/json.hpp>
@@ -43,17 +42,20 @@
 #include "clipboard_http.h"
 #include "crypto.h"
 #include "display_device/session.h"
+#include "file_mapping/file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "http_util.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"
-#include "src/display_device/display_device.h"
 #include "src/display_device/to_string.h"
+#include "src/tray/tray_http.h"
 #include "stream.h"
 #include "utility.h"
 #include "uuid.h"
@@ -63,6 +65,7 @@
 
 #ifdef _WIN32
   #include <iphlpapi.h>
+  #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 
 using namespace std::literals;
@@ -75,6 +78,7 @@ namespace confighttp {
   // Prevent saveApp/deleteApp concurrent write to file_apps causing file corruption, non-blocking
   // return busy if not acquired
   static std::atomic<bool> apps_writing { false };
+  static std::mutex file_mapping_store_transaction_mutex;
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
 
@@ -131,6 +135,39 @@ namespace confighttp {
     headers.emplace("X-Frame-Options", "DENY");
     headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(output_tree.dump(), headers);
+  }
+
+  /**
+   * @brief Validate the request content type and send bad request when mismatch.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   * @param contentType The expected content type.
+   * @return true if the request's Content-Type matches the expected type.
+   *
+   * Backport of upstream LizardByte/Sunshine 738ac93a0ec1 (CVE-2025-53095).
+   * AlkaidLab does not have upstream's bad_request() helper, so the bad-request
+   * response is inlined here.
+   */
+  bool check_content_type(resp_https_t response, req_https_t request, const std::string &contentType) {
+    auto send_bad_request = [response](const std::string &error_message) {
+      nlohmann::json tree;
+      tree["status_code"] = 400;
+      tree["status"] = false;
+      tree["error"] = error_message;
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, tree.dump(), headers);
+    };
+    auto requestContentType = request->header.find("content-type");
+    if (requestContentType == request->header.end()) {
+      send_bad_request("Content type not provided");
+      return false;
+    }
+    if (!http_util::content_type_matches(requestContentType->second, contentType)) {
+      send_bad_request("Content type mismatch");
+      return false;
+    }
+    return true;
   }
 
   void
@@ -728,6 +765,7 @@ namespace confighttp {
 
   void
   saveApp(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -889,8 +927,168 @@ namespace confighttp {
     proc::refresh(config::stream.file_apps);
   }
 
+  /**
+   * @brief Delete multiple apps in a single atomic operation.
+   *
+   * Expects JSON body: {"indices":[<int>, <int>, ...]}
+   *
+   * Rationale: clients that want to delete N apps cannot just loop on
+   * DELETE /api/apps/{id} — each successful delete shifts the remaining
+   * indices, and a second concurrent caller is rejected by apps_writing.
+   * By taking the lock once and rebuilding the array under it, we avoid both
+   * problems: indices are interpreted against a single snapshot, the JSON file
+   * is rewritten once, and proc::refresh runs only once.
+   *
+   * Response:
+   *   200 {"status":"true",  "deleted":<N>, "remaining":<M>}
+   *   400 {"status":"false", "error":"..."} for content-type / JSON / index /
+   *        file-write business errors. Follows uploadCover() convention in
+   *        this same file (status code derived from presence of 'error' key
+   *        inside the fail_guard).
+   *   401  not authenticated (via authenticate)
+   *   409  another apps-writer is already in flight
+   *
+   * @api_examples{/api/apps/batch-delete| POST| {"indices":[2,5,7]}}
+   */
+  void
+  batchDeleteApps(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    // Same single-writer guard as deleteApp / saveApp.
+    bool expected = false;
+    if (!apps_writing.compare_exchange_strong(expected, true)) {
+      pt::ptree busy;
+      busy.put("status", "false");
+      busy.put("error", "Another operation is in progress");
+      std::ostringstream data;
+      pt::write_json(data, busy);
+      response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+
+    pt::ptree outputTree;
+    auto g = util::fail_guard([&]() {
+      // Mirror uploadCover's convention in this file: when fail_guard fires
+      // with an 'error' field, emit 4xx so clients can distinguish business
+      // failures from success rather than parsing status:"false" out of a 200.
+      SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok;
+      if (outputTree.get_child_optional("error").has_value()) {
+        code = SimpleWeb::StatusCode::client_error_bad_request;
+      }
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(code, data.str());
+    });
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+
+    std::set<int> indices_to_remove;
+    try {
+      pt::ptree body;
+      pt::read_json(ss, body);
+
+      auto indices_node = body.get_child_optional("indices");
+      if (!indices_node) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Missing 'indices' array");
+        return;
+      }
+
+      if (indices_node->size() > 1024) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Too many indices in a single request");
+        return;
+      }
+      for (const auto &kv : *indices_node) {
+        // boost::property_tree json reader stores array values as anonymous
+        // children with empty keys. get_value<int>() will throw if the value
+        // is not parseable as an integer.
+        int idx = kv.second.get_value<int>();
+        indices_to_remove.insert(idx);
+      }
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: invalid JSON body: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid JSON body");
+      return;
+    }
+
+    pt::ptree fileTree;
+    try {
+      pt::read_json(config::stream.file_apps, fileTree);
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid File JSON");
+      return;
+    }
+
+    // Validate every index against the single snapshot we just loaded BEFORE
+    // any write, so a partially invalid request fails atomically.
+    const int apps_count = static_cast<int>(fileTree.get_child("apps"s).size());
+    for (int idx : indices_to_remove) {
+      if (idx < 0 || idx >= apps_count) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "Invalid Index");
+        return;
+      }
+    }
+
+    // Empty selection: success no-op. Skip the write+refresh, but still emit
+    // 'remaining' so the success contract matches the non-empty path.
+    if (indices_to_remove.empty()) {
+      outputTree.put("status", "true");
+      outputTree.put("deleted", 0);
+      outputTree.put("remaining", apps_count);
+      return;
+    }
+
+    int deleted_count = 0;
+    int remaining_count = 0;
+    try {
+      auto &apps_node = fileTree.get_child("apps"s);
+      pt::ptree newApps;
+      int i = 0;
+      for (const auto &kv : apps_node) {
+        if (indices_to_remove.find(i) == indices_to_remove.end()) {
+          newApps.push_back(std::make_pair("", kv.second));
+        }
+        else {
+          ++deleted_count;
+        }
+        ++i;
+      }
+      remaining_count = static_cast<int>(newApps.size());
+      fileTree.erase("apps");
+      fileTree.push_back(std::make_pair("apps", newApps));
+
+      pt::write_json(config::stream.file_apps, fileTree);
+    }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "Invalid File JSON");
+      return;
+    }
+
+    BOOST_LOG(info) << "BatchDeleteApps: removed "sv << deleted_count
+                    << " app(s), "sv << remaining_count << " remaining"sv;
+    outputTree.put("status", "true");
+    outputTree.put("deleted", deleted_count);
+    outputTree.put("remaining", remaining_count);
+    proc::refresh(config::stream.file_apps);
+  }
+
   void
   uploadCover(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     std::stringstream ss;
@@ -931,12 +1129,8 @@ namespace confighttp {
 
     std::basic_string path = coverdir + http::url_escape(key) + ".png";
     if (!url.empty()) {
-      if (http::url_get_host(url) != "images.igdb.com") {
-        outputTree.put("error", "Only images.igdb.com is allowed");
-        return;
-      }
-      if (!http::download_image_with_magic_check(url, path)) {
-        outputTree.put("error", "Failed to download cover");
+      if (!http::download_public_cover_image(url, path)) {
+        outputTree.put("error", "Failed to download public HTTPS cover");
         return;
       }
     }
@@ -1009,6 +1203,7 @@ namespace confighttp {
       outputTree.put(std::move(name), std::move(value));
     }
 
+    outputTree.put("active_encoder", video::active_encoder_name());
     outputTree.put("pair_name", nvhttp::get_pair_name());
   }
 
@@ -1157,6 +1352,7 @@ namespace confighttp {
 
   void
   saveConfig(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1253,8 +1449,37 @@ namespace confighttp {
     outputTree.put("status", true);
   }
 
+#ifdef _WIN32
+  void
+  writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
+    const auto bridge_status = platf::vulkan_hdr_bridge::status();
+    nlohmann::json output {
+      {"status", operation_status},
+      {"state", bridge_status.state},
+      {"message", bridge_status.message},
+      {"registered", bridge_status.registered},
+      {"artifacts_installed", bridge_status.artifacts_installed},
+      {"display_available", bridge_status.display_available},
+    };
+    send_response(std::move(response), output);
+  }
+
+  void
+  getVulkanHdrBridgeStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    writeVulkanHdrBridgeStatus(response, true);
+  }
+
+  void
+  validateVulkanHdrBridge(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    writeVulkanHdrBridgeStatus(response, platf::vulkan_hdr_bridge::validate_now());
+  }
+#endif
+
   void
   savePassword(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!config::sunshine.username.empty() && !authenticate(response, request)) return;
 
     print_req(request);
@@ -1325,6 +1550,7 @@ namespace confighttp {
 
   void
   savePin(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1560,6 +1786,7 @@ namespace confighttp {
 
   void
   unpair(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1673,27 +1900,40 @@ namespace confighttp {
   }
 
   void
+  write_runtime_error(resp_https_t response, SimpleWeb::StatusCode http_status, int status_code, const std::string &status_message) {
+    json error_json;
+    error_json["success"] = false;
+    error_json["status_code"] = status_code;
+    error_json["status_message"] = status_message;
+
+    response->write(http_status, error_json.dump());
+    response->close_connection_after_response = true;
+  }
+
+  bool
+  require_localhost(resp_https_t response, req_https_t request, const std::string &action) {
+    auto client_address = request->remote_endpoint().address();
+    auto address = net::addr_to_normalized_string(client_address);
+    auto ip_type = net::from_address(address);
+
+    if (ip_type == net::PC) {
+      return true;
+    }
+
+    std::ostringstream msg_stream;
+    msg_stream << "Access denied when " << action << ". Only localhost requests are allowed. Client IP: " << client_address.to_string();
+    BOOST_LOG(warning) << msg_stream.str();
+    write_runtime_error(response, SimpleWeb::StatusCode::client_error_forbidden, 403, msg_stream.str());
+    return false;
+  }
+
+  void
   getRuntimeSessions(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
     print_req(request);
 
-    // 限制只允许 localhost 访问（增强安全性）
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    
-    if (ip_type != net::PC) {
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied when getting runtime sessions. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      BOOST_LOG(warning) << msg_stream.str();
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 403;
-      error_json["status_message"] = msg_stream.str();
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+    if (!require_localhost(response, request, "getting runtime sessions")) {
       return;
     }
 
@@ -1737,25 +1977,36 @@ namespace confighttp {
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "getRuntimeSessions: " << e.what();
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = std::string(e.what());
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
     }
     catch (...) {
       BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = "Unknown error";
-      
-      response->write(error_json.dump());
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
+  getPerfCurrent(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "getting performance snapshot")) {
+      return;
+    }
+
+    try {
+      response->write(perf::current_snapshot_json().dump());
       response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getPerfCurrent: " << e.what();
+
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getPerfCurrent: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
 
@@ -1765,22 +2016,7 @@ namespace confighttp {
 
     print_req(request);
 
-    // 限制只允许 localhost 访问
-    auto client_address = request->remote_endpoint().address();
-    auto address = net::addr_to_normalized_string(client_address);
-    auto ip_type = net::from_address(address);
-    
-    if (ip_type != net::PC) {
-      std::ostringstream msg_stream;
-      msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
-      BOOST_LOG(warning) << msg_stream.str();
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 403;
-      error_json["status_message"] = msg_stream.str();
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+    if (!require_localhost(response, request, "changing runtime bitrate")) {
       return;
     }
 
@@ -1794,12 +2030,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Missing bitrate parameter when changing bitrate";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -1807,12 +2038,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Missing clientname parameter when changing bitrate";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -1822,12 +2048,7 @@ namespace confighttp {
         bitrate = std::stoi(bitrate_param->second);
       }
       catch (...) {
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = "Invalid bitrate parameter format";
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, "Invalid bitrate parameter format");
         return;
       }
 
@@ -1838,12 +2059,7 @@ namespace confighttp {
         std::ostringstream msg_stream;
         msg_stream << "Invalid bitrate value when changing bitrate. Must be between 1 and 800000 Kbps";
         BOOST_LOG(warning) << msg_stream.str();
-        json error_json;
-        error_json["success"] = false;
-        error_json["status_code"] = 400;
-        error_json["status_message"] = msg_stream.str();
-        response->write(error_json.dump());
-        response->close_connection_after_response = true;
+        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
         return;
       }
 
@@ -1900,30 +2116,19 @@ namespace confighttp {
         BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
       }
       
-      response->write(response_json.dump());
+      response->write(
+        success ? SimpleWeb::StatusCode::success_ok : SimpleWeb::StatusCode::client_error_not_found,
+        response_json.dump()
+      );
       response->close_connection_after_response = true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "changeRuntimeBitrate: " << e.what();
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = std::string(e.what());
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
     }
     catch (...) {
       BOOST_LOG(error) << "changeRuntimeBitrate: Unknown exception";
-      
-      json error_json;
-      error_json["success"] = false;
-      error_json["status_code"] = 500;
-      error_json["status_message"] = "Unknown error";
-      
-      response->write(error_json.dump());
-      response->close_connection_after_response = true;
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
 
@@ -2069,7 +2274,10 @@ namespace confighttp {
       {"provider", "openai"},
       {"apiBase", "https://api.openai.com/v1"},
       {"apiKey", ""},
-      {"model", "gpt-4o-mini"}
+      {"model", "gpt-4.1-mini"},
+      {"compatibility", "openai-chat"},
+      {"temperature", 0.3},
+      {"max_tokens", 2048}
     };
     ai_config_loaded = true;
     return ai_config_cache;
@@ -2109,9 +2317,48 @@ namespace confighttp {
    */
   static bool
   isAnthropicProvider(const nlohmann::json &cfg) {
+    std::string compatibility = cfg.value("compatibility", "");
     std::string provider = cfg.value("provider", "");
     std::string apiBase = cfg.value("apiBase", "");
-    return provider == "anthropic" || apiBase.find("anthropic.com") != std::string::npos;
+    return compatibility == "anthropic-messages" || provider == "anthropic" || apiBase.find("anthropic.com") != std::string::npos;
+  }
+
+  static bool
+  isApiKeyRequired(const nlohmann::json &cfg) {
+    std::string provider = cfg.value("provider", "");
+    std::string apiBase = cfg.value("apiBase", "");
+    return provider != "ollama" &&
+           apiBase.find("localhost") == std::string::npos &&
+           apiBase.find("127.0.0.1") == std::string::npos &&
+           apiBase.find("[::1]") == std::string::npos;
+  }
+
+  static bool
+  hasSuffix(const std::string &value, const std::string &suffix) {
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+  }
+
+  static std::string
+  buildAiEndpoint(std::string apiBase, bool isAnthropic) {
+    while (!apiBase.empty() && apiBase.back() == '/') {
+      apiBase.pop_back();
+    }
+
+    if (isAnthropic) {
+      if (hasSuffix(apiBase, "/v1/messages") || hasSuffix(apiBase, "/messages")) {
+        return apiBase;
+      }
+      if (hasSuffix(apiBase, "/v1")) {
+        return apiBase + "/messages";
+      }
+      return apiBase + "/v1/messages";
+    }
+
+    if (hasSuffix(apiBase, "/chat/completions")) {
+      return apiBase;
+    }
+    return apiBase + "/chat/completions";
   }
 
   /**
@@ -2195,6 +2442,162 @@ namespace confighttp {
     }
   }
 
+  SimpleWeb::CaseInsensitiveMultimap
+  json_headers() {
+    return {
+      { "Content-Type", "application/json" },
+      { "Cache-Control", "no-store" },
+      { "X-Content-Type-Options", "nosniff" }
+    };
+  }
+
+  void
+  write_json(resp_https_t response, SimpleWeb::StatusCode status, const json &body) {
+    response->write(status, body.dump(), json_headers());
+  }
+
+  void
+  write_json_error(resp_https_t response, SimpleWeb::StatusCode status, std::string error) {
+    json body;
+    body["ok"] = false;
+    body["error"] = std::move(error);
+    write_json(std::move(response), status, body);
+  }
+
+  bool
+  read_json_body(resp_https_t response, req_https_t request, json &body) {
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      body = json::parse(ss.str());
+      return true;
+    }
+    catch (const std::exception &e) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, std::string { "Invalid JSON: " } + e.what());
+      return false;
+    }
+  }
+
+  bool
+  persistFileMappingStoreOrRestore(std::vector<file_mapping::mapping_t> previous_mappings) {
+    if (file_mapping_store::persist_to_config(file_mapping_store::global())) {
+      return true;
+    }
+
+    file_mapping_store::global().replace(std::move(previous_mappings));
+    return false;
+  }
+
+  void
+  listFileMappings(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    json body;
+    body["ok"] = true;
+    body["mappings"] = file_mapping_store::global().to_json();
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  createFileMapping(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    json input;
+    if (!read_json_body(response, request, input)) return;
+    if (!input.is_object() || !input.contains("path") || !input["path"].is_string()) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "missing string field: path");
+      return;
+    }
+
+    file_mapping_store::mutation_result_t result;
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      result = file_mapping_store::global().add_quick_share(input["path"].get<std::string>());
+      if (!result.ok) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, result.error);
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
+    }
+
+    json body;
+    body["ok"] = true;
+    body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  updateFileMapping(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
+    if (!file_mapping::is_valid_mapping_id(id)) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+      return;
+    }
+
+    json input;
+    if (!read_json_body(response, request, input)) return;
+    file_mapping_store::mutation_result_t result;
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      result = file_mapping_store::global().update(id, input);
+      if (!result.ok) {
+        const auto status = result.error == "mapping was not found" ? SimpleWeb::StatusCode::client_error_not_found : SimpleWeb::StatusCode::client_error_bad_request;
+        write_json_error(std::move(response), status, result.error);
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
+    }
+
+    json body;
+    body["ok"] = true;
+    body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  deleteFileMapping(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
+    if (!file_mapping::is_valid_mapping_id(id)) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+      return;
+    }
+    {
+      std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
+      auto previous_mappings = file_mapping_store::global().snapshot();
+      if (!file_mapping_store::global().remove(id)) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_not_found, "mapping was not found");
+        return;
+      }
+      if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
+        write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+        return;
+      }
+    }
+
+    json body;
+    body["ok"] = true;
+    body["id"] = id;
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
   /**
    * @brief GET /api/ai/config — 获取 AI 配置（不返回完整 API key）
    */
@@ -2242,6 +2645,10 @@ namespace confighttp {
       if (input.contains("provider")) current["provider"] = input["provider"].get<std::string>();
       if (input.contains("apiBase")) current["apiBase"] = input["apiBase"].get<std::string>();
       if (input.contains("model")) current["model"] = input["model"].get<std::string>();
+      if (input.contains("compatibility")) current["compatibility"] = input["compatibility"].get<std::string>();
+      if (input.contains("system_prompt")) current["system_prompt"] = input["system_prompt"].get<std::string>();
+      if (input.contains("temperature")) current["temperature"] = input["temperature"].get<double>();
+      if (input.contains("max_tokens")) current["max_tokens"] = input["max_tokens"].get<int>();
       if (input.contains("apiKey")) {
         std::string key = input["apiKey"].get<std::string>();
         // 如果前端发来的是掩码（包含****），不覆盖
@@ -2345,7 +2752,7 @@ namespace confighttp {
   isAiEnabled() {
     auto cfg = loadAiConfig();
     return cfg.value("enabled", false) &&
-           !cfg.value("apiKey", "").empty() &&
+           (!isApiKeyRequired(cfg) || !cfg.value("apiKey", "").empty()) &&
            !cfg.value("apiBase", "").empty();
   }
 
@@ -2374,7 +2781,7 @@ namespace confighttp {
     std::string apiKey = cfg.value("apiKey", "");
     std::string defaultModel = cfg.value("model", "");
 
-    if (apiBase.empty() || apiKey.empty()) {
+    if (apiBase.empty() || (apiKey.empty() && isApiKeyRequired(cfg))) {
       result = {400, R"({"error":{"message":"AI proxy not configured: missing apiBase or apiKey","type":"invalid_request_error"}})", "application/json"};
       return false;
     }
@@ -2398,12 +2805,7 @@ namespace confighttp {
 
     isAnthropic = isAnthropicProvider(cfg);
 
-    while (!apiBase.empty() && apiBase.back() == '/') {
-      apiBase.pop_back();
-    }
-    targetUrl = isAnthropic
-      ? apiBase + "/v1/messages"
-      : apiBase + "/chat/completions";
+    targetUrl = buildAiEndpoint(apiBase, isAnthropic);
 
     if (isAnthropic) {
       // Anthropic 流式 SSE 格式与 OpenAI 不兼容，强制走非流式以保证响应格式一致
@@ -2416,10 +2818,14 @@ namespace confighttp {
         isStream = false;
       }
       processedBody = convertToAnthropicFormat(processedBody, defaultModel);
-      proxyHeaders["x-api-key"] = apiKey;
+      if (!apiKey.empty()) {
+        proxyHeaders["x-api-key"] = apiKey;
+      }
       proxyHeaders["anthropic-version"] = "2023-06-01";
     } else {
-      proxyHeaders["Authorization"] = "Bearer " + apiKey;
+      if (!apiKey.empty()) {
+        proxyHeaders["Authorization"] = "Bearer " + apiKey;
+      }
     }
 
     BOOST_LOG(info) << "AI proxy forwarding to: " << targetUrl << (isStream ? " (stream)" : "");
@@ -2773,8 +3179,13 @@ namespace confighttp {
     server.resource["^/api/restart$"]["GET"] = restart;
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
+#ifdef _WIN32
+    server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
+    server.resource["^/api/vulkan-hdr-bridge/validate$"]["POST"] = validateVulkanHdrBridge;
+#endif
     server.resource["^/api/password$"]["POST"] = savePassword;
     server.resource["^/api/apps/([0-9]+)$"]["DELETE"] = deleteApp;
+    server.resource["^/api/apps/batch-delete$"]["POST"] = batchDeleteApps;
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = listClients;
     server.resource["^/api/clients/list$"]["POST"] = saveConfig;
@@ -2785,12 +3196,17 @@ namespace confighttp {
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
+    server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;
     server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
     server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
     server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
+    server.resource["^/api/v1/file-mapping/mappings$"]["GET"] = listFileMappings;
+    server.resource["^/api/v1/file-mapping/mappings$"]["POST"] = createFileMapping;
+    server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["PATCH"] = updateFileMapping;
+    server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["DELETE"] = deleteFileMapping;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
@@ -2802,6 +3218,14 @@ namespace confighttp {
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
+    tray_http::auth_fn tray_local_auth = [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
+        const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+        if (config::sunshine.username.empty() && net::from_address(address) == net::PC) {
+          return true;
+        }
+        return authenticate(std::move(resp), std::move(req));
+      };
+    tray_http::register_routes(server, tray_local_auth, tray_local_auth);
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);

@@ -1,7 +1,7 @@
 # windows specific dependencies
 
 # nlohmann_json
-find_package(nlohmann_json CONFIG 3.11 REQUIRED)
+find_package(nlohmann_json CONFIG 3.12 REQUIRED)
 
 # Make sure MinHook is installed
 find_library(MINHOOK_LIBRARY libMinHook.a REQUIRED)

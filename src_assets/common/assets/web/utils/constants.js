@@ -63,6 +63,85 @@ export const APP_CONSTANTS = {
   TEXT_TRUNCATE_LENGTH: 50
 };
 
+// 默认内置应用配置
+export const DEFAULT_BUILT_IN_APPS = {
+  windows: [
+    {
+      name: 'Desktop',
+      'image-path': 'desktop',
+      'exclude-global-prep-cmd': 'false',
+      elevated: '',
+      'auto-detach': 'true',
+      'wait-all': 'true',
+      'exit-timeout': '5',
+      'menu-cmd': [
+        {
+          id: 'kcENAT5r9P',
+          name: '触摸键盘',
+          cmd: '.\\tools\\qiin-tabtip.exe',
+          elevated: 'false'
+        },
+        {
+          id: 'rjeOKHmcdL',
+          name: '桌宠',
+          cmd: '.\\assets\\gui\\sunshine-gui.exe --toolbar',
+          elevated: 'false'
+        }
+      ]
+    },
+    {
+      name: 'Steam Big Picture',
+      cmd: 'steam://open/bigpicture',
+      'auto-detach': 'true',
+      'wait-all': 'true',
+      'image-path': 'steam.png'
+    },
+    {
+      name: 'Xbox Game',
+      cmd: 'cmd /c "start xbox:"',
+      'auto-detach': 'true',
+      'wait-all': 'true',
+      'image-path': 'box.png'
+    }
+  ],
+  linux: [
+    {
+      name: 'Desktop',
+      'image-path': 'desktop.png'
+    },
+    {
+      name: 'Low Res Desktop',
+      'image-path': 'desktop.png',
+      'prep-cmd': [
+        {
+          do: 'xrandr --output HDMI-1 --mode 1920x1080',
+          undo: 'xrandr --output HDMI-1 --mode 1920x1200'
+        }
+      ]
+    },
+    {
+      name: 'Steam Big Picture',
+      detached: [
+        'setsid steam steam://open/bigpicture'
+      ],
+      'image-path': 'steam.png'
+    }
+  ],
+  macos: [
+    {
+      name: 'Desktop',
+      'image-path': 'desktop.png'
+    },
+    {
+      name: 'Steam Big Picture',
+      detached: [
+        'open steam://open/bigpicture'
+      ],
+      'image-path': 'steam.png'
+    }
+  ]
+};
+
 // 环境变量配置
 export const ENV_VARS_CONFIG = {
   'SUNSHINE_APP_ID': 'apps.env_app_id',
@@ -82,5 +161,8 @@ export const ENV_VARS_CONFIG = {
 export const API_ENDPOINTS = {
   APPS: '/api/apps',
   CONFIG: '/api/config',
-  APP_DELETE: (index) => `/api/apps/${index}`
-}; 
+  AI_CONFIG: '/api/ai/config',
+  AI_CHAT_COMPLETIONS: '/api/ai/chat/completions',
+  APP_DELETE: (index) => `/api/apps/${index}`,
+  APPS_BATCH_DELETE: '/api/apps/batch-delete'
+};

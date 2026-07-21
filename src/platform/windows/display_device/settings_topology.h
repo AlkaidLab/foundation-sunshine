@@ -67,6 +67,15 @@ namespace display_device {
   get_newly_enabled_devices_from_topology(const active_topology_t &previous_topology, const active_topology_t &new_topology);
 
   /**
+   * @brief Check whether the active topology contains only the supplied VDD device.
+   * @param topology Topology to inspect.
+   * @param vdd_device_id Device id of the VDD.
+   * @returns True if the topology has exactly one device and it is the VDD.
+   */
+  bool
+  is_vdd_only_topology(const active_topology_t &topology, const std::string &vdd_device_id);
+
+  /**
    * @brief Modify the topology based on the configuration and previously configured topology.
    *
    * The function performs the necessary steps for changing topology if needed.

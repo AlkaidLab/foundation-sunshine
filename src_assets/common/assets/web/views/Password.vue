@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="password-page">
     <Navbar />
     <div class="container py-4">
       <div class="row justify-content-center">
@@ -150,6 +150,7 @@
 import { ref } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
 import Icon from '../components/common/Icon.vue'
+import { apiPostJson } from '../utils/apiFetch.js'
 
 const error = ref(null)
 const success = ref(false)
@@ -164,14 +165,8 @@ const passwordData = ref({
 async function save() {
   error.value = null
   try {
-    const response = await fetch('/api/password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(passwordData.value),
-    })
-
-    const result = await response.json()
-    if (response.ok && result.status?.toString() === 'true') {
+    const result = await apiPostJson('/api/password', passwordData.value)
+    if (result.status?.toString() === 'true') {
       success.value = true
       setTimeout(() => document.location.reload(), 5000)
     } else {
@@ -190,7 +185,6 @@ async function save() {
 <style lang="less" scoped>
 @transition-duration: 0.2s;
 @transition-timing: ease;
-@primary-bg-opacity: 0.1;
 @success-bg-opacity: 0.1;
 
 .icon-wrapper {
@@ -199,8 +193,9 @@ async function save() {
   justify-content: center;
   width: 56px;
   height: 56px;
-  background: rgba(var(--bs-primary-rgb), @primary-bg-opacity);
-  border-radius: 50%;
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
 }
 
 .section-icon {
@@ -209,28 +204,32 @@ async function save() {
   justify-content: center;
   width: 32px;
   height: 32px;
-  background: rgba(var(--bs-primary-rgb), @primary-bg-opacity);
-  border-radius: 8px;
+  background: var(--ui-accent-soft);
+  border-radius: var(--ui-radius-sm);
   font-size: 1rem;
 
   &-success {
-    background: rgba(var(--bs-success-rgb), @success-bg-opacity);
+    background: rgba(47, 155, 98, @success-bg-opacity);
   }
 }
 
 .form-control {
   padding: 0.5rem 0.75rem;
-  border-radius: 0.375rem;
+  border-radius: var(--ui-radius-sm);
   transition: border-color @transition-duration @transition-timing,
               box-shadow @transition-duration @transition-timing;
 
   &:focus {
-    box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.15);
+    border-color: var(--ui-border-strong);
+    box-shadow: 0 0 0 3px var(--ui-accent-soft);
   }
 }
 
 .card {
   transition: transform @transition-duration @transition-timing;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border) !important;
+  box-shadow: var(--ui-shadow-sm) !important;
 }
 
 .btn-primary {
@@ -239,11 +238,27 @@ async function save() {
 
   &:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(var(--bs-primary-rgb), 0.35);
+    box-shadow: var(--ui-shadow-sm);
   }
 }
 
 hr {
-  opacity: 0.1;
+  border-color: var(--ui-border);
+  opacity: 1;
+}
+
+.password-page {
+  min-height: 100vh;
+  color: var(--ui-text-primary);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
+
+  .page-title {
+    color: var(--ui-text-primary) !important;
+    font-weight: 600;
+  }
+
+  :deep(.text-primary) {
+    color: var(--ui-accent) !important;
+  }
 }
 </style>

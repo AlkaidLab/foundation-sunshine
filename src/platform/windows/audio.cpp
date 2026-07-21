@@ -7,6 +7,7 @@
 // platform includes
 #include <audioclient.h>
 #include <avrt.h>
+#include <chrono>
 #include <mmdeviceapi.h>
 #include <mutex>
 #include <newdev.h>
@@ -17,8 +18,11 @@
 #include "mic_write.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/tray_state.h"
 
 // Must be the last included file
 // clang-format off
@@ -830,6 +834,7 @@ namespace platf::audio {
       if (virtual_sink_info) {
         mic->default_endpt_changed_cb = [this] {
           BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
+          notify_virtual_sink_managed();
           set_sink(assigned_sink);
         };
       }
@@ -937,6 +942,29 @@ namespace platf::audio {
       }
 
       return failure;
+    }
+
+    void
+    notify_virtual_sink_managed() {
+      const auto now = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(last_virtual_sink_notification_mutex);
+      if (now - last_virtual_sink_notification < std::chrono::seconds(30)) {
+        return;
+      }
+
+      last_virtual_sink_notification = now;
+      BOOST_LOG(info) << "Virtual audio sink is being kept selected for host audio streaming";
+      const auto notification_id = tray_state::set_notification(
+        "Audio device kept for streaming",
+        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+      task_pool.pushDelayed([notification_id]() {
+        tray_state::clear_notification_if(notification_id);
+      }, std::chrono::seconds(10));
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+      system_tray::show_notification(
+        "Audio device kept for streaming",
+        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+#endif
     }
 
     enum class match_field_e {
@@ -1213,6 +1241,8 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::chrono::steady_clock::time_point last_virtual_sink_notification {};
+    std::mutex last_virtual_sink_notification_mutex;
 
     int
     init_mic_redirect_device() {

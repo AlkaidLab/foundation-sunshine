@@ -5,6 +5,9 @@
 #include <boost/uuid/uuid_io.hpp>
 
 // standard includes
+#include <algorithm>
+#include <array>
+#include <cstdint>
 #include <iostream>
 #include <system_error>
 
@@ -21,6 +24,126 @@
 namespace display_device::w_utils {
 
   namespace {
+
+    constexpr std::array<int, 16> DISPLAY_SCALE_PERCENT_VALUES {
+      100, 120, 125, 140, 150, 160, 175, 180, 200, 225, 250, 300, 350, 400, 450, 500
+    };
+
+    constexpr auto DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE {
+      static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(-3)
+    };
+
+    constexpr auto DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE {
+      static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(-4)
+    };
+
+    struct displayconfig_source_dpi_scale_get_t {
+      DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+      std::int32_t min_scale_rel;
+      std::int32_t cur_scale_rel;
+      std::int32_t max_scale_rel;
+    };
+
+    struct displayconfig_source_dpi_scale_set_t {
+      DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+      std::int32_t scale_rel;
+    };
+
+    struct display_scale_details_t {
+      display_scale_info_t info;
+      int recommended_scale_index {};
+      LONG query_result { ERROR_SUCCESS };
+    };
+
+    const DISPLAYCONFIG_PATH_INFO *
+    find_active_path(const std::vector<DISPLAYCONFIG_PATH_INFO> &paths, const std::vector<DISPLAYCONFIG_MODE_INFO> &modes, const std::string &display_name, const std::string &device_id) {
+      if (!device_id.empty()) {
+        if (const auto path = get_active_path(device_id, paths)) {
+          return path;
+        }
+      }
+
+      if (!display_name.empty()) {
+        const auto path = std::find_if(std::begin(paths), std::end(paths), [&display_name](const auto &entry) {
+          return boost::iequals(get_display_name(entry), display_name);
+        });
+
+        if (path != std::end(paths)) {
+          return &(*path);
+        }
+      }
+
+      if (display_name.empty() && device_id.empty()) {
+        const auto first_active_path = std::find_if(std::begin(paths), std::end(paths), [](const auto &entry) {
+          return is_active(entry);
+        });
+
+        if (first_active_path != std::end(paths)) {
+          const auto primary_path = std::find_if(std::begin(paths), std::end(paths), [&modes](const auto &entry) {
+            const auto source_mode = get_source_mode(get_source_index(entry, modes), modes);
+            return source_mode && is_primary(*source_mode);
+          });
+
+          return primary_path != std::end(paths) ? &(*primary_path) : &(*first_active_path);
+        }
+      }
+
+      return nullptr;
+    }
+
+    boost::optional<display_scale_details_t>
+    get_display_scale_details(const DISPLAYCONFIG_PATH_INFO &path, const std::vector<DISPLAYCONFIG_MODE_INFO> &modes) {
+      display_scale_info_t info;
+      info.display_name = get_display_name(path);
+      info.device_id = get_device_id(path);
+      info.friendly_name = get_friendly_name(path);
+
+      if (const auto source_mode = get_source_mode(get_source_index(path, modes), modes)) {
+        info.is_primary = is_primary(*source_mode);
+      }
+
+      displayconfig_source_dpi_scale_get_t scale_get {};
+      scale_get.header.adapterId = path.sourceInfo.adapterId;
+      scale_get.header.id = path.sourceInfo.id;
+      scale_get.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE;
+      scale_get.header.size = sizeof(scale_get);
+
+      const LONG result { DisplayConfigGetDeviceInfo(&scale_get.header) };
+      if (result != ERROR_SUCCESS) {
+        BOOST_LOG(debug) << get_error_string(result) << " failed to get display DPI scale for " << info.display_name;
+        info.scale_set_supported = false;
+        return display_scale_details_t { std::move(info), 0, result };
+      }
+
+      const int recommended_index { -scale_get.min_scale_rel };
+      const int min_index { recommended_index + scale_get.min_scale_rel };
+      const int current_index { recommended_index + scale_get.cur_scale_rel };
+      const int max_index { recommended_index + scale_get.max_scale_rel };
+
+      if (min_index < 0 ||
+          current_index < min_index ||
+          current_index > max_index ||
+          max_index >= static_cast<int>(DISPLAY_SCALE_PERCENT_VALUES.size()) ||
+          recommended_index < min_index ||
+          recommended_index > max_index) {
+        BOOST_LOG(warning) << "Unexpected display DPI scale range for " << info.display_name
+                           << ": min_rel=" << scale_get.min_scale_rel
+                           << ", cur_rel=" << scale_get.cur_scale_rel
+                           << ", max_rel=" << scale_get.max_scale_rel;
+        info.scale_set_supported = false;
+        return display_scale_details_t { std::move(info), recommended_index, ERROR_INVALID_DATA };
+      }
+
+      info.current_scale_percent = DISPLAY_SCALE_PERCENT_VALUES[current_index];
+      info.recommended_scale_percent = DISPLAY_SCALE_PERCENT_VALUES[recommended_index];
+      info.supported_scale_percents.reserve(max_index - min_index + 1);
+      for (int i = min_index; i <= max_index; ++i) {
+        info.supported_scale_percents.push_back(DISPLAY_SCALE_PERCENT_VALUES[i]);
+      }
+      info.scale_set_supported = true;
+
+      return display_scale_details_t { std::move(info), recommended_index, result };
+    }
 
     /**
      * @see get_monitor_device_path description for more information as this
@@ -693,6 +816,129 @@ namespace display_device::w_utils {
     }
 
     return boost::none;  // unreachable: loop always returns in both iterations
+  }
+
+  std::vector<display_scale_info_t>
+  list_display_scale_info() {
+    std::vector<display_scale_info_t> displays;
+
+    const auto display_data { query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
+    if (!display_data) {
+      return displays;
+    }
+
+    displays.reserve(display_data->paths.size());
+    for (const auto &path : display_data->paths) {
+      if (!is_active(path)) {
+        continue;
+      }
+
+      if (auto details = get_display_scale_details(path, display_data->modes)) {
+        displays.push_back(std::move(details->info));
+      }
+    }
+
+    return displays;
+  }
+
+  boost::optional<display_scale_info_t>
+  get_display_scale_info(const std::string &display_name, const std::string &device_id) {
+    const auto display_data { query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
+    if (!display_data) {
+      return boost::none;
+    }
+
+    const auto path { find_active_path(display_data->paths, display_data->modes, display_name, device_id) };
+    if (!path) {
+      BOOST_LOG(debug) << "Failed to find active display for display_name=" << display_name << ", device_id=" << device_id;
+      return boost::none;
+    }
+
+    const auto details { get_display_scale_details(*path, display_data->modes) };
+    if (!details) {
+      return boost::none;
+    }
+
+    return details->info;
+  }
+
+  set_display_scale_result_t
+  set_display_scale(const std::string &display_name, const std::string &device_id, int scale_percent) {
+    set_display_scale_result_t result;
+
+    auto display_data { query_display_config(w_utils::ACTIVE_ONLY_DEVICES) };
+    if (!display_data) {
+      result.error = display_scale_error_e::apply_failed;
+      result.message = "Failed to query display configuration";
+      return result;
+    }
+
+    const auto path { find_active_path(display_data->paths, display_data->modes, display_name, device_id) };
+    if (!path) {
+      result.error = display_scale_error_e::display_not_found;
+      result.message = "Display not found";
+      return result;
+    }
+
+    const auto details { get_display_scale_details(*path, display_data->modes) };
+    if (!details || !details->info.scale_set_supported) {
+      result.error = details && details->query_result == ERROR_ACCESS_DENIED ? display_scale_error_e::permission_denied : display_scale_error_e::apply_failed;
+      result.message = "Display scale is not available for this display";
+      if (details) {
+        result.display_name = details->info.display_name;
+        result.device_id = details->info.device_id;
+        result.previous_scale_percent = details->info.current_scale_percent;
+        result.current_scale_percent = details->info.current_scale_percent;
+        result.supported_scale_percents = details->info.supported_scale_percents;
+      }
+      return result;
+    }
+
+    result.display_name = details->info.display_name;
+    result.device_id = details->info.device_id;
+    result.previous_scale_percent = details->info.current_scale_percent;
+    result.supported_scale_percents = details->info.supported_scale_percents;
+
+    const auto scale_it { std::find(std::begin(DISPLAY_SCALE_PERCENT_VALUES), std::end(DISPLAY_SCALE_PERCENT_VALUES), scale_percent) };
+    const bool supported_by_windows_table { scale_it != std::end(DISPLAY_SCALE_PERCENT_VALUES) };
+    const bool supported_by_display { std::find(std::begin(details->info.supported_scale_percents), std::end(details->info.supported_scale_percents), scale_percent) != std::end(details->info.supported_scale_percents) };
+    if (!supported_by_windows_table || !supported_by_display) {
+      result.error = display_scale_error_e::unsupported_scale;
+      result.message = "Unsupported display scale";
+      result.current_scale_percent = details->info.current_scale_percent;
+      return result;
+    }
+
+    displayconfig_source_dpi_scale_set_t scale_set {};
+    scale_set.header.adapterId = path->sourceInfo.adapterId;
+    scale_set.header.id = path->sourceInfo.id;
+    scale_set.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE;
+    scale_set.header.size = sizeof(scale_set);
+    scale_set.scale_rel = static_cast<std::int32_t>(std::distance(std::begin(DISPLAY_SCALE_PERCENT_VALUES), scale_it) - details->recommended_scale_index);
+
+    const LONG set_result { DisplayConfigSetDeviceInfo(&scale_set.header) };
+    if (set_result != ERROR_SUCCESS) {
+      BOOST_LOG(error) << get_error_string(set_result) << " failed to set display DPI scale for " << result.display_name << " to " << scale_percent;
+      result.error = set_result == ERROR_ACCESS_DENIED ? display_scale_error_e::permission_denied : display_scale_error_e::apply_failed;
+      result.message = "Failed to set display scale";
+      result.current_scale_percent = details->info.current_scale_percent;
+      return result;
+    }
+
+    const auto updated_details { get_display_scale_details(*path, display_data->modes) };
+    result.current_scale_percent = updated_details ? updated_details->info.current_scale_percent : boost::optional<int> {};
+    result.success = true;
+    result.error = display_scale_error_e::none;
+    result.effective_immediately = result.current_scale_percent && *result.current_scale_percent == scale_percent;
+    result.restart_required = !result.effective_immediately;
+    result.message = result.effective_immediately ? "Display scale changed successfully" : "Display scale was accepted but has not taken effect yet";
+
+    BOOST_LOG(info) << "Display scale set for " << result.display_name
+                    << " from " << (result.previous_scale_percent ? std::to_string(*result.previous_scale_percent) : "unknown")
+                    << " to " << scale_percent
+                    << ", effective_immediately=" << result.effective_immediately;
+
+    return result;
   }
 
   const DISPLAYCONFIG_PATH_INFO *

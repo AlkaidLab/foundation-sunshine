@@ -1,4 +1,5 @@
 import i18n from './config/i18n.js'
+import { markWebUiReady } from './utils/appReady.js'
 
 // must import even if not implicitly using here
 // https://github.com/aurelia/skeleton-navigation/issues/894
@@ -11,14 +12,18 @@ if (typeof window !== 'undefined') {
   window.bootstrap = bootstrap
 }
 
-export function initApp(app, config) {
-    //Wait for locale initialization, then render
-    i18n().then(i18n => {
-        app.use(i18n);
-        app.provide('i18n', i18n.global)
-        app.mount('#app');
-        if (config) {
-            config(app)
-        }
-    });
+export async function initApp(app, config) {
+    const i18nInstance = await i18n()
+
+    app.use(i18nInstance)
+    app.provide('i18n', i18nInstance.global)
+    const root = app.mount('#app')
+    try {
+        config?.(app)
+        // Let Vue finish the mount microtask before the GUI reveals the iframe.
+        await Promise.resolve()
+    } finally {
+        markWebUiReady()
+    }
+    return root
 }

@@ -5,6 +5,13 @@ import { trackEvents } from '../config/firebase.js'
 
 const GITHUB_API_BASE = 'https://api.github.com/repos/qiin2333/Sunshine/releases'
 
+export const VERSION_CHECK_STATUS = Object.freeze({
+  IDLE: 'idle',
+  CHECKING: 'checking',
+  READY: 'ready',
+  ERROR: 'error',
+})
+
 /**
  * 解析 Markdown 内容
  */
@@ -18,14 +25,11 @@ const parseMarkdown = (text) => {
  * 安全获取 GitHub 数据
  */
 const fetchGitHub = async (url) => {
-  try {
-    const response = await fetch(url)
-    if (!response.ok) return null
-    return await response.json()
-  } catch (e) {
-    console.error(`Failed to fetch ${url}:`, e)
-    return null
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`GitHub release request failed with status ${response.status}`)
   }
+  return response.json()
 }
 
 /**
@@ -46,7 +50,8 @@ export function useVersion() {
   const githubVersion = ref(null)
   const preReleaseVersion = ref(null)
   const notifyPreReleases = ref(false)
-  const loading = ref(true)
+  const versionCheckStatus = ref(VERSION_CHECK_STATUS.IDLE)
+  const loading = computed(() => versionCheckStatus.value === VERSION_CHECK_STATUS.CHECKING)
 
   // 计算属性
   const installedVersionNotStable = computed(() => 
@@ -80,23 +85,20 @@ export function useVersion() {
    * 获取版本信息
    */
   const fetchVersions = async (config) => {
-    loading.value = true
+    versionCheckStatus.value = VERSION_CHECK_STATUS.CHECKING
+    githubVersion.value = null
+    preReleaseVersion.value = null
     
     try {
       notifyPreReleases.value = toBoolean(config.notify_pre_releases)
       version.value = new SunshineVersion(null, config.version)
       
-      // 并行获取 GitHub 版本信息
-      const [latestData, releases] = await Promise.all([
-        fetchGitHub(`${GITHUB_API_BASE}/latest`),
-        fetchGitHub(GITHUB_API_BASE)
-      ])
+      // 稳定版检查始终执行，预发布列表仅在用户订阅时请求
+      const latestData = await fetchGitHub(`${GITHUB_API_BASE}/latest`)
+      githubVersion.value = new SunshineVersion(latestData, null)
 
-      if (latestData) {
-        githubVersion.value = new SunshineVersion(latestData, null)
-      }
-
-      if (Array.isArray(releases)) {
+      if (notifyPreReleases.value) {
+        const releases = await fetchGitHub(GITHUB_API_BASE)
         const preRelease = releases.find((r) => r.prerelease)
         if (preRelease) {
           preReleaseVersion.value = new SunshineVersion(preRelease, null)
@@ -107,11 +109,11 @@ export function useVersion() {
       if (githubVersion.value && version.value) {
         trackEvents.versionChecked(version.value.version, githubVersion.value.version)
       }
+      versionCheckStatus.value = VERSION_CHECK_STATUS.READY
     } catch (e) {
+      versionCheckStatus.value = VERSION_CHECK_STATUS.ERROR
       console.error('Version check failed:', e)
       trackEvents.errorOccurred('version_check', e.message)
-    } finally {
-      loading.value = false
     }
   }
 
@@ -120,6 +122,7 @@ export function useVersion() {
     githubVersion,
     preReleaseVersion,
     notifyPreReleases,
+    versionCheckStatus,
     loading,
     installedVersionNotStable,
     stableBuildAvailable,

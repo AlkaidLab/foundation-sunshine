@@ -315,6 +315,16 @@ namespace display_device {
     return new_ids;
   }
 
+  bool
+  is_vdd_only_topology(const active_topology_t &topology, const std::string &vdd_device_id) {
+    if (vdd_device_id.empty()) {
+      return false;
+    }
+
+    const auto device_ids = get_device_ids_from_topology(topology);
+    return device_ids.size() == 1 && device_ids.contains(vdd_device_id);
+  }
+
   boost::optional<handled_topology_result_t>
   handle_device_topology_configuration(
     const parsed_config_t &config,
