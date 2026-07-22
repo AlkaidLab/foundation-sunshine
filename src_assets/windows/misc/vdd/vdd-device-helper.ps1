@@ -61,10 +61,10 @@ function Get-VddDeviceStatus([string] $InstanceId) {
         $InstanceId,
         0)
     if ($locateResult -in @($crInvalidDevnode, $crNoSuchDevnode)) {
-        return 'MISSING'
+        return [pscustomobject]@{ State = 'MISSING'; Problem = 0 }
     }
     if ($locateResult -ne 0) {
-        return 'ERROR'
+        return [pscustomobject]@{ State = 'ERROR'; Problem = 0 }
     }
 
     $statusResult = [SunshineVddCfgMgr32]::CM_Get_DevNode_Status(
@@ -73,12 +73,12 @@ function Get-VddDeviceStatus([string] $InstanceId) {
         $deviceInstance,
         0)
     if ($statusResult -in @($crInvalidDevnode, $crNoSuchDevnode)) {
-        return 'MISSING'
+        return [pscustomobject]@{ State = 'MISSING'; Problem = 0 }
     }
     if ($statusResult -eq 0 -and $problem -eq 0 -and ($status -band $dnStarted)) {
-        return 'OK'
+        return [pscustomobject]@{ State = 'OK'; Problem = [int]$problem }
     }
-    return 'ERROR'
+    return [pscustomobject]@{ State = 'ERROR'; Problem = [int]$problem }
 }
 
 function Get-VddDevices {
@@ -117,7 +117,7 @@ function Get-VddDevices {
 
                 $instanceId = "ROOT\DISPLAY\$instanceName"
                 $deviceStatus = Get-VddDeviceStatus $instanceId
-                if ($deviceStatus -eq 'MISSING') {
+                if ($deviceStatus.State -eq 'MISSING') {
                     continue
                 }
 
@@ -136,7 +136,8 @@ function Get-VddDevices {
                     InstanceId = $instanceId
                     Version = $driverVersion
                     InfName = $publishedInf
-                    Status = $deviceStatus
+                    Status = $deviceStatus.State
+                    Problem = $deviceStatus.Problem
                 }
             }
             finally {
@@ -560,6 +561,13 @@ function Invoke-VddInstall([string] $Directory, [string] $InstallMode) {
         Write-Output 'Exactly one matching VDD device is active; skipping driver reinstall.'
     }
     if ($InstallMode -eq 'ProbeOnly') {
+        $device = if ($decision.DeviceCount -eq 1) { @(Get-VddDevices)[0] } else { $null }
+        Write-Output 'VDD_PROBE_OK=1'
+        Write-Output ('VDD_DEVICE_PRESENT=' + [int]($decision.DeviceCount -gt 0))
+        Write-Output ('CURRENT_VDD_VERSION=' + $decision.CurrentVersion)
+        Write-Output ('CURRENT_VDD_STATUS=' + $decision.CurrentStatus)
+        Write-Output ('CURRENT_VDD_PROBLEM=' + $(if ($device) { [int]$device.Problem } else { '' }))
+        Write-Output ('BUNDLED_VDD_VERSION=' + $state.BundledVersion)
         return
     }
 

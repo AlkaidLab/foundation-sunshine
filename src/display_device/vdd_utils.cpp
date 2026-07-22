@@ -74,6 +74,27 @@ namespace display_device {
     // 上一次使用的客户端UUID，用于在没有提供UUID时使用
     static std::string last_used_client_uuid;
 
+    vdd_status_t
+    get_vdd_status() {
+      vdd_status_t status;
+      const auto adapter = vdd_ioctl::query_adapter_status();
+      status.installed = adapter.present;
+      status.problem_code = adapter.problem_code;
+      status.running = status.installed && status.problem_code == 0;
+      status.control_available = status.installed && vdd_ioctl::ping();
+      status.monitor_active = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+
+      // Older bundled drivers without the modern control interface remain
+      // usable through the named-pipe compatibility path.
+      status.state = classify_vdd_state(
+        status.installed,
+        status.running,
+        status.control_available,
+        status.problem_code);
+
+      return status;
+    }
+
     std::chrono::milliseconds
     calculate_exponential_backoff(int attempt) {
       auto delay = kInitialRetryDelay * (1 << attempt);
@@ -592,6 +613,13 @@ namespace display_device {
 
     bool
     create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
+      const auto status = get_vdd_status();
+      if (!status.is_usable()) {
+        const auto error_code = status.installed ? "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED";
+        BOOST_LOG(error) << error_code << ": ZakoVDD must be installed and healthy before creating a virtual display. Open the Sunshine desktop VDD settings to install or repair it.";
+        return false;
+      }
+
       std::string response;
       std::wstring command = L"CREATEMONITOR";
 

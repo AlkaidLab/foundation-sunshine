@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -56,6 +57,39 @@ namespace display_device::vdd_utils {
     std::vector<unsigned int> refresh_rates_hz;
     bool needs_update = false;
   };
+
+  struct vdd_status_t {
+    std::string state;
+    bool installed = false;
+    bool running = false;
+    bool control_available = false;
+    bool monitor_active = false;
+    std::uint32_t problem_code = 0;
+
+    bool
+    is_usable() const {
+      return installed && running;
+    }
+  };
+
+  constexpr std::string_view
+  classify_vdd_state(bool installed, bool running, bool control_available, std::uint32_t problem_code) {
+    if (!installed) {
+      return "not_installed";
+    }
+    if (!running) {
+      return problem_code == 14 ? "reboot_required" : "unhealthy";
+    }
+    return control_available ? "ready" : "degraded";
+  }
+
+  /**
+   * @brief Return a fast, read-only VDD prerequisite snapshot.
+   * @details This never connects to the legacy named pipe, so callers can use
+   *          it in Web status polling and stream startup without timeout risk.
+   */
+  vdd_status_t
+  get_vdd_status();
 
   // 指数退避计算
   std::chrono::milliseconds

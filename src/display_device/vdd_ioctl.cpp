@@ -15,9 +15,11 @@
 extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID_INIT;
 
 #include <SetupAPI.h>
+#include <devguid.h>
 
 #include <iomanip>
 #include <algorithm>
+#include <cwchar>
 #include <vector>
 
 #include "src/logging.h"
@@ -25,6 +27,11 @@ extern "C" const GUID GUID_DEVINTERFACE_ZAKO_VDD_CONTROL = ZAKO_VDD_CONTROL_GUID
 namespace display_device::vdd_ioctl {
 
   namespace {
+
+    constexpr DEVPROPKEY kDeviceProblemCodeProperty {
+      { 0x4340a6c5, 0x93fa, 0x4706, { 0x97, 0x2c, 0x7b, 0x64, 0x80, 0x08, 0xa5, 0xa7 } },
+      3
+    };
 
     /**
      * @brief RAII guard for `HDEVINFO` returned by `SetupDiGetClassDevs*`.
@@ -219,6 +226,87 @@ namespace display_device::vdd_ioctl {
     return VDD_FRAME_CHANNEL_FLAG_SEALED_BORROW |
            VDD_FRAME_CHANNEL_FLAG_UNNAMED_HANDLES |
            VDD_FRAME_CHANNEL_FLAG_STRICT_DACL;
+  }
+
+  adapter_status_t
+  query_adapter_status() {
+    constexpr wchar_t kVddHardwareId[] = L"ROOT\\ZAKOVDD";
+
+    HDEVINFO h_raw = SetupDiGetClassDevsW(
+      &GUID_DEVCLASS_DISPLAY,
+      nullptr,
+      nullptr,
+      DIGCF_PRESENT);
+    if (h_raw == INVALID_HANDLE_VALUE) {
+      BOOST_LOG(debug) << "vdd_ioctl: display adapter enumeration failed (err=" << GetLastError() << ")";
+      return {};
+    }
+
+    devinfo_guard h_dev_info { h_raw };
+    for (DWORD index = 0;; ++index) {
+      SP_DEVINFO_DATA device_info {};
+      device_info.cbSize = sizeof(device_info);
+      if (!SetupDiEnumDeviceInfo(h_dev_info.get(), index, &device_info)) {
+        const DWORD err = GetLastError();
+        if (err != ERROR_NO_MORE_ITEMS) {
+          BOOST_LOG(debug) << "vdd_ioctl: display adapter enumeration stopped (err=" << err << ")";
+        }
+        return {};
+      }
+
+      DWORD required_size = 0;
+      DWORD property_type = 0;
+      SetupDiGetDeviceRegistryPropertyW(
+        h_dev_info.get(),
+        &device_info,
+        SPDRP_HARDWAREID,
+        &property_type,
+        nullptr,
+        0,
+        &required_size);
+      if (required_size == 0) {
+        continue;
+      }
+
+      std::vector<BYTE> buffer(required_size + sizeof(wchar_t), 0);
+      if (!SetupDiGetDeviceRegistryPropertyW(
+            h_dev_info.get(),
+            &device_info,
+            SPDRP_HARDWAREID,
+            &property_type,
+            buffer.data(),
+            required_size,
+            nullptr)) {
+        continue;
+      }
+
+      const auto *hardware_id = reinterpret_cast<const wchar_t *>(buffer.data());
+      const auto wchar_count = buffer.size() / sizeof(wchar_t);
+      for (std::size_t offset = 0; offset < wchar_count && hardware_id[offset] != L'\0';) {
+        const wchar_t *candidate = hardware_id + offset;
+        if (_wcsicmp(candidate, kVddHardwareId) == 0) {
+          DWORD problem_code = 0;
+          DEVPROPTYPE problem_type = 0;
+          DWORD problem_size = 0;
+          SetupDiGetDevicePropertyW(
+            h_dev_info.get(),
+            &device_info,
+            &kDeviceProblemCodeProperty,
+            &problem_type,
+            reinterpret_cast<PBYTE>(&problem_code),
+            sizeof(problem_code),
+            &problem_size,
+            0);
+          return { true, problem_code };
+        }
+        offset += std::wcslen(candidate) + 1;
+      }
+    }
+  }
+
+  bool
+  adapter_present() {
+    return query_adapter_status().present;
   }
 
   result

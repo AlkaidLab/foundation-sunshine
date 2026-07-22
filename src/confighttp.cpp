@@ -65,6 +65,7 @@
 
 #ifdef _WIN32
   #include <iphlpapi.h>
+  #include "display_device/vdd_utils.h"
   #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 
@@ -1450,6 +1451,25 @@ namespace confighttp {
   }
 
 #ifdef _WIN32
+  void
+  getVddStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    const auto status = display_device::vdd_utils::get_vdd_status();
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"state", status.state},
+      {"installed", status.installed},
+      {"running", status.running},
+      {"control_available", status.control_available},
+      {"monitor_active", status.monitor_active},
+      {"problem_code", status.problem_code},
+      {"installed_version", ""},
+      {"bundled_version", ""},
+      {"version_match", false},
+    });
+  }
+
   void
   writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
     const auto bridge_status = platf::vulkan_hdr_bridge::status();
@@ -3180,6 +3200,7 @@ namespace confighttp {
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
 #ifdef _WIN32
+    server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
     server.resource["^/api/vulkan-hdr-bridge/validate$"]["POST"] = validateVulkanHdrBridge;
 #endif

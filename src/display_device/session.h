@@ -71,6 +71,9 @@ namespace display_device {
       enum class result_e {
         success,
         deferred_retry,
+        vdd_not_installed,
+        vdd_unavailable,
+        vdd_create_failed,
         parse_fail,
         topology_fail,
         primary_display_fail,
@@ -219,7 +222,7 @@ namespace display_device {
     /**
      * @brief Prepares VDD for use
      */
-    void
+    bool
     prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session);
 
     /**

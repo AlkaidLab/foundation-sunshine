@@ -634,7 +634,11 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session,
+    bool is_reconfigure, bool *vdd_prepare_failed) {
+    if (vdd_prepare_failed) {
+      *vdd_prepare_failed = false;
+    }
     parsed_config_t parsed_config;
     
     // 优先使用客户端指定的显示器名称，如果没有则使用全局配置
@@ -729,7 +733,13 @@ namespace display_device {
     }
 
     // 准备VDD设备
-    display_device::session_t::get().prepare_vdd(parsed_config, session);
+    if (!display_device::session_t::get().prepare_vdd(parsed_config, session)) {
+      BOOST_LOG(error) << "Failed to prepare the VDD device";
+      if (vdd_prepare_failed) {
+        *vdd_prepare_failed = true;
+      }
+      return boost::none;
+    }
 
     return parsed_config;
   }

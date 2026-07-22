@@ -110,6 +110,25 @@ namespace display_device::vdd_ioctl {
 
   std::uint32_t required_sealed_frame_channel_flags();
 
+  struct adapter_status_t {
+    bool present = false;
+    std::uint32_t problem_code = 0;
+  };
+
+  /**
+   * @brief Query the ZakoVDD Plug and Play node without opening its control interface.
+   */
+  adapter_status_t query_adapter_status();
+
+  /**
+   * @brief Check whether the ZakoVDD display adapter is present in Plug and Play.
+   *
+   * Unlike `ping()`, this also recognizes older driver builds that do not expose
+   * the control IOCTL interface and therefore remain usable through the legacy
+   * named-pipe fallback.
+   */
+  bool adapter_present();
+
   /**
    * @brief Send a UTF-16 command buffer to the VDD driver via IOCTL.
    *

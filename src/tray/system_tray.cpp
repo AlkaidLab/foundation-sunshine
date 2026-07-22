@@ -46,6 +46,7 @@
   // local includes
   #include "src/confighttp.h"
   #include "src/display_device/session.h"
+  #include "src/display_device/vdd_utils.h"
   #include "src/file_handler.h"
   #include "src/logging.h"
   #include "src/platform/common.h"
@@ -211,6 +212,24 @@ namespace system_tray {
     return !vdd_device_id.empty();
   }
 
+  static bool ensure_vdd_prerequisite() {
+    const auto status = display_device::vdd_utils::get_vdd_status();
+    if (status.is_usable()) {
+      return true;
+    }
+
+    BOOST_LOG(warning) << (status.installed ? "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED")
+                       << ": tray VDD action redirected to the Sunshine UI"sv;
+#ifdef _WIN32
+    const auto title = system_tray_i18n::utf8_to_wstring("Virtual display driver unavailable");
+    const auto message = system_tray_i18n::utf8_to_wstring(
+      "ZakoVDD is missing or unhealthy. Open the Sunshine desktop app and install or repair it from VDD settings before using this action.");
+    MessageBoxW(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING);
+#endif
+    launch_ui();
+    return false;
+  }
+
   // 更新 VDD 菜单项的文本和状态
   static void update_vdd_menu_text() {
     bool vdd_active = is_vdd_active();
@@ -250,6 +269,7 @@ namespace system_tray {
   auto tray_vdd_create_cb = [](struct tray_menu *item) {
     if (!tray_initialized) return;
     if (s_vdd_in_cooldown || is_vdd_active()) return;
+    if (!ensure_vdd_prerequisite()) return;
 
     BOOST_LOG(info) << "Creating VDD from system tray (Separate Item)"sv;
     if (display_device::session_t::get().toggle_display_power()) {
@@ -274,6 +294,7 @@ namespace system_tray {
     bool is_persistent = config::video.vdd_keep_enabled;
     
     if (!is_persistent) {
+      if (!ensure_vdd_prerequisite()) return;
       // 启用保持启用模式前弹出确认
 #ifdef _WIN32
       std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_TITLE));
@@ -303,6 +324,7 @@ namespace system_tray {
   auto tray_vdd_headless_create_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Toggling headless VDD create from system tray"sv;
     if (!config::video.vdd_headless_create_enabled) {
+      if (!ensure_vdd_prerequisite()) return;
       // 启用前二次确认
 #ifdef _WIN32
       std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE));

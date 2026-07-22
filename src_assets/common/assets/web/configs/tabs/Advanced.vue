@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
+import VddPrerequisiteNotice from '../../components/common/VddPrerequisiteNotice.vue'
 
 const { t } = useI18n()
 
@@ -321,6 +322,7 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
           {{ $t('config.capture_vdd_direct_desc') }}
         </span>
       </div>
+      <VddPrerequisiteNotice :active="isVDDCaptureSelected" />
       <div class="settings-subpanel mt-3" v-if="isVDDCaptureSelected">
         <div class="form-check">
           <input

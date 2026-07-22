@@ -88,6 +88,12 @@ namespace nvhttp::stream_start {
       using result_e = display_device::session_t::configure_result_t::result_e;
 
       switch (result) {
+        case result_e::vdd_not_installed:
+          return "VDD_DRIVER_NOT_INSTALLED";
+        case result_e::vdd_unavailable:
+          return "VDD_DRIVER_UNAVAILABLE";
+        case result_e::vdd_create_failed:
+          return "VDD_CREATE_FAILED";
         case result_e::parse_fail:
           return "DISPLAY_CONFIG_PARSE_FAILED";
         case result_e::topology_fail:
@@ -203,6 +209,9 @@ namespace nvhttp::stream_start {
           return true;
         case result_e::success:
         case result_e::deferred_retry:
+        case result_e::vdd_not_installed:
+        case result_e::vdd_unavailable:
+        case result_e::vdd_create_failed:
         case result_e::parse_fail:
         case result_e::file_save_fail:
         case result_e::revert_fail:
@@ -261,6 +270,9 @@ namespace nvhttp::stream_start {
         case result_e::primary_display_fail:
         case result_e::success:
         case result_e::deferred_retry:
+        case result_e::vdd_not_installed:
+        case result_e::vdd_unavailable:
+        case result_e::vdd_create_failed:
         case result_e::parse_fail:
         case result_e::file_save_fail:
         case result_e::revert_fail:

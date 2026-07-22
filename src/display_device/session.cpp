@@ -393,6 +393,20 @@ namespace display_device {
     // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
+    if (will_use_vdd || config.capture == "vdd") {
+      const auto vdd_status = vdd_utils::get_vdd_status();
+      if (!vdd_status.is_usable()) {
+        const bool missing = !vdd_status.installed;
+        BOOST_LOG(error) << "VDD was requested, but the ZakoVDD adapter is " << (missing ? "not installed" : "not healthy");
+        return {
+          missing ? configure_result_t::result_e::vdd_not_installed : configure_result_t::result_e::vdd_unavailable,
+          missing ? "The virtual display driver is not installed." : "The virtual display driver is installed but unavailable.",
+          missing ?
+            "Open Sunshine settings, install the virtual display driver, then try again." :
+            "Open Sunshine settings, repair the virtual display driver or restart Windows if requested, then try again."
+        };
+      }
+    }
     const bool vulkan_hdr_bridge_requested =
       will_use_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
     const bool vdd_will_turn_off_physical_displays =
@@ -432,7 +446,8 @@ namespace display_device {
       }
     }
 
-    const auto parsed_config = make_parsed_config(config, session, is_reconfigure);
+    bool vdd_prepare_failed = false;
+    const auto parsed_config = make_parsed_config(config, session, is_reconfigure, &vdd_prepare_failed);
     if (!parsed_config) {
       if (vdd_will_turn_off_physical_displays) {
         settings.release_audio_sink();
@@ -440,6 +455,13 @@ namespace display_device {
 
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
+      if (vdd_prepare_failed) {
+        return {
+          configure_result_t::result_e::vdd_create_failed,
+          "Sunshine could not create the virtual display.",
+          "Repair the virtual display driver in Sunshine settings, then try again."
+        };
+      }
       return {
         configure_result_t::result_e::parse_fail,
         "Failed to parse display configuration.",
@@ -593,7 +615,7 @@ namespace display_device {
     std::this_thread::sleep_for(1200ms);
   }
 
-  void
+  bool
   session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
@@ -674,7 +696,10 @@ namespace display_device {
       const std::string vdd_identifier = config::video.vdd_reuse
         ? "shared_vdd"  // 固定标识符，所有客户端共用同一GUID
         : current_client_id;  // 为每个客户端生成不同GUID
-      vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size);
+      if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
+        BOOST_LOG(error) << "VDD monitor creation command failed";
+        return false;
+      }
       std::this_thread::sleep_for(200ms);
     }
 
@@ -702,12 +727,12 @@ namespace display_device {
         else {
           BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
         }
-        return;
+        return false;
       }
     }
 
     if (device_zako.empty()) {
-      return;
+      return false;
     }
 
     if (original_output_name.empty()) {
@@ -753,6 +778,7 @@ namespace display_device {
       std::this_thread::sleep_for(500ms);
       vdd_utils::set_hdr_state(false);
     }
+    return true;
   }
 
   void

@@ -116,6 +116,17 @@
               </div>
             </div>
 
+            <div v-if="isVirtualDisplay && !vddReady" class="alert alert-warning vdd-wizard-prerequisite">
+              <strong>{{ $t('setup.vdd_driver_required') }}</strong>
+              <p class="mb-2 mt-1">
+                {{ canManageVdd ? $t('setup.vdd_driver_desktop_hint') : $t('setup.vdd_driver_browser_hint') }}
+              </p>
+              <small v-if="vddStatusError" class="d-block">{{ vddStatusError }}</small>
+              <small v-else-if="vddStatus.state !== 'unknown'" class="d-block">
+                {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
+              </small>
+            </div>
+
             <!-- 物理显示器列表 -->
             <div v-if="displayDevices && displayDevices.length > 0">
               <h5 class="my-3 physical-display-title">
@@ -309,8 +320,8 @@
           <button class="btn btn-setup btn-setup-primary" 
                   @click="nextStep" 
                   v-if="currentStep < 5"
-                  :disabled="!canProceed || saving">
-            {{ currentStep === 4 ? $t('setup.finish') : $t('setup.next') }}
+                  :disabled="!canProceed || saving || vddInstalling || vddStatusLoading">
+            {{ nextButtonLabel }}
             <i class="fas fa-arrow-right"></i>
           </button>
 
@@ -390,6 +401,7 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
 import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
+import { useVddStatus } from '../composables/useVddStatus.js'
 import ResourceLink from './common/ResourceLink.vue'
 import ConfirmDialog from './common/ConfirmDialog.vue'
 import {
@@ -463,7 +475,7 @@ export default {
     }
   },
   setup() {
-    return { FEATURED_RESOURCES }
+    return { FEATURED_RESOURCES, ...useVddStatus() }
   },
   mounted() {
     // 记录进入设置向导
@@ -485,6 +497,7 @@ export default {
     if (this.uniqueAdapters.length === 1) {
       this.selectedAdapter = this.uniqueAdapters[0].name
     }
+    this.refreshVddStatus()
   },
   beforeUnmount() {
     if (this.restartTimer) {
@@ -507,6 +520,14 @@ export default {
     },
     isVirtualDisplay() {
       return this.selectedDisplay === 'ZakoHDR'
+    },
+    nextButtonLabel() {
+      if (this.currentStep === 3 && this.isVirtualDisplay && !this.vddReady) {
+        return this.canManageVdd
+          ? this.$t('setup.vdd_install_continue')
+          : this.$t('setup.vdd_recheck_continue')
+      }
+      return this.currentStep === 4 ? this.$t('setup.finish') : this.$t('setup.next')
     },
     // 按 name 去重，同一名称只保留一项（保持首次出现顺序）
     uniqueAdapters() {
@@ -548,6 +569,18 @@ export default {
       } else if (this.currentStep === 2 && this.canProceed) {
         this.currentStep++
       } else if (this.currentStep === 3 && this.canProceed) {
+        if (this.isVirtualDisplay && !this.vddReady) {
+          try {
+            if (this.canManageVdd) {
+              await this.installVdd()
+            } else {
+              await this.refreshVddStatus()
+            }
+          } catch {
+            // The status panel keeps the selection and shows the actionable error.
+          }
+          if (!this.vddReady) return
+        }
         this.currentStep++
       } else if (this.currentStep === 4 && this.canProceed) {
         await this.saveConfiguration()
