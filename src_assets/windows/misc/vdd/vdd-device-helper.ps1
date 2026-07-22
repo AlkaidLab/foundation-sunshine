@@ -14,6 +14,7 @@ if (-not $ScriptDirectory) {
     $ScriptDirectory = $PSScriptRoot
 }
 $hardwareId = 'Root\ZakoVDD'
+$managedHardwareIds = @($hardwareId, 'ZakoVDD')
 $displayClassGuid = '4d36e968-e325-11ce-bfc1-08002be10318'
 $serviceName = 'ZAKO_HDR_FOR_SUNSHINE'
 $deviceEnumPath = 'SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY'
@@ -22,6 +23,7 @@ $dnStarted = 0x00000008
 $crInvalidDevnode = 0x00000005
 $crNoSuchDevnode = 0x0000000D
 $deviceTimeoutSeconds = 120
+$targetedRemovalTimeoutSeconds = 10
 
 function Initialize-CfgMgr32 {
     if ('SunshineVddCfgMgr32' -as [type]) {
@@ -111,15 +113,15 @@ function Get-VddDevices {
                 }
 
                 $hardwareIds = @($deviceKey.GetValue('HardwareID', $null))
-                if (-not ($hardwareIds | Where-Object { $_ -ieq $hardwareId })) {
+                $matchedHardwareId = @($hardwareIds | Where-Object {
+                    $managedHardwareIds -icontains $_
+                } | Select-Object -First 1)
+                if ($matchedHardwareId.Count -eq 0) {
                     continue
                 }
 
                 $instanceId = "ROOT\DISPLAY\$instanceName"
                 $deviceStatus = Get-VddDeviceStatus $instanceId
-                if ($deviceStatus.State -eq 'MISSING') {
-                    continue
-                }
 
                 $driverVersion = ''
                 $publishedInf = ''
@@ -134,6 +136,7 @@ function Get-VddDevices {
 
                 [pscustomobject]@{
                     InstanceId = $instanceId
+                    HardwareId = [string] $matchedHardwareId[0]
                     Version = $driverVersion
                     InfName = $publishedInf
                     Status = $deviceStatus.State
@@ -308,11 +311,17 @@ function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
     return $false
 }
 
-function Invoke-NefconRemoval([string] $Path) {
+function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId = $hardwareId) {
     & $Path `
         --remove-device-node `
-        --hardware-id $hardwareId `
+        --hardware-id $TargetHardwareId `
         --class-guid $displayClassGuid
+    return $LASTEXITCODE
+}
+
+function Invoke-PnpUtilDeviceRemoval([string] $InstanceId) {
+    $pnputil = Join-Path $env:SystemRoot 'System32\pnputil.exe'
+    & $pnputil /remove-device $InstanceId
     return $LASTEXITCODE
 }
 
@@ -326,24 +335,64 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
     }
 
     Write-Output "Removing VDD device nodes ($($devices.Count) found)..."
-    $exitCode = Invoke-NefconRemoval $NefconPath
-    if ($exitCode -notin @(0, 3010)) {
-        throw "nefcon failed to remove VDD device nodes (exit code $exitCode)."
+    $targetHardwareIds = @($devices | ForEach-Object {
+        if ($_.HardwareId) { $_.HardwareId } else { $hardwareId }
+    } | Sort-Object -Unique)
+    foreach ($targetHardwareId in $targetHardwareIds) {
+        $exitCode = Invoke-NefconRemoval $NefconPath $targetHardwareId
+        if ($exitCode -notin @(0, 3010)) {
+            throw "nefcon failed to remove VDD device nodes for $targetHardwareId (exit code $exitCode)."
+        }
     }
 
     # Nefcon removes every matching node in one call, but Windows can finish
-    # the PnP removal asynchronously after nefcon returns.
+    # the PnP removal asynchronously after nefcon returns. Only disconnected
+    # nodes need a targeted fallback; issuing a second request for live nodes can
+    # race the asynchronous nefcon removal.
     $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
+    $targetedAttempts = @{}
     do {
         Start-Sleep -Milliseconds 250
         $devices = @(Get-VddDevices)
         if ($devices.Count -eq 0) {
             return
         }
+
+        foreach ($device in $devices) {
+            if ($device.Status -ne 'MISSING' -or
+                $targetedAttempts.ContainsKey($device.InstanceId)) {
+                continue
+            }
+            Write-Output "Removing remaining VDD instance $($device.InstanceId) ($($device.Status))..."
+            $targetedDeadline = [DateTime]::UtcNow.AddSeconds($targetedRemovalTimeoutSeconds)
+            if ($targetedDeadline -gt $deadline) {
+                $targetedDeadline = $deadline
+            }
+            $targetedAttempts[$device.InstanceId] = [pscustomobject]@{
+                ExitCode = Invoke-PnpUtilDeviceRemoval $device.InstanceId
+                Deadline = $targetedDeadline
+            }
+        }
+
+        $stalledTargetedDevices = @($devices | Where-Object {
+            $attempt = $targetedAttempts[$_.InstanceId]
+            $_.Status -eq 'MISSING' -and
+                $null -ne $attempt -and
+                [DateTime]::UtcNow -ge $attempt.Deadline
+        })
+        if ($stalledTargetedDevices.Count -gt 0) {
+            $details = @($stalledTargetedDevices | ForEach-Object {
+                $targetedExitCode = $targetedAttempts[$_.InstanceId].ExitCode
+                "$($_.InstanceId)[$($_.HardwareId),$($_.Status),pnputil=$targetedExitCode]"
+            }) -join ', '
+            throw "VDD device removal made no progress. Remaining instances: $details"
+        }
     } while ([DateTime]::UtcNow -lt $deadline)
 
     throw ("VDD device removal timed out. Remaining instances: " +
-        ($devices.InstanceId -join ', '))
+        (@($devices | ForEach-Object {
+            "$($_.InstanceId)[$($_.HardwareId),$($_.Status)]"
+        }) -join ', '))
 }
 
 function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
@@ -354,7 +403,8 @@ function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
         try {
             $matched = [bool] (Select-String `
                 -LiteralPath $inf.FullName `
-                -SimpleMatch $hardwareId `
+                -Pattern $managedHardwareIds `
+                -SimpleMatch `
                 -Quiet `
                 -ErrorAction Stop)
         }

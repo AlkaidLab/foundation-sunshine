@@ -18,9 +18,11 @@ function Assert-Equal($Expected, $Actual, [string] $Message) {
 function New-TestDevice(
     [string] $Version,
     [string] $Status = 'OK',
-    [string] $InfName = 'oem42.inf') {
+    [string] $InfName = 'oem42.inf',
+    [string] $HardwareId = 'Root\ZakoVDD') {
     return [pscustomobject]@{
         InstanceId = 'ROOT\DISPLAY\0042'
+        HardwareId = $HardwareId
         Version = $Version
         Status = $Status
         InfName = $InfName
@@ -79,6 +81,13 @@ $cases = @(
         Count = 2
         Cleanup = 1
         Install = 1
+    },
+    @{
+        Name = 'A disconnected legacy device is reconciled'
+        Devices = @(New-TestDevice '100.0.16.5' 'MISSING' 'oem40.inf' 'ZakoVDD')
+        Count = 1
+        Cleanup = 1
+        Install = 1
     }
 )
 
@@ -132,9 +141,11 @@ try {
         [CmdletBinding()]
         param(
             [string] $LiteralPath,
-            [string] $SimpleMatch,
+            [string[]] $Pattern,
+            [switch] $SimpleMatch,
             [switch] $Quiet
         )
+        $script:lastInfPatterns = @($Pattern)
         if ($LiteralPath -like '*oem40.inf') {
             throw 'simulated unreadable INF'
         }
@@ -145,6 +156,8 @@ try {
         -RequiredInfNames @('oem42.inf'))
     Assert-Equal 1 $foundPackages.Count 'An unreadable unrelated INF must not abort the package scan.'
     Assert-Equal 'oem42.inf' $foundPackages[0].InfName 'The readable VDD package must still be detected.'
+    Assert-Equal 'Root\ZakoVDD,ZakoVDD' ($script:lastInfPatterns -join ',') `
+        'Package discovery must recognize current and legacy hardware IDs.'
 
     $activeReadFailedClosed = $false
     try {
@@ -169,6 +182,7 @@ finally {
         Remove-Item Function:\Select-String -ErrorAction SilentlyContinue
     }
     Remove-Variable -Name fakeInfFiles -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name lastInfPatterns -Scope Script -ErrorAction SilentlyContinue
 }
 
 $originalGetVddDevices = ${function:Get-VddDevices}
@@ -192,12 +206,14 @@ finally {
 
 $originalGetVddDevices = ${function:Get-VddDevices}
 $originalInvokeNefconRemoval = ${function:Invoke-NefconRemoval}
+$originalInvokePnpUtilDeviceRemoval = ${function:Invoke-PnpUtilDeviceRemoval}
 try {
     $firstFakeDevice = New-TestDevice '100.0.16.5' 'OK' 'oem40.inf'
     $secondFakeDevice = New-TestDevice '100.0.16.6' 'OK' 'oem42.inf'
     $secondFakeDevice.InstanceId = 'ROOT\DISPLAY\0043'
     $script:fakeDevices = @($firstFakeDevice, $secondFakeDevice)
     $script:removalCalls = 0
+    $script:targetedRemovalCalls = 0
     $script:pollsAfterRemoval = 0
     function Get-VddDevices {
         if ($script:removalCalls -gt 0) {
@@ -208,21 +224,54 @@ try {
         }
         return @($script:fakeDevices)
     }
-    function Invoke-NefconRemoval {
+    function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
         $script:removalCalls++
+        return 0
+    }
+    function Invoke-PnpUtilDeviceRemoval {
+        $script:targetedRemovalCalls++
         return 0
     }
 
     [void] (Remove-AllVddDevices $HelperScript 2)
     Assert-Equal 0 $script:fakeDevices.Count 'All duplicate device nodes must be removed.'
     Assert-Equal 1 $script:removalCalls 'An asynchronous removal must not receive overlapping requests.'
+    Assert-Equal 0 $script:targetedRemovalCalls 'Live nodes must not receive overlapping targeted removal requests.'
 
-    $script:fakeDevices = @(New-TestDevice '100.0.16.6')
+    $legacyDevice = New-TestDevice '100.0.16.5' 'MISSING' 'oem40.inf' 'ZakoVDD'
+    $legacyDevice.InstanceId = 'ROOT\DISPLAY\0043'
+    $script:fakeDevices = @((New-TestDevice '100.0.16.6'), $legacyDevice)
+    $script:removalCalls = 0
+    $script:targetedRemovalCalls = 0
+    $script:pollsAfterRemoval = 0
+    $script:removedHardwareIds = @()
+    function Get-VddDevices {
+        if ($script:removalCalls -gt 0) {
+            $script:pollsAfterRemoval++
+            if ($script:pollsAfterRemoval -ge 2) {
+                $script:fakeDevices = @()
+            }
+        }
+        return @($script:fakeDevices)
+    }
+    function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
+        $script:removalCalls++
+        $script:removedHardwareIds += $TargetHardwareId
+        return 0
+    }
+
+    [void] (Remove-AllVddDevices $HelperScript 2)
+    Assert-Equal 2 $script:removalCalls 'Root and legacy hardware IDs must both be reconciled.'
+    Assert-Equal 'Root\ZakoVDD,ZakoVDD' ($script:removedHardwareIds -join ',') `
+        'Removal must target both managed hardware IDs.'
+    Assert-Equal 1 $script:targetedRemovalCalls 'A disconnected legacy node must receive targeted cleanup.'
+
+    $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'MISSING')
     $script:removalCalls = 0
     function Get-VddDevices {
         return @($script:fakeDevices)
     }
-    function Invoke-NefconRemoval {
+    function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
         $script:removalCalls++
         return 1
     }
@@ -237,27 +286,44 @@ try {
     Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
 
     $script:removalCalls = 0
-    function Invoke-NefconRemoval {
+    function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
         $script:removalCalls++
         return 0
     }
-    $removalTimedOut = $false
+    $removalMadeNoProgress = $false
     try {
         [void] (Remove-AllVddDevices $HelperScript 1)
     }
     catch {
-        $removalTimedOut = $_.Exception.Message -like '*timed out*'
+        $removalMadeNoProgress = $_.Exception.Message -like '*made no progress*pnputil=0*'
     }
-    Assert-Equal $true $removalTimedOut 'A successful request without PnP progress must time out.'
-    Assert-Equal 1 $script:removalCalls 'A timed-out removal must not repeatedly invoke nefcon.'
+    Assert-Equal $true $removalMadeNoProgress 'A successful request without PnP progress must fail with diagnostics.'
+    Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
+
+    $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'OK')
+    $script:removalCalls = 0
+    $script:targetedRemovalCalls = 0
+    $liveRemovalTimedOut = $false
+    try {
+        [void] (Remove-AllVddDevices $HelperScript 1)
+    }
+    catch {
+        $liveRemovalTimedOut = $_.Exception.Message -like '*timed out*'
+    }
+    Assert-Equal $true $liveRemovalTimedOut 'A live asynchronous removal must keep the normal timeout path.'
+    Assert-Equal 0 $script:targetedRemovalCalls 'A live node must not receive the disconnected-node fallback.'
 }
 finally {
     ${function:Get-VddDevices} = $originalGetVddDevices
     ${function:Invoke-NefconRemoval} = $originalInvokeNefconRemoval
+    ${function:Invoke-PnpUtilDeviceRemoval} = $originalInvokePnpUtilDeviceRemoval
     Remove-Variable -Name fakeDevices -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name removalCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name pollsAfterRemoval -Scope Script -ErrorAction SilentlyContinue
-    Remove-Variable -Name removalTimedOut -ErrorAction SilentlyContinue
+    Remove-Variable -Name removalMadeNoProgress -ErrorAction SilentlyContinue
+    Remove-Variable -Name liveRemovalTimedOut -ErrorAction SilentlyContinue
+    Remove-Variable -Name targetedRemovalCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name removedHardwareIds -Scope Script -ErrorAction SilentlyContinue
 }
 
 $originalResolveVddPayload = ${function:Resolve-VddPayload}
