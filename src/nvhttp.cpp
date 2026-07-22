@@ -52,6 +52,7 @@
 #include "nvhttp/pairing.h"
 #include "nvhttp/sessions.h"
 #include "nvhttp/tls_client_identity_store.h"
+#include "nvhttp/url_utils.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -268,7 +269,7 @@ namespace nvhttp {
     launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
 
     // Get display_name from query parameter if provided
-    std::string display_name = get_arg(args, "display_name", "");
+    std::string display_name = url_utils::decode(get_arg(args, "display_name", ""));
     if (!display_name.empty()) {
       launch_session->env["SUNSHINE_CLIENT_DISPLAY_NAME"] = display_name;
       BOOST_LOG(info) << "Launch session will use specified display: " << display_name;
