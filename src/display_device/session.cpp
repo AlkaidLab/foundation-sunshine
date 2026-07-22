@@ -362,8 +362,9 @@ namespace display_device {
     // Parsing is side-effect free. From this point on, parsed_config is the
     // single source of truth for whether this session needs VDD preparation.
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
-    const bool should_prepare_vdd = parsed_config->use_vdd && !is_rdp_blocking_vdd;
-    if (parsed_config->use_vdd && is_rdp_blocking_vdd) {
+    const bool use_vdd = parsed_config->use_vdd.value_or(false);
+    const bool should_prepare_vdd = use_vdd && !is_rdp_blocking_vdd;
+    if (use_vdd && is_rdp_blocking_vdd) {
       BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备";
     }
 
