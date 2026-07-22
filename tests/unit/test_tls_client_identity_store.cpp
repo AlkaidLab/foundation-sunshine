@@ -17,6 +17,25 @@ TEST(TlsClientIdentityStore, IdentitySurvivesMultipleRequestsOnOneConnection) {
   EXPECT_EQ(store.lookup("connection-a"), "client-a");
 }
 
+TEST(TlsClientIdentityStore, RejectsInvalidRememberInputs) {
+  nvhttp::tls_client_identity_store_t store;
+  auto connection = std::make_shared<int>(1);
+  std::weak_ptr<void> expired_connection;
+  {
+    auto lifetime = std::make_shared<int>(2);
+    expired_connection = lifetime;
+  }
+
+  ASSERT_TRUE(expired_connection.expired());
+  store.remember("", connection, "client-without-key");
+  store.remember("expired-connection", expired_connection, "client-expired");
+  store.remember("empty-uuid", connection, "");
+
+  EXPECT_TRUE(store.lookup("").empty());
+  EXPECT_TRUE(store.lookup("expired-connection").empty());
+  EXPECT_TRUE(store.lookup("empty-uuid").empty());
+}
+
 TEST(TlsClientIdentityStore, DropsIdentityAfterConnectionExpires) {
   nvhttp::tls_client_identity_store_t store;
   auto connection = std::make_shared<int>(1);
