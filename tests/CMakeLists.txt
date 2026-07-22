@@ -47,7 +47,9 @@ if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
     target_include_directories(vdd_prerequisite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(vdd_prerequisite_unit_tests gtest_main)
+    target_link_libraries(vdd_prerequisite_unit_tests
+            Boost::optional
+            gtest_main)
     target_compile_options(vdd_prerequisite_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
     set_target_properties(vdd_prerequisite_unit_tests PROPERTIES
             CXX_STANDARD 23
