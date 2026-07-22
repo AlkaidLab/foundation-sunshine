@@ -575,6 +575,10 @@
     "webhook_curl_copy_failed": "Copia fallita, seleziona e copia manualmente",
     "webhook_enabled": "Notifiche Webhook",
     "webhook_enabled_desc": "Quando abilitato, Sunshine invierà notifiche di eventi all'URL Webhook specificato",
+    "webhook_events": "Eventi di notifica",
+    "webhook_events_clear": "Cancella",
+    "webhook_events_desc": "Seleziona gli eventi da inviare. Il file di configurazione salva gli ID numerici selezionati come elenco separato da virgole; per impostazione predefinita sono selezionati tutti gli eventi.",
+    "webhook_events_select_all": "Seleziona tutto",
     "webhook_group": "Impostazioni notifiche Webhook",
     "webhook_skip_ssl_verify": "Salta verifica certificato SSL",
     "webhook_skip_ssl_verify_desc": "Salta la verifica del certificato SSL per le connessioni HTTPS, solo per test o certificati autofirmati",
@@ -585,7 +589,7 @@
     "webhook_test_success_cors_note": "Nota: A causa delle restrizioni CORS, lo stato della risposta del server non può essere confermato.\nLa richiesta è stata inviata. Se il webhook è configurato correttamente, il messaggio dovrebbe essere stato consegnato.\n\nSuggerimento: Controlla la scheda Rete negli strumenti per sviluppatori del tuo browser per i dettagli della richiesta.",
     "webhook_test_url_required": "Inserisci prima l'URL Webhook",
     "webhook_timeout": "Timeout richiesta",
-    "webhook_timeout_desc": "Timeout per le richieste Webhook in millisecondi, intervallo 100-5000ms",
+    "webhook_timeout_desc": "Timeout per le richieste Webhook in secondi, intervallo 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "L'URL per ricevere notifiche di eventi, supporta protocolli HTTP/HTTPS",
     "wgc_checking_mode": "Controllo modalità...",
@@ -633,6 +637,35 @@
     "theme_light": "Chiaro",
     "toggle_theme": "Tema",
     "troubleshoot": "Risoluzione Dei Problemi"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Configura",
+      "description": "Invia gli eventi di Sunshine a un endpoint HTTP o HTTPS.",
+      "events": {
+        "app_launch": "Applicazione avviata",
+        "app_resume": "Applicazione ripresa",
+        "app_terminate": "Applicazione terminata",
+        "config_pin_failed": "Associazione non riuscita",
+        "config_pin_success": "Associazione riuscita",
+        "session_end": "Sessione terminata",
+        "session_start": "Sessione avviata"
+      },
+      "hot_apply_note": "Le modifiche vengono convalidate, salvate e applicate immediatamente. Non sono necessari il riavvio o l'azione Applica esterna.",
+      "http_warning": "HTTP invia i dati Webhook senza crittografia del trasporto. Usa HTTPS quando possibile.",
+      "load_failed": "Impossibile caricare la configurazione Webhook",
+      "config_file_may_be_damaged": "Il file di configurazione Webhook potrebbe essere danneggiato. Eliminalo.",
+      "test_retries": "Tentativi aggiuntivi del test (0–3)",
+      "loading": "Caricamento della configurazione Webhook...",
+      "retry": "Riprova",
+      "save_failed": "Impossibile salvare la configurazione Webhook",
+      "save_success": "La configurazione Webhook è stata salvata e applicata immediatamente.",
+      "skip_ssl_verify_warning": "La verifica del certificato è disabilitata. L'identità del server HTTPS non verrà verificata.",
+      "status_unknown": "Lo stato viene caricato all'apertura",
+      "title": "Webhook",
+      "unknown_error": "Errore sconosciuto",
+      "validation_url_invalid": "Inserisci un URL HTTP o HTTPS valido senza credenziali incorporate."
+    }
   },
   "password": {
     "confirm_password": "Conferma Password",

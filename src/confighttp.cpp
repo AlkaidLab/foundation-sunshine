@@ -8,6 +8,7 @@
 
 #include "process.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <ctime>
 #include <thread>
+#include <utility>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -61,7 +63,8 @@
 #include "uuid.h"
 #include "video.h"
 #include "version.h"
-#include "webhook.h"
+#include "webhook/webhook.h"
+#include "webhook/webhook_api.h"
 
 #ifdef _WIN32
   #include <iphlpapi.h>
@@ -1412,6 +1415,33 @@ namespace confighttp {
   }
 
   void
+  getWebhookConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    webhook::api::get_config(std::move(response), config::sunshine.config_file);
+  }
+
+  void
+  saveWebhookConfig(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    webhook::api::save_config(
+      std::move(response),
+      std::move(request),
+      config::sunshine.config_file
+    );
+  }
+
+  void
+  testWebhook(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    webhook::api::test_delivery(std::move(response), std::move(request));
+  }
+
+  void
   restart(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -1606,38 +1636,36 @@ namespace confighttp {
       bool pin_result = nvhttp::pin(pin, name);
       outputTree.put("status", pin_result);
 
-      // Send webhook notification
-      webhook::send_event_async(webhook::event_t{
-        .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
-        .alert_type = pin_result ? "config_pair_success" : "config_pair_failed",
-        .timestamp = webhook::get_current_timestamp(),
-        .client_name = name,
-        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
-        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
-        .app_name = "",
-        .app_id = 0,
-        .session_id = "",
-        .extra_data = {}
-      });
+      try {
+        webhook::send_event_async(webhook::event_t{
+          .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = name,
+          .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+          .server_ip = net::addr_to_normalized_string(request->local_endpoint().address())
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook pairing event construction failed"sv;
+      }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();
       outputTree.put("status", false);
       outputTree.put("error", e.what());
 
-      // Send webhook notification for pairing failure
-      webhook::send_event_async(webhook::event_t{
-        .type = webhook::event_type_t::CONFIG_PIN_FAILED,
-        .alert_type = "config_pair_failed",
-        .timestamp = webhook::get_current_timestamp(),
-        .client_name = "",
-        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
-        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
-        .app_name = "",
-        .app_id = 0,
-        .session_id = "",
-        .extra_data = {{"error", e.what()}}
-      });
+      try {
+        webhook::send_event_async(webhook::event_t{
+          .type = webhook::event_type_t::CONFIG_PIN_FAILED,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+          .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
+          .extra_data = {{"error", e.what()}}
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook pairing failure event construction failed"sv;
+      }
       return;
     }
   }
@@ -3191,6 +3219,9 @@ namespace confighttp {
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
+    server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
+    server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
+    server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
     server.resource["^/api/logout$"]["GET"] = handleLogout;
     server.resource["^/api/logout$"]["POST"] = handleLogout;

@@ -575,6 +575,10 @@
     "webhook_curl_copy_failed": "Kopieren fehlgeschlagen, bitte manuell auswählen und kopieren",
     "webhook_enabled": "Webhook-Benachrichtigungen",
     "webhook_enabled_desc": "Wenn aktiviert, sendet Sunshine Ereignisbenachrichtigungen an die angegebene Webhook-URL",
+    "webhook_events": "Benachrichtigungsereignisse",
+    "webhook_events_clear": "Auswahl löschen",
+    "webhook_events_desc": "Wähle aus, welche Ereignisse gesendet werden. Die Konfigurationsdatei speichert die ausgewählten numerischen IDs als kommagetrennte Liste; standardmäßig sind alle Ereignisse ausgewählt.",
+    "webhook_events_select_all": "Alle auswählen",
     "webhook_group": "Webhook-Benachrichtigungseinstellungen",
     "webhook_skip_ssl_verify": "SSL-Zertifikatsverifizierung überspringen",
     "webhook_skip_ssl_verify_desc": "SSL-Zertifikatsverifizierung für HTTPS-Verbindungen überspringen, nur für Tests oder selbstsignierte Zertifikate",
@@ -585,7 +589,7 @@
     "webhook_test_success_cors_note": "Hinweis: Aufgrund von CORS-Beschränkungen kann der Server-Antwortstatus nicht bestätigt werden.\nDie Anfrage wurde gesendet. Wenn der Webhook korrekt konfiguriert ist, sollte die Nachricht zugestellt worden sein.\n\nVorschlag: Überprüfen Sie die Registerkarte Netzwerk in den Entwicklertools Ihres Browsers für Anfragedetails.",
     "webhook_test_url_required": "Bitte geben Sie zuerst eine Webhook-URL ein",
     "webhook_timeout": "Anfrage-Timeout",
-    "webhook_timeout_desc": "Timeout für Webhook-Anfragen in Millisekunden, Bereich 100-5000ms",
+    "webhook_timeout_desc": "Timeout für Webhook-Anfragen in Sekunden, Bereich 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "Die URL zum Empfangen von Ereignisbenachrichtigungen, unterstützt HTTP/HTTPS-Protokolle",
     "wgc_checking_mode": "Überprüfe Modus...",
@@ -633,6 +637,35 @@
     "theme_light": "Hell",
     "toggle_theme": "Thema",
     "troubleshoot": "Fehlerbehebung"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Konfigurieren",
+      "description": "Sunshine-Ereignisse an einen HTTP- oder HTTPS-Endpunkt senden.",
+      "events": {
+        "app_launch": "Anwendung gestartet",
+        "app_resume": "Anwendung fortgesetzt",
+        "app_terminate": "Anwendung beendet",
+        "config_pin_failed": "Kopplung fehlgeschlagen",
+        "config_pin_success": "Kopplung erfolgreich",
+        "session_end": "Sitzung beendet",
+        "session_start": "Sitzung gestartet"
+      },
+      "hot_apply_note": "Änderungen werden geprüft, gespeichert und sofort angewendet. Ein Neustart oder die äußere Aktion „Anwenden“ ist nicht erforderlich.",
+      "http_warning": "HTTP überträgt Webhook-Daten unverschlüsselt. Verwende nach Möglichkeit HTTPS.",
+      "load_failed": "Webhook-Konfiguration konnte nicht geladen werden",
+      "config_file_may_be_damaged": "Die Webhook-Konfigurationsdatei ist möglicherweise beschädigt. Lösche sie.",
+      "test_retries": "Testwiederholungen (0–3)",
+      "loading": "Webhook-Konfiguration wird geladen...",
+      "retry": "Erneut versuchen",
+      "save_failed": "Webhook-Konfiguration konnte nicht gespeichert werden",
+      "save_success": "Die Webhook-Konfiguration wurde gespeichert und sofort angewendet.",
+      "skip_ssl_verify_warning": "Die Zertifikatsprüfung ist deaktiviert. Die Identität des HTTPS-Servers wird nicht überprüft.",
+      "status_unknown": "Status wird beim Öffnen geladen",
+      "title": "Webhook",
+      "unknown_error": "Unbekannter Fehler",
+      "validation_url_invalid": "Gib eine gültige HTTP- oder HTTPS-URL ohne eingebettete Zugangsdaten ein."
+    }
   },
   "password": {
     "confirm_password": "Passwort wiederholen",

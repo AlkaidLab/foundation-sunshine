@@ -194,13 +194,6 @@ namespace config {
     int pair_max_attempts;  // Max PIN pairing attempts per IP within 60s window. 0 disables limiting.
   };
 
-  struct webhook_t {
-    bool enabled;
-    std::string url;
-    bool skip_ssl_verify;
-    std::chrono::milliseconds timeout;
-  };
-
   struct input_t {
     std::unordered_map<int, int> keybindings;
 
@@ -287,7 +280,6 @@ namespace config {
   extern audio_t audio;
   extern stream_t stream;
   extern nvhttp_t nvhttp;
-  extern webhook_t webhook;
   extern input_t input;
   extern sunshine_t sunshine;
 

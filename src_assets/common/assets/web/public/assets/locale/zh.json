@@ -754,6 +754,10 @@
     "webhook_curl_copy_failed": "复制失败，请手动选择并复制",
     "webhook_enabled": "Webhook 通知",
     "webhook_enabled_desc": "启用后将向指定的 Webhook URL 发送事件通知",
+    "webhook_events": "通知事件",
+    "webhook_events_clear": "清空",
+    "webhook_events_desc": "选择需要发送的事件。配置文件以逗号分隔的数字编号保存，默认全选。",
+    "webhook_events_select_all": "全选",
     "webhook_group": "Webhook 通知设置",
     "webhook_skip_ssl_verify": "跳过 SSL 证书验证",
     "webhook_skip_ssl_verify_desc": "跳过 HTTPS 连接的 SSL 证书验证，仅用于测试或自签名证书",
@@ -764,7 +768,7 @@
     "webhook_test_success_cors_note": "提示：由于 CORS 限制，无法确认服务器响应状态。\n请求已发送，如果 webhook 配置正确，消息应该已送达。\n\n建议：在浏览器开发者工具的 Network 标签页中查看请求详情。",
     "webhook_test_url_required": "请先输入 Webhook URL",
     "webhook_timeout": "请求超时时间",
-    "webhook_timeout_desc": "Webhook 请求的超时时间（毫秒），范围 100-5000ms",
+    "webhook_timeout_desc": "Webhook 请求的超时时间（秒），范围 1-15 秒",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "接收事件通知的 Webhook 地址，支持 HTTP/HTTPS 协议",
     "wgc_checking_mode": "检查中...",
@@ -810,6 +814,35 @@
     "theme_light": "浅色",
     "toggle_theme": "主题",
     "troubleshoot": "故障排除"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "打开设置",
+      "description": "在所选事件发生时，向指定的 Webhook 地址发送通知。",
+      "events": {
+        "app_launch": "应用启动",
+        "app_resume": "应用恢复",
+        "app_terminate": "应用终止",
+        "config_pin_failed": "配对失败",
+        "config_pin_success": "配对成功",
+        "session_end": "会话结束",
+        "session_start": "会话开始"
+      },
+      "hot_apply_note": "这里的设置单独保存，保存后立即生效，不需要重启 Sunshine。",
+      "http_warning": "当前地址使用 HTTP，通知内容会以明文传输。建议改用 HTTPS。",
+      "load_failed": "无法读取 Webhook 设置",
+      "config_file_may_be_damaged": "可能存在 Webhook 配置文件损坏，请清理 Webhook 配置文件。",
+      "test_retries": "测试重试次数（0–3）",
+      "loading": "正在读取 Webhook 设置...",
+      "retry": "重新加载",
+      "save_failed": "无法保存 Webhook 设置",
+      "save_success": "Webhook 设置已保存并立即生效。",
+      "skip_ssl_verify_warning": "关闭证书校验后，Sunshine 无法确认连接的是目标服务器。请只对可信地址使用此选项。",
+      "status_unknown": "尚未读取当前状态",
+      "title": "Webhook 通知",
+      "unknown_error": "发生未知错误",
+      "validation_url_invalid": "请输入有效的 HTTP 或 HTTPS 地址，地址中不能包含用户名或密码。"
+    }
   },
   "password": {
     "confirm_password": "确认密码",

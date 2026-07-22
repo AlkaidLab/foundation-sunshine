@@ -33,6 +33,7 @@
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
 #include "utility.h"
+#include "webhook/webhook.h"
 
 #ifdef _WIN32
   // from_utf8() string conversion function
@@ -395,6 +396,20 @@ namespace proc {
 
       // Same applies when restoring display state
       // display_device::session_t::get().restore_state();
+    }
+
+    if (has_run) {
+      try {
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_APP_TERMINATE,
+          .timestamp = webhook::get_current_timestamp(),
+          .app_name = _app.name,
+          .app_id = _app_id
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook app termination event construction failed"sv;
+      }
     }
 
     _app_id = -1;

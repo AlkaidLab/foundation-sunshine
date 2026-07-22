@@ -604,6 +604,10 @@
     "webhook_curl_copy_failed": "複製失敗，請手動選擇並複製",
     "webhook_enabled": "Webhook 通知",
     "webhook_enabled_desc": "啟用後將向指定的 Webhook URL 發送事件通知",
+    "webhook_events": "通知事件",
+    "webhook_events_clear": "清除",
+    "webhook_events_desc": "選擇需要傳送的事件。設定檔以逗號分隔的數字編號儲存，預設全選。",
+    "webhook_events_select_all": "全選",
     "webhook_group": "Webhook 通知設定",
     "webhook_skip_ssl_verify": "跳過 SSL 憑證驗證",
     "webhook_skip_ssl_verify_desc": "跳過 HTTPS 連線的 SSL 憑證驗證，僅用於測試或自簽憑證",
@@ -614,7 +618,7 @@
     "webhook_test_success_cors_note": "提示：由於 CORS 限制，無法確認伺服器響應狀態。\n請求已發送，如果 webhook 配置正確，訊息應該已送達。\n\n建議：在瀏覽器開發者工具的 Network 標籤頁中查看請求詳情。",
     "webhook_test_url_required": "請先輸入 Webhook URL",
     "webhook_timeout": "請求超時時間",
-    "webhook_timeout_desc": "Webhook 請求的超時時間（毫秒），範圍 100-5000ms",
+    "webhook_timeout_desc": "Webhook 請求的超時時間（秒），範圍 1-15 秒",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "接收事件通知的 Webhook 位址，支援 HTTP/HTTPS 協定",
     "wgc_checking_mode": "檢查中...",
@@ -658,6 +662,35 @@
     "theme_light": "淺色主題",
     "toggle_theme": "主題",
     "troubleshoot": "疑難排解"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "開啟設定",
+      "description": "在所選事件發生時，向指定的 Webhook 位址傳送通知。",
+      "events": {
+        "app_launch": "應用程式啟動",
+        "app_resume": "應用程式恢復",
+        "app_terminate": "應用程式終止",
+        "config_pin_failed": "配對失敗",
+        "config_pin_success": "配對成功",
+        "session_end": "工作階段結束",
+        "session_start": "工作階段開始"
+      },
+      "hot_apply_note": "這裡的設定會單獨儲存，儲存後立即生效，不需要重新啟動 Sunshine。",
+      "http_warning": "目前位址使用 HTTP，通知內容會以明文傳輸。建議改用 HTTPS。",
+      "load_failed": "無法讀取 Webhook 設定",
+      "config_file_may_be_damaged": "Webhook 設定檔可能已損壞，請清理 Webhook 設定檔。",
+      "test_retries": "測試重試次數（0–3）",
+      "loading": "正在讀取 Webhook 設定...",
+      "retry": "重新載入",
+      "save_failed": "無法儲存 Webhook 設定",
+      "save_success": "Webhook 設定已儲存並立即生效。",
+      "skip_ssl_verify_warning": "關閉憑證驗證後，Sunshine 無法確認連線的是目標伺服器。請只對可信任的位址使用此選項。",
+      "status_unknown": "尚未讀取目前狀態",
+      "title": "Webhook 通知",
+      "unknown_error": "發生未知錯誤",
+      "validation_url_invalid": "請輸入有效的 HTTP 或 HTTPS 位址，位址中不能包含使用者名稱或密碼。"
+    }
   },
   "password": {
     "confirm_password": "確認密碼",

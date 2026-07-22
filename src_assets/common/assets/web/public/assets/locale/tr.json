@@ -575,6 +575,10 @@
     "webhook_curl_copy_failed": "Kopyalama başarısız, lütfen manuel olarak seçin ve kopyalayın",
     "webhook_enabled": "Webhook Bildirimleri",
     "webhook_enabled_desc": "Etkinleştirildiğinde, Sunshine belirtilen Webhook URL'sine olay bildirimleri gönderir",
+    "webhook_events": "Bildirim olayları",
+    "webhook_events_clear": "Temizle",
+    "webhook_events_desc": "Gönderilecek olayları seçin. Yapılandırma dosyası seçilen sayısal kimlikleri virgülle ayrılmış bir liste olarak saklar; varsayılan olarak tüm olaylar seçilidir.",
+    "webhook_events_select_all": "Tümünü seç",
     "webhook_group": "Webhook Bildirim Ayarları",
     "webhook_skip_ssl_verify": "SSL Sertifikası Doğrulamasını Atla",
     "webhook_skip_ssl_verify_desc": "HTTPS bağlantıları için SSL sertifikası doğrulamasını atla, yalnızca test veya kendi imzalanmış sertifikalar için",
@@ -585,7 +589,7 @@
     "webhook_test_success_cors_note": "Not: CORS kısıtlamaları nedeniyle, sunucu yanıt durumu doğrulanamaz.\nİstek gönderildi. Webhook doğru yapılandırılmışsa, mesaj teslim edilmiş olmalıdır.\n\nÖneri: İstek ayrıntıları için tarayıcınızın geliştirici araçlarındaki Ağ sekmesini kontrol edin.",
     "webhook_test_url_required": "Lütfen önce Webhook URL'sini girin",
     "webhook_timeout": "İstek Zaman Aşımı",
-    "webhook_timeout_desc": "Webhook isteklerinin zaman aşımı süresi (milisaniye), aralık 100-5000ms",
+    "webhook_timeout_desc": "Webhook isteklerinin zaman aşımı süresi (saniye), aralık 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "Olay bildirimlerini almak için URL, HTTP/HTTPS protokollerini destekler",
     "wgc_checking_mode": "Mod kontrol ediliyor...",
@@ -633,6 +637,35 @@
     "theme_light": "Açık",
     "toggle_theme": "Tema",
     "troubleshoot": "Sorun Giderme"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Yapılandır",
+      "description": "Sunshine olaylarını bir HTTP veya HTTPS uç noktasına gönderir.",
+      "events": {
+        "app_launch": "Uygulama başlatıldı",
+        "app_resume": "Uygulama sürdürüldü",
+        "app_terminate": "Uygulama sonlandırıldı",
+        "config_pin_failed": "Eşleştirme başarısız",
+        "config_pin_success": "Eşleştirme başarılı",
+        "session_end": "Oturum sona erdi",
+        "session_start": "Oturum başladı"
+      },
+      "hot_apply_note": "Değişiklikler doğrulanır, kaydedilir ve hemen uygulanır. Yeniden başlatma veya dıştaki Uygula işlemi gerekmez.",
+      "http_warning": "HTTP, Webhook verilerini aktarım şifrelemesi olmadan gönderir. Mümkün olduğunda HTTPS kullanın.",
+      "load_failed": "Webhook yapılandırması yüklenemedi",
+      "config_file_may_be_damaged": "Webhook yapılandırma dosyası bozulmuş olabilir. Dosyayı silin.",
+      "test_retries": "Test yeniden deneme sayısı (0–3)",
+      "loading": "Webhook yapılandırması yükleniyor...",
+      "retry": "Yeniden dene",
+      "save_failed": "Webhook yapılandırması kaydedilemedi",
+      "save_success": "Webhook yapılandırması kaydedildi ve hemen uygulandı.",
+      "skip_ssl_verify_warning": "Sertifika doğrulaması devre dışı. HTTPS sunucusunun kimliği doğrulanmayacak.",
+      "status_unknown": "Durum açıldığında yüklenir",
+      "title": "Webhook",
+      "unknown_error": "Bilinmeyen hata",
+      "validation_url_invalid": "Yerleşik kimlik bilgileri içermeyen geçerli bir HTTP veya HTTPS URL'si girin."
+    }
   },
   "password": {
     "confirm_password": "Şifreyi Onayla",

@@ -754,6 +754,10 @@
     "webhook_curl_copy_failed": "Copy failed, please manually select and copy",
     "webhook_enabled": "Webhook Notifications",
     "webhook_enabled_desc": "When enabled, Sunshine will send event notifications to the specified Webhook URL",
+    "webhook_events": "Notification Events",
+    "webhook_events_clear": "Clear",
+    "webhook_events_desc": "Select which events are sent. The configuration file stores the selected numeric IDs as a comma-separated list; all events are selected by default.",
+    "webhook_events_select_all": "Select all",
     "webhook_group": "Webhook Notification Settings",
     "webhook_skip_ssl_verify": "Skip SSL Certificate Verification",
     "webhook_skip_ssl_verify_desc": "Skip SSL certificate verification for HTTPS connections, only for testing or self-signed certificates",
@@ -764,7 +768,7 @@
     "webhook_test_success_cors_note": "Note: Due to CORS restrictions, the server response status cannot be confirmed.\nThe request has been sent. If the webhook is configured correctly, the message should have been delivered.\n\nSuggestion: Check the Network tab in your browser's developer tools for request details.",
     "webhook_test_url_required": "Please enter Webhook URL first",
     "webhook_timeout": "Request Timeout",
-    "webhook_timeout_desc": "Timeout for webhook requests in milliseconds, range 100-5000ms",
+    "webhook_timeout_desc": "Timeout for webhook requests in seconds, range 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "The URL to receive event notifications, supports HTTP/HTTPS protocols",
     "wgc_checking_mode": "Checking...",
@@ -810,6 +814,35 @@
     "theme_light": "Light",
     "toggle_theme": "Theme",
     "troubleshoot": "Troubleshooting"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Open settings",
+      "description": "Send a notification to your Webhook URL when a selected event occurs.",
+      "events": {
+        "app_launch": "Application launched",
+        "app_resume": "Application resumed",
+        "app_terminate": "Application terminated",
+        "config_pin_failed": "Pairing failed",
+        "config_pin_success": "Pairing succeeded",
+        "session_end": "Session ended",
+        "session_start": "Session started"
+      },
+      "hot_apply_note": "These settings are saved separately and take effect immediately. You do not need to restart Sunshine.",
+      "http_warning": "HTTP sends Webhook data without transport encryption. Use HTTPS whenever possible.",
+      "load_failed": "Failed to load Webhook configuration",
+      "config_file_may_be_damaged": "The Webhook configuration file may be damaged. Remove it.",
+      "test_retries": "Test retries (0–3)",
+      "loading": "Loading Webhook configuration...",
+      "retry": "Retry",
+      "save_failed": "Failed to save Webhook configuration",
+      "save_success": "Webhook configuration was saved and applied immediately.",
+      "skip_ssl_verify_warning": "Certificate verification is disabled. The HTTPS server identity will not be verified.",
+      "status_unknown": "Current status has not been loaded",
+      "title": "Webhook notifications",
+      "unknown_error": "Unknown error",
+      "validation_url_invalid": "Enter a valid HTTP or HTTPS URL without a username or password."
+    }
   },
   "password": {
     "confirm_password": "Confirm Password",

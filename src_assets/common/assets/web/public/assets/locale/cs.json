@@ -575,6 +575,10 @@
     "webhook_curl_copy_failed": "Kopírování selhalo, prosím vyberte a zkopírujte ručně",
     "webhook_enabled": "Oznámení Webhook",
     "webhook_enabled_desc": "Když je povoleno, Sunshine bude odesílat oznámení o událostech na zadanou Webhook URL",
+    "webhook_events": "Události oznámení",
+    "webhook_events_clear": "Vymazat",
+    "webhook_events_desc": "Vyberte události, které se mají odesílat. Konfigurační soubor ukládá vybraná číselná ID jako seznam oddělený čárkami; ve výchozím nastavení jsou vybrány všechny události.",
+    "webhook_events_select_all": "Vybrat vše",
     "webhook_group": "Nastavení oznámení Webhook",
     "webhook_skip_ssl_verify": "Přeskočit ověření SSL certifikátu",
     "webhook_skip_ssl_verify_desc": "Přeskočit ověření SSL certifikátu pro HTTPS připojení, pouze pro testování nebo samopodepsané certifikáty",
@@ -585,7 +589,7 @@
     "webhook_test_success_cors_note": "Poznámka: Kvůli omezením CORS nelze potvrdit stav odpovědi serveru.\nPožadavek byl odeslán. Pokud je webhook správně nakonfigurován, zpráva by měla být doručena.\n\nNávrh: Zkontrolujte kartu Síť v nástrojích pro vývojáře vašeho prohlížeče pro podrobnosti o požadavku.",
     "webhook_test_url_required": "Nejprve zadejte Webhook URL",
     "webhook_timeout": "Timeout požadavku",
-    "webhook_timeout_desc": "Timeout pro webhook požadavky v milisekundách, rozmezí 100-5000ms",
+    "webhook_timeout_desc": "Timeout pro webhook požadavky v sekundách, rozmezí 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "URL pro příjem oznámení o událostech, podporuje protokoly HTTP/HTTPS",
     "wgc_checking_mode": "Kontrola...",
@@ -633,6 +637,35 @@
     "theme_light": "Světlý",
     "toggle_theme": "Téma",
     "troubleshoot": "Řešení problémů"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Nastavit",
+      "description": "Odesílá události Sunshine na koncový bod HTTP nebo HTTPS.",
+      "events": {
+        "app_launch": "Aplikace spuštěna",
+        "app_resume": "Aplikace obnovena",
+        "app_terminate": "Aplikace ukončena",
+        "config_pin_failed": "Párování se nezdařilo",
+        "config_pin_success": "Párování bylo úspěšné",
+        "session_end": "Relace ukončena",
+        "session_start": "Relace zahájena"
+      },
+      "hot_apply_note": "Změny se ověří, uloží a ihned použijí. Restart ani vnější akce Použít nejsou potřeba.",
+      "http_warning": "HTTP odesílá data Webhooku bez šifrování přenosu. Kdykoli je to možné, použijte HTTPS.",
+      "load_failed": "Načtení konfigurace Webhooku se nezdařilo",
+      "config_file_may_be_damaged": "Konfigurační soubor Webhooku může být poškozen. Odstraňte jej.",
+      "test_retries": "Opakování testu (0–3)",
+      "loading": "Načítání konfigurace Webhooku...",
+      "retry": "Zkusit znovu",
+      "save_failed": "Uložení konfigurace Webhooku se nezdařilo",
+      "save_success": "Konfigurace Webhooku byla uložena a ihned použita.",
+      "skip_ssl_verify_warning": "Ověření certifikátu je vypnuto. Identita HTTPS serveru nebude ověřena.",
+      "status_unknown": "Stav se načte po otevření",
+      "title": "Webhook",
+      "unknown_error": "Neznámá chyba",
+      "validation_url_invalid": "Zadejte platnou HTTP nebo HTTPS URL bez vložených přihlašovacích údajů."
+    }
   },
   "password": {
     "confirm_password": "Potvrzení hesla",

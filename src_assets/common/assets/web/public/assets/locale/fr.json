@@ -575,6 +575,10 @@
     "webhook_curl_copy_failed": "Échec de la copie, veuillez sélectionner et copier manuellement",
     "webhook_enabled": "Notifications Webhook",
     "webhook_enabled_desc": "Lorsqu'activé, Sunshine enverra des notifications d'événements à l'URL Webhook spécifiée",
+    "webhook_events": "Événements de notification",
+    "webhook_events_clear": "Effacer",
+    "webhook_events_desc": "Sélectionnez les événements à envoyer. Le fichier de configuration enregistre les identifiants numériques sélectionnés sous forme de liste séparée par des virgules ; tous les événements sont sélectionnés par défaut.",
+    "webhook_events_select_all": "Tout sélectionner",
     "webhook_group": "Paramètres de notification Webhook",
     "webhook_skip_ssl_verify": "Ignorer la vérification du certificat SSL",
     "webhook_skip_ssl_verify_desc": "Ignorer la vérification du certificat SSL pour les connexions HTTPS, uniquement pour les tests ou les certificats auto-signés",
@@ -585,7 +589,7 @@
     "webhook_test_success_cors_note": "Note : En raison des restrictions CORS, le statut de réponse du serveur ne peut pas être confirmé.\nLa requête a été envoyée. Si le webhook est correctement configuré, le message devrait avoir été livré.\n\nSuggestion : Vérifiez l'onglet Réseau dans les outils de développement de votre navigateur pour les détails de la requête.",
     "webhook_test_url_required": "Veuillez d'abord saisir l'URL Webhook",
     "webhook_timeout": "Délai d'expiration de la requête",
-    "webhook_timeout_desc": "Délai d'expiration pour les requêtes Webhook en millisecondes, plage 100-5000ms",
+    "webhook_timeout_desc": "Délai d'expiration pour les requêtes Webhook en secondes, plage 1-15s",
     "webhook_url": "Webhook URL",
     "webhook_url_desc": "L'URL pour recevoir les notifications d'événements, prend en charge les protocoles HTTP/HTTPS",
     "wgc_checking_mode": "Vérification du mode...",
@@ -633,6 +637,35 @@
     "theme_light": "Lumière",
     "toggle_theme": "Thème",
     "troubleshoot": "Dépannage"
+  },
+  "notifications": {
+    "webhook": {
+      "configure": "Configurer",
+      "description": "Envoyer les événements Sunshine vers un point de terminaison HTTP ou HTTPS.",
+      "events": {
+        "app_launch": "Application lancée",
+        "app_resume": "Application reprise",
+        "app_terminate": "Application arrêtée",
+        "config_pin_failed": "Échec de l'association",
+        "config_pin_success": "Association réussie",
+        "session_end": "Session terminée",
+        "session_start": "Session démarrée"
+      },
+      "hot_apply_note": "Les modifications sont validées, enregistrées et appliquées immédiatement. Aucun redémarrage ni action Appliquer externe n'est nécessaire.",
+      "http_warning": "HTTP envoie les données Webhook sans chiffrement du transport. Utilisez HTTPS dès que possible.",
+      "load_failed": "Échec du chargement de la configuration Webhook",
+      "config_file_may_be_damaged": "Le fichier de configuration Webhook est peut-être endommagé. Supprimez-le.",
+      "test_retries": "Nouvelles tentatives du test (0–3)",
+      "loading": "Chargement de la configuration Webhook...",
+      "retry": "Réessayer",
+      "save_failed": "Échec de l'enregistrement de la configuration Webhook",
+      "save_success": "La configuration Webhook a été enregistrée et appliquée immédiatement.",
+      "skip_ssl_verify_warning": "La vérification du certificat est désactivée. L'identité du serveur HTTPS ne sera pas vérifiée.",
+      "status_unknown": "L'état est chargé à l'ouverture",
+      "title": "Webhook",
+      "unknown_error": "Erreur inconnue",
+      "validation_url_invalid": "Saisissez une URL HTTP ou HTTPS valide sans identifiants intégrés."
+    }
   },
   "password": {
     "confirm_password": "Confirmer le mot de passe",
