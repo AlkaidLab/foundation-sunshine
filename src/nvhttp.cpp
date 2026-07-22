@@ -10,9 +10,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
-#include <map>
 #include <memory>
-#include <mutex>
 #include <shared_mutex>
 #include <sstream>
 #include <string>
@@ -53,6 +51,7 @@
 #include "nvhttp/dynamic_params.h"
 #include "nvhttp/pairing.h"
 #include "nvhttp/sessions.h"
+#include "nvhttp/tls_client_identity_store.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -81,10 +80,22 @@ namespace nvhttp {
 
   std::atomic<uint32_t> session_id_counter;
 
-  // Map to store certificate UUIDs keyed by request pointer
-  // Using weak_ptr to track request lifetime and prevent memory leaks
-  static std::map<const void *, std::pair<std::weak_ptr<void>, std::string>> request_cert_uuid_map;
-  static std::mutex request_cert_uuid_map_mutex;
+  static tls_client_identity_store_t tls_client_identities;
+
+  template <class Request>
+  std::string
+  get_tls_connection_key(const std::shared_ptr<Request> &request) {
+    const auto remote = request->remote_endpoint();
+    const auto local = request->local_endpoint();
+    if (remote.port() == 0 || local.port() == 0) {
+      return {};
+    }
+
+    std::ostringstream key;
+    key << '[' << remote.address().to_string() << "]:" << remote.port()
+        << ">[" << local.address().to_string() << "]:" << local.port();
+    return key.str();
+  }
 
   class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
   public:
@@ -156,24 +167,14 @@ namespace nvhttp {
                   if (x509) {
                     std::string client_cert_pem = crypto::pem(x509);
                     if (auto uuid = pairing::client_uuid_for_cert(client_cert_pem); !uuid.empty()) {
-                      // Store UUID in map using request pointer as key.
-                      // Opportunistically sweep expired entries on every
-                      // insert so that requests which never reach
-                      // get_client_cert_uuid_from_request() (e.g. serverinfo
-                      // polling, applist) and never trigger on_error don't
-                      // accumulate forever. This bounds the map size at
-                      // ~(live requests + recently completed requests).
-                      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
-                      for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
-                        if (it->second.first.expired()) {
-                          it = request_cert_uuid_map.erase(it);
-                        }
-                        else {
-                          ++it;
-                        }
-                      }
-                      request_cert_uuid_map[session->request.get()] =
-                        std::make_pair(std::weak_ptr<void>(std::static_pointer_cast<void>(session->request)), std::move(uuid));
+                      // Client authentication belongs to the TLS connection,
+                      // not to the first HTTP Request object created for it.
+                      // Simple-Web-Server replaces Request objects between
+                      // keep-alive requests while retaining the connection.
+                      tls_client_identities.remember(
+                        get_tls_connection_key(session->request),
+                        std::weak_ptr<void>(std::static_pointer_cast<void>(session->connection)),
+                        std::move(uuid));
                     }
                   }
                 }
@@ -206,27 +207,11 @@ namespace nvhttp {
   using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
   using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
 
-  // Get client certificate UUID from request
+  // Get the client certificate UUID authenticated on this request's TLS connection.
   std::string
   get_client_cert_uuid_from_request(req_https_t request) {
     try {
-      // Retrieve UUID from map using request pointer as key
-      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
-      auto it = request_cert_uuid_map.find(request.get());
-      if (it != request_cert_uuid_map.end()) {
-        // Check if request is still valid (not expired)
-        if (!it->second.first.expired()) {
-          std::string uuid = it->second.second;
-          // Clean up after retrieval to prevent memory leaks
-          // (assuming UUID is only needed once per request)
-          request_cert_uuid_map.erase(it);
-          return uuid;
-        }
-        else {
-          // Request expired, remove from map
-          request_cert_uuid_map.erase(it);
-        }
-      }
+      return tls_client_identities.lookup(get_tls_connection_key(request));
     }
     catch (const std::exception &e) {
       BOOST_LOG(debug) << "Failed to get client certificate UUID: " << e.what();
@@ -1074,20 +1059,10 @@ namespace nvhttp {
     // threads keep the listener responsive under such conditions.
     https_server.config.thread_pool_size = 4;
 
-    // Clean up request_cert_uuid_map entries when a request fails before
-    // get_client_cert_uuid_from_request() is reached, otherwise stale entries
-    // (with expired weak_ptr) accumulate over the lifetime of the process.
+    // A transport error ends the authenticated connection context. Expired
+    // identities for any other connections are pruned opportunistically too.
     https_server.on_error = [](req_https_t request, const SimpleWeb::error_code & /*ec*/) {
-      std::lock_guard<std::mutex> lock(request_cert_uuid_map_mutex);
-      request_cert_uuid_map.erase(request.get());
-      // Opportunistic sweep of any other entries whose request has gone away.
-      for (auto it = request_cert_uuid_map.begin(); it != request_cert_uuid_map.end();) {
-        if (it->second.first.expired()) {
-          it = request_cert_uuid_map.erase(it);
-        } else {
-          ++it;
-        }
-      }
+      tls_client_identities.forget(get_tls_connection_key(request));
     };
 
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
