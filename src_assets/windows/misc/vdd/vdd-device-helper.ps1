@@ -291,6 +291,7 @@ function Get-VddState([string] $InfPath) {
     $devices = @(Get-VddDevices)
     $bundledVersion = Get-BundledVersion $InfPath
     return [pscustomobject]@{
+        Devices = $devices
         BundledVersion = $bundledVersion
         Decision = Get-VddDecision $devices $bundledVersion
     }
@@ -561,7 +562,9 @@ function Invoke-VddInstall([string] $Directory, [string] $InstallMode) {
         Write-Output 'Exactly one matching VDD device is active; skipping driver reinstall.'
     }
     if ($InstallMode -eq 'ProbeOnly') {
-        $device = if ($decision.DeviceCount -eq 1) { @(Get-VddDevices)[0] } else { $null }
+        $devices = @($state.Devices)
+        $decision = Get-VddDecision $devices $state.BundledVersion
+        $device = if ($decision.DeviceCount -eq 1) { $devices[0] } else { $null }
         Write-Output 'VDD_PROBE_OK=1'
         Write-Output ('VDD_DEVICE_PRESENT=' + [int]($decision.DeviceCount -gt 0))
         Write-Output ('CURRENT_VDD_VERSION=' + $decision.CurrentVersion)

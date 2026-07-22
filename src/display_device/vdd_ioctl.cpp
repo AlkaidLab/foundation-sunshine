@@ -288,7 +288,7 @@ namespace display_device::vdd_ioctl {
           DWORD problem_code = 0;
           DEVPROPTYPE problem_type = 0;
           DWORD problem_size = 0;
-          SetupDiGetDevicePropertyW(
+          const bool problem_query_succeeded = SetupDiGetDevicePropertyW(
             h_dev_info.get(),
             &device_info,
             &kDeviceProblemCodeProperty,
@@ -296,8 +296,13 @@ namespace display_device::vdd_ioctl {
             reinterpret_cast<PBYTE>(&problem_code),
             sizeof(problem_code),
             &problem_size,
-            0);
-          return { true, problem_code };
+            0) != FALSE;
+          if (!problem_query_succeeded || problem_type != DEVPROP_TYPE_UINT32 || problem_size != sizeof(problem_code)) {
+            const auto error = problem_query_succeeded ? ERROR_INVALID_DATA : GetLastError();
+            BOOST_LOG(debug) << "vdd_ioctl: adapter problem-code query failed or returned an unexpected value (err=" << error << ")";
+            return { true, false, 0 };
+          }
+          return { true, true, problem_code };
         }
         offset += std::wcslen(candidate) + 1;
       }

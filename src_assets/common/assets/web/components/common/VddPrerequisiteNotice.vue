@@ -37,9 +37,11 @@ onMounted(refreshVddStatus)
         <div class="small mt-1">
           {{ canManageVdd ? $t('config.vdd_driver_desktop_hint') : $t('config.vdd_driver_browser_hint') }}
         </div>
-        <div v-if="vddStatusError" class="small mt-1">{{ vddStatusError }}</div>
-        <div v-else-if="vddStatus.state !== 'unknown'" class="small mt-1">
-          {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
+        <div role="status" aria-live="polite" aria-atomic="true">
+          <div v-if="vddStatusError" class="small mt-1">{{ vddStatusError }}</div>
+          <div v-else-if="vddStatus.state !== 'unknown'" class="small mt-1">
+            {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
+          </div>
         </div>
         <div class="d-flex gap-2 mt-2">
           <button

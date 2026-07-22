@@ -1463,10 +1463,9 @@ namespace confighttp {
       {"running", status.running},
       {"control_available", status.control_available},
       {"monitor_active", status.monitor_active},
+      {"problem_code_valid", status.problem_code_valid},
       {"problem_code", status.problem_code},
-      {"installed_version", ""},
-      {"bundled_version", ""},
-      {"version_match", false},
+      {"version_supported", false},
     });
   }
 

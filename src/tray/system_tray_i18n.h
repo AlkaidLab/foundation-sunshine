@@ -23,6 +23,8 @@ namespace system_tray_i18n {
   extern const std::string KEY_VDD_CANCEL_CREATE_LOG;
   extern const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE;
   extern const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG;
+  extern const std::string KEY_VDD_PREREQUISITE_TITLE;
+  extern const std::string KEY_VDD_PREREQUISITE_MSG;
   extern const std::string KEY_IMPORT_CONFIG;
   extern const std::string KEY_EXPORT_CONFIG;
   extern const std::string KEY_RESET_TO_DEFAULT;

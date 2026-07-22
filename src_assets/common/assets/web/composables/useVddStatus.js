@@ -6,9 +6,10 @@ const EMPTY_STATUS = Object.freeze({
   installed: false,
   running: false,
   control_available: false,
-  installed_version: '',
-  bundled_version: '',
-  version_match: false,
+  version_supported: false,
+  installed_version: null,
+  bundled_version: null,
+  version_match: null,
   monitor_active: false,
   problem_code: 0,
   status_text: '',
@@ -16,9 +17,26 @@ const EMPTY_STATUS = Object.freeze({
 
 function normalizeStatus(value) {
   const raw = value?.success === true && value?.data ? value.data : value
-  return raw && typeof raw === 'object'
-    ? { ...EMPTY_STATUS, ...raw }
-    : { ...EMPTY_STATUS }
+  if (!raw || typeof raw !== 'object') {
+    return { ...EMPTY_STATUS }
+  }
+
+  const versionSupported = typeof raw.version_supported === 'boolean'
+    ? raw.version_supported
+    : (
+        typeof raw.installed_version === 'string' &&
+        typeof raw.bundled_version === 'string' &&
+        typeof raw.version_match === 'boolean'
+      )
+
+  return {
+    ...EMPTY_STATUS,
+    ...raw,
+    version_supported: versionSupported,
+    installed_version: versionSupported ? raw.installed_version : null,
+    bundled_version: versionSupported ? raw.bundled_version : null,
+    version_match: versionSupported ? raw.version_match : null,
+  }
 }
 
 export function useVddStatus() {

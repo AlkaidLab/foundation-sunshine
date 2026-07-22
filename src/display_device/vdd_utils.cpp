@@ -79,8 +79,9 @@ namespace display_device {
       vdd_status_t status;
       const auto adapter = vdd_ioctl::query_adapter_status();
       status.installed = adapter.present;
+      status.problem_code_valid = adapter.problem_code_valid;
       status.problem_code = adapter.problem_code;
-      status.running = status.installed && status.problem_code == 0;
+      status.running = status.installed && status.problem_code_valid && status.problem_code == 0;
       status.control_available = status.installed && vdd_ioctl::ping();
       status.monitor_active = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
 
@@ -90,6 +91,7 @@ namespace display_device {
         status.installed,
         status.running,
         status.control_available,
+        status.problem_code_valid,
         status.problem_code);
 
       return status;

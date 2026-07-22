@@ -102,9 +102,10 @@
               {{ $t('setup.base_display_title') }}
             </h5>
             <!-- 虚拟显示器选项 -->
-            <div class="option-card" 
-                 :class="{ selected: selectedDisplay === 'ZakoHDR' }"
-                 @click="selectedDisplay = 'ZakoHDR'">
+            <div class="option-card"
+                 :class="{ selected: isVirtualDisplay, disabled: !vddReady }"
+                 :aria-disabled="!vddReady"
+                 @click="selectVirtualDisplay">
               <div class="d-flex align-items-center">
                 <div class="option-icon-small">
                   <i class="fas fa-tv"></i>
@@ -116,7 +117,7 @@
               </div>
             </div>
 
-            <div v-if="isVirtualDisplay && !vddReady" class="alert alert-warning vdd-wizard-prerequisite">
+            <div v-if="!vddReady" class="alert alert-warning vdd-wizard-prerequisite">
               <strong>{{ $t('setup.vdd_driver_required') }}</strong>
               <p class="mb-2 mt-1">
                 {{ canManageVdd ? $t('setup.vdd_driver_desktop_hint') : $t('setup.vdd_driver_browser_hint') }}
@@ -128,13 +129,13 @@
             </div>
 
             <!-- 物理显示器列表 -->
-            <div v-if="displayDevices && displayDevices.length > 0">
+            <div v-if="physicalDisplayDevices.length > 0">
               <h5 class="my-3 physical-display-title">
                 <i class="fas fa-desktop"></i>
                 {{ $t('setup.physical_display') }}
               </h5>
               <div class="option-card" 
-                   v-for="device in displayDevices" 
+                   v-for="device in physicalDisplayDevices"
                    :key="device.device_id"
                    :class="{ selected: selectedDisplay === device.device_id }"
                    @click="selectedDisplay = device.device_id">
@@ -426,6 +427,14 @@ function detectInitialWizardLocale() {
   return (sys === 'zh' || sys === 'zh_TW') ? 'zh' : 'en'
 }
 
+function isPhysicalDisplay(device) {
+  return !/^FRIENDLY NAME:\s*Zako HDR\s*$/im.test(device?.data || '')
+}
+
+function firstPhysicalDisplayId(devices) {
+  return (devices || []).find(isPhysicalDisplay)?.device_id ?? null
+}
+
 function markLanguageSavedForReload() {
   try {
     window.sessionStorage.setItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY, 'true')
@@ -458,7 +467,7 @@ export default {
       // 已有 locale 时向导会跳过第一步，不预置，避免 saveConfiguration() 覆盖已有设置（如 de / ja）
       // 首次进入向导时依然按系统 / 浏览器语言预选 zh / en
       selectedLocale: this.hasLocale ? null : detectInitialWizardLocale(),
-      selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
+      selectedDisplay: firstPhysicalDisplayId(this.displayDevices),
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
       saveSuccess: false,
@@ -529,6 +538,9 @@ export default {
       }
       return this.currentStep === 4 ? this.$t('setup.finish') : this.$t('setup.next')
     },
+    physicalDisplayDevices() {
+      return (this.displayDevices || []).filter(isPhysicalDisplay)
+    },
     // 按 name 去重，同一名称只保留一项（保持首次出现顺序）
     uniqueAdapters() {
       const list = this.adapters ?? []
@@ -546,6 +558,11 @@ export default {
     }
   },
   methods: {
+    selectVirtualDisplay() {
+      if (this.vddReady) {
+        this.selectedDisplay = 'ZakoHDR'
+      }
+    },
     resourceTitle(resource) {
       return resolveResourceText(this.$t, resource, 'title')
     },
@@ -993,6 +1010,18 @@ export default {
 .option-card.selected {
   border-color: var(--ui-accent);
   background: var(--ui-accent-soft);
+}
+
+.option-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.option-card.disabled:hover {
+  border-color: var(--ui-border);
+  transform: none;
+  box-shadow: none;
+  background: var(--ui-surface);
 }
 
 .option-card .option-icon {

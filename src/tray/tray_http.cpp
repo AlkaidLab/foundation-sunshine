@@ -191,12 +191,15 @@ namespace tray_http {
     std::optional<std::string_view>
     vdd_prerequisite_error() {
       const auto status = display_device::vdd_utils::get_vdd_status();
-      if (status.is_usable()) {
-        return std::nullopt;
+      switch (display_device::vdd_utils::classify_vdd_prerequisite(status)) {
+        case display_device::vdd_utils::vdd_prerequisite_e::usable:
+          return std::nullopt;
+        case display_device::vdd_utils::vdd_prerequisite_e::unavailable:
+          return "VDD_DRIVER_UNAVAILABLE: repair ZakoVDD from the Sunshine desktop VDD settings first";
+        case display_device::vdd_utils::vdd_prerequisite_e::not_installed:
+          return "VDD_DRIVER_NOT_INSTALLED: install ZakoVDD from the Sunshine desktop VDD settings first";
       }
-      return status.installed ?
-               std::optional<std::string_view> { "VDD_DRIVER_UNAVAILABLE: repair ZakoVDD from the Sunshine desktop VDD settings first" } :
-               std::optional<std::string_view> { "VDD_DRIVER_NOT_INSTALLED: install ZakoVDD from the Sunshine desktop VDD settings first" };
+      return std::nullopt;
     }
 
     bool

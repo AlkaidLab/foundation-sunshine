@@ -112,6 +112,7 @@ namespace display_device::vdd_ioctl {
 
   struct adapter_status_t {
     bool present = false;
+    bool problem_code_valid = false;
     std::uint32_t problem_code = 0;
   };
 

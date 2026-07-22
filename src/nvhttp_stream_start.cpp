@@ -206,12 +206,12 @@ namespace nvhttp::stream_start {
         case result_e::primary_display_fail:
         case result_e::modes_fail:
         case result_e::hdr_states_fail:
-          return true;
-        case result_e::success:
-        case result_e::deferred_retry:
         case result_e::vdd_not_installed:
         case result_e::vdd_unavailable:
         case result_e::vdd_create_failed:
+          return true;
+        case result_e::success:
+        case result_e::deferred_retry:
         case result_e::parse_fail:
         case result_e::file_save_fail:
         case result_e::revert_fail:

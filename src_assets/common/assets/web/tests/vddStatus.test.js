@@ -27,7 +27,36 @@ test('VDD status falls back to the authenticated Core endpoint in a browser', as
 
   assert.equal(vdd.canManageVdd.value, false)
   assert.equal(vdd.vddStatus.value.state, 'not_installed')
+  assert.equal(vdd.vddStatus.value.version_supported, false)
+  assert.equal(vdd.vddStatus.value.version_match, null)
   assert.equal(vdd.vddReady.value, false)
+})
+
+test('VDD status preserves real desktop version probe results', async (t) => {
+  const originalWindow = globalThis.window
+  t.after(() => {
+    globalThis.window = originalWindow
+  })
+
+  globalThis.window = {
+    vddDriver: {
+      getStatus: async () => ({
+        state: 'ready',
+        installed: true,
+        running: true,
+        installed_version: '1.2.3',
+        bundled_version: '1.2.3',
+        version_match: true,
+      }),
+    },
+  }
+
+  const vdd = useVddStatus()
+  await vdd.refreshVddStatus()
+
+  assert.equal(vdd.vddStatus.value.version_supported, true)
+  assert.equal(vdd.vddStatus.value.installed_version, '1.2.3')
+  assert.equal(vdd.vddStatus.value.version_match, true)
 })
 
 test('VDD status prefers the desktop bridge and verifies installation', async (t) => {

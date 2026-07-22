@@ -214,16 +214,19 @@ namespace system_tray {
 
   static bool ensure_vdd_prerequisite() {
     const auto status = display_device::vdd_utils::get_vdd_status();
-    if (status.is_usable()) {
+    const auto prerequisite = display_device::vdd_utils::classify_vdd_prerequisite(status);
+    if (prerequisite == display_device::vdd_utils::vdd_prerequisite_e::usable) {
       return true;
     }
 
-    BOOST_LOG(warning) << (status.installed ? "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED")
+    BOOST_LOG(warning) << (prerequisite == display_device::vdd_utils::vdd_prerequisite_e::unavailable ?
+                            "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED")
                        << ": tray VDD action redirected to the Sunshine UI"sv;
 #ifdef _WIN32
-    const auto title = system_tray_i18n::utf8_to_wstring("Virtual display driver unavailable");
+    const auto title = system_tray_i18n::utf8_to_wstring(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_TITLE));
     const auto message = system_tray_i18n::utf8_to_wstring(
-      "ZakoVDD is missing or unhealthy. Open the Sunshine desktop app and install or repair it from VDD settings before using this action.");
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_MSG));
     MessageBoxW(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING);
 #endif
     launch_ui();

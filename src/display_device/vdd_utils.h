@@ -64,18 +64,36 @@ namespace display_device::vdd_utils {
     bool running = false;
     bool control_available = false;
     bool monitor_active = false;
+    bool problem_code_valid = false;
     std::uint32_t problem_code = 0;
 
-    bool
+    constexpr bool
     is_usable() const {
-      return installed && running;
+      return installed && problem_code_valid && running;
     }
   };
 
+  enum class vdd_prerequisite_e {
+    usable,
+    not_installed,
+    unavailable,
+  };
+
+  constexpr vdd_prerequisite_e
+  classify_vdd_prerequisite(const vdd_status_t &status) {
+    if (status.is_usable()) {
+      return vdd_prerequisite_e::usable;
+    }
+    return status.installed ? vdd_prerequisite_e::unavailable : vdd_prerequisite_e::not_installed;
+  }
+
   constexpr std::string_view
-  classify_vdd_state(bool installed, bool running, bool control_available, std::uint32_t problem_code) {
+  classify_vdd_state(bool installed, bool running, bool control_available, bool problem_code_valid, std::uint32_t problem_code) {
     if (!installed) {
       return "not_installed";
+    }
+    if (!problem_code_valid) {
+      return "unknown";
     }
     if (!running) {
       return problem_code == 14 ? "reboot_required" : "unhealthy";
