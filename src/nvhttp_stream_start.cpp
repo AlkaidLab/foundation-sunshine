@@ -206,12 +206,12 @@ namespace nvhttp::stream_start {
         case result_e::primary_display_fail:
         case result_e::modes_fail:
         case result_e::hdr_states_fail:
-        case result_e::vdd_not_installed:
-        case result_e::vdd_unavailable:
-        case result_e::vdd_create_failed:
           return true;
         case result_e::success:
         case result_e::deferred_retry:
+        case result_e::vdd_not_installed:
+        case result_e::vdd_unavailable:
+        case result_e::vdd_create_failed:
         case result_e::parse_fail:
         case result_e::file_save_fail:
         case result_e::revert_fail:
@@ -265,6 +265,8 @@ namespace nvhttp::stream_start {
       switch (result) {
         case result_e::modes_fail:
         case result_e::hdr_states_fail:
+        case result_e::file_save_fail:
+        case result_e::revert_fail:
           return true;
         case result_e::topology_fail:
         case result_e::primary_display_fail:
@@ -274,8 +276,6 @@ namespace nvhttp::stream_start {
         case result_e::vdd_unavailable:
         case result_e::vdd_create_failed:
         case result_e::parse_fail:
-        case result_e::file_save_fail:
-        case result_e::revert_fail:
         default:
           return false;
       }
@@ -467,9 +467,15 @@ namespace nvhttp::stream_start {
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto_recovery_result_t recovery_result;
     const auto should_try_vdd = should_try_vdd_for_display_config(display_result.result);
+    const auto can_continue_with_current_display =
+      display_config_failure_can_continue_with_current_display(display_result.result);
 
-    if (should_try_vdd &&
-        display_config_failure_can_continue_with_current_display(display_result.result)) {
+    if (!display_result && !should_try_vdd && !can_continue_with_current_display) {
+      set_display_config_error(tree, display_result);
+      return false;
+    }
+
+    if (should_try_vdd && can_continue_with_current_display) {
       recovery_result = {
         true,
         false,

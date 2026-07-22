@@ -212,23 +212,6 @@ namespace display_device {
       return {};
     }
 
-    parsed_config_t::device_prep_e
-    get_effective_device_prep(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
-      const auto configured_device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
-      const auto custom_screen_mode = static_cast<parsed_config_t::device_prep_e>(session.custom_screen_mode);
-
-      switch (custom_screen_mode) {
-        case parsed_config_t::device_prep_e::no_operation:
-        case parsed_config_t::device_prep_e::ensure_active:
-        case parsed_config_t::device_prep_e::ensure_primary:
-        case parsed_config_t::device_prep_e::ensure_only_display:
-        case parsed_config_t::device_prep_e::ensure_secondary:
-          return custom_screen_mode;
-        default:
-          return configured_device_prep;
-      }
-    }
-
     /**
      * @brief Wait for VDD device to be available (active or inactive).
      * @param device_zako Output parameter for the device ID.
@@ -365,35 +348,26 @@ namespace display_device {
       }
     }
 
-    // 在 make_parsed_config 之前保存真实的初始拓扑
-    // 因为 make_parsed_config 内部会调用 prepare_vdd，它会创建VDD并切换到扩展模式，导致原有显示器变成inactive
-    boost::optional<active_topology_t> pre_saved_initial_topology;
-    
-    // 检查是否会使用VDD
-    const auto display_request = resolve_display_request(config, session);
-    
-    // 检查VDD是否已存在
-    const auto existing_vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-    const bool vdd_already_exists = !existing_vdd_id.empty();
-    
-    // 如果会使用VDD且VDD当前不存在，在创建前保存拓扑
-    // 如果VDD已存在，说明拓扑已被破坏，不应该保存当前拓扑
-    const auto requested_device_id = display_device::find_one_of_the_available_devices(display_request.device_id);
-    const bool requested_device_exists = !requested_device_id.empty();
-    const bool is_vdd_device = (display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME);
-    const auto effective_device_prep = get_effective_device_prep(config, session);
-    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
-    const bool automatic_vdd_fallback = !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
+    auto parsed_config = make_parsed_config(config, session);
+    if (!parsed_config) {
+      BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
+      restore_state_impl(revert_reason_e::config_cleanup);
+      return {
+        configure_result_t::result_e::parse_fail,
+        "Failed to parse display configuration.",
+        "Set display, VDD, resolution, refresh rate, and HDR options to Auto or valid values, then try again."
+      };
+    }
 
-    const bool needs_vdd = explicit_vdd_request ||
-      (automatic_vdd_fallback && effective_device_prep != parsed_config_t::device_prep_e::no_operation);
-
-    // - 如果不需要 VDD：跳过 VDD 相关逻辑
-    // - 如果不是 SYSTEM 权限且处于 RDP 中：使用 RDP 虚拟显示器，不创建 VDD
-    // - 其他情况（包括 SYSTEM 权限）：准备 VDD 设备
+    // Parsing is side-effect free. From this point on, parsed_config is the
+    // single source of truth for whether this session needs VDD preparation.
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
-    const bool will_use_vdd = needs_vdd && !is_rdp_blocking_vdd;
-    if (will_use_vdd || config.capture == "vdd") {
+    const bool should_prepare_vdd = parsed_config->use_vdd && !is_rdp_blocking_vdd;
+    if (parsed_config->use_vdd && is_rdp_blocking_vdd) {
+      BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备";
+    }
+
+    if (should_prepare_vdd || config.capture == "vdd") {
       const auto vdd_status = vdd_utils::get_vdd_status();
       if (!vdd_status.is_usable()) {
         const bool missing = !vdd_status.installed;
@@ -407,66 +381,50 @@ namespace display_device {
         };
       }
     }
+
     const bool vulkan_hdr_bridge_requested =
-      will_use_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
-    const bool vdd_will_turn_off_physical_displays =
-      will_use_vdd &&
-      parsed_config_t::to_vdd_prep(effective_device_prep) == parsed_config_t::vdd_prep_e::display_off;
+      should_prepare_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+    const bool will_disable_physical_displays =
+      should_prepare_vdd && parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;
 
-    if (vdd_will_turn_off_physical_displays) {
-      settings.capture_audio_sink();
-    }
+    // Preserve the pre-VDD topology before prepare_vdd can create a monitor
+    // and switch Windows into extended mode.
+    boost::optional<active_topology_t> pre_saved_initial_topology;
+    if (should_prepare_vdd) {
+      const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+      if (will_disable_physical_displays) {
+        settings.capture_audio_sink();
+      }
 
-    if (will_use_vdd && !vdd_already_exists) {
-
-      // 如果有待恢复的设置，保留旧的初始拓扑，不要覆盖
       if (pending_restore_ && settings.has_persistent_data()) {
-        BOOST_LOG(info) << "有待恢复的设置，保留原有初始拓扑";
-        // 取消待恢复标志，因为新串流要开始了
+        BOOST_LOG(info) << (vdd_already_exists ?
+                              "有待恢复的设置且 VDD 仍存在，保留原有初始拓扑" :
+                              "有待恢复的设置，保留原有初始拓扑");
         pending_restore_ = false;
         SessionEventListener::clear_unlock_task();
         timer->setup_timer(nullptr);
-        // 不设置 pre_saved_initial_topology，让 apply_config 复用已有的
+      }
+      else if (vdd_already_exists) {
+        BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
       }
       else {
         pre_saved_initial_topology = get_current_topology();
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
       }
-    }
-    else if (will_use_vdd && vdd_already_exists) {
-      if (pending_restore_ && settings.has_persistent_data()) {
-        // 有待恢复的设置且 VDD 仍存在（CCD 曾失败），保留原有初始拓扑
-        BOOST_LOG(info) << "有待恢复的设置且 VDD 仍存在，保留原有初始拓扑";
-        pending_restore_ = false;
-        SessionEventListener::clear_unlock_task();
-        timer->setup_timer(nullptr);
-      }
-      else {
-        BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
-      }
-    }
 
-    bool vdd_prepare_failed = false;
-    const auto parsed_config = make_parsed_config(config, session, is_reconfigure, &vdd_prepare_failed);
-    if (!parsed_config) {
-      if (vdd_will_turn_off_physical_displays) {
-        settings.release_audio_sink();
-      }
+      if (!prepare_vdd(*parsed_config, session)) {
+        if (will_disable_physical_displays) {
+          settings.release_audio_sink();
+        }
 
-      BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
-      restore_state_impl(revert_reason_e::config_cleanup);
-      if (vdd_prepare_failed) {
+        BOOST_LOG(error) << "Failed to prepare the VDD device";
+        restore_state_impl(revert_reason_e::config_cleanup);
         return {
           configure_result_t::result_e::vdd_create_failed,
           "Sunshine could not create the virtual display.",
           "Repair the virtual display driver in Sunshine settings, then try again."
         };
       }
-      return {
-        configure_result_t::result_e::parse_fail,
-        "Failed to parse display configuration.",
-        "Set display, VDD, resolution, refresh rate, and HDR options to Auto or valid values, then try again."
-      };
     }
 
     // 保存当前会话的配置模式（可能包含客户端的override）

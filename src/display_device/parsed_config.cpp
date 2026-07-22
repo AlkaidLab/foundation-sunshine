@@ -7,12 +7,9 @@
 // local includes
 #include "display_device.h"
 #include "parsed_config.h"
-#include "session.h"
 #include "src/config.h"
 #include "src/globals.h"
 #include "src/logging.h"
-#include "src/platform/windows/display_device/windows_utils.h"
-#include "src/platform/windows/misc.h"
 #include "src/rtsp.h"
 #include "to_string.h"
 
@@ -519,11 +516,6 @@ namespace display_device {
     return !is_client_physical_display();
   }
 
-  bool
-  display_request_t::requires_vdd(bool requested_device_exists, bool is_vdd_device) const {
-    return use_vdd || is_vdd_device || (!requested_device_exists && allows_vdd_fallback());
-  }
-
   display_request_t
   resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
     display_request_t request {
@@ -634,11 +626,7 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session,
-    bool is_reconfigure, bool *vdd_prepare_failed) {
-    if (vdd_prepare_failed) {
-      *vdd_prepare_failed = false;
-    }
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
     parsed_config_t parsed_config;
     
     // 优先使用客户端指定的显示器名称，如果没有则使用全局配置
@@ -725,21 +713,6 @@ namespace display_device {
     parsed_config.vdd_prep = parsed_config_t::to_vdd_prep(parsed_config.device_prep);
     BOOST_LOG(debug) << "VDD模式：统一值 " << static_cast<int>(parsed_config.device_prep)
                      << " 映射为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
-
-    // 不是SYSTEM权限且处于RDP中，强制使用RDP虚拟显示器，不创建VDD
-    if (!is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active()) {
-      BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备"sv;
-      return parsed_config;
-    }
-
-    // 准备VDD设备
-    if (!display_device::session_t::get().prepare_vdd(parsed_config, session)) {
-      BOOST_LOG(error) << "Failed to prepare the VDD device";
-      if (vdd_prepare_failed) {
-        *vdd_prepare_failed = true;
-      }
-      return boost::none;
-    }
 
     return parsed_config;
   }
