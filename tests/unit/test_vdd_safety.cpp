@@ -4,6 +4,7 @@
 
 #include "src/display_device/vdd_control_ioctl.h"
 #include "src/display_device/vdd_ioctl.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/platform/windows/display_device/settings_topology.h"
 #include "src/platform/windows/vdd_frame_channel.h"
 
@@ -158,6 +159,39 @@ TEST(VddFrameChannelSafety, BoundsPostEventAcquireWait) {
             consumer_acquire_wait_budget_ms);
   EXPECT_EQ(bounded_consumer_acquire_timeout_ms(1000),
             consumer_acquire_wait_budget_ms);
+}
+
+TEST(VddModeRefreshSafety, MatchesAdvertisedModesWithRefreshTolerance) {
+  using namespace display_device;
+
+  const display_mode_t requested {
+    {2340, 1080},
+    {11988, 100},
+  };
+
+  EXPECT_TRUE(vdd_utils::advertised_mode_matches(2340, 1080, 120, requested));
+  EXPECT_TRUE(vdd_utils::advertised_mode_matches(2340, 1080, 119, requested));
+  EXPECT_FALSE(vdd_utils::advertised_mode_matches(2560, 1440, 120, requested));
+  EXPECT_FALSE(vdd_utils::advertised_mode_matches(2340, 1080, 60, requested));
+
+  auto invalid = requested;
+  invalid.refresh_rate.denominator = 0;
+  EXPECT_FALSE(vdd_utils::advertised_mode_matches(2340, 1080, 120, invalid));
+}
+
+TEST(VddFrameChannelSafety, SelectsExactOrSoleProducerWithoutAmbiguity) {
+  using namespace platf::dxgi::vdd_frame_channel;
+
+  auto selection = select_producer(3, 7, 2);
+  EXPECT_EQ(selection.index, 3);
+  EXPECT_EQ(selection.match, producer_match::exact);
+
+  selection = select_producer(-1, 7, 1);
+  EXPECT_EQ(selection.index, 7);
+  EXPECT_EQ(selection.match, producer_match::sole_mismatch);
+
+  EXPECT_EQ(select_producer(-1, -1, 0).match, producer_match::unavailable);
+  EXPECT_EQ(select_producer(-1, 7, 2).match, producer_match::unavailable);
 }
 
 TEST(VddFrameChannelSafety, ReadsOnlyStableMetadataSnapshots) {

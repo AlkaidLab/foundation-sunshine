@@ -274,7 +274,6 @@ namespace display_device {
 
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
-    std::string last_vdd_setting; /**< Last VDD resolution and refresh rate setting. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
     std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
     boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
@@ -291,11 +290,19 @@ namespace display_device {
      */
     std::unique_ptr<StateRetryTimer> timer;
 
-    void
-    update_vdd_resolution(const parsed_config_t &config, const vdd_utils::VddSettings &vdd_settings);
+    enum class vdd_mode_update_e {
+      ready,
+      recreate_monitor,
+      failed,
+    };
+
+    vdd_mode_update_e
+    update_vdd_resolution(const parsed_config_t &config,
+      const vdd_utils::VddSettings &vdd_settings,
+      const std::string &vdd_device_id);
 
     /**
-     * @brief Clear VDD state (client ID and last setting)
+     * @brief Clear VDD session state.
      * @note This method does NOT acquire the mutex! It is intended to be used from places
      *       where the mutex has already been locked.
      */

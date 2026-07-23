@@ -51,12 +51,39 @@ namespace display_device::vdd_utils {
 
   // VDD设置结构
   struct VddSettings {
-    std::string resolutions;
-    std::string fps;
     std::vector<resolution_t> resolution_modes;
     std::vector<unsigned int> refresh_rates_hz;
-    bool needs_update = false;
   };
+
+  constexpr bool
+  advertised_mode_matches(unsigned int width,
+    unsigned int height,
+    unsigned int refresh_hz,
+    const display_mode_t &requested_mode) {
+    if (requested_mode.refresh_rate.denominator == 0 ||
+        width != requested_mode.resolution.width ||
+        height != requested_mode.resolution.height) {
+      return false;
+    }
+
+    const auto advertised_scaled =
+      static_cast<std::uint64_t>(refresh_hz) * requested_mode.refresh_rate.denominator;
+    const auto requested_scaled =
+      static_cast<std::uint64_t>(requested_mode.refresh_rate.numerator);
+    const auto difference = advertised_scaled > requested_scaled ?
+                              advertised_scaled - requested_scaled :
+                              requested_scaled - advertised_scaled;
+    return difference <= requested_mode.refresh_rate.denominator;
+  }
+
+  /**
+   * @brief Check whether Windows exposes a requested mode for a display device.
+   * @details SETMODES updates the driver mode list, but an existing IddCx
+   *          monitor can retain a stale monitor-description list. This checks
+   *          the effective modes published to Windows, not just IOCTL success.
+   */
+  bool
+  is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode);
 
   struct vdd_status_t {
     std::string state;
@@ -124,10 +151,6 @@ namespace display_device::vdd_utils {
   bool
   execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr, bool *timed_out = nullptr);
 
-  // 驱动重载函数
-  bool
-  reload_driver();
-
   /**
    * @brief Ensure ZakoVDD renders the cursor into the framebuffer instead of exposing a hardware cursor plane.
    * @details Sunshine's direct VDD capture backend consumes only the shared frame texture exported by ZakoVDD.
@@ -141,13 +164,13 @@ namespace display_device::vdd_utils {
   /**
    * @brief Outcome of attempting a live SETMODES update.
    * @details Lets callers distinguish "driver accepted" / "driver rejected" /
-   *          "feature not present" / "config is unusable" so the persistent
-   *          XML fallback can be used when the live path is not available.
+   *          "feature not present" / "config is unusable" without conflating
+   *          transport failure with invalid input.
    */
   enum class set_vdd_result {
     ok,                 ///< Driver accepted the live mode update.
     failed,             ///< Driver reachable but rejected the IOCTL.
-    interface_missing,  ///< IOCTL interface not present (old driver) -> safe to XML-fallback.
+    interface_missing,  ///< IOCTL interface not present (old driver).
     invalid_config,     ///< Resolution/refresh rate missing or unusable; nothing was sent.
   };
 
@@ -157,7 +180,7 @@ namespace display_device::vdd_utils {
    *          This does not persist the session resolution to vdd_settings.xml.
    * @param config Parsed display configuration containing the requested session mode.
    * @param settings Full standard mode list plus the requested session mode.
-   * @return Typed outcome; callers can XML-fallback when the live path is unavailable.
+   * @return Typed outcome describing whether the complete live update was accepted.
    */
   set_vdd_result
   set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);

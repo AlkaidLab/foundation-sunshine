@@ -24,7 +24,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
@@ -270,36 +269,6 @@ namespace display_device {
     }
 
     bool
-    reload_driver() {
-      // Preferred path: IOCTL device interface (PnP-wakes the driver,
-      // immune to WUDFHost recycle races).
-      switch (vdd_ioctl::send_command(L"RELOAD_DRIVER")) {
-        case vdd_ioctl::result::success:
-          BOOST_LOG(info) << "Reload VDD driver requested (IOCTL)";
-          return true;
-        case vdd_ioctl::result::failed:
-          // Driver is present but rejected the IOCTL -- propagate so the
-          // caller doesn't waste a ~6s pipe timeout retrying the same
-          // command on a transport the driver already answered.
-          BOOST_LOG(error) << "Reload VDD driver via IOCTL failed; not falling back to pipe";
-          return false;
-        case vdd_ioctl::result::interface_missing:
-          // Driver too old to expose the IOCTL interface -- fall through
-          // to the legacy pipe transport.
-          break;
-      }
-
-      // [LEGACY-PIPE] Fallback for older driver builds that do not
-      // expose the IOCTL device interface.
-      std::string response;
-      const bool ok = execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
-      if (ok) {
-        BOOST_LOG(info) << "Reload VDD driver requested (PIPE)";
-      }
-      return ok;
-    }
-
-    bool
     set_hardware_cursor_enabled(bool enabled) {
       const wchar_t *command = enabled ? L"HARDWARECURSOR true" : L"HARDWARECURSOR false";
 
@@ -539,7 +508,7 @@ namespace display_device {
       const auto command_string = command.str();
       if (command_string.size() >= 2048) {
         BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
-                           << " wchar_t); XML fallback will be used";
+                           << " wchar_t); refusing a partial mode-list update";
         return set_vdd_result::failed;
       }
 
@@ -550,10 +519,10 @@ namespace display_device {
                           << "@" << *session_refresh_hz << "Hz";
           return set_vdd_result::ok;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; XML fallback will be used";
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed";
           return set_vdd_result::failed;
         case vdd_ioctl::result::interface_missing:
-          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing; XML fallback will be used";
+          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing";
           return set_vdd_result::interface_missing;
       }
 
@@ -960,45 +929,18 @@ namespace display_device {
 
     VddSettings
     prepare_vdd_settings(const parsed_config_t &config) {
-      auto is_res_cached = false;
-      auto is_fps_cached = false;
-      std::ostringstream res_stream, fps_stream;
       std::vector<resolution_t> resolution_modes;
       std::vector<unsigned int> refresh_rates_hz;
 
-      res_stream << '[';
-      fps_stream << '[';
-
-      // 检查分辨率是否已缓存
       for (const auto &res : config::nvhttp.resolutions) {
-        res_stream << res << ',';
         if (const auto parsed_resolution = parse_vdd_resolution(res)) {
           append_unique_resolution(resolution_modes, *parsed_resolution);
         }
-        if (config.resolution && res == to_string(*config.resolution)) {
-          is_res_cached = true;
-        }
       }
 
-      // 检查帧率是否已缓存
       for (const auto &fps : config::nvhttp.fps) {
-        fps_stream << fps << ',';
         if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
           append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
-        }
-        if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
-          is_fps_cached = true;
-        }
-      }
-
-      // 如果需要更新设置
-      bool needs_update = config.resolution && (!is_res_cached || (config.refresh_rate && !is_fps_cached));
-      if (needs_update) {
-        if (!is_res_cached) {
-          res_stream << to_string(*config.resolution);
-        }
-        if (!is_fps_cached && config.refresh_rate) {
-          fps_stream << to_string(*config.refresh_rate);
         }
       }
 
@@ -1011,15 +953,40 @@ namespace display_device {
         }
       }
 
-      // 移除最后的逗号并添加结束括号
-      auto res_str = res_stream.str();
-      auto fps_str = fps_stream.str();
-      if (res_str.back() == ',') res_str.pop_back();
-      if (fps_str.back() == ',') fps_str.pop_back();
-      res_str += ']';
-      fps_str += ']';
+      return { std::move(resolution_modes), std::move(refresh_rates_hz) };
+    }
 
-      return { res_str, fps_str, resolution_modes, refresh_rates_hz, needs_update };
+    bool
+    is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
+      if (device_id.empty() || requested_mode.refresh_rate.denominator == 0) {
+        return false;
+      }
+
+      const auto devices = enum_available_devices();
+      const auto device_it = devices.find(device_id);
+      if (device_it == std::end(devices) || device_it->second.display_name.empty()) {
+        return false;
+      }
+
+      const auto &display_name = device_it->second.display_name;
+      const std::wstring wide_display_name(display_name.begin(), display_name.end());
+      for (DWORD index = 0; index < 4096; ++index) {
+        DEVMODEW mode {};
+        mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsW(wide_display_name.c_str(), index, &mode)) {
+          break;
+        }
+
+        if (advertised_mode_matches(
+              mode.dmPelsWidth,
+              mode.dmPelsHeight,
+              mode.dmDisplayFrequency,
+              requested_mode)) {
+          return true;
+        }
+      }
+
+      return false;
     }
 
     bool

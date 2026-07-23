@@ -111,6 +111,28 @@ namespace platf::dxgi::vdd_frame_channel {
     }
   };
 
+  enum class producer_match {
+    unavailable,
+    exact,
+    sole_mismatch,
+  };
+
+  struct producer_selection {
+    int index = -1;
+    producer_match match = producer_match::unavailable;
+  };
+
+  inline producer_selection
+  select_producer(int exact_index, int only_valid_index, unsigned int valid_count) {
+    if (exact_index >= 0) {
+      return {exact_index, producer_match::exact};
+    }
+    if (valid_count == 1 && only_valid_index >= 0) {
+      return {only_valid_index, producer_match::sole_mismatch};
+    }
+    return {};
+  }
+
   inline bool
   luid_equal(const LUID &a, const LUID &b) {
     return a.LowPart == b.LowPart && a.HighPart == b.HighPart;

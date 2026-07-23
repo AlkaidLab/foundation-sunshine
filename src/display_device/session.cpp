@@ -7,7 +7,6 @@
 // local includes
 #include "parsed_config.h"
 #include "session.h"
-#include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
@@ -171,7 +170,6 @@ namespace display_device {
 
   void
   session_t::clear_vdd_state() {
-    last_vdd_setting.clear();
     current_device_prep.reset();
     current_vdd_prep.reset();
     current_use_vdd.reset();
@@ -241,6 +239,20 @@ namespace display_device {
           .initial_delay = initial_delay,
           .max_delay = max_delay,
           .context = "Waiting for VDD device availability" });
+    }
+
+    bool
+    wait_for_vdd_device_departure(int max_attempts,
+      std::chrono::milliseconds initial_delay,
+      std::chrono::milliseconds max_delay) {
+      return vdd_utils::retry_with_backoff(
+        []() {
+          return display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+        },
+        { .max_attempts = max_attempts,
+          .initial_delay = initial_delay,
+          .max_delay = max_delay,
+          .context = "Waiting for VDD monitor departure" });
     }
 
     /**
@@ -529,49 +541,54 @@ namespace display_device {
     return vdd_utils::toggle_display_power();
   }
 
-  void
+  session_t::vdd_mode_update_e
   session_t::update_vdd_resolution(const parsed_config_t &config,
-    const vdd_utils::VddSettings &vdd_settings) {
+    const vdd_utils::VddSettings &vdd_settings,
+    const std::string &vdd_device_id) {
     if (!config.resolution || !config.refresh_rate) {
       BOOST_LOG(debug) << "VDD session mode update skipped: resolution or refresh rate is not set";
-      return;
+      return vdd_mode_update_e::failed;
     }
 
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
-    if (last_vdd_setting == new_setting) {
-      BOOST_LOG(debug) << "VDD session mode unchanged; resyncing full driver mode list: " << new_setting;
-    }
-
     const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
     switch (setmodes_result) {
-      case vdd_utils::set_vdd_result::ok:
-        last_vdd_setting = new_setting;
+      case vdd_utils::set_vdd_result::ok: {
         BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
-        return;
+        const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
+        const bool mode_advertised =
+          !vdd_device_id.empty() && vdd_utils::is_mode_advertised(vdd_device_id, requested_mode);
+        if (vdd_device_id.empty() || mode_advertised) {
+          // A monitor created below will publish both monitor and target mode
+          // lists from the new in-memory settings. An existing monitor can
+          // switch live when Windows already exposes the requested mode.
+          if (!vdd_device_id.empty()) {
+            BOOST_LOG(debug) << "VDD monitor already advertises " << new_setting << "; live mode switch is safe";
+          }
+          return vdd_mode_update_e::ready;
+        }
+
+        // IddCxMonitorUpdateModes2 refreshes target modes, but a live console
+        // monitor can retain its old monitor-description modes. Recreate only
+        // this monitor so Windows republishes the complete intersection and
+        // builds a correctly sized swapchain producer.
+        BOOST_LOG(info) << "VDD monitor does not advertise " << new_setting
+                        << "; recreating the monitor through IOCTL";
+        return vdd_mode_update_e::recreate_monitor;
+      }
       case vdd_utils::set_vdd_result::failed:
-        BOOST_LOG(warning) << "VDD SETMODES 更新失败，回退 XML+reload 路径: " << new_setting;
-        break;
+        BOOST_LOG(error) << "VDD SETMODES IOCTL failed for " << new_setting;
+        return vdd_mode_update_e::failed;
       case vdd_utils::set_vdd_result::invalid_config:
-        BOOST_LOG(warning) << "VDD 会话模式参数无效，跳过更新: " << new_setting;
-        return;
+        BOOST_LOG(error) << "VDD session mode is invalid: " << new_setting;
+        return vdd_mode_update_e::failed;
       case vdd_utils::set_vdd_result::interface_missing:
-        // Old driver without IOCTL: fall through to persistent XML + reload path below.
-        break;
+        BOOST_LOG(error) << "VDD SETMODES IOCTL is unavailable; install a current ZakoVDD build";
+        return vdd_mode_update_e::failed;
     }
 
-    if (!confighttp::saveVddSettings(vdd_settings.resolutions, vdd_settings.fps, config::video.adapter_name)) {
-      BOOST_LOG(error) << "VDD配置保存失败 [resolutions: " << vdd_settings.resolutions
-                       << " fps: " << vdd_settings.fps << "]";
-      return;
-    }
-
-    last_vdd_setting = new_setting;
-    BOOST_LOG(info) << "VDD配置更新完成: " << new_setting;
-
-    BOOST_LOG(info) << "重新加载VDD驱动...";
-    vdd_utils::reload_driver();
-    std::this_thread::sleep_for(1200ms);
+    return vdd_mode_update_e::failed;
   }
 
   bool
@@ -637,10 +654,33 @@ namespace display_device {
       }
     }
 
+    std::string mode_rebuild_old_vdd_id;
+    bool verify_mode_publication_after_create = false;
+
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution && config.refresh_rate) {
-      update_vdd_resolution(config, vdd_settings);
+      const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako);
+      if (mode_update == vdd_mode_update_e::failed) {
+        return false;
+      }
+
+      verify_mode_publication_after_create = device_zako.empty();
+      if (mode_update == vdd_mode_update_e::recreate_monitor) {
+        mode_rebuild_old_vdd_id = device_zako;
+        verify_mode_publication_after_create = true;
+        if (!vdd_utils::destroy_vdd_monitor()) {
+          BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
+          return false;
+        }
+        if (!wait_for_vdd_device_departure(5, 100ms, 1000ms)) {
+          // The driver has already removed its monitor object synchronously.
+          // Continue with recreation so a delayed Windows device-interface
+          // update cannot leave a headless host without a recovery attempt.
+          BOOST_LOG(warning) << "VDD monitor departure is not visible yet; continuing the IOCTL rebuild";
+        }
+        device_zako.clear();
+      }
     }
 
     // Create VDD device if not present
@@ -692,6 +732,29 @@ namespace display_device {
 
     if (device_zako.empty()) {
       return false;
+    }
+
+    if (verify_mode_publication_after_create) {
+      const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
+      const bool mode_advertised = vdd_utils::retry_with_backoff(
+        [&]() {
+          return vdd_utils::is_mode_advertised(device_zako, requested_mode);
+        },
+        { .max_attempts = 5,
+          .initial_delay = 100ms,
+          .max_delay = 1000ms,
+          .context = "Waiting for VDD mode publication" });
+      if (!mode_advertised) {
+        BOOST_LOG(error) << "VDD monitor did not publish "
+                         << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
+        return false;
+      }
+    }
+
+    if (!mode_rebuild_old_vdd_id.empty() && mode_rebuild_old_vdd_id != device_zako) {
+      BOOST_LOG(info) << "Replacing VDD ID after mode-list rebuild: "
+                      << mode_rebuild_old_vdd_id << " -> " << device_zako;
+      settings.replace_vdd_id(mode_rebuild_old_vdd_id, device_zako);
     }
 
     if (original_output_name.empty()) {
