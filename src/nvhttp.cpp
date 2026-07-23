@@ -165,8 +165,7 @@ namespace nvhttp {
 #endif
                   };
                   if (x509) {
-                    std::string client_cert_pem = crypto::pem(x509);
-                    if (auto uuid = pairing::client_uuid_for_cert(client_cert_pem); !uuid.empty()) {
+                    if (auto uuid = pairing::client_uuid_for_cert(x509.get()); !uuid.empty()) {
                       // Client authentication belongs to the TLS connection,
                       // not to the first HTTP Request object created for it.
                       // Simple-Web-Server replaces Request objects between
