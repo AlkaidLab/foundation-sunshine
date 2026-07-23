@@ -159,8 +159,7 @@ namespace display_device::vdd_ioctl {
         if (path.empty()) {
           // Empty path = SetupDi enumeration found no instance of our
           // GUID. This is the "driver isn't installed / hasn't registered
-          // yet" case and the only one where falling back to the legacy
-          // pipe is correct.
+          // yet" case.
           return open_result::interface_missing;
         }
 
