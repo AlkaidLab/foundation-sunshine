@@ -204,6 +204,73 @@ finally {
     ${function:Get-VddDevices} = $originalGetVddDevices
 }
 
+$originalStartProcess = ${function:Start-Process}
+$originalWaitProcess = ${function:Wait-Process}
+$originalStopProcess = ${function:Stop-Process}
+try {
+    $script:fakePnpProcess = [pscustomobject]@{
+        HasExited = $false
+        ExitCode = 0
+    }
+    $script:pnpWaitTimesOut = $true
+    $script:stoppedPnpProcesses = 0
+    function Start-Process {
+        [CmdletBinding()]
+        param(
+            [string] $FilePath,
+            [object[]] $ArgumentList,
+            [switch] $NoNewWindow,
+            [switch] $PassThru)
+        return $script:fakePnpProcess
+    }
+    function Wait-Process {
+        [CmdletBinding()]
+        param(
+            [object] $InputObject,
+            [int] $Timeout)
+        if ($script:pnpWaitTimesOut) {
+            throw 'simulated timeout'
+        }
+    }
+    function Stop-Process {
+        [CmdletBinding()]
+        param(
+            [object] $InputObject,
+            [switch] $Force)
+        $script:stoppedPnpProcesses++
+    }
+
+    $timedOutExitCode = Invoke-PnpUtilDeviceRemoval 'ROOT\DISPLAY\0042'
+    Assert-Equal $win32ErrorTimeout $timedOutExitCode `
+        'A hung pnputil process must return the Windows timeout error.'
+    Assert-Equal 1 $script:stoppedPnpProcesses `
+        'A hung pnputil process must be force-stopped.'
+
+    $script:fakePnpProcess = [pscustomobject]@{
+        HasExited = $true
+        ExitCode = 3010
+    }
+    $script:pnpWaitTimesOut = $false
+    $completedExitCode = Invoke-PnpUtilDeviceRemoval 'ROOT\DISPLAY\0042'
+    Assert-Equal 3010 $completedExitCode `
+        'A completed pnputil process must preserve its exit code.'
+}
+finally {
+    foreach ($name in @('Start-Process', 'Wait-Process', 'Stop-Process')) {
+        $originalName = 'original' + $name.Replace('-', '')
+        $original = Get-Variable -Name $originalName -ValueOnly
+        if ($original) {
+            Set-Item -Path "Function:\$name" -Value $original
+        }
+        else {
+            Remove-Item -Path "Function:\$name" -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Variable -Name fakePnpProcess -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name pnpWaitTimesOut -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name stoppedPnpProcesses -Scope Script -ErrorAction SilentlyContinue
+}
+
 $originalGetVddDevices = ${function:Get-VddDevices}
 $originalInvokeNefconRemoval = ${function:Invoke-NefconRemoval}
 $originalInvokePnpUtilDeviceRemoval = ${function:Invoke-PnpUtilDeviceRemoval}

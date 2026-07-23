@@ -24,6 +24,7 @@ $crInvalidDevnode = 0x00000005
 $crNoSuchDevnode = 0x0000000D
 $deviceTimeoutSeconds = 120
 $targetedRemovalTimeoutSeconds = 10
+$win32ErrorTimeout = 1460
 
 function Initialize-CfgMgr32 {
     if ('SunshineVddCfgMgr32' -as [type]) {
@@ -321,8 +322,25 @@ function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId = $hard
 
 function Invoke-PnpUtilDeviceRemoval([string] $InstanceId) {
     $pnputil = Join-Path $env:SystemRoot 'System32\pnputil.exe'
-    & $pnputil /remove-device $InstanceId
-    return $LASTEXITCODE
+    $process = Start-Process `
+        -FilePath $pnputil `
+        -ArgumentList @('/remove-device', $InstanceId) `
+        -NoNewWindow `
+        -PassThru
+    try {
+        Wait-Process `
+            -InputObject $process `
+            -Timeout $targetedRemovalTimeoutSeconds `
+            -ErrorAction Stop
+    }
+    catch {
+        if ($process.HasExited) {
+            return $process.ExitCode
+        }
+        Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
+        return $win32ErrorTimeout
+    }
+    return $process.ExitCode
 }
 
 function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $deviceTimeoutSeconds) {
