@@ -54,7 +54,7 @@ function Invoke-ResolveOnly {
         $wrapperLines += ('set "VDD_TEST_WIN_BUILD={0}"' -f $BuildOverride)
     }
 
-    $wrapperLines += ('call "{0}" --resolve-only' -f $ScriptCopy)
+    $wrapperLines += ('call "{0}" --resolve-only --preserve-healthy-existing' -f $ScriptCopy)
     $wrapperLines += 'exit /b %ERRORLEVEL%'
 
     Set-Content -Path $wrapper -Value $wrapperLines -Encoding Ascii
