@@ -23,9 +23,6 @@ namespace display_device::vdd_utils {
   inline constexpr auto kInitialRetryDelay = 500ms;
   inline constexpr auto kMaxRetryDelay = 3000ms;
 
-  extern const wchar_t *kVddPipeName;
-  extern const DWORD kPipeTimeoutMs;
-  extern const DWORD kPipeBufferSize;
   extern const std::chrono::milliseconds kDefaultDebounceInterval;
 
   // HDR亮度范围结构
@@ -130,8 +127,8 @@ namespace display_device::vdd_utils {
 
   /**
    * @brief Return a fast, read-only VDD prerequisite snapshot.
-   * @details This never connects to the legacy named pipe, so callers can use
-   *          it in Web status polling and stream startup without timeout risk.
+   * @details This only performs read-only device and IOCTL probes, so callers
+   *          can use it in Web status polling and stream startup.
    */
   vdd_status_t
   get_vdd_status();
@@ -143,13 +140,6 @@ namespace display_device::vdd_utils {
   // VDD命令执行
   bool
   execute_vdd_command(const std::string &action);
-
-  // 管道相关函数
-  HANDLE
-  connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries = 3);
-
-  bool
-  execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response = nullptr, bool *timed_out = nullptr);
 
   /**
    * @brief Ensure ZakoVDD renders the cursor into the framebuffer instead of exposing a hardware cursor plane.

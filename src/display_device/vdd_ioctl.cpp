@@ -178,9 +178,7 @@ namespace display_device::vdd_ioctl {
 
         if (m_handle == INVALID_HANDLE_VALUE) {
           // Interface was enumerated (path resolved) but the kernel still
-          // refused to give us a handle. The driver is present, so the
-          // pipe fallback would either deadlock on the same WUDFHost or
-          // duplicate-execute the command -- propagate failure instead.
+          // refused to give us a handle. Propagate the failure.
           BOOST_LOG(warning) << "vdd_ioctl: CreateFileW failed (err=" << GetLastError() << ")";
           return open_result::failed;
         }
@@ -347,11 +345,8 @@ namespace display_device::vdd_ioctl {
       nullptr);
 
     if (!ok) {
-      // The driver answered the IRP with an error status. Do NOT retry
-      // on the legacy pipe: the kernel-side handler may have partially
-      // applied the command (e.g. CREATEMONITOR allocated state before
-      // failing) and re-running it via pipe could double-create or leave
-      // the device in a worse spot than just surfacing the failure.
+      // The driver answered the IRP with an error status. Surface it to
+      // the caller without retrying a potentially state-changing command.
       BOOST_LOG(warning) << "vdd_ioctl: DeviceIoControl(IOCTL_VDD_COMMAND) failed (err=" << GetLastError() << ")";
       return result::failed;
     }

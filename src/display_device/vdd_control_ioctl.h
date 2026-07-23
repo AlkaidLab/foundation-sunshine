@@ -11,14 +11,11 @@
  * Transport summary:
  *   The driver exposes a custom WDF device interface
  *   (`GUID_DEVINTERFACE_ZAKO_VDD_CONTROL`). Opening this interface with
- *   `CreateFileW` PnP-wakes the IddCx driver back into D0, eliminating the
- *   race that the old named pipe transport had with WUDFHost recycling.
+ *   `CreateFileW` PnP-wakes the IddCx driver back into D0 and remains valid
+ *   across WUDFHost recycling.
  *
- *   `IOCTL_VDD_COMMAND` carries the same NUL-terminated UTF-16 command
- *   buffer grammar as the legacy pipe protocol (e.g. `RELOAD_DRIVER`,
- *   `CREATEMONITOR ...`, `DESTROYMONITOR`). The in-driver dispatcher is
- *   shared verbatim between both transports, so callers do not need to
- *   re-encode anything when migrating from pipe to IOCTL.
+ *   `IOCTL_VDD_COMMAND` carries a NUL-terminated UTF-16 command buffer
+ *   (e.g. `RELOAD_DRIVER`, `CREATEMONITOR ...`, `DESTROYMONITOR`).
  *
  *   `IOCTL_VDD_PING` is a cheap liveness probe (no payload).
  *

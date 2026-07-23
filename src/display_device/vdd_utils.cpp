@@ -39,31 +39,6 @@ namespace pt = boost::property_tree;
 namespace display_device {
   namespace vdd_utils {
 
-    // ===========================================================
-    // [LEGACY-PIPE] Transitional named-pipe transport
-    // -----------------------------------------------------------
-    // The named pipe was the only way Sunshine talked to ZakoVDD
-    // before the IOCTL device interface (`vdd_ioctl.cpp`) landed.
-    // It is kept as a fallback so this Sunshine build still works
-    // against older driver releases that don't expose the IOCTL
-    // interface yet.
-    //
-    // Once every driver release in the wild speaks IOCTL, the
-    // entire pipe code path can be removed mechanically:
-    //   1. grep -nE '\[LEGACY-PIPE\]' vdd_utils.cpp and delete
-    //      every tagged block (constants, helpers, fallback calls).
-    //   2. Drop kVddPipeName, kPipeTimeoutMs, kPipeBufferSize,
-    //      connect_to_pipe_with_retry, execute_pipe_command, the
-    //      pipe-write half of destroy_vdd_monitor_nolog.
-    // The IOCTL primitives in vdd_ioctl.{h,cpp} stay untouched.
-    // ===========================================================
-
-    // [LEGACY-PIPE]
-    const wchar_t *kVddPipeName = L"\\\\.\\pipe\\ZakoVDDPipe";
-    // [LEGACY-PIPE]
-    const DWORD kPipeTimeoutMs = 3000;
-    // [LEGACY-PIPE]
-    const DWORD kPipeBufferSize = 4096;
     const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
     // 上次切换显示器的时间点
@@ -84,8 +59,6 @@ namespace display_device {
       status.control_available = status.installed && vdd_ioctl::ping();
       status.monitor_active = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
 
-      // Older bundled drivers without the modern control interface remain
-      // usable through the named-pipe compatibility path.
       status.state = classify_vdd_state(
         status.installed,
         status.running,
@@ -161,113 +134,6 @@ namespace display_device {
       return false;
     }
 
-    // [LEGACY-PIPE] entire function
-    HANDLE
-    connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries) {
-      HANDLE hPipe = INVALID_HANDLE_VALUE;
-      int attempt = 0;
-      auto retry_delay = kInitialRetryDelay;
-
-      while (attempt < max_retries) {
-        hPipe = CreateFileW(
-          pipe_name,
-          GENERIC_READ | GENERIC_WRITE,
-          0,
-          NULL,
-          OPEN_EXISTING,
-          // Never let a squatted legacy pipe impersonate the LocalSystem client.
-          FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-          NULL);
-
-        if (hPipe != INVALID_HANDLE_VALUE) {
-          DWORD mode = PIPE_READMODE_MESSAGE;
-          if (SetNamedPipeHandleState(hPipe, &mode, NULL, NULL)) {
-            return hPipe;
-          }
-          CloseHandle(hPipe);
-        }
-
-        ++attempt;
-        retry_delay = calculate_exponential_backoff(attempt);
-        std::this_thread::sleep_for(retry_delay);
-      }
-      return INVALID_HANDLE_VALUE;
-    }
-
-    // [LEGACY-PIPE] entire function
-    bool
-    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out) {
-      auto hPipe = connect_to_pipe_with_retry(pipe_name);
-      if (hPipe == INVALID_HANDLE_VALUE) {
-        BOOST_LOG(error) << "连接MTT虚拟显示管道失败，已重试多次";
-        return false;
-      }
-
-      // RAII guard for pipe handle to prevent handle leak
-      struct HandleGuard {
-        HANDLE handle;
-        ~HandleGuard() {
-          if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-        }
-      } pipe_guard { hPipe };
-
-      // 异步IO结构体
-      OVERLAPPED overlapped = { 0 };
-      overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-      HandleGuard event_guard { overlapped.hEvent };
-
-      // 发送命令（使用宽字符版本）
-      DWORD bytesWritten;
-      size_t cmd_len = (wcslen(command) + 1) * sizeof(wchar_t);  // 包含终止符
-      if (!WriteFile(hPipe, command, (DWORD) cmd_len, &bytesWritten, &overlapped)) {
-        if (GetLastError() != ERROR_IO_PENDING) {
-          BOOST_LOG(error) << L"发送" << command << L"命令失败，错误代码: " << GetLastError();
-          return false;
-        }
-
-        // 等待写入完成
-        DWORD waitResult = WaitForSingleObject(overlapped.hEvent, kPipeTimeoutMs);
-        if (waitResult != WAIT_OBJECT_0) {
-          BOOST_LOG(error) << L"发送" << command << L"命令超时";
-          return false;
-        }
-      }
-
-      // 读取响应
-      bool read_timed_out = false;
-      if (response) {
-        char buffer[kPipeBufferSize];
-        DWORD bytesRead = 0;
-        if (!ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, &overlapped)) {
-          if (GetLastError() != ERROR_IO_PENDING) {
-            BOOST_LOG(warning) << "读取响应失败，错误代码: " << GetLastError();
-            return false;
-          }
-
-          DWORD waitResult = WaitForSingleObject(overlapped.hEvent, kPipeTimeoutMs);
-          if (waitResult == WAIT_OBJECT_0 && GetOverlappedResult(hPipe, &overlapped, &bytesRead, FALSE)) {
-            buffer[bytesRead] = '\0';
-            *response = std::string(buffer, bytesRead);
-          }
-          else {
-            read_timed_out = true;
-            CancelIo(hPipe);
-          }
-        }
-        else {
-          // ReadFile completed synchronously
-          buffer[bytesRead] = '\0';
-          *response = std::string(buffer, bytesRead);
-        }
-      }
-
-      if (timed_out) {
-        *timed_out = read_timed_out;
-      }
-      return true;
-    }
-
     bool
     set_hardware_cursor_enabled(bool enabled) {
       const wchar_t *command = enabled ? L"HARDWARECURSOR true" : L"HARDWARECURSOR false";
@@ -277,18 +143,13 @@ namespace display_device {
           BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (IOCTL)";
           return true;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(error) << "VDD hardware cursor command was rejected by driver; not falling back to pipe";
+          BOOST_LOG(error) << "VDD hardware cursor command was rejected by driver";
           return false;
         case vdd_ioctl::result::interface_missing:
-          break;
+          BOOST_LOG(error) << "VDD hardware cursor command unavailable: IOCTL interface missing";
+          return false;
       }
-
-      std::string response;
-      const bool ok = execute_pipe_command(kVddPipeName, command, &response);
-      if (ok) {
-        BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (PIPE)";
-      }
-      return ok;
+      return false;
     }
 
     bool
@@ -591,7 +452,6 @@ namespace display_device {
         return false;
       }
 
-      std::string response;
       std::wstring command = L"CREATEMONITOR";
 
       // 如果没有提供UUID，使用上一次的UUID
@@ -638,8 +498,7 @@ namespace display_device {
         last_used_client_uuid = identifier_to_use;
       }
 
-      // 尝试发送命令（带GUID或不带GUID）
-      // Preferred path: IOCTL device interface. On success skip pipe entirely.
+      // 尝试通过 IOCTL 发送命令（带 GUID 或不带 GUID）
       switch (vdd_ioctl::send_command(command)) {
         case vdd_ioctl::result::success:
           tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
@@ -649,37 +508,13 @@ namespace display_device {
           BOOST_LOG(info) << "创建虚拟显示器完成 (IOCTL)";
           return true;
         case vdd_ioctl::result::failed:
-          // Driver answered but rejected CREATEMONITOR -- avoid the pipe
-          // retry (could double-allocate monitor state on a partially
-          // applied request).
-          BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL); not falling back to pipe";
+          BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL)";
           return false;
         case vdd_ioctl::result::interface_missing:
-          break;
+          BOOST_LOG(error) << "创建虚拟显示器失败: VDD IOCTL interface missing";
+          return false;
       }
-
-      // [LEGACY-PIPE] Fallback for older driver builds.
-      bool read_timed_out = false;
-      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out);
-
-      // 如果带GUID的命令失败，降级为不带GUID的命令（兼容旧版驱动）
-      if (!success && !guid_str.empty()) {
-        BOOST_LOG(warning) << "带GUID的命令失败，尝试降级为不带GUID的命令";
-        read_timed_out = false;
-        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response, &read_timed_out);
-      }
-
-      if (!success) {
-        BOOST_LOG(error) << "创建虚拟显示器失败";
-        return false;
-      }
-
-      tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-      system_tray::update_vdd_menu();
-#endif
-      BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response << " [return=" << (read_timed_out ? 1 : 0) << "]";
-      return true;
+      return false;
     }
 
     bool
@@ -690,26 +525,16 @@ namespace display_device {
         return true;
       }
 
-      // Preferred path: IOCTL.
       switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
         case vdd_ioctl::result::success:
           BOOST_LOG(info) << "销毁虚拟显示器完成 (IOCTL)";
           break;
         case vdd_ioctl::result::failed:
-          // Driver answered but DESTROYMONITOR errored -- don't redo it
-          // on the pipe (state may already be torn down).
-          BOOST_LOG(error) << "销毁虚拟显示器失败 (IOCTL); not falling back to pipe";
+          BOOST_LOG(error) << "销毁虚拟显示器失败 (IOCTL)";
           return false;
-        case vdd_ioctl::result::interface_missing: {
-          // [LEGACY-PIPE] Fallback for older driver builds.
-          std::string response;
-          if (!execute_pipe_command(kVddPipeName, L"DESTROYMONITOR", &response)) {
-            BOOST_LOG(error) << "销毁虚拟显示器失败";
-            return false;
-          }
-          BOOST_LOG(info) << "销毁虚拟显示器完成 (PIPE)，响应: " << response;
-          break;
-        }
+        case vdd_ioctl::result::interface_missing:
+          BOOST_LOG(error) << "销毁虚拟显示器失败: VDD IOCTL interface missing";
+          return false;
       }
 
       // 等待驱动程序完全卸载，避免WUDFHost.exe崩溃
@@ -725,32 +550,7 @@ namespace display_device {
 
     void
     destroy_vdd_monitor_nolog() {
-      // Preferred path: IOCTL. Both success and "driver said no" stop
-      // here -- the latter would just churn through a stale pipe handle
-      // during shutdown, which we explicitly do not want to log about.
-      switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
-        case vdd_ioctl::result::success:
-        case vdd_ioctl::result::failed:
-          return;
-        case vdd_ioctl::result::interface_missing:
-          break;
-      }
-
-      // [LEGACY-PIPE] Best-effort pipe write for shutdown / process-exit
-      // paths where we don't want to log a failure if the pipe is gone.
-      HANDLE hPipe = CreateFileW(
-        kVddPipeName,
-        GENERIC_READ | GENERIC_WRITE,
-        0, NULL, OPEN_EXISTING,
-        SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, NULL);
-      if (hPipe != INVALID_HANDLE_VALUE) {
-        DWORD mode = PIPE_READMODE_MESSAGE;
-        SetNamedPipeHandleState(hPipe, &mode, NULL, NULL);
-        const wchar_t cmd[] = L"DESTROYMONITOR";
-        DWORD bytesWritten;
-        WriteFile(hPipe, cmd, sizeof(cmd), &bytesWritten, NULL);
-        CloseHandle(hPipe);
-      }
+      (void) vdd_ioctl::send_command(L"DESTROYMONITOR");
     }
 
     void
