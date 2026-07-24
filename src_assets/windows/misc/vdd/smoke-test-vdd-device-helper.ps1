@@ -393,15 +393,71 @@ finally {
     Remove-Variable -Name removedHardwareIds -Scope Script -ErrorAction SilentlyContinue
 }
 
+$transactionTestRoot = Join-Path ([IO.Path]::GetTempPath()) "sunshine-vdd-transaction-$([Guid]::NewGuid().ToString('N'))"
+[void] [IO.Directory]::CreateDirectory($transactionTestRoot)
+$transactionPayload = [pscustomobject]@{
+    Paths = [pscustomobject]@{
+        ConfigDir = $transactionTestRoot
+        Nefcon = $HelperScript
+    }
+}
+$transactionPreviousDevice = New-TestDevice '100.0.16.5' 'OK' 'oem40.inf'
+$originalGetVddDevices = ${function:Get-VddDevices}
+$originalRestoreVddDevice = ${function:Restore-VddDevice}
+try {
+    $script:transactionDevices = @()
+    $script:transactionRestoreCalls = 0
+    function Get-VddDevices { return @($script:transactionDevices) }
+    function Restore-VddDevice { $script:transactionRestoreCalls++ }
+
+    Save-VddTransaction $transactionPayload $transactionPreviousDevice
+    Recover-VddTransaction $transactionPayload '100.0.16.6'
+    Assert-Equal 1 $script:transactionRestoreCalls `
+        'An interrupted replacement without a ready VDD must restore the previous package.'
+    Assert-Equal $false (Test-Path -LiteralPath (Get-VddTransactionPath $transactionPayload)) `
+        'A recovered VDD transaction must be cleared.'
+
+    Save-VddTransaction $transactionPayload $transactionPreviousDevice
+    $script:transactionDevices = @(New-TestDevice '100.0.16.6')
+    Recover-VddTransaction $transactionPayload '100.0.16.6'
+    Assert-Equal 1 $script:transactionRestoreCalls `
+        'A completed replacement must not roll back the new ready VDD.'
+
+    Save-VddTransaction $transactionPayload $transactionPreviousDevice
+    $script:transactionDevices = @(New-TestDevice '100.0.17.0')
+    $unexpectedDriverWasRejected = $false
+    try {
+        Recover-VddTransaction $transactionPayload '100.0.16.6'
+    }
+    catch {
+        $unexpectedDriverWasRejected = $_.Exception.Message -like '*different healthy driver*'
+    }
+    Assert-Equal $true $unexpectedDriverWasRejected `
+        'Recovery must not replace a different healthy VDD automatically.'
+}
+finally {
+    ${function:Get-VddDevices} = $originalGetVddDevices
+    ${function:Restore-VddDevice} = $originalRestoreVddDevice
+    if (Test-Path -LiteralPath $transactionTestRoot) {
+        Remove-Item -LiteralPath $transactionTestRoot -Recurse -Force
+    }
+    Remove-Variable -Name transactionDevices -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name transactionRestoreCalls -Scope Script -ErrorAction SilentlyContinue
+}
+
 $originalResolveVddPayload = ${function:Resolve-VddPayload}
 $originalGetVddPaths = ${function:Get-VddPaths}
 $originalGetVddState = ${function:Get-VddState}
 $originalStageVddPayload = ${function:Stage-VddPayload}
+$originalAddVddDriverPackage = ${function:Add-VddDriverPackage}
 $originalRemoveAllVddDevices = ${function:Remove-AllVddDevices}
 $originalRemoveVddRegistry = ${function:Remove-VddRegistry}
 $originalCleanupVddPackages = ${function:Cleanup-VddPackages}
 $originalSetVddConfiguration = ${function:Set-VddConfiguration}
 $originalInstallVddDevice = ${function:Install-VddDevice}
+$originalRestoreVddDevice = ${function:Restore-VddDevice}
+$originalSaveVddTransaction = ${function:Save-VddTransaction}
+$originalClearVddTransaction = ${function:Clear-VddTransaction}
 try {
     function Resolve-VddPayload {
         return [pscustomobject]@{
@@ -409,7 +465,10 @@ try {
             BuildNumber = 22000
             DriverDir = $PSScriptRoot
             ConfigSource = $HelperScript
-            Paths = [pscustomobject]@{ Nefcon = $HelperScript }
+            Paths = [pscustomobject]@{
+                Nefcon = $HelperScript
+                ConfigDir = $PSScriptRoot
+            }
         }
     }
     function Get-VddPaths {
@@ -420,48 +479,102 @@ try {
     }
     function Get-VddState {
         return [pscustomobject]@{
+            Devices = @($script:workflowDevices)
             BundledVersion = '100.0.16.6'
             Decision = $script:workflowDecision
         }
     }
     function Stage-VddPayload { $script:workflowCalls += 'Stage' }
+    function Add-VddDriverPackage {
+        $script:workflowCalls += 'Package'
+        if ($script:failWorkflowPackage) {
+            throw 'simulated package validation failure'
+        }
+    }
     function Remove-AllVddDevices { $script:workflowCalls += 'Remove' }
     function Remove-VddRegistry { $script:workflowCalls += 'Registry' }
     function Cleanup-VddPackages([string] $ExpectedVersion = '') {
         $script:workflowCalls += "Cleanup:$ExpectedVersion"
     }
     function Set-VddConfiguration { $script:workflowCalls += 'Configure' }
-    function Install-VddDevice { $script:workflowCalls += 'Install' }
+    function Install-VddDevice {
+        $script:workflowCalls += 'Install'
+        if ($script:failWorkflowInstall) {
+            throw 'simulated install failure'
+        }
+    }
+    function Restore-VddDevice { $script:workflowCalls += 'Restore' }
+    function Save-VddTransaction { $script:workflowCalls += 'Journal' }
+    function Clear-VddTransaction { $script:workflowCalls += 'Clear' }
 
     $script:workflowCalls = @()
+    $script:workflowDevices = @(New-TestDevice '100.0.16.6')
+    $script:failWorkflowInstall = $false
+    $script:failWorkflowPackage = $false
     $script:workflowDecision = [pscustomobject]@{
         DeviceCount = 1
         CleanupRequired = 0
         InstallRequired = 0
+        HealthyExisting = 1
         CurrentVersion = '100.0.16.6'
         CurrentStatus = 'OK'
         CurrentInf = 'oem42.inf'
     }
     Invoke-VddInstall $PSScriptRoot 'Run'
-    Assert-Equal 'Stage,Cleanup:100.0.16.6,Configure' ($script:workflowCalls -join ',') `
+    Assert-Equal 'Stage,Configure,Cleanup:100.0.16.6' ($script:workflowCalls -join ',') `
         'A healthy matching device must keep its package and skip reinstall.'
 
     $script:workflowCalls = @()
+    $script:workflowDevices = @(New-TestDevice '100.0.16.5' 'OK' 'oem40.inf')
     $script:workflowDecision = [pscustomobject]@{
         DeviceCount = 1
         CleanupRequired = 1
         InstallRequired = 1
+        HealthyExisting = 1
         CurrentVersion = '100.0.16.5'
         CurrentStatus = 'OK'
         CurrentInf = 'oem40.inf'
     }
     Invoke-VddInstall $PSScriptRoot 'Run'
-    Assert-Equal 'Stage,Remove,Registry,Cleanup:,Configure,Install' ($script:workflowCalls -join ',') `
-        'An upgrade must remove, prune, configure, and install in order.'
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Clear,Cleanup:100.0.16.6' ($script:workflowCalls -join ',') `
+        'An upgrade must stage the replacement before removing the working device and prune only after verification.'
+
+    $script:workflowCalls = @()
+    Invoke-VddInstall $PSScriptRoot 'Run' -PreserveHealthyExisting
+    Assert-Equal 'Stage,Configure' ($script:workflowCalls -join ',') `
+        'An unattended upgrade must preserve a healthy mismatched driver for later GUI maintenance.'
+
+    $script:workflowCalls = @()
+    $script:failWorkflowPackage = $true
+    $packageValidationFailed = $false
+    try {
+        Invoke-VddInstall $PSScriptRoot 'Run'
+    }
+    catch {
+        $packageValidationFailed = $_.Exception.Message -like '*simulated package validation failure*'
+    }
+    Assert-Equal $true $packageValidationFailed 'A rejected replacement package must abort the update.'
+    Assert-Equal 'Stage,Configure,Package' ($script:workflowCalls -join ',') `
+        'A rejected replacement package must not remove the working VDD.'
+    $script:failWorkflowPackage = $false
+
+    $script:workflowCalls = @()
+    $script:failWorkflowInstall = $true
+    $installFailed = $false
+    try {
+        Invoke-VddInstall $PSScriptRoot 'Run'
+    }
+    catch {
+        $installFailed = $_.Exception.Message -like '*simulated install failure*'
+    }
+    Assert-Equal $true $installFailed 'A failed driver replacement must report the original failure.'
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Restore,Clear' ($script:workflowCalls -join ',') `
+        'A failed driver replacement must restore the previous healthy driver.'
+    $script:failWorkflowInstall = $false
 
     $script:workflowCalls = @()
     Invoke-VddUninstall $PSScriptRoot
-    Assert-Equal 'Remove,Cleanup:,Registry' ($script:workflowCalls -join ',') `
+    Assert-Equal 'Remove,Cleanup:,Clear,Registry' ($script:workflowCalls -join ',') `
         'Uninstall must remove devices before packages and always clean the registry.'
 }
 finally {
@@ -469,13 +582,20 @@ finally {
     ${function:Get-VddPaths} = $originalGetVddPaths
     ${function:Get-VddState} = $originalGetVddState
     ${function:Stage-VddPayload} = $originalStageVddPayload
+    ${function:Add-VddDriverPackage} = $originalAddVddDriverPackage
     ${function:Remove-AllVddDevices} = $originalRemoveAllVddDevices
     ${function:Remove-VddRegistry} = $originalRemoveVddRegistry
     ${function:Cleanup-VddPackages} = $originalCleanupVddPackages
     ${function:Set-VddConfiguration} = $originalSetVddConfiguration
     ${function:Install-VddDevice} = $originalInstallVddDevice
+    ${function:Restore-VddDevice} = $originalRestoreVddDevice
+    ${function:Save-VddTransaction} = $originalSaveVddTransaction
+    ${function:Clear-VddTransaction} = $originalClearVddTransaction
     Remove-Variable -Name workflowCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowDecision -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowDevices -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name failWorkflowInstall -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name failWorkflowPackage -Scope Script -ErrorAction SilentlyContinue
 }
 
 $results | Format-Table -AutoSize
