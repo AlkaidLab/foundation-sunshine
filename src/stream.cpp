@@ -2345,7 +2345,7 @@ namespace stream {
         frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
       }
 
-      const auto now = std::chrono::steady_clock::now();
+      const auto frame_dequeue_time = std::chrono::steady_clock::now();
       auto processing_start = packet->frame_timestamp;
       if (packet->pipeline_trace && packet->pipeline_trace->capture_ready) {
         // Presentation time belongs to the RTP clock. Host processing starts
@@ -2359,10 +2359,10 @@ namespace stream {
           return (uint16_t) std::clamp<decltype(duration_us)>((duration_us + 50) / 100, 0, std::numeric_limits<uint16_t>::max());
         };
 
-        uint16_t latency = duration_to_latency(now - *processing_start);
+        uint16_t latency = duration_to_latency(frame_dequeue_time - *processing_start);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
-        perf::record_host_latency(session->launch_session_id, latency / 10., now);
+        perf::record_host_latency(session->launch_session_id, latency / 10., frame_dequeue_time);
       }
       else {
         frame_header.frame_processing_latency = 0;
@@ -2383,9 +2383,9 @@ namespace stream {
         sample.convert_ms = elapsed_ms(trace.convert_begin, trace.convert_end);
         sample.encode_queue_ms = elapsed_ms(trace.convert_end, trace.encode_submit);
         sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
-        sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { now });
-        sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { now });
-        perf::record_pipeline_sample(session->launch_session_id, sample, now);
+        sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { frame_dequeue_time });
+        sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { frame_dequeue_time });
+        perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
       auto fecPercentage = config::stream.fec_percentage;

@@ -58,3 +58,13 @@ TEST(VideoRtpTimestampTests, RoundsBeforeApplyingRtpWraparound) {
     stream::video_rtp_timestamp(epoch - std::chrono::milliseconds(20), epoch),
     std::numeric_limits<std::uint32_t>::max() - 1'799u);
 }
+
+TEST(VideoRtpTimestampTests, WrapsForwardPastUint32Max) {
+  using rtp_tick = std::chrono::duration<std::int64_t, std::ratio<1, 90'000>>;
+  const auto epoch = std::chrono::steady_clock::time_point {};
+  const auto wrap_time = epoch +
+                         std::chrono::round<std::chrono::steady_clock::duration>(
+                           rtp_tick { std::int64_t { 1 } << 32 });
+
+  EXPECT_EQ(stream::video_rtp_timestamp(wrap_time, epoch), 0u);
+}

@@ -6,6 +6,7 @@
 
   #include <chrono>
   #include <cstdint>
+  #include <limits>
 
   #include <src/platform/windows/misc.h>
 
@@ -30,6 +31,30 @@ TEST(WindowsQpcTiming, PreservesSubMillisecondPrecision) {
 TEST(WindowsQpcTiming, RejectsInvalidFrequency) {
   EXPECT_EQ(platf::qpc_ticks_to_duration(123, 0), 0ns);
   EXPECT_EQ(platf::qpc_ticks_to_duration(123, -1), 0ns);
+}
+
+TEST(WindowsQpcTiming, SaturatesExtremeTicksAtLowFrequency) {
+  EXPECT_EQ(platf::qpc_ticks_to_duration(2, 1), 2s);
+  EXPECT_EQ(platf::qpc_ticks_to_duration(-2, 1), -2s);
+  EXPECT_EQ(
+    platf::qpc_ticks_to_duration(std::numeric_limits<std::int64_t>::max(), 1),
+    std::chrono::nanoseconds::max());
+  EXPECT_EQ(
+    platf::qpc_ticks_to_duration(std::numeric_limits<std::int64_t>::min(), 1),
+    std::chrono::nanoseconds::min());
+}
+
+TEST(WindowsQpcTiming, SaturatesExtremeCounterDifferences) {
+  EXPECT_EQ(
+    platf::qpc_time_difference(
+      std::numeric_limits<std::int64_t>::max(),
+      std::numeric_limits<std::int64_t>::min()),
+    std::chrono::nanoseconds::max());
+  EXPECT_EQ(
+    platf::qpc_time_difference(
+      std::numeric_limits<std::int64_t>::min(),
+      std::numeric_limits<std::int64_t>::max()),
+    std::chrono::nanoseconds::min());
 }
 
 #endif
