@@ -34,6 +34,7 @@
 #include "config.h"
 #include "confighttp.h"
 #include "display_device/session.h"
+#include "display_device/vdd_capability.h"
 #include "file_handler.h"
 #include "file_mapping/file_mapping_http.h"
 #include "file_mapping/service.h"
@@ -532,6 +533,12 @@ namespace nvhttp {
 
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
+
+#ifdef _WIN32
+    tree.put("root.VddCapabilityVersion", display_device::vdd_capability::capability_version);
+#else
+    tree.put("root.VddCapabilityVersion", 0);
+#endif
 
     std::ostringstream data;
 

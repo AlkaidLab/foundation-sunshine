@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "src/display_device/vdd_control_ioctl.h"
+#include "src/display_device/vdd_capability.h"
 #include "src/display_device/vdd_ioctl.h"
 #include "src/display_device/vdd_utils.h"
 #include "src/platform/windows/display_device/settings_topology.h"
@@ -52,6 +53,16 @@ namespace {
   }
 
 }  // namespace
+
+TEST(VddCapability, ExposesStableStateNames) {
+  using namespace display_device::vdd_capability;
+
+  EXPECT_EQ(to_string(state_e::ready), "ready");
+  EXPECT_EQ(to_string(state_e::driver_missing), "driver_missing");
+  EXPECT_EQ(to_string(state_e::driver_unreachable), "driver_unreachable");
+  EXPECT_EQ(to_string(state_e::unsupported_platform), "unsupported_platform");
+  EXPECT_EQ(capability_version, 1);
+}
 
 TEST(VddBaselineSafety, DetectsVddOnlyTopology) {
   using namespace display_device;
