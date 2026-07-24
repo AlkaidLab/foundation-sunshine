@@ -412,6 +412,15 @@ namespace platf::dxgi {
         }
       }
 
+      if (status == capture_e::ok && img_out) {
+        // Keep the encoder-ready time separate from the producer's presentation
+        // timestamp: the former measures host processing, while the latter drives RTP PTS.
+        if (!img_out->pipeline_trace) {
+          img_out->pipeline_trace.emplace();
+        }
+        img_out->pipeline_trace->capture_ready = std::chrono::steady_clock::now();
+      }
+
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:

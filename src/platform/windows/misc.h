@@ -20,6 +20,15 @@ namespace platf {
   int64_t
   qpc_counter();
 
+  /**
+   * @brief Convert a QueryPerformanceCounter tick delta to nanoseconds.
+   * @param ticks The signed difference between two QPC readings.
+   * @param frequency The QueryPerformanceFrequency value in ticks per second.
+   * @return The equivalent signed duration, or zero if frequency is invalid.
+   */
+  std::chrono::nanoseconds
+  qpc_ticks_to_duration(int64_t ticks, int64_t frequency);
+
   std::chrono::nanoseconds
   qpc_time_difference(int64_t performance_counter1, int64_t performance_counter2);
 
