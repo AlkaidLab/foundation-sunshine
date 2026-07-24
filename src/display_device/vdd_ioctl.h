@@ -2,18 +2,7 @@
  * @file vdd_ioctl.h
  * @brief Self-contained IOCTL transport for the ZakoVDD control channel.
  *
- * This module is the *forward-looking* transport for VDD commands.
- *
- * Co-existing with it (intentionally, transitionally) is the named-pipe
- * code in `vdd_utils.cpp`. Once every Sunshine release in the wild bundles
- * a driver build that exposes the IOCTL device interface, the pipe code
- * can be deleted in a single mechanical pass — every pipe-only call site
- * in `vdd_utils.cpp` is bracketed with `LEGACY-PIPE` markers.
- *
- * Design rationale: the entire IOCTL implementation lives in its own
- * translation unit (header + cpp), with no contamination of `vdd_utils.cpp`,
- * so the eventual cleanup is "delete pipe code from vdd_utils.cpp; collapse
- * the dispatch wrapper". The IOCTL module does not need to be touched.
+ * This is the sole transport for VDD control commands.
  */
 
 #pragma once
@@ -27,17 +16,13 @@ namespace display_device::vdd_ioctl {
   /**
    * @brief Outcome of an IOCTL transport attempt.
    *
-   * Three-state so callers can distinguish "transport unavailable, fall
-   * back to the legacy pipe" from "transport reached the driver but the
-   * command itself failed". The latter must NOT silently retry on the
-   * pipe -- the driver already saw the request and a duplicate could
-   * change device state (e.g. CREATEMONITOR twice -> two phantom panels)
-   * or just waste the ~6s pipe-connect timeout while the user waits.
+   * Three-state so callers can distinguish an unavailable device interface
+   * from a command rejected by a reachable driver.
    */
   enum class result {
     success,           ///< IOCTL completed with STATUS_SUCCESS.
-    interface_missing, ///< No registered device interface (driver too old / not installed). Safe to fall back.
-    failed,            ///< Driver was reached but rejected the IOCTL or returned an error. Do NOT fall back.
+    interface_missing, ///< No registered device interface (driver too old / not installed).
+    failed,            ///< Driver was reached but rejected the IOCTL or returned an error.
   };
 
   /**
@@ -124,9 +109,8 @@ namespace display_device::vdd_ioctl {
   /**
    * @brief Check whether the ZakoVDD display adapter is present in Plug and Play.
    *
-   * Unlike `ping()`, this also recognizes older driver builds that do not expose
-   * the control IOCTL interface and therefore remain usable through the legacy
-   * named-pipe fallback.
+   * Unlike `ping()`, this also recognizes an installed adapter whose control
+   * IOCTL interface is unavailable.
    */
   bool adapter_present();
 
@@ -137,8 +121,7 @@ namespace display_device::vdd_ioctl {
    * opens the first interface instance with `CreateFileW`, and issues
    * `IOCTL_VDD_COMMAND`.
    *
-   * @param command UTF-16 command string identical in grammar to the
-   *                legacy pipe protocol (e.g. `L"RELOAD_DRIVER"`,
+   * @param command UTF-16 VDD command string (e.g. `L"RELOAD_DRIVER"`,
    *                `L"CREATEMONITOR {GUID}:[..]"`, `L"DESTROYMONITOR"`).
    * @return tri-state result; see `enum class result`.
    */
