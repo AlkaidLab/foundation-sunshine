@@ -2473,9 +2473,9 @@ namespace stream {
 
         // RTP video timestamps use the 90 kHz media clock and the original
         // capture presentation timestamp. Frames without a capture timestamp
-        // (intentional duplicates) use this frame's pacing start instead.
+        // (intentional duplicates) retain the next scheduled pacing time.
         const bool frame_is_dupe = !packet->frame_timestamp;
-        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_frame_start);
+        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         auto blockIndex = 0;
