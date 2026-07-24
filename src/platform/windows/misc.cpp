@@ -2127,19 +2127,39 @@ namespace platf {
     return 0;
   }
 
+  namespace {
+    std::chrono::nanoseconds
+    qpc_ticks_to_duration_with_scale(int64_t ticks, double nanoseconds_per_tick) {
+      return std::chrono::nanoseconds {
+        static_cast<int64_t>(static_cast<double>(ticks) * nanoseconds_per_tick)
+      };
+    }
+  }  // namespace
+
+  std::chrono::nanoseconds
+  qpc_ticks_to_duration(int64_t ticks, int64_t frequency) {
+    if (frequency <= 0) {
+      return {};
+    }
+
+    return qpc_ticks_to_duration_with_scale(
+      ticks,
+      static_cast<double>(std::nano::den) / static_cast<double>(frequency));
+  }
+
   std::chrono::nanoseconds
   qpc_time_difference(int64_t performance_counter1, int64_t performance_counter2) {
-    auto get_frequency = []() {
+    static const double nanoseconds_per_tick = []() {
       LARGE_INTEGER frequency;
-      frequency.QuadPart = 0;
-      QueryPerformanceFrequency(&frequency);
-      return frequency.QuadPart;
-    };
-    static const double frequency = get_frequency();
-    if (frequency) {
-      return std::chrono::nanoseconds((int64_t) ((performance_counter1 - performance_counter2) * frequency / std::nano::den));
-    }
-    return {};
+      if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) {
+        return 0.0;
+      }
+      return static_cast<double>(std::nano::den) / static_cast<double>(frequency.QuadPart);
+    }();
+
+    return qpc_ticks_to_duration_with_scale(
+      performance_counter1 - performance_counter2,
+      nanoseconds_per_tick);
   }
 
   std::wstring

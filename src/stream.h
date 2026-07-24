@@ -4,6 +4,7 @@
  */
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -26,6 +27,17 @@ namespace stream {
   constexpr auto CONTROL_PORT = 10;
   constexpr auto AUDIO_STREAM_PORT = 11;
   constexpr auto MIC_STREAM_PORT = 12;  // Port for microphone streaming
+
+  /**
+   * @brief Convert a steady-clock presentation time to the 90 kHz RTP video clock.
+   *
+   * The conversion is performed with a signed intermediate so timestamps just
+   * before the epoch round correctly before the final RTP modulo-2^32 cast.
+   */
+  std::uint32_t
+  video_rtp_timestamp(
+    std::chrono::steady_clock::time_point presentation_time,
+    std::chrono::steady_clock::time_point epoch);
 
   struct session_t;
   struct config_t {
