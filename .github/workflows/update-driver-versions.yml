@@ -16,6 +16,7 @@ on:
         options:
           - vmouse
           - vdd
+          - vdd-win10
           - nefcon
           - all
       version:
@@ -82,11 +83,13 @@ jobs:
           declare -A REPOS=(
             [vmouse]="AlkaidLab/ZakoVirtualMouse"
             [vdd]="qiin2333/zako-vdd"
+            [vdd-win10]="qiin2333/zako-vdd"
             [nefcon]="nefarius/nefcon"
           )
           declare -A VARS=(
             [vmouse]="VMOUSE_DRIVER_VERSION"
             [vdd]="VDD_DRIVER_VERSION"
+            [vdd-win10]="VDD_WIN10_DRIVER_VERSION"
             [nefcon]="NEFCON_VERSION"
           )
 
@@ -101,6 +104,11 @@ jobs:
             repo="${REPOS[$comp]}"
             var="${VARS[$comp]}"
             ver="$VERSION"
+
+            if [ "$comp" = "vdd-win10" ] && [ -z "$ver" ]; then
+              echo "Warning: vdd-win10 requires an explicit maintenance release tag, skipping"
+              continue
+            fi
 
             if [ -z "$ver" ]; then
               ver=$(resolve_latest "$repo")
@@ -119,7 +127,7 @@ jobs:
           echo "EOF" >> "$GITHUB_ENV"
 
           echo "Updated CMake file:"
-          grep -E "^set\((VMOUSE_DRIVER_VERSION|VDD_DRIVER_VERSION|NEFCON_VERSION)" "$CMAKE_FILE"
+          grep -E "^set\((VMOUSE_DRIVER_VERSION|VDD_DRIVER_VERSION|VDD_WIN10_DRIVER_VERSION|NEFCON_VERSION)" "$CMAKE_FILE"
 
       - name: Create PR
         uses: peter-evans/create-pull-request@v6
