@@ -1224,77 +1224,6 @@ namespace confighttp {
 
     outputTree.put("status", "true");
     outputTree.put("locale", config::sunshine.locale);
-    outputTree.put("tray_locale", config::sunshine.tray_locale);
-  }
-
-  void
-  saveLocale(resp_https_t response, req_https_t request) {
-    if (!check_content_type(response, request, "application/json")) return;
-
-    const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
-    if (net::from_address(address) != net::PC && !authenticate(response, request)) return;
-
-    print_req(request);
-
-    pt::ptree outputTree;
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-      pt::write_json(data, outputTree);
-
-      const auto code = outputTree.get_child_optional("error").has_value() ?
-                          SimpleWeb::StatusCode::client_error_bad_request :
-                          SimpleWeb::StatusCode::success_ok;
-      response->write(code, data.str());
-    });
-
-    try {
-      std::stringstream content;
-      content << request->content.rdbuf();
-      pt::ptree inputTree;
-      pt::read_json(content, inputTree);
-      const auto ui_locale = inputTree.get_optional<std::string>("locale");
-      const auto tray_locale = inputTree.get_optional<std::string>("tray_locale");
-      if (!ui_locale && !tray_locale) {
-        outputTree.put("status", "false");
-        outputTree.put("error", "locale or tray_locale is required");
-        return;
-      }
-
-      static const std::set<std::string> supported_ui_locales {
-        "bg", "cs", "de", "en", "en_GB", "en_US", "es", "fr",
-        "it", "ja", "pt", "ru", "sv", "tr", "zh", "zh_TW"
-      };
-      if (ui_locale && !supported_ui_locales.contains(*ui_locale)) {
-        outputTree.put("status", "false");
-        outputTree.put("error", "Unsupported UI locale");
-        return;
-      }
-      if (tray_locale && *tray_locale != "en" && *tray_locale != "zh" && *tray_locale != "ja") {
-        outputTree.put("status", "false");
-        outputTree.put("error", "Unsupported tray locale");
-        return;
-      }
-
-      std::map<std::string, std::string> updates;
-      if (ui_locale) {
-        config::sunshine.locale = *ui_locale;
-        updates.emplace("locale", *ui_locale);
-        outputTree.put("locale", *ui_locale);
-      }
-      if (tray_locale) {
-        config::sunshine.tray_locale = *tray_locale;
-        updates.emplace("tray_locale", *tray_locale);
-        outputTree.put("tray_locale", *tray_locale);
-      }
-
-      config::update_config(updates);
-      outputTree.put("status", "true");
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(warning) << "SaveLocale: "sv << e.what();
-      outputTree.put("status", "false");
-      outputTree.put("error", e.what());
-    }
   }
 
   std::vector<std::string>
@@ -3263,7 +3192,6 @@ namespace confighttp {
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
-    server.resource["^/api/configLocale$"]["POST"] = saveLocale;
     server.resource["^/api/logout$"]["GET"] = handleLogout;
     server.resource["^/api/logout$"]["POST"] = handleLogout;
     server.resource["^/api/restart$"]["POST"] = restart;
