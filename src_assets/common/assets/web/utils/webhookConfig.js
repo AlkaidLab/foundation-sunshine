@@ -20,9 +20,7 @@ export const parseWebhookEventIds = (value) => {
       selected.add(id)
     }
   }
-  return selected.size > 0
-    ? [...selected].sort((left, right) => left - right)
-    : [...WEBHOOK_EVENT_IDS]
+  return [...selected].sort((left, right) => left - right)
 }
 
 export const serializeWebhookEventIds = (eventIds) => {

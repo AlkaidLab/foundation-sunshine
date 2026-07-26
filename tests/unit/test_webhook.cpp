@@ -155,6 +155,42 @@ TEST_F(WebhookTest, TestRetryCountRejectsValuesAboveThree) {
   EXPECT_EQ(result.error, webhook::delivery_error_t::INTERNAL);
 }
 
+TEST_F(WebhookTest, TestDeliveryRejectsTimeoutOutsidePublicContract) {
+  webhook::settings_t settings {
+    "https://example.invalid/webhook",
+    false,
+    webhook::MIN_TIMEOUT - 1ms
+  };
+  bool completed = false;
+  webhook::delivery_result_t result;
+
+  EXPECT_FALSE(webhook::send_test_async(
+    settings,
+    0,
+    [&](const webhook::delivery_result_t value) {
+      completed = true;
+      result = value;
+    }
+  ));
+  EXPECT_TRUE(completed);
+  EXPECT_EQ(result.attempts, 0);
+  EXPECT_EQ(result.error, webhook::delivery_error_t::INTERNAL);
+
+  completed = false;
+  settings.timeout = webhook::MAX_TIMEOUT + 1ms;
+  EXPECT_FALSE(webhook::send_test_async(
+    settings,
+    0,
+    [&](const webhook::delivery_result_t value) {
+      completed = true;
+      result = value;
+    }
+  ));
+  EXPECT_TRUE(completed);
+  EXPECT_EQ(result.attempts, 0);
+  EXPECT_EQ(result.error, webhook::delivery_error_t::INTERNAL);
+}
+
 TEST_F(WebhookTest, PayloadTruncationPreservesUtf8AndJson) {
   webhook::event_t event {
     .type = webhook::event_type_t::NV_APP_LAUNCH,

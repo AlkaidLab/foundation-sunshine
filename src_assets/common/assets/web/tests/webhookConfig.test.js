@@ -50,7 +50,7 @@ test('Webhook test retries default to zero and stay within zero to three', () =>
 test('Webhook event configuration uses a stable sorted comma-separated ID list', () => {
   assert.deepEqual(parseWebhookEventIds(undefined), [0, 1, 2, 3, 4, 5, 6])
   assert.deepEqual(parseWebhookEventIds('6,2,2,invalid,9,0'), [0, 2, 6])
-  assert.deepEqual(parseWebhookEventIds('invalid,9'), [0, 1, 2, 3, 4, 5, 6])
+  assert.deepEqual(parseWebhookEventIds('invalid,9'), [])
   assert.deepEqual(parseWebhookEventIds('-1'), [])
   assert.equal(serializeWebhookEventIds([6, 2, 2, 9, 0]), '0,2,6')
   assert.equal(serializeWebhookEventIds([]), '-1')

@@ -16,13 +16,6 @@ import {
   webhookTimeoutToSeconds,
 } from '../../utils/webhookConfig.js'
 
-const props = defineProps({
-  platform: {
-    type: String,
-    default: '',
-  },
-})
-
 const { t } = useI18n()
 const modalOpen = ref(false)
 const modalRef = ref(null)
@@ -33,8 +26,9 @@ const loaded = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testRetries = ref(0)
-const copied = ref(false)
+const copiedCommand = ref('')
 const errorMessage = ref('')
+const warningMessage = ref('')
 const successMessage = ref('')
 const loadGeneration = ref(0)
 const form = ref(normalizeWebhookConfigResponse())
@@ -82,14 +76,14 @@ const usesPlainHttp = computed(() => parsedUrl.value?.protocol === 'http:')
 const isUrlTooLong = (value) => new TextEncoder().encode(value).length > 4096
 const hasInvalidUrlCharacters = (value) => /[\u0000-\u0020\u007f]/.test(value)
 
-const quoteShellArgument = (value) => {
-  if (props.platform === 'windows') {
+const quoteShellArgument = (value, platform) => {
+  if (platform === 'windows') {
     return `'${String(value).replaceAll("'", "''")}'`
   }
   return `'${String(value).replaceAll("'", "'\\''")}'`
 }
 
-const curlCommand = computed(() => {
+const curlCommands = computed(() => {
   const url = parsedUrl.value
   if (
     !url ||
@@ -100,7 +94,10 @@ const curlCommand = computed(() => {
     url.username ||
     url.password
   ) {
-    return ''
+    return {
+      linux: '',
+      windows: '',
+    }
   }
 
   const requestUrl = new URL(url.href)
@@ -113,25 +110,45 @@ const curlCommand = computed(() => {
       content: '**Sunshine Webhook Test**',
     },
   })
-  const executable = props.platform === 'windows' ? 'curl.exe' : 'curl'
-  const options = [
-    executable,
-    '-X POST',
-    quoteShellArgument(requestUrl.href),
-    `--max-time ${timeoutSeconds.value}`,
-  ]
-  if (url.protocol === 'https:' && form.value.webhook_skip_ssl_verify === 'enabled') {
-    options.push('--insecure')
+  const buildCommand = (platform) => {
+    const options = [
+      platform === 'windows' ? 'curl.exe' : 'curl',
+      '-X POST',
+      quoteShellArgument(requestUrl.href, platform),
+      `--max-time ${timeoutSeconds.value}`,
+    ]
+    if (url.protocol === 'https:' && form.value.webhook_skip_ssl_verify === 'enabled') {
+      options.push('--insecure')
+    }
+    options.push(
+      `-H ${quoteShellArgument('Content-Type: application/json', platform)}`,
+      `--data-raw ${quoteShellArgument(payload, platform)}`,
+    )
+    return options.join(' ')
   }
-  options.push(
-    `-H ${quoteShellArgument('Content-Type: application/json')}`,
-    `--data-raw ${quoteShellArgument(payload)}`,
-  )
-  return options.join(' ')
+
+  return {
+    linux: buildCommand('linux'),
+    windows: buildCommand('windows'),
+  }
 })
+
+const curlTemplates = computed(() => [
+  {
+    id: 'linux',
+    label: 'Linux / macOS',
+    command: curlCommands.value.linux,
+  },
+  {
+    id: 'windows',
+    label: 'Windows PowerShell',
+    command: curlCommands.value.windows,
+  },
+])
 
 const clearMessages = () => {
   errorMessage.value = ''
+  warningMessage.value = ''
   successMessage.value = ''
 }
 
@@ -187,7 +204,7 @@ const open = async () => {
   lastFocusedElement.value = document.activeElement
   modalOpen.value = true
   ++copyGeneration
-  copied.value = false
+  copiedCommand.value = ''
   await nextTick()
   modalRef.value?.focus()
   await load()
@@ -200,7 +217,7 @@ const close = () => {
   loading.value = false
   modalOpen.value = false
   clearMessages()
-  copied.value = false
+  copiedCommand.value = ''
   if (copyResetTimer !== null) {
     clearTimeout(copyResetTimer)
     copyResetTimer = null
@@ -234,7 +251,11 @@ const save = async () => {
     }
     loaded.value = true
     savedEnabled.value = submittedEnabled
-    successMessage.value = t('notifications.webhook.save_success')
+    if (result.runtime_active === false || result.runtime_active === 'false') {
+      warningMessage.value = t('notifications.webhook.save_runtime_unavailable')
+    } else {
+      successMessage.value = t('notifications.webhook.save_success')
+    }
   } catch (error) {
     errorMessage.value = `${t('notifications.webhook.save_failed')}: ${error.message || t('notifications.webhook.unknown_error')}`
   } finally {
@@ -279,22 +300,22 @@ const clearEvents = () => {
   selectedEvents.value = []
 }
 
-const copyCurlCommand = async () => {
-  if (!curlCommand.value) return
+const copyCurlCommand = async (template) => {
+  if (!template.command) return
   const generation = ++copyGeneration
-  copied.value = false
+  copiedCommand.value = ''
   if (copyResetTimer !== null) {
     clearTimeout(copyResetTimer)
     copyResetTimer = null
   }
   let copySucceeded = false
   try {
-    await navigator.clipboard.writeText(curlCommand.value)
+    await navigator.clipboard.writeText(template.command)
     copySucceeded = true
   } catch {
     const textArea = document.createElement('textarea')
     try {
-      textArea.value = curlCommand.value
+      textArea.value = template.command
       textArea.style.position = 'fixed'
       textArea.style.opacity = '0'
       document.body.appendChild(textArea)
@@ -308,18 +329,18 @@ const copyCurlCommand = async () => {
   }
   if (generation !== copyGeneration || !modalOpen.value) return
   if (!copySucceeded) {
-    copied.value = false
+    copiedCommand.value = ''
     errorMessage.value = t('config.webhook_curl_copy_failed')
     return
   }
 
-  copied.value = true
+  copiedCommand.value = template.id
   const timer = setTimeout(() => {
     if (copyResetTimer === timer) {
       copyResetTimer = null
     }
     if (generation === copyGeneration) {
-      copied.value = false
+      copiedCommand.value = ''
     }
   }, 2000)
   copyResetTimer = timer
@@ -435,6 +456,7 @@ onUnmounted(() => {
 
               <template v-else-if="loaded">
                 <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
+                <div v-if="warningMessage" class="alert alert-warning" role="status">{{ warningMessage }}</div>
                 <div v-if="successMessage" class="alert alert-success" role="status">{{ successMessage }}</div>
 
                 <div class="mb-3">
@@ -579,22 +601,29 @@ onUnmounted(() => {
                     </button>
                   </div>
 
-                  <details class="curl-details" :class="{ disabled: !curlCommand }">
+                  <details class="curl-details" :class="{ disabled: !curlCommands.linux }">
                     <summary>
                       <i class="fas fa-terminal me-1"></i>
                       {{ $t('config.webhook_curl_command') }}
                     </summary>
                     <p>{{ $t('config.webhook_curl_command_desc') }}</p>
-                    <pre>{{ curlCommand }}</pre>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-secondary"
-                      :disabled="!curlCommand"
-                      @click="copyCurlCommand"
+                    <div
+                      v-for="template in curlTemplates"
+                      :key="template.id"
+                      class="curl-template"
                     >
-                      <i class="fas fa-copy me-1"></i>
-                      {{ copied ? $t('_common.success') : $t('_common.copy') }}
-                    </button>
+                      <strong>{{ template.label }}</strong>
+                      <pre>{{ template.command }}</pre>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        :disabled="!template.command"
+                        @click="copyCurlCommand(template)"
+                      >
+                        <i class="fas fa-copy me-1"></i>
+                        {{ copiedCommand === template.id ? $t('_common.success') : $t('_common.copy') }}
+                      </button>
+                    </div>
                   </details>
                 </div>
               </template>
@@ -863,6 +892,15 @@ onUnmounted(() => {
     background: var(--bs-tertiary-bg);
     white-space: pre-wrap;
     word-break: break-all;
+  }
+
+  .curl-template + .curl-template {
+    margin-top: 1rem;
+  }
+
+  .curl-template strong {
+    display: block;
+    margin-bottom: 0.4rem;
   }
 }
 

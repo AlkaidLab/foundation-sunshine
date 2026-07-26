@@ -438,7 +438,7 @@ main(int argc, char *argv[]) {
   }
 
   auto webhook_deinit_guard = webhook::init();
-  if (!webhook_deinit_guard) {
+  if (!webhook_deinit_guard || !webhook::runtime_active()) {
     BOOST_LOG(warning) << "Webhook runtime is unavailable; Sunshine will continue without Webhook delivery"sv;
   }
 

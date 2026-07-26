@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import WebhookCard from '../webhook/WebhookCard.vue'
 
-const props = defineProps(['platform', 'config'])
+const props = defineProps(['config'])
 
 const defaultMoonlightPort = 47989
 
@@ -101,6 +101,7 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
       <div class="alert alert-warning" v-if="config.origin_web_ui_allowed === 'wan'">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_warning') }}
       </div>
+    </div>
 
     <!-- Origin Web UI Allowed -->
     <div class="mb-3">
@@ -186,7 +187,7 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
     </div>
 
     <!-- Webhook is stored and applied independently from the general configuration form. -->
-    <WebhookCard :platform="props.platform" />
+    <WebhookCard />
 
   </div>
 </template>

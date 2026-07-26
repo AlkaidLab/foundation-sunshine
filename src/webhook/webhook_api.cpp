@@ -187,44 +187,50 @@ namespace webhook::api {
 
       bool saved = false;
       bool applied = false;
-      bool rolled_back = true;
-      configuration_t previous;
+      bool prepared_ok = false;
       try {
         std::lock_guard<std::mutex> lock(configuration_transaction_mutex);
-        previous = current_configuration();
-        applied = configure(settings);
-        if (applied) {
+        auto prepared = prepare_configuration(settings);
+        prepared_ok = static_cast<bool>(prepared);
+        if (prepared) {
           try {
-            saved = auth::save(config_path, settings);
+            saved = auth::save(config_path, prepared.value());
           }
           catch (...) {
             saved = false;
           }
-          if (!saved) {
-            rolled_back = configure(std::move(previous));
+          if (saved) {
+            applied = commit_configuration(std::move(prepared));
           }
         }
       }
       catch (...) {
         // Return a stable error without exposing the selected local path.
       }
-      if (!applied) {
+      if (!prepared_ok) {
         write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to apply Webhook configuration");
         return;
       }
       if (!saved) {
-        if (!rolled_back) {
-          BOOST_LOG(error) << "Webhook configuration persistence failed and the runtime rollback was unsuccessful";
-        }
         write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to write Webhook configuration");
         return;
       }
+      if (!applied) {
+        BOOST_LOG(error) << "Webhook configuration was persisted but could not be published to the runtime";
+        write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to apply Webhook configuration");
+        return;
+      }
 
+      // A failed startup is isolated from Sunshine and can be retried by an
+      // explicit user save. Report the runtime state separately: persistence
+      // success must not be presented as immediate delivery availability.
+      const bool runtime_available = ensure_running();
       write_json(
         std::move(response),
         SimpleWeb::StatusCode::success_ok,
         {
           {"status", true},
+          {"runtime_active", runtime_available},
         }
       );
     }

@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace webhook {
@@ -58,6 +59,45 @@ namespace webhook {
     std::vector<int> events {0, 1, 2, 3, 4, 5, 6};
   };
 
+  /**
+   * Move-only token containing an immutable, validated configuration.
+   *
+   * Only prepare_configuration() can create a valid token. Callers can read
+   * the value for persistence but cannot modify or forge the committed data.
+   */
+  class prepared_configuration_t {
+  public:
+    prepared_configuration_t(const prepared_configuration_t &) = delete;
+    prepared_configuration_t &operator=(const prepared_configuration_t &) = delete;
+    prepared_configuration_t(prepared_configuration_t &&) noexcept = default;
+    prepared_configuration_t &operator=(prepared_configuration_t &&) noexcept = default;
+    ~prepared_configuration_t() = default;
+
+    explicit operator bool() const noexcept {
+      return configuration_ != nullptr;
+    }
+
+    const configuration_t &value() const noexcept {
+      return *configuration_;
+    }
+
+  private:
+    friend prepared_configuration_t
+    prepare_configuration(configuration_t configuration) noexcept;
+    friend bool
+    commit_configuration(prepared_configuration_t &&configuration) noexcept;
+
+    prepared_configuration_t() noexcept = default;
+
+    explicit prepared_configuration_t(
+      std::shared_ptr<const configuration_t> configuration
+    ) noexcept:
+        configuration_(std::move(configuration)) {
+    }
+
+    std::shared_ptr<const configuration_t> configuration_;
+  };
+
   enum class delivery_error_t {
     NONE,
     NOT_RUNNING,
@@ -90,11 +130,41 @@ namespace webhook {
     deinit_t() = default;
   };
 
-  /** Start the isolated Webhook runtime. Failure does not affect Sunshine startup. */
+  /**
+   * Establish the isolated Webhook lifecycle and try to start its runtime.
+   *
+   * The returned guard remains responsible for any later hot-start even when
+   * the initial runtime start fails. A null guard only means lifecycle
+   * ownership itself could not be established.
+   */
   [[nodiscard]] std::unique_ptr<deinit_t> init() noexcept;
+
+  /** Idempotently start the runtime unless Sunshine shutdown has begun. */
+  bool ensure_running() noexcept;
+
+  /** Return whether the runtime is currently accepting deliveries. */
+  bool runtime_active() noexcept;
 
   /** Validate a complete independently persisted Webhook configuration. */
   bool validate_configuration(const configuration_t &configuration) noexcept;
+
+  /**
+   * Validate, normalize and fully allocate a pending configuration.
+   *
+   * Preparing does not change the configuration visible to event producers,
+   * so persistence can fail without exposing an unsaved destination.
+   */
+  prepared_configuration_t
+  prepare_configuration(configuration_t configuration) noexcept;
+
+  /**
+   * Atomically publish a previously prepared configuration.
+   *
+   * The prepared object already owns all dynamic storage, keeping the commit
+   * step independent from persistence and free of new allocations.
+  */
+  bool
+  commit_configuration(prepared_configuration_t &&configuration) noexcept;
 
   /**
    * Atomically replace the configuration used for newly queued deliveries.

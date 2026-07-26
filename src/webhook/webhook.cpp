@@ -40,6 +40,7 @@
 #include "src/platform/common.h"
 #include "src/uuid.h"
 #include "webhook_format.h"
+#include "webhook_httpclient.h"
 #include "webhook_httpsclient.h"
 
 using namespace std::literals;
@@ -54,8 +55,9 @@ namespace webhook {
     constexpr int MAX_PRODUCTION_ATTEMPTS = 3;
     constexpr auto RATE_LIMIT_WINDOW = 1min;
     constexpr auto MAX_RETRY_AFTER = 60s;
-    std::mutex configuration_mutex;
-    configuration_t active_configuration;
+    std::atomic<std::shared_ptr<const configuration_t>> active_configuration {
+      std::make_shared<const configuration_t>()
+    };
 
     struct parsed_url_t {
       bool https = false;
@@ -104,6 +106,18 @@ namespace webhook {
           std::any_of(value.begin(), value.end(), [](unsigned char c) {
             return c <= 0x20U || c == 0x7fU;
           })) {
+        return false;
+      }
+
+      const auto authority_marker = value.find("://");
+      if (authority_marker == std::string::npos) {
+        return false;
+      }
+      const auto authority_begin = authority_marker + 3;
+      if (authority_begin >= value.size() ||
+          value[authority_begin] == '/' ||
+          value[authority_begin] == '?' ||
+          value[authority_begin] == '#') {
         return false;
       }
 
@@ -295,6 +309,7 @@ namespace webhook {
 
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json; charset=utf-8");
+      headers.emplace("Connection", "close");
       headers.emplace("User-Agent", "Sunshine_Foundation/1.0 (System Notification Service)");
       headers.emplace("X-Webhook-Delivery", delivery_id);
       headers.emplace("X-Trace-ID", delivery_id);
@@ -351,10 +366,19 @@ namespace webhook {
       };
 
     public:
+      ~dispatcher_t() {
+        // Final safety net for tests or future callers that start the runtime
+        // without retaining the application lifecycle guard.
+        stop();
+      }
+
       bool start() noexcept {
         std::lock_guard<std::mutex> lock(lifecycle_mutex_);
         if (accepting_.load(std::memory_order_acquire)) {
           return true;
+        }
+        if (shutdown_requested_) {
+          return false;
         }
 
         try {
@@ -386,11 +410,12 @@ namespace webhook {
         std::shared_ptr<SimpleWeb::io_context> io;
         {
           std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+          shutdown_requested_ = true;
+          accepting_.store(false, std::memory_order_release);
           if (!io_) {
             return;
           }
 
-          accepting_.store(false, std::memory_order_release);
           io = io_;
           try {
             boost::asio::post(*io, [this]() noexcept {
@@ -424,6 +449,10 @@ namespace webhook {
         work_guard_.reset();
         io_.reset();
         pending_count_.store(0, std::memory_order_release);
+      }
+
+      bool active() const noexcept {
+        return accepting_.load(std::memory_order_acquire);
       }
 
       delivery_error_t enqueue(std::shared_ptr<delivery_t> delivery) noexcept {
@@ -568,7 +597,7 @@ namespace webhook {
           start_client(delivery, std::move(client));
         }
         else {
-          auto client = std::make_shared<SimpleWeb::Client<SimpleWeb::HTTP>>(delivery->destination.server);
+          auto client = std::make_shared<WebhookHttpClient>(delivery->destination.server);
           start_client(delivery, std::move(client));
         }
       }
@@ -851,6 +880,7 @@ namespace webhook {
       std::unique_ptr<work_guard_t> work_guard_;
       std::thread thread_;
       std::atomic<bool> accepting_ {false};
+      bool shutdown_requested_ = false;
       std::atomic<std::size_t> pending_count_ {0};
       std::atomic<long long> last_queue_full_log_ {0};
       std::map<std::string, std::shared_ptr<delivery_t>> pending_posts_;
@@ -919,9 +949,7 @@ namespace webhook {
     try {
       auto guard = std::unique_ptr<deinit_t>(new deinit_t());
       init_webhook_format();
-      if (!dispatcher().start()) {
-        return nullptr;
-      }
+      (void) dispatcher().start();
       return guard;
     }
     catch (const std::exception &) {
@@ -931,6 +959,19 @@ namespace webhook {
       BOOST_LOG(error) << "Webhook initialization failed with an unknown exception"sv;
     }
     return nullptr;
+  }
+
+  bool ensure_running() noexcept {
+    try {
+      return dispatcher().start();
+    }
+    catch (...) {
+      return false;
+    }
+  }
+
+  bool runtime_active() noexcept {
+    return dispatcher().active();
   }
 
   bool validate_configuration(const configuration_t &configuration) noexcept {
@@ -964,25 +1005,44 @@ namespace webhook {
     }
   }
 
-  bool configure(configuration_t configuration) noexcept {
+  prepared_configuration_t
+  prepare_configuration(configuration_t configuration) noexcept {
     if (!validate_configuration(configuration)) {
-      return false;
+      return {};
     }
 
     try {
       std::sort(configuration.events.begin(), configuration.events.end());
-      std::lock_guard<std::mutex> lock(configuration_mutex);
-      active_configuration = std::move(configuration);
-      return true;
+      return prepared_configuration_t {
+        std::make_shared<const configuration_t>(std::move(configuration))
+      };
     }
     catch (...) {
-      return false;
+      return {};
     }
   }
 
+  bool
+  commit_configuration(prepared_configuration_t &&configuration) noexcept {
+    if (!configuration) {
+      return false;
+    }
+
+    active_configuration.store(
+      std::move(configuration.configuration_),
+      std::memory_order_release
+    );
+    return true;
+  }
+
+  bool configure(configuration_t configuration) noexcept {
+    auto prepared = prepare_configuration(std::move(configuration));
+    return commit_configuration(std::move(prepared));
+  }
+
   configuration_t current_configuration() {
-    std::lock_guard<std::mutex> lock(configuration_mutex);
-    return active_configuration;
+    const auto configuration = active_configuration.load(std::memory_order_acquire);
+    return *configuration;
   }
 
   void send_event_async(const event_t &event) noexcept {
@@ -1034,8 +1094,15 @@ namespace webhook {
     completion_handler_t completion
   ) noexcept {
     try {
-      if (retry_count < 0 || retry_count > MAX_TEST_RETRIES) {
+      if (retry_count < 0 ||
+          retry_count > MAX_TEST_RETRIES ||
+          settings.timeout < MIN_TIMEOUT ||
+          settings.timeout > MAX_TIMEOUT) {
         complete_rejected(completion, delivery_error_t::INTERNAL);
+        return false;
+      }
+      if (!ensure_running()) {
+        complete_rejected(completion, delivery_error_t::NOT_RUNNING);
         return false;
       }
       auto delivery = make_delivery(

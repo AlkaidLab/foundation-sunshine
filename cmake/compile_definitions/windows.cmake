@@ -142,6 +142,7 @@ set(OPENSSL_LIBRARIES
 list(PREPEND PLATFORM_LIBRARIES
         ${CURL_STATIC_LIBRARIES}
         avrt
+        crypt32
         d3d11
         D3DCompiler
         dwmapi
