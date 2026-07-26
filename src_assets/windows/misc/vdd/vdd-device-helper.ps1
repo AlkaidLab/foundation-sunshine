@@ -24,9 +24,11 @@ $deviceClassPath = 'SYSTEM\CurrentControlSet\Control\Class'
 $dnStarted = 0x00000008
 $crInvalidDevnode = 0x00000005
 $crNoSuchDevnode = 0x0000000D
+$crBufferSmall = 0x0000001A
 $deviceTimeoutSeconds = 120
 $targetedRemovalTimeoutSeconds = 10
 $win32ErrorTimeout = 1460
+$vddControlInterfaceGuid = 'DA9F8C2B-7E4F-49A1-9D4E-6F2B0E1A0C4D'
 $requiredDriverFiles = @('ZakoVDD.inf', 'ZakoVDD.dll', 'zakovdd.cat', 'ZakoVDD.cer')
 
 function Initialize-CfgMgr32 {
@@ -51,6 +53,21 @@ public static class SunshineVddCfgMgr32
         out uint status,
         out uint problemNumber,
         uint deviceInstance,
+        uint flags);
+
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint CM_Get_Device_Interface_List_SizeW(
+        out uint bufferLength,
+        ref Guid interfaceClassGuid,
+        string deviceInstanceId,
+        uint flags);
+
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint CM_Get_Device_Interface_ListW(
+        ref Guid interfaceClassGuid,
+        string deviceInstanceId,
+        [Out] char[] buffer,
+        uint bufferLength,
         uint flags);
 }
 '@
@@ -85,6 +102,42 @@ function Get-VddDeviceStatus([string] $InstanceId) {
         return [pscustomobject]@{ State = 'OK'; Problem = [int]$problem }
     }
     return [pscustomobject]@{ State = 'ERROR'; Problem = [int]$problem }
+}
+
+function Test-VddControlInterfaceAvailable(
+    [int] $Attempts = 3,
+    [int] $DelayMilliseconds = 200) {
+    Initialize-CfgMgr32
+
+    $interfaceGuid = [Guid] $vddControlInterfaceGuid
+    for ($attempt = 0; $attempt -lt [Math]::Max(1, $Attempts); $attempt++) {
+        [uint32] $bufferLength = 0
+        $sizeResult = [SunshineVddCfgMgr32]::CM_Get_Device_Interface_List_SizeW(
+            [ref] $bufferLength,
+            [ref] $interfaceGuid,
+            $null,
+            0)
+        if ($sizeResult -eq 0 -and $bufferLength -gt 1) {
+            $buffer = New-Object char[] $bufferLength
+            $listResult = [SunshineVddCfgMgr32]::CM_Get_Device_Interface_ListW(
+                [ref] $interfaceGuid,
+                $null,
+                $buffer,
+                $bufferLength,
+                0)
+            if ($listResult -eq 0 -and $buffer[0] -ne [char]0) {
+                return $true
+            }
+            if ($listResult -eq $crBufferSmall) {
+                continue
+            }
+        }
+
+        if ($attempt + 1 -lt $Attempts -and $DelayMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+    return $false
 }
 
 function Get-VddDevices {
@@ -188,17 +241,21 @@ function Test-VddDeviceReady([object] $Device, [string] $ExpectedVersion = '') {
         (-not $ExpectedVersion -or $Device.Version -eq $ExpectedVersion))
 }
 
-function Get-VddDecision([object[]] $Devices, [string] $BundledVersion) {
+function Get-VddDecision(
+    [object[]] $Devices,
+    [string] $BundledVersion,
+    [bool] $ControlAvailable = $true) {
     $deviceList = @($Devices)
     $device = if ($deviceList.Count -eq 1) { $deviceList[0] } else { $null }
     $isHealthy = Test-VddDeviceReady $device
-    $isReady = Test-VddDeviceReady $device $BundledVersion
+    $isReady = (Test-VddDeviceReady $device $BundledVersion) -and $ControlAvailable
 
     return [pscustomobject]@{
         DeviceCount = $deviceList.Count
         CleanupRequired = [int]($deviceList.Count -gt 0 -and -not $isReady)
         InstallRequired = [int](-not $isReady)
         HealthyExisting = [int]$isHealthy
+        ControlAvailable = [int]$ControlAvailable
         CurrentVersion = $(if ($device) { $device.Version } else { '' })
         CurrentStatus = $(if ($device) { $device.Status } else { '' })
         CurrentInf = $(if ($device) { $device.InfName } else { '' })
@@ -303,10 +360,12 @@ function Resolve-VddPayload([string] $Directory, [string] $BuildOverride) {
 function Get-VddState([string] $InfPath) {
     $devices = @(Get-VddDevices)
     $bundledVersion = Get-BundledVersion $InfPath
+    $controlAvailable = Test-VddControlInterfaceAvailable
     return [pscustomobject]@{
         Devices = $devices
         BundledVersion = $bundledVersion
-        Decision = Get-VddDecision $devices $bundledVersion
+        ControlAvailable = $controlAvailable
+        Decision = Get-VddDecision $devices $bundledVersion $controlAvailable
     }
 }
 
@@ -592,7 +651,8 @@ function Add-VddDriverPackage([object] $Payload) {
 function Install-VddDeviceFromInf(
     [string] $NefconPath,
     [string] $InfPath,
-    [string] $ExpectedVersion) {
+    [string] $ExpectedVersion,
+    [bool] $RequireControlInterface = $true) {
     foreach ($requiredPath in @($NefconPath, $InfPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Required VDD installer file is unavailable: $requiredPath"
@@ -618,9 +678,12 @@ function Install-VddDeviceFromInf(
     if (-not (Wait-Until {
         $devices = @(Get-VddDevices)
         $devices.Count -eq 1 -and
-            (Test-VddDeviceReady $devices[0] $ExpectedVersion)
+            (Test-VddDeviceReady $devices[0] $ExpectedVersion) -and
+            (-not $RequireControlInterface -or
+                (Test-VddControlInterfaceAvailable 1 0))
     } $deviceTimeoutSeconds)) {
-        throw "VDD did not become ready at version $ExpectedVersion."
+        $readiness = if ($RequireControlInterface) { ' with its control interface' } else { '' }
+        throw "VDD did not become ready$readiness at version $ExpectedVersion."
     }
 }
 
@@ -649,7 +712,8 @@ function Restore-VddDevice([object] $Payload, [object] $PreviousDevice) {
         Install-VddDeviceFromInf `
             $Payload.Paths.Nefcon `
             $previousInf `
-            $PreviousDevice.Version
+            $PreviousDevice.Version `
+            $false
     }
 
     try {
@@ -756,6 +820,7 @@ function Invoke-VddInstall(
     if ($decision.CurrentVersion) { Write-Output "Installed VDD version: $($decision.CurrentVersion)" }
     if ($decision.CurrentStatus) { Write-Output "Installed VDD status: $($decision.CurrentStatus)" }
     if ($decision.CurrentInf) { Write-Output "Active VDD package: $($decision.CurrentInf)" }
+    Write-Output "VDD control interface available: $([bool]$decision.ControlAvailable)"
     Write-Output "Bundled VDD version: $($state.BundledVersion)"
     if ($decision.InstallRequired) {
         Write-Output 'VDD state requires reconciliation before installation.'
@@ -765,10 +830,11 @@ function Invoke-VddInstall(
     }
     if ($InstallMode -eq 'ProbeOnly') {
         $devices = @($state.Devices)
-        $decision = Get-VddDecision $devices $state.BundledVersion
+        $decision = Get-VddDecision $devices $state.BundledVersion $state.ControlAvailable
         $device = if ($decision.DeviceCount -eq 1) { $devices[0] } else { $null }
         Write-Output 'VDD_PROBE_OK=1'
         Write-Output ('VDD_DEVICE_PRESENT=' + [int]($decision.DeviceCount -gt 0))
+        Write-Output ('VDD_CONTROL_AVAILABLE=' + $decision.ControlAvailable)
         Write-Output ('CURRENT_VDD_VERSION=' + $decision.CurrentVersion)
         Write-Output ('CURRENT_VDD_STATUS=' + $decision.CurrentStatus)
         Write-Output ('CURRENT_VDD_PROBLEM=' + $(if ($device) { [int]$device.Problem } else { '' }))
@@ -781,7 +847,8 @@ function Invoke-VddInstall(
 
     if ($PreserveHealthyExisting -and
         $decision.InstallRequired -and
-        $decision.HealthyExisting) {
+        $decision.HealthyExisting -and
+        $decision.ControlAvailable) {
         Write-Output 'A healthy VDD is already active; deferring the bundled driver update.'
         Write-Output 'VDD_DRIVER_UPDATE_DEFERRED=1'
         return

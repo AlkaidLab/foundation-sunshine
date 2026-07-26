@@ -15,7 +15,7 @@ TEST(VddPrerequisiteSafety, ClassifiesEveryCoreState) {
   EXPECT_EQ(classify_vdd_state(true, true, true, true, 0), "ready");
 }
 
-TEST(VddPrerequisiteSafety, OnlyInstalledRunningDriversAreUsable) {
+TEST(VddPrerequisiteSafety, OnlyInstalledRunningDriversWithControlAreUsable) {
   display_device::vdd_utils::vdd_status_t status;
   EXPECT_FALSE(status.is_usable());
 
@@ -26,6 +26,9 @@ TEST(VddPrerequisiteSafety, OnlyInstalledRunningDriversAreUsable) {
   EXPECT_FALSE(status.is_usable());
 
   status.problem_code_valid = true;
+  EXPECT_FALSE(status.is_usable());
+
+  status.control_available = true;
   EXPECT_TRUE(status.is_usable());
 }
 
@@ -41,6 +44,9 @@ TEST(VddPrerequisiteSafety, SharesPrerequisiteClassificationAcrossCallers) {
 
   status.problem_code_valid = true;
   status.running = true;
+  EXPECT_EQ(classify_vdd_prerequisite(status), vdd_prerequisite_e::unavailable);
+
+  status.control_available = true;
   EXPECT_EQ(classify_vdd_prerequisite(status), vdd_prerequisite_e::usable);
 }
 

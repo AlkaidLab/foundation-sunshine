@@ -44,6 +44,7 @@ test('VDD status preserves real desktop version probe results', async (t) => {
         state: 'ready',
         installed: true,
         running: true,
+        control_available: true,
         installed_version: '1.2.3',
         bundled_version: '1.2.3',
         version_match: true,
@@ -77,10 +78,11 @@ test('VDD status prefers the desktop bridge and verifies installation', async (t
         state: installed ? 'ready' : 'not_installed',
         installed,
         running: installed,
+        control_available: installed,
       }),
       install: async () => {
         installed = true
-        return { state: 'ready', installed: true, running: true }
+        return { state: 'ready', installed: true, running: true, control_available: true }
       },
     },
   }
@@ -104,11 +106,16 @@ test('VDD installation cancellation keeps state visible and allows retry', async
   let attempts = 0
   globalThis.window = {
     vddDriver: {
-      getStatus: async () => ({ state: 'not_installed', installed: false, running: false }),
+      getStatus: async () => ({
+        state: 'not_installed',
+        installed: false,
+        running: false,
+        control_available: false,
+      }),
       install: async () => {
         attempts += 1
         if (attempts === 1) throw new Error('UAC request was cancelled')
-        return { state: 'ready', installed: true, running: true }
+        return { state: 'ready', installed: true, running: true, control_available: true }
       },
     },
   }
@@ -124,4 +131,28 @@ test('VDD installation cancellation keeps state visible and allows retry', async
   await vdd.installVdd()
   assert.equal(vdd.vddReady.value, true)
   assert.equal(vdd.vddStatusError.value, '')
+})
+
+test('VDD without its required control interface is not ready', async (t) => {
+  const originalWindow = globalThis.window
+  t.after(() => {
+    globalThis.window = originalWindow
+  })
+
+  globalThis.window = {
+    vddDriver: {
+      getStatus: async () => ({
+        state: 'degraded',
+        installed: true,
+        running: true,
+        control_available: false,
+      }),
+    },
+  }
+
+  const vdd = useVddStatus()
+  await vdd.refreshVddStatus()
+
+  assert.equal(vdd.vddStatus.value.state, 'degraded')
+  assert.equal(vdd.vddReady.value, false)
 })

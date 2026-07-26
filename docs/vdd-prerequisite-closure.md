@@ -64,6 +64,14 @@ facts:
 derived from `state`; the backend does not need a second recommended-action
 enum.
 
+`control_available` reports whether the driver published its control interface
+(`GUID_DEVINTERFACE_ZAKO_VDD_CONTROL`). A present but silent adapter cannot be
+driven, so the fact is part of the usable invariant rather than advisory
+metadata: `is_usable()`, the Web `vddReady` computed property, and the
+installer's reconciliation decision all require it. An installed and running
+adapter that never publishes the interface classifies as `degraded` and is
+reconciled instead of being preserved as a healthy existing installation.
+
 ## Architecture
 
 ### Desktop management path

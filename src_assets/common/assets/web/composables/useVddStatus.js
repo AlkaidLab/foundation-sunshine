@@ -51,6 +51,7 @@ export function useVddStatus() {
   const vddReady = computed(() =>
     vddStatus.value.installed &&
     vddStatus.value.running &&
+    vddStatus.value.control_available &&
     ['ready', 'degraded'].includes(vddStatus.value.state)
   )
 
