@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "src/platform/common.h"
@@ -19,6 +20,17 @@
 struct OpusDecoder;
 
 namespace platf::audio {
+
+  struct mic_redirect_test_result_t {
+    bool success = false;
+    std::string error_code;
+  };
+
+  /**
+   * @brief Write a short test tone through the configured virtual microphone.
+   */
+  mic_redirect_test_result_t
+  test_mic_redirect();
   
   // COM interface Release helper for safe_ptr
   template<typename T>
@@ -62,7 +74,7 @@ namespace platf::audio {
      * @return 0 on success, -1 on failure
      */
     int
-    init();
+    init(bool test_mode = false);
 
     /**
      * @brief Write audio data to the virtual audio device
@@ -75,7 +87,7 @@ namespace platf::audio {
     write_data(const char *data, size_t len, uint16_t seq = 0);
 
     /**
-     * @brief Test write functionality with silent audio
+     * @brief Write a short audible tone to the initialized render endpoint.
      * @return Number of bytes written, or -1 on error
      */
     int
@@ -209,4 +221,4 @@ namespace platf::audio {
   };
 
   extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
-}  // namespace platf::audio 
+}  // namespace platf::audio

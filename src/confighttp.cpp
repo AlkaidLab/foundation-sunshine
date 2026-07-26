@@ -66,6 +66,7 @@
 #ifdef _WIN32
   #include <iphlpapi.h>
   #include "display_device/vdd_utils.h"
+  #include "platform/windows/mic_write.h"
   #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 
@@ -1448,6 +1449,24 @@ namespace confighttp {
 
     display_device::session_t::get().reset_persistence();
     outputTree.put("status", true);
+  }
+
+  void
+  testMicrophone(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+    const auto result = platf::audio::test_mic_redirect();
+    send_response(response, nlohmann::json {
+      {"success", result.success},
+      {"error_code", result.error_code},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"success", false},
+      {"error_code", "MIC_TEST_UNSUPPORTED"},
+    });
+#endif
   }
 
 #ifdef _WIN32
@@ -3198,6 +3217,7 @@ namespace confighttp {
     server.resource["^/api/restart$"]["GET"] = restart;
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
+    server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
