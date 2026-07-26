@@ -554,7 +554,25 @@ namespace platf::audio {
         return -1;
       }
       total_bytes_written += bytes_written;
-      Sleep(18);
+      // Stay ahead of playback so the render buffer never drains mid-tone. The
+      // default Windows timer granularity is ~15.6 ms, so any requested delay is
+      // rounded up to a whole tick: Sleep(18) really costs ~31 ms and starves a
+      // 20 ms packet. One tick is comfortably shorter than the packet, and
+      // write_data() backs off on its own once the buffer is full.
+      Sleep(10);
+    }
+
+    // The writer finishes ahead of playback, so the last packets are still
+    // queued. cleanup() stops the audio client outright, which would clip the
+    // tail off the tone; wait for the endpoint to drain first.
+    for (int drain_attempt = 0; drain_attempt < 40; ++drain_attempt) {
+      UINT32 padding = 0;
+      if (FAILED(audio_client->GetCurrentPadding(&padding)) || padding == 0) {
+        break;
+      }
+      const DWORD remaining_ms = static_cast<DWORD>(
+        padding * 1000ull / current_format.nSamplesPerSec);
+      Sleep(std::max<DWORD>(remaining_ms, 5));
     }
 
     return total_bytes_written;
