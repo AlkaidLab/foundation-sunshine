@@ -125,7 +125,9 @@ mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
 
   // Main thread event loop
   BOOST_LOG(info) << "Starting main loop"sv;
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   while (system_tray::process_tray_events() == 0);
+#endif
   BOOST_LOG(info) << "Main loop has exited"sv;
 }
 
@@ -442,15 +444,17 @@ main(int argc, char *argv[]) {
 
   if (tray_is_enabled && config::sunshine.system_tray) {
     BOOST_LOG(info) << "Starting system tray"sv;
-#ifdef _WIN32
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+  #ifdef _WIN32
     // TODO: Windows has a weird bug where when running as a service and on the first Windows boot,
     // he tray icon would not appear even though Sunshine is running correctly otherwise.
     // Restarting the service would allow the icon to appear normally.
     // For now we will keep the Windows tray icon on a separate thread.
     // Ideally, we would run the system tray on the main thread for all platforms.
     system_tray::init_tray_threaded();
-#else
+  #else
     system_tray::init_tray();
+  #endif
 #endif
   }
 
