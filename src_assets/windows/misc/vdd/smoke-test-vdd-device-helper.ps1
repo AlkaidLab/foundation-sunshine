@@ -36,6 +36,13 @@ if (-not (Test-Path -LiteralPath $HelperScript)) {
 
 . $HelperScript
 
+Assert-Equal $false (Test-VddVersionAtLeast '100.0.16.5' '100.0.16.6') `
+    'An older driver version must not satisfy the bundled minimum.'
+Assert-Equal $true (Test-VddVersionAtLeast '100.0.16.7' '100.0.16.6') `
+    'A newer driver version must satisfy the bundled minimum.'
+Assert-Equal $true (Test-VddVersionAtLeast 'custom-build' '100.0.16.6') `
+    'An incomparable healthy custom driver must be preserved.'
+
 $cases = @(
     @{
         Name = 'No device requires one install'
@@ -559,8 +566,25 @@ try {
 
     $script:workflowCalls = @()
     Invoke-VddInstall $PSScriptRoot 'Run' -PreserveHealthyExisting
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Clear,Cleanup:100.0.16.6' `
+        ($script:workflowCalls -join ',') `
+        'An unattended upgrade must replace a healthy older driver.'
+
+    $script:workflowCalls = @()
+    $script:workflowDevices = @(New-TestDevice '100.0.16.7' 'OK' 'oem43.inf')
+    $script:workflowDecision = [pscustomobject]@{
+        DeviceCount = 1
+        CleanupRequired = 1
+        InstallRequired = 1
+        HealthyExisting = 1
+        ControlAvailable = 1
+        CurrentVersion = '100.0.16.7'
+        CurrentStatus = 'OK'
+        CurrentInf = 'oem43.inf'
+    }
+    Invoke-VddInstall $PSScriptRoot 'Run' -PreserveHealthyExisting
     Assert-Equal 'Stage,Configure' ($script:workflowCalls -join ',') `
-        'An unattended upgrade must preserve a healthy mismatched driver for later GUI maintenance.'
+        'An unattended upgrade must not downgrade a healthy newer driver.'
 
     $script:workflowCalls = @()
     $script:workflowDevices = @(New-TestDevice '100.0.16.6')

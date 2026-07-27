@@ -241,6 +241,17 @@ function Test-VddDeviceReady([object] $Device, [string] $ExpectedVersion = '') {
         (-not $ExpectedVersion -or $Device.Version -eq $ExpectedVersion))
 }
 
+function Test-VddVersionAtLeast([string] $InstalledVersion, [string] $BundledVersion) {
+    try {
+        return [version] $InstalledVersion -ge [version] $BundledVersion
+    }
+    catch {
+        # Never silently replace a healthy custom driver whose version cannot
+        # be compared with the bundled Windows dotted-quad version.
+        return $true
+    }
+}
+
 function Get-VddDecision(
     [object[]] $Devices,
     [string] $BundledVersion,
@@ -848,8 +859,9 @@ function Invoke-VddInstall(
     if ($PreserveHealthyExisting -and
         $decision.InstallRequired -and
         $decision.HealthyExisting -and
-        $decision.ControlAvailable) {
-        Write-Output 'A healthy VDD is already active; deferring the bundled driver update.'
+        $decision.ControlAvailable -and
+        (Test-VddVersionAtLeast $decision.CurrentVersion $state.BundledVersion)) {
+        Write-Output 'A healthy same-or-newer VDD is already active; deferring the bundled driver update.'
         Write-Output 'VDD_DRIVER_UPDATE_DEFERRED=1'
         return
     }
