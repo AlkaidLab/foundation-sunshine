@@ -93,7 +93,7 @@ namespace display_device::vdd_utils {
 
     constexpr bool
     is_usable() const {
-      return installed && problem_code_valid && running;
+      return installed && problem_code_valid && running && control_available;
     }
   };
 

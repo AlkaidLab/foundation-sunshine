@@ -15,7 +15,8 @@ namespace display_device::vdd_capability {
     if (!status.installed) {
       return state_e::driver_missing;
     }
-    if (status.is_usable() && status.control_available) {
+    // is_usable() already requires control_available.
+    if (status.is_usable()) {
       return state_e::ready;
     }
     return state_e::driver_unreachable;

@@ -52,6 +52,14 @@ $cases = @(
         Install = 0
     },
     @{
+        Name = 'A matching device without its control interface is reconciled'
+        Devices = @(New-TestDevice '100.0.16.6')
+        ControlAvailable = $false
+        Count = 1
+        Cleanup = 1
+        Install = 1
+    },
+    @{
         Name = 'Version upgrade reconciles the existing device'
         Devices = @(New-TestDevice '100.0.16.5')
         Count = 1
@@ -92,10 +100,18 @@ $cases = @(
 )
 
 $results = foreach ($case in $cases) {
-    $decision = Get-VddDecision $case.Devices '100.0.16.6'
+    $controlAvailable = if ($case.ContainsKey('ControlAvailable')) {
+        [bool] $case.ControlAvailable
+    }
+    else {
+        $true
+    }
+    $decision = Get-VddDecision $case.Devices '100.0.16.6' $controlAvailable
     Assert-Equal $case.Count $decision.DeviceCount "$($case.Name): wrong device count"
     Assert-Equal $case.Cleanup $decision.CleanupRequired "$($case.Name): wrong cleanup decision"
     Assert-Equal $case.Install $decision.InstallRequired "$($case.Name): wrong install decision"
+    Assert-Equal ([int]$controlAvailable) $decision.ControlAvailable `
+        "$($case.Name): wrong control-interface decision"
 
     [pscustomobject]@{
         Case = $case.Name
@@ -516,6 +532,7 @@ try {
         CleanupRequired = 0
         InstallRequired = 0
         HealthyExisting = 1
+        ControlAvailable = 1
         CurrentVersion = '100.0.16.6'
         CurrentStatus = 'OK'
         CurrentInf = 'oem42.inf'
@@ -531,6 +548,7 @@ try {
         CleanupRequired = 1
         InstallRequired = 1
         HealthyExisting = 1
+        ControlAvailable = 1
         CurrentVersion = '100.0.16.5'
         CurrentStatus = 'OK'
         CurrentInf = 'oem40.inf'
@@ -544,6 +562,34 @@ try {
     Assert-Equal 'Stage,Configure' ($script:workflowCalls -join ',') `
         'An unattended upgrade must preserve a healthy mismatched driver for later GUI maintenance.'
 
+    $script:workflowCalls = @()
+    $script:workflowDevices = @(New-TestDevice '100.0.16.6')
+    $script:workflowDecision = [pscustomobject]@{
+        DeviceCount = 1
+        CleanupRequired = 1
+        InstallRequired = 1
+        HealthyExisting = 1
+        ControlAvailable = 0
+        CurrentVersion = '100.0.16.6'
+        CurrentStatus = 'OK'
+        CurrentInf = 'oem42.inf'
+    }
+    Invoke-VddInstall $PSScriptRoot 'Run' -PreserveHealthyExisting
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Clear,Cleanup:100.0.16.6' `
+        ($script:workflowCalls -join ',') `
+        'An unattended upgrade must repair a driver whose required control interface is missing.'
+
+    $script:workflowDevices = @(New-TestDevice '100.0.16.5' 'OK' 'oem40.inf')
+    $script:workflowDecision = [pscustomobject]@{
+        DeviceCount = 1
+        CleanupRequired = 1
+        InstallRequired = 1
+        HealthyExisting = 1
+        ControlAvailable = 1
+        CurrentVersion = '100.0.16.5'
+        CurrentStatus = 'OK'
+        CurrentInf = 'oem40.inf'
+    }
     $script:workflowCalls = @()
     $script:failWorkflowPackage = $true
     $packageValidationFailed = $false
