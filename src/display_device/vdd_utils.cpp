@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
@@ -67,6 +68,174 @@ namespace display_device {
         status.problem_code);
 
       return status;
+    }
+
+    using vdd_mode_t = std::pair<std::string, std::string>;
+
+    std::string
+    make_vdd_mode_key(const std::string &resolution, const std::string &refresh_rate) {
+      return resolution + "@" + refresh_rate;
+    }
+
+    void
+    append_vdd_mode_latest(std::vector<vdd_mode_t> &modes, std::string resolution, std::string refresh_rate) {
+      boost::algorithm::trim(resolution);
+      boost::algorithm::trim(refresh_rate);
+      if (resolution.empty() || refresh_rate.empty()) {
+        return;
+      }
+
+      const auto key = make_vdd_mode_key(resolution, refresh_rate);
+      modes.erase(std::remove_if(modes.begin(), modes.end(), [&](const auto &mode) {
+                    return make_vdd_mode_key(mode.first, mode.second) == key;
+                  }),
+        modes.end());
+      modes.emplace_back(std::move(resolution), std::move(refresh_rate));
+    }
+
+    void
+    collect_vdd_mode_dimensions(const std::vector<vdd_mode_t> &modes,
+      std::unordered_set<std::string> &resolutions,
+      std::unordered_set<std::string> &refresh_rates) {
+      for (const auto &mode : modes) {
+        resolutions.insert(mode.first);
+        refresh_rates.insert(mode.second);
+      }
+    }
+
+    std::size_t
+    count_vdd_mode_combinations(const std::vector<vdd_mode_t> &modes) {
+      std::unordered_set<std::string> resolutions;
+      std::unordered_set<std::string> refresh_rates;
+      collect_vdd_mode_dimensions(modes, resolutions, refresh_rates);
+      return resolutions.size() * refresh_rates.size();
+    }
+
+    bool
+    vdd_modes_equal(const std::vector<vdd_mode_t> &lhs, const std::vector<vdd_mode_t> &rhs) {
+      if (lhs.size() != rhs.size()) {
+        return false;
+      }
+
+      for (std::size_t index = 0; index < lhs.size(); ++index) {
+        if (lhs[index] != rhs[index]) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    bool
+    contains_vdd_mode(const std::vector<vdd_mode_t> &modes, const std::string &resolution, const std::string &refresh_rate) {
+      const auto key = make_vdd_mode_key(resolution, refresh_rate);
+      return std::any_of(modes.begin(), modes.end(), [&](const auto &mode) {
+        return make_vdd_mode_key(mode.first, mode.second) == key;
+      });
+    }
+
+    void
+    trim_temporary_vdd_modes_to_limit(const std::vector<vdd_mode_t> &global_modes, std::vector<vdd_mode_t> &temporary_modes) {
+      std::unordered_set<std::string> global_resolutions;
+      std::unordered_set<std::string> global_refresh_rates;
+      collect_vdd_mode_dimensions(global_modes, global_resolutions, global_refresh_rates);
+
+      const auto temporary_mode_limit = std::min(
+        confighttp::VDD_MAX_CACHED_TEMPORARY_MODES,
+        confighttp::vdd_max_temporary_mode_count(
+          global_resolutions.size(),
+          global_refresh_rates.size()));
+
+      while (temporary_modes.size() > temporary_mode_limit) {
+        temporary_modes.erase(temporary_modes.begin());
+      }
+    }
+
+    void
+    read_modes_from_vdd_settings(const pt::ptree &vdd_settings,
+      std::vector<vdd_mode_t> &global_modes,
+      std::vector<vdd_mode_t> &temporary_modes) {
+      global_modes.clear();
+      temporary_modes.clear();
+      std::vector<std::string> resolutions;
+      std::vector<std::string> global_refresh_rates;
+
+      if (const auto global_node = vdd_settings.get_child_optional("global")) {
+        for (const auto &child : *global_node) {
+          if (child.first != "g_refresh_rate") {
+            continue;
+          }
+
+          auto refresh_rate = child.second.data();
+          boost::algorithm::trim(refresh_rate);
+          if (!refresh_rate.empty()) {
+            global_refresh_rates.push_back(std::move(refresh_rate));
+          }
+        }
+      }
+
+      if (const auto resolutions_node = vdd_settings.get_child_optional("resolutions")) {
+        for (const auto &child : *resolutions_node) {
+          if (child.first != "resolution") {
+            continue;
+          }
+
+          auto width = child.second.get<std::string>("width", "");
+          auto height = child.second.get<std::string>("height", "");
+          boost::algorithm::trim(width);
+          boost::algorithm::trim(height);
+          if (width.empty() || height.empty()) {
+            continue;
+          }
+
+          const auto resolution = width + "x" + height;
+          if (auto refresh_rate = child.second.get_optional<std::string>("refresh_rate")) {
+            append_vdd_mode_latest(temporary_modes, resolution, *refresh_rate);
+          }
+          else {
+            resolutions.push_back(resolution);
+          }
+        }
+      }
+
+      for (const auto &refresh_rate : global_refresh_rates) {
+        for (const auto &resolution : resolutions) {
+          append_vdd_mode_latest(global_modes, resolution, refresh_rate);
+        }
+      }
+    }
+
+    void
+    read_vdd_settings_modes(std::vector<vdd_mode_t> &global_modes,
+      std::vector<vdd_mode_t> &temporary_modes) {
+      global_modes.clear();
+      temporary_modes.clear();
+      const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
+      if (!std::filesystem::exists(settings_path)) {
+        return;
+      }
+
+      try {
+        pt::ptree root;
+        pt::read_xml(settings_path.string(), root);
+        const auto vdd_settings = root.get_child_optional("vdd_settings");
+        if (!vdd_settings) {
+          return;
+        }
+
+        read_modes_from_vdd_settings(*vdd_settings, global_modes, temporary_modes);
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "读取VDD模式列表失败: " << e.what();
+      }
+    }
+
+    void
+    append_configured_vdd_modes(std::vector<vdd_mode_t> &modes) {
+      for (const auto &resolution : config::nvhttp.resolutions) {
+        for (const auto &refresh_rate : config::nvhttp.fps) {
+          append_vdd_mode_latest(modes, resolution, refresh_rate);
+        }
+      }
     }
 
     std::chrono::milliseconds
@@ -729,31 +898,83 @@ namespace display_device {
 
     VddSettings
     prepare_vdd_settings(const parsed_config_t &config) {
-      std::vector<resolution_t> resolution_modes;
-      std::vector<unsigned int> refresh_rates_hz;
+      VddSettings settings;
 
+      // XML缓存模式列表：全局模式来自用户配置，临时模式来自缓存+本次会话
+      std::vector<vdd_mode_t> existing_global_modes;
+      std::vector<vdd_mode_t> existing_temporary_modes;
+      read_vdd_settings_modes(existing_global_modes, existing_temporary_modes);
+
+      auto global_modes = existing_global_modes;
+      if (!config::nvhttp.resolutions.empty() && !config::nvhttp.fps.empty()) {
+        global_modes.clear();
+        append_configured_vdd_modes(global_modes);
+      }
+
+      auto temporary_modes = existing_temporary_modes;
+      if (config.resolution && config.refresh_rate) {
+        const auto current_resolution = to_string(*config.resolution);
+        const auto current_refresh_rate = to_string(*config.refresh_rate);
+        if (!contains_vdd_mode(global_modes, current_resolution, current_refresh_rate)) {
+          append_vdd_mode_latest(temporary_modes, current_resolution, current_refresh_rate);
+        }
+      }
+
+      trim_temporary_vdd_modes_to_limit(global_modes, temporary_modes);
+
+      // SETMODES类型化模式列表：配置模式 + 缓存临时模式 + 本次会话模式
       for (const auto &res : config::nvhttp.resolutions) {
         if (const auto parsed_resolution = parse_vdd_resolution(res)) {
-          append_unique_resolution(resolution_modes, *parsed_resolution);
+          append_unique_resolution(settings.resolution_modes, *parsed_resolution);
         }
       }
 
       for (const auto &fps : config::nvhttp.fps) {
         if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
-          append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
+          append_unique_refresh_rate(settings.refresh_rates_hz, *parsed_refresh_hz);
+        }
+      }
+
+      for (const auto &mode : temporary_modes) {
+        if (const auto parsed_resolution = parse_vdd_resolution(mode.first)) {
+          append_unique_resolution(settings.resolution_modes, *parsed_resolution);
+        }
+        if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(mode.second)) {
+          append_unique_refresh_rate(settings.refresh_rates_hz, *parsed_refresh_hz);
         }
       }
 
       if (config.resolution) {
-        append_unique_resolution(resolution_modes, *config.resolution);
+        append_unique_resolution(settings.resolution_modes, *config.resolution);
       }
       if (config.refresh_rate) {
         if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
-          append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
+          append_unique_refresh_rate(settings.refresh_rates_hz, *session_refresh_hz);
         }
       }
 
-      return { std::move(resolution_modes), std::move(refresh_rates_hz) };
+      settings.needs_cache_update = config.resolution && config.refresh_rate &&
+                                    (!vdd_modes_equal(existing_global_modes, global_modes) ||
+                                      !vdd_modes_equal(existing_temporary_modes, temporary_modes));
+      settings.mode_combination_count = count_vdd_mode_combinations(global_modes) + temporary_modes.size();
+      settings.global_modes = std::move(global_modes);
+      settings.temporary_modes = std::move(temporary_modes);
+      return settings;
+    }
+
+    void
+    clear_vdd_mode_cache() {
+      std::vector<vdd_mode_t> global_modes;
+      std::vector<vdd_mode_t> temporary_modes;
+      read_vdd_settings_modes(global_modes, temporary_modes);
+      if (temporary_modes.empty()) {
+        return;
+      }
+
+      BOOST_LOG(info) << "VDD启动失败，清除临时模式缓存 [count: " << temporary_modes.size() << "]";
+      if (!confighttp::saveVddModeSettings(global_modes, {}, config::video.adapter_name)) {
+        BOOST_LOG(warning) << "清除VDD临时模式缓存失败";
+      }
     }
 
     bool

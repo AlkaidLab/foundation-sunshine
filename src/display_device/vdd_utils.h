@@ -2,9 +2,11 @@
 
 #define WIN32_LEAN_AND_MEAN
 
+#include <cstddef>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -48,8 +50,15 @@ namespace display_device::vdd_utils {
 
   // VDD设置结构
   struct VddSettings {
+    // Typed mode lists pushed to the driver via SETMODES.
     std::vector<resolution_t> resolution_modes;
     std::vector<unsigned int> refresh_rates_hz;
+    // Fixed modes written through global.g_refresh_rate plus resolution nodes.
+    std::vector<std::pair<std::string, std::string>> global_modes;
+    // Temporary exact modes written as resolution.refresh_rate nodes.
+    std::vector<std::pair<std::string, std::string>> temporary_modes;
+    std::size_t mode_combination_count = 0;
+    bool needs_cache_update = false;
   };
 
   constexpr bool
@@ -256,6 +265,14 @@ namespace display_device::vdd_utils {
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
+
+  /**
+   * @brief Drop cached temporary modes from vdd_settings.xml.
+   * @details Called on driver bring-up failure paths so a bad cached mode list
+   *          cannot keep breaking every subsequent VDD start.
+   */
+  void
+  clear_vdd_mode_cache();
 
   // 重试函数模板
   template <typename Func>

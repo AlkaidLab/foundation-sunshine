@@ -1239,32 +1239,193 @@ namespace confighttp {
     return tokens;
   }
 
-  bool
-  saveVddSettings(std::string resArray, std::string fpsArray, std::string gpu_name) {
-    pt::ptree iddOptionTree;
-    pt::ptree global_node;
-    pt::ptree resolutions_nodes;
+  std::string
+  trim_vdd_token(std::string value) {
+    boost::algorithm::trim(value);
+    if (value.size() >= 2 &&
+        ((value.front() == '"' && value.back() == '"') ||
+         (value.front() == '\'' && value.back() == '\''))) {
+      value = value.substr(1, value.size() - 2);
+      boost::algorithm::trim(value);
+    }
+    return value;
+  }
 
-    // prepare resolutions setting for vdd
-    boost::regex pattern("\\[|\\]|\\s+");
-    char delimiter = ',';
-
-    // 添加全局刷新率到global节点
-    for (const auto &fps : split(boost::regex_replace(fpsArray, pattern, ""), delimiter)) {
-      global_node.add("g_refresh_rate", fps);
+  std::vector<std::string>
+  parse_vdd_array(std::string value) {
+    boost::algorithm::trim(value);
+    if (value.size() >= 2 && value.front() == '[' && value.back() == ']') {
+      value = value.substr(1, value.size() - 2);
     }
 
-    std::string str = boost::regex_replace(resArray, pattern, "");
-    boost::algorithm::trim(str);
-    for (const auto &resolution : split(str, delimiter)) {
-      auto index = resolution.find('x');
-      if(index == std::string::npos) {
+    std::vector<std::string> result;
+    for (auto token : split(value, ',')) {
+      token = trim_vdd_token(token);
+      if (!token.empty()) {
+        result.push_back(std::move(token));
+      }
+    }
+    return result;
+  }
+
+  std::vector<VddMode>
+  normalize_vdd_modes(const std::vector<VddMode> &modes, bool enforce_global_combination_limit = true) {
+    std::vector<VddMode> normalized;
+
+    for (const auto &mode : modes) {
+      auto resolution = trim_vdd_token(mode.first);
+      auto refresh_rate = trim_vdd_token(mode.second);
+      if (resolution.empty() || refresh_rate.empty() || resolution.find('x') == std::string::npos) {
+        continue;
+      }
+
+      const auto key = resolution + "@" + refresh_rate;
+      normalized.erase(std::remove_if(normalized.begin(), normalized.end(), [&](const auto &existing_mode) {
+                         return existing_mode.first + "@" + existing_mode.second == key;
+                       }),
+        normalized.end());
+      normalized.emplace_back(std::move(resolution), std::move(refresh_rate));
+    }
+
+    while (enforce_global_combination_limit && !normalized.empty()) {
+      std::set<std::string> resolutions;
+      std::set<std::string> refresh_rates;
+      for (const auto &mode : normalized) {
+        resolutions.insert(mode.first);
+        refresh_rates.insert(mode.second);
+      }
+
+      const auto combination_limit = vdd_max_mode_combination_count(refresh_rates.size());
+      if (resolutions.size() * refresh_rates.size() <= combination_limit) {
+        break;
+      }
+      normalized.erase(normalized.begin());
+    }
+    return normalized;
+  }
+
+  bool
+  append_vdd_resolution_node(pt::ptree &resolutions_nodes, const std::string &resolution, const std::string *refresh_rate = nullptr) {
+    const auto index = resolution.find('x');
+    if (index == std::string::npos) {
+      return false;
+    }
+
+    auto width = resolution.substr(0, index);
+    auto height = resolution.substr(index + 1);
+    boost::algorithm::trim(width);
+    boost::algorithm::trim(height);
+
+    if (width.empty() || height.empty()) {
+      return false;
+    }
+
+    pt::ptree res_node;
+    res_node.put("width", width);
+    res_node.put("height", height);
+    if (refresh_rate) {
+      auto refresh_rate_value = trim_vdd_token(*refresh_rate);
+      if (refresh_rate_value.empty()) {
         return false;
       }
-      pt::ptree res_node;
-      res_node.put("width", resolution.substr(0, index));
-      res_node.put("height", resolution.substr(index + 1));
-      resolutions_nodes.push_back(std::make_pair("resolution"s, res_node));
+      res_node.put("refresh_rate", refresh_rate_value);
+    }
+    resolutions_nodes.push_back(std::make_pair("resolution"s, res_node));
+    return true;
+  }
+
+  void
+  append_vdd_global_refresh_rates(pt::ptree &global_node, const std::vector<std::string> &refresh_rates) {
+    for (const auto &refresh_rate : refresh_rates) {
+      global_node.add("g_refresh_rate", refresh_rate);
+    }
+  }
+
+  void
+  collect_vdd_mode_lists(const std::vector<VddMode> &modes,
+    std::vector<std::string> &resolutions,
+    std::vector<std::string> &refresh_rates) {
+    std::set<std::string> seen_resolutions;
+    std::set<std::string> seen_refresh_rates;
+
+    for (const auto &mode : modes) {
+      if (seen_resolutions.insert(mode.first).second) {
+        resolutions.push_back(mode.first);
+      }
+      if (seen_refresh_rates.insert(mode.second).second) {
+        refresh_rates.push_back(mode.second);
+      }
+    }
+  }
+
+  void
+  trim_vdd_temporary_modes(const std::vector<VddMode> &global_modes, std::vector<VddMode> &temporary_modes) {
+    std::set<std::string> global_resolutions;
+    std::set<std::string> global_refresh_rates;
+    for (const auto &mode : global_modes) {
+      global_resolutions.insert(mode.first);
+      global_refresh_rates.insert(mode.second);
+    }
+
+    temporary_modes.erase(std::remove_if(temporary_modes.begin(), temporary_modes.end(), [&](const auto &mode) {
+                            return global_resolutions.count(mode.first) != 0 &&
+                                   global_refresh_rates.count(mode.second) != 0;
+                          }),
+      temporary_modes.end());
+
+    const auto temporary_mode_limit = std::min(
+      VDD_MAX_CACHED_TEMPORARY_MODES,
+      vdd_max_temporary_mode_count(
+        global_resolutions.size(),
+        global_refresh_rates.size()));
+    while (temporary_modes.size() > temporary_mode_limit) {
+      temporary_modes.erase(temporary_modes.begin());
+    }
+  }
+
+  void
+  put_vdd_common_nodes(pt::ptree &iddOptionTree, const std::string &gpu_name) {
+    pt::ptree monitor_node;
+    monitor_node.put("count", 1);
+
+    pt::ptree gpu_node;
+    gpu_node.put("friendlyname", gpu_name.empty() ? "default" : gpu_name);
+
+    iddOptionTree.put_child("monitors", monitor_node);
+    iddOptionTree.put_child("gpu", gpu_node);
+  }
+
+  bool
+  saveVddModeSettings(const std::vector<VddMode> &modes, std::string gpu_name) {
+    return saveVddModeSettings(modes, {}, std::move(gpu_name));
+  }
+
+  bool
+  saveVddModeSettings(const std::vector<VddMode> &global_modes, const std::vector<VddMode> &temporary_modes, std::string gpu_name) {
+    auto normalized_global_modes = normalize_vdd_modes(global_modes);
+    if (normalized_global_modes.empty()) {
+      return false;
+    }
+    auto normalized_temporary_modes = normalize_vdd_modes(temporary_modes, false);
+    trim_vdd_temporary_modes(normalized_global_modes, normalized_temporary_modes);
+
+    std::vector<std::string> resolutions;
+    std::vector<std::string> refresh_rates;
+    collect_vdd_mode_lists(normalized_global_modes, resolutions, refresh_rates);
+
+    pt::ptree global_node;
+    append_vdd_global_refresh_rates(global_node, refresh_rates);
+
+    pt::ptree resolutions_nodes;
+    for (const auto &resolution : resolutions) {
+      if (!append_vdd_resolution_node(resolutions_nodes, resolution)) {
+        return false;
+      }
+    }
+    for (const auto &mode : normalized_temporary_modes) {
+      if (!append_vdd_resolution_node(resolutions_nodes, mode.first, &mode.second)) {
+        return false;
+      }
     }
 
     // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
@@ -1273,60 +1434,29 @@ namespace confighttp {
     BOOST_LOG(info) << "VDD配置文件路径: " << idd_option_path.string();
 
     if (!fs::exists(idd_option_path)) {
-        return false;
+      return false;
     }
 
     // 先读取现有配置文件
+    pt::ptree iddOptionTree;
     pt::ptree existing_root;
     pt::ptree root;
 
     try {
       pt::read_xml(idd_option_path.string(), existing_root);
-      // 如果现有配置文件中已有vdd_settings节点
       if (existing_root.get_child_optional("vdd_settings")) {
-        // 复制现有配置
         iddOptionTree = existing_root.get_child("vdd_settings");
-
-        // 更新需要更改的部分
-        pt::ptree monitor_node;
-        monitor_node.put("count", 1);
-
-        pt::ptree gpu_node;
-        gpu_node.put("friendlyname", gpu_name.empty() ? "default" : gpu_name);
-
-        // 替换配置
-        iddOptionTree.put_child("monitors", monitor_node);
-        iddOptionTree.put_child("gpu", gpu_node);
-        iddOptionTree.put_child("global", global_node);
-        iddOptionTree.put_child("resolutions", resolutions_nodes);
-      } else {
-        // 如果没有vdd_settings节点，创建新的
-        pt::ptree monitor_node;
-        monitor_node.put("count", 1);
-
-        pt::ptree gpu_node;
-        gpu_node.put("friendlyname", gpu_name.empty() ? "default" : gpu_name);
-
-        iddOptionTree.add_child("monitors", monitor_node);
-        iddOptionTree.add_child("gpu", gpu_node);
-        iddOptionTree.add_child("global", global_node);
-        iddOptionTree.add_child("resolutions", resolutions_nodes);
       }
-    } catch(std::exception &e) {
-      // 读取失败，创建新的配置
-      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置: " << e.what();
-
-      pt::ptree monitor_node;
-      monitor_node.put("count", 1);
-
-      pt::ptree gpu_node;
-      gpu_node.put("friendlyname", gpu_name.empty() ? "default" : gpu_name);
-
-      iddOptionTree.add_child("monitors", monitor_node);
-      iddOptionTree.add_child("gpu", gpu_node);
-      iddOptionTree.add_child("global", global_node);
-      iddOptionTree.add_child("resolutions", resolutions_nodes);
     }
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "读取现有VDD配置失败，创建新配置: " << e.what();
+    }
+
+    put_vdd_common_nodes(iddOptionTree, gpu_name);
+
+    iddOptionTree.put_child("global", global_node);
+    iddOptionTree.put_child("resolutions", resolutions_nodes);
+    iddOptionTree.erase("sunshine_mode_cache");
 
     root.add_child("vdd_settings", iddOptionTree);
     try {
@@ -1350,6 +1480,25 @@ namespace confighttp {
       BOOST_LOG(warning) << "写入VDD配置失败: " << e.what();
       return false;
     }
+  }
+
+  bool
+  saveVddSettings(std::string resArray, std::string fpsArray, std::string gpu_name) {
+    std::vector<VddMode> modes;
+    const auto resolutions = parse_vdd_array(std::move(resArray));
+    const auto refresh_rates = parse_vdd_array(std::move(fpsArray));
+
+    for (const auto &resolution : resolutions) {
+      if (resolution.find('x') == std::string::npos) {
+        return false;
+      }
+
+      for (const auto &refresh_rate : refresh_rates) {
+        modes.emplace_back(resolution, refresh_rate);
+      }
+    }
+
+    return saveVddModeSettings(modes, std::move(gpu_name));
   }
 
   void

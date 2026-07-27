@@ -7,6 +7,7 @@
 // local includes
 #include "parsed_config.h"
 #include "session.h"
+#include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
@@ -555,7 +556,7 @@ namespace display_device {
     const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok: {
-        BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
+        BOOST_LOG(info) << "VDD会话模式列表更新完成: " << new_setting;
         const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
         const bool mode_advertised =
           !vdd_device_id.empty() && vdd_utils::is_mode_advertised(vdd_device_id, requested_mode);
@@ -662,7 +663,14 @@ namespace display_device {
       config.resolution && config.refresh_rate) {
       const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako);
       if (mode_update == vdd_mode_update_e::failed) {
+        vdd_utils::clear_vdd_mode_cache();
         return false;
+      }
+
+      // SETMODES已被驱动接受，持久化模式缓存供驱动重载/重启后使用
+      if (vdd_settings.needs_cache_update &&
+          !confighttp::saveVddModeSettings(vdd_settings.global_modes, vdd_settings.temporary_modes, config::video.adapter_name)) {
+        BOOST_LOG(warning) << "VDD模式XML缓存保存失败 [mode_count: " << vdd_settings.mode_combination_count << "]";
       }
 
       verify_mode_publication_after_create = device_zako.empty();
@@ -671,6 +679,7 @@ namespace display_device {
         verify_mode_publication_after_create = true;
         if (!vdd_utils::destroy_vdd_monitor()) {
           BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
+          vdd_utils::clear_vdd_mode_cache();
           return false;
         }
         if (!wait_for_vdd_device_departure(5, 100ms, 1000ms)) {
@@ -697,6 +706,7 @@ namespace display_device {
         : current_client_id;  // 为每个客户端生成不同GUID
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
+        vdd_utils::clear_vdd_mode_cache();
         return false;
       }
       std::this_thread::sleep_for(200ms);
@@ -726,11 +736,13 @@ namespace display_device {
         else {
           BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
         }
+        vdd_utils::clear_vdd_mode_cache();
         return false;
       }
     }
 
     if (device_zako.empty()) {
+      vdd_utils::clear_vdd_mode_cache();
       return false;
     }
 
@@ -747,6 +759,7 @@ namespace display_device {
       if (!mode_advertised) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
+        vdd_utils::clear_vdd_mode_cache();
         return false;
       }
     }
