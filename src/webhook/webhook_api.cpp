@@ -225,6 +225,8 @@ namespace webhook::api {
       // explicit user save. Report the runtime state separately: persistence
       // success must not be presented as immediate delivery availability.
       const bool runtime_available = ensure_running();
+      BOOST_LOG(info) << "Webhook configuration saved successfully; runtime is "
+                      << (runtime_available ? "available" : "unavailable");
       write_json(
         std::move(response),
         SimpleWeb::StatusCode::success_ok,

@@ -26,14 +26,18 @@ const loaded = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testRetries = ref(0)
+const showWebhookUrl = ref(false)
 const copiedCommand = ref('')
 const errorMessage = ref('')
-const warningMessage = ref('')
 const successMessage = ref('')
+const toastMessage = ref('')
+const toastTone = ref('success')
+const toastVisible = ref(false)
 const loadGeneration = ref(0)
 const form = ref(normalizeWebhookConfigResponse())
 const savedEnabled = ref(null)
 let copyResetTimer = null
+let toastTimer = null
 let copyGeneration = 0
 
 const webhookEventOptions = [
@@ -76,6 +80,33 @@ const usesPlainHttp = computed(() => parsedUrl.value?.protocol === 'http:')
 const isUrlTooLong = (value) => new TextEncoder().encode(value).length > 4096
 const hasInvalidUrlCharacters = (value) => /[\u0000-\u0020\u007f]/.test(value)
 
+const formatLocalTimestamp = (date = new Date()) => {
+  const pad = (value, width = 2) => String(value).padStart(width, '0')
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`,
+  ].join(' ')
+}
+
+const testPayloadText = computed(() => {
+  const prefix = 'notifications.webhook.test_payload'
+  return {
+    heading: t(`${prefix}.heading`),
+    title: t(`${prefix}.title`),
+    resultLabel: t(`${prefix}.result_label`),
+    result: t(`${prefix}.result`),
+    hostnameLabel: t(`${prefix}.hostname_label`),
+    eventTypeLabel: t(`${prefix}.event_type_label`),
+    sampleApplicationLabel: t(`${prefix}.sample_application_label`),
+    sampleApplication: t(`${prefix}.sample_application`),
+    sampleClientLabel: t(`${prefix}.sample_client_label`),
+    sampleClient: t(`${prefix}.sample_client`),
+    sampleStreamLabel: t(`${prefix}.sample_stream_label`),
+    sampleStream: t(`${prefix}.sample_stream`),
+    timeLabel: t(`${prefix}.time_label`),
+  }
+})
+
 const quoteShellArgument = (value, platform) => {
   if (platform === 'windows') {
     return `'${String(value).replaceAll("'", "''")}'`
@@ -102,12 +133,26 @@ const curlCommands = computed(() => {
 
   const requestUrl = new URL(url.href)
   requestUrl.hash = ''
+  const text = testPayloadText.value
   const payload = JSON.stringify({
     event_id: -1,
     event_type: 'webhook_test',
     msgtype: 'markdown',
     markdown: {
-      content: '**Sunshine Webhook Test**',
+      content: [
+        `**${text.heading}**`,
+        '',
+        `<font color="info">**${text.title}**</font>`,
+        '',
+        `>${text.resultLabel}: <font color="comment">${text.result}</font>`,
+        `>${text.hostnameLabel}: <font color="comment">sunshine-host</font>`,
+        `>${text.eventTypeLabel}: <font color="comment">webhook_test</font>`,
+        `>${text.sampleApplicationLabel}: <font color="comment">${text.sampleApplication}</font>`,
+        `>${text.sampleClientLabel}: <font color="comment">${text.sampleClient}</font>`,
+        `>${text.sampleStreamLabel}: <font color="comment">${text.sampleStream}</font>`,
+        `>${text.timeLabel}: <font color="comment">${formatLocalTimestamp()}</font>`,
+        '',
+      ].join('\n'),
     },
   })
   const buildCommand = (platform) => {
@@ -148,8 +193,26 @@ const curlTemplates = computed(() => [
 
 const clearMessages = () => {
   errorMessage.value = ''
-  warningMessage.value = ''
   successMessage.value = ''
+}
+
+const dismissToast = () => {
+  toastVisible.value = false
+  if (toastTimer !== null) {
+    clearTimeout(toastTimer)
+    toastTimer = null
+  }
+}
+
+const showToast = (message, tone = 'success') => {
+  dismissToast()
+  toastMessage.value = message
+  toastTone.value = tone
+  toastVisible.value = true
+  toastTimer = setTimeout(() => {
+    toastVisible.value = false
+    toastTimer = null
+  }, 5000)
 }
 
 const validateForm = ({ requireEnabledUrl = true } = {}) => {
@@ -202,6 +265,7 @@ const load = async () => {
 
 const open = async () => {
   lastFocusedElement.value = document.activeElement
+  showWebhookUrl.value = false
   modalOpen.value = true
   ++copyGeneration
   copiedCommand.value = ''
@@ -217,6 +281,7 @@ const close = () => {
   loading.value = false
   modalOpen.value = false
   clearMessages()
+  showWebhookUrl.value = false
   copiedCommand.value = ''
   if (copyResetTimer !== null) {
     clearTimeout(copyResetTimer)
@@ -243,6 +308,7 @@ const save = async () => {
 
   const submittedForm = { ...form.value }
   const submittedEnabled = submittedForm.webhook_enabled === 'enabled'
+  let savedToast = null
   saving.value = true
   try {
     const result = await saveWebhookConfig(submittedForm)
@@ -252,14 +318,24 @@ const save = async () => {
     loaded.value = true
     savedEnabled.value = submittedEnabled
     if (result.runtime_active === false || result.runtime_active === 'false') {
-      warningMessage.value = t('notifications.webhook.save_runtime_unavailable')
+      savedToast = {
+        message: t('notifications.webhook.save_runtime_unavailable'),
+        tone: 'warning',
+      }
     } else {
-      successMessage.value = t('notifications.webhook.save_success')
+      savedToast = {
+        message: t('notifications.webhook.save_success'),
+        tone: 'success',
+      }
     }
   } catch (error) {
     errorMessage.value = `${t('notifications.webhook.save_failed')}: ${error.message || t('notifications.webhook.unknown_error')}`
   } finally {
     saving.value = false
+  }
+  if (savedToast) {
+    close()
+    showToast(savedToast.message, savedToast.tone)
   }
 }
 
@@ -390,6 +466,10 @@ onUnmounted(() => {
     clearTimeout(copyResetTimer)
     copyResetTimer = null
   }
+  if (toastTimer !== null) {
+    clearTimeout(toastTimer)
+    toastTimer = null
+  }
 })
 </script>
 
@@ -420,7 +500,7 @@ onUnmounted(() => {
 
     <Teleport to="body">
       <Transition name="notification-modal">
-        <div v-if="modalOpen" class="notification-modal-overlay" @click.self="close">
+        <div v-if="modalOpen" class="notification-modal-overlay">
           <div
             ref="modalRef"
             class="notification-modal"
@@ -428,7 +508,7 @@ onUnmounted(() => {
             aria-modal="true"
             aria-labelledby="webhook-modal-title"
             tabindex="-1"
-            @keydown.esc.prevent="close"
+            @keydown.esc.prevent.stop
             @keydown.tab="trapFocus"
           >
             <div class="notification-modal-header">
@@ -439,13 +519,6 @@ onUnmounted(() => {
                 </h5>
                 <p>{{ $t('notifications.webhook.hot_apply_note') }}</p>
               </div>
-              <button
-                type="button"
-                class="btn-close"
-                :disabled="saving || testing"
-                :aria-label="$t('_common.close')"
-                @click="close"
-              ></button>
             </div>
 
             <div class="notification-modal-body">
@@ -456,36 +529,52 @@ onUnmounted(() => {
 
               <template v-else-if="loaded">
                 <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
-                <div v-if="warningMessage" class="alert alert-warning" role="status">{{ warningMessage }}</div>
                 <div v-if="successMessage" class="alert alert-success" role="status">{{ successMessage }}</div>
 
-                <div class="mb-3">
-                  <label for="webhook_enabled" class="form-label">{{ $t('config.webhook_enabled') }}</label>
-                  <select
-                    id="webhook_enabled"
-                    class="form-select"
-                    v-model="form.webhook_enabled"
-                    :disabled="saving || testing"
-                  >
-                    <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                    <option value="enabled">{{ $t('_common.enabled') }}</option>
-                  </select>
+                <div class="mb-3 webhook-switch-setting">
+                  <div class="form-check form-switch">
+                    <input
+                      id="webhook_enabled"
+                      v-model="form.webhook_enabled"
+                      class="form-check-input"
+                      type="checkbox"
+                      true-value="enabled"
+                      false-value="disabled"
+                      :disabled="saving || testing"
+                    />
+                    <label for="webhook_enabled" class="form-check-label">
+                      {{ $t('config.webhook_enabled') }}
+                    </label>
+                  </div>
                   <div class="form-text">{{ $t('config.webhook_enabled_desc') }}</div>
                 </div>
 
                 <div class="mb-3">
                   <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
-                  <input
-                    id="webhook_url"
-                    v-model.trim="form.webhook_url"
-                    type="url"
-                    class="form-control"
-                    maxlength="4096"
-                    placeholder="https://example.invalid/webhook"
-                    autocomplete="off"
-                    spellcheck="false"
-                    :disabled="saving || testing"
-                  />
+                  <div class="input-group">
+                    <input
+                      id="webhook_url"
+                      v-model.trim="form.webhook_url"
+                      :type="showWebhookUrl ? 'url' : 'password'"
+                      class="form-control"
+                      maxlength="4096"
+                      placeholder="https://example.invalid/webhook"
+                      autocomplete="off"
+                      spellcheck="false"
+                      :disabled="saving || testing"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-outline-secondary webhook-url-visibility"
+                      :disabled="saving || testing"
+                      :aria-label="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')"
+                      :title="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')"
+                      :aria-pressed="showWebhookUrl"
+                      @click="showWebhookUrl = !showWebhookUrl"
+                    >
+                      <i :class="showWebhookUrl ? 'fas fa-eye-slash' : 'fas fa-eye'" aria-hidden="true"></i>
+                    </button>
+                  </div>
                   <div class="form-text">{{ $t('config.webhook_url_desc') }}</div>
                   <div v-if="usesPlainHttp" class="alert alert-warning mt-2 mb-0" role="alert">
                     <i class="fas fa-exclamation-triangle me-2"></i>
@@ -493,19 +582,21 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div class="mb-3">
-                  <label for="webhook_skip_ssl_verify" class="form-label">
-                    {{ $t('config.webhook_skip_ssl_verify') }}
-                  </label>
-                  <select
-                    id="webhook_skip_ssl_verify"
-                    class="form-select"
-                    v-model="form.webhook_skip_ssl_verify"
-                    :disabled="saving || testing"
-                  >
-                    <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                    <option value="enabled">{{ $t('_common.enabled') }}</option>
-                  </select>
+                <div class="mb-3 webhook-switch-setting">
+                  <div class="form-check form-switch">
+                    <input
+                      id="webhook_skip_ssl_verify"
+                      v-model="form.webhook_skip_ssl_verify"
+                      class="form-check-input"
+                      type="checkbox"
+                      true-value="enabled"
+                      false-value="disabled"
+                      :disabled="saving || testing"
+                    />
+                    <label for="webhook_skip_ssl_verify" class="form-check-label">
+                      {{ $t('config.webhook_skip_ssl_verify') }}
+                    </label>
+                  </div>
                   <div class="form-text">{{ $t('config.webhook_skip_ssl_verify_desc') }}</div>
                   <div
                     v-if="form.webhook_skip_ssl_verify === 'enabled'"
@@ -655,6 +746,34 @@ onUnmounted(() => {
           </div>
         </div>
       </Transition>
+      <Transition name="webhook-toast">
+        <div v-if="toastVisible" class="webhook-toast-container">
+          <div
+            class="toast align-items-center border-0 show"
+            :class="toastTone === 'warning' ? 'text-bg-warning' : 'text-bg-success'"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+          >
+            <div class="d-flex">
+              <div class="toast-body">
+                <i
+                  class="me-2"
+                  :class="toastTone === 'warning' ? 'fas fa-exclamation-triangle' : 'fas fa-check-circle'"
+                ></i>
+                {{ toastMessage }}
+              </div>
+              <button
+                type="button"
+                class="btn-close"
+                :class="{ 'btn-close-white': toastTone !== 'warning' }"
+                :aria-label="$t('_common.close')"
+                @click="dismissToast"
+              ></button>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </Teleport>
   </section>
 </template>
@@ -760,6 +879,25 @@ onUnmounted(() => {
   backdrop-filter: blur(8px);
 }
 
+.webhook-toast-container {
+  position: fixed;
+  top: 1.5rem;
+  left: 50%;
+  z-index: 10030;
+  width: min(420px, calc(100vw - 3rem));
+  transform: translateX(-50%);
+
+  .toast {
+    width: 100%;
+    max-width: none;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  }
+
+  .btn-close {
+    margin: auto 0.75rem auto 0;
+  }
+}
+
 .notification-modal {
   width: min(820px, 100%);
   max-height: calc(100vh - 2.5rem);
@@ -768,8 +906,8 @@ onUnmounted(() => {
   overflow: hidden;
   border: 1px solid var(--bs-border-color);
   border-radius: 1.25rem;
-  color: var(--bs-body-color);
-  background: var(--bs-body-bg);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
 }
 
@@ -788,11 +926,12 @@ onUnmounted(() => {
 
   h5 {
     margin: 0;
+    color: var(--ui-text-primary);
   }
 
   p {
     margin: 0.35rem 0 0;
-    color: var(--bs-secondary-color);
+    color: var(--ui-text-secondary);
     font-size: 0.9rem;
   }
 }
@@ -801,6 +940,63 @@ onUnmounted(() => {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 1.35rem;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.notification-modal {
+  .form-label,
+  .form-check-label,
+  legend {
+    color: var(--ui-text-primary);
+    font-weight: 600;
+  }
+
+  .form-text,
+  .curl-details p {
+    color: var(--ui-text-secondary);
+  }
+
+  .form-control {
+    color: var(--ui-text-primary);
+  }
+}
+
+[data-bs-theme='light'] .notification-modal {
+  background: #f8fbff;
+
+  .form-text,
+  .curl-details p,
+  .notification-loading,
+  .notification-load-error {
+    color: #475569;
+  }
+}
+
+.webhook-switch-setting {
+  .form-check {
+    min-height: 1.75rem;
+  }
+
+  .form-check-input {
+    width: 2.5rem;
+    height: 1.25rem;
+    margin-right: 0.65rem;
+  }
+}
+
+.webhook-url-visibility {
+  min-width: 2.75rem;
+  border-color: var(--ui-border);
+  color: var(--ui-text-primary);
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-accent-soft);
+    color: var(--ui-accent-text);
+  }
 }
 
 .notification-modal-footer {
@@ -923,6 +1119,17 @@ onUnmounted(() => {
   }
 }
 
+.webhook-toast-enter-active,
+.webhook-toast-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.webhook-toast-enter-from,
+.webhook-toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+}
+
 @media (max-width: 575.98px) {
   .webhook-test-controls {
     grid-template-columns: 1fr;
@@ -948,6 +1155,11 @@ onUnmounted(() => {
     max-height: 100vh;
     min-height: 100vh;
     border-radius: 0;
+  }
+
+  .webhook-toast-container {
+    top: 1rem;
+    width: calc(100vw - 2rem);
   }
 }
 </style>

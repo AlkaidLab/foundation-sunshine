@@ -85,22 +85,21 @@ TEST_F(WebhookTest, JsonStringSanitization) {
   EXPECT_EQ(webhook::sanitize_json_string("Hello 世界 🚀"), "Hello 世界 🚀");
 }
 
-TEST_F(WebhookTest, TimestampIsRfc3339Utc) {
+TEST_F(WebhookTest, TimestampUsesSystemLocalTimeFormat) {
   const auto timestamp = webhook::get_current_timestamp();
-  ASSERT_EQ(timestamp.size(), 24);
+  ASSERT_EQ(timestamp.size(), 23);
   EXPECT_EQ(timestamp[4], '-');
   EXPECT_EQ(timestamp[7], '-');
-  EXPECT_EQ(timestamp[10], 'T');
+  EXPECT_EQ(timestamp[10], ' ');
   EXPECT_EQ(timestamp[13], ':');
   EXPECT_EQ(timestamp[16], ':');
   EXPECT_EQ(timestamp[19], '.');
-  EXPECT_EQ(timestamp.back(), 'Z');
 }
 
 TEST_F(WebhookTest, ProductionPayloadIsValidJsonAndEscapesMarkup) {
   webhook::event_t event {
     .type = webhook::event_type_t::NV_APP_LAUNCH,
-    .timestamp = "2026-01-01T00:00:00.000Z",
+    .timestamp = "2026-01-01 00:00:00.000",
     .client_name = "Client **admin** <admin>",
     .client_ip = "127.0.0.10",
     .server_ip = "127.0.0.20",
@@ -122,15 +121,62 @@ TEST_F(WebhookTest, ProductionPayloadIsValidJsonAndEscapesMarkup) {
   EXPECT_NE(content.find("127.0.0.20"), std::string::npos);
 }
 
-TEST_F(WebhookTest, TestPayloadUsesTheProductionEnvelope) {
-  const auto payload_text = webhook::g_webhook_format.generate_test_json_payload();
+TEST_F(WebhookTest, EnglishTestPayloadUsesTheProductionEnvelope) {
+  const auto payload_text = webhook::g_webhook_format.generate_test_json_payload(false);
   ASSERT_TRUE(nlohmann::json::accept(payload_text));
 
   const auto payload = nlohmann::json::parse(payload_text);
   EXPECT_EQ(payload.at("event_id"), -1);
   EXPECT_EQ(payload.at("event_type"), "webhook_test");
   EXPECT_EQ(payload.at("msgtype"), "markdown");
-  EXPECT_EQ(payload.at("markdown").at("content"), "**Sunshine Webhook Test**");
+  const auto content = payload.at("markdown").at("content").get<std::string>();
+  EXPECT_NE(content.find("**Sunshine Webhook Test**"), std::string::npos);
+  EXPECT_NE(content.find("Webhook endpoint reached"), std::string::npos);
+  EXPECT_NE(content.find("webhook_test"), std::string::npos);
+  EXPECT_NE(content.find("Sunshine Test Application"), std::string::npos);
+  EXPECT_NE(content.find("1920x1080 @ 60 FPS, Audio Enabled"), std::string::npos);
+  EXPECT_NE(content.find("Time:"), std::string::npos);
+}
+
+TEST_F(WebhookTest, ChineseTestPayloadUsesTheProductionEnvelope) {
+  const auto payload_text = webhook::g_webhook_format.generate_test_json_payload(true);
+  ASSERT_TRUE(nlohmann::json::accept(payload_text));
+
+  const auto payload = nlohmann::json::parse(payload_text);
+  EXPECT_EQ(payload.at("event_id"), -1);
+  EXPECT_EQ(payload.at("event_type"), "webhook_test");
+  EXPECT_EQ(payload.at("msgtype"), "markdown");
+  const auto content = payload.at("markdown").at("content").get<std::string>();
+  EXPECT_NE(content.find("**Sunshine Webhook 测试**"), std::string::npos);
+  EXPECT_NE(content.find("Webhook 接收地址已收到测试请求"), std::string::npos);
+  EXPECT_NE(content.find("事件类型"), std::string::npos);
+  EXPECT_NE(content.find("Sunshine 测试应用"), std::string::npos);
+  EXPECT_NE(content.find("1920x1080 @ 60 FPS，音频已启用"), std::string::npos);
+  EXPECT_NE(content.find("时间:"), std::string::npos);
+}
+
+TEST_F(WebhookTest, ChineseTestPayloadSupportsTextAndJsonFormats) {
+  webhook::g_webhook_format.set_format_type(webhook::format_type_t::TEXT);
+  const auto text_payload = nlohmann::json::parse(
+    webhook::g_webhook_format.generate_test_json_payload(true)
+  );
+  EXPECT_EQ(text_payload.at("event_id"), -1);
+  EXPECT_EQ(text_payload.at("event_type"), "webhook_test");
+  EXPECT_EQ(text_payload.at("msgtype"), "text");
+  EXPECT_NE(
+    text_payload.at("text").at("content").get<std::string>().find("结果: Webhook 接收地址已收到测试请求"),
+    std::string::npos
+  );
+
+  webhook::g_webhook_format.set_format_type(webhook::format_type_t::JSON);
+  const auto json_payload = nlohmann::json::parse(
+    webhook::g_webhook_format.generate_test_json_payload(true)
+  );
+  EXPECT_EQ(json_payload.at("event_id"), -1);
+  EXPECT_EQ(json_payload.at("event_type"), "webhook_test");
+  EXPECT_EQ(json_payload.at("event_title"), "Webhook 测试");
+  EXPECT_EQ(json_payload.at("result"), "Webhook 接收地址已收到测试请求");
+  EXPECT_EQ(json_payload.at("sample").at("audio"), "已启用");
 }
 
 TEST_F(WebhookTest, TestRetryCountRejectsValuesAboveThree) {
@@ -194,7 +240,7 @@ TEST_F(WebhookTest, TestDeliveryRejectsTimeoutOutsidePublicContract) {
 TEST_F(WebhookTest, PayloadTruncationPreservesUtf8AndJson) {
   webhook::event_t event {
     .type = webhook::event_type_t::NV_APP_LAUNCH,
-    .timestamp = "2026-01-01T00:00:00.000Z",
+    .timestamp = "2026-01-01 00:00:00.000",
     .app_name = std::string(2000, 'a') + "世界世界世界"
   };
   for (int i = 0; i < 2000; ++i) {

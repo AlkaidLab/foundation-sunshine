@@ -92,9 +92,10 @@ namespace webhook {
 
     /**
      * @brief 生成与生产通知相同外层结构的测试 payload
+     * @param is_chinese 是否使用中文
      * @return JSON字符串
      */
-    std::string generate_test_json_payload() const;
+    std::string generate_test_json_payload(bool is_chinese) const;
 
   private:
     format_type_t format_type_;
@@ -111,7 +112,7 @@ namespace webhook {
 
     /**
      * @brief 格式化时间戳
-     * @param timestamp ISO 8601格式时间戳
+     * @param timestamp Sunshine 本地时间格式（YYYY-MM-DD HH:mm:ss.xxx）
      * @return 格式化后的时间字符串
      */
     std::string format_timestamp(const std::string& timestamp) const;

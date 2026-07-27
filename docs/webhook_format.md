@@ -61,7 +61,7 @@ Webhook 的唯一有效配置位于所选 `sunshine.conf` 同目录下的
   "event_id": 2,
   "event_type": "nv_app_launch",
   "markdown": {
-    "content": "**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27T01:20:29.979Z</font>\n"
+    "content": "**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
   },
   "msgtype": "markdown"
 }
@@ -80,25 +80,44 @@ Webhook 的唯一有效配置位于所选 `sunshine.conf` 同目录下的
 - UTF-8 JSON。
 - Markdown 内容最大 4096 字节。
 - 超长内容在 UTF-8 字符边界处截断并追加省略号。
-- 时间戳使用 RFC 3339 UTC。
+- 时间使用 Sunshine 主机的系统时区，格式固定为 `YYYY-MM-DD HH:mm:ss.xxx`。
 - 日志不记录 URL、payload、凭据或响应正文。
 
 测试接口发送相同的 payload 外层结构，固定使用 `event_id=-1` 和
 `event_type=webhook_test`。`webhook_retries` 表示失败后的额外重试次数，
 默认 0，允许 0–3；该参数只用于当前测试，不会写入配置文件。
+测试通知与正式通知使用相同的运行时语言规则：`locale=zh` 或 `zh_TW`
+时使用中文，其他语言使用英文。修改主配置中的 `locale` 后，需要重启
+Sunshine 才会影响 Webhook 内容。
 
-当前默认 Markdown 测试 payload：
+英文 Markdown 测试 payload：
 
 ```json
 {
   "event_id": -1,
   "event_type": "webhook_test",
   "markdown": {
-    "content": "**Sunshine Webhook Test**"
+    "content": "**Sunshine Webhook Test**\n\n<font color=\"info\">**Test Notification**</font>\n\n>Result: <font color=\"comment\">Webhook endpoint reached</font>\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Event Type: <font color=\"comment\">webhook_test</font>\n>Sample Application: <font color=\"comment\">Sunshine Test Application</font>\n>Sample Client: <font color=\"comment\">Sunshine Test Client</font>\n>Sample Stream: <font color=\"comment\">1920x1080 @ 60 FPS, Audio Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
   },
   "msgtype": "markdown"
 }
 ```
+
+中文 Markdown 测试 payload 的协议字段保持不变，仅翻译展示内容：
+
+```json
+{
+  "event_id": -1,
+  "event_type": "webhook_test",
+  "markdown": {
+    "content": "**Sunshine Webhook 测试**\n\n<font color=\"info\">**测试通知**</font>\n\n>结果: <font color=\"comment\">Webhook 接收地址已收到测试请求</font>\n>主机名: <font color=\"comment\">sunshine-host</font>\n>事件类型: <font color=\"comment\">webhook_test</font>\n>示例应用: <font color=\"comment\">Sunshine 测试应用</font>\n>示例客户端: <font color=\"comment\">Sunshine 测试客户端</font>\n>示例串流: <font color=\"comment\">1920x1080 @ 60 FPS，音频已启用</font>\n>时间: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
+  },
+  "msgtype": "markdown"
+}
+```
+
+`Hostname` 和 `Time` 由 Sunshine 在发起测试时生成；应用、客户端和串流字段是明确标注的样例，
+用于让接收端一次看到接近生产通知的 Markdown 结构，不代表当前存在真实串流会话。
 
 ## 投递语义
 

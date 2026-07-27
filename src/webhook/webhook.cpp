@@ -59,6 +59,10 @@ namespace webhook {
       std::make_shared<const configuration_t>()
     };
 
+    bool use_chinese_content() {
+      return config::sunshine.locale == "zh"sv || config::sunshine.locale == "zh_TW"sv;
+    }
+
     struct parsed_url_t {
       bool https = false;
       std::string server;
@@ -1060,10 +1064,9 @@ namespace webhook {
         configuration.skip_ssl_verify,
         configuration.timeout
       };
-      const bool is_chinese = config::sunshine.locale == "zh" || config::sunshine.locale == "zh_TW";
       auto delivery = make_delivery(
         settings,
-        generate_webhook_json(event, is_chinese),
+        generate_webhook_json(event, use_chinese_content()),
         event_id,
         event_type_name(event.type),
         true,
@@ -1107,7 +1110,7 @@ namespace webhook {
       }
       auto delivery = make_delivery(
         settings,
-        g_webhook_format.generate_test_json_payload(),
+        g_webhook_format.generate_test_json_payload(use_chinese_content()),
         -1,
         "webhook_test",
         false,
@@ -1233,16 +1236,16 @@ namespace webhook {
     const auto now = std::chrono::system_clock::now();
     const auto time = std::chrono::system_clock::to_time_t(now);
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-    std::tm utc {};
+    std::tm local {};
 #ifdef _WIN32
-    gmtime_s(&utc, &time);
+    localtime_s(&local, &time);
 #else
-    gmtime_r(&time, &utc);
+    localtime_r(&time, &local);
 #endif
 
     std::ostringstream stream;
-    stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S")
-           << '.' << std::setfill('0') << std::setw(3) << milliseconds.count() << 'Z';
+    stream << std::put_time(&local, "%Y-%m-%d %H:%M:%S")
+           << '.' << std::setfill('0') << std::setw(3) << milliseconds.count();
     return stream.str();
   }
 

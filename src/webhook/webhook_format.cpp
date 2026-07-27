@@ -407,23 +407,67 @@ namespace webhook {
     ));
   }
 
-  std::string WebhookFormat::generate_test_json_payload() const {
+  std::string WebhookFormat::generate_test_json_payload(bool is_chinese) const {
+    const auto hostname = bounded_json_value(platf::get_host_name());
+    const auto timestamp = get_current_timestamp();
+    const auto heading = is_chinese ? "Sunshine Webhook 测试" : "Sunshine Webhook Test";
+    const auto title = is_chinese ? "测试通知" : "Test Notification";
+    const auto event_title = is_chinese ? "Webhook 测试" : "Webhook Test";
+    const auto result_label = is_chinese ? "结果" : "Result";
+    const auto result = is_chinese ? "Webhook 接收地址已收到测试请求" : "Webhook endpoint reached";
+    const auto hostname_label = is_chinese ? "主机名" : "Hostname";
+    const auto event_type_label = is_chinese ? "事件类型" : "Event Type";
+    const auto sample_application_label = is_chinese ? "示例应用" : "Sample Application";
+    const auto sample_application = is_chinese ? "Sunshine 测试应用" : "Sunshine Test Application";
+    const auto sample_client_label = is_chinese ? "示例客户端" : "Sample Client";
+    const auto sample_client = is_chinese ? "Sunshine 测试客户端" : "Sunshine Test Client";
+    const auto sample_stream_label = is_chinese ? "示例串流" : "Sample Stream";
+    const auto sample_stream = is_chinese ? "1920x1080 @ 60 FPS，音频已启用" : "1920x1080 @ 60 FPS, Audio Enabled";
+    const auto time_label = is_chinese ? "时间" : "Time";
     if (format_type_ == format_type_t::JSON) {
       return dump_utf8({
         {"event_id", -1},
         {"event_type", "webhook_test"},
-        {"event_title", "Webhook Test"},
-        {"system", "Sunshine"}
+        {"event_title", event_title},
+        {"system", "Sunshine"},
+        {"hostname", hostname},
+        {"timestamp", timestamp},
+        {"result", result},
+        {"sample", {
+          {"app_name", sample_application},
+          {"client_name", sample_client},
+          {"resolution", "1920x1080"},
+          {"fps", 60},
+          {"audio", is_chinese ? "已启用" : "Enabled"}
+        }}
       });
     }
 
-    const std::string content =
-      format_type_ == format_type_t::TEXT ?
-        "Sunshine Webhook Test" :
-        "**Sunshine Webhook Test**";
+    std::ostringstream content;
+    if (format_type_ == format_type_t::TEXT) {
+      content << heading << "\n\n"
+              << result_label << ": " << result << '\n'
+              << hostname_label << ": " << hostname << '\n'
+              << event_type_label << ": webhook_test\n"
+              << sample_application_label << ": " << sample_application << '\n'
+              << sample_client_label << ": " << sample_client << '\n'
+              << sample_stream_label << ": " << sample_stream << '\n'
+              << time_label << ": " << timestamp << '\n';
+    }
+    else {
+      content << "**" << heading << "**\n\n"
+              << "<font color=\"info\">**" << title << "**</font>\n\n"
+              << '>' << result_label << ": <font color=\"comment\">" << result << "</font>\n"
+              << '>' << hostname_label << ": <font color=\"comment\">" << escape_markup(hostname) << "</font>\n"
+              << '>' << event_type_label << ": <font color=\"comment\">webhook_test</font>\n"
+              << '>' << sample_application_label << ": <font color=\"comment\">" << sample_application << "</font>\n"
+              << '>' << sample_client_label << ": <font color=\"comment\">" << sample_client << "</font>\n"
+              << '>' << sample_stream_label << ": <font color=\"comment\">" << sample_stream << "</font>\n"
+              << '>' << time_label << ": <font color=\"comment\">" << escape_markup(timestamp) << "</font>\n";
+    }
     return dump_utf8(make_message_payload(
       format_type_,
-      content,
+      content.str(),
       -1,
       "webhook_test"
     ));

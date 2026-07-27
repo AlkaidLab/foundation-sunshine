@@ -183,6 +183,8 @@ Content-Type: application/json
 - `webhook_retries` 可省略，默认 0，范围 0–3，表示失败后的额外重试次数。
 - 测试使用生产 transport 和相同 payload 外层结构。
 - 测试事件固定为 `event_id=-1`、`event_type=webhook_test`。
+- 测试内容与正式通知使用相同的语言规则：`zh`、`zh_TW` 使用中文，
+  其他 Sunshine locale 使用英文。
 - 配置服务线程只保留异步响应，不同步等待远端网络。
 
 响应：
@@ -206,15 +208,17 @@ Webhook 保留在网络配置页原有位置，以大卡片和弹窗呈现，不
 界面行为：
 
 - 初始只显示卡片，点击后才异步读取独立配置。
-- URL 支持 HTTP 和 HTTPS；HTTP 显示明文传输提醒。
-- 用户自行选择是否跳过 HTTPS 证书校验；开启时显示明确风险提示。
+- URL 支持 HTTP 和 HTTPS，内容默认隐藏并可通过显隐按钮查看；HTTP 显示明文传输提醒。
+- Webhook 通知和“跳过 HTTPS 证书校验”使用启停开关；证书校验被跳过时显示明确风险提示。
 - 超时在界面中使用 1–15 秒整数，API 和文件中继续使用毫秒。
 - 七个事件使用多选框，默认全选，可全选或清空。
 - 保存、测试和加载状态互斥，避免并发编辑造成状态错报。
-- 保存成功后直接显示热生效结果，不依赖外层配置按钮。
+- 保存成功后关闭弹窗，并通过页面顶部居中的通知显示热生效结果，不依赖外层配置按钮。
 - 配置损坏时提示用户清理 `webhook_auth.json`，不显示本地绝对路径。
 - 同时提供 Linux/macOS shell 与 Windows PowerShell 的 curl 请求模板。
-- 弹窗支持 Escape、遮罩关闭、键盘焦点循环和关闭后焦点恢复。
+- 弹窗只允许通过“取消”或保存成功关闭；点击遮罩或按 Escape 不关闭，并保留键盘焦点循环和关闭后焦点恢复。
+- 弹窗正文支持鼠标滚轮和触摸纵向滑动，并隔离滚动越界，避免带动背景页面。
+- 浅色模式使用不透明弹窗表面和高对比度正文、标签及辅助文字。
 
 所有 Webhook 文案和七个事件名称使用项目现有 vue-i18n 体系。
 
@@ -260,7 +264,7 @@ X-Service-Name: Sunshine_Foundation_Service
 X-Component: Sunshine_Foundation_Component
 Content-Length: 719
 
-{"event_id":2,"event_type":"nv_app_launch","markdown":{"content":"**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27T01:20:29.979Z</font>\n"},"msgtype":"markdown"}
+{"event_id":2,"event_type":"nv_app_launch","markdown":{"content":"**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"},"msgtype":"markdown"}
 ```
 
 示例中的 `X-Signature` 只展示数值形态；实际值由当前 C++ `std::hash`
@@ -273,7 +277,7 @@ Content-Length: 719
   "event_id": 2,
   "event_type": "nv_app_launch",
   "markdown": {
-    "content": "**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27T01:20:29.979Z</font>\n"
+    "content": "**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
   },
   "msgtype": "markdown"
 }
@@ -292,20 +296,39 @@ Content-Length: 719
 所有生产事件还会包含 Hostname、可用时的 Server IP 和 Time。空值不输出。
 
 Markdown 内容最大 4096 字节。超长内容在 UTF-8 字符边界处截断并追加省略号。
-时间戳使用 RFC 3339 UTC。
+时间使用 Sunshine 主机的系统时区，格式固定为 `YYYY-MM-DD HH:mm:ss.xxx`。
 
-测试按钮使用相同外层结构，当前默认 Markdown payload 为：
+测试按钮使用相同外层结构。语言读取 Sunshine 本次启动时加载的
+`config::sunshine.locale`；修改主配置语言后需要重启 Sunshine 才会影响
+Webhook。英文 Markdown payload 为：
 
 ```json
 {
   "event_id": -1,
   "event_type": "webhook_test",
   "markdown": {
-    "content": "**Sunshine Webhook Test**"
+    "content": "**Sunshine Webhook Test**\n\n<font color=\"info\">**Test Notification**</font>\n\n>Result: <font color=\"comment\">Webhook endpoint reached</font>\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Event Type: <font color=\"comment\">webhook_test</font>\n>Sample Application: <font color=\"comment\">Sunshine Test Application</font>\n>Sample Client: <font color=\"comment\">Sunshine Test Client</font>\n>Sample Stream: <font color=\"comment\">1920x1080 @ 60 FPS, Audio Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
   },
   "msgtype": "markdown"
 }
 ```
+
+中文 payload 保持 `event_id`、`event_type`、`msgtype` 等协议字段不变，
+仅翻译接收端展示的文本：
+
+```json
+{
+  "event_id": -1,
+  "event_type": "webhook_test",
+  "markdown": {
+    "content": "**Sunshine Webhook 测试**\n\n<font color=\"info\">**测试通知**</font>\n\n>结果: <font color=\"comment\">Webhook 接收地址已收到测试请求</font>\n>主机名: <font color=\"comment\">sunshine-host</font>\n>事件类型: <font color=\"comment\">webhook_test</font>\n>示例应用: <font color=\"comment\">Sunshine 测试应用</font>\n>示例客户端: <font color=\"comment\">Sunshine 测试客户端</font>\n>示例串流: <font color=\"comment\">1920x1080 @ 60 FPS，音频已启用</font>\n>时间: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"
+  },
+  "msgtype": "markdown"
+}
+```
+
+真实测试中的主机名和时间由 Sunshine 动态填写；其余带 `Sample` 的字段只展示接收端可能看到的
+生产内容形态，不对应当前真实应用或客户端。
 
 ### 6.3 请求头
 
@@ -468,4 +491,4 @@ Webhook 配置和网络故障不会传播为主程序退出条件。
 - [RFC 6585](https://www.rfc-editor.org/rfc/rfc6585.html)：`429 Too Many Requests`。
 - [RFC 9525](https://www.rfc-editor.org/rfc/rfc9525.html)：HTTPS 服务身份校验。
 - [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html)：UTF-8 JSON。
-- [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339.html)：UTC 时间戳。
+- 时间字段：使用 Sunshine 主机系统时区和固定格式 `YYYY-MM-DD HH:mm:ss.xxx`。
