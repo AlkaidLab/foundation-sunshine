@@ -18,7 +18,6 @@ namespace config {
   audio_t audio;
   stream_t stream;
   nvhttp_t nvhttp;
-  webhook_t webhook;
   input_t input;
   sunshine_t sunshine;
 }  // namespace config

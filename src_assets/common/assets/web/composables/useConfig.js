@@ -97,10 +97,6 @@ const DEFAULT_TABS = [
       close_verify_safe: 'disabled',
       mdns_broadcast: 'enabled',
       ping_timeout: 10000,
-      webhook_url: '',
-      webhook_enabled: 'disabled',
-      webhook_skip_ssl_verify: 'disabled',
-      webhook_timeout: 1000,
       pair_max_attempts: 10,
     },
   },
@@ -508,24 +504,6 @@ export function useConfig() {
       )
     }
 
-    if (
-      valueChanged(currentConfig, 'webhook_skip_ssl_verify') &&
-      isEnabledValue(currentConfig.webhook_skip_ssl_verify)
-    ) {
-      addRisk(
-        risks,
-        createRisk('webhook_skip_ssl_verify', 'high', { currentValue: currentConfig.webhook_skip_ssl_verify }),
-      )
-    }
-
-    if (
-      (valueChanged(currentConfig, 'webhook_enabled') || valueChanged(currentConfig, 'webhook_url')) &&
-      isEnabledValue(currentConfig.webhook_enabled) &&
-      currentConfig.webhook_url
-    ) {
-      addRisk(risks, createRisk('webhook_enabled', 'medium', { currentValue: currentConfig.webhook_url }))
-    }
-
     if (valueChanged(currentConfig, 'pair_max_attempts') && Number(currentConfig.pair_max_attempts) === 0) {
       addRisk(risks, createRisk('pair_limit_disabled', 'high', { currentValue: currentConfig.pair_max_attempts }))
     }
@@ -641,12 +619,16 @@ export function useConfig() {
     removeDefaultValues(configData)
 
     try {
-      const response = await apiFetch('/api/config', {
+      const configResult = await apiJson('/api/config', {
         method: 'POST',
         body: configData,
       })
+      const generalConfigSaved = configResult.status === true || configResult.status === 'true'
+      if (!generalConfigSaved) {
+        throw new Error(configResult.error || 'Failed to save configuration')
+      }
 
-      saved.value = response.ok
+      saved.value = true
 
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')
