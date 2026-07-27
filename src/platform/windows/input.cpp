@@ -717,12 +717,16 @@ namespace platf {
           127
         );
         if (!raw.vmouse_dev->scroll(static_cast<int8_t>(notches))) {
+          raw.vmouse_vscroll_accum = 0;
           break;
         }
         raw.vmouse_vscroll_accum -= notches * WHEEL_DELTA;
       }
       return;
     }
+
+    // Do not replay stale virtual-device deltas after switching back from SendInput.
+    raw.vmouse_vscroll_accum = 0;
 
     INPUT i {};
 
@@ -748,12 +752,16 @@ namespace platf {
           127
         );
         if (!raw.vmouse_dev->hscroll(static_cast<int8_t>(notches))) {
+          raw.vmouse_hscroll_accum = 0;
           break;
         }
         raw.vmouse_hscroll_accum -= notches * WHEEL_DELTA;
       }
       return;
     }
+
+    // Do not replay stale virtual-device deltas after switching back from SendInput.
+    raw.vmouse_hscroll_accum = 0;
 
     INPUT i {};
 
