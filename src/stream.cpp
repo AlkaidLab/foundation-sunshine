@@ -3193,13 +3193,26 @@ namespace stream {
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
 
+      std::string client_ip = session.control.expected_peer_address;
+      if (session.control.peer) {
+        try {
+          client_ip = platf::from_sockaddr(
+            (sockaddr *) &session.control.peer->address.address
+          );
+        }
+        catch (...) {
+          // Preserve the handshake address when the live peer cannot be
+          // converted during teardown.
+        }
+      }
+
       const auto lifecycle = session.lifecycle.snapshot();
       try {
         webhook::send_event_async(webhook::event_t {
           .type = webhook::event_type_t::NV_SESSION_END,
           .timestamp = webhook::get_current_timestamp(),
           .client_name = session.client_name,
-          .client_ip = session.control.expected_peer_address,
+          .client_ip = std::move(client_ip),
           .app_name = session.app_name,
           .app_id = session.app_id,
           .session_id = std::to_string(session.launch_session_id),

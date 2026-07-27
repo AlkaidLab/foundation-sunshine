@@ -262,7 +262,6 @@ X-API-Version: v1.0
 X-Client-Info: Foundation Sunshine
 X-Service-Name: Sunshine_Foundation_Service
 X-Component: Sunshine_Foundation_Component
-Content-Length: 719
 
 {"event_id":2,"event_type":"nv_app_launch","markdown":{"content":"**Sunshine System Notification**\n\n<font color=\"info\">**Application Launched**</font>\n\n>Hostname: <font color=\"comment\">sunshine-host</font>\n>Server IP: <font color=\"comment\">192.168.1.10</font>\n>App Name: <font color=\"comment\">Example App</font>\n>App ID: <font color=\"comment\">123</font>\n>Client: <font color=\"comment\">Moonlight Client</font>\n>Client IP: <font color=\"comment\">192.168.1.20</font>\n>Resolution: <font color=\"comment\">1920x1080</font>\n>FPS: <font color=\"comment\">60</font>\n>Audio: <font color=\"comment\">Enabled</font>\n>Time: <font color=\"comment\">2026-07-27 09:20:29.979</font>\n"},"msgtype":"markdown"}
 ```
@@ -365,6 +364,8 @@ URL 规则：
 
 HTTPS 默认同时校验证书链和目标主机身份。只有用户明确设置
 `webhook_skip_ssl_verify=true` 时才使用 `verify_none`。
+域名目标会发送 SNI 并检查 OpenSSL 设置结果；IPv4/IPv6 字面量按照 RFC 6066
+不发送 SNI，开启证书校验时仍按 IP 身份校验证书。
 
 Windows 打包环境中的 OpenSSL 默认 CA 路径不保证可用，因此开启证书校验时：
 
@@ -419,6 +420,7 @@ Webhook 的接收确认契约只依赖 HTTP 状态码和响应头：
 
 - 使用最大 16 KiB 的独立响应头缓冲区。
 - 正确跳过除 `101` 外的临时 `1xx` 响应。
+- 连续临时 `1xx` 最多接受 8 个，超出后按协议错误结束本次尝试。
 - 取得最终响应头后立即完成尝试并关闭 client。
 - 不读取或解释响应正文。
 

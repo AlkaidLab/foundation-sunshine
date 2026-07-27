@@ -651,7 +651,7 @@
         "session_end": "Session avslutad",
         "session_start": "Session startad"
       },
-      "hot_apply_note": "Ändringar valideras, sparas och tillämpas omedelbart. Ingen omstart eller yttre åtgärd Tillämpa krävs.",
+      "hot_apply_note": "Ändringar valideras, sparas och tillämpas omedelbart. Ingen omstart eller ytterligare åtgärd krävs.",
       "http_warning": "HTTP skickar Webhook-data utan transportkryptering. Använd HTTPS när det är möjligt.",
       "show_url": "Visa Webhook-URL",
       "hide_url": "Dölj Webhook-URL",

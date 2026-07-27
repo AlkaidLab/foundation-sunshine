@@ -94,6 +94,40 @@ TEST_F(WebhookTest, TimestampUsesSystemLocalTimeFormat) {
   EXPECT_EQ(timestamp[13], ':');
   EXPECT_EQ(timestamp[16], ':');
   EXPECT_EQ(timestamp[19], '.');
+
+  const auto parse_decimal = [&timestamp](std::size_t offset, std::size_t length) {
+    int value = 0;
+    for (std::size_t index = offset; index < offset + length; ++index) {
+      if (timestamp[index] < '0' || timestamp[index] > '9') {
+        return -1;
+      }
+      value = value * 10 + (timestamp[index] - '0');
+    }
+    return value;
+  };
+
+  const auto year = parse_decimal(0, 4);
+  const auto month = parse_decimal(5, 2);
+  const auto day = parse_decimal(8, 2);
+  const auto hour = parse_decimal(11, 2);
+  const auto minute = parse_decimal(14, 2);
+  const auto second = parse_decimal(17, 2);
+  const auto millisecond = parse_decimal(20, 3);
+
+  EXPECT_GE(year, 1);
+  EXPECT_LE(year, 9999);
+  EXPECT_GE(month, 1);
+  EXPECT_LE(month, 12);
+  EXPECT_GE(day, 1);
+  EXPECT_LE(day, 31);
+  EXPECT_GE(hour, 0);
+  EXPECT_LE(hour, 23);
+  EXPECT_GE(minute, 0);
+  EXPECT_LE(minute, 59);
+  EXPECT_GE(second, 0);
+  EXPECT_LE(second, 59);
+  EXPECT_GE(millisecond, 0);
+  EXPECT_LE(millisecond, 999);
 }
 
 TEST_F(WebhookTest, ProductionPayloadIsValidJsonAndEscapesMarkup) {

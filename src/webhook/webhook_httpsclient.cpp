@@ -8,18 +8,30 @@
 #include <memory>
 #include <stdexcept>
 
+#include <boost/asio/ip/address.hpp>
+
 #ifdef _WIN32
   #include <windows.h>
   #include <wincrypt.h>
+#endif
 
-  #include <openssl/err.h>
-  #include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
+#ifdef _WIN32
   #include <openssl/x509.h>
   #include <openssl/x509err.h>
 #endif
 
 namespace webhook {
   namespace {
+    bool
+    is_ip_literal(const std::string &value) noexcept {
+      SimpleWeb::error_code error;
+      (void) boost::asio::ip::make_address(value, error);
+      return !error;
+    }
+
 #ifdef _WIN32
     class certificate_store_t {
     public:
@@ -242,10 +254,20 @@ namespace webhook {
 
   void
   WebhookHttpsClient::handshake(const std::shared_ptr<Session> &session) {
-    SSL_set_tlsext_host_name(
-      session->connection->socket->native_handle(),
-      host.c_str()
-    );
+    // RFC 6066 permits DNS hostnames in SNI, but not literal IPv4 or IPv6
+    // addresses. Some TLS endpoints reject a ClientHello containing an IP in
+    // server_name, even when the certificate itself has a matching IP SAN.
+    if (!is_ip_literal(host) &&
+        SSL_set_tlsext_host_name(
+          session->connection->socket->native_handle(),
+          host.c_str()
+        ) != 1) {
+      ERR_clear_error();
+      session->callback(SimpleWeb::make_error_code::make_error_code(
+        SimpleWeb::errc::protocol_error
+      ));
+      return;
+    }
 
     session->connection->set_timeout(config.timeout_connect);
     session->connection->socket->async_handshake(

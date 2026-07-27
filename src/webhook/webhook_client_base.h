@@ -61,24 +61,27 @@ namespace webhook {
     }
 
   private:
+    static constexpr std::size_t MAX_INTERIM_RESPONSES = 8;
+
     void
     read_response_headers(const std::shared_ptr<Session> &session) {
       auto response_buffer = std::make_shared<boost::asio::streambuf>(
         this->config.max_response_streambuf_size
       );
-      read_response_headers(session, std::move(response_buffer));
+      read_response_headers(session, std::move(response_buffer), 0);
     }
 
     void
     read_response_headers(
       const std::shared_ptr<Session> &session,
-      const std::shared_ptr<boost::asio::streambuf> &response_buffer
+      const std::shared_ptr<boost::asio::streambuf> &response_buffer,
+      std::size_t interim_response_count
     ) {
       boost::asio::async_read_until(
         *session->connection->socket,
         *response_buffer,
         SimpleWeb::HeaderEndMatch(),
-        [this, session, response_buffer](
+        [this, session, response_buffer, interim_response_count](
           const SimpleWeb::error_code &read_error,
           std::size_t
         ) {
@@ -110,10 +113,20 @@ namespace webhook {
             status[2] >= '0' && status[2] <= '9' &&
             status.compare(0, 3, "101") != 0;
           if (interim_response) {
+            if (interim_response_count >= MAX_INTERIM_RESPONSES) {
+              session->callback(SimpleWeb::make_error_code::make_error_code(
+                SimpleWeb::errc::protocol_error
+              ));
+              return;
+            }
             session->response->http_version.clear();
             session->response->status_code.clear();
             session->response->header.clear();
-            read_response_headers(session, response_buffer);
+            read_response_headers(
+              session,
+              response_buffer,
+              interim_response_count + 1
+            );
             return;
           }
 
