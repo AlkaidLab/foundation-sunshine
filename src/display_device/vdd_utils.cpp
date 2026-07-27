@@ -48,6 +48,52 @@ namespace display_device {
     // 上一次使用的客户端UUID，用于在没有提供UUID时使用
     static std::string last_used_client_uuid;
 
+    namespace {
+      constexpr auto kModePublicationTimeout = 3s;
+      constexpr auto kModePublicationInitialPoll = 50ms;
+      constexpr auto kModePublicationMaxPoll = 500ms;
+
+      std::vector<std::string>
+      collect_physical_devices_for_preservation() {
+        const auto topology = get_current_topology();
+        const auto devices = enum_available_devices();
+        std::vector<std::string> ordered_devices;
+        std::unordered_set<std::string> included;
+
+        const auto append = [&](const std::string &device_id) {
+          const auto device_it = devices.find(device_id);
+          const auto friendly_name = device_it != devices.end() ?
+                                       device_it->second.friendly_name :
+                                       get_display_friendly_name(device_id);
+          if (friendly_name != ZAKO_NAME && included.insert(device_id).second) {
+            ordered_devices.push_back(device_id);
+          }
+        };
+
+        // Active topology order preserves the current primary display first.
+        for (const auto &group : topology) {
+          for (const auto &device_id : group) {
+            append(device_id);
+          }
+        }
+
+        if (ordered_devices.empty()) {
+          // If no topology is active, preserve the enumerated primary first,
+          // followed by the remaining physical displays.
+          for (const auto &[device_id, device_info] : devices) {
+            if (device_info.device_state == device_state_e::primary) {
+              append(device_id);
+            }
+          }
+          for (const auto &entry : devices) {
+            append(entry.first);
+          }
+        }
+
+        return ordered_devices;
+      }
+    }  // namespace
+
     vdd_status_t
     get_vdd_status() {
       vdd_status_t status;
@@ -575,24 +621,7 @@ namespace display_device {
 
     bool
     create_vdd_monitor_noninteractive() {
-      std::unordered_set<std::string> physical_devices_before;
-      const auto topology_before = get_current_topology();
-      const auto all_devices_before = enum_available_devices();
-
-      for (const auto &group : topology_before) {
-        for (const auto &device_id : group) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
-      if (physical_devices_before.empty()) {
-        for (const auto &[device_id, device_info] : all_devices_before) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
+      const auto physical_devices_before = collect_physical_devices_for_preservation();
 
       if (!create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {})) {
         return false;
@@ -649,28 +678,7 @@ namespace display_device {
 
       // 保存创建虚拟显示器前的物理设备列表
       // 同时从所有可用设备中查找物理显示器（包括可能被禁用的）
-      std::unordered_set<std::string> physical_devices_before;
-      auto topology_before = get_current_topology();
-      auto all_devices_before = enum_available_devices();
-
-      // 从当前拓扑中获取活动的物理设备
-      for (const auto &group : topology_before) {
-        for (const auto &device_id : group) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
-
-      // 如果拓扑中没有物理设备，尝试从所有设备中查找（可能被禁用了）
-      if (physical_devices_before.empty()) {
-        for (const auto &[device_id, device_info] : all_devices_before) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-            BOOST_LOG(debug) << "从所有设备中找到物理显示器: " << device_id;
-          }
-        }
-      }
+      const auto physical_devices_before = collect_physical_devices_for_preservation();
 
       // 后台线程确保VDD处于扩展模式，并进行二次确认
       std::thread([vdd_device_id = find_device_by_friendlyname(ZAKO_NAME), physical_devices_before]() mutable {
@@ -790,16 +798,34 @@ namespace display_device {
     }
 
     bool
-    ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve) {
+    wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
+      const auto deadline = std::chrono::steady_clock::now() + kModePublicationTimeout;
+      auto poll_delay = kModePublicationInitialPoll;
+
+      while (true) {
+        if (is_mode_advertised(device_id, requested_mode)) {
+          return true;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          return false;
+        }
+
+        std::this_thread::sleep_for(std::min(
+          poll_delay,
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)));
+        poll_delay = std::min(kModePublicationMaxPoll, poll_delay * 2);
+      }
+    }
+
+    bool
+    ensure_vdd_extended_mode(const std::string &device_id, const std::vector<std::string> &physical_devices_to_preserve) {
       if (device_id.empty()) {
         return false;
       }
 
       auto current_topology = get_current_topology();
-      if (current_topology.empty()) {
-        BOOST_LOG(warning) << "无法获取当前显示器拓扑";
-        return false;
-      }
 
       // 查找VDD所在的拓扑组
       std::size_t vdd_group_index = SIZE_MAX;
@@ -810,13 +836,39 @@ namespace display_device {
         }
       }
 
+      if (vdd_group_index == SIZE_MAX) {
+        // A cold-created IDDCX monitor can be available to DisplayConfig while
+        // remaining absent from the active topology (and therefore have no
+        // \\.\DISPLAYn name). Add it as an independent extended display.
+        active_topology_t new_topology = current_topology;
+        std::unordered_set<std::string> included;
+        for (const auto &group : new_topology) {
+          included.insert(group.begin(), group.end());
+        }
+
+        for (const auto &physical_id : physical_devices_to_preserve) {
+          if (physical_id != device_id && included.insert(physical_id).second) {
+            new_topology.push_back({ physical_id });
+          }
+        }
+        new_topology.push_back({ device_id });
+
+        if (!is_topology_valid(new_topology) || !set_topology(new_topology)) {
+          BOOST_LOG(error) << "Failed to add inactive VDD to the extended topology";
+          return false;
+        }
+
+        BOOST_LOG(info) << "Added inactive VDD to the extended topology";
+        return true;
+      }
+
       // 检查是否需要切换
-      bool is_duplicated = (vdd_group_index != SIZE_MAX && current_topology[vdd_group_index].size() > 1);
+      bool is_duplicated = current_topology[vdd_group_index].size() > 1;
       bool is_vdd_only = (current_topology.size() == 1 && current_topology[0].size() == 1 && current_topology[0][0] == device_id);
 
       if (!is_duplicated && !is_vdd_only) {
         BOOST_LOG(debug) << "VDD已经是扩展模式";
-        return false;
+        return true;
       }
 
       BOOST_LOG(info) << "检测到VDD处于" << (is_vdd_only ? "仅启用" : "复制") << "模式，切换到扩展模式";
@@ -958,8 +1010,9 @@ namespace display_device {
       }
 
       if (physical_devices.empty()) {
-        BOOST_LOG(debug) << "没有物理显示器需要处理";
-        return true;
+        // Continue building a VDD-only topology. This is required on headless
+        // systems where a cold-created monitor is not activated automatically.
+        BOOST_LOG(debug) << "No physical displays to preserve; activating a VDD-only topology";
       }
 
       active_topology_t new_topology;

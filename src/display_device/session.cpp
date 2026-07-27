@@ -655,8 +655,6 @@ namespace display_device {
     }
 
     std::string mode_rebuild_old_vdd_id;
-    bool verify_mode_publication_after_create = false;
-
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution && config.refresh_rate) {
@@ -665,10 +663,8 @@ namespace display_device {
         return false;
       }
 
-      verify_mode_publication_after_create = device_zako.empty();
       if (mode_update == vdd_mode_update_e::recreate_monitor) {
         mode_rebuild_old_vdd_id = device_zako;
-        verify_mode_publication_after_create = true;
         if (!vdd_utils::destroy_vdd_monitor()) {
           BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
           return false;
@@ -734,17 +730,39 @@ namespace display_device {
       return false;
     }
 
-    if (verify_mode_publication_after_create) {
+    // Apply topology before mode verification so a cold-created monitor
+    // receives the GDI display name consumed by EnumDisplaySettingsW.
+    if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
+      if (!vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
+        BOOST_LOG(error) << "Failed to apply the requested VDD topology";
+        return false;
+      }
+      BOOST_LOG(info) << "已应用VDD屏幕布局设置";
+    }
+    else {
+      std::vector<std::string> physical_devices_to_preserve;
+      const auto append_physical_devices = [&](device_state_e state) {
+        for (const auto &[device_id, info] : pre_vdd_devices) {
+          if (info.friendly_name != ZAKO_NAME && info.device_state == state) {
+            physical_devices_to_preserve.push_back(device_id);
+          }
+        }
+      };
+      append_physical_devices(device_state_e::primary);
+      append_physical_devices(device_state_e::active);
+
+      if (!vdd_utils::ensure_vdd_extended_mode(device_zako, physical_devices_to_preserve)) {
+        BOOST_LOG(error) << "Failed to ensure the default VDD extended topology";
+        return false;
+      }
+      BOOST_LOG(info) << "VDD extended topology is ready";
+    }
+
+    // Wait for the OS-facing mode contract using the utility's bounded
+    // deadline policy rather than driver-specific timing assumptions.
+    if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
-      const bool mode_advertised = vdd_utils::retry_with_backoff(
-        [&]() {
-          return vdd_utils::is_mode_advertised(device_zako, requested_mode);
-        },
-        { .max_attempts = 5,
-          .initial_delay = 100ms,
-          .max_delay = 1000ms,
-          .context = "Waiting for VDD mode publication" });
-      if (!mode_advertised) {
+      if (!vdd_utils::wait_for_mode_publication(device_zako, requested_mode)) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
         return false;
@@ -775,24 +793,6 @@ namespace display_device {
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
-
-    // Apply VDD prep settings to handle display topology
-    // This determines how VDD interacts with physical displays
-    // VDD模式下的拓扑控制与普通模式分开处理
-    if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
-      // User has specified a display configuration, apply it
-      if (vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
-        BOOST_LOG(info) << "已应用VDD屏幕布局设置";
-        std::this_thread::sleep_for(200ms);
-      }
-    }
-    else {
-      // No specific configuration, ensure VDD is in extended mode (default behavior)
-      if (vdd_utils::ensure_vdd_extended_mode(device_zako)) {
-        BOOST_LOG(info) << "已将VDD切换到扩展模式";
-        std::this_thread::sleep_for(500ms);
-      }
-    }
 
     // Set HDR state with retry
     if (!vdd_utils::set_hdr_state(false)) {
