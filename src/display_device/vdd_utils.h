@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <unordered_set>
 #include <vector>
 #include <windows.h>
 
@@ -81,6 +80,14 @@ namespace display_device::vdd_utils {
    */
   bool
   is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode);
+
+  /**
+   * @brief Wait until Windows exposes a requested mode for a display device.
+   * @details Uses a bounded deadline internally. Callers do not need to encode
+   *          driver timing assumptions or retry counts.
+   */
+  bool
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode);
 
   struct vdd_status_t {
     std::string state;
@@ -237,7 +244,7 @@ namespace display_device::vdd_utils {
   set_hdr_state(bool enable_hdr);
 
   bool
-  ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve = {});
+  ensure_vdd_extended_mode(const std::string &device_id, const std::vector<std::string> &physical_devices_to_preserve = {});
 
   /**
    * @brief Apply VDD prep settings to handle physical displays.
