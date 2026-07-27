@@ -846,7 +846,7 @@
         "sample_client_label": "示例客户端",
         "sample_client": "Sunshine 测试客户端",
         "sample_stream_label": "示例串流",
-        "sample_stream": "1920x1080 @ 60 FPS，音频已启用",
+        "sample_stream": "1920x1080，60 FPS，音频已启用",
         "time_label": "时间"
       },
       "test_retries": "测试重试次数（0–3）",

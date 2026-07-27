@@ -669,7 +669,7 @@
         "sample_client_label": "Sample Client",
         "sample_client": "Sunshine Test Client",
         "sample_stream_label": "Sample Stream",
-        "sample_stream": "1920x1080 @ 60 FPS, Audio Enabled",
+        "sample_stream": "1920x1080, 60 FPS, Audio Enabled",
         "time_label": "Time"
       },
       "test_retries": "Nouvelles tentatives du test (0–3)",

@@ -134,7 +134,7 @@ TEST_F(WebhookTest, EnglishTestPayloadUsesTheProductionEnvelope) {
   EXPECT_NE(content.find("Webhook endpoint reached"), std::string::npos);
   EXPECT_NE(content.find("webhook_test"), std::string::npos);
   EXPECT_NE(content.find("Sunshine Test Application"), std::string::npos);
-  EXPECT_NE(content.find("1920x1080 @ 60 FPS, Audio Enabled"), std::string::npos);
+  EXPECT_NE(content.find("1920x1080, 60 FPS, Audio Enabled"), std::string::npos);
   EXPECT_NE(content.find("Time:"), std::string::npos);
 }
 
@@ -151,7 +151,7 @@ TEST_F(WebhookTest, ChineseTestPayloadUsesTheProductionEnvelope) {
   EXPECT_NE(content.find("Webhook 接收地址已收到测试请求"), std::string::npos);
   EXPECT_NE(content.find("事件类型"), std::string::npos);
   EXPECT_NE(content.find("Sunshine 测试应用"), std::string::npos);
-  EXPECT_NE(content.find("1920x1080 @ 60 FPS，音频已启用"), std::string::npos);
+  EXPECT_NE(content.find("1920x1080，60 FPS，音频已启用"), std::string::npos);
   EXPECT_NE(content.find("时间:"), std::string::npos);
 }
 

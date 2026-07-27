@@ -90,20 +90,24 @@ const formatLocalTimestamp = (date = new Date()) => {
 
 const testPayloadText = computed(() => {
   const prefix = 'notifications.webhook.test_payload'
-  return {
-    heading: t(`${prefix}.heading`),
-    title: t(`${prefix}.title`),
-    resultLabel: t(`${prefix}.result_label`),
-    result: t(`${prefix}.result`),
-    hostnameLabel: t(`${prefix}.hostname_label`),
-    eventTypeLabel: t(`${prefix}.event_type_label`),
-    sampleApplicationLabel: t(`${prefix}.sample_application_label`),
-    sampleApplication: t(`${prefix}.sample_application`),
-    sampleClientLabel: t(`${prefix}.sample_client_label`),
-    sampleClient: t(`${prefix}.sample_client`),
-    sampleStreamLabel: t(`${prefix}.sample_stream_label`),
-    sampleStream: t(`${prefix}.sample_stream`),
-    timeLabel: t(`${prefix}.time_label`),
+  try {
+    return {
+      heading: t(`${prefix}.heading`),
+      title: t(`${prefix}.title`),
+      resultLabel: t(`${prefix}.result_label`),
+      result: t(`${prefix}.result`),
+      hostnameLabel: t(`${prefix}.hostname_label`),
+      eventTypeLabel: t(`${prefix}.event_type_label`),
+      sampleApplicationLabel: t(`${prefix}.sample_application_label`),
+      sampleApplication: t(`${prefix}.sample_application`),
+      sampleClientLabel: t(`${prefix}.sample_client_label`),
+      sampleClient: t(`${prefix}.sample_client`),
+      sampleStreamLabel: t(`${prefix}.sample_stream_label`),
+      sampleStream: t(`${prefix}.sample_stream`),
+      timeLabel: t(`${prefix}.time_label`),
+    }
+  } catch {
+    return null
   }
 })
 
@@ -134,6 +138,12 @@ const curlCommands = computed(() => {
   const requestUrl = new URL(url.href)
   requestUrl.hash = ''
   const text = testPayloadText.value
+  if (!text) {
+    return {
+      linux: '',
+      windows: '',
+    }
+  }
   const payload = JSON.stringify({
     event_id: -1,
     event_type: 'webhook_test',

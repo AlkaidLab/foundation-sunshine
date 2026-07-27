@@ -422,7 +422,7 @@ namespace webhook {
     const auto sample_client_label = is_chinese ? "示例客户端" : "Sample Client";
     const auto sample_client = is_chinese ? "Sunshine 测试客户端" : "Sunshine Test Client";
     const auto sample_stream_label = is_chinese ? "示例串流" : "Sample Stream";
-    const auto sample_stream = is_chinese ? "1920x1080 @ 60 FPS，音频已启用" : "1920x1080 @ 60 FPS, Audio Enabled";
+    const auto sample_stream = is_chinese ? "1920x1080，60 FPS，音频已启用" : "1920x1080, 60 FPS, Audio Enabled";
     const auto time_label = is_chinese ? "时间" : "Time";
     if (format_type_ == format_type_t::JSON) {
       return dump_utf8({
