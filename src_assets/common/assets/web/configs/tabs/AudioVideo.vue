@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { $tp } from '../../platform-i18n'
 import { openExternalUrl } from '../../utils/helpers.js'
+import { apiPostJson } from '../../utils/apiFetch.js'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
@@ -20,6 +21,8 @@ const { t } = useI18n()
 const config = ref(props.config)
 const currentSubTab = ref('display-modes')
 const showDownloadConfirm = ref(false)
+const micTestRunning = ref(false)
+const micTestResult = ref(null)
 
 const handleDownloadVSink = () => {
   showDownloadConfirm.value = true
@@ -38,6 +41,32 @@ const confirmDownload = async () => {
 
 const cancelDownload = () => {
   showDownloadConfirm.value = false
+}
+
+const testMicrophoneRoute = async () => {
+  micTestRunning.value = true
+  micTestResult.value = null
+
+  try {
+    const result = await apiPostJson('/api/microphone/test')
+    micTestResult.value = {
+      success: result.success === true,
+      messageKey: result.success === true
+        ? 'config.stream_mic_test_success'
+        : (
+            result.error_code === 'MIC_TEST_DEVICE_UNAVAILABLE'
+              ? 'config.stream_mic_test_device_unavailable'
+              : 'config.stream_mic_test_failed'
+          ),
+    }
+  } catch {
+    micTestResult.value = {
+      success: false,
+      messageKey: 'config.stream_mic_test_failed',
+    }
+  } finally {
+    micTestRunning.value = false
+  }
 }
 </script>
 
@@ -126,10 +155,35 @@ const cancelDownload = () => {
           <i class="fas fa-download me-1"></i>
           {{ $t('_common.download') }}
         </button>
+        <button
+          v-if="platform === 'windows'"
+          type="button"
+          class="btn btn-sm btn-outline-primary stream-mic-test-btn"
+          :disabled="micTestRunning"
+          @click="testMicrophoneRoute"
+        >
+          <i class="fas fa-wave-square me-1"></i>
+          {{ micTestRunning ? $t('config.stream_mic_testing') : $t('config.stream_mic_test') }}
+        </button>
         <div class="stream-mic-note">
           <i class="fas fa-info-circle me-2"></i>
-          <span>{{ $t('config.stream_mic_note') }}</span>
+          <span>
+            {{
+              platform === 'windows'
+                ? $t('config.stream_mic_test_note')
+                : $t('config.stream_mic_note')
+            }}
+          </span>
         </div>
+      </div>
+      <div
+        v-if="micTestResult"
+        class="alert mt-2 mb-0 py-2"
+        :class="micTestResult.success ? 'alert-success' : 'alert-danger'"
+        role="status"
+        aria-live="polite"
+      >
+        {{ $t(micTestResult.messageKey) }}
       </div>
     </div>
 
@@ -256,6 +310,11 @@ const cancelDownload = () => {
   order: -1;
 }
 
+.stream-mic-test-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .stream-mic-note {
   display: flex;
   align-items: center;
@@ -286,7 +345,8 @@ const cancelDownload = () => {
     gap: 0.75rem;
   }
 
-  .stream-mic-download-btn {
+  .stream-mic-download-btn,
+  .stream-mic-test-btn {
     width: 100%;
   }
 }

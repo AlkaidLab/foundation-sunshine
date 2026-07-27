@@ -74,6 +74,7 @@ _draft/
 instructions/
 skills/
 .codex/
+.codex-remote-attachments/
 
 # Temp HID trace files
 temphidtrace*
