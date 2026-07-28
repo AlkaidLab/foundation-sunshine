@@ -1679,7 +1679,7 @@ namespace confighttp {
           .timestamp = webhook::get_current_timestamp(),
           .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
           .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
-          .extra_data = {{"error", e.what()}}
+          .extra_data = {{"error", "invalid_request"}}
         });
       }
       catch (...) {

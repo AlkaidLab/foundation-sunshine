@@ -147,14 +147,17 @@ namespace webhook {
   ):
       base_t(server_port_path, 443),
 #if BOOST_ASIO_VERSION >= 101300
-      context_(boost::asio::ssl::context::tls_client) {
+      context_(boost::asio::ssl::context::tls_client)
+#else
+      context_(boost::asio::ssl::context::tlsv12)
+#endif
+  {
+#if BOOST_ASIO_VERSION >= 101300
     context_.set_options(boost::asio::ssl::context::no_tlsv1);
     context_.set_options(boost::asio::ssl::context::no_tlsv1_1);
-#else
-      context_(boost::asio::ssl::context::tlsv12) {
 #endif
     if (verify_certificate) {
-#if BOOST_ASIO_VERSION >= 103300
+#if BOOST_ASIO_VERSION >= 101601
       context_.set_verify_callback(boost::asio::ssl::host_name_verification(host));
 #else
       context_.set_verify_callback(boost::asio::ssl::rfc2818_verification(host));
