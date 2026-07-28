@@ -13,23 +13,24 @@
  *   histogram accumulated by atomics.
  *   Each thread group (16x16 = 256 threads) processes one tile, writes
  *   {min, max, sum, count} of maxRGB values (in nits) to the output buffer, and folds
- *   its local 128-bin histogram into the global one with one atomic per occupied bin.
+ *   its local PQ-domain histogram into the global one with one atomic per occupied bin.
  *   A second-pass shader reduces the per-tile scalars to one result.
  *
- * Histogram: 128 bins covering 0-10000 nits, each bin = 78.125 nits wide.
- *   Used for P95/P99 percentile computation for stable peak luminance.
+ * Histogram: 256 uniform bins in normalized PQ signal space.
+ *   HDR Vivid variance is P90-P10 in PQ space; PQ-domain bins retain useful
+ *   precision in dark regions that a linear-nits histogram would discard.
  *
  * Thread group size: 16x16 = 256 threads
  * Dispatch: (ceil(analysisWidth/16), ceil(analysisHeight/16), 1)
  */
 
+#include "include/common.hlsl"
+
 // scRGB to nits conversion factor
 static const float SCRGB_NITS_PER_UNIT = 80.0;
 
 // Histogram parameters
-static const uint HISTOGRAM_BINS = 128;
-static const float HISTOGRAM_MAX_NITS = 10000.0;
-static const float NITS_PER_BIN = HISTOGRAM_MAX_NITS / HISTOGRAM_BINS;  // 78.125
+static const uint HISTOGRAM_BINS = 256;
 
 // Input texture (scRGB FP16)
 Texture2D<float4> inputTexture : register(t0);
@@ -52,7 +53,7 @@ struct GroupResult {
 
 RWStructuredBuffer<GroupResult> groupResults : register(u0);
 
-// Frame-global 128-bin histogram. Each group folds its local histogram in with one
+// Frame-global 256-bin histogram. Each group folds its local histogram in with one
 // atomic per *occupied* bin, so pass 2 never has to merge per-tile histograms.
 // Cleared by the host before every dispatch.
 RWBuffer<uint> globalHistogram : register(u1);
@@ -70,7 +71,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
              uint3 Gid  : SV_GroupID,
              uint  GIndex : SV_GroupIndex)
 {
-    // Initialize shared histogram bins (each thread zeroes ~1 bin, 256 threads > 128 bins)
+    // Initialize shared histogram bins (one bin per thread).
     if (GIndex < HISTOGRAM_BINS) {
         gs_histogram[GIndex] = 0;
     }
@@ -84,15 +85,13 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         float2 uv = (float2(DTid.xy) + 0.5) / float2(analysisWidth, analysisHeight);
         float4 pixel = inputTexture.SampleLevel(linearSampler, uv, 0.0);
 
-        // maxRGB = max(R, G, B) — the brightest channel per pixel
-        // This is the key statistic used by CUVA HDR Vivid and HDR10+
-        float maxRGB = max(max(pixel.r, pixel.g), pixel.b);
-
-        // Clamp negative values (out-of-gamut in scRGB)
-        maxRGB = max(maxRGB, 0.0);
-
-        // Convert to nits: scRGB 1.0 = 80 nits
-        maxRGB_nits = maxRGB * SCRGB_NITS_PER_UNIT;
+        // Match the encoder's scRGB (display-linear Rec.709) to Rec.2020 before
+        // extracting maxRGB. For an HLG source, Windows composition has already
+        // produced the display-linear result of inverse OETF + OOTF, so converting
+        // these absolute nits to PQ matches GB/T 46269.1-2025 Annex A.2.
+        // PQ is monotonic, so max(PQ(R),PQ(G),PQ(B)) equals PQ(max(R,G,B)).
+        float3 rec2020_nits = max(Rec709toRec2020(pixel.rgb) * SCRGB_NITS_PER_UNIT, 0.0);
+        maxRGB_nits = max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b);
     }
 
     // Initialize shared memory for min/max/sum/count reduction
@@ -105,7 +104,8 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
 
     // Accumulate into shared histogram using atomic add
     if (valid) {
-        uint bin = min((uint)(maxRGB_nits / NITS_PER_BIN), HISTOGRAM_BINS - 1);
+        float maxRGB_pq = NitsToPQ(maxRGB_nits.xxx).x;
+        uint bin = min((uint)(maxRGB_pq * HISTOGRAM_BINS), HISTOGRAM_BINS - 1);
         InterlockedAdd(gs_histogram[bin], 1);
     }
 

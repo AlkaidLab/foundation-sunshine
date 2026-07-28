@@ -27,6 +27,7 @@ extern "C" {
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
 #include "src/amf/amf_d3d11.h"
 #include "src/video.h"
+#include "src/video_hdr_metadata.h"
 
 #include <AMF/components/DisplayCapture.h>
 #include <AMF/core/Factory.h>
@@ -1667,7 +1668,7 @@ namespace platf::dxgi {
     bool gpu_timing_disabled = false;
 
     // ===== HDR Luminance Analyzer (Two-Pass GPU Reduction) =====
-    // Pass 1: Per-tile CS — each 16x16 group produces {min, max, sum, count, histogram[128]}
+    // Pass 1: Per-tile CS — each 16x16 group produces {min, max, sum, count}
     // Pass 2: Single-group CS — reduces all groups to one final result on GPU
     // CPU only reads 1 FinalResult (no iteration over thousands of groups)
     cs_t hdr_pass1_cs;                     // First pass: per-tile analysis
@@ -1679,7 +1680,7 @@ namespace platf::dxgi {
     shader_res_t hdr_group_results_srv;    // SRV view for pass 2 input
     buf_t hdr_final_result_buf;            // Pass 2 output (default usage + UAV)
     uav_t hdr_final_result_uav;            // UAV view for pass 2 output
-    buf_t hdr_global_histogram_buf;        // 128-bin histogram accumulated by pass 1 atomics
+    buf_t hdr_global_histogram_buf;        // 256-bin PQ histogram accumulated by pass 1 atomics
     uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
     buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
@@ -1716,16 +1717,16 @@ namespace platf::dxgi {
     bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
 
     // Must match HLSL GroupResult layout exactly
-    static constexpr uint32_t HISTOGRAM_BINS = 128;
+    static constexpr uint32_t HISTOGRAM_BINS = 256;
     static constexpr uint32_t HDR_ANALYSIS_INTERVAL = 4;
     static constexpr uint32_t HDR_ANALYSIS_MAX_WIDTH = 1920;
     static constexpr uint32_t HDR_ANALYSIS_MAX_HEIGHT = 1080;
 
-    // Pass 1 per-tile output. Deliberately scalars only: the 128-bin histogram is
+    // Pass 1 per-tile output. Deliberately scalars only: the PQ histogram is
     // accumulated straight into a single global buffer by sparse atomics in pass 1,
     // instead of being carried per-tile and merged by pass 2. Carrying it here cost
-    // 528 bytes/tile (~4.3 MiB/frame of mostly-zero writes) and forced pass 2 to walk
-    // numGroups x 128 dwords at a 528-byte stride from a single thread group.
+    // hundreds of bytes per tile and would force pass 2 to walk a large sparse
+    // array from a single thread group.
     struct GroupResult {
       float minMaxRGB;
       float maxMaxRGB;
@@ -1906,7 +1907,7 @@ namespace platf::dxgi {
         return -1;
       }
 
-      // --- Global histogram: 128 bins accumulated by pass 1 via InterlockedAdd ---
+      // --- Global PQ-domain histogram accumulated by pass 1 via InterlockedAdd ---
       // Typed (non-structured) R32_UINT so ClearUnorderedAccessViewUint() is well-defined
       // on it; a structured-buffer UAV is not reliably clearable across drivers.
       D3D11_BUFFER_DESC hist_desc = {};
@@ -2040,7 +2041,7 @@ namespace platf::dxgi {
     /**
      * @brief Read HDR analysis results from the staging buffer (previous frame).
      * GPU has already reduced all groups to one FinalResult — CPU just reads it
-     * and computes percentiles from the histogram.
+     * and computes PQ-domain percentiles from the histogram.
      */
     void
     read_hdr_analysis_results() {
@@ -2064,27 +2065,38 @@ namespace platf::dxgi {
         hdr_luminance_stats_out.max_maxrgb = result->maxMaxRGB;
         hdr_luminance_stats_out.avg_maxrgb = result->sumMaxRGB / static_cast<float>(result->pixelCount);
 
-        // Copy histogram to stats
-        for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
-          hdr_luminance_stats_out.histogram[i] = result->histogram[i];
-        }
-
-        // Compute P95 and P99 percentiles from histogram
-        uint32_t total = result->pixelCount;
-        uint32_t target_95 = static_cast<uint32_t>(total * 0.95);
-        uint32_t target_99 = static_cast<uint32_t>(total * 0.99);
+        // HDR Vivid defines variance as P90-P10 in normalized PQ signal space.
+        // Retain P95/P99 in nits for the independent HDR10+ path.
+        const uint32_t total = result->pixelCount;
+        const uint32_t target_10 = static_cast<uint32_t>(std::ceil(total * 0.10f));
+        const uint32_t target_90 = static_cast<uint32_t>(std::ceil(total * 0.90f));
+        const uint32_t target_95 = static_cast<uint32_t>(std::ceil(total * 0.95f));
+        const uint32_t target_99 = static_cast<uint32_t>(std::ceil(total * 0.99f));
         uint32_t cumulative = 0;
-        bool found_95 = false, found_99 = false;
+        bool found_10 = false;
+        bool found_90 = false;
+        bool found_95 = false;
+        bool found_99 = false;
 
         for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
           cumulative += result->histogram[i];
+          const float pq_bin_center = (static_cast<float>(i) + 0.5f) / HISTOGRAM_BINS;
+          if (!found_10 && cumulative >= target_10) {
+            hdr_luminance_stats_out.percentile_10_pq = pq_bin_center;
+            found_10 = true;
+          }
+          if (!found_90 && cumulative >= target_90) {
+            hdr_luminance_stats_out.percentile_90_pq = pq_bin_center;
+            found_90 = true;
+          }
           if (!found_95 && cumulative >= target_95) {
-            // P95 is the upper edge of this bin
-            hdr_luminance_stats_out.percentile_95 = (i + 1) * platf::HDR_NITS_PER_BIN;
+            hdr_luminance_stats_out.percentile_95 =
+              ::video::hdr_metadata::pq_to_nits(pq_bin_center);
             found_95 = true;
           }
           if (!found_99 && cumulative >= target_99) {
-            hdr_luminance_stats_out.percentile_99 = (i + 1) * platf::HDR_NITS_PER_BIN;
+            hdr_luminance_stats_out.percentile_99 =
+              ::video::hdr_metadata::pq_to_nits(pq_bin_center);
             found_99 = true;
             break;
           }

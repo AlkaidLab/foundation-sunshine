@@ -105,6 +105,7 @@ namespace nvenc {
 
     if (encoder) destroy_encoder();
     auto fail_guard = util::fail_guard([this] { destroy_encoder(); });
+    dynamic_hdr_formats = video::hdr_metadata::formats_for(sunshine_colorspace);
 
     auto colorspace = nvenc_colorspace_from_sunshine_colorspace(sunshine_colorspace);
     auto buffer_format = nvenc_format_from_sunshine_format(sunshine_buffer_format);
@@ -757,6 +758,9 @@ namespace nvenc {
 
     encoder_state = {};
     encoder_params = {};
+    dynamic_hdr_formats = {};
+    luminance_stats = {};
+    vivid_filter.reset();
   }
 
   nvenc_encoded_frame
@@ -845,9 +849,11 @@ namespace nvenc {
 
     if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
       uint16_t max_lum = hdr_metadata->maxDisplayLuminance;
+      const auto vivid_metadata = vivid_filter.update(luminance_stats);
 
       // HDR10+ (PQ only — HDR10+ requires absolute luminance)
-      if (serialize_hdr10plus_sei(luminance_stats, max_lum, hdr10plus_payload) > 0) {
+      if (dynamic_hdr_formats.hdr10plus &&
+          serialize_hdr10plus_sei(luminance_stats, max_lum, hdr10plus_payload) > 0) {
         sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(hdr10plus_payload.size());
         sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
         sei_payloads[sei_count].payload = hdr10plus_payload.data();
@@ -855,7 +861,8 @@ namespace nvenc {
       }
 
       // HDR Vivid (both PQ and HLG)
-      if (serialize_vivid_sei(luminance_stats, max_lum, vivid_payload) > 0) {
+      if (dynamic_hdr_formats.vivid &&
+          video::hdr_metadata::serialize_vivid_t35(vivid_metadata, vivid_payload) > 0) {
         sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(vivid_payload.size());
         sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
         sei_payloads[sei_count].payload = vivid_payload.data();
@@ -1175,99 +1182,6 @@ namespace nvenc {
     // In 0.0001 cd/m² units
     uint32_t target_lum = static_cast<uint32_t>(peak_nits * 10000);
     bw.write(target_lum, 27);
-
-    bw.flush();
-
-    return payload.size();
-  }
-
-  size_t
-  nvenc_base::serialize_vivid_sei(const platf::hdr_frame_luminance_stats_t &stats,
-    uint16_t max_display_luminance,
-    std::vector<uint8_t> &payload) {
-    // HDR Vivid (CUVA / T/UWA 005.3) ITU-T T.35 registered SEI payload:
-    //   country_code:          0x26 (China)
-    //   terminal_provider_code: 0x0004 (CUVA HDR)
-    //   terminal_provider_oriented_code: 0x0005
-    //   system_start_code:     0x01
-    //   Then per-window: minimum_maxrgb, average_maxrgb, variance_maxrgb, maximum_maxrgb
-    //   tone_mapping_mode, color_saturation_mapping
-
-    float peak_nits = max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-
-    payload.clear();
-    payload.reserve(64);
-
-    // ITU-T T.35 header for CUVA HDR Vivid
-    payload.push_back(0x26);        // country_code (China)
-    payload.push_back(0x00);        // terminal_provider_code high byte
-    payload.push_back(0x04);        // terminal_provider_code low byte (CUVA)
-    payload.push_back(0x00);        // terminal_provider_oriented_code high byte
-    payload.push_back(0x05);        // terminal_provider_oriented_code low byte
-
-    // system_start_code: 8 bits
-    payload.push_back(0x01);
-
-    // Bitstream-packed fields
-    struct bitwriter {
-      std::vector<uint8_t> &buf;
-      uint32_t accumulator = 0;
-      int bits_pending = 0;
-
-      void write(uint32_t value, int num_bits) {
-        for (int i = num_bits - 1; i >= 0; --i) {
-          accumulator = (accumulator << 1) | ((value >> i) & 1);
-          bits_pending++;
-          if (bits_pending == 8) {
-            buf.push_back(static_cast<uint8_t>(accumulator));
-            accumulator = 0;
-            bits_pending = 0;
-          }
-        }
-      }
-
-      void flush() {
-        if (bits_pending > 0) {
-          accumulator <<= (8 - bits_pending);
-          buf.push_back(static_cast<uint8_t>(accumulator));
-          accumulator = 0;
-          bits_pending = 0;
-        }
-      }
-    };
-
-    bitwriter bw { payload };
-
-    // num_windows: 3 bits (value = 1)
-    bw.write(1, 3);
-
-    // For window 0:
-    // CUVA uses Q4.12 format (denominator 4095) for normalized values
-
-    // minimum_maxrgb: 12 bits
-    float min_norm = std::clamp(stats.min_maxrgb / peak_nits, 0.0f, 1.0f);
-    bw.write(static_cast<uint32_t>(min_norm * 4095), 12);
-
-    // average_maxrgb: 12 bits
-    float avg_norm = std::clamp(stats.avg_maxrgb / peak_nits, 0.0f, 1.0f);
-    bw.write(static_cast<uint32_t>(avg_norm * 4095), 12);
-
-    // variance_maxrgb: 12 bits
-    float variance_norm = std::clamp((stats.percentile_99 - stats.min_maxrgb) / peak_nits, 0.0f, 1.0f);
-    bw.write(static_cast<uint32_t>(variance_norm * 4095), 12);
-
-    // maximum_maxrgb: 12 bits
-    float max_norm = std::clamp(stats.percentile_95 / peak_nits, 0.0f, 1.0f);
-    bw.write(static_cast<uint32_t>(max_norm * 4095), 12);
-
-    // tone_mapping_mode_flag: 1 bit (= 0, no tone mapping)
-    bw.write(0, 1);
-
-    // tone_mapping_param_num: 1 bit (= 0)
-    bw.write(0, 1);
-
-    // color_saturation_mapping_flag: 1 bit (= 0)
-    bw.write(0, 1);
 
     bw.flush();
 

@@ -474,22 +474,18 @@ namespace platf {
    * by a D3D11 compute shader and used to generate accurate per-frame
    * HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
    *
-   * Values are in nits (cd/m²). scRGB 1.0 = 80 nits.
+   * Scalar luminance and HDR10+ percentile values are in nits (cd/m²);
+   * HDR Vivid P10/P90 values are in normalized PQ signal space.
+   * scRGB 1.0 = 80 nits.
    */
-  /// Number of luminance histogram bins (each bin = 78.125 nits, covering 0-10000 nits)
-  static constexpr uint32_t HDR_HISTOGRAM_BINS = 128;
-  /// Maximum nits covered by the histogram
-  static constexpr float HDR_HISTOGRAM_MAX_NITS = 10000.0f;
-  /// Nits per histogram bin
-  static constexpr float HDR_NITS_PER_BIN = HDR_HISTOGRAM_MAX_NITS / HDR_HISTOGRAM_BINS;
-
   struct hdr_frame_luminance_stats_t {
     float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
     float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
     float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
-    float percentile_95 = 0.0f; ///< 95th percentile of maxRGB (nits) — stable peak estimate
-    float percentile_99 = 0.0f; ///< 99th percentile of maxRGB (nits) — near-peak estimate
-    uint32_t histogram[HDR_HISTOGRAM_BINS] = {};  ///< Luminance histogram (128 bins × 78.125 nits)
+    float percentile_10_pq = 0.0f;  ///< 10th percentile in normalized PQ signal space
+    float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
+    float percentile_95 = 0.0f;     ///< 95th percentile of maxRGB (nits), for HDR10+
+    float percentile_99 = 0.0f;     ///< 99th percentile of maxRGB (nits), for HDR10+
     bool valid = false;         ///< Whether stats are available (false on first frame)
   };
 
