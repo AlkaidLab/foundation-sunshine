@@ -16,6 +16,14 @@
 
 namespace video::hdr_metadata {
 
+  namespace detail {
+    constexpr double st2084_m1 = 2610.0 / 4096.0 / 4.0;
+    constexpr double st2084_m2 = 2523.0 / 4096.0 * 128.0;
+    constexpr double st2084_c1 = 3424.0 / 4096.0;
+    constexpr double st2084_c2 = 2413.0 / 4096.0 * 32.0;
+    constexpr double st2084_c3 = 2392.0 / 4096.0 * 32.0;
+  }  // namespace detail
+
   struct formats_t {
     bool hdr10plus = false;
     bool vivid = false;
@@ -42,38 +50,33 @@ namespace video::hdr_metadata {
    */
   inline float
   nits_to_pq(float nits) {
-    constexpr double m1 = 2610.0 / 4096.0 / 4.0;
-    constexpr double m2 = 2523.0 / 4096.0 * 128.0;
-    constexpr double c1 = 3424.0 / 4096.0;
-    constexpr double c2 = 2413.0 / 4096.0 * 32.0;
-    constexpr double c3 = 2392.0 / 4096.0 * 32.0;
-
     if (!std::isfinite(nits)) {
       return 0.0f;
     }
 
     const double normalized = std::clamp(static_cast<double>(nits) / 10000.0, 0.0, 1.0);
-    const double powered = std::pow(normalized, m1);
-    return static_cast<float>(std::pow((c1 + c2 * powered) / (1.0 + c3 * powered), m2));
+    const double powered = std::pow(normalized, detail::st2084_m1);
+    return static_cast<float>(std::pow(
+      (detail::st2084_c1 + detail::st2084_c2 * powered) /
+        (1.0 + detail::st2084_c3 * powered),
+      detail::st2084_m2
+    ));
   }
 
   inline float
   pq_to_nits(float pq) {
-    constexpr double m1 = 2610.0 / 4096.0 / 4.0;
-    constexpr double m2 = 2523.0 / 4096.0 * 128.0;
-    constexpr double c1 = 3424.0 / 4096.0;
-    constexpr double c2 = 2413.0 / 4096.0 * 32.0;
-    constexpr double c3 = 2392.0 / 4096.0 * 32.0;
-
     if (!std::isfinite(pq)) {
       return 0.0f;
     }
 
     const double powered =
-      std::pow(std::clamp(static_cast<double>(pq), 0.0, 1.0), 1.0 / m2);
-    const double numerator = std::max(powered - c1, 0.0);
-    const double denominator = std::max(c2 - c3 * powered, 1.0e-12);
-    return static_cast<float>(10000.0 * std::pow(numerator / denominator, 1.0 / m1));
+      std::pow(std::clamp(static_cast<double>(pq), 0.0, 1.0), 1.0 / detail::st2084_m2);
+    const double numerator = std::max(powered - detail::st2084_c1, 0.0);
+    const double denominator =
+      std::max(detail::st2084_c2 - detail::st2084_c3 * powered, 1.0e-12);
+    return static_cast<float>(
+      10000.0 * std::pow(numerator / denominator, 1.0 / detail::st2084_m1)
+    );
   }
 
   inline uint16_t
