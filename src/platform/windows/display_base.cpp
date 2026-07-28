@@ -607,6 +607,7 @@ namespace platf::dxgi {
     HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create DXGIFactory1 [0x"sv << util::hex(status).to_string_view() << ']';
+      log_init_timing("factory create failed");
       return -1;
     }
 
@@ -724,6 +725,7 @@ namespace platf::dxgi {
     status = adapter->QueryInterface(IID_IDXGIAdapter, (void **) &adapter_p);
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to query IDXGIAdapter interface"sv;
+      log_init_timing("adapter query failed");
       return -1;
     }
 
@@ -829,6 +831,7 @@ namespace platf::dxgi {
       status = device->QueryInterface(IID_IDXGIDevice, (void **) &dxgi);
       if (FAILED(status)) {
         BOOST_LOG(warning) << "Failed to query DXGI interface [0x"sv << util::hex(status).to_string_view() << ']';
+        log_init_timing("dxgi device query failed");
         return -1;
       }
 
