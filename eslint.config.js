@@ -16,12 +16,21 @@ export default [
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
-      globals: {
-        ...globals.browser,
-      },
     },
     rules: {
       'no-undef': 'error',
+    },
+  },
+  {
+    files: ['src_assets/common/assets/web/**/*.{js,vue}'],
+    ignores: [
+      'src_assets/common/assets/web/scripts/**/*.js',
+      'src_assets/common/assets/web/tests/**/*.js',
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
     },
   },
   {
