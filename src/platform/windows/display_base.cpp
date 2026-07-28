@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initguid.h>
+#include <iterator>
 #include <thread>
 
 #include <boost/algorithm/string/join.hpp>
@@ -1058,6 +1059,15 @@ namespace platf::dxgi {
 
   const char *
   display_base_t::dxgi_format_to_string(DXGI_FORMAT format) {
+    // The table is indexed directly by the DXGI_FORMAT value, but it only covers the
+    // contiguous range of documented formats and contains NULL holes for the reserved
+    // values between B4G4R4A4_UNORM (115) and P208 (130). Formats outside that range
+    // (e.g. A4B4G4R4_UNORM = 191, the sampler feedback opaque formats, or a bogus value
+    // from a driver) would otherwise read out of bounds, and the NULL holes would be
+    // streamed as a null char pointer, which is undefined behavior.
+    if (format >= std::size(format_str) || !format_str[format]) {
+      return "DXGI_FORMAT_UNRECOGNIZED";
+    }
     return format_str[format];
   }
 
