@@ -36,6 +36,7 @@ extern "C" {
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
+#include "video_hdr_metadata.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -638,9 +639,10 @@ namespace video {
     std::vector<packet_raw_t::replace_t> replacements;
     frame_timestamp_ring_t frame_timestamps;
 
-    // Temporal smoothing state for HDR dynamic metadata. Owned per session so a new
-    // stream starts from an unconverged EMA rather than inheriting the previous one's.
+    // Temporal filters are session-local so a new stream cannot inherit metadata
+    // history from the previous stream.
     hdr_luminance_ema_t hdr_ema;
+    hdr_metadata::vivid_temporal_filter_t vivid_filter;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -1866,61 +1868,56 @@ namespace video {
   }
 
   /**
-   * @brief Update per-frame HDR dynamic metadata with smoothed GPU-computed luminance stats.
+   * @brief Update HDR Vivid and HDR10+ side data before encoding a frame.
    *
-   * Called before each avcodec_send_frame() to inject accurate per-frame
-   * maxRGB statistics into HDR Vivid and HDR10+ side data.
-   * Uses P95 percentile for peak luminance (more stable than raw max) and
-   * EMA-smoothed values to prevent frame-to-frame flicker.
+   * HDR Vivid receives its GB/T 46269.1-2025 content-domain statistics after
+   * the recommended 32-frame mean. HDR10+ keeps its independent EMA path.
    *
    * @param frame The AVFrame with pre-allocated dynamic HDR side data
-   * @param ema Temporally-smoothed luminance statistics
-   * @param max_display_luminance Display peak luminance in nits (from EDID)
+   * @param ema Temporally-smoothed HDR10+ luminance statistics
+   * @param vivid_metadata Filtered HDR Vivid statistics in normalized PQ space
+   * @param max_display_luminance Mapped client display peak luminance in nits
    */
   void
-  update_hdr_dynamic_metadata(AVFrame *frame, const hdr_luminance_ema_t &ema, uint16_t max_display_luminance) {
-    if (!ema.initialized || !frame) return;
-
-    float peak_nits = max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-
-    // Use P95 as the "effective peak" for metadata — more stable than raw max,
-    // avoids single-pixel HDR highlights distorting global tone mapping
-    float effective_max = ema.percentile_95;
+  update_hdr_dynamic_metadata(
+    AVFrame *frame,
+    const hdr_luminance_ema_t &ema,
+    const hdr_metadata::vivid_metadata_t &vivid_metadata,
+    uint16_t max_display_luminance) {
+    if (!frame) return;
 
     // Update HDR Vivid (CUVA) dynamic metadata
     auto vivid_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_VIVID);
-    if (vivid_sd) {
+    if (vivid_sd && vivid_metadata.valid) {
       auto *vivid = reinterpret_cast<AVDynamicHDRVivid *>(vivid_sd->data);
       if (vivid && vivid->num_windows > 0) {
         auto &params = vivid->params[0];
 
-        // Normalize to [0, 1] range relative to peak luminance
-        // CUVA spec uses Q4.12 representation via AVRational with denominator 4095
-        float min_norm = std::clamp(ema.min_maxrgb / peak_nits, 0.0f, 1.0f);
-        float avg_norm = std::clamp(ema.avg_maxrgb / peak_nits, 0.0f, 1.0f);
-        float max_norm = std::clamp(effective_max / peak_nits, 0.0f, 1.0f);
+        params.minimum_maxrgb = av_make_q(vivid_metadata.minimum_maxrgb_pq, 4095);
+        params.average_maxrgb = av_make_q(vivid_metadata.average_maxrgb_pq, 4095);
+        params.variance_maxrgb = av_make_q(vivid_metadata.variance_maxrgb_pq, 4095);
+        params.maximum_maxrgb = av_make_q(vivid_metadata.maximum_maxrgb_pq, 4095);
 
-        // Variance: spread between P99 and min, normalized
-        float variance_norm = std::clamp((ema.percentile_99 - ema.min_maxrgb) / peak_nits, 0.0f, 1.0f);
-
-        params.minimum_maxrgb = av_make_q(static_cast<int>(min_norm * 4095), 4095);
-        params.average_maxrgb = av_make_q(static_cast<int>(avg_norm * 4095), 4095);
-        params.variance_maxrgb = av_make_q(static_cast<int>(variance_norm * 4095), 4095);
-        params.maximum_maxrgb = av_make_q(static_cast<int>(max_norm * 4095), 4095);
-
-        // Update targeted display luminance in tone mapping params
+        const float target_display_nits =
+          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
+        const int target_display_pq = hdr_metadata::pq_to_u12(
+          hdr_metadata::nits_to_pq(target_display_nits));
         for (int i = 0; i < 2; i++) {
-          params.tm_params[i].targeted_system_display_maximum_luminance = av_make_q(max_display_luminance, 1);
+          params.tm_params[i].targeted_system_display_maximum_luminance =
+            av_make_q(target_display_pq, 4095);
         }
       }
     }
 
     // Update HDR10+ dynamic metadata
     auto hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
-    if (hdr10plus_sd) {
+    if (hdr10plus_sd && ema.initialized) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
         auto &params = hdr10plus->params[0];
+        const float peak_nits =
+          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
+        const float effective_max = ema.percentile_95;
 
         // HDR10+ maxscl: use P95 for stability
         float max_norm = std::clamp(effective_max / peak_nits, 0.0f, 1.0f);
@@ -1958,12 +1955,13 @@ namespace video {
     auto &sps = session.sps;
     auto &vps = session.vps;
 
-    // Update per-frame HDR dynamic metadata with GPU-computed luminance stats
-    // Apply temporal EMA smoothing to prevent brightness jitter between frames
+    // Update per-frame dynamic metadata. HDR10+ and HDR Vivid intentionally use
+    // their own temporal models because their standards define different fields.
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
         session.hdr_ema.update(raw_stats);
+        const auto vivid_metadata = session.vivid_filter.update(raw_stats);
 
         uint16_t max_lum = 1000;
         auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
@@ -1973,7 +1971,7 @@ namespace video {
             max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
           }
         }
-        update_hdr_dynamic_metadata(frame, session.hdr_ema, max_lum);
+        update_hdr_dynamic_metadata(frame, session.hdr_ema, vivid_metadata, max_lum);
       }
     }
 
@@ -2577,7 +2575,7 @@ namespace video {
           }
         }
 
-        // HDR Vivid (CUVA HDR / T/UWA 3.137) dynamic metadata - both PQ and HLG
+        // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG
         // HDR Vivid supports both transfer functions:
         //   - PQ mode: absolute luminance tone mapping
         //   - HLG mode: scene-referred relative luminance tone mapping
@@ -2610,9 +2608,15 @@ namespace video {
           }
 
           // Initialize tone mapping params structure (even if not used)
+          const float target_display_nits = hdr_metadata.maxDisplayLuminance > 0
+                                              ? static_cast<float>(hdr_metadata.maxDisplayLuminance)
+                                              : 1000.0f;
+          const int target_display_pq = video::hdr_metadata::pq_to_u12(
+            video::hdr_metadata::nits_to_pq(target_display_nits));
           for (int i = 0; i < 2; i++) {
             auto &tm_params = params.tm_params[i];
-            tm_params.targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            tm_params.targeted_system_display_maximum_luminance =
+              av_make_q(target_display_pq, 4095);
             tm_params.base_enable_flag = 0;
             tm_params.base_param_m_p = av_make_q(0, 16383);
             tm_params.base_param_m_m = av_make_q(0, 10);

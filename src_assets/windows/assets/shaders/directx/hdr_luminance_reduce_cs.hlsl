@@ -3,14 +3,14 @@
  * @brief Second-pass GPU reduction shader for HDR luminance analysis.
  *
  * Reduces per-group scalar results from the first-pass analysis shader into a single
- * final result. The 128-bin histogram is not merged here — pass 1 already accumulated
+ * final result. The 256-bin histogram is not merged here — pass 1 already accumulated
  * it into a frame-global buffer via atomics, so this shader only copies it out.
  *
  * Input:  StructuredBuffer of GroupResult from first pass (N groups, 16 bytes each)
- *         RWBuffer of the frame-global 128-bin histogram
+ *         RWBuffer of the frame-global 256-bin PQ-domain histogram
  * Output: RWStructuredBuffer with 1 FinalResult containing:
  *         - Global min/max/sum/count
- *         - The merged 128-bin histogram
+ *         - The merged 256-bin histogram
  *
  * Dispatch: (1, 1, 1) — single thread group of 256 threads
  * Threads walk the group array with a grid-stride loop so the loads coalesce.
@@ -18,7 +18,7 @@
  * cbuffer provides numGroups so the shader knows how many to reduce.
  */
 
-static const uint HISTOGRAM_BINS = 128;
+static const uint HISTOGRAM_BINS = 256;
 
 struct GroupResult {
     float minMaxRGB;
@@ -104,7 +104,7 @@ void main_cs(uint GIndex : SV_GroupIndex)
         finalResult[0].pixelCount = gs_count[0];
     }
 
-    // First 128 threads copy the already-merged global histogram into the readback struct
+    // All 256 threads copy the already-merged global histogram into the readback struct
     if (GIndex < HISTOGRAM_BINS) {
         finalResult[0].histogram[GIndex] = globalHistogram[GIndex];
     }
