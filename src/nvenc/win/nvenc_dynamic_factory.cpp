@@ -6,33 +6,29 @@
 
 #include "impl/nvenc_dynamic_factory_1100.h"
 #include "impl/nvenc_dynamic_factory_1200.h"
-#include "impl/nvenc_dynamic_factory_1202.h"
-
-#include "impl/nvenc_shared_dll.h"
+#include "impl/nvenc_dynamic_factory_1300.h"
+#include "impl/nvenc_dynamic_factory_1301.h"
 
 #include "src/logging.h"
 
 #include <windows.h>
 
 #include <array>
+#include <bit>
+#include <cstdint>
 #include <tuple>
-
-uint32_t
-NvEncodeAPIGetMaxSupportedVersion(uint32_t *version);
 
 namespace {
   using namespace nvenc;
 
-  // Priority key is taken from each factory's compile-time-derived sdk_version
-  // (defined in nvenc_dynamic_factory_blueprint.h via the SDK headers it includes),
-  // so submodules like `1202` can keep tracking master indefinitely without the
-  // priority key ever going stale. Order: highest-versioned factory first.
   const std::array factory_priorities = {
-    std::tuple(&nvenc_dynamic_factory_1202::get, nvenc_dynamic_factory_1202::sdk_version),
-    std::tuple(&nvenc_dynamic_factory_1200::get, nvenc_dynamic_factory_1200::sdk_version),
-    std::tuple(&nvenc_dynamic_factory_1100::get, nvenc_dynamic_factory_1100::sdk_version),
+#define SUNSHINE_NVENC_SDK(version, name) \
+  std::tuple(&nvenc_dynamic_factory_##version::get, nvenc_sdk_version::sdk_##name),
+#include "../nvenc_sdk_versions.def"
+#undef SUNSHINE_NVENC_SDK
   };
   constexpr auto min_driver_version = "456.71";
+  using get_max_supported_version_fn = std::uint32_t(WINAPI *)(std::uint32_t *);
 
 #ifdef _WIN64
   constexpr auto dll_name = "nvEncodeAPI64.dll";
@@ -41,14 +37,15 @@ namespace {
 #endif
 
   std::tuple<shared_dll, uint32_t>
-  load_dll() {
-    auto dll = make_shared_dll(LoadLibraryEx(dll_name, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32));
+  load_dll(const nvenc_runtime_api &runtime_api) {
+    auto dll = runtime_api.load_driver();
     if (!dll) {
       BOOST_LOG(debug) << "NvEnc: Couldn't load NvEnc library " << dll_name;
       return {};
     }
 
-    auto get_max_version = (decltype(NvEncodeAPIGetMaxSupportedVersion) *) GetProcAddress(dll.get(), "NvEncodeAPIGetMaxSupportedVersion");
+    auto get_max_version = std::bit_cast<get_max_supported_version_fn>(
+      runtime_api.get_symbol(dll.get(), "NvEncodeAPIGetMaxSupportedVersion"));
     if (!get_max_version) {
       BOOST_LOG(error) << "NvEnc: No NvEncodeAPIGetMaxSupportedVersion() in " << dll_name;
       return {};
@@ -59,7 +56,7 @@ namespace {
       BOOST_LOG(error) << "NvEnc: NvEncodeAPIGetMaxSupportedVersion() failed";
       return {};
     }
-    max_version = (max_version >> 4) * 100 + (max_version & 0xf);
+    max_version = decode_nvenc_driver_version(max_version);
 
     return { dll, max_version };
   }
@@ -70,16 +67,35 @@ namespace nvenc {
 
   std::shared_ptr<nvenc_dynamic_factory>
   nvenc_dynamic_factory::get() {
-    auto [dll, max_version] = load_dll();
+    return get({
+      []() {
+        return make_shared_dll(LoadLibraryEx(dll_name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32));
+      },
+      [](HMODULE dll, const char *symbol) {
+        return GetProcAddress(dll, symbol);
+      },
+    });
+  }
+
+  std::shared_ptr<nvenc_dynamic_factory>
+  nvenc_dynamic_factory::get(const nvenc_runtime_api &runtime_api) {
+    auto [dll, max_version] = load_dll(runtime_api);
     if (!dll) return {};
 
+    const auto selected_version = select_nvenc_sdk_version(max_version);
     for (const auto &[factory_init, version] : factory_priorities) {
-      if (max_version >= version) {
+      if (version == selected_version) {
+        BOOST_LOG(info) << "NvEnc: driver supports API "
+                        << max_version / 100 << '.' << max_version % 100
+                        << ", selecting SDK "
+                        << nvenc_sdk_version_number(version) / 100 << '.'
+                        << nvenc_sdk_version_number(version) % 100;
         return factory_init(dll);
       }
     }
 
-    BOOST_LOG(error) << "NvEnc: minimum required driver version is " << min_driver_version;
+    BOOST_LOG(error) << "NvEnc: driver API " << max_version / 100 << '.' << max_version % 100
+                     << " is unsupported; minimum required driver version is " << min_driver_version;
     return {};
   }
 
@@ -100,7 +116,15 @@ namespace {
 struct NvencVersionTests: testing::TestWithParam<decltype(factory_priorities)::value_type> {
   static void
   SetUpTestSuite() {
-    std::tie(suite.dll, suite.max_version) = load_dll();
+    nvenc_runtime_api runtime_api {
+      []() {
+        return make_shared_dll(LoadLibraryEx(dll_name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32));
+      },
+      [](HMODULE dll, const char *symbol) {
+        return GetProcAddress(dll, symbol);
+      },
+    };
+    std::tie(suite.dll, suite.max_version) = load_dll(runtime_api);
     if (!suite.dll) {
       GTEST_SKIP() << "Can't load " << dll_name;
     }
@@ -134,8 +158,8 @@ struct NvencVersionTests: testing::TestWithParam<decltype(factory_priorities)::v
 
 TEST_P(NvencVersionTests, CreateAndEncode) {
   auto [factory_init, version] = GetParam();
-  if (version > suite.max_version) {
-    GTEST_SKIP() << "Need dll version " << version << ", have " << suite.max_version;
+  if (nvenc_sdk_version_number(version) > suite.max_version) {
+    GTEST_SKIP() << "Need dll version " << nvenc_sdk_version_number(version) << ", have " << suite.max_version;
   }
 
   auto factory = factory_init(suite.dll);
@@ -159,6 +183,6 @@ TEST_P(NvencVersionTests, CreateAndEncode) {
 }
 
 INSTANTIATE_TEST_SUITE_P(NvencFactoryTestsPrivate, NvencVersionTests, testing::ValuesIn(factory_priorities),
-  [](const auto &info) { return std::to_string(std::get<1>(info.param)); });
+  [](const auto &info) { return std::to_string(nvenc_sdk_version_number(std::get<1>(info.param))); });
 
 #endif
