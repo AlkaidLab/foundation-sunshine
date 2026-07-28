@@ -9,10 +9,12 @@
  *   - scRGB uses BT.709 primaries in linear light
  *   - 1.0 in scRGB = 80 nits (SDR reference white)
  *
- * Output: Per-group reduction results in a structured buffer.
- *   Each thread group (16x16 = 256 threads) processes one tile and writes
- *   {min, max, sum, count, histogram[128]} of maxRGB values (in nits)
- *   to the output buffer. A second-pass shader reduces all groups to one.
+ * Output: Per-group scalar reductions in a structured buffer, plus a frame-global
+ *   histogram accumulated by atomics.
+ *   Each thread group (16x16 = 256 threads) processes one tile, writes
+ *   {min, max, sum, count} of maxRGB values (in nits) to the output buffer, and folds
+ *   its local 128-bin histogram into the global one with one atomic per occupied bin.
+ *   A second-pass shader reduces the per-tile scalars to one result.
  *
  * Histogram: 128 bins covering 0-10000 nits, each bin = 78.125 nits wide.
  *   Used for P95/P99 percentile computation for stable peak luminance.
@@ -39,16 +41,21 @@ cbuffer AnalysisParams : register(b0) {
     uint2 _pad;
 };
 
-// Per-group reduction results
+// Per-group reduction results (scalars only — the histogram goes straight to the
+// global accumulator below, so it is not carried per tile)
 struct GroupResult {
     float minMaxRGB;                  // Minimum of max(R,G,B) in nits
     float maxMaxRGB;                  // Maximum of max(R,G,B) in nits
     float sumMaxRGB;                  // Sum of max(R,G,B) in nits (for average)
     uint  pixelCount;                 // Number of valid pixels processed
-    uint  histogram[HISTOGRAM_BINS];  // Luminance histogram (128 bins)
 };
 
 RWStructuredBuffer<GroupResult> groupResults : register(u0);
+
+// Frame-global 128-bin histogram. Each group folds its local histogram in with one
+// atomic per *occupied* bin, so pass 2 never has to merge per-tile histograms.
+// Cleared by the host before every dispatch.
+RWBuffer<uint> globalHistogram : register(u1);
 
 // Shared memory for intra-group parallel reduction
 groupshared float gs_min[256];
@@ -116,7 +123,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         GroupMemoryBarrierWithGroupSync();
     }
 
-    // Thread 0 writes the group's result (including histogram)
+    // Thread 0 writes the group's scalar result
     if (GIndex == 0) {
         // Compute flat group index
         uint dispatchWidth = (analysisWidth + 15) / 16;
@@ -128,11 +135,13 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         result.sumMaxRGB = gs_sum[0];
         result.pixelCount = gs_count[0];
 
-        [unroll]
-        for (uint i = 0; i < HISTOGRAM_BINS; i++) {
-            result.histogram[i] = gs_histogram[i];
-        }
-
         groupResults[groupIndex] = result;
+    }
+
+    // Fold this tile's histogram into the frame-global one. Only occupied bins need an
+    // atomic: a 16x16 tile usually spans a handful of bins, not all 128, so in practice
+    // this is a few atomics per group rather than one per bin.
+    if (GIndex < HISTOGRAM_BINS && gs_histogram[GIndex] != 0) {
+        InterlockedAdd(globalHistogram[GIndex], gs_histogram[GIndex]);
     }
 }

@@ -1679,6 +1679,8 @@ namespace platf::dxgi {
     shader_res_t hdr_group_results_srv;    // SRV view for pass 2 input
     buf_t hdr_final_result_buf;            // Pass 2 output (default usage + UAV)
     uav_t hdr_final_result_uav;            // UAV view for pass 2 output
+    buf_t hdr_global_histogram_buf;        // 128-bin histogram accumulated by pass 1 atomics
+    uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
     buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
     buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
@@ -1719,15 +1721,20 @@ namespace platf::dxgi {
     static constexpr uint32_t HDR_ANALYSIS_MAX_WIDTH = 1920;
     static constexpr uint32_t HDR_ANALYSIS_MAX_HEIGHT = 1080;
 
+    // Pass 1 per-tile output. Deliberately scalars only: the 128-bin histogram is
+    // accumulated straight into a single global buffer by sparse atomics in pass 1,
+    // instead of being carried per-tile and merged by pass 2. Carrying it here cost
+    // 528 bytes/tile (~4.3 MiB/frame of mostly-zero writes) and forced pass 2 to walk
+    // numGroups x 128 dwords at a 528-byte stride from a single thread group.
     struct GroupResult {
       float minMaxRGB;
       float maxMaxRGB;
       float sumMaxRGB;
       uint32_t pixelCount;
-      uint32_t histogram[HISTOGRAM_BINS];
     };
 
-    // Must match HLSL FinalResult layout exactly (same as GroupResult for merged output)
+    // Must match HLSL FinalResult layout exactly. This one keeps the histogram because
+    // it is what the CPU reads back.
     struct FinalResult {
       float minMaxRGB;
       float maxMaxRGB;
@@ -1899,6 +1906,31 @@ namespace platf::dxgi {
         return -1;
       }
 
+      // --- Global histogram: 128 bins accumulated by pass 1 via InterlockedAdd ---
+      // Typed (non-structured) R32_UINT so ClearUnorderedAccessViewUint() is well-defined
+      // on it; a structured-buffer UAV is not reliably clearable across drivers.
+      D3D11_BUFFER_DESC hist_desc = {};
+      hist_desc.ByteWidth = HISTOGRAM_BINS * sizeof(uint32_t);
+      hist_desc.Usage = D3D11_USAGE_DEFAULT;
+      hist_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+
+      status = device->CreateBuffer(&hist_desc, nullptr, &hdr_global_histogram_buf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR global histogram buffer: " << util::log_hex(status);
+        return -1;
+      }
+
+      D3D11_UNORDERED_ACCESS_VIEW_DESC hist_uav_desc = {};
+      hist_uav_desc.Format = DXGI_FORMAT_R32_UINT;
+      hist_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+      hist_uav_desc.Buffer.NumElements = HISTOGRAM_BINS;
+
+      status = device->CreateUnorderedAccessView(hdr_global_histogram_buf.get(), &hist_uav_desc, &hdr_global_histogram_uav);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR global histogram UAV: " << util::log_hex(status);
+        return -1;
+      }
+
       // --- Constant buffer for pass 2 (numGroups) ---
       D3D11_BUFFER_DESC cb_desc = {};
       cb_desc.ByteWidth = 16;  // 16-byte aligned: uint numGroups + 12 bytes padding
@@ -1955,13 +1987,17 @@ namespace platf::dxgi {
       ID3D11RenderTargetView *null_rtv = nullptr;
       device_ctx->OMSetRenderTargets(1, &null_rtv, nullptr);
 
+      // The global histogram accumulates across the whole frame, so it must start at zero.
+      const UINT hist_clear[4] = { 0, 0, 0, 0 };
+      device_ctx->ClearUnorderedAccessViewUint(hdr_global_histogram_uav.get(), hist_clear);
+
       // ===== Pass 1: Per-tile analysis =====
       device_ctx->CSSetShader(hdr_pass1_cs.get(), nullptr, 0);
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
       ID3D11SamplerState *cs_sampler = sampler_linear.get();
       device_ctx->CSSetSamplers(0, 1, &cs_sampler);
-      ID3D11UnorderedAccessView *uav1 = hdr_group_results_uav.get();
-      device_ctx->CSSetUnorderedAccessViews(0, 1, &uav1, nullptr);
+      ID3D11UnorderedAccessView *pass1_uavs[] = { hdr_group_results_uav.get(), hdr_global_histogram_uav.get() };
+      device_ctx->CSSetUnorderedAccessViews(0, 2, pass1_uavs, nullptr);
       ID3D11Buffer *analysis_cbuf = hdr_analysis_cbuf.get();
       device_ctx->CSSetConstantBuffers(0, 1, &analysis_cbuf);
 
@@ -1971,9 +2007,9 @@ namespace platf::dxgi {
 
       // Unbind pass 1 resources
       ID3D11ShaderResourceView *null_srv = nullptr;
-      ID3D11UnorderedAccessView *null_uav = nullptr;
+      ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
-      device_ctx->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+      device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
       ID3D11SamplerState *null_sampler = nullptr;
       device_ctx->CSSetSamplers(0, 1, &null_sampler);
 
@@ -1981,8 +2017,8 @@ namespace platf::dxgi {
       device_ctx->CSSetShader(hdr_pass2_cs.get(), nullptr, 0);
       ID3D11ShaderResourceView *group_srv = hdr_group_results_srv.get();
       device_ctx->CSSetShaderResources(0, 1, &group_srv);
-      ID3D11UnorderedAccessView *uav2 = hdr_final_result_uav.get();
-      device_ctx->CSSetUnorderedAccessViews(0, 1, &uav2, nullptr);
+      ID3D11UnorderedAccessView *pass2_uavs[] = { hdr_final_result_uav.get(), hdr_global_histogram_uav.get() };
+      device_ctx->CSSetUnorderedAccessViews(0, 2, pass2_uavs, nullptr);
       ID3D11Buffer *cbuf = hdr_reduce_cbuf.get();
       device_ctx->CSSetConstantBuffers(0, 1, &cbuf);
 
@@ -1990,7 +2026,7 @@ namespace platf::dxgi {
 
       // Unbind all CS resources
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
-      device_ctx->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+      device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
       ID3D11Buffer *null_cb = nullptr;
       device_ctx->CSSetConstantBuffers(0, 1, &null_cb);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
