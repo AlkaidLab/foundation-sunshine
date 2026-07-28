@@ -38,9 +38,19 @@ namespace {
 
   std::tuple<shared_dll, uint32_t>
   load_dll(const nvenc_runtime_api &runtime_api) {
+    if (!runtime_api.load_driver) {
+      BOOST_LOG(error) << "NvEnc: No driver loader was provided";
+      return {};
+    }
+
     auto dll = runtime_api.load_driver();
     if (!dll) {
       BOOST_LOG(debug) << "NvEnc: Couldn't load NvEnc library " << dll_name;
+      return {};
+    }
+
+    if (!runtime_api.get_symbol) {
+      BOOST_LOG(error) << "NvEnc: No symbol resolver was provided";
       return {};
     }
 

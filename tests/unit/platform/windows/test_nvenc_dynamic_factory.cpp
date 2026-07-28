@@ -48,6 +48,21 @@ namespace {
     };
   }
 
+  TEST(NvencDynamicFactoryTest, HandlesMissingDriverLoader) {
+    EXPECT_FALSE(nvenc::nvenc_dynamic_factory::get({}));
+  }
+
+  TEST(NvencDynamicFactoryTest, HandlesMissingSymbolResolver) {
+    const nvenc::nvenc_runtime_api runtime_api {
+      []() {
+        return make_fake_dll();
+      },
+      {},
+    };
+
+    EXPECT_FALSE(nvenc::nvenc_dynamic_factory::get(runtime_api));
+  }
+
   TEST(NvencDynamicFactoryTest, HandlesUnavailableDriver) {
     bool resolved_symbol = false;
     const nvenc::nvenc_runtime_api runtime_api {
