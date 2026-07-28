@@ -439,6 +439,63 @@ namespace video {
     std::array<entry_t, 256> entries {};
   };
 
+  /**
+   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
+   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
+   * the raw per-frame GPU statistics over time.
+   *
+   * This state is owned by the encode session. It must not be shared across sessions:
+   * carrying a previous stream's converged luminance into a new one biases the first
+   * frames of dynamic metadata until the EMA re-converges.
+   */
+  struct hdr_luminance_ema_t {
+    float min_maxrgb = 0.0f;
+    float max_maxrgb = 0.0f;
+    float avg_maxrgb = 0.0f;
+    float percentile_95 = 0.0f;
+    float percentile_99 = 0.0f;
+    bool initialized = false;
+
+    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
+    /// Lower α = more smoothing (less flicker, slower adaptation).
+    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
+    static constexpr float ALPHA = 0.15f;
+    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
+
+    /**
+     * @brief Apply EMA smoothing to raw per-frame stats.
+     * On first frame or scene cuts (>3x luminance change), snaps to current value.
+     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
+     */
+    void
+    update(const platf::hdr_frame_luminance_stats_t &raw) {
+      if (!raw.valid) return;
+
+      if (!initialized) {
+        // First frame: snap to current values
+        min_maxrgb = raw.min_maxrgb;
+        max_maxrgb = raw.max_maxrgb;
+        avg_maxrgb = raw.avg_maxrgb;
+        percentile_95 = raw.percentile_95;
+        percentile_99 = raw.percentile_99;
+        initialized = true;
+        return;
+      }
+
+      // Scene cut detection: if peak luminance changes dramatically, snap immediately
+      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
+      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
+                    ? 1.0f  // Scene cut: snap to new values
+                    : ALPHA; // Normal: smooth transition
+
+      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
+      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
+      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
+      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
+      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
+    }
+  };
+
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
@@ -465,6 +522,7 @@ namespace video {
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
+      hdr_ema = other.hdr_ema;
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -579,6 +637,10 @@ namespace video {
 
     std::vector<packet_raw_t::replace_t> replacements;
     frame_timestamp_ring_t frame_timestamps;
+
+    // Temporal smoothing state for HDR dynamic metadata. Owned per session so a new
+    // stream starts from an unconverged EMA rather than inheriting the previous one's.
+    hdr_luminance_ema_t hdr_ema;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -1804,59 +1866,6 @@ namespace video {
   }
 
   /**
-   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
-   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
-   * the raw per-frame GPU statistics over time.
-   */
-  struct hdr_luminance_ema_t {
-    float min_maxrgb = 0.0f;
-    float max_maxrgb = 0.0f;
-    float avg_maxrgb = 0.0f;
-    float percentile_95 = 0.0f;
-    float percentile_99 = 0.0f;
-    bool initialized = false;
-
-    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
-    /// Lower α = more smoothing (less flicker, slower adaptation).
-    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
-    static constexpr float ALPHA = 0.15f;
-    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
-
-    /**
-     * @brief Apply EMA smoothing to raw per-frame stats.
-     * On first frame or scene cuts (>3x luminance change), snaps to current value.
-     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
-     */
-    void
-    update(const platf::hdr_frame_luminance_stats_t &raw) {
-      if (!raw.valid) return;
-
-      if (!initialized) {
-        // First frame: snap to current values
-        min_maxrgb = raw.min_maxrgb;
-        max_maxrgb = raw.max_maxrgb;
-        avg_maxrgb = raw.avg_maxrgb;
-        percentile_95 = raw.percentile_95;
-        percentile_99 = raw.percentile_99;
-        initialized = true;
-        return;
-      }
-
-      // Scene cut detection: if peak luminance changes dramatically, snap immediately
-      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
-      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
-                    ? 1.0f  // Scene cut: snap to new values
-                    : ALPHA; // Normal: smooth transition
-
-      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
-      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
-      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
-      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
-      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
-    }
-  };
-
-  /**
    * @brief Update per-frame HDR dynamic metadata with smoothed GPU-computed luminance stats.
    *
    * Called before each avcodec_send_frame() to inject accurate per-frame
@@ -1927,9 +1936,6 @@ namespace video {
     }
   }
 
-  // Per-session EMA state for temporal smoothing of HDR luminance stats
-  static thread_local hdr_luminance_ema_t hdr_ema_state;
-
   int
   encode_avcodec(
     int64_t frame_nr,
@@ -1957,7 +1963,7 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        hdr_ema_state.update(raw_stats);
+        session.hdr_ema.update(raw_stats);
 
         uint16_t max_lum = 1000;
         auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
@@ -1967,7 +1973,7 @@ namespace video {
             max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
           }
         }
-        update_hdr_dynamic_metadata(frame, hdr_ema_state, max_lum);
+        update_hdr_dynamic_metadata(frame, session.hdr_ema, max_lum);
       }
     }
 
