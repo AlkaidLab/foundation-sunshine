@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { trackEvents } from '../config/firebase.js'
 import { getBootstrapConfig } from '../config/bootstrapData.js'
-import { apiFetch } from '../utils/apiFetch.js'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 
 // 平台相关的标签页排除规则
