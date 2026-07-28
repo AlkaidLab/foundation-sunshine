@@ -37,6 +37,10 @@ namespace nvenc {
           }
           cuda_surface = 0;
         }
+
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+        destroy_cuda_array_input();
+#endif
       }
 
       if (cuda_failed(cuda_functions.cuCtxDestroy(cuda_context))) {
@@ -79,6 +83,16 @@ namespace nvenc {
         BOOST_LOG(error) << "NvEnc: missing CUDA functions in " << dll_name;
         cuda_functions = {};
       }
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+      else if (!load_function(cuda_functions.cuArray3DCreate, "cuArray3DCreate_v2") ||
+               !load_function(cuda_functions.cuArrayDestroy, "cuArrayDestroy") ||
+               !load_function(cuda_functions.cuArrayGetPlane, "cuArrayGetPlane")) {
+        BOOST_LOG(info) << "NvEnc: CUDA array input functions unavailable, using CUDA device pointer input";
+        cuda_functions.cuArray3DCreate = nullptr;
+        cuda_functions.cuArrayDestroy = nullptr;
+        cuda_functions.cuArrayGetPlane = nullptr;
+      }
+#endif
     }
     else {
       BOOST_LOG(debug) << "NvEnc: couldn't load CUDA dynamic library " << dll_name;
@@ -119,7 +133,7 @@ namespace nvenc {
     auto create_input_texture = [&](UINT bind_flags) -> bool {
       D3D11_TEXTURE2D_DESC desc = {};
       desc.Width = encoder_params.width;
-      desc.Height = encoder_params.height * 3;  // Planar YUV
+      desc.Height = encoder_params.height * planar_yuv_plane_count;
       desc.MipLevels = 1;
       desc.ArraySize = 1;
       desc.Format = dxgi_format_from_nvenc_format(encoder_params.buffer_format);
@@ -178,38 +192,130 @@ namespace nvenc {
           }
         }
       }
+    }
 
-      if (!cuda_surface) {
-        if (cuda_failed(cuda_functions.cuMemAllocPitch(
-              &cuda_surface,
-              &cuda_surface_pitch,
-              // Planar 16-bit YUV
-              encoder_params.width * 2,
-              encoder_params.height * 3, 16))) {
-          BOOST_LOG(error) << "NvEnc: cuMemAllocPitch() failed: error " << last_cuda_error;
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    if (create_and_register_cuda_array_input()) {
+      BOOST_LOG(info) << "NvEnc: using block-linear CUDA array input";
+      return true;
+    }
+
+    BOOST_LOG(info) << "NvEnc: falling back to pitch-linear CUDA device pointer input";
+#endif
+
+    return create_and_register_cuda_device_pointer_input();
+  }
+
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+  bool
+  nvenc_d3d11_on_cuda::create_and_register_cuda_array_input() {
+    if (!cuda_functions.cuArray3DCreate ||
+        !cuda_functions.cuArrayDestroy ||
+        !cuda_functions.cuArrayGetPlane) {
+      return false;
+    }
+
+    auto autopop_context = push_context();
+    if (!autopop_context) return false;
+
+    if (!cuda_array_surface) {
+      // The D3D interop array is valid only while its graphics resource is
+      // mapped. Keep an app-owned block-linear array registered with NVENC.
+      CUDA_ARRAY3D_DESCRIPTOR array_descriptor = {};
+      array_descriptor.Width = encoder_params.width;
+      array_descriptor.Height = encoder_params.height;
+      array_descriptor.Format = CU_AD_FORMAT_UINT16_PLANAR_444;
+      array_descriptor.NumChannels = planar_yuv_plane_count;
+      array_descriptor.Flags = CUDA_ARRAY3D_SURFACE_LDST | CUDA_ARRAY3D_VIDEO_ENCODE_DECODE;
+
+      if (cuda_failed(cuda_functions.cuArray3DCreate(&cuda_array_surface, &array_descriptor))) {
+        BOOST_LOG(warning) << "NvEnc: cuArray3DCreate() failed for NVENC input: error " << last_cuda_error;
+        cuda_array_surface = nullptr;
+        return false;
+      }
+
+      for (std::uint32_t plane = 0; plane < planar_yuv_plane_count; ++plane) {
+        if (cuda_failed(cuda_functions.cuArrayGetPlane(&cuda_array_planes[plane], cuda_array_surface, plane))) {
+          BOOST_LOG(warning) << "NvEnc: cuArrayGetPlane() failed for NVENC input plane " << plane << ": error " << last_cuda_error;
+          destroy_cuda_array_input();
           return false;
         }
       }
     }
 
-    if (!registered_input_buffer) {
-      NV_ENC_REGISTER_RESOURCE register_resource = { NV_ENC_REGISTER_RESOURCE_VER };
-      register_resource.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR;
-      register_resource.width = encoder_params.width;
-      register_resource.height = encoder_params.height;
-      register_resource.pitch = cuda_surface_pitch;
-      register_resource.resourceToRegister = (void *) cuda_surface;
-      register_resource.bufferFormat = encoder_params.buffer_format;
-      register_resource.bufferUsage = NV_ENC_INPUT_IMAGE;
-
-      if (nvenc_failed(nvenc->nvEncRegisterResource(encoder, &register_resource))) {
-        BOOST_LOG(error) << "NvEnc: NvEncRegisterResource() failed: " << last_nvenc_error_string;
-        return false;
-      }
-
-      registered_input_buffer = register_resource.registeredResource;
+    if (!register_cuda_input(
+          NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY,
+          cuda_array_surface,
+          encoder_params.width * planar_yuv_bytes_per_sample)) {
+      BOOST_LOG(warning) << "NvEnc: CUDA array registration failed: " << last_nvenc_error_string;
+      destroy_cuda_array_input();
+      return false;
     }
 
+    return true;
+  }
+
+  void
+  nvenc_d3d11_on_cuda::destroy_cuda_array_input() {
+    if (cuda_array_surface) {
+      if (cuda_failed(cuda_functions.cuArrayDestroy(cuda_array_surface))) {
+        BOOST_LOG(error) << "NvEnc: cuArrayDestroy() failed: error " << last_cuda_error;
+      }
+      cuda_array_surface = nullptr;
+      for (auto &plane : cuda_array_planes) {
+        plane = nullptr;
+      }
+    }
+  }
+#endif
+
+  bool
+  nvenc_d3d11_on_cuda::create_and_register_cuda_device_pointer_input() {
+    {
+      auto autopop_context = push_context();
+      if (!autopop_context) return false;
+
+      if (!cuda_surface &&
+          cuda_failed(cuda_functions.cuMemAllocPitch(
+            &cuda_surface,
+            &cuda_surface_pitch,
+            encoder_params.width * planar_yuv_bytes_per_sample,
+            encoder_params.height * planar_yuv_plane_count, 16))) {
+        BOOST_LOG(error) << "NvEnc: cuMemAllocPitch() failed: error " << last_cuda_error;
+        return false;
+      }
+    }
+
+    if (!register_cuda_input(
+          NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR,
+          (void *) cuda_surface,
+          cuda_surface_pitch)) {
+      BOOST_LOG(error) << "NvEnc: NvEncRegisterResource() failed: " << last_nvenc_error_string;
+      return false;
+    }
+
+    return true;
+  }
+
+  bool
+  nvenc_d3d11_on_cuda::register_cuda_input(
+    NV_ENC_INPUT_RESOURCE_TYPE resource_type,
+    void *resource,
+    std::uint32_t pitch) {
+    NV_ENC_REGISTER_RESOURCE register_resource = { NV_ENC_REGISTER_RESOURCE_VER };
+    register_resource.resourceType = resource_type;
+    register_resource.width = encoder_params.width;
+    register_resource.height = encoder_params.height;
+    register_resource.pitch = pitch;
+    register_resource.resourceToRegister = resource;
+    register_resource.bufferFormat = encoder_params.buffer_format;
+    register_resource.bufferUsage = NV_ENC_INPUT_IMAGE;
+
+    if (nvenc_failed(nvenc->nvEncRegisterResource(encoder, &register_resource))) {
+      return false;
+    }
+
+    registered_input_buffer = register_resource.registeredResource;
     return true;
   }
 
@@ -238,16 +344,33 @@ namespace nvenc {
       return false;
     }
 
+    CUDA_MEMCPY2D copy_params = {};
+    copy_params.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+    copy_params.srcArray = input_texture_array;
+    copy_params.WidthInBytes = encoder_params.width * planar_yuv_bytes_per_sample;
+
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    if (cuda_array_surface) {
+      copy_params.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+      copy_params.Height = encoder_params.height;
+
+      for (std::uint32_t plane = 0; plane < planar_yuv_plane_count; ++plane) {
+        copy_params.srcY = encoder_params.height * plane;
+        copy_params.dstArray = cuda_array_planes[plane];
+        if (cuda_failed(cuda_functions.cuMemcpy2D(&copy_params))) {
+          BOOST_LOG(error) << "NvEnc: cuMemcpy2D() to CUDA array plane " << plane
+                           << " failed: error " << last_cuda_error;
+          return false;
+        }
+      }
+    }
+    else
+#endif
     {
-      CUDA_MEMCPY2D copy_params = {};
-      copy_params.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-      copy_params.srcArray = input_texture_array;
       copy_params.dstMemoryType = CU_MEMORYTYPE_DEVICE;
       copy_params.dstDevice = cuda_surface;
       copy_params.dstPitch = cuda_surface_pitch;
-      // Planar 16-bit YUV
-      copy_params.WidthInBytes = encoder_params.width * 2;
-      copy_params.Height = encoder_params.height * 3;
+      copy_params.Height = encoder_params.height * planar_yuv_plane_count;
 
       if (cuda_failed(cuda_functions.cuMemcpy2D(&copy_params))) {
         BOOST_LOG(error) << "NvEnc: cuMemcpy2D() failed: error " << last_cuda_error;
