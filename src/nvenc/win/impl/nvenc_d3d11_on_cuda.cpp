@@ -229,14 +229,14 @@ namespace nvenc {
       array_descriptor.Flags = CUDA_ARRAY3D_SURFACE_LDST | CUDA_ARRAY3D_VIDEO_ENCODE_DECODE;
 
       if (cuda_failed(cuda_functions.cuArray3DCreate(&cuda_array_surface, &array_descriptor))) {
-        BOOST_LOG(info) << "NvEnc: cuArray3DCreate() unavailable for NVENC input: error " << last_cuda_error;
+        BOOST_LOG(warning) << "NvEnc: cuArray3DCreate() failed for NVENC input: error " << last_cuda_error;
         cuda_array_surface = nullptr;
         return false;
       }
 
       for (std::uint32_t plane = 0; plane < planar_yuv_plane_count; ++plane) {
         if (cuda_failed(cuda_functions.cuArrayGetPlane(&cuda_array_planes[plane], cuda_array_surface, plane))) {
-          BOOST_LOG(info) << "NvEnc: cuArrayGetPlane() failed for NVENC input: error " << last_cuda_error;
+          BOOST_LOG(warning) << "NvEnc: cuArrayGetPlane() failed for NVENC input plane " << plane << ": error " << last_cuda_error;
           destroy_cuda_array_input();
           return false;
         }
@@ -247,7 +247,7 @@ namespace nvenc {
           NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY,
           cuda_array_surface,
           encoder_params.width * planar_yuv_bytes_per_sample)) {
-      BOOST_LOG(info) << "NvEnc: CUDA array registration failed: " << last_nvenc_error_string;
+      BOOST_LOG(warning) << "NvEnc: CUDA array registration failed: " << last_nvenc_error_string;
       destroy_cuda_array_input();
       return false;
     }
