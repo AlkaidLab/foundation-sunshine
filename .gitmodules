@@ -38,10 +38,14 @@
 	path = third-party/nvenc-headers/1200
 	url = https://github.com/FFmpeg/nv-codec-headers.git
 	branch = sdk/12.0
-[submodule "third-party/nvenc-headers/1202"]
-	path = third-party/nvenc-headers/1202
+# Keep each NVENC API line as a separate, pinned gitlink. A newer API line can
+# raise the minimum driver requirement and must not replace an older fallback.
+[submodule "third-party/nvenc-headers/1300"]
+	path = third-party/nvenc-headers/1300
 	url = https://github.com/FFmpeg/nv-codec-headers.git
-	branch = master
+[submodule "third-party/nvenc-headers/1301"]
+	path = third-party/nvenc-headers/1301
+	url = https://github.com/FFmpeg/nv-codec-headers.git
 [submodule "third-party/AMF"]
 	path = third-party/AMF
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
