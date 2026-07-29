@@ -1322,11 +1322,17 @@ namespace config {
     int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
     string_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
     if (video.hdr_luminance_analysis == "true" ||
-        video.hdr_luminance_analysis == "enabled") {
+        video.hdr_luminance_analysis == "enabled" ||
+        video.hdr_luminance_analysis == "yes" ||
+        video.hdr_luminance_analysis == "enable" ||
+        video.hdr_luminance_analysis == "1") {
       video.hdr_luminance_analysis = "on";
     }
     else if (video.hdr_luminance_analysis == "false" ||
-             video.hdr_luminance_analysis == "disabled") {
+             video.hdr_luminance_analysis == "disabled" ||
+             video.hdr_luminance_analysis == "no" ||
+             video.hdr_luminance_analysis == "disable" ||
+             video.hdr_luminance_analysis == "0") {
       video.hdr_luminance_analysis = "off";
     }
     if (video.hdr_luminance_analysis.empty()) {

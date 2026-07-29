@@ -1452,13 +1452,13 @@ namespace platf::dxgi {
       // Initialize HDR luminance analyzer for HDR formats (P010, Y410, R16_UINT)
       // The analyzer is optional — if it fails, HDR will still work with static metadata only
       hdr_analysis_failure_reason.clear();
-      if (!dynamic_metadata_supported && config::video.hdr_luminance_analysis != "off" &&
-          (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
-        hdr_analysis_failure_reason = "encoder_unsupported";
-      }
-      else if (config::video.hdr_luminance_analysis != "off" &&
-          (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
-        if (init_hdr_luminance_analyzer() != 0) {
+      const bool hdr_format =
+        format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+      if (hdr_format && config::video.hdr_luminance_analysis != "off") {
+        if (!dynamic_metadata_supported) {
+          hdr_analysis_failure_reason = "encoder_unsupported";
+        }
+        else if (init_hdr_luminance_analyzer() != 0) {
           hdr_analysis_failure_reason = "analysis_setup_failed";
           BOOST_LOG(warning) << "HDR luminance analyzer init failed, dynamic metadata will use defaults";
         }

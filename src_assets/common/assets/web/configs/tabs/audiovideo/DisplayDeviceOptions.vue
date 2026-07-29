@@ -75,7 +75,9 @@ const hdrRuntimeViewState = computed(() => {
     }
   }
   if (!pipeline.analysis_active) {
-    return { statusKey: 'config.hdr_runtime_status_fallback', tone: 'warning' }
+    return hdrAnalysisMode.value === 'off'
+      ? { statusKey: '_common.disabled', tone: 'muted' }
+      : { statusKey: 'config.hdr_runtime_status_fallback', tone: 'warning' }
   }
   if (!pipeline.scene_metadata_active) {
     return { statusKey: 'config.hdr_runtime_status_starting', tone: 'info' }
