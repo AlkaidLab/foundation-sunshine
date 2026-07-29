@@ -171,3 +171,27 @@ TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
   EXPECT_EQ(
     video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(10000.0f)), 4095u);
 }
+
+// target_display_pq_u12() is the single conversion used by both the frame-setup and
+// per-frame metadata paths, so its <= 0 fallback is behavioral, not cosmetic: a display
+// that reports no peak luminance must still yield the 1000-nit code both places agree on.
+TEST(HdrDynamicMetadata, TargetDisplayHelperMatchesManualChainAndFallsBackTo1000Nits) {
+  using video::hdr_metadata::nits_to_pq;
+  using video::hdr_metadata::pq_to_u12;
+  using video::hdr_metadata::target_display_pq_u12;
+
+  // Matches the manual nits -> PQ -> 12-bit chain it replaces.
+  for (const float nits : { 1.0f, 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
+    EXPECT_EQ(target_display_pq_u12(nits), pq_to_u12(nits_to_pq(nits))) << "nits=" << nits;
+  }
+
+  // Unreported / invalid peaks collapse to the documented 1000-nit default.
+  const auto fallback = pq_to_u12(nits_to_pq(1000.0f));
+  EXPECT_EQ(target_display_pq_u12(0.0f), fallback);
+  EXPECT_EQ(target_display_pq_u12(-1.0f), fallback);
+  EXPECT_EQ(target_display_pq_u12(-10000.0f), fallback);
+
+  // The denominator the codes are paired with is what FFmpeg parses them against.
+  EXPECT_EQ(video::hdr_metadata::pq_u12_den, 4095);
+  EXPECT_LE(target_display_pq_u12(10000.0f), video::hdr_metadata::pq_u12_den);
+}

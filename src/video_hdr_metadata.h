@@ -87,6 +87,29 @@ namespace video::hdr_metadata {
     return static_cast<uint16_t>(std::clamp(pq, 0.0f, 1.0f) * 4095.0f);
   }
 
+  /**
+   * Denominator paired with every 12-bit code value in this namespace.
+   *
+   * FFmpeg parses the CUVA fields as `(AVRational){get_bits(gb, 12), 4095}` — see
+   * maxrgb_den and maximum_luminance_den in libavcodec/dynamic_hdr_vivid.c.
+   */
+  constexpr int pq_u12_den = 4095;
+
+  /**
+   * @brief Target display peak luminance as a 12-bit PQ code value.
+   *
+   * Pair with pq_u12_den when building an AVRational. Returning the raw code rather
+   * than an AVRational keeps this header free of FFmpeg includes, which is what lets
+   * it be unit-tested without the full media stack.
+   *
+   * @param nits Display peak luminance; values at or below zero fall back to 1000 nits,
+   *             matching what the rest of the pipeline assumes for an unreported peak.
+   */
+  inline uint16_t
+  target_display_pq_u12(float nits) {
+    return pq_to_u12(nits_to_pq(nits > 0.0f ? nits : 1000.0f));
+  }
+
   struct vivid_metadata_t {
     uint16_t minimum_maxrgb_pq = 0;
     uint16_t average_maxrgb_pq = 0;

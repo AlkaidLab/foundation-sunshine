@@ -1893,18 +1893,16 @@ namespace video {
       if (vivid && vivid->num_windows > 0) {
         auto &params = vivid->params[0];
 
-        params.minimum_maxrgb = av_make_q(vivid_metadata.minimum_maxrgb_pq, 4095);
-        params.average_maxrgb = av_make_q(vivid_metadata.average_maxrgb_pq, 4095);
-        params.variance_maxrgb = av_make_q(vivid_metadata.variance_maxrgb_pq, 4095);
-        params.maximum_maxrgb = av_make_q(vivid_metadata.maximum_maxrgb_pq, 4095);
+        params.minimum_maxrgb = av_make_q(vivid_metadata.minimum_maxrgb_pq, hdr_metadata::pq_u12_den);
+        params.average_maxrgb = av_make_q(vivid_metadata.average_maxrgb_pq, hdr_metadata::pq_u12_den);
+        params.variance_maxrgb = av_make_q(vivid_metadata.variance_maxrgb_pq, hdr_metadata::pq_u12_den);
+        params.maximum_maxrgb = av_make_q(vivid_metadata.maximum_maxrgb_pq, hdr_metadata::pq_u12_den);
 
-        const float target_display_nits =
-          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-        const int target_display_pq = hdr_metadata::pq_to_u12(
-          hdr_metadata::nits_to_pq(target_display_nits));
+        const auto target_display_pq =
+          hdr_metadata::target_display_pq_u12(static_cast<float>(max_display_luminance));
         for (int i = 0; i < 2; i++) {
           params.tm_params[i].targeted_system_display_maximum_luminance =
-            av_make_q(target_display_pq, 4095);
+            av_make_q(target_display_pq, hdr_metadata::pq_u12_den);
         }
       }
     }
@@ -2610,22 +2608,19 @@ namespace video {
             params.color_saturation_mapping_flag = 0;
             params.color_saturation_num = 0;
 
-            const float target_display_nits = hdr_metadata.maxDisplayLuminance > 0
-                                                ? static_cast<float>(hdr_metadata.maxDisplayLuminance)
-                                                : 1000.0f;
-            const int target_display_pq = video::hdr_metadata::pq_to_u12(
-              video::hdr_metadata::nits_to_pq(target_display_nits));
+            const auto target_display_pq =
+              hdr_metadata::target_display_pq_u12(static_cast<float>(hdr_metadata.maxDisplayLuminance));
             for (int i = 0; i < 2; i++) {
               auto &tm_params = params.tm_params[i];
               tm_params.targeted_system_display_maximum_luminance =
-                av_make_q(target_display_pq, 4095);
+                av_make_q(target_display_pq, hdr_metadata::pq_u12_den);
               tm_params.base_enable_flag = 0;
             }
-          }
 
-          BOOST_LOG(debug) << "Attached HDR Vivid side data to frame"
-                           << (colorspace_is_hlg(colorspace) ? " (HLG mode)" : " (PQ mode)")
-                           << " - note: no FFmpeg encoder serializes it yet";
+            BOOST_LOG(debug) << "Attached HDR Vivid side data to frame"
+                             << (colorspace_is_hlg(colorspace) ? " (HLG mode)" : " (PQ mode)")
+                             << " - note: no FFmpeg encoder serializes it yet";
+          }
         }
       }
       else {
