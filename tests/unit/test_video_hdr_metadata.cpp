@@ -157,11 +157,27 @@ TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
       EXPECT_LT(static_cast<float>(code), nits) << "nits=" << nits;
     }
 
-    // Round-trips back to the requested luminance within one code step.
-    const float decoded = video::hdr_metadata::pq_to_nits(static_cast<float>(code) / 4095.0f);
-    const float step = video::hdr_metadata::pq_to_nits(static_cast<float>(code + 1) / 4095.0f) -
-                       video::hdr_metadata::pq_to_nits(static_cast<float>(code) / 4095.0f);
-    EXPECT_NEAR(decoded, nits, std::max(step, 1.0f)) << "nits=" << nits;
+    // pq_to_u12 truncates, so `code` is the floor of the exact PQ position. That
+    // brackets the requested luminance: decoding `code` lands at or below it, and
+    // decoding the next code lands above it. Only float round-trip error needs a
+    // tolerance here — measured worst case is ~7.3e-07 in PQ, about 0.07 nits at the
+    // top of the range — not a whole quantization step, which near 10000 nits is 23
+    // nits wide and would let a genuinely wrong code pass.
+    const float tolerance = std::max(nits * 1e-5f, 0.001f);
+    const float decoded = video::hdr_metadata::pq_to_nits(
+      static_cast<float>(code) / video::hdr_metadata::pq_u12_den);
+    EXPECT_LE(decoded, nits + tolerance) << "nits=" << nits;
+
+    if (code < video::hdr_metadata::pq_u12_den) {
+      const float next = video::hdr_metadata::pq_to_nits(
+        static_cast<float>(code + 1) / video::hdr_metadata::pq_u12_den);
+      EXPECT_GT(next, nits - tolerance) << "nits=" << nits;
+    }
+    else {
+      // Saturated at the top of the 12-bit range. 10000 nits is the PQ ceiling, so
+      // there is no next code to bracket against and none should be read.
+      EXPECT_NEAR(decoded, 10000.0f, tolerance) << "nits=" << nits;
+    }
   }
 
   // PQ is monotonic, so ordering of target luminances must be preserved.
