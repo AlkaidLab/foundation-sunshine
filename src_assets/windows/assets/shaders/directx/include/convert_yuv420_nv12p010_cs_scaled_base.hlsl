@@ -99,7 +99,44 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
     }
 
-    StoreHdrAnalysisSnapshot(rect_pos, out_rect_size, src_rgb, inside_rect);
+#ifdef HDR_ANALYSIS_SNAPSHOT
+    // Analyze the same Catmull-Rom output samples that feed the encoded Y plane.
+    // The capped snapshot stores exact per-cell scalar statistics, not one point sample.
+    uint2 analysis_position;
+    uint2 cell_begin;
+    uint2 cell_end;
+    if (inside_rect &&
+        GetHdrAnalysisCell(rect_pos, out_rect_size, analysis_position, cell_begin, cell_end)) {
+        float min_maxrgb_nits = 10000.0;
+        float max_maxrgb_nits = 0.0;
+        float sum_maxrgb_nits = 0.0;
+        uint pixel_count = 0;
+
+        for (uint y = cell_begin.y; y < cell_end.y; ++y) {
+            for (uint x = cell_begin.x; x < cell_end.x; ++x) {
+                float3 cell_rgb = src_rgb;
+                if (x != uint(rect_pos.x) || y != uint(rect_pos.y)) {
+                    float2 cell_uv = (float2(x, y) + 0.5) / float2(out_rect_size);
+                    cell_rgb = SampleCatmullRom5Tap(cell_uv, src_size_f);
+                }
+                float maxrgb_nits = HdrAnalysisMaxRgbNits(cell_rgb);
+                min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
+                max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
+                sum_maxrgb_nits += maxrgb_nits;
+                ++pixel_count;
+            }
+        }
+
+        StoreHdrAnalysisCellStats(
+            analysis_position,
+            min_maxrgb_nits,
+            max_maxrgb_nits,
+            sum_maxrgb_nits,
+            pixel_count,
+            HdrAnalysisMaxRgbNits(src_rgb)
+        );
+    }
+#endif
 
     // ---- Y plane (per pixel) ----
     if (inside_rect) {
