@@ -11,9 +11,12 @@
 
 RWTexture2D<float4> hdr_analysis_snapshot_uav : register(u2);
 
+// Matches AnalysisParams so one buffer can serve this converter and pass 1.
 cbuffer hdr_analysis_snapshot_cbuffer : register(b2) {
     uint2 hdr_analysis_snapshot_size;
-    uint2 hdr_analysis_snapshot_pad;
+    uint2 hdr_analysis_snapshot_source_size;
+    uint hdr_analysis_snapshot_has_cell_statistics;
+    uint3 hdr_analysis_snapshot_pad;
 };
 
 float HdrAnalysisMaxRgbNits(float3 sc_rgb)

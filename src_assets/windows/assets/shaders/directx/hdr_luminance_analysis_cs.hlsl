@@ -67,6 +67,12 @@ groupshared float gs_sum[256];
 groupshared uint  gs_count[256];
 groupshared uint  gs_histogram[HISTOGRAM_BINS];
 
+float HdrAnalysisMaxRgbNits(float3 sc_rgb)
+{
+    float3 rec2020_nits = max(Rec709toRec2020(sc_rgb) * SCRGB_NITS_PER_UNIT, 0.0);
+    return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), 10000.0);
+}
+
 [numthreads(16, 16, 1)]
 void main_cs(uint3 DTid : SV_DispatchThreadID,
              uint3 GTid : SV_GroupThreadID,
@@ -108,12 +114,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             for (uint y = cellBegin.y; y < cellEnd.y; ++y) {
                 for (uint x = cellBegin.x; x < cellEnd.x; ++x) {
                     float3 pixel = inputTexture.Load(int3(uint2(x, y), 0)).rgb;
-                    float3 rec2020_nits =
-                        max(Rec709toRec2020(pixel) * SCRGB_NITS_PER_UNIT, 0.0);
-                    float maxrgb_nits = min(
-                        max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b),
-                        10000.0
-                    );
+                    float maxrgb_nits = HdrAnalysisMaxRgbNits(pixel);
                     minMaxRGB_nits = min(minMaxRGB_nits, maxrgb_nits);
                     maxMaxRGB_nits = max(maxMaxRGB_nits, maxrgb_nits);
                     sumMaxRGB_nits += maxrgb_nits;
@@ -122,15 +123,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
 
             uint2 representativePosition = (cellBegin + cellEnd - 1) / 2;
             float3 representative = inputTexture.Load(int3(representativePosition, 0)).rgb;
-            float3 representative2020_nits =
-                max(Rec709toRec2020(representative) * SCRGB_NITS_PER_UNIT, 0.0);
-            representativeMaxRGB_nits = min(
-                max(
-                    max(representative2020_nits.r, representative2020_nits.g),
-                    representative2020_nits.b
-                ),
-                10000.0
-            );
+            representativeMaxRGB_nits = HdrAnalysisMaxRgbNits(representative);
         }
     }
 

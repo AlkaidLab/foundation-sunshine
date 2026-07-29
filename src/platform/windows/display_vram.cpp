@@ -833,7 +833,7 @@ namespace platf::dxgi {
         if (hdr_analysis_due) {
           if (hdr_analysis_snapshot_written) {
             hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
-            hdr_analysis_params = hdr_analysis_snapshot_stats_cbuf.get();
+            hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
           } else {
             // Fallback for the pixel-shader path and devices that cannot bind the
             // low-resolution snapshot UAV.
@@ -1718,8 +1718,7 @@ namespace platf::dxgi {
     uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
     buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
-    buf_t hdr_analysis_snapshot_cbuf;      // Snapshot dimensions for the fused P010 converter
-    buf_t hdr_analysis_snapshot_stats_cbuf; // Pass 1 params for the pre-aggregated snapshot
+    buf_t hdr_analysis_snapshot_cbuf;      // Shared converter/pass 1 params for the snapshot
     buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
     uint32_t hdr_analysis_width = 0;       // Analysis grid width (downsampled from source)
     uint32_t hdr_analysis_height = 0;      // Analysis grid height (downsampled from source)
@@ -2176,7 +2175,6 @@ namespace platf::dxgi {
       hdr_analysis_snapshot_srv.reset();
       hdr_analysis_snapshot_uav.reset();
       hdr_analysis_snapshot_cbuf.reset();
-      hdr_analysis_snapshot_stats_cbuf.reset();
       hdr_analysis_snapshot_enabled = false;
       cs_scratch_tex.reset();
       cs_y_uav.reset();
@@ -2437,22 +2435,7 @@ namespace platf::dxgi {
             hdr_analysis_snapshot_tex.get(), nullptr, &hdr_analysis_snapshot_uav);
         }
 
-        struct AnalysisSnapshotCB {
-          uint32_t width;
-          uint32_t height;
-          uint32_t pad[2];
-        } snapshot_layout = {
-          hdr_analysis_width,
-          hdr_analysis_height,
-          {},
-        };
-        if (SUCCEEDED(snapshot_status)) {
-          hdr_analysis_snapshot_cbuf = make_buffer(device.get(), snapshot_layout);
-          if (!hdr_analysis_snapshot_cbuf) {
-            snapshot_status = E_FAIL;
-          }
-        }
-        AnalysisParams snapshot_stats_layout = {
+        AnalysisParams snapshot_layout = {
           hdr_analysis_width,
           hdr_analysis_height,
           static_cast<uint32_t>(active_w),
@@ -2461,8 +2444,8 @@ namespace platf::dxgi {
           {},
         };
         if (SUCCEEDED(snapshot_status)) {
-          hdr_analysis_snapshot_stats_cbuf = make_buffer(device.get(), snapshot_stats_layout);
-          if (!hdr_analysis_snapshot_stats_cbuf) {
+          hdr_analysis_snapshot_cbuf = make_buffer(device.get(), snapshot_layout);
+          if (!hdr_analysis_snapshot_cbuf) {
             snapshot_status = E_FAIL;
           }
         }
@@ -2476,7 +2459,6 @@ namespace platf::dxgi {
           hdr_analysis_snapshot_srv.reset();
           hdr_analysis_snapshot_uav.reset();
           hdr_analysis_snapshot_cbuf.reset();
-          hdr_analysis_snapshot_stats_cbuf.reset();
           BOOST_LOG(info) << "HDR analysis snapshot unavailable, full-resolution copy fallback active: "
                           << util::log_hex(snapshot_status);
         }
