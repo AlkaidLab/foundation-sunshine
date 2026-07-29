@@ -1874,11 +1874,6 @@ namespace platf::dxgi {
       }
 
       // --- Constant buffer for pass 1 (analysis resolution) ---
-      D3D11_BUFFER_DESC analysis_cb_desc = {};
-      analysis_cb_desc.ByteWidth = sizeof(AnalysisParams);
-      analysis_cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
-      analysis_cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-
       AnalysisParams analysis_cb_data = {
         hdr_analysis_width,
         hdr_analysis_height,
@@ -1887,13 +1882,9 @@ namespace platf::dxgi {
         0,
         {},
       };
-
-      D3D11_SUBRESOURCE_DATA analysis_cb_init = {};
-      analysis_cb_init.pSysMem = &analysis_cb_data;
-
-      status = device->CreateBuffer(&analysis_cb_desc, &analysis_cb_init, &hdr_analysis_cbuf);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to create HDR analysis constant buffer: " << util::log_hex(status);
+      hdr_analysis_cbuf = make_buffer(device.get(), analysis_cb_data);
+      if (!hdr_analysis_cbuf) {
+        BOOST_LOG(warning) << "Failed to create HDR analysis constant buffer";
         return -1;
       }
 
