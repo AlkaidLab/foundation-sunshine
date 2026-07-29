@@ -109,7 +109,7 @@ function addRemapping(type) {
                 default="true"
               ></Checkbox>
 
-              <!-- Capture Compute Shader (HDR RGB->P010 fast path) -->
+              <!-- Frame conversion strategy -->
               <div class="mb-3">
                 <label for="capture_compute_shader" class="form-label">
                   {{ $t('config.capture_compute_shader') }}
@@ -118,12 +118,15 @@ function addRemapping(type) {
                   id="capture_compute_shader"
                   class="form-select"
                   v-model="config.capture_compute_shader"
+                  aria-describedby="capture_compute_shader_desc"
                 >
                   <option value="auto">{{ $t('config.capture_compute_shader_auto') }}</option>
                   <option value="on">{{ $t('config.capture_compute_shader_on') }}</option>
                   <option value="off">{{ $t('config.capture_compute_shader_off') }}</option>
                 </select>
-                <div class="form-text">{{ $t('config.capture_compute_shader_desc') }}</div>
+                <div id="capture_compute_shader_desc" class="form-text">
+                  {{ $t('config.capture_compute_shader_desc') }}
+                </div>
               </div>
 
               <!-- Display Mode Remapping -->

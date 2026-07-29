@@ -677,6 +677,10 @@ namespace platf::dxgi {
     };
 
   public:
+    ~d3d_base_encode_device() {
+      ::video::unregister_hdr_pipeline_status(runtime_status_id);
+    }
+
     int
     convert(platf::img_t &img_base) {
       if (vram_timing_enabled) {
@@ -706,6 +710,10 @@ namespace platf::dxgi {
         // Poll the previous analysis result before taking the capture mutex.
         if (hdr_analysis_pending) {
           read_hdr_analysis_results();
+          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+            runtime_status.scene_metadata_active = true;
+            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+          }
         }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
@@ -972,6 +980,7 @@ namespace platf::dxgi {
           BOOST_LOG(warning)
             << "Failed to update HDR analysis luminance limit; disabling dynamic metadata";
           hdr_analysis_enabled = false;
+          hdr_analysis_failure_reason = "analysis_setup_failed";
         }
         else {
           hdr_analysis_cbuf = std::move(analysis_cbuf);
@@ -983,6 +992,12 @@ namespace platf::dxgi {
 
     int
     init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) {
+      ::video::unregister_hdr_pipeline_status(runtime_status_id);
+      runtime_status_id = 0;
+      hdr_luminance_stats_out = {};
+      hdr_analysis_pending = false;
+      hdr_analysis_frame_index = 0;
+
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
       output_texture.reset(frame_texture);
@@ -1306,11 +1321,17 @@ namespace platf::dxgi {
         init_compute_path(out_width, out_height, active_w, active_h, active_off_x, active_off_y, colorspace);
       }
 
+      publish_runtime_status(colorspace, is_probe);
       return 0;
     }
 
     int
-    init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+    init(
+      std::shared_ptr<platf::display_t> display,
+      adapter_t::pointer adapter_p,
+      pix_fmt_e pix_fmt,
+      bool supports_dynamic_metadata) {
+      dynamic_metadata_supported = supports_dynamic_metadata;
       switch (pix_fmt) {
         case pix_fmt_e::nv12:
           format = DXGI_FORMAT_NV12;
@@ -1430,9 +1451,15 @@ namespace platf::dxgi {
 
       // Initialize HDR luminance analyzer for HDR formats (P010, Y410, R16_UINT)
       // The analyzer is optional — if it fails, HDR will still work with static metadata only
-      if (config::video.hdr_luminance_analysis &&
+      hdr_analysis_failure_reason.clear();
+      if (!dynamic_metadata_supported && config::video.hdr_luminance_analysis != "off" &&
+          (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
+        hdr_analysis_failure_reason = "encoder_unsupported";
+      }
+      else if (config::video.hdr_luminance_analysis != "off" &&
           (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
         if (init_hdr_luminance_analyzer() != 0) {
+          hdr_analysis_failure_reason = "analysis_setup_failed";
           BOOST_LOG(warning) << "HDR luminance analyzer init failed, dynamic metadata will use defaults";
         }
       }
@@ -1742,6 +1769,49 @@ namespace platf::dxgi {
       return resource_view;
     }
 
+    void
+    publish_runtime_status(
+      const ::video::sunshine_colorspace_t &colorspace,
+      bool is_probe) {
+      if (is_probe) {
+        ::video::unregister_hdr_pipeline_status(runtime_status_id);
+        runtime_status_id = 0;
+        return;
+      }
+
+      const bool use_pq = ::video::colorspace_is_pq(colorspace);
+      const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
+      runtime_status.hdr_mode = use_pq ? "pq" : use_hlg ? "hlg" : "sdr";
+      runtime_status.analysis_mode = config::video.hdr_luminance_analysis;
+      runtime_status.analysis_active = (use_pq || use_hlg) && hdr_analysis_enabled;
+      runtime_status.scene_metadata_active = false;
+      runtime_status.metadata_formats.clear();
+      if (runtime_status.analysis_active) {
+        if (use_pq) {
+          runtime_status.metadata_formats.emplace_back("hdr10_plus");
+        }
+        runtime_status.metadata_formats.emplace_back("hdr_vivid");
+      }
+
+      runtime_status.conversion_path =
+        cs_path_active
+          ? (cs_writes_output_directly
+               ? "compute_shader_direct"
+               : "compute_shader_scratch")
+          : "pixel_shader";
+      runtime_status.conversion_fallback_reason =
+        cs_path_active ? std::string {} : cs_fallback_reason;
+      runtime_status.analysis_failure_reason =
+        runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
+
+      if (runtime_status_id == 0) {
+        runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
+      }
+      else {
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      }
+    }
+
     ::video::color_t *color_p;
 
     buf_t subsample_offset;
@@ -1822,6 +1892,7 @@ namespace platf::dxgi {
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
     float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
+    std::string hdr_analysis_failure_reason;
 
     // ===== Compute-shader RGB->P010/NV12 fast path =====
     // Phase 1: HDR PQ/HLG -> P010. Phase 2A: SDR sRGB/scRGB -> NV12.
@@ -1848,6 +1919,11 @@ namespace platf::dxgi {
     bool cs_for_p010 = false;              // True for HDR P010 path, false for SDR NV12 path
     bool cs_is_scaled = false;             // True when active rect != source (use *_scaled variants)
     bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
+    std::string cs_fallback_reason;
+
+    std::uint64_t runtime_status_id = 0;
+    ::video::hdr_pipeline_status_t runtime_status;
+    bool dynamic_metadata_supported = true;
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 256;
@@ -2265,31 +2341,55 @@ namespace platf::dxgi {
       cs_y_uav.reset();
       cs_uv_uav.reset();
       cs_layout_cbuf.reset();
+      cs_fallback_reason.clear();
 
       // Phase 1/2: only NV12 (SDR) or P010 (HDR) supported.
       const bool is_p010 = (format == DXGI_FORMAT_P010);
       const bool is_nv12 = (format == DXGI_FORMAT_NV12);
-      if (!is_p010 && !is_nv12) return;
+      if (!is_p010 && !is_nv12) {
+        cs_fallback_reason = "unsupported_format";
+        return;
+      }
 
       // For HDR P010 we require PQ or HLG colorspace (linear-light source).
       const bool use_pq = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
-      if (is_p010 && !use_pq && !use_hlg) return;
+      if (is_p010 && !use_pq && !use_hlg) {
+        cs_fallback_reason = "unsupported_colorspace";
+        return;
+      }
       // For SDR NV12 we require a non-PQ/HLG colorspace.
-      if (is_nv12 && (use_pq || use_hlg)) return;
+      if (is_nv12 && (use_pq || use_hlg)) {
+        cs_fallback_reason = "unsupported_colorspace";
+        return;
+      }
 
       // Phase 2B: scaling supported via *_scaled variants. Rotation still TBD.
       const bool is_scaled = (active_w != display->width || active_h != display->height);
       if (display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
-          display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) return;
+          display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) {
+        cs_fallback_reason = "rotation";
+        return;
+      }
 
-      // Config gate: "auto" defers to off for now; user must opt in with "on".
+      // Automatic mode uses the compute path where it has a clear payoff:
+      // scaling, or fusing HDR conversion with luminance-analysis sampling.
       const auto &cfg = config::video.capture_compute_shader;
-      if (cfg != "on") return;
+      if (cfg == "off") {
+        cs_fallback_reason = "disabled";
+        return;
+      }
+      if (cfg == "auto" && !is_scaled && !(is_p010 && hdr_analysis_enabled)) {
+        cs_fallback_reason = "not_beneficial";
+        return;
+      }
 
       // Output dimensions must be even (4:2:0 sub-sampling) and aligned for plane UAV.
-      if ((out_width & 1) != 0 || (out_height & 1) != 0) return;
-      if ((active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) return;
+      if ((out_width & 1) != 0 || (out_height & 1) != 0 ||
+          (active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) {
+        cs_fallback_reason = "unaligned_output";
+        return;
+      }
 
       // Compile-time blobs present?
       if (is_p010) {
@@ -2299,6 +2399,7 @@ namespace platf::dxgi {
                        : (use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
                                  : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl);
         if (!blob) {
+          cs_fallback_reason = "shader_unavailable";
           BOOST_LOG(info) << "CS path skipped: P010 compute shader blob unavailable";
           return;
         }
@@ -2310,6 +2411,7 @@ namespace platf::dxgi {
                                 : (convert_yuv420_nv12_cs_passthrough_hlsl ||
                                    convert_yuv420_nv12_cs_linear_hlsl);
         if (!any_blob) {
+          cs_fallback_reason = "shader_unavailable";
           BOOST_LOG(info) << "CS path skipped: NV12 compute shader blobs unavailable";
           return;
         }
@@ -2324,6 +2426,7 @@ namespace platf::dxgi {
       const DXGI_FORMAT y_fmt = is_p010 ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
       const DXGI_FORMAT uv_fmt = is_p010 ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
       if (!has_uav_typed_store(y_fmt) || !has_uav_typed_store(uv_fmt)) {
+        cs_fallback_reason = "device_capability";
         BOOST_LOG(info) << "CS path skipped: device lacks typed UAV store for plane formats";
         return;
       }
@@ -2332,6 +2435,7 @@ namespace platf::dxgi {
       D3D11_FEATURE_DATA_FORMAT_SUPPORT fs_yuv = { format };
       if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &fs_yuv, sizeof(fs_yuv))) ||
           !(fs_yuv.OutFormatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
+        cs_fallback_reason = "device_capability";
         BOOST_LOG(info) << "CS path skipped: device lacks typed UAV support for output format";
         return;
       }
@@ -2376,6 +2480,7 @@ namespace platf::dxgi {
         scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
         auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create scratch with UAV bind: "
                           << util::log_hex(status);
           return;
@@ -2383,6 +2488,7 @@ namespace platf::dxgi {
 
         status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &y_uav_desc, &cs_y_uav);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create Y-plane UAV: " << util::log_hex(status);
           cs_scratch_tex.reset();
           return;
@@ -2390,6 +2496,7 @@ namespace platf::dxgi {
 
         status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &uv_uav_desc, &cs_uv_uav);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create UV-plane UAV: " << util::log_hex(status);
           cs_scratch_tex.reset();
           cs_y_uav.reset();
@@ -2455,6 +2562,7 @@ namespace platf::dxgi {
         }
       }
       if (!any_cs_created) {
+        cs_fallback_reason = "shader_creation";
         cs_scratch_tex.reset();
         cs_y_uav.reset();
         cs_uv_uav.reset();
@@ -2475,6 +2583,7 @@ namespace platf::dxgi {
       };
       cs_layout_cbuf = make_buffer(device.get(), layout);
       if (!cs_layout_cbuf) {
+        cs_fallback_reason = "resource_creation";
         BOOST_LOG(info) << "CS path skipped: failed to create layout cbuffer";
         cs_p010.reset();
         cs_p010_hdr_analysis.reset();
@@ -2564,6 +2673,7 @@ namespace platf::dxgi {
       cs_copy_h = out_height;
 
       cs_path_active = true;
+      cs_fallback_reason.clear();
       cs_use_pq = use_pq;
       cs_for_p010 = is_p010;
       cs_is_scaled = is_scaled;
@@ -2685,7 +2795,7 @@ namespace platf::dxgi {
   public:
     int
     init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      int result = base.init(display, adapter_p, pix_fmt);
+      int result = base.init(display, adapter_p, pix_fmt, true);
       data = base.device.get();
       return result;
     }
@@ -2785,7 +2895,7 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt)) return false;
+      if (base.init(display, adapter_p, pix_fmt, true)) return false;
 
       auto factory = nvenc::nvenc_dynamic_factory::get();
       if (!factory) return false;
@@ -2833,7 +2943,7 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt)) return false;
+      if (base.init(display, adapter_p, pix_fmt, false)) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;

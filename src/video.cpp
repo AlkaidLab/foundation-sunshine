@@ -10,6 +10,8 @@
 #include <functional>
 #include <list>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -49,6 +51,10 @@ using namespace std::literals;
 namespace video {
 
   namespace {
+    std::mutex hdr_pipeline_status_mutex;
+    std::map<std::uint64_t, hdr_pipeline_status_t> hdr_pipeline_statuses;
+    std::atomic<std::uint64_t> next_hdr_pipeline_status_id { 1 };
+
     std::optional<std::string>
     capture_override_for_encoder_probe() {
 #ifdef _WIN32
@@ -101,6 +107,52 @@ namespace video {
       return false;
     }
   }  // namespace
+
+  std::uint64_t
+  register_hdr_pipeline_status(const hdr_pipeline_status_t &status) {
+    const auto id = next_hdr_pipeline_status_id.fetch_add(1, std::memory_order_relaxed);
+    auto registered = status;
+    registered.id = id;
+
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    hdr_pipeline_statuses[id] = std::move(registered);
+    return id;
+  }
+
+  void
+  update_hdr_pipeline_status(std::uint64_t id, const hdr_pipeline_status_t &status) {
+    if (id == 0) {
+      return;
+    }
+
+    auto updated = status;
+    updated.id = id;
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    if (hdr_pipeline_statuses.contains(id)) {
+      hdr_pipeline_statuses[id] = std::move(updated);
+    }
+  }
+
+  void
+  unregister_hdr_pipeline_status(std::uint64_t id) {
+    if (id == 0) {
+      return;
+    }
+
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    hdr_pipeline_statuses.erase(id);
+  }
+
+  std::vector<hdr_pipeline_status_t>
+  get_hdr_pipeline_statuses() {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    std::vector<hdr_pipeline_status_t> statuses;
+    statuses.reserve(hdr_pipeline_statuses.size());
+    for (const auto &[id, status] : hdr_pipeline_statuses) {
+      statuses.push_back(status);
+    }
+    return statuses;
+  }
 
   std::chrono::duration<double, std::milli>
   minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target) {
