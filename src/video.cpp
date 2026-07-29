@@ -2490,6 +2490,10 @@ namespace video {
     // HLG uses scene-referred relative luminance but benefits from HDR Vivid (CUVA)
     // dynamic metadata for enhanced tone mapping on capable displays.
     if (colorspace_is_hdr(colorspace)) {
+      // Single source of truth for which dynamic formats this transfer function allows,
+      // shared with the native NVENC path so the two cannot drift apart.
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace);
+
       SS_HDR_METADATA hdr_metadata;
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
 
@@ -2522,7 +2526,7 @@ namespace video {
         }
 
         // HDR10+ dynamic metadata - PQ only (Samsung ST 2094-40, uses absolute luminance)
-        if (colorspace_is_pq(colorspace)) {
+        if (dynamic_hdr_formats.hdr10plus) {
           auto hdr10plus = av_dynamic_hdr_plus_create_side_data(frame.get());
           if (hdr10plus) {
             // Set default values for HDR10+
@@ -2575,75 +2579,53 @@ namespace video {
           }
         }
 
-        // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG
-        // HDR Vivid supports both transfer functions:
-        //   - PQ mode: absolute luminance tone mapping
-        //   - HLG mode: scene-referred relative luminance tone mapping
-        // The CUVA metadata is carried as ITU-T T.35 registered SEI/OBU, independent
-        // of the underlying transfer function.
-        auto vivid = av_dynamic_hdr_vivid_create_side_data(frame.get());
-        if (vivid) {
-          // Set default values for HDR Vivid
-          vivid->system_start_code = 0x01;
-          vivid->num_windows = 0x01;  // Single processing window
+        // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG.
+        //
+        // NOTE: this side data currently cannot reach the bitstream on the avcodec path.
+        // FFmpeg ships a serializer for HDR10+ (av_dynamic_hdr_plus_to_t35) but has no
+        // CUVA counterpart: libavcodec/dynamic_hdr_vivid.c defines only
+        // ff_parse_itu_t_t35_to_dynamic_hdr_vivid, i.e. parsing for decode. So no FFmpeg
+        // encoder turns AV_FRAME_DATA_DYNAMIC_HDR_VIVID into an SEI/OBU today.
+        //
+        // We still attach and maintain it so the metadata is correct the moment a
+        // serializer exists, but HDR Vivid output is in practice only produced by the
+        // native NVENC path (see nvenc_base.cpp, which hand-writes the T.35 payload).
+        // Encoders routed through avcodec (QSV, AMF, software) will not emit it.
+        //
+        // Field values are deliberately left zero-initialized rather than filled with
+        // invented defaults: update_hdr_dynamic_metadata() populates them from real
+        // analyzer statistics once the 32-frame filter reports valid output, and a
+        // fabricated "average 0.5 / maximum 1.0" frame is worse than an absent one.
+        if (dynamic_hdr_formats.vivid) {
+          auto vivid = av_dynamic_hdr_vivid_create_side_data(frame.get());
+          if (vivid) {
+            vivid->system_start_code = 0x01;
+            vivid->num_windows = 0x01;  // Fixed at one for system_start_code 0x01
 
-          // Initialize the first (and only) processing window
-          auto &params = vivid->params[0];
+            auto &params = vivid->params[0];
 
-          // Initialize maxrgb values (simplified - use full range)
-          params.minimum_maxrgb = av_make_q(0, 4095);
-          params.average_maxrgb = av_make_q(2047, 4095);  // 0.5
-          params.variance_maxrgb = av_make_q(0, 4095);
-          params.maximum_maxrgb = av_make_q(4095, 4095);  // 1.0
+            // Statistics mode only: no tone mapping curve, no saturation mapping.
+            params.tone_mapping_mode_flag = 0;
+            params.tone_mapping_param_num = 0;
+            params.color_saturation_mapping_flag = 0;
+            params.color_saturation_num = 0;
 
-          // Initialize tone mapping parameters (simplified - no tone mapping)
-          params.tone_mapping_mode_flag = 0;
-          params.tone_mapping_param_num = 0;
-
-          // Initialize color saturation mapping (disabled)
-          params.color_saturation_mapping_flag = 0;
-          params.color_saturation_num = 0;
-          for (int j = 0; j < 8; j++) {
-            params.color_saturation_gain[j] = av_make_q(128, 128);  // 1.0 (no adjustment)
-          }
-
-          // Initialize tone mapping params structure (even if not used)
-          const float target_display_nits = hdr_metadata.maxDisplayLuminance > 0
-                                              ? static_cast<float>(hdr_metadata.maxDisplayLuminance)
-                                              : 1000.0f;
-          const int target_display_pq = video::hdr_metadata::pq_to_u12(
-            video::hdr_metadata::nits_to_pq(target_display_nits));
-          for (int i = 0; i < 2; i++) {
-            auto &tm_params = params.tm_params[i];
-            tm_params.targeted_system_display_maximum_luminance =
-              av_make_q(target_display_pq, 4095);
-            tm_params.base_enable_flag = 0;
-            tm_params.base_param_m_p = av_make_q(0, 16383);
-            tm_params.base_param_m_m = av_make_q(0, 10);
-            tm_params.base_param_m_a = av_make_q(0, 1023);
-            tm_params.base_param_m_b = av_make_q(0, 1023);
-            tm_params.base_param_m_n = av_make_q(0, 10);
-            tm_params.base_param_k1 = 0;
-            tm_params.base_param_k2 = 0;
-            tm_params.base_param_k3 = 0;
-            tm_params.base_param_Delta_enable_mode = 0;
-            tm_params.base_param_Delta = av_make_q(0, 127);
-            tm_params.three_Spline_enable_flag = 0;
-            tm_params.three_Spline_num = 0;
-            // Initialize three spline parameters
-            for (int j = 0; j < 2; j++) {
-              auto &spline = tm_params.three_spline[j];
-              spline.th_mode = 0;
-              spline.th_enable_mb = av_make_q(0, 255);
-              spline.th_enable = av_make_q(0, 4095);
-              spline.th_delta1 = av_make_q(0, 1023);
-              spline.th_delta2 = av_make_q(0, 1023);
-              spline.enable_strength = av_make_q(0, 255);
+            const float target_display_nits = hdr_metadata.maxDisplayLuminance > 0
+                                                ? static_cast<float>(hdr_metadata.maxDisplayLuminance)
+                                                : 1000.0f;
+            const int target_display_pq = video::hdr_metadata::pq_to_u12(
+              video::hdr_metadata::nits_to_pq(target_display_nits));
+            for (int i = 0; i < 2; i++) {
+              auto &tm_params = params.tm_params[i];
+              tm_params.targeted_system_display_maximum_luminance =
+                av_make_q(target_display_pq, 4095);
+              tm_params.base_enable_flag = 0;
             }
           }
 
-          BOOST_LOG(debug) << "Added HDR Vivid dynamic metadata to frame"
-                           << (colorspace_is_hlg(colorspace) ? " (HLG mode)" : " (PQ mode)");
+          BOOST_LOG(debug) << "Attached HDR Vivid side data to frame"
+                           << (colorspace_is_hlg(colorspace) ? " (HLG mode)" : " (PQ mode)")
+                           << " - note: no FFmpeg encoder serializes it yet";
         }
       }
       else {

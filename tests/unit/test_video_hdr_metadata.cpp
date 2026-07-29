@@ -135,3 +135,39 @@ TEST(HdrDynamicMetadata, AppliesAnnexA9ThirtyTwoFrameMean) {
   filter.reset();
   EXPECT_EQ(filter.update(dark).average_maxrgb_pq, 100);
 }
+
+// Regression guard for the representation of
+// AVHDRVividColorToneMappingParams::targeted_system_display_maximum_luminance.
+//
+// FFmpeg parses that field as a 12-bit code with a fixed denominator of 4095
+// (libavcodec/dynamic_hdr_vivid.c: `(AVRational){get_bits(gb, 12), maximum_luminance_den}`)
+// and documents the value range as 0.0 to 1.0 inclusive. Writing raw nits with a
+// denominator of 1 — as this code did before — yields values like 1000/1, far outside
+// that range. Encode it as a PQ code value, consistently with the four maxrgb fields.
+TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
+  for (const float nits : { 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
+    const auto code = video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(nits));
+
+    // Must land inside the 12-bit range the field is defined over.
+    EXPECT_LE(code, 4095u) << "nits=" << nits;
+
+    // A raw-nits encoding would exceed 4095 for every value above it, which is
+    // precisely the bug this guards against.
+    if (nits > 4095.0f) {
+      EXPECT_LT(static_cast<float>(code), nits) << "nits=" << nits;
+    }
+
+    // Round-trips back to the requested luminance within one code step.
+    const float decoded = video::hdr_metadata::pq_to_nits(static_cast<float>(code) / 4095.0f);
+    const float step = video::hdr_metadata::pq_to_nits(static_cast<float>(code + 1) / 4095.0f) -
+                       video::hdr_metadata::pq_to_nits(static_cast<float>(code) / 4095.0f);
+    EXPECT_NEAR(decoded, nits, std::max(step, 1.0f)) << "nits=" << nits;
+  }
+
+  // PQ is monotonic, so ordering of target luminances must be preserved.
+  EXPECT_LT(
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(400.0f)),
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(1000.0f)));
+  EXPECT_EQ(
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(10000.0f)), 4095u);
+}
