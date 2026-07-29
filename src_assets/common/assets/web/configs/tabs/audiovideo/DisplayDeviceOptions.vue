@@ -351,7 +351,7 @@ function addRemapping(type) {
                 id="hdr_luminance_analysis"
                 locale-prefix="config"
                 v-model="config.hdr_luminance_analysis"
-                default="true"
+                :default="false"
               ></Checkbox>
             </div>
           </div>

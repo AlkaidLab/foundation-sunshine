@@ -2198,9 +2198,12 @@ namespace platf::dxgi {
       if (display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
           display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) return;
 
-      // Config gate: "auto" defers to off for now; user must opt in with "on".
+      // Auto enables the fast path only when P010 dynamic metadata analysis can
+      // consume its peak-preserving snapshot. Explicit on/off still takes priority.
       const auto &cfg = config::video.capture_compute_shader;
-      if (cfg != "on") return;
+      const bool compute_requested =
+        cfg == "on" || (cfg == "auto" && is_p010 && hdr_analysis_enabled);
+      if (!compute_requested) return;
 
       // Output dimensions must be even (4:2:0 sub-sampling) and aligned for plane UAV.
       if ((out_width & 1) != 0 || (out_height & 1) != 0) return;
