@@ -12,6 +12,7 @@
 RWTexture2D<float4> hdr_analysis_snapshot_uav : register(u2);
 
 // Matches AnalysisParams so one buffer can serve this converter and pass 1.
+// source_size and has_cell_statistics are intentionally unused by the converter.
 cbuffer hdr_analysis_snapshot_cbuffer : register(b2) {
     uint2 hdr_analysis_snapshot_size;
     uint2 hdr_analysis_snapshot_source_size;
@@ -55,6 +56,9 @@ void StoreHdrAnalysisCellStats(
     uint pixel_count,
     float representative_maxrgb_nits)
 {
+    // Store the average rather than the sum because a cell sum can overflow FP16.
+    // The compact snapshot intentionally accepts FP16 quantization (up to about
+    // 8 nits ULP near 10,000 nits) instead of copying a full-resolution texture.
     hdr_analysis_snapshot_uav[analysis_position] = float4(
         min_maxrgb_nits,
         max_maxrgb_nits,

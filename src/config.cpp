@@ -475,7 +475,7 @@ namespace config {
     150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
     false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
-    "auto"s,  // capture_compute_shader (auto: P010 only when hdr_luminance_analysis is enabled)
+    "auto"s,  // capture_compute_shader (default: auto -> off until validated)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
   };
