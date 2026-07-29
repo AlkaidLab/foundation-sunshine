@@ -135,3 +135,79 @@ TEST(HdrDynamicMetadata, AppliesAnnexA9ThirtyTwoFrameMean) {
   filter.reset();
   EXPECT_EQ(filter.update(dark).average_maxrgb_pq, 100);
 }
+
+// Regression guard for the representation of
+// AVHDRVividColorToneMappingParams::targeted_system_display_maximum_luminance.
+//
+// FFmpeg parses that field as a 12-bit code with a fixed denominator of 4095
+// (libavcodec/dynamic_hdr_vivid.c: `(AVRational){get_bits(gb, 12), maximum_luminance_den}`)
+// and documents the value range as 0.0 to 1.0 inclusive. Writing raw nits with a
+// denominator of 1 — as this code did before — yields values like 1000/1, far outside
+// that range. Encode it as a PQ code value, consistently with the four maxrgb fields.
+TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
+  for (const float nits : { 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
+    const auto code = video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(nits));
+
+    // Must land inside the 12-bit range the field is defined over.
+    EXPECT_LE(code, 4095u) << "nits=" << nits;
+
+    // A raw-nits encoding would exceed 4095 for every value above it, which is
+    // precisely the bug this guards against.
+    if (nits > 4095.0f) {
+      EXPECT_LT(static_cast<float>(code), nits) << "nits=" << nits;
+    }
+
+    // pq_to_u12 truncates, so `code` is the floor of the exact PQ position. That
+    // brackets the requested luminance: decoding `code` lands at or below it, and
+    // decoding the next code lands above it. Only float round-trip error needs a
+    // tolerance here — measured worst case is ~7.3e-07 in PQ, about 0.07 nits at the
+    // top of the range — not a whole quantization step, which near 10000 nits is 23
+    // nits wide and would let a genuinely wrong code pass.
+    const float tolerance = std::max(nits * 1e-5f, 0.001f);
+    const float decoded = video::hdr_metadata::pq_to_nits(
+      static_cast<float>(code) / video::hdr_metadata::pq_u12_den);
+    EXPECT_LE(decoded, nits + tolerance) << "nits=" << nits;
+
+    if (code < video::hdr_metadata::pq_u12_den) {
+      const float next = video::hdr_metadata::pq_to_nits(
+        static_cast<float>(code + 1) / video::hdr_metadata::pq_u12_den);
+      EXPECT_GT(next, nits - tolerance) << "nits=" << nits;
+    }
+    else {
+      // Saturated at the top of the 12-bit range. 10000 nits is the PQ ceiling, so
+      // there is no next code to bracket against and none should be read.
+      EXPECT_NEAR(decoded, 10000.0f, tolerance) << "nits=" << nits;
+    }
+  }
+
+  // PQ is monotonic, so ordering of target luminances must be preserved.
+  EXPECT_LT(
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(400.0f)),
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(1000.0f)));
+  EXPECT_EQ(
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(10000.0f)), 4095u);
+}
+
+// target_display_pq_u12() is the single conversion used by both the frame-setup and
+// per-frame metadata paths, so its <= 0 fallback is behavioral, not cosmetic: a display
+// that reports no peak luminance must still yield the 1000-nit code both places agree on.
+TEST(HdrDynamicMetadata, TargetDisplayHelperMatchesManualChainAndFallsBackTo1000Nits) {
+  using video::hdr_metadata::nits_to_pq;
+  using video::hdr_metadata::pq_to_u12;
+  using video::hdr_metadata::target_display_pq_u12;
+
+  // Matches the manual nits -> PQ -> 12-bit chain it replaces.
+  for (const float nits : { 1.0f, 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
+    EXPECT_EQ(target_display_pq_u12(nits), pq_to_u12(nits_to_pq(nits))) << "nits=" << nits;
+  }
+
+  // Unreported / invalid peaks collapse to the documented 1000-nit default.
+  const auto fallback = pq_to_u12(nits_to_pq(1000.0f));
+  EXPECT_EQ(target_display_pq_u12(0.0f), fallback);
+  EXPECT_EQ(target_display_pq_u12(-1.0f), fallback);
+  EXPECT_EQ(target_display_pq_u12(-10000.0f), fallback);
+
+  // The denominator the codes are paired with is what FFmpeg parses them against.
+  EXPECT_EQ(video::hdr_metadata::pq_u12_den, 4095);
+  EXPECT_LE(target_display_pq_u12(10000.0f), video::hdr_metadata::pq_u12_den);
+}
