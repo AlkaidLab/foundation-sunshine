@@ -611,6 +611,25 @@ namespace platf::dxgi {
   }
 
   class d3d_base_encode_device final {
+    struct alignas(16) HlgDisplayParams {
+      float peakNits;
+      float systemGamma;
+      float pad[2];
+    };
+    static_assert(sizeof(HlgDisplayParams) == 16);
+
+    // Must match the AnalysisParams constant buffer in both HDR analysis shaders.
+    struct AnalysisParams {
+      uint32_t analysisWidth;
+      uint32_t analysisHeight;
+      uint32_t sourceWidth;
+      uint32_t sourceHeight;
+      uint32_t inputHasCellStatistics;
+      float maxAnalysisNits;
+      uint32_t pad[2];
+    };
+    static_assert(sizeof(AnalysisParams) == 32);
+
     struct gpu_timing_sample_t {
       query_t disjoint;
       query_t start;
@@ -893,6 +912,76 @@ namespace platf::dxgi {
     }
 
     int
+    configure_hlg_display(bool use_hlg_shader, bool is_probe) {
+      hlg_display_cbuf.reset();
+      ID3D11Buffer *null_cbuf = nullptr;
+      device_ctx->PSSetConstantBuffers(3, 1, &null_cbuf);
+
+      float analysis_max_nits = 10000.0f;
+      if (use_hlg_shader) {
+        SS_HDR_METADATA metadata {};
+        // Use the effective capture-display metadata as the single source of
+        // truth. VDD reports the client-mapped capabilities here; a physical
+        // output reports the values after Windows applies its HDR color profile.
+        const bool has_display_peak =
+          display->get_hdr_metadata(metadata) && metadata.maxDisplayLuminance > 0;
+        const float peak_nits = has_display_peak
+                                  ? static_cast<float>(metadata.maxDisplayLuminance)
+                                  : 1000.0f;
+        const float system_gamma = ::video::hlg_system_gamma(peak_nits);
+        const HlgDisplayParams params {
+          peak_nits,
+          system_gamma,
+          {},
+        };
+
+        auto hlg_params = make_buffer(device.get(), params);
+        if (!hlg_params) {
+          BOOST_LOG(error) << "Failed to create HLG display parameter buffer";
+          return -1;
+        }
+
+        ID3D11Buffer *hlg_params_p = hlg_params.get();
+        device_ctx->PSSetConstantBuffers(3, 1, &hlg_params_p);
+        hlg_display_cbuf = std::move(hlg_params);
+        // Vivid statistics must describe the encoded HLG range, not scRGB
+        // headroom that cannot be represented by the nominal HLG signal.
+        analysis_max_nits = std::min(peak_nits, 10000.0f);
+
+        BOOST_LOG(is_probe ? debug : info)
+          << "HLG conversion: BT.2100 inverse OOTF, nominal display peak "
+          << peak_nits << " nits, system gamma " << system_gamma
+          << (has_display_peak
+                ? " (capture display metadata)"
+                : " (1000-nit fallback)");
+      }
+
+      hdr_analysis_max_nits = analysis_max_nits;
+      if (hdr_analysis_enabled) {
+        const AnalysisParams analysis_params {
+          hdr_analysis_width,
+          hdr_analysis_height,
+          static_cast<uint32_t>(display->width),
+          static_cast<uint32_t>(display->height),
+          0,
+          hdr_analysis_max_nits,
+          {},
+        };
+        auto analysis_cbuf = make_buffer(device.get(), analysis_params);
+        if (!analysis_cbuf) {
+          BOOST_LOG(warning)
+            << "Failed to update HDR analysis luminance limit; disabling dynamic metadata";
+          hdr_analysis_enabled = false;
+        }
+        else {
+          hdr_analysis_cbuf = std::move(analysis_cbuf);
+        }
+      }
+
+      return 0;
+    }
+
+    int
     init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) {
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
@@ -914,6 +1003,10 @@ namespace platf::dxgi {
       // Determine which HDR shader to use based on colorspace
       const bool use_pq_shader = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg_shader = ::video::colorspace_is_hlg(colorspace);
+
+      if (configure_hlg_display(use_hlg_shader, is_probe) != 0) {
+        return -1;
+      }
 
       const bool downscaling = display->width > width || display->height > height;
       // Determine downscaling quality based on config
@@ -1653,6 +1746,7 @@ namespace platf::dxgi {
 
     buf_t subsample_offset;
     buf_t color_matrix;
+    buf_t hlg_display_cbuf;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;
@@ -1727,6 +1821,7 @@ namespace platf::dxgi {
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
+    float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
 
     // ===== Compute-shader RGB->P010/NV12 fast path =====
     // Phase 1: HDR PQ/HLG -> P010. Phase 2A: SDR sRGB/scRGB -> NV12.
@@ -1771,17 +1866,6 @@ namespace platf::dxgi {
       float sumMaxRGB;
       uint32_t pixelCount;
     };
-
-    // Must match HLSL AnalysisParams layout exactly.
-    struct AnalysisParams {
-      uint32_t analysisWidth;
-      uint32_t analysisHeight;
-      uint32_t sourceWidth;
-      uint32_t sourceHeight;
-      uint32_t inputHasCellStatistics;
-      uint32_t pad[3];
-    };
-    static_assert(sizeof(AnalysisParams) == 32);
 
     // Must match HLSL FinalResult layout exactly. This one keeps the histogram because
     // it is what the CPU reads back.
@@ -1879,6 +1963,7 @@ namespace platf::dxgi {
         width,
         height,
         0,
+        hdr_analysis_max_nits,
         {},
       };
       hdr_analysis_cbuf = make_buffer(device.get(), analysis_cb_data);
@@ -2441,6 +2526,7 @@ namespace platf::dxgi {
           static_cast<uint32_t>(active_w),
           static_cast<uint32_t>(active_h),
           1,
+          hdr_analysis_max_nits,
           {},
         };
         if (SUCCEEDED(snapshot_status)) {
@@ -2549,6 +2635,10 @@ namespace platf::dxgi {
       };
       const UINT cbuf_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetConstantBuffers(0, cbuf_count, cbufs);
+      if (hlg_display_cbuf) {
+        ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
+        device_ctx->CSSetConstantBuffers(3, 1, &hlg_cbuf);
+      }
 
       // Dispatch covers only the active rect (precomputed in init_compute_path).
       device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
@@ -2565,6 +2655,8 @@ namespace platf::dxgi {
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, null_uavs, nullptr);
       ID3D11Buffer *null_cb[3] = { nullptr, nullptr, nullptr };
       device_ctx->CSSetConstantBuffers(0, cbuf_count, null_cb);
+      ID3D11Buffer *null_hlg_cbuf = nullptr;
+      device_ctx->CSSetConstantBuffers(3, 1, &null_hlg_cbuf);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
       if (timing) {
         device_ctx->End(timing->before_copy.get());

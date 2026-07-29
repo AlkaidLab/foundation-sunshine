@@ -41,7 +41,8 @@ cbuffer AnalysisParams : register(b0) {
     uint sourceWidth;
     uint sourceHeight;
     uint inputHasCellStatistics;
-    uint3 _pad;
+    float maxAnalysisNits;
+    uint2 _pad;
 };
 
 // Per-group reduction results (scalars only — the histogram goes straight to the
@@ -70,7 +71,7 @@ groupshared uint  gs_histogram[HISTOGRAM_BINS];
 float HdrAnalysisMaxRgbNits(float3 sc_rgb)
 {
     float3 rec2020_nits = max(Rec709toRec2020(sc_rgb) * SCRGB_NITS_PER_UNIT, 0.0);
-    return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), 10000.0);
+    return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), maxAnalysisNits);
 }
 
 [numthreads(16, 16, 1)]
