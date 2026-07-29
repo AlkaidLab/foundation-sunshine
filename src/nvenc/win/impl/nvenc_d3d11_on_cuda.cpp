@@ -246,7 +246,9 @@ namespace nvenc {
     if (!register_cuda_input(
           NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY,
           cuda_array_surface,
-          encoder_params.width * planar_yuv_bytes_per_sample)) {
+          // NVENC SDK 13.1 requires CUDA array pitch to be the allocation
+          // width multiplied by CUDA_ARRAY3D_DESCRIPTOR::NumChannels.
+          encoder_params.width * planar_yuv_plane_count)) {
       BOOST_LOG(warning) << "NvEnc: CUDA array registration failed: " << last_nvenc_error_string;
       destroy_cuda_array_input();
       return false;
