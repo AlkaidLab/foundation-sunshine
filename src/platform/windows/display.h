@@ -25,7 +25,9 @@
 #include "src/platform/common.h"
 #include "src/utility.h"
 #include "src/video.h"
+#include "d3d12/d3d12_device.h"
 #include "vdd_frame_channel.h"
+#include "video_backend.h"
 
 namespace display_device::vdd_ioctl {
   struct frame_channel_caps;
@@ -33,6 +35,10 @@ namespace display_device::vdd_ioctl {
 }
 
 namespace platf::dxgi {
+  namespace d3d12 {
+    class hdr_analysis_t;
+  }
+
   extern const char *format_str[];
 
   // Add D3D11_CREATE_DEVICE_DEBUG here to enable the D3D11 debug runtime.
@@ -354,7 +360,34 @@ namespace platf::dxgi {
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
+    bool
+    prepare_video_backend();
+
+    std::unique_ptr<d3d12::hdr_analysis_t>
+    make_d3d12_hdr_analysis(
+      ID3D11Device *d3d11_device,
+      ID3D11DeviceContext *d3d11_context,
+      std::uint32_t analysis_width,
+      std::uint32_t analysis_height,
+      std::uint32_t source_width,
+      std::uint32_t source_height,
+      bool is_probe);
+
+    void
+    disable_d3d12_analysis(
+      std::string_view stage,
+      HRESULT hresult);
+
+    void
+    report_video_backend_selection(std::string_view encoder_backend) override;
+
     std::atomic<uint32_t> next_image_id;
+    std::optional<video_backend::selection_t> video_backend_selection;
+    std::unique_ptr<d3d12::device_t> d3d12_video_device;
+    HRESULT video_backend_hresult = S_OK;
+    std::string_view video_backend_stage = "build_select";
+    bool video_backend_selection_logged = false;
+    std::uint64_t d3d12_video_generation = 0;
   };
 
   /**

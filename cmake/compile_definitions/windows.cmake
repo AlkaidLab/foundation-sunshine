@@ -141,6 +141,81 @@ else()
     set(SUNSHINE_GUI_TRAY 0)
 endif()
 
+if (NOT SUNSHINE_DXC_EXECUTABLE)
+    find_program(SUNSHINE_DXC_EXECUTABLE NAMES dxc.exe dxc)
+endif ()
+if (NOT SUNSHINE_DXC_EXECUTABLE)
+    file(GLOB sunshine_windows_dxc_candidates
+            "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/dxc.exe")
+    list(SORT sunshine_windows_dxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    if (sunshine_windows_dxc_candidates)
+        list(GET sunshine_windows_dxc_candidates 0 SUNSHINE_DXC_EXECUTABLE)
+    endif ()
+endif ()
+if (NOT EXISTS "${SUNSHINE_DXC_EXECUTABLE}")
+    message(FATAL_ERROR "DXC is required to build the Windows D3D12 video shaders")
+endif ()
+if (NOT SUNSHINE_FXC_EXECUTABLE)
+    find_program(SUNSHINE_FXC_EXECUTABLE NAMES fxc.exe fxc)
+endif ()
+if (NOT SUNSHINE_FXC_EXECUTABLE)
+    file(GLOB sunshine_windows_fxc_candidates
+            "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/fxc.exe")
+    list(SORT sunshine_windows_fxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    if (sunshine_windows_fxc_candidates)
+        list(GET sunshine_windows_fxc_candidates 0 SUNSHINE_FXC_EXECUTABLE)
+    endif ()
+endif ()
+if (NOT EXISTS "${SUNSHINE_FXC_EXECUTABLE}")
+    message(FATAL_ERROR "FXC is required to validate the Windows D3D11 video shaders")
+endif ()
+
+set(D3D12_SHADER_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/windows/d3d12")
+set(D3D12_HDR_ANALYSIS_DXIL "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_analysis_cs.dxil")
+set(D3D12_HDR_REDUCE_DXIL "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_reduce_cs.dxil")
+set(D3D11_HDR_ANALYSIS_DXBC "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_analysis_cs.dxbc")
+set(D3D11_HDR_REDUCE_DXBC "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_reduce_cs.dxbc")
+set(D3D12_HDR_SHADER_HEADER "${D3D12_SHADER_GENERATED_DIR}/d3d12_hdr_shaders.h")
+add_custom_command(
+        OUTPUT "${D3D12_HDR_SHADER_HEADER}"
+        BYPRODUCTS
+                "${D3D12_HDR_ANALYSIS_DXIL}"
+                "${D3D12_HDR_REDUCE_DXIL}"
+                "${D3D11_HDR_ANALYSIS_DXBC}"
+                "${D3D11_HDR_REDUCE_DXBC}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${D3D12_SHADER_GENERATED_DIR}"
+        COMMAND "${SUNSHINE_DXC_EXECUTABLE}"
+                -T cs_6_0 -E main_cs
+                -I "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx"
+                -Fo "${D3D12_HDR_ANALYSIS_DXIL}"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+        COMMAND "${SUNSHINE_DXC_EXECUTABLE}"
+                -T cs_6_0 -E main_cs
+                -I "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx"
+                -Fo "${D3D12_HDR_REDUCE_DXIL}"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl"
+        COMMAND "${SUNSHINE_FXC_EXECUTABLE}"
+                /nologo /T cs_5_0 /E main_cs
+                /I "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx"
+                /Fo "${D3D11_HDR_ANALYSIS_DXBC}"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+        COMMAND "${SUNSHINE_FXC_EXECUTABLE}"
+                /nologo /T cs_5_0 /E main_cs
+                /I "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx"
+                /Fo "${D3D11_HDR_REDUCE_DXBC}"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl"
+        COMMAND "${CMAKE_COMMAND}"
+                "-DANALYSIS_DXIL=${D3D12_HDR_ANALYSIS_DXIL}"
+                "-DREDUCE_DXIL=${D3D12_HDR_REDUCE_DXIL}"
+                "-DOUTPUT_HEADER=${D3D12_HDR_SHADER_HEADER}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake"
+        DEPENDS
+                "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/include/common.hlsl"
+        VERBATIM)
+
 set(PLATFORM_TARGET_FILES
         "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
@@ -157,6 +232,18 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_base.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_backend.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_backend.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_pipeline_telemetry.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp"
+        "${D3D12_HDR_SHADER_HEADER}"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_ram.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_wgc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_amd.cpp"
@@ -194,6 +281,7 @@ list(PREPEND PLATFORM_LIBRARIES
         avrt
         crypt32
         d3d11
+        d3d12
         D3DCompiler
         dwmapi
         dxgi

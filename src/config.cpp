@@ -33,6 +33,7 @@
 #ifdef _WIN32
   #include <shellapi.h>
   #include "platform/windows/misc.h"
+  #include "platform/windows/video_backend.h"
 #endif
 
 #ifndef __APPLE__
@@ -1360,6 +1361,18 @@ namespace config {
                          << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
       video.capture_compute_shader = "auto";
     }
+
+#ifdef _WIN32
+    string_f(vars, "windows_video_backend", video.windows_video_backend);
+    if (video.windows_video_backend.empty()) {
+      video.windows_video_backend = "auto";
+    }
+    else if (!platf::dxgi::video_backend::parse(video.windows_video_backend)) {
+      BOOST_LOG(warning) << "Invalid windows_video_backend: ["sv << video.windows_video_backend
+                         << "], valid options are: auto, d3d11, d3d12. Defaulting to 'auto'"sv;
+      video.windows_video_backend = "auto";
+    }
+#endif
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
