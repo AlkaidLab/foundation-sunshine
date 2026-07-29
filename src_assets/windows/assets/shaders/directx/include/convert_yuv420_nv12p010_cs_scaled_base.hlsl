@@ -38,7 +38,7 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
-#include "hdr_analysis_snapshot.hlsl"
+#include "include/hdr_analysis_snapshot.hlsl"
 
 #define CS_TILE 16
 
