@@ -38,6 +38,8 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
+#include "hdr_analysis_snapshot.hlsl"
+
 #define CS_TILE 16
 
 // 5-tap Catmull-Rom interpolation using bilinear samples.
@@ -91,11 +93,16 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     bool inside_rect = (rect_pos.x < out_rect_size.x && rect_pos.y < out_rect_size.y);
 
     float2 src_size_f = float2(src_size);
+    float3 src_rgb = float3(0.0, 0.0, 0.0);
+    if (inside_rect) {
+        float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
+        src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
+    }
+
+    StoreHdrAnalysisSnapshot(rect_pos, out_rect_size, src_rgb, inside_rect);
 
     // ---- Y plane (per pixel) ----
     if (inside_rect) {
-        float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
-        float3 src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
         float3 rgb_y = CONVERT_FUNCTION(src_rgb);
         float y = dot(color_vec_y.xyz, rgb_y) + color_vec_y.w;
         y = y * range_y.x + range_y.y;

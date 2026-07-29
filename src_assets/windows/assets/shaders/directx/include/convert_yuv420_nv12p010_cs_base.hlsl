@@ -36,6 +36,8 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
+#include "hdr_analysis_snapshot.hlsl"
+
 groupshared float3 s_rgb[16][16];
 
 #define CS_TILE 16
@@ -59,6 +61,8 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     s_rgb[GTid.y][GTid.x] = src_rgb;
 
     GroupMemoryBarrierWithGroupSync();
+
+    StoreHdrAnalysisSnapshot(rect_pos, out_rect_size, src_rgb, inside_rect);
 
     // ---- Y plane (per pixel) ----
     if (inside_rect) {
