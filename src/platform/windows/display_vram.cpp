@@ -828,15 +828,18 @@ namespace platf::dxgi {
 
         bool dispatch_hdr_after_unlock = false;
         ID3D11ShaderResourceView *hdr_analysis_srv = nullptr;
+        ID3D11Buffer *hdr_analysis_params = nullptr;
 
         if (hdr_analysis_due) {
           if (hdr_analysis_snapshot_written) {
             hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
+            hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
           } else {
             // Fallback for the pixel-shader path and devices that cannot bind the
             // low-resolution snapshot UAV.
             device_ctx->CopyResource(hdr_analysis_input_tex.get(), img_ctx.encoder_texture.get());
             hdr_analysis_srv = hdr_analysis_input_srv.get();
+            hdr_analysis_params = hdr_analysis_cbuf.get();
           }
           dispatch_hdr_after_unlock = true;
         }
@@ -857,7 +860,7 @@ namespace platf::dxgi {
         }
 
         if (dispatch_hdr_after_unlock) {
-          dispatch_hdr_analysis(hdr_analysis_srv);
+          dispatch_hdr_analysis(hdr_analysis_srv, hdr_analysis_params);
         }
       }
 
@@ -1703,7 +1706,7 @@ namespace platf::dxgi {
     cs_t hdr_pass2_cs;                     // Second pass: global reduction
     texture2d_t hdr_analysis_input_tex;    // Dedicated copy of the HDR frame for analysis outside the keyed mutex
     shader_res_t hdr_analysis_input_srv;   // SRV for the copied HDR frame
-    texture2d_t hdr_analysis_snapshot_tex; // Low-resolution snapshot written by the P010 converter
+    texture2d_t hdr_analysis_snapshot_tex; // Capped per-cell scalar statistics from the P010 converter
     shader_res_t hdr_analysis_snapshot_srv;
     uav_t hdr_analysis_snapshot_uav;
     buf_t hdr_group_results_buf;           // Pass 1 output (default usage + UAV + SRV)
@@ -1715,7 +1718,7 @@ namespace platf::dxgi {
     uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
     buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
-    buf_t hdr_analysis_snapshot_cbuf;      // Snapshot dimensions for the fused P010 converter
+    buf_t hdr_analysis_snapshot_cbuf;      // Shared converter/pass 1 params for the snapshot
     buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
     uint32_t hdr_analysis_width = 0;       // Analysis grid width (downsampled from source)
     uint32_t hdr_analysis_height = 0;      // Analysis grid height (downsampled from source)
@@ -1768,6 +1771,17 @@ namespace platf::dxgi {
       float sumMaxRGB;
       uint32_t pixelCount;
     };
+
+    // Must match HLSL AnalysisParams layout exactly.
+    struct AnalysisParams {
+      uint32_t analysisWidth;
+      uint32_t analysisHeight;
+      uint32_t sourceWidth;
+      uint32_t sourceHeight;
+      uint32_t inputHasCellStatistics;
+      uint32_t pad[3];
+    };
+    static_assert(sizeof(AnalysisParams) == 32);
 
     // Must match HLSL FinalResult layout exactly. This one keeps the histogram because
     // it is what the CPU reads back.
@@ -1859,23 +1873,17 @@ namespace platf::dxgi {
       }
 
       // --- Constant buffer for pass 1 (analysis resolution) ---
-      D3D11_BUFFER_DESC analysis_cb_desc = {};
-      analysis_cb_desc.ByteWidth = 16;  // 16-byte aligned: uint2 + padding
-      analysis_cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
-      analysis_cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-
-      struct {
-        uint32_t analysisWidth;
-        uint32_t analysisHeight;
-        uint32_t pad[2];
-      } analysis_cb_data = { hdr_analysis_width, hdr_analysis_height, {} };
-
-      D3D11_SUBRESOURCE_DATA analysis_cb_init = {};
-      analysis_cb_init.pSysMem = &analysis_cb_data;
-
-      status = device->CreateBuffer(&analysis_cb_desc, &analysis_cb_init, &hdr_analysis_cbuf);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to create HDR analysis constant buffer: " << util::log_hex(status);
+      AnalysisParams analysis_cb_data = {
+        hdr_analysis_width,
+        hdr_analysis_height,
+        width,
+        height,
+        0,
+        {},
+      };
+      hdr_analysis_cbuf = make_buffer(device.get(), analysis_cb_data);
+      if (!hdr_analysis_cbuf) {
+        BOOST_LOG(warning) << "Failed to create HDR analysis constant buffer";
         return -1;
       }
 
@@ -2013,11 +2021,14 @@ namespace platf::dxgi {
      * Pass 1: Per-tile analysis — reads scRGB texture, writes per-group results
      * Pass 2: Global reduction — reads per-group results, writes 1 final result
      * Then copies final result to staging for async CPU readback next frame.
-     * @param input_srv SRV of the scRGB FP16 capture texture
+     * @param input_srv SRV of either the scRGB FP16 frame or pre-aggregated snapshot
+     * @param analysis_params Parameters describing that input
      */
     void
-    dispatch_hdr_analysis(ID3D11ShaderResourceView *input_srv) {
-      if (!hdr_analysis_enabled || !input_srv) return;
+    dispatch_hdr_analysis(
+      ID3D11ShaderResourceView *input_srv,
+      ID3D11Buffer *analysis_params) {
+      if (!hdr_analysis_enabled || !input_srv || !analysis_params) return;
 
       // Unbind render targets to avoid resource hazard (SRV vs RTV conflict)
       ID3D11RenderTargetView *null_rtv = nullptr;
@@ -2030,12 +2041,9 @@ namespace platf::dxgi {
       // ===== Pass 1: Per-tile analysis =====
       device_ctx->CSSetShader(hdr_pass1_cs.get(), nullptr, 0);
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
-      ID3D11SamplerState *cs_sampler = sampler_linear.get();
-      device_ctx->CSSetSamplers(0, 1, &cs_sampler);
       ID3D11UnorderedAccessView *pass1_uavs[] = { hdr_group_results_uav.get(), hdr_global_histogram_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, pass1_uavs, nullptr);
-      ID3D11Buffer *analysis_cbuf = hdr_analysis_cbuf.get();
-      device_ctx->CSSetConstantBuffers(0, 1, &analysis_cbuf);
+      device_ctx->CSSetConstantBuffers(0, 1, &analysis_params);
 
       uint32_t groups_x = (hdr_analysis_width + 15) / 16;
       uint32_t groups_y = (hdr_analysis_height + 15) / 16;
@@ -2046,8 +2054,6 @@ namespace platf::dxgi {
       ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
       device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
-      ID3D11SamplerState *null_sampler = nullptr;
-      device_ctx->CSSetSamplers(0, 1, &null_sampler);
 
       // ===== Pass 2: Global reduction =====
       device_ctx->CSSetShader(hdr_pass2_cs.get(), nullptr, 0);
@@ -2399,10 +2405,10 @@ namespace platf::dxgi {
         return;
       }
 
-      // Let the HDR converter write a capped-resolution private snapshot while it
-      // already owns the shared scRGB source. The existing luminance passes consume
-      // this snapshot after the keyed mutex is released, avoiding a full-resolution
-      // CopyResource without moving the expensive PQ/histogram work into the lock.
+      // Let the HDR converter write capped per-cell min/max/average statistics while
+      // it already owns the shared scRGB source. The luminance passes consume them
+      // after the keyed mutex is released, avoiding a full-resolution CopyResource
+      // without losing extrema to a point-sampled analysis grid.
       const bool has_hdr_analysis_shader =
         is_p010 && (is_scaled ? bool(cs_p010_scaled_hdr_analysis) : bool(cs_p010_hdr_analysis));
       if (hdr_analysis_enabled && has_hdr_analysis_shader &&
@@ -2429,13 +2435,12 @@ namespace platf::dxgi {
             hdr_analysis_snapshot_tex.get(), nullptr, &hdr_analysis_snapshot_uav);
         }
 
-        struct AnalysisSnapshotCB {
-          uint32_t width;
-          uint32_t height;
-          uint32_t pad[2];
-        } snapshot_layout = {
+        AnalysisParams snapshot_layout = {
           hdr_analysis_width,
           hdr_analysis_height,
+          static_cast<uint32_t>(active_w),
+          static_cast<uint32_t>(active_h),
+          1,
           {},
         };
         if (SUCCEEDED(snapshot_status)) {
@@ -2447,7 +2452,7 @@ namespace platf::dxgi {
 
         if (SUCCEEDED(snapshot_status)) {
           hdr_analysis_snapshot_enabled = true;
-          BOOST_LOG(info) << "HDR analysis snapshot fused into P010 conversion at "
+          BOOST_LOG(info) << "HDR analysis cell statistics fused into P010 conversion at "
                           << hdr_analysis_width << "x" << hdr_analysis_height;
         } else {
           hdr_analysis_snapshot_tex.reset();

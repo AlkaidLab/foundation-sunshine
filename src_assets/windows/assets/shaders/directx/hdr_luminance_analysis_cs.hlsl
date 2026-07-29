@@ -5,9 +5,9 @@
  * Analyzes captured scRGB FP16 frames to extract per-frame luminance statistics
  * for generating accurate HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
  *
- * Input: scRGB FP16 texture (R16G16B16A16_FLOAT)
- *   - scRGB uses BT.709 primaries in linear light
- *   - 1.0 in scRGB = 80 nits (SDR reference white)
+ * Input: either an scRGB FP16 frame or the converter's capped FP16 statistics
+ *   snapshot. For the full-frame fallback, each analysis thread scans one disjoint
+ *   integer cell so extrema and the average cover every source pixel.
  *
  * Output: Per-group scalar reductions in a structured buffer, plus a frame-global
  *   histogram accumulated by atomics.
@@ -34,12 +34,14 @@ static const uint HISTOGRAM_BINS = 256;
 
 // Input texture (scRGB FP16)
 Texture2D<float4> inputTexture : register(t0);
-SamplerState linearSampler : register(s0);
 
 cbuffer AnalysisParams : register(b0) {
     uint analysisWidth;
     uint analysisHeight;
-    uint2 _pad;
+    uint sourceWidth;
+    uint sourceHeight;
+    uint inputHasCellStatistics;
+    uint3 _pad;
 };
 
 // Per-group reduction results (scalars only — the histogram goes straight to the
@@ -65,6 +67,12 @@ groupshared float gs_sum[256];
 groupshared uint  gs_count[256];
 groupshared uint  gs_histogram[HISTOGRAM_BINS];
 
+float HdrAnalysisMaxRgbNits(float3 sc_rgb)
+{
+    float3 rec2020_nits = max(Rec709toRec2020(sc_rgb) * SCRGB_NITS_PER_UNIT, 0.0);
+    return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), 10000.0);
+}
+
 [numthreads(16, 16, 1)]
 void main_cs(uint3 DTid : SV_DispatchThreadID,
              uint3 GTid : SV_GroupThreadID,
@@ -76,37 +84,62 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         gs_histogram[GIndex] = 0;
     }
 
-    // Compute maxRGB for this analysis sample
-    float maxRGB_nits = 0.0;
+    float minMaxRGB_nits = 10000.0;
+    float maxMaxRGB_nits = 0.0;
+    float sumMaxRGB_nits = 0.0;
+    float representativeMaxRGB_nits = 0.0;
+    uint pixelCount = 0;
     bool valid = (DTid.x < analysisWidth && DTid.y < analysisHeight);
 
     if (valid) {
-        // Sample the full-resolution frame on a lower-resolution analysis grid.
-        float2 uv = (float2(DTid.xy) + 0.5) / float2(analysisWidth, analysisHeight);
-        float4 pixel = inputTexture.SampleLevel(linearSampler, uv, 0.0);
+        uint2 analysisPosition = DTid.xy;
+        uint2 sourceSize = uint2(sourceWidth, sourceHeight);
+        uint2 analysisSize = uint2(analysisWidth, analysisHeight);
+        uint2 cellBegin = (analysisPosition * sourceSize) / analysisSize;
+        uint2 cellEnd = ((analysisPosition + 1) * sourceSize) / analysisSize;
+        uint2 cellExtent = cellEnd - cellBegin;
+        pixelCount = cellExtent.x * cellExtent.y;
 
-        // Match the encoder's scRGB (display-linear Rec.709) to Rec.2020 before
-        // extracting maxRGB. For an HLG source, Windows composition has already
-        // produced the display-linear result of inverse OETF + OOTF, so converting
-        // these absolute nits to PQ matches GB/T 46269.1-2025 Annex A.2.
-        // PQ is monotonic, so max(PQ(R),PQ(G),PQ(B)) equals PQ(max(R,G,B)).
-        float3 rec2020_nits = max(Rec709toRec2020(pixel.rgb) * SCRGB_NITS_PER_UNIT, 0.0);
-        maxRGB_nits = max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b);
+        if (inputHasCellStatistics != 0) {
+            // R/G/B/A = cell min/max/average/representative maxRGB nits.
+            float4 cellStats = inputTexture.Load(int3(analysisPosition, 0));
+            minMaxRGB_nits = cellStats.r;
+            maxMaxRGB_nits = cellStats.g;
+            sumMaxRGB_nits = cellStats.b * pixelCount;
+            representativeMaxRGB_nits = cellStats.a;
+        } else {
+            // Full-frame fallback: scan a disjoint integer partition. The union of
+            // all cells covers every source pixel exactly once, including non-integer
+            // source-to-analysis ratios.
+            for (uint y = cellBegin.y; y < cellEnd.y; ++y) {
+                for (uint x = cellBegin.x; x < cellEnd.x; ++x) {
+                    float3 pixel = inputTexture.Load(int3(uint2(x, y), 0)).rgb;
+                    float maxrgb_nits = HdrAnalysisMaxRgbNits(pixel);
+                    minMaxRGB_nits = min(minMaxRGB_nits, maxrgb_nits);
+                    maxMaxRGB_nits = max(maxMaxRGB_nits, maxrgb_nits);
+                    sumMaxRGB_nits += maxrgb_nits;
+                }
+            }
+
+            uint2 representativePosition = (cellBegin + cellEnd - 1) / 2;
+            float3 representative = inputTexture.Load(int3(representativePosition, 0)).rgb;
+            representativeMaxRGB_nits = HdrAnalysisMaxRgbNits(representative);
+        }
     }
 
     // Initialize shared memory for min/max/sum/count reduction
-    gs_min[GIndex] = valid ? maxRGB_nits : 100000.0;  // Large sentinel for min
-    gs_max[GIndex] = valid ? maxRGB_nits : 0.0;
-    gs_sum[GIndex] = valid ? maxRGB_nits : 0.0;
-    gs_count[GIndex] = valid ? 1u : 0u;
+    gs_min[GIndex] = valid ? minMaxRGB_nits : 10000.0;
+    gs_max[GIndex] = valid ? maxMaxRGB_nits : 0.0;
+    gs_sum[GIndex] = valid ? sumMaxRGB_nits : 0.0;
+    gs_count[GIndex] = valid ? pixelCount : 0u;
 
     GroupMemoryBarrierWithGroupSync();
 
     // Accumulate into shared histogram using atomic add
     if (valid) {
-        float maxRGB_pq = NitsToPQ(maxRGB_nits.xxx).x;
+        float maxRGB_pq = NitsToPQ(representativeMaxRGB_nits.xxx).x;
         uint bin = min((uint)(maxRGB_pq * HISTOGRAM_BINS), HISTOGRAM_BINS - 1);
-        InterlockedAdd(gs_histogram[bin], 1);
+        InterlockedAdd(gs_histogram[bin], pixelCount);
     }
 
     GroupMemoryBarrierWithGroupSync();
