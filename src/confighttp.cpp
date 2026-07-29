@@ -394,6 +394,18 @@ namespace confighttp {
     getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
   }
 
+  void
+  getAlkaidLabLogoImage(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    getStaticResource(response, request, WEB_DIR "images/logo-alkaidlab.png", "image/png");
+  }
+
+  void
+  getNatPierceLogoImage(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    getStaticResource(response, request, WEB_DIR "images/logo-natpierce.png", "image/png");
+  }
+
   /**
    * @brief 检查 child 是否是 parent 目录的子路径（防止路径穿越）
    */
@@ -3280,6 +3292,8 @@ namespace confighttp {
     server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["DELETE"] = deleteFileMapping;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
+    server.resource["^/images/logo-alkaidlab.png$"]["GET"] = getAlkaidLabLogoImage;
+    server.resource["^/images/logo-natpierce.png$"]["GET"] = getNatPierceLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
 
     // Clipboard sync routes are registered in a sibling module so the
