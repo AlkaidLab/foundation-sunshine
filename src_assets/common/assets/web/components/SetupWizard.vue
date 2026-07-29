@@ -297,7 +297,7 @@
                         <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-android"></i>
+                        <i class="fas fa-mobile-alt"></i>
                         {{ $t('setup.android_client') }}
                       </div>
                     </div>
@@ -306,7 +306,7 @@
                         <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-apple"></i>
+                        <i class="fas fa-tablet-alt"></i>
                         {{ $t('setup.ios_client') }}
                       </div>
                     </div>
@@ -439,6 +439,12 @@ const SETUP_CLIENT_RESOURCE_ORDER = [
   'moonlight-macos',
   'moonlight-desktop',
 ]
+
+const SETUP_CLIENT_ICON_OVERRIDES = Object.freeze({
+  'android-vplus': 'fas fa-mobile-alt',
+  voidlink: 'fas fa-tablet-alt',
+  'moonlight-macos': 'fas fa-laptop',
+})
 
 const COMPLETION_NOTICES = Object.freeze([
   {
@@ -601,7 +607,13 @@ export default {
     },
     setupClientResources() {
       const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
-      return SETUP_CLIENT_RESOURCE_ORDER.map((id) => resourcesById.get(id)).filter(Boolean)
+      return SETUP_CLIENT_RESOURCE_ORDER
+        .map((id) => resourcesById.get(id))
+        .filter(Boolean)
+        .map((resource) => ({
+          ...resource,
+          icon: SETUP_CLIENT_ICON_OVERRIDES[resource.id] || resource.icon,
+        }))
     }
   },
   methods: {
