@@ -33,6 +33,18 @@ namespace video {
   bool
   colorspace_is_pq(const sunshine_colorspace_t &colorspace);
 
+  /**
+   * @brief Calculate the BT.2100 HLG system gamma for a nominal display peak.
+   *
+   * Uses the normal production-monitor formula from 400 to 2000 nits and the
+   * BT.2100-3 extended-range formula outside that interval.
+   *
+   * @param peak_luminance_nits Nominal display peak luminance in cd/m2.
+   * @return HLG system gamma. Invalid peaks fall back to the 1000-nit value (1.2).
+   */
+  float
+  hlg_system_gamma(float peak_luminance_nits);
+
   // Declared in video.h
   struct config_t;
 

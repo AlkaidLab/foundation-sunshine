@@ -6,6 +6,8 @@
 
 #include "../tests_common.h"
 
+#include <limits>
+
 namespace {
 
   double
@@ -97,6 +99,24 @@ TEST(VideoInputActivityBoostPolicy, CapsBoostAtStreamFps) {
   ASSERT_TRUE(policy.useful);
   EXPECT_EQ(policy.fps, 120);
   EXPECT_NEAR(millis(policy.frame_time), 1000.0 / 120.0, 0.001);
+}
+
+TEST(HlgSystemGamma, UsesBt2100ProductionMonitorFormula) {
+  EXPECT_NEAR(video::hlg_system_gamma(400.0f), 1.0328653f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(678.0f), 1.12912f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(1000.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(2000.0f), 1.32643f, 0.00001f);
+}
+
+TEST(HlgSystemGamma, UsesBt2100ExtendedRangeFormula) {
+  EXPECT_NEAR(video::hlg_system_gamma(300.0f), 0.99949f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(4000.0f), 1.48119f, 0.00001f);
+}
+
+TEST(HlgSystemGamma, FallsBackToReferencePeakForInvalidValues) {
+  EXPECT_NEAR(video::hlg_system_gamma(0.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(-1.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(std::numeric_limits<float>::quiet_NaN()), 1.2f, 0.00001f);
 }
 
 struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {
