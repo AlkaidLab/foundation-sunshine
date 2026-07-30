@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -98,9 +99,11 @@ namespace platf::dxgi {
   struct cursor_t {
     std::vector<std::uint8_t> img_data;
 
-    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info;
-    int x, y;
-    bool visible;
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    int x = 0;
+    int y = 0;
+    bool visible = false;
+    std::uint32_t shape_id = 0;
   };
 
   class gpu_cursor_t {
@@ -412,12 +415,16 @@ namespace platf::dxgi {
   public:
     dup_t dup;
     bool has_frame {};
+    bool local_cursor_mode_was_active {};
+    cursor_t cursor;
     std::chrono::steady_clock::time_point last_protected_content_warning_time {};
 
     int
     init(display_base_t *display, const ::video::config_t &config);
     capture_e
     next_frame(DXGI_OUTDUPL_FRAME_INFO &frame_info, std::chrono::milliseconds timeout, resource_t::pointer *res_p);
+    capture_e
+    update_cursor(const DXGI_OUTDUPL_FRAME_INFO &frame_info, bool &shape_updated);
     capture_e
     reset(dup_t::pointer dup_p = dup_t::pointer());
     capture_e
@@ -439,7 +446,6 @@ namespace platf::dxgi {
     release_snapshot() override;
 
     duplication_t dup;
-    cursor_t cursor;
   };
 
   /**

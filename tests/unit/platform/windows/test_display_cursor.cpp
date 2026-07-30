@@ -10,6 +10,7 @@
   #include <initializer_list>
 
   #include <src/platform/windows/display_cursor.h>
+  #include <src/cursor_channel.h>
 
   #include "../../../tests_common.h"
 
@@ -85,6 +86,54 @@ TEST(WindowsCursorImage, PreservesMaskedColorPixelConversion) {
   EXPECT_EQ(read_pixel(alpha, 1), 0x00000000u);
   EXPECT_EQ(read_pixel(xor_mask, 0), 0x00000000u);
   EXPECT_EQ(read_pixel(xor_mask, 1), 0xFF445566u);
+}
+
+TEST(WindowsCursorImage, RepublishesDesktopDuplicationShapeOnLocalModeActivation) {
+  constexpr std::uint32_t session_id = 0xDDC00001u;
+  struct session_guard_t {
+    std::uint32_t session_id;
+
+    ~session_guard_t() {
+      cursor_channel::remove_session(session_id);
+    }
+  } session_guard {session_id};
+  cursor_channel::set_session_enabled(session_id, true);
+
+  platf::dxgi::duplication_t duplication;
+  auto &cursor = duplication.cursor;
+  cursor.visible = true;
+  cursor.shape_id = 7;
+  cursor.shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+  cursor.shape_info.Width = 2;
+  cursor.shape_info.Height = 1;
+  cursor.shape_info.Pitch = 12;
+  cursor.shape_info.HotSpot.x = 1;
+  cursor.shape_info.HotSpot.y = 0;
+  cursor.img_data = {
+    0x33, 0x22, 0x11, 0xFF,
+    0x66, 0x55, 0x44, 0xFF,
+    0xEE, 0xEE, 0xEE, 0xEE,
+  };
+
+  ASSERT_TRUE(platf::dxgi::sync_local_cursor_mode(duplication));
+
+  cursor_channel::snapshot_t published;
+  ASSERT_TRUE(cursor_channel::copy_latest(0, published));
+  EXPECT_TRUE(published.visible);
+  EXPECT_TRUE(published.has_shape);
+  EXPECT_EQ(published.shape_id, 7u);
+  EXPECT_EQ(published.width, 2u);
+  EXPECT_EQ(published.height, 1u);
+  EXPECT_EQ(published.hotspot_x, 1);
+  EXPECT_EQ(published.hotspot_y, 0);
+  EXPECT_EQ(published.bgra, (std::vector<std::uint8_t> {
+    0x33, 0x22, 0x11, 0xFF,
+    0x66, 0x55, 0x44, 0xFF,
+  }));
+
+  EXPECT_TRUE(platf::dxgi::sync_local_cursor_mode(duplication));
+  cursor_channel::snapshot_t duplicate;
+  EXPECT_FALSE(cursor_channel::copy_latest(published.revision, duplicate));
 }
 
 #endif

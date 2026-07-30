@@ -166,6 +166,43 @@ namespace platf::dxgi {
   }
 
   capture_e
+  duplication_t::update_cursor(const DXGI_OUTDUPL_FRAME_INFO &frame_info,
+                               bool &shape_updated) {
+    shape_updated = false;
+    if (frame_info.PointerShapeBufferSize > 0) {
+      std::vector<std::uint8_t> img_data(frame_info.PointerShapeBufferSize);
+      DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+      UINT actual_size = 0;
+      const auto status = dup->GetFramePointerShape(
+        static_cast<UINT>(img_data.size()),
+        img_data.data(),
+        &actual_size,
+        &shape_info
+      );
+      if (FAILED(status) || actual_size > img_data.size()) {
+        BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv
+                         << util::hex(status).to_string_view() << ']';
+        return capture_e::error;
+      }
+
+      img_data.resize(actual_size);
+      cursor.img_data = std::move(img_data);
+      cursor.shape_info = shape_info;
+      do {
+        ++cursor.shape_id;
+      } while (cursor.shape_id == 0);
+      shape_updated = true;
+    }
+
+    if (frame_info.LastMouseUpdateTime.QuadPart) {
+      cursor.x = frame_info.PointerPosition.Position.x;
+      cursor.y = frame_info.PointerPosition.Position.y;
+      cursor.visible = frame_info.PointerPosition.Visible;
+    }
+    return capture_e::ok;
+  }
+
+  capture_e
   duplication_t::reset(dup_t::pointer dup_p) {
     auto capture_status = release_frame();
 

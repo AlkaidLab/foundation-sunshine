@@ -2730,6 +2730,8 @@ namespace platf::dxgi {
     HRESULT status;
     DXGI_OUTDUPL_FRAME_INFO frame_info;
 
+    const bool use_local_cursor = sync_local_cursor_mode(dup);
+
     resource_t::pointer res_p {};
     auto capture_status = dup.next_frame(frame_info, timeout, &res_p);
     resource_t res { res_p };
@@ -2752,19 +2754,23 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (frame_info.PointerShapeBufferSize > 0) {
-      DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    bool shape_updated;
+    if (dup.update_cursor(frame_info, shape_updated) != capture_e::ok) {
+      return capture_e::error;
+    }
+    auto &cursor = dup.cursor;
+    if (use_local_cursor) {
+      publish_local_cursor(cursor, shape_updated);
+    }
 
-      util::buffer_t<std::uint8_t> img_data { frame_info.PointerShapeBufferSize };
-
-      UINT dummy;
-      status = dup.dup->GetFramePointerShape(img_data.size(), std::begin(img_data), &dummy, &shape_info);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv << util::hex(status).to_string_view() << ']';
-
-        return capture_e::error;
-      }
-
+    if (shape_updated) {
+      auto shape_info = cursor.shape_info;
+      util::buffer_t<std::uint8_t> img_data(cursor.img_data.size());
+      std::memcpy(
+        std::begin(img_data),
+        cursor.img_data.data(),
+        cursor.img_data.size()
+      );
       auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
       auto xor_cursor_img = make_cursor_xor_image(img_data, shape_info);
 
@@ -2775,14 +2781,17 @@ namespace platf::dxgi {
     }
 
     if (frame_info.LastMouseUpdateTime.QuadPart) {
-      cursor_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
-        width, height, display_rotation, frame_info.PointerPosition.Visible);
+      cursor_alpha.set_pos(cursor.x, cursor.y,
+        width, height, display_rotation, cursor.visible);
 
-      cursor_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
-        width, height, display_rotation, frame_info.PointerPosition.Visible);
+      cursor_xor.set_pos(cursor.x, cursor.y,
+        width, height, display_rotation, cursor.visible);
     }
 
-    const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;
+    const bool blend_mouse_cursor_flag =
+      !use_local_cursor &&
+      (cursor_alpha.visible || cursor_xor.visible) &&
+      cursor_visible;
 
     texture2d_t src {};
     if (frame_update_flag) {

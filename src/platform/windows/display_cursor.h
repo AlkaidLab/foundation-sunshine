@@ -30,10 +30,19 @@ namespace platf::dxgi {
   bool
   local_cursor_mode_active();
 
+  bool
+  sync_local_cursor_mode(duplication_t &duplication);
+
   /**
-   * Convert a VDD cursor snapshot into tightly packed DXGI cursor images.
+   * Convert a captured cursor shape into tightly packed DXGI cursor images.
    * The XOR image is omitted when include_xor is false.
    */
+  bool
+  normalize_cursor_shape(const std::vector<std::uint8_t> &shape_buffer,
+                         DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info,
+                         bool include_xor,
+                         normalized_cursor_shape_t &normalized);
+
   bool
   normalize_cursor_shape(const vdd_capture_t::cursor_snapshot &cursor,
                          bool include_xor,
@@ -46,4 +55,7 @@ namespace platf::dxgi {
    */
   bool
   publish_local_cursor(const vdd_capture_t::cursor_snapshot &cursor);
+
+  bool
+  publish_local_cursor(const cursor_t &cursor, bool shape_updated);
 }  // namespace platf::dxgi

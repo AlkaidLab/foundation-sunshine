@@ -1805,8 +1805,12 @@ namespace stream {
       }
 
       const bool enable = requested_mode == 1;
-      if (enable && config::video.capture != "vdd") {
-        BOOST_LOG(warning) << "Ignoring local cursor mode outside VDD capture"sv;
+      const auto &capture_backend = config::video.capture;
+      const bool local_cursor_supported =
+        capture_backend.empty() || capture_backend == "ddx" || capture_backend == "vdd";
+      if (enable && !local_cursor_supported) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode for unsupported capture backend "sv
+                           << capture_backend;
         return;
       }
       if (session->control.local_cursor_mode == enable) {

@@ -21,6 +21,31 @@ namespace platf::dxgi {
       xor_mask,
     };
 
+    bool
+    make_dxgi_shape_info(const vdd_capture_t::cursor_snapshot &cursor,
+                         DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info) {
+      shape_info = {};
+      switch (cursor.shape_type) {
+        case 0:
+          shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+          break;
+        case 1:
+          shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+          break;
+        case 2:
+          shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
+          break;
+        default:
+          return false;
+      }
+      shape_info.Width = cursor.width;
+      shape_info.Height = cursor.height;
+      shape_info.Pitch = cursor.pitch;
+      shape_info.HotSpot.x = cursor.xhot;
+      shape_info.HotSpot.y = cursor.yhot;
+      return true;
+    }
+
     template<typename Transform>
     bool
     transform_cursor_pixels(util::buffer_t<std::uint8_t> &cursor_img,
@@ -230,69 +255,63 @@ namespace platf::dxgi {
   }
 
   bool
-  normalize_cursor_shape(const vdd_capture_t::cursor_snapshot &cursor,
+  normalize_cursor_shape(const std::vector<std::uint8_t> &shape_buffer,
+                         DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info,
                          bool include_xor,
                          normalized_cursor_shape_t &normalized) {
     normalized = {};
-    if (cursor.shape_buffer.empty() || cursor.width == 0 ||
-        cursor.height == 0 || cursor.pitch == 0) {
+    if (shape_buffer.empty() || shape_info.Width == 0 ||
+        shape_info.Height == 0 || shape_info.Pitch == 0) {
       return false;
     }
 
-    switch (cursor.shape_type) {
-      case 0:
-        if ((cursor.height & 1u) != 0) {
+    switch (shape_info.Type) {
+      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
+        if ((shape_info.Height & 1u) != 0) {
           return false;
         }
-        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
         break;
-      case 1:
-        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
-        break;
-      case 2:
-        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
+      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR:
+      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR:
         break;
       default:
         return false;
     }
 
-    normalized.info.Width = cursor.width;
-    normalized.info.Height = cursor.height;
-    normalized.info.Pitch = cursor.pitch;
-    normalized.info.HotSpot.x = cursor.xhot;
-    normalized.info.HotSpot.y = cursor.yhot;
-
-    const bool color_shape = cursor.shape_type != 0;
+    normalized.info = shape_info;
+    const bool color_shape =
+      shape_info.Type != DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
     if (color_shape &&
-        cursor.width > std::numeric_limits<UINT32>::max() / 4u) {
+        shape_info.Width > std::numeric_limits<UINT32>::max() / 4u) {
       return false;
     }
-    const UINT32 packed_pitch = color_shape ? cursor.width * 4u : cursor.pitch;
-    if (color_shape && cursor.pitch < packed_pitch) {
+    const UINT32 packed_pitch =
+      color_shape ? shape_info.Width * 4u : shape_info.Pitch;
+    if (color_shape && shape_info.Pitch < packed_pitch) {
       return false;
     }
 
     const std::size_t source_size =
-      static_cast<std::size_t>(cursor.pitch) * cursor.height;
+      static_cast<std::size_t>(shape_info.Pitch) * shape_info.Height;
     const std::size_t packed_size =
-      static_cast<std::size_t>(packed_pitch) * cursor.height;
-    if (cursor.shape_buffer.size() < source_size) {
+      static_cast<std::size_t>(packed_pitch) * shape_info.Height;
+    if (shape_buffer.size() < source_size) {
       return false;
     }
 
     util::buffer_t<std::uint8_t> img_data(packed_size);
-    if (color_shape && cursor.pitch != packed_pitch) {
-      for (UINT32 row = 0; row < cursor.height; ++row) {
+    if (color_shape && shape_info.Pitch != packed_pitch) {
+      for (UINT32 row = 0; row < shape_info.Height; ++row) {
         std::memcpy(
           std::begin(img_data) + static_cast<std::size_t>(row) * packed_pitch,
-          cursor.shape_buffer.data() + static_cast<std::size_t>(row) * cursor.pitch,
+          shape_buffer.data() + static_cast<std::size_t>(row) * shape_info.Pitch,
           packed_pitch
         );
       }
       normalized.info.Pitch = packed_pitch;
     }
     else {
-      std::memcpy(std::begin(img_data), cursor.shape_buffer.data(), packed_size);
+      std::memcpy(std::begin(img_data), shape_buffer.data(), packed_size);
     }
 
     normalized.alpha = make_cursor_alpha_image(img_data, normalized.info);
@@ -311,55 +330,114 @@ namespace platf::dxgi {
   }
 
   bool
-  publish_local_cursor(const vdd_capture_t::cursor_snapshot &cursor) {
-    cursor_channel::publish_visibility(cursor.visible, cursor.shape_id);
-    if (!cursor.shape_updated) {
+  normalize_cursor_shape(const vdd_capture_t::cursor_snapshot &cursor,
+                         bool include_xor,
+                         normalized_cursor_shape_t &normalized) {
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    if (!make_dxgi_shape_info(cursor, shape_info)) {
       return false;
     }
+    return normalize_cursor_shape(
+      cursor.shape_buffer,
+      shape_info,
+      include_xor,
+      normalized
+    );
+  }
 
-    const bool empty_hidden_shape = !cursor.visible &&
-                                    cursor.shape_buffer.empty() &&
-                                    cursor.width == 0 &&
-                                    cursor.height == 0;
-    if (empty_hidden_shape) {
+  namespace {
+    bool
+    publish_local_cursor(bool visible,
+                         bool shape_updated,
+                         std::uint32_t shape_id,
+                         const std::vector<std::uint8_t> &shape_buffer,
+                         DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info) {
+      cursor_channel::publish_visibility(visible, shape_id);
+      if (!shape_updated) {
+        return false;
+      }
+
+      const bool empty_hidden_shape = !visible &&
+                                      shape_buffer.empty() &&
+                                      shape_info.Width == 0 &&
+                                      shape_info.Height == 0;
+      if (empty_hidden_shape) {
+        return true;
+      }
+      if (shape_buffer.empty() || shape_info.Width == 0 || shape_info.Height == 0) {
+        return false;
+      }
+
+      normalized_cursor_shape_t normalized;
+      if (!normalize_cursor_shape(shape_buffer, shape_info, false, normalized)) {
+        return false;
+      }
+      const UINT32 output_height =
+        normalized.info.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ?
+          normalized.info.Height / 2u : normalized.info.Height;
+      const bool valid_hotspot = normalized.info.HotSpot.x >= 0 &&
+                                 normalized.info.HotSpot.y >= 0 &&
+                                 normalized.info.HotSpot.x < static_cast<LONG>(normalized.info.Width) &&
+                                 normalized.info.HotSpot.y < static_cast<LONG>(output_height);
+      if (!valid_hotspot ||
+          normalized.info.Width > std::numeric_limits<std::uint16_t>::max() ||
+          output_height > std::numeric_limits<std::uint16_t>::max() ||
+          normalized.info.HotSpot.x > std::numeric_limits<std::int16_t>::max() ||
+          normalized.info.HotSpot.y > std::numeric_limits<std::int16_t>::max()) {
+        return false;
+      }
+
+      std::vector<std::uint8_t> bgra(
+        std::begin(normalized.alpha),
+        std::end(normalized.alpha)
+      );
+      cursor_channel::publish_shape(
+        visible,
+        shape_id,
+        static_cast<std::uint16_t>(normalized.info.Width),
+        static_cast<std::uint16_t>(output_height),
+        static_cast<std::int16_t>(normalized.info.HotSpot.x),
+        static_cast<std::int16_t>(normalized.info.HotSpot.y),
+        std::move(bgra)
+      );
       return true;
     }
-    if (cursor.shape_buffer.empty() || cursor.width == 0 || cursor.height == 0) {
-      return false;
-    }
+  }  // namespace
 
-    normalized_cursor_shape_t normalized;
-    if (!normalize_cursor_shape(cursor, false, normalized)) {
+  bool
+  publish_local_cursor(const vdd_capture_t::cursor_snapshot &cursor) {
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    if (!make_dxgi_shape_info(cursor, shape_info)) {
+      cursor_channel::publish_visibility(cursor.visible, cursor.shape_id);
       return false;
     }
-    const UINT32 output_height =
-      normalized.info.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ?
-        normalized.info.Height / 2u : normalized.info.Height;
-    const bool valid_hotspot = normalized.info.HotSpot.x >= 0 &&
-                               normalized.info.HotSpot.y >= 0 &&
-                               normalized.info.HotSpot.x < static_cast<LONG>(normalized.info.Width) &&
-                               normalized.info.HotSpot.y < static_cast<LONG>(output_height);
-    if (!valid_hotspot ||
-        normalized.info.Width > std::numeric_limits<std::uint16_t>::max() ||
-        output_height > std::numeric_limits<std::uint16_t>::max() ||
-        normalized.info.HotSpot.x > std::numeric_limits<std::int16_t>::max() ||
-        normalized.info.HotSpot.y > std::numeric_limits<std::int16_t>::max()) {
-      return false;
-    }
-
-    std::vector<std::uint8_t> bgra(
-      std::begin(normalized.alpha),
-      std::end(normalized.alpha)
-    );
-    cursor_channel::publish_shape(
+    return publish_local_cursor(
       cursor.visible,
+      cursor.shape_updated,
       cursor.shape_id,
-      static_cast<std::uint16_t>(normalized.info.Width),
-      static_cast<std::uint16_t>(output_height),
-      static_cast<std::int16_t>(normalized.info.HotSpot.x),
-      static_cast<std::int16_t>(normalized.info.HotSpot.y),
-      std::move(bgra)
+      cursor.shape_buffer,
+      shape_info
     );
-    return true;
+  }
+
+  bool
+  publish_local_cursor(const cursor_t &cursor, bool shape_updated) {
+    return publish_local_cursor(
+      cursor.visible,
+      shape_updated,
+      cursor.shape_id,
+      cursor.img_data,
+      cursor.shape_info
+    );
+  }
+
+  bool
+  sync_local_cursor_mode(duplication_t &duplication) {
+    const bool active = local_cursor_mode_active();
+    if (active && !duplication.local_cursor_mode_was_active) {
+      publish_local_cursor(duplication.cursor, true);
+    }
+    duplication.local_cursor_mode_was_active = active;
+    return active;
   }
 }  // namespace platf::dxgi

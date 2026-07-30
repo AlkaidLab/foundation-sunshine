@@ -4,6 +4,7 @@
  */
 #include "display.h"
 
+#include "display_cursor.h"
 #include "misc.h"
 #include "src/logging.h"
 
@@ -181,6 +182,8 @@ namespace platf::dxgi {
     HRESULT status;
     DXGI_OUTDUPL_FRAME_INFO frame_info;
 
+    const bool use_local_cursor = sync_local_cursor_mode(dup);
+
     resource_t::pointer res_p {};
     auto capture_status = dup.next_frame(frame_info, timeout, &res_p);
     resource_t res { res_p };
@@ -203,24 +206,13 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (frame_info.PointerShapeBufferSize > 0) {
-      auto &img_data = cursor.img_data;
-
-      img_data.resize(frame_info.PointerShapeBufferSize);
-
-      UINT dummy;
-      status = dup.dup->GetFramePointerShape(img_data.size(), img_data.data(), &dummy, &cursor.shape_info);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv << util::hex(status).to_string_view() << ']';
-
-        return capture_e::error;
-      }
+    bool shape_updated;
+    if (dup.update_cursor(frame_info, shape_updated) != capture_e::ok) {
+      return capture_e::error;
     }
-
-    if (frame_info.LastMouseUpdateTime.QuadPart) {
-      cursor.x = frame_info.PointerPosition.Position.x;
-      cursor.y = frame_info.PointerPosition.Position.y;
-      cursor.visible = frame_info.PointerPosition.Visible;
+    auto &cursor = dup.cursor;
+    if (use_local_cursor) {
+      publish_local_cursor(cursor, shape_updated);
     }
 
     if (frame_update_flag) {
@@ -314,7 +306,7 @@ namespace platf::dxgi {
       img_info.pData = nullptr;
     }
 
-    if (cursor_visible && cursor.visible) {
+    if (!use_local_cursor && cursor_visible && cursor.visible) {
       blend_cursor(cursor, *img);
     }
 
