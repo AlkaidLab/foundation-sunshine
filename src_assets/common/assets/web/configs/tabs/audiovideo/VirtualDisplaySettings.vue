@@ -1,5 +1,7 @@
 <script setup>
 import { ref } from 'vue'
+import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
+import VulkanHdrBridgeCard from './VulkanHdrBridgeCard.vue'
 
 const props = defineProps({
   platform: String,
@@ -10,6 +12,7 @@ const props = defineProps({
 
 const resolutions = ref(props.resolutions)
 const fps = ref(props.fps)
+const config = ref(props.config)
 
 const resIn = ref('')
 const fpsIn = ref('')
@@ -142,6 +145,34 @@ function removeFps(index) {
         {{ $t('config.max_fps_reached') || 'Maximum FPS values reached' }}
       </div>
     </div>
+
+    <PlatformLayout :platform="platform">
+      <template #windows>
+        <div class="settings-section">
+          <div class="section-header">
+            <i class="fas fa-sliders-h section-icon"></i>
+            <label class="section-title">{{ $t('tabs.advanced') }}</label>
+          </div>
+
+          <div class="form-check form-switch">
+            <input
+              id="vdd_borrowed_texture"
+              v-model="config.vdd_borrowed_texture"
+              class="form-check-input"
+              type="checkbox"
+              true-value="enabled"
+              false-value="disabled"
+            />
+            <label class="form-check-label" for="vdd_borrowed_texture">
+              {{ $t('config.vdd_borrowed_texture') }}
+            </label>
+          </div>
+          <div class="form-text">{{ $t('config.vdd_borrowed_texture_desc') }}</div>
+
+          <VulkanHdrBridgeCard class="mt-3" :config="config" />
+        </div>
+      </template>
+    </PlatformLayout>
 
     <div class="form-text description-text">
       <i class="fas fa-info-circle"></i>

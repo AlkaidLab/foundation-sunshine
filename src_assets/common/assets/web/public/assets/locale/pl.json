@@ -306,7 +306,7 @@
     "encoder_desc": "Wymuś określony koder, w przeciwnym razie Sunshine wybierze najlepszą dostępną opcję. Uwaga: Jeśli określisz koder sprzętowy w systemie Windows, musi on być zgodny z procesorem graficznym, do którego podłączony jest wyświetlacz.",
     "encoder_software": "Oprogramowanie",
     "experimental": "Eksperymentalne",
-    "experimental_features": "Funkcje eksperymentalne",
+    "experimental_features": "Nadpisania przechwytywania i zgodności",
     "external_ip": "Zewnętrzny adres IP",
     "external_ip_desc": "Jeśli nie podano zewnętrznego adresu IP, Sunshine automatycznie wykryje zewnętrzny adres IP",
     "fec_percentage": "Procent FEC",

@@ -3,10 +3,12 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import VddPrerequisiteNotice from '../../components/common/VddPrerequisiteNotice.vue'
+import AdapterNameSelector from './advanced/AdapterNameSelector.vue'
+import CaptureCompatibilityOverrides from './advanced/CaptureCompatibilityOverrides.vue'
 
 const { t } = useI18n()
 
-const props = defineProps(['platform', 'config', 'global_prep_cmd'])
+const props = defineProps(['platform', 'config', 'global_prep_cmd', 'display_mode_remapping'])
 
 const config = ref(props.config)
 
@@ -171,24 +173,8 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
 
 <template>
   <div class="config-page">
-    <div class="settings-grid">
-      <!-- FEC Percentage -->
-      <div class="settings-field">
-        <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
-        <input type="text" class="form-control" id="fec_percentage" placeholder="20" v-model="config.fec_percentage" />
-        <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
-      </div>
-
-      <!-- Min Threads -->
-      <div class="settings-field">
-        <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
-        <input type="number" class="form-control" id="min_threads" placeholder="2" min="1" v-model="config.min_threads" />
-        <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
-      </div>
-    </div>
-
     <!-- Codec Strategy (整合 HEVC + AV1) -->
-    <div class="settings-panel settings-panel--accent mt-3">
+    <div class="settings-panel settings-panel--accent">
       <label for="codec_strategy" class="form-label">{{ $t('config.codec_strategy') }}</label>
       <select id="codec_strategy" class="form-select" v-model="codecStrategy">
         <option value="auto">{{ $t('config.codec_strategy_auto') }}</option>
@@ -263,6 +249,8 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
 
     <!-- Capture -->
     <div class="settings-panel mt-3" v-if="platform !== 'macos'">
+      <AdapterNameSelector :platform="platform" :config="config" />
+
       <label for="capture" class="form-label">{{ $t('config.capture') }}</label>
       <div class="capture-control-row">
         <select id="capture" class="form-select flex-grow-1" v-model="config.capture">
@@ -323,22 +311,6 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
         </span>
       </div>
       <VddPrerequisiteNotice :active="isVDDCaptureSelected" />
-      <div class="settings-subpanel mt-3" v-if="isVDDCaptureSelected">
-        <div class="form-check">
-          <input
-            class="form-check-input"
-            type="checkbox"
-            id="vdd_borrowed_texture"
-            v-model="config.vdd_borrowed_texture"
-            true-value="enabled"
-            false-value="disabled"
-          />
-          <label class="form-check-label" for="vdd_borrowed_texture">
-            {{ $t('config.vdd_borrowed_texture') }}
-          </label>
-        </div>
-        <div class="form-text">{{ $t('config.vdd_borrowed_texture_desc') }}</div>
-      </div>
     </div>
 
     <!-- Encoder -->
@@ -364,6 +336,12 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
       </select>
       <div class="form-text">{{ $t('config.encoder_desc') }}</div>
     </div>
+
+    <CaptureCompatibilityOverrides
+      :platform="platform"
+      :config="config"
+      :display_mode_remapping="display_mode_remapping"
+    />
   </div>
 </template>
 

@@ -143,6 +143,19 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
       <div class="form-text">{{ $t('config.wan_encryption_mode_desc') }}</div>
     </div>
 
+    <!-- Forward Error Correction -->
+    <div class="mb-3">
+      <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
+      <input
+        id="fec_percentage"
+        v-model="config.fec_percentage"
+        class="form-control"
+        type="text"
+        placeholder="20"
+      />
+      <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
+    </div>
+
     <!-- CLOSE VERIFY SAFE -->
     <div class="mb-3">
       <label for="close_verify_safe" class="form-label">{{ $t('config.close_verify_safe') }}</label>

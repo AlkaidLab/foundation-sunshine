@@ -306,7 +306,7 @@
     "encoder_desc": "Forza un encoder specifico, altrimenti Sunshine selezionerà l'opzione migliore disponibile. Nota: Se si specifica un codificatore hardware su Windows, deve corrispondere alla GPU a cui è collegato il display.",
     "encoder_software": "Software",
     "experimental": "Sperimentale",
-    "experimental_features": "Funzionalità sperimentali",
+    "experimental_features": "Override di acquisizione e compatibilità",
     "external_ip": "IP Esterno",
     "external_ip_desc": "Se non viene fornito alcun indirizzo IP esterno, Sunshine lo rileverà automaticamente",
     "fec_percentage": "Percentuale FEC",

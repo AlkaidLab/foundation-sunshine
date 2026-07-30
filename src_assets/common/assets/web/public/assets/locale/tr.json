@@ -306,7 +306,7 @@
     "encoder_desc": "Belirli bir kodlayıcıyı zorlayın, aksi takdirde Sunshine mevcut en iyi seçeneği seçecektir. Not: Windows'ta bir donanım kodlayıcı belirtirseniz, ekranın bağlı olduğu GPU ile eşleşmelidir.",
     "encoder_software": "Yazılım",
     "experimental": "Deneysel",
-    "experimental_features": "Deneysel Özellikler",
+    "experimental_features": "Yakalama ve uyumluluk geçersiz kılmaları",
     "external_ip": "Harici IP",
     "external_ip_desc": "Harici IP adresi verilmezse, Sunshine harici IP'yi otomatik olarak algılar",
     "fec_percentage": "FEC Yüzdesi",

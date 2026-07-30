@@ -9,18 +9,6 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
-const display_mode_remapping = ref(props.display_mode_remapping || [])
-const createVulkanHdrStatus = (overrides = {}) => ({
-  state: 'idle',
-  artifacts_installed: false,
-  display_available: false,
-  ...overrides,
-})
-const vulkanHdrStatus = ref(createVulkanHdrStatus())
-const vulkanHdrStatusLoaded = ref(false)
-const vulkanHdrValidating = ref(false)
-let vulkanHdrStatusTimer
-let vulkanHdrStatusActive = false
 const hdrRuntimeStatus = ref(null)
 const hdrRuntimeStatusLoaded = ref(false)
 let hdrRuntimeStatusTimer
@@ -106,113 +94,10 @@ const hdrRuntimeConversionLabel = computed(() => {
   return 'D3D11 Pixel Shader'
 })
 
-const vulkanHdrEnabled = computed({
-  get: () => config.value.vdd_vulkan_hdr_bridge === 'enabled',
-  set: (enabled) => {
-    config.value.vdd_vulkan_hdr_bridge = enabled ? 'enabled' : 'disabled'
-  },
-})
-
-const vulkanHdrViewState = computed(() => {
-  if (!vulkanHdrEnabled.value) {
-    return {
-      statusKey: 'config.vdd_vulkan_hdr_bridge_status_disabled',
-      tone: 'muted',
-      canValidate: false,
-      showValidateAction: false,
-      showValidateHint: false,
-    }
-  }
-  if (!vulkanHdrStatusLoaded.value) {
-    return {
-      statusKey: 'config.vdd_vulkan_hdr_bridge_status_loading',
-      tone: 'muted',
-      canValidate: false,
-      showValidateAction: false,
-      showValidateHint: false,
-    }
-  }
-
-  const { state, artifacts_installed: artifactsInstalled, display_available: displayAvailable } =
-    vulkanHdrStatus.value
-  if (!artifactsInstalled || state === 'unavailable') {
-    return {
-      statusKey: 'config.vdd_vulkan_hdr_bridge_status_unavailable',
-      tone: 'muted',
-      canValidate: false,
-      showValidateAction: false,
-      showValidateHint: false,
-    }
-  }
-
-  const showValidateAction = state !== 'enabled'
-  const canValidate = showValidateAction && displayAvailable && !vulkanHdrValidating.value
-  if (state === 'idle' && !displayAvailable) {
-    return {
-      statusKey: 'config.vdd_vulkan_hdr_bridge_status_waiting_display',
-      tone: 'muted',
-      canValidate,
-      showValidateAction,
-      showValidateHint: true,
-    }
-  }
-
-  const presentation = {
-    idle: { statusKey: 'config.vdd_vulkan_hdr_bridge_status_idle', tone: 'ready' },
-    validating: { statusKey: 'config.vdd_vulkan_hdr_bridge_status_validating', tone: 'info' },
-    enabled: { statusKey: 'config.vdd_vulkan_hdr_bridge_status_enabled', tone: 'success' },
-    error: { statusKey: 'config.vdd_vulkan_hdr_bridge_status_error', tone: 'warning' },
-  }[state] ?? { statusKey: 'config.vdd_vulkan_hdr_bridge_status_idle', tone: 'ready' }
-
-  return { ...presentation, canValidate, showValidateAction, showValidateHint: false }
-})
-
-async function refreshVulkanHdrStatus() {
-  try {
-    const response = await fetch('/api/vulkan-hdr-bridge')
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const result = await response.json()
-    if (result.status?.toString() === 'true') vulkanHdrStatus.value = result
-  } catch (_) {
-    vulkanHdrStatus.value = createVulkanHdrStatus({ state: 'unavailable' })
-  } finally {
-    vulkanHdrStatusLoaded.value = true
-  }
-}
-
-async function validateVulkanHdrBridge() {
-  vulkanHdrValidating.value = true
-  vulkanHdrStatus.value = { ...vulkanHdrStatus.value, state: 'validating' }
-  try {
-    const response = await fetch('/api/vulkan-hdr-bridge/validate', { method: 'POST' })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    vulkanHdrStatus.value = await response.json()
-  } catch (_) {
-    vulkanHdrStatus.value = { ...vulkanHdrStatus.value, state: 'error' }
-  } finally {
-    vulkanHdrValidating.value = false
-    vulkanHdrStatusLoaded.value = true
-  }
-}
-
-function scheduleVulkanHdrStatusRefresh() {
-  if (!vulkanHdrStatusActive) return
-  if (vulkanHdrStatusTimer !== undefined) window.clearTimeout(vulkanHdrStatusTimer)
-  const delay = vulkanHdrStatus.value.state === 'enabled' ? 3000 : 10000
-  vulkanHdrStatusTimer = window.setTimeout(async () => {
-    if (!document.hidden) await refreshVulkanHdrStatus()
-    scheduleVulkanHdrStatusRefresh()
-  }, delay)
-}
-
 async function handleVisibilityChange() {
-  if (document.hidden) return
-  await Promise.all([
-    vulkanHdrStatusActive ? refreshVulkanHdrStatus() : Promise.resolve(),
-    hdrRuntimeStatusActive ? refreshHdrRuntimeStatus() : Promise.resolve(),
-  ])
-  if (vulkanHdrStatusActive) scheduleVulkanHdrStatusRefresh()
-  if (hdrRuntimeStatusActive) scheduleHdrRuntimeStatusRefresh()
+  if (!hdrRuntimeStatusActive || document.hidden) return
+  await refreshHdrRuntimeStatus()
+  scheduleHdrRuntimeStatusRefresh()
 }
 
 async function refreshHdrRuntimeStatus() {
@@ -239,45 +124,17 @@ function scheduleHdrRuntimeStatusRefresh() {
 
 onMounted(async () => {
   if (props.platform !== 'windows') return
-  vulkanHdrStatusActive = true
   hdrRuntimeStatusActive = true
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  await Promise.all([refreshVulkanHdrStatus(), refreshHdrRuntimeStatus()])
-  scheduleVulkanHdrStatusRefresh()
+  await refreshHdrRuntimeStatus()
   scheduleHdrRuntimeStatusRefresh()
 })
 
 onUnmounted(() => {
-  vulkanHdrStatusActive = false
   hdrRuntimeStatusActive = false
-  if (vulkanHdrStatusTimer !== undefined) window.clearTimeout(vulkanHdrStatusTimer)
   if (hdrRuntimeStatusTimer !== undefined) window.clearTimeout(hdrRuntimeStatusTimer)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
-
-// TODO: Sample for use in PR #2032
-function getRemappingType() {
-  // Assuming here that at least one setting is set to "automatic"
-  if (config.value.resolution_change !== 'automatic') {
-    return 'refresh_rate_only'
-  }
-  if (config.value.refresh_rate_change !== 'automatic') {
-    return 'resolution_only'
-  }
-  return ''
-}
-
-function addRemapping(type) {
-  let template = {
-    type: type,
-    received_resolution: '',
-    received_fps: '',
-    final_resolution: '',
-    final_refresh_rate: '',
-  }
-
-  display_mode_remapping.value.push(template)
-}
 </script>
 
 <template>
@@ -396,67 +253,6 @@ function addRemapping(type) {
                   <option value="no_operation">{{ $tp('config.hdr_prep_no_operation') }}</option>
                   <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
                 </select>
-              </div>
-
-              <div class="hdr-feature-card mb-3" :class="{ 'is-disabled': !vulkanHdrEnabled }">
-                <div class="d-flex align-items-start justify-content-between gap-3">
-                  <div>
-                    <label for="vdd_vulkan_hdr_bridge" class="form-label fw-semibold mb-1">
-                      {{ $tp('config.vdd_vulkan_hdr_bridge') }}
-                    </label>
-                    <div id="vdd_vulkan_hdr_bridge_desc" class="form-text mt-0">
-                      {{ $tp('config.vdd_vulkan_hdr_bridge_desc') }}
-                    </div>
-                  </div>
-                  <div class="form-check form-switch flex-shrink-0 mt-1">
-                    <input
-                      id="vdd_vulkan_hdr_bridge"
-                      v-model="vulkanHdrEnabled"
-                      class="form-check-input"
-                      type="checkbox"
-                      role="switch"
-                      aria-describedby="vdd_vulkan_hdr_bridge_desc"
-                    />
-                  </div>
-                </div>
-
-                <div
-                  class="feature-status mt-3"
-                  :class="`is-${vulkanHdrViewState.tone}`"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <span class="feature-status-dot" aria-hidden="true"></span>
-                  <span>{{ $tp(vulkanHdrViewState.statusKey) }}</span>
-                </div>
-
-                <div
-                  v-if="vulkanHdrViewState.showValidateAction"
-                  class="d-flex flex-wrap align-items-center gap-2 mt-3"
-                >
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary btn-sm"
-                    :disabled="!vulkanHdrViewState.canValidate"
-                    @click="validateVulkanHdrBridge"
-                  >
-                    <span
-                      v-if="vulkanHdrValidating"
-                      class="spinner-border spinner-border-sm me-1"
-                      aria-hidden="true"
-                    ></span>
-                    {{
-                      $tp(
-                        vulkanHdrValidating
-                          ? 'config.vdd_vulkan_hdr_bridge_validating'
-                          : 'config.vdd_vulkan_hdr_bridge_validate',
-                      )
-                    }}
-                  </button>
-                  <small v-if="vulkanHdrViewState.showValidateHint" class="text-body-secondary">
-                    {{ $tp('config.vdd_vulkan_hdr_bridge_validate_hint') }}
-                  </small>
-                </div>
               </div>
 
               <div

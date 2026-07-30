@@ -306,7 +306,7 @@
     "encoder_desc": "特定のエンコーダを強制します。そうでなければ、Sunshineは最良の選択肢を選択します。 注:Windowsでハードウェアエンコーダを指定する場合は、ディスプレイが接続されているGPUと一致する必要があります。",
     "encoder_software": "ソフトウェア",
     "experimental": "実験的",
-    "experimental_features": "実験的機能",
+    "experimental_features": "キャプチャと互換性の上書き",
     "external_ip": "外部 IP",
     "external_ip_desc": "外部IPアドレスが指定されていない場合、Sunshineは自動的に外部IPを検出します。",
     "fec_percentage": "FECの割合",

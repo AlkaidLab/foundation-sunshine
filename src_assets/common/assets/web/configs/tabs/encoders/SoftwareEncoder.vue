@@ -46,6 +46,19 @@ const config = ref(props.config)
       <input type="number" class="form-control" id="qp" placeholder="28" v-model="config.qp" />
       <div class="form-text">{{ $t('config.qp_desc') }}</div>
     </div>
+
+    <div class="mb-3">
+      <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
+      <input
+        id="min_threads"
+        v-model="config.min_threads"
+        class="form-control"
+        type="number"
+        min="1"
+        placeholder="2"
+      />
+      <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
+    </div>
   </div>
 </template>
 

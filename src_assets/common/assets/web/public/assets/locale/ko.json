@@ -306,7 +306,7 @@
     "encoder_desc": "특정 인코더를 강제로 지정하지 않으면 Sunshine에서 사용 가능한 최상의 옵션을 선택합니다. 참고: Windows에서 하드웨어 인코더를 지정하는 경우 디스플레이가 연결된 GPU와 일치해야 합니다.",
     "encoder_software": "소프트웨어",
     "experimental": "실험적",
-    "experimental_features": "실험적 기능",
+    "experimental_features": "캡처 및 호환성 재정의",
     "external_ip": "외부 IP",
     "external_ip_desc": "외부 IP 주소가 지정되지 않은 경우 Sunshine은 자동으로 외부 IP를 감지합니다.",
     "fec_percentage": "FEC 백분율",

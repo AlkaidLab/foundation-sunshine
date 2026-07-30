@@ -5,11 +5,8 @@ import { $tp } from '../../platform-i18n'
 import { openExternalUrl } from '../../utils/helpers.js'
 import { apiPostJson } from '../../utils/apiFetch.js'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
-import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
-import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelector.vue'
 import DisplayDeviceOptions from './audiovideo/DisplayDeviceOptions.vue'
-import ExperimentalFeatures from './audiovideo/ExperimentalFeatures.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
 import Checkbox from '../../components/Checkbox.vue'
@@ -187,8 +184,6 @@ const testMicrophoneRoute = async () => {
       </div>
     </div>
 
-    <AdapterNameSelector :platform="platform" :config="config" />
-
     <NewDisplayOutputSelector :platform="platform" :config="config" />
 
     <DisplayDeviceOptions :platform="platform" :config="config" />
@@ -237,8 +232,6 @@ const testMicrophoneRoute = async () => {
         />
       </div>
     </div>
-
-    <ExperimentalFeatures :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
 
     <ConfirmDialog
       :show="showDownloadConfirm"
