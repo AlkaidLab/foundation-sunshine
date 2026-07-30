@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
+import DisplayPreparationPicker from './DisplayPreparationPicker.vue'
+import DisplayRuleRadioGroup from './DisplayRuleRadioGroup.vue'
 
 const props = defineProps({
   platform: String,
@@ -9,13 +11,6 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
-const displayPreparationModes = [
-  { value: 'no_operation', icon: 'fa-pause' },
-  { value: 'ensure_active', icon: 'fa-play' },
-  { value: 'ensure_primary', icon: 'fa-star' },
-  { value: 'ensure_secondary', icon: 'fa-columns' },
-  { value: 'ensure_only_display', icon: 'fa-desktop' },
-]
 const hdrRuntimeStatus = ref(null)
 const hdrRuntimeStatusLoaded = ref(false)
 let hdrRuntimeStatusTimer
@@ -165,55 +160,7 @@ onUnmounted(() => {
             aria-labelledby="panelsStayOpen-headingOne"
           >
             <div class="accordion-body">
-              <fieldset class="display-prep-group">
-                <legend class="form-label fw-semibold mb-2">
-                  {{ $tp('config.display_device_prep') }}
-                </legend>
-                <div class="display-prep-options">
-                  <label
-                    v-for="mode in displayPreparationModes"
-                    :key="mode.value"
-                    class="display-prep-option"
-                    :class="{ 'is-selected': config.display_device_prep === mode.value }"
-                  >
-                    <input
-                      v-model="config.display_device_prep"
-                      class="visually-hidden"
-                      type="radio"
-                      name="display_device_prep"
-                      :value="mode.value"
-                    />
-                    <div class="display-prep-option-content">
-                      <div
-                        class="topology-preview"
-                        :class="`is-${mode.value}`"
-                        aria-hidden="true"
-                      >
-                        <div class="topology-screen topology-host">
-                          <i class="fas fa-desktop"></i>
-                          <span class="topology-off-mark"></span>
-                        </div>
-                        <span class="topology-link"></span>
-                        <div class="topology-screen topology-target">
-                          <i class="fas fa-desktop"></i>
-                          <span class="topology-primary-badge">
-                            <i class="fas fa-star"></i>
-                          </span>
-                        </div>
-                      </div>
-                      <div class="display-prep-copy">
-                        <span class="display-prep-title">
-                          <i class="fas me-1" :class="mode.icon" aria-hidden="true"></i>
-                          {{ $tp('config.display_device_prep_' + mode.value) }}
-                        </span>
-                        <span class="display-prep-description">
-                          {{ $tp('config.display_device_prep_' + mode.value + '_desc') }}
-                        </span>
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </fieldset>
+              <DisplayPreparationPicker v-model="config.display_device_prep" />
 
               <details class="display-options-note">
                 <summary>
@@ -224,31 +171,14 @@ onUnmounted(() => {
               </details>
 
               <div class="display-rule-grid">
-                <!-- Resolution change -->
-                <section class="display-rule-card">
-                  <div class="display-rule-heading">
-                    <i class="fas fa-expand-alt" aria-hidden="true"></i>
-                    <span class="form-label mb-0">
-                      {{ $tp('config.resolution_change') }}
-                    </span>
-                  </div>
-                  <div class="display-rule-options">
-                    <label
-                      v-for="mode in ['no_operation', 'automatic', 'manual']"
-                      :key="mode"
-                      class="display-rule-option"
-                      :class="{ 'is-selected': config.resolution_change === mode }"
-                    >
-                      <input
-                        v-model="config.resolution_change"
-                        class="form-check-input"
-                        type="radio"
-                        name="resolution_change"
-                        :value="mode"
-                      />
-                      <span>{{ $tp('config.resolution_change_' + mode) }}</span>
-                    </label>
-                  </div>
+                <DisplayRuleRadioGroup
+                  v-model="config.resolution_change"
+                  name="resolution_change"
+                  label-key="config.resolution_change"
+                  option-key-prefix="config.resolution_change_"
+                  :options="['no_operation', 'automatic', 'manual']"
+                  icon="fa-expand-alt"
+                >
                   <div
                     class="form-text"
                     v-if="config.resolution_change === 'automatic' || config.resolution_change === 'manual'"
@@ -268,34 +198,16 @@ onUnmounted(() => {
                       v-model="config.manual_resolution"
                     />
                   </div>
-                </section>
+                </DisplayRuleRadioGroup>
 
-                <!-- Refresh rate change -->
-                <section class="display-rule-card">
-                  <div class="display-rule-heading">
-                    <i class="fas fa-gauge-high" aria-hidden="true"></i>
-                    <span class="form-label mb-0">
-                      {{ $tp('config.refresh_rate_change') }}
-                    </span>
-                  </div>
-                  <div class="display-rule-options">
-                    <label
-                      v-for="mode in ['no_operation', 'automatic', 'manual']"
-                      :key="mode"
-                      class="display-rule-option"
-                      :class="{ 'is-selected': config.refresh_rate_change === mode }"
-                    >
-                      <input
-                        v-model="config.refresh_rate_change"
-                        class="form-check-input"
-                        type="radio"
-                        name="refresh_rate_change"
-                        :value="mode"
-                      />
-                      <span>{{ $tp('config.refresh_rate_change_' + mode) }}</span>
-                    </label>
-                  </div>
-
+                <DisplayRuleRadioGroup
+                  v-model="config.refresh_rate_change"
+                  name="refresh_rate_change"
+                  label-key="config.refresh_rate_change"
+                  option-key-prefix="config.refresh_rate_change_"
+                  :options="['no_operation', 'automatic', 'manual']"
+                  icon="fa-gauge-high"
+                >
                   <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
                     <div class="form-text">
                       {{ $tp('config.refresh_rate_change_manual_desc') }}
@@ -308,34 +220,16 @@ onUnmounted(() => {
                       v-model="config.manual_refresh_rate"
                     />
                   </div>
-                </section>
+                </DisplayRuleRadioGroup>
 
-                <!-- HDR preparation -->
-                <section class="display-rule-card">
-                  <div class="display-rule-heading">
-                    <i class="fas fa-sun" aria-hidden="true"></i>
-                    <span class="form-label mb-0">
-                      {{ $tp('config.hdr_prep') }}
-                    </span>
-                  </div>
-                  <div class="display-rule-options">
-                    <label
-                      v-for="mode in ['no_operation', 'automatic']"
-                      :key="mode"
-                      class="display-rule-option"
-                      :class="{ 'is-selected': config.hdr_prep === mode }"
-                    >
-                      <input
-                        v-model="config.hdr_prep"
-                        class="form-check-input"
-                        type="radio"
-                        name="hdr_prep"
-                        :value="mode"
-                      />
-                      <span>{{ $tp('config.hdr_prep_' + mode) }}</span>
-                    </label>
-                  </div>
-                </section>
+                <DisplayRuleRadioGroup
+                  v-model="config.hdr_prep"
+                  name="hdr_prep"
+                  label-key="config.hdr_prep"
+                  option-key-prefix="config.hdr_prep_"
+                  :options="['no_operation', 'automatic']"
+                  icon="fa-sun"
+                />
               </div>
 
               <div
@@ -398,186 +292,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.display-prep-group {
-  min-width: 0;
-  margin: 0 0 1rem;
-  padding: 0;
-  border: 0;
-}
-
-.display-prep-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
-  gap: 0.75rem;
-}
-
-.display-prep-option {
-  min-width: 0;
-  margin: 0;
-  cursor: pointer;
-}
-
-.display-prep-option-content {
-  display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.85rem;
-  height: 100%;
-  padding: 0.85rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    box-shadow 0.2s ease,
-    transform 0.2s ease;
-}
-
-.display-prep-option:hover .display-prep-option-content {
-  border-color: var(--ui-border-strong);
-  background: var(--ui-surface-hover);
-  transform: translateY(-1px);
-}
-
-.display-prep-option.is-selected .display-prep-option-content {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 28%, transparent);
-}
-
-.display-prep-option input:focus-visible + .display-prep-option-content {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 2px;
-}
-
-.display-prep-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.display-prep-title {
-  color: var(--ui-text-primary);
-  font-size: 0.9rem;
-  font-weight: 650;
-}
-
-.display-prep-title i {
-  color: var(--ui-accent);
-}
-
-.display-prep-description {
-  color: var(--ui-text-secondary);
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
-
-.topology-preview {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 3.5rem;
-}
-
-.topology-screen {
-  position: relative;
-  display: grid;
-  width: 2.65rem;
-  height: 1.75rem;
-  place-items: center;
-  border: 2px solid var(--ui-border-strong);
-  border-radius: 0.3rem;
-  background: var(--ui-surface-strong);
-  color: var(--ui-text-muted);
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    color 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.topology-screen::after {
-  position: absolute;
-  bottom: -0.38rem;
-  width: 1rem;
-  height: 0.25rem;
-  border-top: 2px solid currentColor;
-  content: '';
-}
-
-.topology-screen i {
-  font-size: 0.8rem;
-}
-
-.topology-link {
-  width: 0.75rem;
-  border-top: 2px solid var(--ui-border-strong);
-}
-
-.topology-primary-badge {
-  position: absolute;
-  top: -0.45rem;
-  right: -0.45rem;
-  display: none;
-  width: 1rem;
-  height: 1rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--ui-accent);
-  color: var(--ui-on-accent, #fff);
-  font-size: 0.48rem;
-  box-shadow: 0 0 0 2px var(--ui-surface);
-}
-
-.topology-off-mark {
-  position: absolute;
-  display: none;
-  width: 2.8rem;
-  border-top: 2px solid var(--ui-warning-text);
-  transform: rotate(-34deg);
-}
-
-.topology-preview.is-no_operation .topology-link {
-  border-top-style: dashed;
-}
-
-.topology-preview.is-ensure_active .topology-target,
-.topology-preview.is-ensure_primary .topology-target,
-.topology-preview.is-ensure_only_display .topology-target {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent);
-}
-
-.topology-preview.is-ensure_primary .topology-primary-badge {
-  display: flex;
-}
-
-.topology-preview.is-ensure_secondary .topology-screen {
-  border-color: var(--ui-accent);
-  color: var(--ui-accent);
-}
-
-.topology-preview.is-ensure_secondary .topology-target {
-  background: var(--ui-accent-soft);
-}
-
-.topology-preview.is-ensure_only_display .topology-host {
-  opacity: 0.38;
-}
-
-.topology-preview.is-ensure_only_display .topology-off-mark {
-  display: block;
-}
-
-.topology-preview.is-ensure_only_display .topology-link {
-  border-top-style: dashed;
-  opacity: 0.45;
-}
-
 .display-options-note {
   margin: 0 0 1rem;
   border: 1px solid var(--ui-border);
@@ -630,72 +344,6 @@ onUnmounted(() => {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
   gap: 0.75rem;
   margin-bottom: 1rem;
-}
-
-.display-rule-card {
-  min-width: 0;
-  padding: 0.85rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-}
-
-.display-rule-heading {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
-}
-
-.display-rule-heading i {
-  width: 1rem;
-  color: var(--ui-accent);
-  text-align: center;
-}
-
-.display-rule-heading .form-label {
-  font-size: 0.88rem;
-  font-weight: 650;
-}
-
-.display-rule-options {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.display-rule-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-text-secondary);
-  font-size: 0.8rem;
-  line-height: 1.35;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    color 0.2s ease;
-}
-
-.display-rule-option:hover {
-  border-color: var(--ui-border-strong);
-  background: var(--ui-surface-hover);
-}
-
-.display-rule-option.is-selected {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-  color: var(--ui-text-primary);
-}
-
-.display-rule-option .form-check-input {
-  flex: 0 0 auto;
-  margin: 0.1rem 0 0;
-  cursor: pointer;
 }
 
 .nested-setting {
@@ -779,10 +427,6 @@ onUnmounted(() => {
 
   .display-options-note {
     padding: 0;
-  }
-
-  .display-prep-option-content {
-    grid-template-columns: 6.5rem minmax(0, 1fr);
   }
 
   .feature-mode-select {
