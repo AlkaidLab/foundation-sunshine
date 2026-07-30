@@ -72,6 +72,11 @@ function removeFps(index) {
 
 <template>
   <div class="virtual-display-settings">
+    <div class="form-text description-text">
+      <i class="fas fa-info-circle"></i>
+      {{ $t('config.res_fps_desc') }}
+    </div>
+
     <!-- Advertised Resolutions -->
     <div class="settings-section">
       <div class="section-header">
@@ -178,16 +183,12 @@ function removeFps(index) {
       </template>
     </PlatformLayout>
 
-    <div class="form-text description-text">
-      <i class="fas fa-info-circle"></i>
-      {{ $t('config.res_fps_desc') }}
-    </div>
   </div>
 </template>
 
 <style scoped>
 .virtual-display-settings {
-  padding: 1rem 0;
+  padding: 0;
 }
 
 .settings-section {
@@ -330,7 +331,7 @@ function removeFps(index) {
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-text-secondary);
-  margin-top: 0.5rem;
+  margin-bottom: 1rem;
 }
 
 .description-text i {

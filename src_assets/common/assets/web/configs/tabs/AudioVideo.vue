@@ -259,7 +259,7 @@ const testMicrophoneRoute = async () => {
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface);
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 
 .nav-tabs .nav-link {
@@ -283,7 +283,7 @@ const testMicrophoneRoute = async () => {
 }
 
 .tab-content {
-  padding-top: 1rem;
+  padding-top: 0;
 }
 
 .stream-mic-helper {

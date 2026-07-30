@@ -499,7 +499,7 @@
     "refresh_rate_change_manual_windows": "Use manually entered refresh rate",
     "refresh_rate_change_no_operation_windows": "Disabled",
     "refresh_rate_change_windows": "FPS change",
-    "res_fps_desc": "Sunshine이 광고하는 디스플레이 모드입니다. Moonlight-nx(Switch) 등 일부 Moonlight 버전은 이 목록을 사용하여 요청된 해상도와 FPS가 지원되는지 확인합니다. 이 설정은 화면 스트림이 Moonlight로 전송되는 방식을 변경하지 않습니다.",
+    "res_fps_desc": "Sunshine이 클라이언트에 알리는 해상도 및 프레임 속도 옵션이며 스트리밍 화면을 직접 제어하지 않습니다. 기본 목록은 대부분의 클라이언트를 지원합니다. Zako VDD는 클라이언트 요청에 맞게 디스플레이 모드를 자동으로 조정하므로, 클라이언트가 목록에 없는 모드를 필요로 하는 경우가 아니라면 이 목록을 수정하지 않는 것이 좋습니다.",
     "resolution_change_automatic_windows": "Use resolution provided by the client",
     "resolution_change_manual_desc_windows": "\"Optimize game settings\" option must be enabled on the Moonlight client for this to work.",
     "resolution_change_manual_windows": "Use manually entered resolution",

@@ -567,7 +567,7 @@
     "refresh_rate_change_manual_windows": "使用手动输入的刷新率",
     "refresh_rate_change_no_operation_windows": "禁用",
     "refresh_rate_change_windows": "帧率更改",
-    "res_fps_desc": "为基地显示器设置的分辨率(不超过25组)、帧率(不超过5组)，预置组合已满足大部分常见串流客户端。",
+    "res_fps_desc": "这里配置的是 Sunshine 向客户端公布的分辨率和帧率选项，并不直接决定串流画面。预置列表已覆盖大多数客户端；Zako 虚拟显示器会自动适配客户端请求，除非客户端需要未列出的模式，否则不建议修改。",
     "resolution_change_automatic_windows": "使用客户端要求的分辨率",
     "resolution_change_manual_desc_windows": "\"优化游戏设置\" 必须在 Moonlight 客户端上启用选项才能生效。",
     "resolution_change_manual_windows": "手动指定分辨率",

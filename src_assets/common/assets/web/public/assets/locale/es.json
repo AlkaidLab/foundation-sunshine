@@ -499,7 +499,7 @@
     "refresh_rate_change_manual_windows": "Usar frecuencia de actualización ingresada manualmente",
     "refresh_rate_change_no_operation_windows": "Deshabilitado",
     "refresh_rate_change_windows": "Cambio de FPS",
-    "res_fps_desc": "Los modos de pantalla anunciados por Sunshine. Algunas versiones de Moonlight, como Moonlight-nx (Switch), dependen de estas listas para asegurar que las resoluciones y fps solicitados sean compatibles. Esta configuración no cambia cómo se envía el flujo de pantalla a Moonlight.",
+    "res_fps_desc": "Estas son las opciones de resolución y velocidad de fotogramas que Sunshine anuncia a los clientes; no controlan directamente la imagen transmitida. Los valores predefinidos cubren la mayoría de los clientes. Zako VDD adapta automáticamente el modo de pantalla a la solicitud del cliente, por lo que no se recomienda editar estas listas salvo que un cliente necesite un modo no incluido.",
     "resolution_change_automatic_windows": "Usar resolución proporcionada por el cliente",
     "resolution_change_manual_desc_windows": "La opción \"Optimizar configuración de juegos\" debe estar habilitada en el cliente Moonlight para que esto funcione.",
     "resolution_change_manual_windows": "Usar resolución ingresada manualmente",
