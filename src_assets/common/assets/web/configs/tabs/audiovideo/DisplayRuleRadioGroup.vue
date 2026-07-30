@@ -29,11 +29,11 @@ const emit = defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <section class="display-setting-card">
-    <div class="display-setting-heading">
+  <fieldset class="display-setting-card">
+    <legend class="display-setting-heading">
       <i class="fas" :class="icon" aria-hidden="true"></i>
       <span class="form-label mb-0">{{ $tp(labelKey) }}</span>
-    </div>
+    </legend>
     <div class="display-rule-options">
       <label
         v-for="option in options"
@@ -53,7 +53,7 @@ const emit = defineEmits(['update:modelValue'])
       </label>
     </div>
     <slot></slot>
-  </section>
+  </fieldset>
 </template>
 
 <style scoped>
@@ -67,9 +67,12 @@ const emit = defineEmits(['update:modelValue'])
 
 .display-setting-heading {
   display: flex;
+  float: none;
   align-items: center;
   gap: 0.5rem;
+  width: 100%;
   margin-bottom: 0.6rem;
+  padding: 0;
 }
 
 .display-setting-heading i {
