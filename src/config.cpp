@@ -530,8 +530,8 @@ namespace config {
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
 
     true,  // client_fingerprint_remote_rules
-    {},  // client_fingerprint_rules_url (empty keeps remote updates disabled)
-    platf::appdata().string() + "/client-fingerprint-rules.pem",  // signing certificate
+    "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
+    {},  // client_fingerprint_rules_certificate (empty uses the pinned built-in certificate)
     24,  // client_fingerprint_rules_refresh_hours
   };
 
@@ -1412,7 +1412,14 @@ namespace config {
     int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
     bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
-    path_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
+    string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
+    if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
+      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      if (certificate_path.is_relative()) {
+        certificate_path = platf::appdata() / certificate_path;
+      }
+      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+    }
     int_between_f(
       vars,
       "client_fingerprint_rules_refresh_hours",

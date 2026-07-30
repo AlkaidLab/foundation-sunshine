@@ -35,6 +35,33 @@ namespace client_fingerprint {
     constexpr std::size_t max_value_bytes = 256;
     constexpr auto max_feed_lifetime = 180 * 24h;
     constexpr auto allowed_clock_skew = 5min;
+    constexpr std::string_view built_in_signing_certificate = R"PEM(-----BEGIN CERTIFICATE-----
+MIIEdTCCAt2gAwIBAgIUI3ZvACPZVxrOB1GZRlVKxb54DvwwDQYJKoZIhvcNAQEL
+BQAwSjE0MDIGA1UEAwwrQWxrYWlkTGFiIFN1bnNoaW5lIENsaWVudCBGaW5nZXJw
+cmludCBSdWxlczESMBAGA1UECgwJQWxrYWlkTGFiMB4XDTI2MDczMDE3MzM1OFoX
+DTM2MDcyNzE3MzM1OFowSjE0MDIGA1UEAwwrQWxrYWlkTGFiIFN1bnNoaW5lIENs
+aWVudCBGaW5nZXJwcmludCBSdWxlczESMBAGA1UECgwJQWxrYWlkTGFiMIIBojAN
+BgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAmlpsbhHUc6XgbChaAjvBfyiqxULB
+RTTsmKiXFh2Wgmk4UynIhcxRTQ6aFzQRxAojpwbYg79H4l8zWpKhSyWPqsEmxHOc
+iZyTkTTEUtw0lbs8dv+p/TUiGhnX/SCZ2wqIAnrNNw0KFpbK6wmrnB7+NtipyAKs
+lzCX0DzSfhz/Z5aK7qtGSabXYUmGIlVrwk5DqIyAnW+yuqGJuBBs1rjPXzB7nco7
+F2b8NS9h7vr0tj/CTnulaRNy+U5LKtsR95gUV/S+q4RWHAyVTl049OvWzO7XNwgY
+wEzSQur8yVVlgeQcBa2gM7YDHOnofMxlWiOHdbabUecBY5NztuNtfOhslh53JRqF
+IIbnLMVf1/mn5f+zgfcBtJwEt6ucexbitixR17JZDdHZCVPpms6zRMOITf3zH4x0
+GxLyQEUvQWICOtQ1txID5ZPha5aajj2gSdqss219t6dzgdlVpje7hkx6KcV9dRNI
+hkV9I+9wGea8oiPKYtY62ra/5WFHCVFs1ZRFAgMBAAGjUzBRMB0GA1UdDgQWBBSF
+KfXILcBwrZpp+9xBFdeiuI0J+jAfBgNVHSMEGDAWgBSFKfXILcBwrZpp+9xBFdei
+uI0J+jAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQCFRe96FKSf
+ciDDjBxqTJi8mdB9ZTevE0W0jreCj8spL8nS+0VXiU6V4/3J9QPZBeBZzEIBbS4O
++scQ3h10ok2kn4meNYuQ9KZRVEMgI7kBJfQ9nBaCMJPSaf+wK41+LNhVnIUAguiG
+Qd5QGvh+EG5y4+AFP3MGMUd5zw+pXmwYV3IuCP9KumaoDLNL3SthMPHOJgv0zYzJ
+2mkTL6EVRcRMPFCz03PTFJuUkeAXBY/OOBGBo4mSk0EWielpJ2wKzxXYf8OR2rrc
++LlM4v5Ibd+7qEuQx0U8CL/rxn+SX8fNZ+AhSNDecz5N+1Xgd24BdItgH5e8MkLU
+/i1qltD97zDNAQgi7q/GpYVBYGA/lJsYTFj5VkoFRuAR6Z10CydhpCo81V4i1ZLC
+K4B6JulL3BbTAzNZp2wVqJO33GUKKLlyirGOW4riahjogcKN5n6eZKRLRf3OMlOK
+BuXdcXkyIk9BYg0tTStl015bfxdjWm/U2g8ULOVKtseXH4iGyaPdnJ0=
+-----END CERTIFICATE-----
+)PEM";
 
     struct active_state_t {
       std::shared_ptr<const rule_set_t> rules;
@@ -447,6 +474,14 @@ namespace client_fingerprint {
       return content;
     }
 
+    std::optional<std::string>
+    signing_certificate(const options_t &options) {
+      if (options.signing_certificate.empty()) {
+        return std::string {built_in_signing_certificate};
+      }
+      return read_bounded_file(options.signing_certificate, 64 * 1024);
+    }
+
     void
     expire_active_rules_if_needed() {
       std::lock_guard lock {active_mutex};
@@ -604,9 +639,6 @@ namespace client_fingerprint {
       }
 
       load_cache();
-      if (options_.signing_certificate.empty()) {
-        record_error("rule signing certificate path is not configured");
-      }
     }
 
     ~impl_t() {
@@ -620,12 +652,12 @@ namespace client_fingerprint {
   private:
     std::optional<std::string>
     certificate() const {
-      return read_bounded_file(options_.signing_certificate, 64 * 1024);
+      return signing_certificate(options_);
     }
 
     void
     load_cache() {
-      if (options_.cache_file.empty() || options_.signing_certificate.empty()) {
+      if (options_.cache_file.empty()) {
         return;
       }
       const auto envelope = read_bounded_file(options_.cache_file, max_envelope_bytes);
@@ -673,12 +705,7 @@ namespace client_fingerprint {
       current_revision = active_state.remote_revision;
     }
 
-    if (options.signing_certificate.empty()) {
-      const std::string error = "rule signing certificate path is not configured";
-      record_error(error);
-      return {.error = error};
-    }
-    const auto certificate_pem = read_bounded_file(options.signing_certificate, 64 * 1024);
+    const auto certificate_pem = signing_certificate(options);
     if (!certificate_pem) {
       const std::string error = "could not read the rule signing certificate";
       record_error(error);

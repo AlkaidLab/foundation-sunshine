@@ -22,7 +22,10 @@ activated.
 
 ## Source payload
 
-Maintain the readable payload in a dedicated, reviewed rule repository:
+Maintain the readable payload in
+[`AlkaidLab/sunshine-client-fingerprint-rules`](https://github.com/AlkaidLab/sunshine-client-fingerprint-rules).
+The reviewed source is `rules/rules.json`; CI publishes the signed
+`payload.json` and `stable.json` files:
 
 ```json
 {
@@ -75,8 +78,8 @@ Configure Sunshine with:
 
 ```ini
 client_fingerprint_remote_rules = enabled
-client_fingerprint_rules_url = https://example.invalid/client-fingerprint-rules/stable.json
-client_fingerprint_rules_certificate = /path/to/client-fingerprint-rules.pem
+client_fingerprint_rules_url = https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json
+client_fingerprint_rules_certificate =
 client_fingerprint_rules_refresh_hours = 24
 ```
 
@@ -84,6 +87,10 @@ The GUI accepts only an absolute HTTPS URL, does not follow redirects, uses
 ETag revalidation, and limits the fully decoded response to 512 KiB. An empty
 URL disables network access while retaining the built-in and cached rules.
 The refresh interval is clamped to 1–168 hours.
+
+When the URL setting is absent, the packaged GUI uses the official feed above.
+When the certificate setting is empty, Core uses its pinned built-in
+certificate. A configured certificate path explicitly overrides that pin.
 
 The verified last-known-good envelope is cached as
 `client-fingerprint-rules.json` in Sunshine's application data directory.
