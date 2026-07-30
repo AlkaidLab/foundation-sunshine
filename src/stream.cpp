@@ -604,6 +604,8 @@ namespace stream {
       std::uint32_t cursor_shape_id = 0;
       bool cursor_visibility_sent = false;
       bool cursor_visible = false;
+      std::uint64_t cursor_failed_revision = 0;
+      std::uint32_t cursor_send_failures = 0;
     } control;
 
     std::uint32_t launch_session_id;
@@ -1815,6 +1817,8 @@ namespace stream {
       session->control.cursor_revision = 0;
       session->control.cursor_shape_sent = false;
       session->control.cursor_visibility_sent = false;
+      session->control.cursor_failed_revision = 0;
+      session->control.cursor_send_failures = 0;
       cursor_channel::set_session_enabled(session->launch_session_id, enable);
       BOOST_LOG(info) << "Local cursor mode "sv << (enable ? "enabled"sv : "disabled"sv)
                       << " for session "sv << session->launch_session_id;
@@ -2006,6 +2010,8 @@ namespace stream {
                 if ((include_shape || visibility_changed) &&
                     send_cursor_update(session, cursor, include_shape) == 0) {
                   session->control.cursor_revision = cursor.revision;
+                  session->control.cursor_failed_revision = 0;
+                  session->control.cursor_send_failures = 0;
                   session->control.cursor_visibility_sent = true;
                   session->control.cursor_visible = cursor.visible;
                   if (include_shape) {
@@ -2015,6 +2021,23 @@ namespace stream {
                 }
                 else if (!include_shape && !visibility_changed) {
                   session->control.cursor_revision = cursor.revision;
+                  session->control.cursor_failed_revision = 0;
+                  session->control.cursor_send_failures = 0;
+                }
+                else {
+                  if (session->control.cursor_failed_revision != cursor.revision) {
+                    session->control.cursor_failed_revision = cursor.revision;
+                    session->control.cursor_send_failures = 0;
+                  }
+
+                  if (++session->control.cursor_send_failures >= 3) {
+                    BOOST_LOG(warning) << "Dropping local cursor revision "sv
+                                       << cursor.revision
+                                       << " after repeated send failures"sv;
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
                 }
               }
             }

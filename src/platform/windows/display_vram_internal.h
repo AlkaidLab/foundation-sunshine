@@ -25,7 +25,7 @@ namespace platf::dxgi {
     bool dummy = false;
     bool blank = true;
     std::uint32_t id = 0;
-    DXGI_FORMAT format;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     bool linear_gamma = false;
 
     // Borrowed VDD frames use the producer's shared texture directly.
