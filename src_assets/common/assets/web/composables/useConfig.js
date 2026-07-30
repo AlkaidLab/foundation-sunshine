@@ -65,7 +65,7 @@ const DEFAULT_TABS = [
       output_name: '',
       capture_target: 'display',
       capture_compute_shader: 'auto',
-      hdr_luminance_analysis: false,
+      hdr_luminance_analysis: 'auto',
       vdd_borrowed_texture: 'enabled',
       vdd_vulkan_hdr_bridge: 'enabled',
       window_title: '',

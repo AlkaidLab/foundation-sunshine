@@ -135,8 +135,8 @@ namespace config {
     int input_activity_boost_fps;  // Minimum FPS floor to maintain during the input activity boost window
     int input_activity_boost_window_ms;  // Duration of the input activity boost window in milliseconds
     std::string downscaling_quality;  // Downscaling quality: "fast" (bilinear+8pt), "balanced" (bicubic), "high_quality" (future: lanczos)
-    bool hdr_luminance_analysis;  // Enable per-frame HDR luminance analysis for dynamic metadata
-    std::string capture_compute_shader;  // Use compute shader for HDR RGB->P010 conversion: "auto" (off for now), "on", "off"
+    std::string hdr_luminance_analysis;  // Per-frame HDR analysis: "auto", "on", "off"
+    std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
   };
