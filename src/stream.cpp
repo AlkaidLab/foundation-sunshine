@@ -35,6 +35,7 @@ extern "C" {
   #define DATA_SHARDS_MAX 255
 #endif
 
+#include "client_fingerprint.h"
 #include "config.h"
 #include "display_device/session.h"
 #include "globals.h"
@@ -538,6 +539,7 @@ namespace stream {
     // 添加客户端名称字段
     std::string client_name;
     std::string client_cert_uuid;
+    bool highly_suspected_unknown_client {false};
     std::string app_name;
     int app_id = 0;
 
@@ -3512,7 +3514,11 @@ namespace stream {
         ::config::video.capture.empty() ? "auto" : ::config::video.capture,
         session.control_only,
       });
-      tray_state::add_session(session.launch_session_id, session.client_name);
+      tray_state::add_session(
+        session.launch_session_id,
+        session.client_name,
+        session.highly_suspected_unknown_client
+      );
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
@@ -3552,6 +3558,16 @@ namespace stream {
       }
 
       try {
+        std::map<std::string, std::string> extra_data {
+          {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
+          {"fps", std::to_string(session.config.monitor.framerate)}
+        };
+        if (session.highly_suspected_unknown_client) {
+          extra_data.emplace(
+            "client_integrity_warning",
+            client_fingerprint::suspicious_client_code
+          );
+        }
         webhook::send_event_async(webhook::event_t {
           .type = webhook::event_type_t::NV_SESSION_START,
           .timestamp = webhook::get_current_timestamp(),
@@ -3560,10 +3576,7 @@ namespace stream {
           .app_name = session.app_name,
           .app_id = session.app_id,
           .session_id = std::to_string(session.launch_session_id),
-          .extra_data = {
-            {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
-            {"fps", std::to_string(session.config.monitor.framerate)}
-          }
+          .extra_data = std::move(extra_data)
         });
       }
       catch (...) {
@@ -3586,6 +3599,7 @@ namespace stream {
       // 设置客户端名称
       session->client_name = launch_session.client_name;
       session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);
 

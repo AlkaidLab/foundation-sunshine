@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "src/client_fingerprint.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "webhook.h"
@@ -39,6 +40,18 @@ namespace webhook {
 
     std::string bounded_json_value(const std::string &value) {
       return truncate_utf8(value, MAX_JSON_FIELD_LENGTH);
+    }
+
+    std::string client_integrity_warning(const event_t &event, bool is_chinese) {
+      const auto warning = event.extra_data.find("client_integrity_warning");
+      if (warning == event.extra_data.end() ||
+          warning->second != client_fingerprint::suspicious_client_code) {
+        return {};
+      }
+
+      return is_chinese ?
+               "您很可能正在受到未知侵权客户端的侵害。该判断基于客户端网络特征，可能存在误判。" :
+               "You are very likely being affected by an unknown infringing client. This heuristic assessment may be inaccurate.";
     }
 
     std::string escape_markup(const std::string &value) {
@@ -277,6 +290,12 @@ namespace webhook {
     }
 
     field("时间", "Time", format_timestamp(event.timestamp));
+    const auto integrity_warning = client_integrity_warning(event, is_chinese);
+    if (!integrity_warning.empty()) {
+      content << '>' << (is_chinese ? "客户端风险警告" : "Client Risk Warning")
+              << ": <font color=\"warning\">" << escape_markup(integrity_warning) << "</font>\n";
+    }
+
     const auto error = event.extra_data.find("error");
     if (error != event.extra_data.end()) {
       content << '>' << (is_chinese ? "错误信息" : "Error")
@@ -287,6 +306,11 @@ namespace webhook {
 
   std::string WebhookFormat::generate_text_content(const event_t &event, bool is_chinese) const {
     std::ostringstream content;
+    const auto integrity_warning = client_integrity_warning(event, is_chinese);
+    if (!integrity_warning.empty()) {
+      content << (is_chinese ? "客户端风险警告" : "Client Risk Warning")
+              << ": " << integrity_warning << '\n';
+    }
     const auto field = [&content, is_chinese](const char *zh_label, const char *en_label, const std::string &value) {
       if (!value.empty()) {
         content << (is_chinese ? zh_label : en_label) << ": " << value << '\n';
@@ -325,7 +349,15 @@ namespace webhook {
     if (!event.session_id.empty()) body["session_id"] = bounded_json_value(event.session_id);
 
     for (const auto &[key, value] : event.extra_data) {
-      body["extra_data"][bounded_json_value(key)] = bounded_json_value(value);
+      if (key == "client_integrity_warning" &&
+          value == client_fingerprint::suspicious_client_code) {
+        body["extra_data"]["client_integrity_status"] = value;
+        body["extra_data"]["client_integrity_warning"] =
+          bounded_json_value(client_integrity_warning(event, is_chinese));
+      }
+      else {
+        body["extra_data"][bounded_json_value(key)] = bounded_json_value(value);
+      }
     }
 
     auto serialized = dump_utf8(body);
@@ -370,6 +402,11 @@ namespace webhook {
     replace_all(result, "{{session_id}}", escape_markup(event.session_id));
     const auto error = event.extra_data.find("error");
     replace_all(result, "{{error}}", error == event.extra_data.end() ? std::string {} : escape_markup(error->second));
+    replace_all(
+      result,
+      "{{client_integrity_warning}}",
+      escape_markup(client_integrity_warning(event, is_chinese))
+    );
     return result;
   }
 

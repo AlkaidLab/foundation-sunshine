@@ -528,6 +528,11 @@ namespace config {
     SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
 
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
+
+    true,  // client_fingerprint_remote_rules
+    {},  // client_fingerprint_rules_url (empty keeps remote updates disabled)
+    platf::appdata().string() + "/client-fingerprint-rules.pem",  // signing certificate
+    24,  // client_fingerprint_rules_refresh_hours
   };
 
   input_t input {
@@ -1405,6 +1410,15 @@ namespace config {
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
     int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
+    bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
+    string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
+    path_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
+    int_between_f(
+      vars,
+      "client_fingerprint_rules_refresh_hours",
+      nvhttp.client_fingerprint_rules_refresh_hours,
+      {1, 168}
+    );
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);

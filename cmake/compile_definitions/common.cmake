@@ -79,6 +79,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/upnp.cpp"
         "${CMAKE_SOURCE_DIR}/src/upnp.h"
         "${CMAKE_SOURCE_DIR}/src/cbs.cpp"
+        "${CMAKE_SOURCE_DIR}/src/client_fingerprint.cpp"
+        "${CMAKE_SOURCE_DIR}/src/client_fingerprint.h"
         "${CMAKE_SOURCE_DIR}/src/utility.h"
         "${CMAKE_SOURCE_DIR}/src/uuid.h"
         "${CMAKE_SOURCE_DIR}/src/config.h"

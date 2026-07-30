@@ -142,11 +142,31 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(launch_session_manager_unit_tests ${dep})
 endforeach()
 
+add_executable(client_fingerprint_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_fingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(client_fingerprint_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_fingerprint_unit_tests
+        ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES})
+target_compile_definitions(client_fingerprint_unit_tests PRIVATE
+        ${SUNSHINE_DEFINITIONS}
+        CLIENT_FINGERPRINT_STANDALONE_TEST)
+target_compile_options(client_fingerprint_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(client_fingerprint_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_fingerprint_unit_tests COMMAND client_fingerprint_unit_tests)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(client_fingerprint_unit_tests ${dep})
+endforeach()
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(client_fingerprint_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 
 if (WIN32)
