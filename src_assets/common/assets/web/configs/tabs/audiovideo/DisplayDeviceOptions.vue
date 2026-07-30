@@ -178,7 +178,7 @@ onUnmounted(() => {
                   >
                     <input
                       v-model="config.display_device_prep"
-                      class="form-check-input display-prep-radio"
+                      class="visually-hidden"
                       type="radio"
                       name="display_device_prep"
                       :value="mode.value"
@@ -228,15 +228,27 @@ onUnmounted(() => {
                 <section class="display-rule-card">
                   <div class="display-rule-heading">
                     <i class="fas fa-expand-alt" aria-hidden="true"></i>
-                    <label for="resolution_change" class="form-label mb-0">
+                    <span class="form-label mb-0">
                       {{ $tp('config.resolution_change') }}
+                    </span>
+                  </div>
+                  <div class="display-rule-options">
+                    <label
+                      v-for="mode in ['no_operation', 'automatic', 'manual']"
+                      :key="mode"
+                      class="display-rule-option"
+                      :class="{ 'is-selected': config.resolution_change === mode }"
+                    >
+                      <input
+                        v-model="config.resolution_change"
+                        class="form-check-input"
+                        type="radio"
+                        name="resolution_change"
+                        :value="mode"
+                      />
+                      <span>{{ $tp('config.resolution_change_' + mode) }}</span>
                     </label>
                   </div>
-                  <select id="resolution_change" class="form-select" v-model="config.resolution_change">
-                    <option value="no_operation">{{ $tp('config.resolution_change_no_operation') }}</option>
-                    <option value="automatic">{{ $tp('config.resolution_change_automatic') }}</option>
-                    <option value="manual">{{ $tp('config.resolution_change_manual') }}</option>
-                  </select>
                   <div
                     class="form-text"
                     v-if="config.resolution_change === 'automatic' || config.resolution_change === 'manual'"
@@ -262,15 +274,27 @@ onUnmounted(() => {
                 <section class="display-rule-card">
                   <div class="display-rule-heading">
                     <i class="fas fa-gauge-high" aria-hidden="true"></i>
-                    <label for="refresh_rate_change" class="form-label mb-0">
+                    <span class="form-label mb-0">
                       {{ $tp('config.refresh_rate_change') }}
+                    </span>
+                  </div>
+                  <div class="display-rule-options">
+                    <label
+                      v-for="mode in ['no_operation', 'automatic', 'manual']"
+                      :key="mode"
+                      class="display-rule-option"
+                      :class="{ 'is-selected': config.refresh_rate_change === mode }"
+                    >
+                      <input
+                        v-model="config.refresh_rate_change"
+                        class="form-check-input"
+                        type="radio"
+                        name="refresh_rate_change"
+                        :value="mode"
+                      />
+                      <span>{{ $tp('config.refresh_rate_change_' + mode) }}</span>
                     </label>
                   </div>
-                  <select id="refresh_rate_change" class="form-select" v-model="config.refresh_rate_change">
-                    <option value="no_operation">{{ $tp('config.refresh_rate_change_no_operation') }}</option>
-                    <option value="automatic">{{ $tp('config.refresh_rate_change_automatic') }}</option>
-                    <option value="manual">{{ $tp('config.refresh_rate_change_manual_desc') }}</option>
-                  </select>
 
                   <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
                     <div class="form-text">
@@ -290,14 +314,27 @@ onUnmounted(() => {
                 <section class="display-rule-card">
                   <div class="display-rule-heading">
                     <i class="fas fa-sun" aria-hidden="true"></i>
-                    <label for="hdr_prep" class="form-label mb-0">
+                    <span class="form-label mb-0">
                       {{ $tp('config.hdr_prep') }}
+                    </span>
+                  </div>
+                  <div class="display-rule-options">
+                    <label
+                      v-for="mode in ['no_operation', 'automatic']"
+                      :key="mode"
+                      class="display-rule-option"
+                      :class="{ 'is-selected': config.hdr_prep === mode }"
+                    >
+                      <input
+                        v-model="config.hdr_prep"
+                        class="form-check-input"
+                        type="radio"
+                        name="hdr_prep"
+                        :value="mode"
+                      />
+                      <span>{{ $tp('config.hdr_prep_' + mode) }}</span>
                     </label>
                   </div>
-                  <select id="hdr_prep" class="form-select" v-model="config.hdr_prep">
-                    <option value="no_operation">{{ $tp('config.hdr_prep_no_operation') }}</option>
-                    <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
-                  </select>
                 </section>
               </div>
 
@@ -375,17 +412,7 @@ onUnmounted(() => {
 }
 
 .display-prep-option {
-  position: relative;
   min-width: 0;
-  margin: 0;
-  cursor: pointer;
-}
-
-.display-prep-radio {
-  position: absolute;
-  z-index: 1;
-  top: 0.85rem;
-  right: 0.85rem;
   margin: 0;
   cursor: pointer;
 }
@@ -629,6 +656,46 @@ onUnmounted(() => {
 .display-rule-heading .form-label {
   font-size: 0.88rem;
   font-weight: 650;
+}
+
+.display-rule-options {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.display-rule-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.display-rule-option:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface-hover);
+}
+
+.display-rule-option.is-selected {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-text-primary);
+}
+
+.display-rule-option .form-check-input {
+  flex: 0 0 auto;
+  margin: 0.1rem 0 0;
+  cursor: pointer;
 }
 
 .nested-setting {
