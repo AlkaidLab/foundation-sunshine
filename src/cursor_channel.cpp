@@ -14,6 +14,7 @@ namespace cursor_channel {
     std::mutex state_mutex;
     std::unordered_set<std::uint32_t> enabled_sessions;
     std::atomic_size_t enabled_session_count {0};
+    std::atomic_bool producer_is_available {false};
     snapshot_t latest;
     std::uint64_t next_revision = 1;
 
@@ -52,6 +53,16 @@ namespace cursor_channel {
   bool
   local_mode_active() {
     return enabled_session_count.load(std::memory_order_acquire) != 0;
+  }
+
+  void
+  set_producer_available(bool available) {
+    producer_is_available.store(available, std::memory_order_release);
+  }
+
+  bool
+  producer_available() {
+    return producer_is_available.load(std::memory_order_acquire);
   }
 
   void

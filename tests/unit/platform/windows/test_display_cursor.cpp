@@ -88,6 +88,34 @@ TEST(WindowsCursorImage, PreservesMaskedColorPixelConversion) {
   EXPECT_EQ(read_pixel(xor_mask, 1), 0xFF445566u);
 }
 
+TEST(WindowsCursorImage, RejectsMalformedCursorShapes) {
+  platf::dxgi::normalized_cursor_shape_t normalized;
+
+  DXGI_OUTDUPL_POINTER_SHAPE_INFO monochrome {};
+  monochrome.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+  monochrome.Width = 9;
+  monochrome.Height = 4;
+  monochrome.Pitch = 1;
+  EXPECT_FALSE(platf::dxgi::normalize_cursor_shape(
+    std::vector<std::uint8_t>(4),
+    monochrome,
+    true,
+    normalized
+  ));
+
+  DXGI_OUTDUPL_POINTER_SHAPE_INFO color {};
+  color.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+  color.Width = 2;
+  color.Height = 2;
+  color.Pitch = 8;
+  EXPECT_FALSE(platf::dxgi::normalize_cursor_shape(
+    std::vector<std::uint8_t>(15),
+    color,
+    true,
+    normalized
+  ));
+}
+
 TEST(WindowsCursorImage, RepublishesDesktopDuplicationShapeOnLocalModeActivation) {
   constexpr std::uint32_t session_id = 0xDDC00001u;
   struct session_guard_t {

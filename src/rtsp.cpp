@@ -27,6 +27,7 @@ extern "C" {
 // local includes
 #include "clipboard_bridge.h"
 #include "config.h"
+#include "cursor_channel.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -1101,7 +1102,7 @@ namespace rtsp_stream {
       if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
       }
-      if (config::video.capture == "vdd") {
+      if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
       }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;

@@ -31,6 +31,12 @@ namespace cursor_channel {
   local_mode_active();
 
   void
+  set_producer_available(bool available);
+
+  bool
+  producer_available();
+
+  void
   publish_visibility(bool visible, std::uint32_t shape_id);
 
   void

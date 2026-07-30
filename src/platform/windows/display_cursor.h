@@ -51,7 +51,8 @@ namespace platf::dxgi {
   /**
    * Publish visibility and, when present, a canonical BGRA cursor shape.
    *
-   * @return true when the current shape was consumed and may be acknowledged.
+   * @return true when a shape was published or an empty hidden shape was
+   * handled; false when this update had no shape or its shape was rejected.
    */
   bool
   publish_local_cursor(const vdd_capture_t::cursor_snapshot &cursor);

@@ -31,6 +31,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 #include "display_device/windows_utils.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/cursor_channel.h"
 #include "src/display_device/display_device.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -1224,6 +1225,7 @@ namespace platf {
       }
 
       if (ret) {
+        cursor_channel::set_producer_available(type == "ddx" || type == "vdd");
         return ret;
       }
 
@@ -1233,6 +1235,7 @@ namespace platf {
     }
 
     BOOST_LOG(error) << "Failed to create display for: " << display_name;
+    cursor_channel::set_producer_available(false);
     return nullptr;
   }
 

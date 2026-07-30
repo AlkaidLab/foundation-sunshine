@@ -1414,7 +1414,7 @@ namespace stream {
   send_cursor_update(session_t *session,
                      const cursor_channel::snapshot_t &cursor,
                      bool include_shape) {
-    if (!session->control.peer) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
       return -1;
     }
 
@@ -1462,13 +1462,11 @@ namespace stream {
         util::endian::little<std::uint16_t>(include_shape ? cursor.width : 0);
       cursor_header->height =
         util::endian::little<std::uint16_t>(include_shape ? cursor.height : 0);
-      cursor_header->hotspot_x = static_cast<std::int16_t>(
-        util::endian::little<std::uint16_t>(
-          include_shape ? static_cast<std::uint16_t>(cursor.hotspot_x) : 0)
+      cursor_header->hotspot_x = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_x : 0
       );
-      cursor_header->hotspot_y = static_cast<std::int16_t>(
-        util::endian::little<std::uint16_t>(
-          include_shape ? static_cast<std::uint16_t>(cursor.hotspot_y) : 0)
+      cursor_header->hotspot_y = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_y : 0
       );
       cursor_header->total_size =
         util::endian::little<std::uint32_t>(static_cast<std::uint32_t>(total_size));
@@ -1805,12 +1803,12 @@ namespace stream {
       }
 
       const bool enable = requested_mode == 1;
-      const auto &capture_backend = config::video.capture;
-      const bool local_cursor_supported =
-        capture_backend.empty() || capture_backend == "ddx" || capture_backend == "vdd";
-      if (enable && !local_cursor_supported) {
-        BOOST_LOG(warning) << "Ignoring local cursor mode for unsupported capture backend "sv
-                           << capture_backend;
+      if (enable && session->config.controlProtocolType != 13) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode on an unencrypted control stream"sv;
+        return;
+      }
+      if (enable && !cursor_channel::producer_available()) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode without an active cursor producer"sv;
         return;
       }
       if (session->control.local_cursor_mode == enable) {
@@ -2010,6 +2008,10 @@ namespace stream {
                 const bool visibility_changed =
                   !session->control.cursor_visibility_sent ||
                   session->control.cursor_visible != cursor.visible;
+                const bool waiting_for_shape =
+                  !cursor.has_shape &&
+                  session->control.cursor_shape_sent &&
+                  session->control.cursor_shape_id != cursor.shape_id;
 
                 if ((include_shape || visibility_changed) &&
                     send_cursor_update(session, cursor, include_shape) == 0) {
@@ -2024,9 +2026,11 @@ namespace stream {
                   }
                 }
                 else if (!include_shape && !visibility_changed) {
-                  session->control.cursor_revision = cursor.revision;
-                  session->control.cursor_failed_revision = 0;
-                  session->control.cursor_send_failures = 0;
+                  if (!waiting_for_shape) {
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
                 }
                 else {
                   if (session->control.cursor_failed_revision != cursor.revision) {

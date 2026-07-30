@@ -267,7 +267,9 @@ namespace platf::dxgi {
 
     switch (shape_info.Type) {
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
-        if ((shape_info.Height & 1u) != 0) {
+        if ((shape_info.Height & 1u) != 0 ||
+            (static_cast<std::uint64_t>(shape_info.Width) + 7u) / 8u >
+              shape_info.Pitch) {
           return false;
         }
         break;

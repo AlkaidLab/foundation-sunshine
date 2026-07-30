@@ -2764,18 +2764,18 @@ namespace platf::dxgi {
     }
 
     if (shape_updated) {
-      auto shape_info = cursor.shape_info;
-      util::buffer_t<std::uint8_t> img_data(cursor.img_data.size());
-      std::memcpy(
-        std::begin(img_data),
-        cursor.img_data.data(),
-        cursor.img_data.size()
-      );
-      auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
-      auto xor_cursor_img = make_cursor_xor_image(img_data, shape_info);
+      normalized_cursor_shape_t normalized;
+      if (!normalize_cursor_shape(
+            cursor.img_data,
+            cursor.shape_info,
+            true,
+            normalized
+          )) {
+        return capture_e::error;
+      }
 
-      if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_cursor_img), shape_info) ||
-          !set_cursor_texture(device.get(), cursor_xor, std::move(xor_cursor_img), shape_info)) {
+      if (!set_cursor_texture(device.get(), cursor_alpha, std::move(normalized.alpha), normalized.info) ||
+          !set_cursor_texture(device.get(), cursor_xor, std::move(normalized.xor_mask), normalized.info)) {
         return capture_e::error;
       }
     }
