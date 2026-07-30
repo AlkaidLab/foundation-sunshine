@@ -51,20 +51,20 @@ function addRemapping(type) {
 <template>
   <PlatformLayout :platform="platform">
     <template #windows>
-      <div class="mb-3 accordion">
+      <div class="my-3 accordion">
         <div class="accordion-item">
           <h2 class="accordion-header">
             <button
               class="accordion-button collapsed"
               type="button"
               data-bs-toggle="collapse"
-              data-bs-target="#experimental-features-collapse"
+              data-bs-target="#capture-compatibility-overrides-collapse"
             >
               {{ $t('config.experimental_features') }}
             </button>
           </h2>
           <div
-            id="experimental-features-collapse"
+            id="capture-compatibility-overrides-collapse"
             class="accordion-collapse collapse"
           >
             <div class="accordion-body">
@@ -91,8 +91,9 @@ function addRemapping(type) {
                 <div class="form-text">{{ $t('config.window_title_desc') }}</div>
               </div>
 
-              <!-- WGC Disable Secure Desktop -->
+              <!-- WGC compatibility -->
               <Checkbox
+                v-if="config.capture === 'wgc'"
                 class="mb-3"
                 id="wgc_disable_secure_desktop"
                 locale-prefix="config"

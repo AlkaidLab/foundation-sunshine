@@ -212,11 +212,15 @@
           :platform="platform"
           :resolutions="resolutions"
           :fps="fps"
-          :display-mode-remapping="display_mode_remapping"
         />
         <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
         <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
-        <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
+        <Advanced
+          v-if="currentTab === 'advanced'"
+          :config="config"
+          :platform="platform"
+          :display_mode_remapping="display_mode_remapping"
+        />
         <ContainerEncoders
           v-if="isEncoderCurrentTab"
           :current-tab="currentTab"
