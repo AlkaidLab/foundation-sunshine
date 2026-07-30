@@ -355,6 +355,54 @@ namespace platf::dxgi {
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
     std::atomic<uint32_t> next_image_id;
+
+  protected:
+    // Shared cursor blending pipeline used by display backends that need to
+    // composite a software cursor on top of a captured frame (DXGI Desktop
+    // Duplication, VDD direct-capture). AMD/WGC paths use different schemes
+    // and shadow these in their own subclasses where applicable.
+    sampler_state_t sampler_linear;
+    sampler_state_t sampler_point;
+
+    blend_t blend_alpha;
+    blend_t blend_invert;
+    blend_t blend_disable;
+
+    ps_t cursor_ps;
+    vs_t cursor_vs;
+    buf_t cursor_white_multiplier;
+
+    gpu_cursor_t cursor_alpha;
+    gpu_cursor_t cursor_xor;
+    float cursor_white_multiplier_value = 300.0f / 80.0f;
+    bool cursor_white_normalization_enabled = false;
+    bool cursor_pipeline_ready = false;
+
+    /**
+     * @brief Create the cursor blend shaders, blend states, samplers, and
+     *        rotation constant buffer. Caller is responsible for `device` /
+     *        `device_ctx` being valid (typically called from a subclass
+     *        `init()` after `display_base_t::init()` succeeds).
+     * @return 0 on success, -1 on any failure (errors already logged).
+     */
+    int
+    init_cursor_pipeline(const ::video::config_t &config);
+
+    /**
+     * @brief Update the HDR cursor luminance from the VDD driver's SDR white
+     *        level. A zero value keeps the legacy 300-nit fallback.
+     */
+    void
+    set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000);
+
+    /**
+     * @brief Draw the currently-configured cursor_alpha / cursor_xor onto the
+     *        given render target. Caller must hold the capture mutex for the
+     *        underlying image. After the draw the blend state is reset to
+     *        `blend_disable` and the RTV/SRV slots are cleared.
+     */
+    void
+    blend_cursor(ID3D11RenderTargetView *capture_rt);
   };
 
   /**
@@ -407,19 +455,6 @@ namespace platf::dxgi {
     release_snapshot() override;
 
     duplication_t dup;
-    sampler_state_t sampler_linear;
-    // Point sampler for high-quality resampling shaders (avoid double-filtering).
-    sampler_state_t sampler_point;
-
-    blend_t blend_alpha;
-    blend_t blend_invert;
-    blend_t blend_disable;
-
-    ps_t cursor_ps;
-    vs_t cursor_vs;
-
-    gpu_cursor_t cursor_alpha;
-    gpu_cursor_t cursor_xor;
 
     texture2d_t old_surface_delayed_destruction;
     std::chrono::steady_clock::time_point old_surface_timestamp;
@@ -604,6 +639,45 @@ namespace platf::dxgi {
     release_frame();
 
     /**
+     * @brief One snapshot of the producer-published hardware cursor state.
+     * Mirrors the layout of `CursorSharedMetadata` in ZakoVDD's Driver.cpp.
+     * `shape_buffer` is owned by the snapshot (copied out of SHM).
+     */
+    struct cursor_snapshot {
+      bool     valid = false;          ///< True if at least one publish observed.
+      bool     visible = false;
+      bool     shape_updated = false;  ///< True iff shape_id changed since last poll.
+      bool     position_updated = false;
+      INT32    x = 0;                  ///< Top-left of cursor image, desktop-relative.
+      INT32    y = 0;
+      UINT32   position_id = 0;
+      UINT32   shape_id = 0;
+      UINT32   shape_type = 0;         ///< IDDCX_CURSOR_SHAPE_TYPE value (0=mono, 1=color, 2=masked color).
+      UINT32   width = 0;
+      UINT32   height = 0;
+      UINT32   pitch = 0;
+      INT32    xhot = 0;
+      INT32    yhot = 0;
+      UINT32   sdr_white_level_x1000 = 0;
+      std::vector<uint8_t> shape_buffer;  ///< Empty if !shape_updated or shape is uninitialized.
+    };
+
+    /**
+     * @brief Non-blocking poll of the latest cursor state published by the
+     *        driver-side CursorExporter. Returns false if cursor SHM is not
+     *        attached or nothing has been published yet.
+     */
+    bool
+    poll_cursor(cursor_snapshot &out);
+
+    /**
+     * @brief Mark a cursor shape as consumed only after both GPU texture
+     *        uploads have succeeded. Until then poll_cursor() retries it.
+     */
+    void
+    acknowledge_cursor_shape(UINT32 shape_id);
+
+    /**
      * @brief Reported producer-side dimensions / format / HDR metadata.
      */
     UINT  width()      const { return m_width; }
@@ -642,6 +716,7 @@ namespace platf::dxgi {
     };
 
     void close();
+    void attach_cursor_channel(unsigned int monitor_idx);
     void apply_metadata_snapshot(const vdd_frame_channel::shared_frame_metadata_t &meta);
     bool attach_texture_slot(ID3D11Device1 *device,
                              HANDLE shared_handle,
@@ -668,6 +743,13 @@ namespace platf::dxgi {
     std::vector<keyed_mutex_t> m_keyedMutex;
     bool m_holdsKey = false;
     UINT32 m_heldSlot = 0;
+
+    // Cursor SHM (optional; opened on a best-effort basis in init()).
+    HANDLE m_hCursorMeta = nullptr;
+    void  *m_pCursorMeta = nullptr;
+    HANDLE m_hCursorEvent = nullptr;  // For diagnostic use; poll_cursor() is event-free.
+    UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
+    UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 
     UINT m_width = 0;
     UINT m_height = 0;

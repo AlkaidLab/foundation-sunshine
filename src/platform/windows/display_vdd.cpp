@@ -25,8 +25,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -289,6 +291,38 @@ namespace platf::dxgi {
     return false;
   }
 
+  // Mirror of CursorSharedMetadata in ZakoVDD/Driver.cpp. Layout is
+  // 4-byte aligned (#pragma pack(push, 4) on the producer side); the
+  // standard ABI on x64 already aligns the fields below identically.
+  struct CursorSharedMetadata {
+    UINT32 Magic;                // 'ZVCU' = 0x5A564355
+    UINT32 Version;              // 1
+    UINT32 IsVisible;            // 0/1
+    INT32  PositionX;            // top-left of cursor image (already hot-spot adjusted, DXGI semantics)
+    INT32  PositionY;
+    UINT32 PositionId;           // monotonic on position change
+    UINT32 ShapeId;              // monotonic on shape change
+    UINT32 ShapeType;            // IDDCX_CURSOR_SHAPE_TYPE value (0=mono, 1=color, 2=masked color)
+    UINT32 Width;
+    UINT32 Height;
+    UINT32 Pitch;
+    INT32  XHot;
+    INT32  YHot;
+    UINT32 SdrWhiteLevelX1000;
+    UINT32 ShapeBufferSize;
+    UINT32 PublicationSequence;  // odd while producer writes, even when stable
+    UINT64 LastUpdateQpc;
+    // Followed by up to 256 KiB of shape pixels.
+  };
+
+  static_assert(sizeof(CursorSharedMetadata) == 72, "Unexpected cursor metadata layout");
+  static_assert(offsetof(CursorSharedMetadata, PublicationSequence) == 60, "Unexpected cursor sequence offset");
+  static_assert(offsetof(CursorSharedMetadata, LastUpdateQpc) == 64, "Unexpected cursor QPC offset");
+
+  static constexpr UINT32 VDD_CURSOR_MAGIC = 0x5A564355;  // 'ZVCU'
+  static constexpr UINT32 VDD_CURSOR_VERSION = 1;
+  static constexpr UINT32 VDD_CURSOR_MAX_BYTES = 256u * 256u * 4u;  // matches driver
+
   vdd_capture_t::vdd_capture_t() = default;
 
   vdd_capture_t::~vdd_capture_t() {
@@ -316,6 +350,51 @@ namespace platf::dxgi {
       CloseHandle(m_hEvent);
       m_hEvent = nullptr;
     }
+    if (m_pCursorMeta) {
+      UnmapViewOfFile(m_pCursorMeta);
+      m_pCursorMeta = nullptr;
+    }
+    if (m_hCursorMeta) {
+      CloseHandle(m_hCursorMeta);
+      m_hCursorMeta = nullptr;
+    }
+    if (m_hCursorEvent) {
+      CloseHandle(m_hCursorEvent);
+      m_hCursorEvent = nullptr;
+    }
+    m_lastSeenCursorShapeId = 0xFFFFFFFFu;
+    m_lastSeenCursorPositionId = 0xFFFFFFFFu;
+  }
+
+  void
+  vdd_capture_t::attach_cursor_channel(unsigned int monitor_idx) {
+    // Optional: old driver builds do not export cursor mappings. Capture must
+    // remain usable in that case, with the cursor overlay simply disabled.
+    std::wstring cursor_meta_name = L"Global\\ZakoVDD_CursorMeta_" + std::to_wstring(monitor_idx);
+    std::wstring cursor_event_name = L"Global\\ZakoVDD_CursorReady_" + std::to_wstring(monitor_idx);
+
+    m_hCursorMeta = OpenFileMappingW(FILE_MAP_READ, FALSE, cursor_meta_name.c_str());
+    if (!m_hCursorMeta) {
+      BOOST_LOG(info) << "[vdd_capture] cursor SHM not present for monitor "sv
+                      << monitor_idx << " (driver may predate cursor export); "sv
+                      << "clients will see no overlay cursor for this output."sv;
+      return;
+    }
+
+    const SIZE_T map_size = sizeof(CursorSharedMetadata) + VDD_CURSOR_MAX_BYTES;
+    m_pCursorMeta = MapViewOfFile(m_hCursorMeta, FILE_MAP_READ, 0, 0, map_size);
+    if (!m_pCursorMeta) {
+      BOOST_LOG(warning) << "[vdd_capture] cursor MapViewOfFile failed: "sv << GetLastError()
+                         << "; cursor overlay disabled."sv;
+      CloseHandle(m_hCursorMeta);
+      m_hCursorMeta = nullptr;
+      return;
+    }
+
+    // The event is diagnostic/future-facing; polling reads the mapping directly.
+    m_hCursorEvent = OpenEventW(SYNCHRONIZE, FALSE, cursor_event_name.c_str());
+    BOOST_LOG(info) << "[vdd_capture] cursor SHM attached (event="sv
+                    << (m_hCursorEvent ? "yes"sv : "no"sv) << ")"sv;
   }
 
   void
@@ -636,6 +715,7 @@ namespace platf::dxgi {
 
     switch (try_open_sealed_channel(dev1_p, monitor_idx, *device_luid, sealed_caps)) {
       case sealed_channel_attempt::opened:
+        attach_cursor_channel(monitor_idx);
         return 0;
       case sealed_channel_attempt::required_failed:
         return -1;
@@ -646,7 +726,11 @@ namespace platf::dxgi {
         break;
     }
 
-    return attach_legacy_named_channel(dev1_p, monitor_idx, *device_luid) ? 0 : -1;
+    if (!attach_legacy_named_channel(dev1_p, monitor_idx, *device_luid)) {
+      return -1;
+    }
+    attach_cursor_channel(monitor_idx);
+    return 0;
   }
 
   capture_e
@@ -787,6 +871,127 @@ namespace platf::dxgi {
       m_heldSlot = 0;
     }
     return capture_e::ok;
+  }
+
+  bool
+  vdd_capture_t::poll_cursor(cursor_snapshot &out) {
+    out = {};
+    if (!m_pCursorMeta) {
+      return false;
+    }
+
+    auto *meta = static_cast<const CursorSharedMetadata *>(m_pCursorMeta);
+    auto *publication_sequence = reinterpret_cast<volatile const UINT32 *>(&meta->PublicationSequence);
+    auto *published_position_id = reinterpret_cast<volatile const UINT32 *>(&meta->PositionId);
+    auto *published_shape_id = reinterpret_cast<volatile const UINT32 *>(&meta->ShapeId);
+
+    // The producer uses a seqlock: odd means a publication is in progress and
+    // matching even values around the complete header+payload copy identify a
+    // coherent snapshot. Sequence zero also supports the preview producer that
+    // used this field as Reserved0; its shape and position IDs are commit markers.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      const UINT32 sequence_before = *publication_sequence;
+      if ((sequence_before & 1u) != 0u) {
+        continue;
+      }
+      MemoryBarrier();
+
+      CursorSharedMetadata header {};
+      std::memcpy(&header, meta, sizeof(header));
+      if (header.ShapeBufferSize > VDD_CURSOR_MAX_BYTES) {
+        continue;
+      }
+
+      const bool shape_updated = header.ShapeId != m_lastSeenCursorShapeId;
+      std::vector<uint8_t> shape_buffer;
+      if (shape_updated && header.ShapeBufferSize > 0) {
+        const auto *payload = reinterpret_cast<const uint8_t *>(meta + 1);
+        shape_buffer.assign(payload, payload + header.ShapeBufferSize);
+      }
+
+      MemoryBarrier();
+      const UINT32 sequence_after = *publication_sequence;
+      if (sequence_before != sequence_after || (sequence_after & 1u) != 0u) {
+        continue;
+      }
+      if (sequence_after == 0 &&
+          (*published_shape_id != header.ShapeId || *published_position_id != header.PositionId)) {
+        continue;
+      }
+
+      if (header.Magic != VDD_CURSOR_MAGIC || header.Version != VDD_CURSOR_VERSION) {
+        return false;
+      }
+      if (header.ShapeType > 2) {
+        return false;
+      }
+
+      constexpr UINT32 kMaxCursorWidth = 256;
+      constexpr UINT32 kMaxCursorHeight = 512;  // monochrome stores AND+XOR vertically
+      const UINT32 max_height = header.ShapeType == 0 ? kMaxCursorHeight : 256;
+      const bool empty_hidden_shape = header.IsVisible == 0 &&
+                                      header.Width == 0 &&
+                                      header.Height == 0 &&
+                                      header.Pitch == 0 &&
+                                      header.ShapeBufferSize == 0;
+      if (!empty_hidden_shape &&
+          (header.Width == 0 || header.Width > kMaxCursorWidth ||
+           header.Height == 0 || header.Height > max_height)) {
+        return false;
+      }
+
+      UINT64 required_bytes = 0;
+      if (empty_hidden_shape) {
+        // A newly-attached producer can publish visibility before its first shape.
+      }
+      else if (header.ShapeType == 0 /* MONOCHROME */) {
+        if ((header.Height & 1u) != 0u || header.Pitch < (header.Width + 7u) / 8u) {
+          return false;
+        }
+        required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
+      }
+      else {
+        if (header.Pitch < static_cast<UINT64>(header.Width) * 4u) {
+          return false;
+        }
+        required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
+      }
+      if (required_bytes > VDD_CURSOR_MAX_BYTES || header.ShapeBufferSize < required_bytes) {
+        return false;  // header/payload mismatch; likely a torn read
+      }
+      if (shape_updated) {
+        shape_buffer.resize(static_cast<size_t>(required_bytes));
+      }
+
+      out.valid = true;
+      out.visible = header.IsVisible != 0;
+      out.x = header.PositionX;
+      out.y = header.PositionY;
+      out.position_id = header.PositionId;
+      out.shape_id = header.ShapeId;
+      out.shape_type = header.ShapeType;
+      out.width = header.Width;
+      out.height = header.Height;
+      out.pitch = header.Pitch;
+      out.xhot = header.XHot;
+      out.yhot = header.YHot;
+      out.sdr_white_level_x1000 = header.SdrWhiteLevelX1000;
+      out.position_updated = header.PositionId != m_lastSeenCursorPositionId;
+      out.shape_updated = shape_updated;
+      out.shape_buffer = std::move(shape_buffer);
+
+      if (out.position_updated) {
+        m_lastSeenCursorPositionId = header.PositionId;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  void
+  vdd_capture_t::acknowledge_cursor_shape(UINT32 shape_id) {
+    m_lastSeenCursorShapeId = shape_id;
   }
 
   // ===========================================================================
@@ -1154,6 +1359,13 @@ namespace platf::dxgi {
                     << " producer_slots="sv << dup.producer_slot_count()
                     << " generation="sv << dup.producer_channel_generation()
                     << " borrowed_texture="sv << vdd_borrow_enabled;
+
+    // Cursor export is optional and older drivers do not expose it. Likewise,
+    // a cursor-only shader failure must not take down otherwise valid capture.
+    if (init_cursor_pipeline(config) != 0) {
+      cursor_pipeline_ready = false;
+      BOOST_LOG(warning) << "[vdd] cursor pipeline init failed; continuing without cursor overlay"sv;
+    }
     return 0;
   }
 

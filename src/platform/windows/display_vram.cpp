@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <optional>
@@ -3378,38 +3379,6 @@ namespace platf::dxgi {
       }
     }
 
-    auto blend_cursor = [&](img_d3d_t &d3d_img) {
-      device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
-      device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
-      device_ctx->OMSetRenderTargets(1, &d3d_img.capture_rt, nullptr);
-
-      if (cursor_alpha.texture.get()) {
-        // Perform an alpha blending operation
-        device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
-        device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      if (cursor_xor.texture.get()) {
-        // Perform an invert blending without touching alpha values
-        device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
-        device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
-
-      ID3D11RenderTargetView *emptyRenderTarget = nullptr;
-      device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
-      device_ctx->RSSetViewports(0, nullptr);
-      ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
-      device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
-    };
-
     switch (out_frame_action) {
       case ofa::forward_last_img: {
         auto p_img = std::get_if<std::shared_ptr<platf::img_t>>(&last_frame_variant);
@@ -3438,7 +3407,7 @@ namespace platf::dxgi {
         if (!d3d_img) return capture_e::error;
 
         device_ctx->CopyResource(d3d_img->capture_texture.get(), p_surface->get());
-        blend_cursor(*d3d_img);
+        blend_cursor(d3d_img->capture_rt.get());
         break;
       }
 
@@ -3459,7 +3428,7 @@ namespace platf::dxgi {
         }
 
         if (blend_mouse_cursor_flag) {
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
 
         break;
@@ -3484,10 +3453,11 @@ namespace platf::dxgi {
   }
 
   int
-  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
-    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
-      return -1;
-    }
+  display_vram_t::init_cursor_pipeline(const ::video::config_t &config) {
+    cursor_pipeline_ready = false;
+    cursor_white_normalization_enabled = false;
+    cursor_white_multiplier.reset();
+    cursor_white_multiplier_value = 300.0f / 80.0f;
 
     D3D11_SAMPLER_DESC sampler_desc {};
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -3536,17 +3506,15 @@ namespace platf::dxgi {
         return -1;
       }
 
-      // Use a 300 nit target for the mouse cursor. We should really get
-      // the user's SDR white level in nits, but there is no API that
-      // provides that information to Win32 apps.
-      float white_multiplier_data[16 / sizeof(float)] { 300.0f / 80.f };  // aligned to 16-byte
-      auto white_multiplier = make_buffer(device.get(), white_multiplier_data);
-      if (!white_multiplier) {
+      // Keep the established 300-nit fallback for backends without producer
+      // white-level metadata. VDD replaces it with the driver's current value.
+      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value };  // aligned to 16-byte
+      cursor_white_multiplier = make_buffer(device.get(), white_multiplier_data);
+      if (!cursor_white_multiplier) {
         BOOST_LOG(warning) << "Failed to create cursor blending (normalized white) white multiplier constant buffer";
         return -1;
       }
-
-      device_ctx->PSSetConstantBuffers(1, 1, &white_multiplier);
+      cursor_white_normalization_enabled = true;
     }
     else {
       status = device->CreatePixelShader(cursor_ps_hlsl->GetBufferPointer(), cursor_ps_hlsl->GetBufferSize(), nullptr, &cursor_ps);
@@ -3568,6 +3536,84 @@ namespace platf::dxgi {
     ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
     device_ctx->PSSetSamplers(0, 2, samplers);
     device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    cursor_pipeline_ready = true;
+    return 0;
+  }
+
+  void
+  display_vram_t::set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000) {
+    if (!cursor_white_normalization_enabled || sdr_white_level_x1000 == 0) {
+      return;
+    }
+
+    const float sdr_white_nits = static_cast<float>(sdr_white_level_x1000) / 1000.0f;
+    if (!std::isfinite(sdr_white_nits) || sdr_white_nits < 1.0f || sdr_white_nits > 10000.0f) {
+      return;
+    }
+
+    const float next_multiplier = sdr_white_nits / 80.0f;
+    if (std::abs(next_multiplier - cursor_white_multiplier_value) < 0.0001f) {
+      return;
+    }
+
+    float white_multiplier_data[16 / sizeof(float)] { next_multiplier };  // aligned to 16-byte
+    auto next_buffer = make_buffer(device.get(), white_multiplier_data);
+    if (!next_buffer) {
+      BOOST_LOG(warning) << "Failed to update cursor SDR white-level multiplier; retaining previous value"sv;
+      return;
+    }
+
+    cursor_white_multiplier = std::move(next_buffer);
+    cursor_white_multiplier_value = next_multiplier;
+  }
+
+  void
+  display_vram_t::blend_cursor(ID3D11RenderTargetView *capture_rt) {
+    device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
+    device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
+    if (cursor_white_normalization_enabled && cursor_white_multiplier) {
+      ID3D11Buffer *white_multiplier = cursor_white_multiplier.get();
+      device_ctx->PSSetConstantBuffers(1, 1, &white_multiplier);
+    }
+    device_ctx->OMSetRenderTargets(1, &capture_rt, nullptr);
+
+    if (cursor_alpha.texture.get()) {
+      // Perform an alpha blending operation
+      device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
+      device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    if (cursor_xor.texture.get()) {
+      // Perform an invert blending without touching alpha values
+      device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
+      device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
+
+    ID3D11RenderTargetView *emptyRenderTarget = nullptr;
+    device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
+    device_ctx->RSSetViewports(0, nullptr);
+    ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
+    device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
+  }
+
+  int
+  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
+    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
+      return -1;
+    }
+
+    if (init_cursor_pipeline(config) != 0) {
+      return -1;
+    }
 
     return 0;
   }
@@ -4388,7 +4434,7 @@ namespace platf::dxgi {
   capture_e
   display_vdd_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb,
                                std::shared_ptr<platf::img_t> &img_out,
-                               std::chrono::milliseconds timeout, bool /*cursor_visible*/) {
+                               std::chrono::milliseconds timeout, bool cursor_visible) {
     if (current_frame) {
       // Defensive: caller forgot to call release_snapshot(). Drop the stale ref.
       dup.release_frame();
@@ -4431,6 +4477,92 @@ namespace platf::dxgi {
       return capture_e::reinit;
     }
 
+    vdd_capture_t::cursor_snapshot cursor_state;
+    const bool has_cursor_state = cursor_visible && cursor_pipeline_ready &&
+                                  dup.poll_cursor(cursor_state) && cursor_state.valid;
+    const bool cursor_overlay_required = has_cursor_state && cursor_state.visible;
+
+    auto composite_cursor = [&](ID3D11RenderTargetView *capture_rt) {
+      if (!has_cursor_state) {
+        return;
+      }
+
+      set_cursor_sdr_white_level(cursor_state.sdr_white_level_x1000);
+      if (cursor_state.shape_updated) {
+        bool upload_succeeded = false;
+        const bool empty_hidden_shape = !cursor_state.visible &&
+                                        cursor_state.shape_buffer.empty() &&
+                                        cursor_state.width == 0 &&
+                                        cursor_state.height == 0;
+        if (empty_hidden_shape) {
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO empty_info {};
+          upload_succeeded = set_cursor_texture(device.get(), cursor_alpha, {}, empty_info) &&
+                             set_cursor_texture(device.get(), cursor_xor, {}, empty_info);
+        }
+        else if (!cursor_state.shape_buffer.empty() && cursor_state.width > 0 && cursor_state.height > 0) {
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+          switch (cursor_state.shape_type) {
+            case 0:
+              shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+              break;
+            case 1:
+              shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+              break;
+            case 2:
+            default:
+              shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
+              break;
+          }
+          shape_info.Width = cursor_state.width;
+          shape_info.Height = cursor_state.height;
+          shape_info.Pitch = cursor_state.pitch;
+          shape_info.HotSpot.x = cursor_state.xhot;
+          shape_info.HotSpot.y = cursor_state.yhot;
+
+          const bool color_shape = cursor_state.shape_type != 0;
+          const UINT32 packed_pitch = color_shape ? cursor_state.width * 4u : cursor_state.pitch;
+          util::buffer_t<std::uint8_t> img_data(
+            static_cast<size_t>(packed_pitch) * cursor_state.height
+          );
+          if (color_shape && cursor_state.pitch != packed_pitch) {
+            for (UINT32 row = 0; row < cursor_state.height; ++row) {
+              std::memcpy(
+                std::begin(img_data) + static_cast<size_t>(row) * packed_pitch,
+                cursor_state.shape_buffer.data() + static_cast<size_t>(row) * cursor_state.pitch,
+                packed_pitch
+              );
+            }
+            shape_info.Pitch = packed_pitch;
+          }
+          else {
+            std::memcpy(std::begin(img_data), cursor_state.shape_buffer.data(), img_data.size());
+          }
+          auto alpha_img = make_cursor_alpha_image(img_data, shape_info);
+          auto xor_img = make_cursor_xor_image(img_data, shape_info);
+          upload_succeeded = set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_img), shape_info) &&
+                             set_cursor_texture(device.get(), cursor_xor, std::move(xor_img), shape_info);
+        }
+
+        if (upload_succeeded) {
+          dup.acknowledge_cursor_shape(cursor_state.shape_id);
+        }
+        else {
+          // Do not retain the previous shape at a newly-published position.
+          // Leaving the shape unacknowledged makes the next frame retry it.
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO empty_info {};
+          set_cursor_texture(device.get(), cursor_alpha, {}, empty_info);
+          set_cursor_texture(device.get(), cursor_xor, {}, empty_info);
+        }
+      }
+
+      // CursorExporter publishes already-hotspot-adjusted top-left coordinates.
+      cursor_alpha.set_pos(cursor_state.x, cursor_state.y, width, height, display_rotation, cursor_state.visible);
+      cursor_xor.set_pos(cursor_state.x, cursor_state.y, width, height, display_rotation, cursor_state.visible);
+      if (cursor_state.visible && (cursor_alpha.texture || cursor_xor.texture)) {
+        blend_cursor(capture_rt);
+      }
+    };
+
     auto copy_current_frame_to = [&](std::shared_ptr<platf::img_t> candidate_img,
                                      std::shared_ptr<img_d3d_t> candidate_d3d) -> capture_e {
       if (!candidate_img || !candidate_d3d) {
@@ -4448,6 +4580,7 @@ namespace platf::dxgi {
         return capture_e::error;
       }
       device_ctx->CopyResource(candidate_d3d->capture_texture.get(), current_frame);
+      composite_cursor(candidate_d3d->capture_rt.get());
 
       img_out = std::move(candidate_img);
       img_out->frame_timestamp = frame_timestamp;
@@ -4561,6 +4694,12 @@ namespace platf::dxgi {
         ++vdd_borrow_fallbacks;
         return false;
       };
+
+      // A borrowed producer texture cannot be modified in place. Preserve the
+      // zero-copy path whenever no visible cursor needs compositing.
+      if (cursor_overlay_required) {
+        return borrow_fallback();
+      }
 
       if (!vdd_borrow_enabled) {
         ++vdd_borrow_disabled_frames;
