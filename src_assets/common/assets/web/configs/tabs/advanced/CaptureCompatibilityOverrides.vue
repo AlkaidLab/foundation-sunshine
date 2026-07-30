@@ -51,7 +51,7 @@ function addRemapping(type) {
 <template>
   <PlatformLayout :platform="platform">
     <template #windows>
-      <div class="mb-3 accordion">
+      <div class="my-3 accordion">
         <div class="accordion-item">
           <h2 class="accordion-header">
             <button
