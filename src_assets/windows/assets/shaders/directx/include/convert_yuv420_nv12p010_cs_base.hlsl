@@ -36,6 +36,8 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
+#include "include/hdr_analysis_snapshot.hlsl"
+
 groupshared float3 s_rgb[16][16];
 
 #define CS_TILE 16
@@ -59,6 +61,43 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     s_rgb[GTid.y][GTid.x] = src_rgb;
 
     GroupMemoryBarrierWithGroupSync();
+
+#ifdef HDR_ANALYSIS_SNAPSHOT
+    // One thread per analysis cell scans every output pixel assigned to that cell.
+    // This preserves true extrema and average while keeping the snapshot capped.
+    uint2 analysis_position;
+    uint2 cell_begin;
+    uint2 cell_end;
+    if (inside_rect &&
+        GetHdrAnalysisCell(rect_pos, out_rect_size, analysis_position, cell_begin, cell_end)) {
+        float min_maxrgb_nits = 10000.0;
+        float max_maxrgb_nits = 0.0;
+        float sum_maxrgb_nits = 0.0;
+        uint pixel_count = 0;
+
+        for (uint y = cell_begin.y; y < cell_end.y; ++y) {
+            for (uint x = cell_begin.x; x < cell_end.x; ++x) {
+                float3 cell_rgb = (x == uint(rect_pos.x) && y == uint(rect_pos.y))
+                    ? src_rgb
+                    : source_image.Load(int3(uint2(x, y), 0)).rgb;
+                float maxrgb_nits = HdrAnalysisMaxRgbNits(cell_rgb);
+                min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
+                max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
+                sum_maxrgb_nits += maxrgb_nits;
+                ++pixel_count;
+            }
+        }
+
+        StoreHdrAnalysisCellStats(
+            analysis_position,
+            min_maxrgb_nits,
+            max_maxrgb_nits,
+            sum_maxrgb_nits,
+            pixel_count,
+            HdrAnalysisMaxRgbNits(src_rgb)
+        );
+    }
+#endif
 
     // ---- Y plane (per pixel) ----
     if (inside_rect) {

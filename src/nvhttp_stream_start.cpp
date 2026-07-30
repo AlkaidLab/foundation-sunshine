@@ -16,6 +16,7 @@
 #include "config.h"
 #include "display_device/parsed_config.h"
 #include "display_device/session.h"
+#include "display_device/vdd_capability.h"
 #include "globals.h"
 #include "logging.h"
 #include "video.h"
@@ -88,6 +89,12 @@ namespace nvhttp::stream_start {
       using result_e = display_device::session_t::configure_result_t::result_e;
 
       switch (result) {
+        case result_e::vdd_not_installed:
+          return "VDD_DRIVER_NOT_INSTALLED";
+        case result_e::vdd_unavailable:
+          return "VDD_DRIVER_UNAVAILABLE";
+        case result_e::vdd_create_failed:
+          return "VDD_CREATE_FAILED";
         case result_e::parse_fail:
           return "DISPLAY_CONFIG_PARSE_FAILED";
         case result_e::topology_fail:
@@ -203,6 +210,9 @@ namespace nvhttp::stream_start {
           return true;
         case result_e::success:
         case result_e::deferred_retry:
+        case result_e::vdd_not_installed:
+        case result_e::vdd_unavailable:
+        case result_e::vdd_create_failed:
         case result_e::parse_fail:
         case result_e::file_save_fail:
         case result_e::revert_fail:
@@ -246,6 +256,58 @@ namespace nvhttp::stream_start {
     }
 
     bool
+    validate_explicit_vdd_request(pt::ptree &tree, const rtsp_stream::launch_session_t &launch_session) {
+      if (!explicit_vdd_requested_for_launch(launch_session)) {
+        return true;
+      }
+
+      const auto state = display_device::vdd_capability::query_state();
+      using state_e = display_device::vdd_capability::state_e;
+      switch (state) {
+        case state_e::ready:
+          return true;
+        case state_e::unsupported_platform:
+          set_sunshine_error(
+            tree,
+            501,
+            "Virtual display streaming is not supported on this host.",
+            "VDD_NOT_SUPPORTED",
+            "Use a physical display or install a Sunshine build with VDD support.",
+            "use_physical_display",
+            "display",
+            "vdd_preflight",
+            false);
+          return false;
+        case state_e::driver_missing:
+          set_sunshine_error(
+            tree,
+            503,
+            "The virtual display driver is not installed or not running.",
+            "VDD_DRIVER_MISSING",
+            "Install or repair ZakoVDD, then try again.",
+            "repair_vdd_driver",
+            "display",
+            "vdd_preflight",
+            true);
+          return false;
+        case state_e::driver_unreachable:
+          set_sunshine_error(
+            tree,
+            503,
+            "The virtual display driver is currently unreachable.",
+            "VDD_DRIVER_UNREACHABLE",
+            "Restart or repair ZakoVDD, then try again.",
+            "repair_vdd_driver",
+            "display",
+            "vdd_preflight",
+            true);
+          return false;
+      }
+
+      return false;
+    }
+
+    bool
     no_operation_blocks_automatic_vdd_recovery(const rtsp_stream::launch_session_t &launch_session) {
       return display_no_operation_requested(launch_session) && !explicit_vdd_requested_for_launch(launch_session);
     }
@@ -256,14 +318,17 @@ namespace nvhttp::stream_start {
       switch (result) {
         case result_e::modes_fail:
         case result_e::hdr_states_fail:
+        case result_e::file_save_fail:
+        case result_e::revert_fail:
           return true;
         case result_e::topology_fail:
         case result_e::primary_display_fail:
         case result_e::success:
         case result_e::deferred_retry:
+        case result_e::vdd_not_installed:
+        case result_e::vdd_unavailable:
+        case result_e::vdd_create_failed:
         case result_e::parse_fail:
-        case result_e::file_save_fail:
-        case result_e::revert_fail:
         default:
           return false;
       }
@@ -450,14 +515,24 @@ namespace nvhttp::stream_start {
     pt::ptree &tree,
     rtsp_stream::launch_session_t &launch_session,
     bool is_reconfigure) {
+    if (!validate_explicit_vdd_request(tree, launch_session)) {
+      return false;
+    }
+
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto_recovery_result_t recovery_result;
     const auto should_try_vdd = should_try_vdd_for_display_config(display_result.result);
+    const auto can_continue_with_current_display =
+      display_config_failure_can_continue_with_current_display(display_result.result);
 
-    if (should_try_vdd &&
-        display_config_failure_can_continue_with_current_display(display_result.result)) {
+    if (!display_result && !should_try_vdd && !can_continue_with_current_display) {
+      set_display_config_error(tree, display_result);
+      return false;
+    }
+
+    if (should_try_vdd && can_continue_with_current_display) {
       recovery_result = {
         true,
         false,

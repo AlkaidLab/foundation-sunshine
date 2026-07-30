@@ -8,6 +8,7 @@
 
 #include "process.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <ctime>
 #include <thread>
+#include <utility>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -61,10 +63,13 @@
 #include "uuid.h"
 #include "video.h"
 #include "version.h"
-#include "webhook.h"
+#include "webhook/webhook.h"
+#include "webhook/webhook_api.h"
 
 #ifdef _WIN32
   #include <iphlpapi.h>
+  #include "display_device/vdd_utils.h"
+  #include "platform/windows/mic_write.h"
   #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 
@@ -387,6 +392,18 @@ namespace confighttp {
   void
   getSunshineLogoImage(resp_https_t response, req_https_t request) {
     getStaticResource(response, request, WEB_DIR "images/logo-sunshine-256.png", "image/png");
+  }
+
+  void
+  getAlkaidLabLogoImage(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    getStaticResource(response, request, WEB_DIR "images/logo-alkaidlab.png", "image/png");
+  }
+
+  void
+  getNatPierceLogoImage(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    getStaticResource(response, request, WEB_DIR "images/logo-natpierce.png", "image/png");
   }
 
   /**
@@ -1411,6 +1428,33 @@ namespace confighttp {
   }
 
   void
+  getWebhookConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    webhook::api::get_config(std::move(response), config::sunshine.config_file);
+  }
+
+  void
+  saveWebhookConfig(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    webhook::api::save_config(
+      std::move(response),
+      std::move(request),
+      config::sunshine.config_file
+    );
+  }
+
+  void
+  testWebhook(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    webhook::api::test_delivery(std::move(response), std::move(request));
+  }
+
+  void
   restart(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -1449,7 +1493,43 @@ namespace confighttp {
     outputTree.put("status", true);
   }
 
+  void
+  testMicrophone(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
 #ifdef _WIN32
+    const auto result = platf::audio::test_mic_redirect();
+    send_response(response, nlohmann::json {
+      {"success", result.success},
+      {"error_code", result.error_code},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"success", false},
+      {"error_code", "MIC_TEST_UNSUPPORTED"},
+    });
+#endif
+  }
+
+#ifdef _WIN32
+  void
+  getVddStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    const auto status = display_device::vdd_utils::get_vdd_status();
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"state", status.state},
+      {"installed", status.installed},
+      {"running", status.running},
+      {"control_available", status.control_available},
+      {"monitor_active", status.monitor_active},
+      {"problem_code_valid", status.problem_code_valid},
+      {"problem_code", status.problem_code},
+      {"version_supported", false},
+    });
+  }
+
   void
   writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
     const auto bridge_status = platf::vulkan_hdr_bridge::status();
@@ -1587,38 +1667,36 @@ namespace confighttp {
       bool pin_result = nvhttp::pin(pin, name);
       outputTree.put("status", pin_result);
 
-      // Send webhook notification
-      webhook::send_event_async(webhook::event_t{
-        .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
-        .alert_type = pin_result ? "config_pair_success" : "config_pair_failed",
-        .timestamp = webhook::get_current_timestamp(),
-        .client_name = name,
-        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
-        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
-        .app_name = "",
-        .app_id = 0,
-        .session_id = "",
-        .extra_data = {}
-      });
+      try {
+        webhook::send_event_async(webhook::event_t{
+          .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = name,
+          .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+          .server_ip = net::addr_to_normalized_string(request->local_endpoint().address())
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook pairing event construction failed"sv;
+      }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();
       outputTree.put("status", false);
       outputTree.put("error", e.what());
 
-      // Send webhook notification for pairing failure
-      webhook::send_event_async(webhook::event_t{
-        .type = webhook::event_type_t::CONFIG_PIN_FAILED,
-        .alert_type = "config_pair_failed",
-        .timestamp = webhook::get_current_timestamp(),
-        .client_name = "",
-        .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
-        .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
-        .app_name = "",
-        .app_id = 0,
-        .session_id = "",
-        .extra_data = {{"error", e.what()}}
-      });
+      try {
+        webhook::send_event_async(webhook::event_t{
+          .type = webhook::event_type_t::CONFIG_PIN_FAILED,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
+          .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()),
+          .extra_data = {{"error", "invalid_request"}}
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook pairing failure event construction failed"sv;
+      }
       return;
     }
   }
@@ -1981,6 +2059,59 @@ namespace confighttp {
     }
     catch (...) {
       BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
+  getRuntimeHdrStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "getting runtime HDR status")) {
+      return;
+    }
+
+    try {
+      const auto statuses = video::get_hdr_pipeline_statuses();
+      json response_json {
+        { "success", true },
+        { "status_code", 200 },
+        { "status_message", "Success" },
+#ifdef _WIN32
+        { "available", true },
+#else
+        { "available", false },
+#endif
+        { "configured_analysis_mode", config::video.hdr_luminance_analysis },
+        { "configured_conversion_mode", config::video.capture_compute_shader },
+        { "pipelines", json::array() },
+      };
+
+      for (const auto &status : statuses) {
+        response_json["pipelines"].push_back({
+          { "id", status.id },
+          { "hdr_mode", status.hdr_mode },
+          { "analysis_mode", status.analysis_mode },
+          { "analysis_active", status.analysis_active },
+          { "scene_metadata_active", status.scene_metadata_active },
+          { "metadata_formats", status.metadata_formats },
+          { "conversion_path", status.conversion_path },
+          { "conversion_fallback_reason", status.conversion_fallback_reason },
+          { "analysis_failure_reason", status.analysis_failure_reason },
+        });
+      }
+
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getRuntimeHdrStatus: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getRuntimeHdrStatus: Unknown exception";
       write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
@@ -3172,6 +3303,9 @@ namespace confighttp {
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
+    server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
+    server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
+    server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
     server.resource["^/api/logout$"]["GET"] = handleLogout;
     server.resource["^/api/logout$"]["POST"] = handleLogout;
@@ -3179,7 +3313,9 @@ namespace confighttp {
     server.resource["^/api/restart$"]["GET"] = restart;
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
+    server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
 #ifdef _WIN32
+    server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
     server.resource["^/api/vulkan-hdr-bridge/validate$"]["POST"] = validateVulkanHdrBridge;
 #endif
@@ -3195,6 +3331,7 @@ namespace confighttp {
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
+    server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
@@ -3209,6 +3346,8 @@ namespace confighttp {
     server.resource["^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$"]["DELETE"] = deleteFileMapping;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;
     server.resource["^/images/logo-sunshine-256.png$"]["GET"] = getSunshineLogoImage;
+    server.resource["^/images/logo-alkaidlab.png$"]["GET"] = getAlkaidLabLogoImage;
+    server.resource["^/images/logo-natpierce.png$"]["GET"] = getNatPierceLogoImage;
     server.resource["^/boxart/.+$"]["GET"] = getBoxArt;
 
     // Clipboard sync routes are registered in a sibling module so the

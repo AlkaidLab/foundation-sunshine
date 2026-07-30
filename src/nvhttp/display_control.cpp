@@ -11,6 +11,7 @@
 #include "url_utils.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
+#include "src/display_device/vdd_capability.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 
@@ -104,6 +105,16 @@ namespace nvhttp::display_control {
 
       response_json["displays"] = std::move(displays_array);
       response_json["count"] = static_cast<int>(display_names.size());
+
+      const auto vdd_state = display_device::vdd_capability::query_state();
+      response_json["vdd"] = {
+#ifdef _WIN32
+        { "capability_version", display_device::vdd_capability::capability_version },
+#else
+        { "capability_version", 0 },
+#endif
+        { "state", display_device::vdd_capability::to_string(vdd_state) }
+      };
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "Error getting display list: " << e.what();

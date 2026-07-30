@@ -8,6 +8,7 @@
 #include <csignal>
 #include <fstream>
 #include <iostream>
+#include <utility>
 
 // lib includes
 #include <rs.h>
@@ -26,6 +27,8 @@
 #include "upnp.h"
 #include "version.h"
 #include "video.h"
+#include "webhook/webhook.h"
+#include "webhook/webhook_auth.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -415,6 +418,30 @@ main(int argc, char *argv[]) {
     return lifetime::desired_exit_code;
   }
 
+  webhook::auth::load_result_t webhook_auth_result {
+    webhook::auth::load_status_t::INVALID,
+    {}
+  };
+  try {
+    webhook_auth_result = webhook::auth::load(
+      webhook::auth::path_for(config::sunshine.config_file)
+    );
+  }
+  catch (...) {
+    // Treat path construction failures exactly like an invalid Webhook file.
+    // Webhook configuration must never abort Sunshine startup.
+  }
+  const bool webhook_configured = webhook::configure(std::move(webhook_auth_result.settings));
+  if (webhook_auth_result.status == webhook::auth::load_status_t::INVALID ||
+      !webhook_configured) {
+    BOOST_LOG(error) << "Webhook configuration is invalid; Webhook delivery is disabled"sv;
+  }
+
+  auto webhook_deinit_guard = webhook::init();
+  if (!webhook_deinit_guard || !webhook::runtime_active()) {
+    BOOST_LOG(warning) << "Webhook runtime is unavailable; Sunshine will continue without Webhook delivery"sv;
+  }
+
   std::thread httpThread { nvhttp::start };
   std::thread configThread { confighttp::start };
   std::thread rtspThread { rtsp_stream::start };
@@ -455,6 +482,10 @@ main(int argc, char *argv[]) {
   }
 
   mainThreadLoop(shutdown_event);
+
+  // Stop outbound callbacks before joining inbound servers. This cancels
+  // queued tests while their response objects are still valid.
+  webhook_deinit_guard.reset();
 
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   system_tray::end_tray();

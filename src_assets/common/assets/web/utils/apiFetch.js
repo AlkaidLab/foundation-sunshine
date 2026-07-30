@@ -42,7 +42,10 @@ export async function apiJson(url, options = {}) {
   const data = await parseJsonResponse(response)
 
   if (!response.ok) {
-    throw new Error(getApiErrorMessage(data, response))
+    const error = new Error(getApiErrorMessage(data, response))
+    error.status = response.status
+    error.code = typeof data?.error_code === 'string' ? data.error_code : ''
+    throw error
   }
 
   return data

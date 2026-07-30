@@ -5,6 +5,7 @@
 #include <csignal>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -2127,19 +2128,79 @@ namespace platf {
     return 0;
   }
 
+  namespace {
+    std::chrono::nanoseconds
+    qpc_tick_magnitude_to_duration(std::uint64_t tick_magnitude, bool negative, int64_t frequency) {
+      if (frequency <= 0) {
+        return {};
+      }
+
+      constexpr std::uint64_t nanoseconds_per_second = std::nano::den;
+      constexpr std::uint64_t positive_limit = std::numeric_limits<int64_t>::max();
+      constexpr std::uint64_t negative_limit = positive_limit + 1;
+      const std::uint64_t result_limit = negative ? negative_limit : positive_limit;
+      const auto unsigned_frequency = static_cast<std::uint64_t>(frequency);
+
+      const auto whole_seconds = tick_magnitude / unsigned_frequency;
+      const auto remaining_ticks = tick_magnitude % unsigned_frequency;
+      if (whole_seconds > result_limit / nanoseconds_per_second) {
+        return negative ? std::chrono::nanoseconds::min() : std::chrono::nanoseconds::max();
+      }
+
+      const auto whole_nanoseconds = whole_seconds * nanoseconds_per_second;
+      std::uint64_t remaining_nanoseconds;
+      if (remaining_ticks <= std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
+        remaining_nanoseconds = remaining_ticks * nanoseconds_per_second / unsigned_frequency;
+      }
+      else {
+        // QueryPerformanceFrequency is far below this branch in practice. Keep
+        // the fallback bounded for synthetic inputs that cannot be multiplied safely.
+        remaining_nanoseconds = std::min<std::uint64_t>(
+          static_cast<std::uint64_t>(
+            static_cast<long double>(remaining_ticks) * nanoseconds_per_second /
+            static_cast<long double>(unsigned_frequency)),
+          nanoseconds_per_second - 1);
+      }
+
+      if (remaining_nanoseconds > result_limit - whole_nanoseconds) {
+        return negative ? std::chrono::nanoseconds::min() : std::chrono::nanoseconds::max();
+      }
+
+      const auto nanosecond_magnitude = whole_nanoseconds + remaining_nanoseconds;
+      if (!negative) {
+        return std::chrono::nanoseconds { static_cast<int64_t>(nanosecond_magnitude) };
+      }
+      if (nanosecond_magnitude == negative_limit) {
+        return std::chrono::nanoseconds::min();
+      }
+      return std::chrono::nanoseconds { -static_cast<int64_t>(nanosecond_magnitude) };
+    }
+  }  // namespace
+
+  std::chrono::nanoseconds
+  qpc_ticks_to_duration(int64_t ticks, int64_t frequency) {
+    const bool negative = ticks < 0;
+    const auto tick_magnitude = negative ?
+                                  std::uint64_t { 0 } - static_cast<std::uint64_t>(ticks) :
+                                  static_cast<std::uint64_t>(ticks);
+    return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
+  }
+
   std::chrono::nanoseconds
   qpc_time_difference(int64_t performance_counter1, int64_t performance_counter2) {
-    auto get_frequency = []() {
-      LARGE_INTEGER frequency;
-      frequency.QuadPart = 0;
-      QueryPerformanceFrequency(&frequency);
-      return frequency.QuadPart;
-    };
-    static const double frequency = get_frequency();
-    if (frequency) {
-      return std::chrono::nanoseconds((int64_t) ((performance_counter1 - performance_counter2) * frequency / std::nano::den));
-    }
-    return {};
+    static const int64_t frequency = []() {
+      LARGE_INTEGER qpc_frequency;
+      if (!QueryPerformanceFrequency(&qpc_frequency) || qpc_frequency.QuadPart <= 0) {
+        return int64_t { 0 };
+      }
+      return qpc_frequency.QuadPart;
+    }();
+
+    const bool negative = performance_counter1 < performance_counter2;
+    const auto tick_magnitude = negative ?
+                                  static_cast<std::uint64_t>(performance_counter2) - static_cast<std::uint64_t>(performance_counter1) :
+                                  static_cast<std::uint64_t>(performance_counter1) - static_cast<std::uint64_t>(performance_counter2);
+    return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
   }
 
   std::wstring

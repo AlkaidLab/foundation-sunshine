@@ -709,13 +709,24 @@ namespace platf {
       // HID wheel uses notch units; distance is in WHEEL_DELTA (120) units.
       // Accumulate sub-notch deltas for high-resolution scrolling support.
       raw.vmouse_vscroll_accum += distance;
-      int notches = raw.vmouse_vscroll_accum / WHEEL_DELTA;
-      if (notches != 0) {
+      while (raw.vmouse_vscroll_accum <= -WHEEL_DELTA ||
+             raw.vmouse_vscroll_accum >= WHEEL_DELTA) {
+        const auto notches = std::clamp(
+          raw.vmouse_vscroll_accum / WHEEL_DELTA,
+          -127,
+          127
+        );
+        if (!raw.vmouse_dev->scroll(static_cast<int8_t>(notches))) {
+          raw.vmouse_vscroll_accum = 0;
+          break;
+        }
         raw.vmouse_vscroll_accum -= notches * WHEEL_DELTA;
-        raw.vmouse_dev->scroll((int8_t) std::clamp(notches, -127, 127));
       }
       return;
     }
+
+    // Do not replay stale virtual-device deltas after switching back from SendInput.
+    raw.vmouse_vscroll_accum = 0;
 
     INPUT i {};
 
@@ -733,13 +744,24 @@ namespace platf {
     auto &raw = *(input_raw_t *) input.get();
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       raw.vmouse_hscroll_accum += distance;
-      int notches = raw.vmouse_hscroll_accum / WHEEL_DELTA;
-      if (notches != 0) {
+      while (raw.vmouse_hscroll_accum <= -WHEEL_DELTA ||
+             raw.vmouse_hscroll_accum >= WHEEL_DELTA) {
+        const auto notches = std::clamp(
+          raw.vmouse_hscroll_accum / WHEEL_DELTA,
+          -127,
+          127
+        );
+        if (!raw.vmouse_dev->hscroll(static_cast<int8_t>(notches))) {
+          raw.vmouse_hscroll_accum = 0;
+          break;
+        }
         raw.vmouse_hscroll_accum -= notches * WHEEL_DELTA;
-        raw.vmouse_dev->hscroll((int8_t) std::clamp(notches, -127, 127));
       }
       return;
     }
+
+    // Do not replay stale virtual-device deltas after switching back from SendInput.
+    raw.vmouse_hscroll_accum = 0;
 
     INPUT i {};
 

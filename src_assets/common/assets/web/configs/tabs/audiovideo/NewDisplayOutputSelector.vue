@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import { $tp } from "../../../platform-i18n";
 import PlatformLayout from "../../../components/layout/PlatformLayout.vue";
+import VddPrerequisiteNotice from "../../../components/common/VddPrerequisiteNotice.vue";
 
 const props = defineProps(["platform", "config", "displays"]);
 
@@ -59,6 +60,8 @@ const displayDevices = computed(() => {
       </PlatformLayout>
     </div>
   </div>
+
+  <VddPrerequisiteNotice :active="isVddMode && platform === 'windows'" />
 
   <!-- VDD mode: Reuse VDD for all clients (only shown in VDD mode, Windows only) -->
   <div class="mb-3 form-check" v-if="isVddMode && platform === 'windows'">

@@ -13,17 +13,17 @@ if (typeof window !== 'undefined') {
 }
 
 export async function initApp(app, config) {
-    const i18nInstance = await i18n()
-
-    app.use(i18nInstance)
-    app.provide('i18n', i18nInstance.global)
-    const root = app.mount('#app')
     try {
+        const i18nInstance = await i18n()
+
+        app.use(i18nInstance)
+        app.provide('i18n', i18nInstance.global)
+        const root = app.mount('#app')
         config?.(app)
         // Let Vue finish the mount microtask before the GUI reveals the iframe.
         await Promise.resolve()
+        return root
     } finally {
         markWebUiReady()
     }
-    return root
 }

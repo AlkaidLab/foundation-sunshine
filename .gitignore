@@ -68,12 +68,19 @@ venv/
 .env
 .env.*
 
+# Local Webhook configuration may contain private endpoints or tokens.
+webhook_auth.json
+webhook_auth.json.tmp
+webhook_auth.json.bak
+webhook_auth.json.bak.tmp
+
 # Dev notes (analysis docs, guide generation, images)
 _dev_notes/
 _draft/
 instructions/
 skills/
 .codex/
+.codex-remote-attachments/
 
 # Temp HID trace files
 temphidtrace*

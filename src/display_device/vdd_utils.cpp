@@ -24,7 +24,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "src/confighttp.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
@@ -40,31 +39,6 @@ namespace pt = boost::property_tree;
 namespace display_device {
   namespace vdd_utils {
 
-    // ===========================================================
-    // [LEGACY-PIPE] Transitional named-pipe transport
-    // -----------------------------------------------------------
-    // The named pipe was the only way Sunshine talked to ZakoVDD
-    // before the IOCTL device interface (`vdd_ioctl.cpp`) landed.
-    // It is kept as a fallback so this Sunshine build still works
-    // against older driver releases that don't expose the IOCTL
-    // interface yet.
-    //
-    // Once every driver release in the wild speaks IOCTL, the
-    // entire pipe code path can be removed mechanically:
-    //   1. grep -nE '\[LEGACY-PIPE\]' vdd_utils.cpp and delete
-    //      every tagged block (constants, helpers, fallback calls).
-    //   2. Drop kVddPipeName, kPipeTimeoutMs, kPipeBufferSize,
-    //      connect_to_pipe_with_retry, execute_pipe_command, the
-    //      pipe-write half of destroy_vdd_monitor_nolog.
-    // The IOCTL primitives in vdd_ioctl.{h,cpp} stay untouched.
-    // ===========================================================
-
-    // [LEGACY-PIPE]
-    const wchar_t *kVddPipeName = L"\\\\.\\pipe\\ZakoVDDPipe";
-    // [LEGACY-PIPE]
-    const DWORD kPipeTimeoutMs = 3000;
-    // [LEGACY-PIPE]
-    const DWORD kPipeBufferSize = 4096;
     const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
     // 上次切换显示器的时间点
@@ -73,6 +47,73 @@ namespace display_device {
     static std::chrono::milliseconds debounce_interval { kDefaultDebounceInterval };
     // 上一次使用的客户端UUID，用于在没有提供UUID时使用
     static std::string last_used_client_uuid;
+
+    namespace {
+      constexpr auto kModePublicationTimeout = 3s;
+      constexpr auto kModePublicationInitialPoll = 50ms;
+      constexpr auto kModePublicationMaxPoll = 500ms;
+
+      std::vector<std::string>
+      collect_physical_devices_for_preservation() {
+        const auto topology = get_current_topology();
+        const auto devices = enum_available_devices();
+        std::vector<std::string> ordered_devices;
+        std::unordered_set<std::string> included;
+
+        const auto append = [&](const std::string &device_id) {
+          const auto device_it = devices.find(device_id);
+          const auto friendly_name = device_it != devices.end() ?
+                                       device_it->second.friendly_name :
+                                       get_display_friendly_name(device_id);
+          if (friendly_name != ZAKO_NAME && included.insert(device_id).second) {
+            ordered_devices.push_back(device_id);
+          }
+        };
+
+        // Active topology order preserves the current primary display first.
+        for (const auto &group : topology) {
+          for (const auto &device_id : group) {
+            append(device_id);
+          }
+        }
+
+        if (ordered_devices.empty()) {
+          // If no topology is active, preserve the enumerated primary first,
+          // followed by the remaining physical displays.
+          for (const auto &[device_id, device_info] : devices) {
+            if (device_info.device_state == device_state_e::primary) {
+              append(device_id);
+            }
+          }
+          for (const auto &entry : devices) {
+            append(entry.first);
+          }
+        }
+
+        return ordered_devices;
+      }
+    }  // namespace
+
+    vdd_status_t
+    get_vdd_status() {
+      vdd_status_t status;
+      const auto adapter = vdd_ioctl::query_adapter_status();
+      status.installed = adapter.present;
+      status.problem_code_valid = adapter.problem_code_valid;
+      status.problem_code = adapter.problem_code;
+      status.running = status.installed && status.problem_code_valid && status.problem_code == 0;
+      status.control_available = status.installed && vdd_ioctl::ping();
+      status.monitor_active = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+
+      status.state = classify_vdd_state(
+        status.installed,
+        status.running,
+        status.control_available,
+        status.problem_code_valid,
+        status.problem_code);
+
+      return status;
+    }
 
     std::chrono::milliseconds
     calculate_exponential_backoff(int attempt) {
@@ -139,143 +180,6 @@ namespace display_device {
       return false;
     }
 
-    // [LEGACY-PIPE] entire function
-    HANDLE
-    connect_to_pipe_with_retry(const wchar_t *pipe_name, int max_retries) {
-      HANDLE hPipe = INVALID_HANDLE_VALUE;
-      int attempt = 0;
-      auto retry_delay = kInitialRetryDelay;
-
-      while (attempt < max_retries) {
-        hPipe = CreateFileW(
-          pipe_name,
-          GENERIC_READ | GENERIC_WRITE,
-          0,
-          NULL,
-          OPEN_EXISTING,
-          // Never let a squatted legacy pipe impersonate the LocalSystem client.
-          FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-          NULL);
-
-        if (hPipe != INVALID_HANDLE_VALUE) {
-          DWORD mode = PIPE_READMODE_MESSAGE;
-          if (SetNamedPipeHandleState(hPipe, &mode, NULL, NULL)) {
-            return hPipe;
-          }
-          CloseHandle(hPipe);
-        }
-
-        ++attempt;
-        retry_delay = calculate_exponential_backoff(attempt);
-        std::this_thread::sleep_for(retry_delay);
-      }
-      return INVALID_HANDLE_VALUE;
-    }
-
-    // [LEGACY-PIPE] entire function
-    bool
-    execute_pipe_command(const wchar_t *pipe_name, const wchar_t *command, std::string *response, bool *timed_out) {
-      auto hPipe = connect_to_pipe_with_retry(pipe_name);
-      if (hPipe == INVALID_HANDLE_VALUE) {
-        BOOST_LOG(error) << "连接MTT虚拟显示管道失败，已重试多次";
-        return false;
-      }
-
-      // RAII guard for pipe handle to prevent handle leak
-      struct HandleGuard {
-        HANDLE handle;
-        ~HandleGuard() {
-          if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-        }
-      } pipe_guard { hPipe };
-
-      // 异步IO结构体
-      OVERLAPPED overlapped = { 0 };
-      overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-      HandleGuard event_guard { overlapped.hEvent };
-
-      // 发送命令（使用宽字符版本）
-      DWORD bytesWritten;
-      size_t cmd_len = (wcslen(command) + 1) * sizeof(wchar_t);  // 包含终止符
-      if (!WriteFile(hPipe, command, (DWORD) cmd_len, &bytesWritten, &overlapped)) {
-        if (GetLastError() != ERROR_IO_PENDING) {
-          BOOST_LOG(error) << L"发送" << command << L"命令失败，错误代码: " << GetLastError();
-          return false;
-        }
-
-        // 等待写入完成
-        DWORD waitResult = WaitForSingleObject(overlapped.hEvent, kPipeTimeoutMs);
-        if (waitResult != WAIT_OBJECT_0) {
-          BOOST_LOG(error) << L"发送" << command << L"命令超时";
-          return false;
-        }
-      }
-
-      // 读取响应
-      bool read_timed_out = false;
-      if (response) {
-        char buffer[kPipeBufferSize];
-        DWORD bytesRead = 0;
-        if (!ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, &overlapped)) {
-          if (GetLastError() != ERROR_IO_PENDING) {
-            BOOST_LOG(warning) << "读取响应失败，错误代码: " << GetLastError();
-            return false;
-          }
-
-          DWORD waitResult = WaitForSingleObject(overlapped.hEvent, kPipeTimeoutMs);
-          if (waitResult == WAIT_OBJECT_0 && GetOverlappedResult(hPipe, &overlapped, &bytesRead, FALSE)) {
-            buffer[bytesRead] = '\0';
-            *response = std::string(buffer, bytesRead);
-          }
-          else {
-            read_timed_out = true;
-            CancelIo(hPipe);
-          }
-        }
-        else {
-          // ReadFile completed synchronously
-          buffer[bytesRead] = '\0';
-          *response = std::string(buffer, bytesRead);
-        }
-      }
-
-      if (timed_out) {
-        *timed_out = read_timed_out;
-      }
-      return true;
-    }
-
-    bool
-    reload_driver() {
-      // Preferred path: IOCTL device interface (PnP-wakes the driver,
-      // immune to WUDFHost recycle races).
-      switch (vdd_ioctl::send_command(L"RELOAD_DRIVER")) {
-        case vdd_ioctl::result::success:
-          BOOST_LOG(info) << "Reload VDD driver requested (IOCTL)";
-          return true;
-        case vdd_ioctl::result::failed:
-          // Driver is present but rejected the IOCTL -- propagate so the
-          // caller doesn't waste a ~6s pipe timeout retrying the same
-          // command on a transport the driver already answered.
-          BOOST_LOG(error) << "Reload VDD driver via IOCTL failed; not falling back to pipe";
-          return false;
-        case vdd_ioctl::result::interface_missing:
-          // Driver too old to expose the IOCTL interface -- fall through
-          // to the legacy pipe transport.
-          break;
-      }
-
-      // [LEGACY-PIPE] Fallback for older driver builds that do not
-      // expose the IOCTL device interface.
-      std::string response;
-      const bool ok = execute_pipe_command(kVddPipeName, L"RELOAD_DRIVER", &response);
-      if (ok) {
-        BOOST_LOG(info) << "Reload VDD driver requested (PIPE)";
-      }
-      return ok;
-    }
-
     bool
     set_hardware_cursor_enabled(bool enabled) {
       const wchar_t *command = enabled ? L"HARDWARECURSOR true" : L"HARDWARECURSOR false";
@@ -285,18 +189,13 @@ namespace display_device {
           BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (IOCTL)";
           return true;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(error) << "VDD hardware cursor command was rejected by driver; not falling back to pipe";
+          BOOST_LOG(error) << "VDD hardware cursor command was rejected by driver";
           return false;
         case vdd_ioctl::result::interface_missing:
-          break;
+          BOOST_LOG(error) << "VDD hardware cursor command unavailable: IOCTL interface missing";
+          return false;
       }
-
-      std::string response;
-      const bool ok = execute_pipe_command(kVddPipeName, command, &response);
-      if (ok) {
-        BOOST_LOG(info) << "VDD hardware cursor " << (enabled ? "enabled" : "disabled") << " (PIPE)";
-      }
-      return ok;
+      return false;
     }
 
     bool
@@ -516,7 +415,7 @@ namespace display_device {
       const auto command_string = command.str();
       if (command_string.size() >= 2048) {
         BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
-                           << " wchar_t); XML fallback will be used";
+                           << " wchar_t); refusing a partial mode-list update";
         return set_vdd_result::failed;
       }
 
@@ -527,10 +426,10 @@ namespace display_device {
                           << "@" << *session_refresh_hz << "Hz";
           return set_vdd_result::ok;
         case vdd_ioctl::result::failed:
-          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed; XML fallback will be used";
+          BOOST_LOG(warning) << "VDD SETMODES IOCTL failed";
           return set_vdd_result::failed;
         case vdd_ioctl::result::interface_missing:
-          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing; XML fallback will be used";
+          BOOST_LOG(debug) << "VDD SETMODES unavailable: IOCTL interface missing";
           return set_vdd_result::interface_missing;
       }
 
@@ -592,7 +491,13 @@ namespace display_device {
 
     bool
     create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
-      std::string response;
+      const auto status = get_vdd_status();
+      if (!status.is_usable()) {
+        const auto error_code = status.installed ? "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED";
+        BOOST_LOG(error) << error_code << ": ZakoVDD must be installed and healthy before creating a virtual display. Open the Sunshine desktop VDD settings to install or repair it.";
+        return false;
+      }
+
       std::wstring command = L"CREATEMONITOR";
 
       // 如果没有提供UUID，使用上一次的UUID
@@ -639,8 +544,7 @@ namespace display_device {
         last_used_client_uuid = identifier_to_use;
       }
 
-      // 尝试发送命令（带GUID或不带GUID）
-      // Preferred path: IOCTL device interface. On success skip pipe entirely.
+      // 尝试通过 IOCTL 发送命令（带 GUID 或不带 GUID）
       switch (vdd_ioctl::send_command(command)) {
         case vdd_ioctl::result::success:
           tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
@@ -650,37 +554,13 @@ namespace display_device {
           BOOST_LOG(info) << "创建虚拟显示器完成 (IOCTL)";
           return true;
         case vdd_ioctl::result::failed:
-          // Driver answered but rejected CREATEMONITOR -- avoid the pipe
-          // retry (could double-allocate monitor state on a partially
-          // applied request).
-          BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL); not falling back to pipe";
+          BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL)";
           return false;
         case vdd_ioctl::result::interface_missing:
-          break;
+          BOOST_LOG(error) << "创建虚拟显示器失败: VDD IOCTL interface missing";
+          return false;
       }
-
-      // [LEGACY-PIPE] Fallback for older driver builds.
-      bool read_timed_out = false;
-      bool success = execute_pipe_command(kVddPipeName, command.c_str(), &response, &read_timed_out);
-
-      // 如果带GUID的命令失败，降级为不带GUID的命令（兼容旧版驱动）
-      if (!success && !guid_str.empty()) {
-        BOOST_LOG(warning) << "带GUID的命令失败，尝试降级为不带GUID的命令";
-        read_timed_out = false;
-        success = execute_pipe_command(kVddPipeName, L"CREATEMONITOR", &response, &read_timed_out);
-      }
-
-      if (!success) {
-        BOOST_LOG(error) << "创建虚拟显示器失败";
-        return false;
-      }
-
-      tray_state::set_vdd_state(true, config::video.vdd_keep_enabled, config::video.vdd_headless_create_enabled, false);
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-      system_tray::update_vdd_menu();
-#endif
-      BOOST_LOG(info) << "创建虚拟显示器完成，响应: " << response << " [return=" << (read_timed_out ? 1 : 0) << "]";
-      return true;
+      return false;
     }
 
     bool
@@ -691,26 +571,16 @@ namespace display_device {
         return true;
       }
 
-      // Preferred path: IOCTL.
       switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
         case vdd_ioctl::result::success:
           BOOST_LOG(info) << "销毁虚拟显示器完成 (IOCTL)";
           break;
         case vdd_ioctl::result::failed:
-          // Driver answered but DESTROYMONITOR errored -- don't redo it
-          // on the pipe (state may already be torn down).
-          BOOST_LOG(error) << "销毁虚拟显示器失败 (IOCTL); not falling back to pipe";
+          BOOST_LOG(error) << "销毁虚拟显示器失败 (IOCTL)";
           return false;
-        case vdd_ioctl::result::interface_missing: {
-          // [LEGACY-PIPE] Fallback for older driver builds.
-          std::string response;
-          if (!execute_pipe_command(kVddPipeName, L"DESTROYMONITOR", &response)) {
-            BOOST_LOG(error) << "销毁虚拟显示器失败";
-            return false;
-          }
-          BOOST_LOG(info) << "销毁虚拟显示器完成 (PIPE)，响应: " << response;
-          break;
-        }
+        case vdd_ioctl::result::interface_missing:
+          BOOST_LOG(error) << "销毁虚拟显示器失败: VDD IOCTL interface missing";
+          return false;
       }
 
       // 等待驱动程序完全卸载，避免WUDFHost.exe崩溃
@@ -726,32 +596,7 @@ namespace display_device {
 
     void
     destroy_vdd_monitor_nolog() {
-      // Preferred path: IOCTL. Both success and "driver said no" stop
-      // here -- the latter would just churn through a stale pipe handle
-      // during shutdown, which we explicitly do not want to log about.
-      switch (vdd_ioctl::send_command(L"DESTROYMONITOR")) {
-        case vdd_ioctl::result::success:
-        case vdd_ioctl::result::failed:
-          return;
-        case vdd_ioctl::result::interface_missing:
-          break;
-      }
-
-      // [LEGACY-PIPE] Best-effort pipe write for shutdown / process-exit
-      // paths where we don't want to log a failure if the pipe is gone.
-      HANDLE hPipe = CreateFileW(
-        kVddPipeName,
-        GENERIC_READ | GENERIC_WRITE,
-        0, NULL, OPEN_EXISTING,
-        SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, NULL);
-      if (hPipe != INVALID_HANDLE_VALUE) {
-        DWORD mode = PIPE_READMODE_MESSAGE;
-        SetNamedPipeHandleState(hPipe, &mode, NULL, NULL);
-        const wchar_t cmd[] = L"DESTROYMONITOR";
-        DWORD bytesWritten;
-        WriteFile(hPipe, cmd, sizeof(cmd), &bytesWritten, NULL);
-        CloseHandle(hPipe);
-      }
+      (void) vdd_ioctl::send_command(L"DESTROYMONITOR");
     }
 
     void
@@ -776,24 +621,7 @@ namespace display_device {
 
     bool
     create_vdd_monitor_noninteractive() {
-      std::unordered_set<std::string> physical_devices_before;
-      const auto topology_before = get_current_topology();
-      const auto all_devices_before = enum_available_devices();
-
-      for (const auto &group : topology_before) {
-        for (const auto &device_id : group) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
-      if (physical_devices_before.empty()) {
-        for (const auto &[device_id, device_info] : all_devices_before) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
+      const auto physical_devices_before = collect_physical_devices_for_preservation();
 
       if (!create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {})) {
         return false;
@@ -850,28 +678,7 @@ namespace display_device {
 
       // 保存创建虚拟显示器前的物理设备列表
       // 同时从所有可用设备中查找物理显示器（包括可能被禁用的）
-      std::unordered_set<std::string> physical_devices_before;
-      auto topology_before = get_current_topology();
-      auto all_devices_before = enum_available_devices();
-
-      // 从当前拓扑中获取活动的物理设备
-      for (const auto &group : topology_before) {
-        for (const auto &device_id : group) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-          }
-        }
-      }
-
-      // 如果拓扑中没有物理设备，尝试从所有设备中查找（可能被禁用了）
-      if (physical_devices_before.empty()) {
-        for (const auto &[device_id, device_info] : all_devices_before) {
-          if (get_display_friendly_name(device_id) != ZAKO_NAME) {
-            physical_devices_before.insert(device_id);
-            BOOST_LOG(debug) << "从所有设备中找到物理显示器: " << device_id;
-          }
-        }
-      }
+      const auto physical_devices_before = collect_physical_devices_for_preservation();
 
       // 后台线程确保VDD处于扩展模式，并进行二次确认
       std::thread([vdd_device_id = find_device_by_friendlyname(ZAKO_NAME), physical_devices_before]() mutable {
@@ -930,45 +737,18 @@ namespace display_device {
 
     VddSettings
     prepare_vdd_settings(const parsed_config_t &config) {
-      auto is_res_cached = false;
-      auto is_fps_cached = false;
-      std::ostringstream res_stream, fps_stream;
       std::vector<resolution_t> resolution_modes;
       std::vector<unsigned int> refresh_rates_hz;
 
-      res_stream << '[';
-      fps_stream << '[';
-
-      // 检查分辨率是否已缓存
       for (const auto &res : config::nvhttp.resolutions) {
-        res_stream << res << ',';
         if (const auto parsed_resolution = parse_vdd_resolution(res)) {
           append_unique_resolution(resolution_modes, *parsed_resolution);
         }
-        if (config.resolution && res == to_string(*config.resolution)) {
-          is_res_cached = true;
-        }
       }
 
-      // 检查帧率是否已缓存
       for (const auto &fps : config::nvhttp.fps) {
-        fps_stream << fps << ',';
         if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
           append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
-        }
-        if (config.refresh_rate && fps == to_string(*config.refresh_rate)) {
-          is_fps_cached = true;
-        }
-      }
-
-      // 如果需要更新设置
-      bool needs_update = config.resolution && (!is_res_cached || (config.refresh_rate && !is_fps_cached));
-      if (needs_update) {
-        if (!is_res_cached) {
-          res_stream << to_string(*config.resolution);
-        }
-        if (!is_fps_cached && config.refresh_rate) {
-          fps_stream << to_string(*config.refresh_rate);
         }
       }
 
@@ -981,28 +761,71 @@ namespace display_device {
         }
       }
 
-      // 移除最后的逗号并添加结束括号
-      auto res_str = res_stream.str();
-      auto fps_str = fps_stream.str();
-      if (res_str.back() == ',') res_str.pop_back();
-      if (fps_str.back() == ',') fps_str.pop_back();
-      res_str += ']';
-      fps_str += ']';
-
-      return { res_str, fps_str, resolution_modes, refresh_rates_hz, needs_update };
+      return { std::move(resolution_modes), std::move(refresh_rates_hz) };
     }
 
     bool
-    ensure_vdd_extended_mode(const std::string &device_id, const std::unordered_set<std::string> &physical_devices_to_preserve) {
+    is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
+      if (device_id.empty() || requested_mode.refresh_rate.denominator == 0) {
+        return false;
+      }
+
+      const auto devices = enum_available_devices();
+      const auto device_it = devices.find(device_id);
+      if (device_it == std::end(devices) || device_it->second.display_name.empty()) {
+        return false;
+      }
+
+      const auto &display_name = device_it->second.display_name;
+      const std::wstring wide_display_name(display_name.begin(), display_name.end());
+      for (DWORD index = 0; index < 4096; ++index) {
+        DEVMODEW mode {};
+        mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsW(wide_display_name.c_str(), index, &mode)) {
+          break;
+        }
+
+        if (advertised_mode_matches(
+              mode.dmPelsWidth,
+              mode.dmPelsHeight,
+              mode.dmDisplayFrequency,
+              requested_mode)) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    bool
+    wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
+      const auto deadline = std::chrono::steady_clock::now() + kModePublicationTimeout;
+      auto poll_delay = kModePublicationInitialPoll;
+
+      while (true) {
+        if (is_mode_advertised(device_id, requested_mode)) {
+          return true;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          return false;
+        }
+
+        std::this_thread::sleep_for(std::min(
+          poll_delay,
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)));
+        poll_delay = std::min(kModePublicationMaxPoll, poll_delay * 2);
+      }
+    }
+
+    bool
+    ensure_vdd_extended_mode(const std::string &device_id, const std::vector<std::string> &physical_devices_to_preserve) {
       if (device_id.empty()) {
         return false;
       }
 
       auto current_topology = get_current_topology();
-      if (current_topology.empty()) {
-        BOOST_LOG(warning) << "无法获取当前显示器拓扑";
-        return false;
-      }
 
       // 查找VDD所在的拓扑组
       std::size_t vdd_group_index = SIZE_MAX;
@@ -1013,13 +836,39 @@ namespace display_device {
         }
       }
 
+      if (vdd_group_index == SIZE_MAX) {
+        // A cold-created IDDCX monitor can be available to DisplayConfig while
+        // remaining absent from the active topology (and therefore have no
+        // \\.\DISPLAYn name). Add it as an independent extended display.
+        active_topology_t new_topology = current_topology;
+        std::unordered_set<std::string> included;
+        for (const auto &group : new_topology) {
+          included.insert(group.begin(), group.end());
+        }
+
+        for (const auto &physical_id : physical_devices_to_preserve) {
+          if (physical_id != device_id && included.insert(physical_id).second) {
+            new_topology.push_back({ physical_id });
+          }
+        }
+        new_topology.push_back({ device_id });
+
+        if (!is_topology_valid(new_topology) || !set_topology(new_topology)) {
+          BOOST_LOG(error) << "Failed to add inactive VDD to the extended topology";
+          return false;
+        }
+
+        BOOST_LOG(info) << "Added inactive VDD to the extended topology";
+        return true;
+      }
+
       // 检查是否需要切换
-      bool is_duplicated = (vdd_group_index != SIZE_MAX && current_topology[vdd_group_index].size() > 1);
+      bool is_duplicated = current_topology[vdd_group_index].size() > 1;
       bool is_vdd_only = (current_topology.size() == 1 && current_topology[0].size() == 1 && current_topology[0][0] == device_id);
 
       if (!is_duplicated && !is_vdd_only) {
         BOOST_LOG(debug) << "VDD已经是扩展模式";
-        return false;
+        return true;
       }
 
       BOOST_LOG(info) << "检测到VDD处于" << (is_vdd_only ? "仅启用" : "复制") << "模式，切换到扩展模式";
@@ -1161,8 +1010,9 @@ namespace display_device {
       }
 
       if (physical_devices.empty()) {
-        BOOST_LOG(debug) << "没有物理显示器需要处理";
-        return true;
+        // Continue building a VDD-only topology. This is required on headless
+        // systems where a cold-created monitor is not activated automatically.
+        BOOST_LOG(debug) << "No physical displays to preserve; activating a VDD-only topology";
       }
 
       active_topology_t new_topology;

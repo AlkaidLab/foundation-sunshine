@@ -6,6 +6,9 @@
 
 #include "../tests_common.h"
 
+#include <algorithm>
+#include <limits>
+
 namespace {
 
   double
@@ -97,6 +100,52 @@ TEST(VideoInputActivityBoostPolicy, CapsBoostAtStreamFps) {
   ASSERT_TRUE(policy.useful);
   EXPECT_EQ(policy.fps, 120);
   EXPECT_NEAR(millis(policy.frame_time), 1000.0 / 120.0, 0.001);
+}
+
+TEST(HlgSystemGamma, UsesBt2100ProductionMonitorFormula) {
+  EXPECT_NEAR(video::hlg_system_gamma(400.0f), 1.0328653f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(678.0f), 1.12912f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(1000.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(2000.0f), 1.32643f, 0.00001f);
+}
+
+TEST(HlgSystemGamma, UsesBt2100ExtendedRangeFormula) {
+  EXPECT_NEAR(video::hlg_system_gamma(300.0f), 0.99949f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(4000.0f), 1.48119f, 0.00001f);
+}
+
+TEST(HlgSystemGamma, FallsBackToReferencePeakForInvalidValues) {
+  EXPECT_NEAR(video::hlg_system_gamma(0.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(-1.0f), 1.2f, 0.00001f);
+  EXPECT_NEAR(video::hlg_system_gamma(std::numeric_limits<float>::quiet_NaN()), 1.2f, 0.00001f);
+}
+
+TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
+  video::hdr_pipeline_status_t status {
+    .hdr_mode = "hlg",
+    .analysis_mode = "auto",
+    .analysis_active = true,
+    .metadata_formats = { "hdr_vivid" },
+    .conversion_path = "compute_shader_direct",
+  };
+
+  const auto id = video::register_hdr_pipeline_status(status);
+  auto statuses = video::get_hdr_pipeline_statuses();
+  auto entry = std::ranges::find(statuses, id, &video::hdr_pipeline_status_t::id);
+  ASSERT_NE(entry, statuses.end());
+  EXPECT_EQ(entry->hdr_mode, "hlg");
+  EXPECT_FALSE(entry->scene_metadata_active);
+
+  status.scene_metadata_active = true;
+  video::update_hdr_pipeline_status(id, status);
+  statuses = video::get_hdr_pipeline_statuses();
+  entry = std::ranges::find(statuses, id, &video::hdr_pipeline_status_t::id);
+  ASSERT_NE(entry, statuses.end());
+  EXPECT_TRUE(entry->scene_metadata_active);
+
+  video::unregister_hdr_pipeline_status(id);
+  statuses = video::get_hdr_pipeline_statuses();
+  EXPECT_EQ(std::ranges::find(statuses, id, &video::hdr_pipeline_status_t::id), statuses.end());
 }
 
 struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {

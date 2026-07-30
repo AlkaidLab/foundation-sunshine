@@ -437,6 +437,16 @@ namespace crypto {
     return p;
   }
 
+  bool
+  x509_matches_pem(const X509 *cert, const std::string_view &pem) {
+    if (!cert) {
+      return false;
+    }
+
+    auto pem_cert = x509(pem);
+    return pem_cert && X509_cmp(cert, pem_cert.get()) == 0;
+  }
+
   pkey_t
   pkey(const std::string_view &k) {
     bio_t io { BIO_new(BIO_s_mem()) };

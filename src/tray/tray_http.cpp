@@ -17,6 +17,7 @@
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/session.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/http_util.h"
@@ -185,6 +186,20 @@ namespace tray_http {
         { "status", false },
         { "error", error },
       };
+    }
+
+    std::optional<std::string_view>
+    vdd_prerequisite_error() {
+      const auto status = display_device::vdd_utils::get_vdd_status();
+      switch (display_device::vdd_utils::classify_vdd_prerequisite(status)) {
+        case display_device::vdd_utils::vdd_prerequisite_e::usable:
+          return std::nullopt;
+        case display_device::vdd_utils::vdd_prerequisite_e::unavailable:
+          return "VDD_DRIVER_UNAVAILABLE: repair ZakoVDD from the Sunshine desktop VDD settings first";
+        case display_device::vdd_utils::vdd_prerequisite_e::not_installed:
+          return "VDD_DRIVER_NOT_INSTALLED: install ZakoVDD from the Sunshine desktop VDD settings first";
+      }
+      return std::nullopt;
     }
 
     bool
@@ -371,6 +386,9 @@ namespace tray_http {
           update_tray_vdd_state();
           return action_error("VDD is already active");
         }
+        if (const auto error = vdd_prerequisite_error()) {
+          return action_error(*error);
+        }
         return start_vdd_action(true, action);
       }
 
@@ -396,7 +414,13 @@ namespace tray_http {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
           return action_error("VDD settings cannot change while an action is in progress or cooling down");
         }
-        config::video.vdd_keep_enabled = enabled.value_or(!config::video.vdd_keep_enabled);
+        const bool next_enabled = enabled.value_or(!config::video.vdd_keep_enabled);
+        if (next_enabled) {
+          if (const auto error = vdd_prerequisite_error()) {
+            return action_error(*error);
+          }
+        }
+        config::video.vdd_keep_enabled = next_enabled;
         config::update_config({ { "vdd_keep_enabled", config::video.vdd_keep_enabled ? "true" : "false" } });
         update_tray_vdd_state();
         return action_success(config::video.vdd_keep_enabled ? "VDD keep-enabled mode enabled" : "VDD keep-enabled mode disabled");
@@ -406,7 +430,13 @@ namespace tray_http {
         if (tray_vdd_action_running.load() || tray_vdd_action_cooldown.load()) {
           return action_error("VDD settings cannot change while an action is in progress or cooling down");
         }
-        config::video.vdd_headless_create_enabled = enabled.value_or(!config::video.vdd_headless_create_enabled);
+        const bool next_enabled = enabled.value_or(!config::video.vdd_headless_create_enabled);
+        if (next_enabled) {
+          if (const auto error = vdd_prerequisite_error()) {
+            return action_error(*error);
+          }
+        }
+        config::video.vdd_headless_create_enabled = next_enabled;
         config::update_config({ { "vdd_headless_create", config::video.vdd_headless_create_enabled ? "true" : "false" } });
         update_tray_vdd_state();
         return action_success(config::video.vdd_headless_create_enabled ? "Headless VDD auto-create enabled" : "Headless VDD auto-create disabled");

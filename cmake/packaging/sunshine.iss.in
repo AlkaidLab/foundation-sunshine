@@ -281,7 +281,8 @@ Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunsh
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-Filename: "{app}\scripts\install-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
+; Upgrade older VDDs, but never silently replace a healthy newer/custom driver.
+Filename: "{app}\scripts\install-vdd.bat"; Parameters: "--preserve-healthy-existing"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
 Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled

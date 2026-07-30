@@ -463,10 +463,14 @@ namespace nvhttp {
     }
 
     std::string
-    client_uuid_for_cert(const std::string &cert) {
+    client_uuid_for_cert(const X509 *cert) {
+      if (!cert) {
+        return {};
+      }
+
       std::shared_lock<std::shared_mutex> cl(client_state_mutex);
       for (const auto &named_cert : client_root.named_devices) {
-        if (named_cert.cert == cert) {
+        if (crypto::x509_matches_pem(cert, named_cert.cert)) {
           return named_cert.uuid;
         }
       }

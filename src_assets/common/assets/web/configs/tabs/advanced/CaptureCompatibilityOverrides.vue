@@ -51,20 +51,20 @@ function addRemapping(type) {
 <template>
   <PlatformLayout :platform="platform">
     <template #windows>
-      <div class="mb-3 accordion">
+      <div class="my-3 accordion">
         <div class="accordion-item">
           <h2 class="accordion-header">
             <button
               class="accordion-button collapsed"
               type="button"
               data-bs-toggle="collapse"
-              data-bs-target="#experimental-features-collapse"
+              data-bs-target="#capture-compatibility-overrides-collapse"
             >
               {{ $t('config.experimental_features') }}
             </button>
           </h2>
           <div
-            id="experimental-features-collapse"
+            id="capture-compatibility-overrides-collapse"
             class="accordion-collapse collapse"
           >
             <div class="accordion-body">
@@ -91,8 +91,9 @@ function addRemapping(type) {
                 <div class="form-text">{{ $t('config.window_title_desc') }}</div>
               </div>
 
-              <!-- WGC Disable Secure Desktop -->
+              <!-- WGC compatibility -->
               <Checkbox
+                v-if="config.capture === 'wgc'"
                 class="mb-3"
                 id="wgc_disable_secure_desktop"
                 locale-prefix="config"
@@ -109,7 +110,7 @@ function addRemapping(type) {
                 default="true"
               ></Checkbox>
 
-              <!-- Capture Compute Shader (HDR RGB->P010 fast path) -->
+              <!-- Frame conversion strategy -->
               <div class="mb-3">
                 <label for="capture_compute_shader" class="form-label">
                   {{ $t('config.capture_compute_shader') }}
@@ -118,12 +119,15 @@ function addRemapping(type) {
                   id="capture_compute_shader"
                   class="form-select"
                   v-model="config.capture_compute_shader"
+                  aria-describedby="capture_compute_shader_desc"
                 >
                   <option value="auto">{{ $t('config.capture_compute_shader_auto') }}</option>
                   <option value="on">{{ $t('config.capture_compute_shader_on') }}</option>
                   <option value="off">{{ $t('config.capture_compute_shader_off') }}</option>
                 </select>
-                <div class="form-text">{{ $t('config.capture_compute_shader_desc') }}</div>
+                <div id="capture_compute_shader_desc" class="form-text">
+                  {{ $t('config.capture_compute_shader_desc') }}
+                </div>
               </div>
 
               <!-- Display Mode Remapping -->

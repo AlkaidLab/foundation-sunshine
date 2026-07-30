@@ -474,8 +474,8 @@ namespace config {
     60,  // input_activity_boost_fps
     150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
-    false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
-    "auto"s,  // capture_compute_shader (default: auto -> off until validated)
+    "auto"s,  // hdr_luminance_analysis (automatic for HDR streams, inactive for SDR)
+    "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
   };
@@ -528,13 +528,6 @@ namespace config {
     SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
 
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
-  };
-
-  webhook_t webhook {
-    false,  // enabled
-    {},     // url
-    false,  // skip_ssl_verify
-    1000ms, // timeout
   };
 
   input_t input {
@@ -1327,7 +1320,31 @@ namespace config {
     bool_f(vars, "input_activity_boost", video.input_activity_boost);
     int_between_f(vars, "input_activity_boost_fps", video.input_activity_boost_fps, { 0, 1000 });
     int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
-    bool_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    string_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    if (video.hdr_luminance_analysis == "true" ||
+        video.hdr_luminance_analysis == "enabled" ||
+        video.hdr_luminance_analysis == "yes" ||
+        video.hdr_luminance_analysis == "enable" ||
+        video.hdr_luminance_analysis == "1") {
+      video.hdr_luminance_analysis = "on";
+    }
+    else if (video.hdr_luminance_analysis == "false" ||
+             video.hdr_luminance_analysis == "disabled" ||
+             video.hdr_luminance_analysis == "no" ||
+             video.hdr_luminance_analysis == "disable" ||
+             video.hdr_luminance_analysis == "0") {
+      video.hdr_luminance_analysis = "off";
+    }
+    if (video.hdr_luminance_analysis.empty()) {
+      video.hdr_luminance_analysis = "auto";
+    }
+    if (video.hdr_luminance_analysis != "auto" &&
+        video.hdr_luminance_analysis != "on" &&
+        video.hdr_luminance_analysis != "off") {
+      BOOST_LOG(warning) << "Invalid hdr_luminance_analysis: ["sv << video.hdr_luminance_analysis
+                         << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
+      video.hdr_luminance_analysis = "auto";
+    }
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
@@ -1513,15 +1530,6 @@ namespace config {
     if (sunshine.max_log_size_mb < 0) {
       sunshine.max_log_size_mb = 0;
     }
-
-    // Webhook configuration
-    bool_f(vars, "webhook_enabled"s, webhook.enabled);
-    string_f(vars, "webhook_url"s, webhook.url);
-    bool_f(vars, "webhook_skip_ssl_verify"s, webhook.skip_ssl_verify);
-    
-    int webhook_timeout = 1000;
-    int_between_f(vars, "webhook_timeout"s, webhook_timeout, { 100, 5000 });
-    webhook.timeout = std::chrono::milliseconds(webhook_timeout);
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian

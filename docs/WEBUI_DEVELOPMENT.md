@@ -48,11 +48,28 @@ npm run preview
 
 # 自动构建并预览生产版本（推荐）
 npm run preview:build
+
+# 检查 WebUI JavaScript 和 Vue 组件
+npm run lint:webui
 ```
 
 > **注意**: 项目已配置为使用 Rolldown（Vite 5.1+ 的实验性打包器）以获得更快的构建速度。所有构建命令默认启用 Rolldown。
 
-### 3. 开发服务器特性
+### 3. 代码静态检查
+
+WebUI 使用 ESLint 检查 `src_assets/common/assets/web` 下的 JavaScript 和 Vue 单文件组件。提交前必须运行：
+
+```bash
+npm run lint:webui
+```
+
+当前规则重点检查未声明的标识符。新增或修改代码时，使用到的变量、函数和模块成员必须在当前作用域声明或显式导入，不能依赖构建阶段无法验证的隐式全局变量。浏览器全局变量由 ESLint 配置统一声明；仅供测试、构建脚本或特定运行环境使用的全局变量，应限制在对应文件范围内。
+
+不要使用 `eslint-disable` 隐藏缺失导入或作用域错误。确实需要例外时，应将范围限制到最小，并在配置或代码中说明该全局变量由什么运行环境提供。
+
+CI 会在 WebUI 测试和构建之前执行相同的检查。Lint 失败时应先修复错误，不应跳过检查。
+
+### 4. 开发服务器特性
 
 - **HTTPS支持**: 自动生成本地SSL证书
 - **热重载**: 实时更新代码变更
@@ -808,6 +825,13 @@ npm run i18n:validate
 - 模拟 API 数据用于前端开发
 - 使用 Vue DevTools 进行组件调试
 
+提交 WebUI 改动前至少运行：
+
+```bash
+npm run lint:webui
+npm run test:webui
+```
+
 ## 📦 构建和部署
 
 ### 构建命令
@@ -884,6 +908,7 @@ const increment = () => count.value++
 - [ ] 添加错误处理
 - [ ] 使用国际化 (`$t` 或 `t`)
 - [ ] 添加必要的用户反馈
+- [ ] `npm run lint:webui` 检查通过
 - [ ] 代码格式化统一
 - [ ] 添加必要的注释
 
@@ -948,6 +973,8 @@ import { trackEvents } from '../config/firebase.js'
    - 添加必要的注释
 
 3. **测试验证**
+   - 提交前运行 `npm run lint:webui`
+   - 提交前运行 `npm run test:webui`
    - 提交前运行构建命令确保无错误
    - 测试新功能在不同浏览器中的表现
 

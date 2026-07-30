@@ -44,6 +44,56 @@ file(GLOB NVPREFS_FILES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/*.h")
 
+# Keep every supported NVENC API line independently pinned. NVIDIA can raise
+# the minimum driver requirement in a minor SDK release, so updating one
+# directory in-place must never silently change the runtime compatibility tier.
+set(NVENC_SDK_MANIFEST "${CMAKE_SOURCE_DIR}/src/nvenc/nvenc_sdk_versions.def")
+file(STRINGS "${NVENC_SDK_MANIFEST}" nvenc_sdk_entries
+        REGEX "^SUNSHINE_NVENC_SDK\\([0-9]+,[ \t]*[0-9_]+\\)$")
+
+if(NOT nvenc_sdk_entries)
+    message(FATAL_ERROR "No NVENC SDK compatibility tiers found in ${NVENC_SDK_MANIFEST}")
+endif()
+
+function(validate_nvenc_sdk_headers sdk_version)
+    set(header "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/${sdk_version}/include/ffnvcodec/nvEncodeAPI.h")
+    if(NOT EXISTS "${header}")
+        message(FATAL_ERROR
+                "NVENC SDK ${sdk_version} headers are missing. "
+                "Run: git submodule update --init third-party/nvenc-headers/${sdk_version}")
+    endif()
+
+    file(STRINGS "${header}" major_line
+            REGEX "^#define[ \t]+NVENCAPI_MAJOR_VERSION[ \t]+[0-9]+")
+    file(STRINGS "${header}" minor_line
+            REGEX "^#define[ \t]+NVENCAPI_MINOR_VERSION[ \t]+[0-9]+")
+    string(REGEX MATCH "[0-9]+$" major_version "${major_line}")
+    string(REGEX MATCH "[0-9]+$" minor_version "${minor_line}")
+    math(EXPR actual_version "${major_version} * 100 + ${minor_version}")
+
+    if(NOT actual_version EQUAL sdk_version)
+        message(FATAL_ERROR
+                "NVENC headers in ${sdk_version}/ expose API ${actual_version}. "
+                "Add a separate compatibility tier instead of replacing an existing one.")
+    endif()
+
+    foreach(factory_extension IN ITEMS h cpp)
+        set(factory
+                "${CMAKE_SOURCE_DIR}/src/nvenc/win/impl/nvenc_dynamic_factory_${sdk_version}.${factory_extension}")
+        if(NOT EXISTS "${factory}")
+            message(FATAL_ERROR
+                    "NVENC SDK ${sdk_version} factory is missing: ${factory}")
+        endif()
+    endforeach()
+endfunction()
+
+foreach(nvenc_sdk_entry IN LISTS nvenc_sdk_entries)
+    string(REGEX REPLACE
+            "^SUNSHINE_NVENC_SDK\\(([0-9]+),.*$" "\\1"
+            sdk_version "${nvenc_sdk_entry}")
+    validate_nvenc_sdk_headers(${sdk_version})
+endforeach()
+
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers")
 file(GLOB_RECURSE NVENC_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/nvenc/*.h"
@@ -142,6 +192,7 @@ set(OPENSSL_LIBRARIES
 list(PREPEND PLATFORM_LIBRARIES
         ${CURL_STATIC_LIBRARIES}
         avrt
+        crypt32
         d3d11
         D3DCompiler
         dwmapi

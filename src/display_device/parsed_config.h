@@ -185,8 +185,6 @@ namespace display_device {
     bool
     allows_vdd_fallback() const;
 
-    bool
-    requires_vdd(bool requested_device_exists, bool is_vdd_device) const;
   };
 
   display_request_t
@@ -206,6 +204,6 @@ namespace display_device {
    * ```
    */
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure);
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
 }  // namespace display_device

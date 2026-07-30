@@ -28,6 +28,8 @@ namespace system_tray_i18n {
   const std::string KEY_VDD_CANCEL_CREATE_LOG = "vdd_cancel_create_log";
   const std::string KEY_VDD_PERSISTENT_CONFIRM_TITLE = "vdd_persistent_confirm_title";
   const std::string KEY_VDD_PERSISTENT_CONFIRM_MSG = "vdd_persistent_confirm_msg";
+  const std::string KEY_VDD_PREREQUISITE_TITLE = "vdd_prerequisite_title";
+  const std::string KEY_VDD_PREREQUISITE_MSG = "vdd_prerequisite_msg";
   const std::string KEY_IMPORT_CONFIG = "import_config";
   const std::string KEY_EXPORT_CONFIG = "export_config";
   const std::string KEY_RESET_TO_DEFAULT = "reset_to_default";
@@ -100,6 +102,8 @@ namespace system_tray_i18n {
     { KEY_VDD_CANCEL_CREATE_LOG, "User cancelled creating virtual display" },
     { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "Keep Virtual Display Enabled" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "By enabling this option, the virtual display will NOT be closed after you stop streaming.\n\nDo you want to enable this feature?" },
+    { KEY_VDD_PREREQUISITE_TITLE, "Virtual Display Driver Unavailable" },
+    { KEY_VDD_PREREQUISITE_MSG, "ZakoVDD is missing or unhealthy. Open the Sunshine desktop app and install or repair it from VDD settings before using this action." },
     { KEY_IMPORT_CONFIG, "Import Config" },
     { KEY_EXPORT_CONFIG, "Export Config" },
     { KEY_RESET_TO_DEFAULT, "Reset Config" },
@@ -167,8 +171,10 @@ namespace system_tray_i18n {
     { KEY_VDD_CONFIRM_KEEP_TITLE, "显示器确认" },
     { KEY_VDD_CONFIRM_KEEP_MSG, "已创建基地显示器，是否继续使用？\n\n如不确认，20秒后将自动关闭显示器" },
     { KEY_VDD_CANCEL_CREATE_LOG, "用户取消创建基地显示器" },
-    { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "保持开启虚拟显示器" },
+    { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "保持开启基地显示器" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "启用此选项后，在串流结束后基地显示器将不会被自动关闭。\n\n确定要开启此功能吗？" },
+    { KEY_VDD_PREREQUISITE_TITLE, "基地显示器驱动不可用（ZakoVDD）" },
+    { KEY_VDD_PREREQUISITE_MSG, "基地显示器驱动（ZakoVDD）未安装或状态异常。请打开 Sunshine 桌面应用，在基地显示器设置中安装或修复驱动后再使用此操作。" },
     { KEY_IMPORT_CONFIG, "导入配置" },
     { KEY_EXPORT_CONFIG, "导出配置" },
     { KEY_RESET_TO_DEFAULT, "重置配置" },
@@ -237,6 +243,8 @@ namespace system_tray_i18n {
     { KEY_VDD_CANCEL_CREATE_LOG, "ユーザーが仮想ディスプレイの作成をキャンセルしました" },
     { KEY_VDD_PERSISTENT_CONFIRM_TITLE, "仮想ディスプレイを有効に保つ" },
     { KEY_VDD_PERSISTENT_CONFIRM_MSG, "このオプションを有効にすると、ストリーミング終了後に仮想ディスプレイは**自動的に閉じられません**。\n\nこの機能を有効にしますか？" },
+    { KEY_VDD_PREREQUISITE_TITLE, "仮想ディスプレイドライバーを利用できません" },
+    { KEY_VDD_PREREQUISITE_MSG, "ZakoVDD が未インストールか、正常に動作していません。Sunshine デスクトップアプリを開き、VDD 設定でドライバーをインストールまたは修復してから、この操作を実行してください。" },
     { KEY_IMPORT_CONFIG, "設定をインポート" },
     { KEY_EXPORT_CONFIG, "設定をエクスポート" },
     { KEY_RESET_TO_DEFAULT, "設定をリセット" },

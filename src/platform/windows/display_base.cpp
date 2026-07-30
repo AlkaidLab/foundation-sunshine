@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initguid.h>
+#include <iterator>
 #include <thread>
 
 #include <boost/algorithm/string/join.hpp>
@@ -410,6 +411,15 @@ namespace platf::dxgi {
 
           frame_pacing_group_frames = 1;
         }
+      }
+
+      if (status == capture_e::ok && img_out) {
+        // Keep the encoder-ready time separate from the producer's presentation
+        // timestamp: the former measures host processing, while the latter drives RTP PTS.
+        if (!img_out->pipeline_trace) {
+          img_out->pipeline_trace.emplace();
+        }
+        img_out->pipeline_trace->capture_ready = std::chrono::steady_clock::now();
       }
 
       switch (status) {
@@ -1049,6 +1059,15 @@ namespace platf::dxgi {
 
   const char *
   display_base_t::dxgi_format_to_string(DXGI_FORMAT format) {
+    // The table is indexed directly by the DXGI_FORMAT value, but it only covers the
+    // contiguous range of documented formats and contains NULL holes for the reserved
+    // values between B4G4R4A4_UNORM (115) and P208 (130). Formats outside that range
+    // (e.g. A4B4G4R4_UNORM = 191, the sampler feedback opaque formats, or a bogus value
+    // from a driver) would otherwise read out of bounds, and the NULL holes would be
+    // streamed as a null char pointer, which is undefined behavior.
+    if (format >= std::size(format_str) || !format_str[format]) {
+      return "DXGI_FORMAT_UNRECOGNIZED";
+    }
     return format_str[format];
   }
 
@@ -1129,6 +1148,11 @@ namespace platf {
       BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
       try_types = { "ddx" };
     }
+    else if (capture_backend == "vdd") {
+      // Direct VDD capture is preferred, but DDX remains a safe last resort
+      // when the producer cannot represent the selected desktop mode.
+      try_types = { "vdd", "ddx" };
+    }
     else {
       try_types = { capture_backend };
     }
@@ -1164,6 +1188,10 @@ namespace platf {
 
       if (ret) {
         return ret;
+      }
+
+      if (type == "vdd") {
+        BOOST_LOG(warning) << "[vdd] direct capture initialization failed; trying DDX capture for the selected VDD output"sv;
       }
     }
 

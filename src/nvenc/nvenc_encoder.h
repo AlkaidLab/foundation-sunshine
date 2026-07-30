@@ -83,8 +83,8 @@ namespace nvenc {
 
     /**
      * @brief Set per-frame HDR luminance statistics for dynamic metadata injection.
-     *        When valid stats are provided, the encoder will generate HDR10+ SEI/OBU
-     *        payloads and inject them into each encoded frame.
+     *        When valid stats are provided, the encoder injects HDR10+ for PQ and
+     *        HDR Vivid for PQ or HLG into each encoded HEVC/AV1 frame.
      * @param stats Per-frame luminance statistics from GPU analysis.
      */
     virtual void

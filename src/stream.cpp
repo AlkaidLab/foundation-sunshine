@@ -49,6 +49,7 @@ extern "C" {
 #include "tray/tray_state.h"
 #include "thread_safe.h"
 #include "utility.h"
+#include "webhook/webhook.h"
 
 #include "clipboard_bridge.h"
 #include "platform/common.h"
@@ -107,6 +108,15 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace stream {
+
+  std::uint32_t
+  video_rtp_timestamp(
+    std::chrono::steady_clock::time_point presentation_time,
+    std::chrono::steady_clock::time_point epoch) {
+    using signed_rtp_tick = std::chrono::duration<std::int64_t, std::ratio<1, 90000>>;
+    return static_cast<std::uint32_t>(
+      std::chrono::round<signed_rtp_tick>(presentation_time - epoch).count());
+  }
 
   namespace {
     std::int64_t
@@ -504,6 +514,8 @@ namespace stream {
     // 添加客户端名称字段
     std::string client_name;
     std::string client_cert_uuid;
+    std::string app_name;
+    int app_id = 0;
 
     std::int64_t created_at_ms { 0 };
     std::atomic<std::int64_t> last_control_activity_ms { 0 };
@@ -2336,40 +2348,47 @@ namespace stream {
         frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
       }
 
-      if (packet->frame_timestamp) {
+      const auto frame_dequeue_time = std::chrono::steady_clock::now();
+      auto processing_start = packet->frame_timestamp;
+      if (packet->pipeline_trace && packet->pipeline_trace->capture_ready) {
+        // Presentation time belongs to the RTP clock. Host processing starts
+        // when the captured frame is ready for conversion and encoding.
+        processing_start = packet->pipeline_trace->capture_ready;
+      }
+
+      if (processing_start) {
         auto duration_to_latency = [](const std::chrono::steady_clock::duration &duration) {
           const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
           return (uint16_t) std::clamp<decltype(duration_us)>((duration_us + 50) / 100, 0, std::numeric_limits<uint16_t>::max());
         };
 
-        auto now = std::chrono::steady_clock::now();
-        uint16_t latency = duration_to_latency(now - *packet->frame_timestamp);
+        uint16_t latency = duration_to_latency(frame_dequeue_time - *processing_start);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
-        perf::record_host_latency(session->launch_session_id, latency / 10., now);
-
-        if (packet->pipeline_trace) {
-          const auto &trace = *packet->pipeline_trace;
-          const auto elapsed_ms = [](const auto &begin, const auto &end) -> std::optional<double> {
-            if (!begin || !end) {
-              return std::nullopt;
-            }
-
-            return std::chrono::duration<double, std::milli>(*end - *begin).count();
-          };
-
-          perf::pipeline_sample_t sample;
-          sample.capture_to_convert_ms = elapsed_ms(trace.capture_ready, trace.convert_begin);
-          sample.convert_ms = elapsed_ms(trace.convert_begin, trace.convert_end);
-          sample.encode_queue_ms = elapsed_ms(trace.convert_end, trace.encode_submit);
-          sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
-          sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { now });
-          sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { now });
-          perf::record_pipeline_sample(session->launch_session_id, sample, now);
-        }
+        perf::record_host_latency(session->launch_session_id, latency / 10., frame_dequeue_time);
       }
       else {
         frame_header.frame_processing_latency = 0;
+      }
+
+      if (packet->pipeline_trace) {
+        const auto &trace = *packet->pipeline_trace;
+        const auto elapsed_ms = [](const auto &begin, const auto &end) -> std::optional<double> {
+          if (!begin || !end) {
+            return std::nullopt;
+          }
+
+          return std::chrono::duration<double, std::milli>(*end - *begin).count();
+        };
+
+        perf::pipeline_sample_t sample;
+        sample.capture_to_convert_ms = elapsed_ms(trace.capture_ready, trace.convert_begin);
+        sample.convert_ms = elapsed_ms(trace.convert_begin, trace.convert_end);
+        sample.encode_queue_ms = elapsed_ms(trace.convert_end, trace.encode_submit);
+        sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
+        sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { frame_dequeue_time });
+        sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { frame_dequeue_time });
+        perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
       auto fecPercentage = config::stream.fec_percentage;
@@ -2455,6 +2474,13 @@ namespace stream {
         size_t ratecontrol_frame_packets_sent = 0;
         size_t ratecontrol_group_packets_sent = 0;
 
+        // RTP video timestamps use the 90 kHz media clock and the original
+        // capture presentation timestamp. Frames without a capture timestamp
+        // (intentional duplicates) retain the next scheduled pacing time.
+        const bool frame_is_dupe = !packet->frame_timestamp;
+        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
+        const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
+
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
           auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
@@ -2499,16 +2525,6 @@ namespace stream {
           };
 
           size_t next_shard_to_send = 0;
-
-          // RTP video timestamps use a 90 KHz clock and the frame_timestamp from when the frame was captured
-          // When a timestamp isn't available (duplicate frames), the timestamp from rate control is used instead.
-          bool frame_is_dupe = false;
-          if (!packet->frame_timestamp) {
-            packet->frame_timestamp = ratecontrol_next_frame_start;
-            frame_is_dupe = true;
-          }
-          using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
-          uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - video_epoch).count();
 
           // set FEC info now that we know for sure what our percentage will be for this frame
           for (auto x = 0; x < shards.size(); ++x) {
@@ -3177,9 +3193,39 @@ namespace stream {
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
 
+      std::string client_ip = session.control.expected_peer_address;
+      if (session.control.peer) {
+        try {
+          client_ip = platf::from_sockaddr(
+            (sockaddr *) &session.control.peer->address.address
+          );
+        }
+        catch (...) {
+          // Preserve the handshake address when the live peer cannot be
+          // converted during teardown.
+        }
+      }
+
+      const auto lifecycle = session.lifecycle.snapshot();
+      try {
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_SESSION_END,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = session.client_name,
+          .client_ip = std::move(client_ip),
+          .app_name = session.app_name,
+          .app_id = session.app_id,
+          .session_id = std::to_string(session.launch_session_id),
+          .extra_data = {{"reason", stop_reason_name(lifecycle.stop_reason)}}
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook session end event construction failed"sv;
+      }
+
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id
                        << ", client_uuid="sv << session.client_cert_uuid
-                       << ", reason="sv << stop_reason_name(session.lifecycle.snapshot().stop_reason) << ']';
+                       << ", reason="sv << stop_reason_name(lifecycle.stop_reason) << ']';
     }
 
     int
@@ -3280,6 +3326,25 @@ namespace stream {
         }
       }
 
+      try {
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_SESSION_START,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = session.client_name,
+          .client_ip = addr_string,
+          .app_name = session.app_name,
+          .app_id = session.app_id,
+          .session_id = std::to_string(session.launch_session_id),
+          .extra_data = {
+            {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
+            {"fps", std::to_string(session.config.monitor.framerate)}
+          }
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook session start event construction failed"sv;
+      }
+
       return 0;
     }
 
@@ -3296,6 +3361,8 @@ namespace stream {
       // 设置客户端名称
       session->client_name = launch_session.client_name;
       session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->app_id = launch_session.appid;
+      session->app_name = proc::proc.get_app_name(launch_session.appid);
 
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;

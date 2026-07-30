@@ -505,7 +505,16 @@ namespace display_device {
       const std::unordered_set<std::string> valid_ids_set(valid_device_ids.begin(), valid_device_ids.end());
 
       if (change_hdr_state) {
-        const auto original_hdr_states { previous_hdr_states.empty() ? get_current_hdr_states(valid_device_ids) : previous_hdr_states };
+        const auto current_hdr_states { get_current_hdr_states(valid_device_ids) };
+        if (current_hdr_states.empty()) {
+          return boost::none;
+        }
+
+        auto original_hdr_states { previous_hdr_states };
+        for (const auto &[device_id, state] : current_hdr_states) {
+          original_hdr_states.try_emplace(device_id, state);
+        }
+
         auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
         filter_stale_devices(new_hdr_states, valid_ids_set, "HDR states");
 

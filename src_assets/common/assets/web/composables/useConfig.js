@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { trackEvents } from '../config/firebase.js'
 import { getBootstrapConfig } from '../config/bootstrapData.js'
-import { apiFetch } from '../utils/apiFetch.js'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 
 // 平台相关的标签页排除规则
@@ -61,13 +61,10 @@ const DEFAULT_TABS = [
       audio_sink: '',
       virtual_sink: '',
       install_steam_audio_drivers: 'enabled',
-      adapter_name: '',
       output_name: '',
-      capture_target: 'display',
-      capture_compute_shader: 'auto',
+      hdr_luminance_analysis: 'auto',
       vdd_borrowed_texture: 'enabled',
       vdd_vulkan_hdr_bridge: 'enabled',
-      window_title: '',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
       resolution_change: 'automatic',
@@ -75,7 +72,6 @@ const DEFAULT_TABS = [
       refresh_rate_change: 'automatic',
       manual_refresh_rate: '',
       hdr_prep: 'automatic',
-      display_mode_remapping: '[]',
       resolutions: '[1280x720,1920x1080,2560x1080,2560x1440,2560x1600,3440x1440,3840x2160]',
       fps: '[60,90,120,144]',
       max_bitrate: 0,
@@ -97,11 +93,8 @@ const DEFAULT_TABS = [
       close_verify_safe: 'disabled',
       mdns_broadcast: 'enabled',
       ping_timeout: 10000,
-      webhook_url: '',
-      webhook_enabled: 'disabled',
-      webhook_skip_ssl_verify: 'disabled',
-      webhook_timeout: 1000,
       pair_max_attempts: 10,
+      fec_percentage: 20,
     },
   },
   {
@@ -120,9 +113,11 @@ const DEFAULT_TABS = [
     id: 'advanced',
     name: 'Advanced',
     options: {
-      fec_percentage: 20,
-      qp: 28,
-      min_threads: 2,
+      adapter_name: '',
+      capture_target: 'display',
+      capture_compute_shader: 'auto',
+      window_title: '',
+      display_mode_remapping: '[]',
       hevc_mode: 0,
       av1_mode: 0,
       capture: '',
@@ -201,6 +196,8 @@ const DEFAULT_TABS = [
         options: {
           sw_preset: 'superfast',
           sw_tune: 'zerolatency',
+          qp: 28,
+          min_threads: 2,
         },
       },
     ],
@@ -508,24 +505,6 @@ export function useConfig() {
       )
     }
 
-    if (
-      valueChanged(currentConfig, 'webhook_skip_ssl_verify') &&
-      isEnabledValue(currentConfig.webhook_skip_ssl_verify)
-    ) {
-      addRisk(
-        risks,
-        createRisk('webhook_skip_ssl_verify', 'high', { currentValue: currentConfig.webhook_skip_ssl_verify }),
-      )
-    }
-
-    if (
-      (valueChanged(currentConfig, 'webhook_enabled') || valueChanged(currentConfig, 'webhook_url')) &&
-      isEnabledValue(currentConfig.webhook_enabled) &&
-      currentConfig.webhook_url
-    ) {
-      addRisk(risks, createRisk('webhook_enabled', 'medium', { currentValue: currentConfig.webhook_url }))
-    }
-
     if (valueChanged(currentConfig, 'pair_max_attempts') && Number(currentConfig.pair_max_attempts) === 0) {
       addRisk(risks, createRisk('pair_limit_disabled', 'high', { currentValue: currentConfig.pair_max_attempts }))
     }
@@ -641,12 +620,16 @@ export function useConfig() {
     removeDefaultValues(configData)
 
     try {
-      const response = await apiFetch('/api/config', {
+      const configResult = await apiJson('/api/config', {
         method: 'POST',
         body: configData,
       })
+      const generalConfigSaved = configResult.status === true || configResult.status === 'true'
+      if (!generalConfigSaved) {
+        throw new Error(configResult.error || 'Failed to save configuration')
+      }
 
-      saved.value = response.ok
+      saved.value = true
 
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')

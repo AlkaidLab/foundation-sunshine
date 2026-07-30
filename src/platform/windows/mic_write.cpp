@@ -7,8 +7,10 @@
 // Platform includes
 #include <audioclient.h>
 #include <avrt.h>
+#include <cmath>
 #include <filesystem>
 #include <mmdeviceapi.h>
+#include <mutex>
 #include <roapi.h>
 #include <synchapi.h>
 #include <urlmon.h>
@@ -125,7 +127,7 @@ namespace platf::audio {
   }
 
   int
-  mic_write_wasapi_t::init() {
+  mic_write_wasapi_t::init(bool test_mode) {
     last_seq = 0;
     first_packet = true;
     total_packets = 0;
@@ -154,17 +156,19 @@ namespace platf::audio {
       return -1;
     }
 
-    // 存储原始音频设备设置
-    store_original_audio_settings();
+    if (!test_mode) {
+      // 存储原始音频设备设置
+      store_original_audio_settings();
 
-    // 尝试创建或使用虚拟音频设备
-    if (create_virtual_audio_device() != 0) {
-      BOOST_LOG(warning) << "Virtual audio device not available, microphone redirection may not work";
-    }
+      // 尝试创建或使用虚拟音频设备
+      if (create_virtual_audio_device() != 0) {
+        BOOST_LOG(warning) << "Virtual audio device not available, microphone redirection may not work";
+      }
 
-    // 设置loopback
-    if (setup_virtual_mic_loopback() != 0) {
-      BOOST_LOG(warning) << "Failed to setup virtual microphone loopback";
+      // 设置loopback
+      if (setup_virtual_mic_loopback() != 0) {
+        BOOST_LOG(warning) << "Failed to setup virtual microphone loopback";
+      }
     }
 
     // 对于麦克风重定向，我们需要使用虚拟音频输出设备
@@ -178,8 +182,17 @@ namespace platf::audio {
       }
     }
 
+    if (test_mode) {
+      const auto vb_capture = find_capture_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
+      if (!vb_matched || !vb_capture || FAILED(hr) || !device) {
+        BOOST_LOG(warning) << "Microphone route test requires active VB-Cable render and capture endpoints";
+        cleanup();
+        return -1;
+      }
+    }
+
     // 最后尝试使用默认的扬声器设备
-    if (FAILED(hr) || !device) {
+    if (!test_mode && (FAILED(hr) || !device)) {
       hr = device_enum->GetDefaultAudioEndpoint(eRender, eConsole, &device);
       if (SUCCEEDED(hr) && device) {
         BOOST_LOG(info) << "Using default console audio output device for client mic redirection";
@@ -495,14 +508,104 @@ namespace platf::audio {
       return -1;
     }
 
-    // 创建一个简单的测试音频数据（静音）
-    const int test_frames = 480;  // 10ms at 48kHz
-    const int test_bytes = test_frames * current_format.nBlockAlign;
-    std::vector<BYTE> test_data(test_bytes, 0);  // 全零数据（静音）
+    int opus_error = OPUS_OK;
+    auto encoder = std::unique_ptr<OpusEncoder, decltype(&opus_encoder_destroy)> {
+      opus_encoder_create(48000, 1, OPUS_APPLICATION_VOIP, &opus_error),
+      opus_encoder_destroy,
+    };
+    if (!encoder || opus_error != OPUS_OK) {
+      BOOST_LOG(error) << "Failed to create OPUS encoder for microphone test";
+      return -1;
+    }
 
-    BOOST_LOG(info) << "Testing client mic redirection with " << test_frames << " frames, " << test_bytes << " bytes";
+    constexpr double tone_hz = 440.0;
+    constexpr double amplitude = 0.18;
+    constexpr double pi = 3.14159265358979323846;
+    constexpr int frame_samples = 960;  // 20 ms at 48 kHz
+    constexpr int packet_count = 40;  // 800 ms
+    std::vector<int16_t> pcm(frame_samples);
+    std::vector<unsigned char> packet(4000);
+    int total_bytes_written = 0;
 
-    return write_data(reinterpret_cast<const char *>(test_data.data()), test_bytes);
+    BOOST_LOG(info) << "Testing client mic redirection with an 800 ms tone";
+
+    for (int packet_index = 0; packet_index < packet_count; ++packet_index) {
+      for (int sample_index = 0; sample_index < frame_samples; ++sample_index) {
+        const auto absolute_sample = packet_index * frame_samples + sample_index;
+        const double phase = 2.0 * pi * tone_hz *
+                             static_cast<double>(absolute_sample) / 48000.0;
+        pcm[sample_index] = static_cast<int16_t>(std::sin(phase) * amplitude * 32767.0);
+      }
+
+      const int encoded_bytes = opus_encode(
+        encoder.get(),
+        pcm.data(),
+        frame_samples,
+        packet.data(),
+        static_cast<opus_int32>(packet.size()));
+      if (encoded_bytes <= 0) {
+        return -1;
+      }
+
+      const int bytes_written = write_data(
+        reinterpret_cast<const char *>(packet.data()),
+        static_cast<size_t>(encoded_bytes));
+      if (bytes_written < 0) {
+        return -1;
+      }
+      total_bytes_written += bytes_written;
+      // Stay ahead of playback so the render buffer never drains mid-tone. The
+      // default Windows timer granularity is ~15.6 ms, so any requested delay is
+      // rounded up to a whole tick: Sleep(18) really costs ~31 ms and starves a
+      // 20 ms packet. One tick is comfortably shorter than the packet, and
+      // write_data() backs off on its own once the buffer is full.
+      Sleep(10);
+    }
+
+    // The writer finishes ahead of playback, so the last packets are still
+    // queued. cleanup() stops the audio client outright, which would clip the
+    // tail off the tone; wait for the endpoint to drain first.
+    for (int drain_attempt = 0; drain_attempt < 40; ++drain_attempt) {
+      UINT32 padding = 0;
+      if (FAILED(audio_client->GetCurrentPadding(&padding)) || padding == 0) {
+        break;
+      }
+      const DWORD remaining_ms = static_cast<DWORD>(
+        padding * 1000ull / current_format.nSamplesPerSec);
+      Sleep(std::max<DWORD>(remaining_ms, 5));
+    }
+
+    return total_bytes_written;
+  }
+
+  mic_redirect_test_result_t
+  test_mic_redirect() {
+    static std::mutex test_mutex;
+    const std::lock_guard lock(test_mutex);
+
+    const auto com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(com_status) && com_status != RPC_E_CHANGED_MODE) {
+      return { false, "MIC_TEST_COM_FAILED" };
+    }
+
+    mic_redirect_test_result_t result;
+    {
+      mic_write_wasapi_t test_device;
+      if (test_device.init(true) != 0) {
+        result.error_code = "MIC_TEST_DEVICE_UNAVAILABLE";
+      }
+      else if (test_device.test_write() <= 0) {
+        result.error_code = "MIC_TEST_WRITE_FAILED";
+      }
+      else {
+        result.success = true;
+      }
+    }
+
+    if (SUCCEEDED(com_status)) {
+      CoUninitialize();
+    }
+    return result;
   }
 
   int

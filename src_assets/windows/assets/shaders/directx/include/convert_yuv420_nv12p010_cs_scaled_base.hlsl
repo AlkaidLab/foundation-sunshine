@@ -38,6 +38,8 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
+#include "include/hdr_analysis_snapshot.hlsl"
+
 #define CS_TILE 16
 
 // 5-tap Catmull-Rom interpolation using bilinear samples.
@@ -91,11 +93,53 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     bool inside_rect = (rect_pos.x < out_rect_size.x && rect_pos.y < out_rect_size.y);
 
     float2 src_size_f = float2(src_size);
+    float3 src_rgb = float3(0.0, 0.0, 0.0);
+    if (inside_rect) {
+        float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
+        src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
+    }
+
+#ifdef HDR_ANALYSIS_SNAPSHOT
+    // Analyze the same Catmull-Rom output samples that feed the encoded Y plane.
+    // The capped snapshot stores exact per-cell scalar statistics, not one point sample.
+    uint2 analysis_position;
+    uint2 cell_begin;
+    uint2 cell_end;
+    if (inside_rect &&
+        GetHdrAnalysisCell(rect_pos, out_rect_size, analysis_position, cell_begin, cell_end)) {
+        float min_maxrgb_nits = 10000.0;
+        float max_maxrgb_nits = 0.0;
+        float sum_maxrgb_nits = 0.0;
+        uint pixel_count = 0;
+
+        for (uint y = cell_begin.y; y < cell_end.y; ++y) {
+            for (uint x = cell_begin.x; x < cell_end.x; ++x) {
+                float3 cell_rgb = src_rgb;
+                if (x != uint(rect_pos.x) || y != uint(rect_pos.y)) {
+                    float2 cell_uv = (float2(x, y) + 0.5) / float2(out_rect_size);
+                    cell_rgb = SampleCatmullRom5Tap(cell_uv, src_size_f);
+                }
+                float maxrgb_nits = HdrAnalysisMaxRgbNits(cell_rgb);
+                min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
+                max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
+                sum_maxrgb_nits += maxrgb_nits;
+                ++pixel_count;
+            }
+        }
+
+        StoreHdrAnalysisCellStats(
+            analysis_position,
+            min_maxrgb_nits,
+            max_maxrgb_nits,
+            sum_maxrgb_nits,
+            pixel_count,
+            HdrAnalysisMaxRgbNits(src_rgb)
+        );
+    }
+#endif
 
     // ---- Y plane (per pixel) ----
     if (inside_rect) {
-        float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
-        float3 src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
         float3 rgb_y = CONVERT_FUNCTION(src_rgb);
         float y = dot(color_vec_y.xyz, rgb_y) + color_vec_y.w;
         y = y * range_y.x + range_y.y;

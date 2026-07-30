@@ -1,5 +1,37 @@
 <template>
   <div class="setup-container">
+    <Teleport to="body">
+      <TransitionGroup
+        v-if="visibleCompletionNotices.length"
+        name="setup-toast"
+        tag="div"
+        class="setup-completion-toasts"
+        aria-live="polite"
+        aria-atomic="false"
+      >
+        <div
+          v-for="notice in visibleCompletionNotices"
+          :key="notice.id"
+          class="setup-completion-toast"
+          :class="`setup-completion-toast-${notice.tone}`"
+          role="status"
+        >
+          <i :class="notice.icon" aria-hidden="true"></i>
+          <span :class="{ 'setup-completion-toast-title': notice.emphasis }">
+            {{ $t(notice.messageKey) }}
+          </span>
+          <button
+            type="button"
+            class="setup-completion-toast-close"
+            :aria-label="$t('_common.close')"
+            @click="dismissCompletionNotice(notice.id)"
+          >
+            <i class="fas fa-times" aria-hidden="true"></i>
+          </button>
+        </div>
+      </TransitionGroup>
+    </Teleport>
+
     <div class="setup-card">
       <div class="setup-header">
         <img src="/images/logo-sunshine-256.png" height="60" alt="Sunshine">
@@ -102,9 +134,10 @@
               {{ $t('setup.base_display_title') }}
             </h5>
             <!-- 虚拟显示器选项 -->
-            <div class="option-card" 
-                 :class="{ selected: selectedDisplay === 'ZakoHDR' }"
-                 @click="selectedDisplay = 'ZakoHDR'">
+            <div class="option-card"
+                 :class="{ selected: isVirtualDisplay, disabled: !vddReady }"
+                 :aria-disabled="!vddReady"
+                 @click="selectVirtualDisplay">
               <div class="d-flex align-items-center">
                 <div class="option-icon-small">
                   <i class="fas fa-tv"></i>
@@ -116,14 +149,25 @@
               </div>
             </div>
 
+            <div v-if="!vddReady" class="alert alert-warning vdd-wizard-prerequisite">
+              <strong>{{ $t('setup.vdd_driver_required') }}</strong>
+              <p class="mb-2 mt-1">
+                {{ canManageVdd ? $t('setup.vdd_driver_desktop_hint') : $t('setup.vdd_driver_browser_hint') }}
+              </p>
+              <small v-if="vddStatusError" class="d-block">{{ vddStatusError }}</small>
+              <small v-else-if="vddStatus.state !== 'unknown'" class="d-block">
+                {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
+              </small>
+            </div>
+
             <!-- 物理显示器列表 -->
-            <div v-if="displayDevices && displayDevices.length > 0">
+            <div v-if="physicalDisplayDevices.length > 0">
               <h5 class="my-3 physical-display-title">
                 <i class="fas fa-desktop"></i>
                 {{ $t('setup.physical_display') }}
               </h5>
               <div class="option-card" 
-                   v-for="device in displayDevices" 
+                   v-for="device in physicalDisplayDevices"
                    :key="device.device_id"
                    :class="{ selected: selectedDisplay === device.device_id }"
                    @click="selectedDisplay = device.device_id">
@@ -199,19 +243,6 @@
           <!-- 步骤 5: 完成 -->
           <div v-else-if="currentStep === 5">
             <div>
-              <div class="text-center mb-3">
-                <h3 class="mb-1">
-                  <i class="fas fa-check-circle setup-complete-icon"></i>
-                  {{ $t('setup.setup_complete') }}
-                </h3>
-                <p class="mb-0">{{ $t('setup.setup_complete_desc') }}</p>
-              </div>
-              
-              <div class="alert alert-info text-center" v-if="saveSuccess">
-                <i class="fas fa-info-circle"></i>
-                {{ $t('setup.config_saved') }}
-              </div>
-              
               <div class="alert alert-danger" v-if="saveError">
                 <i class="fas fa-exclamation-triangle"></i>
                 {{ saveError }}
@@ -255,6 +286,7 @@
                       :description="resourceDescription(resource)"
                       :icon="resource.icon"
                       :variant="resource.variant"
+                      compact
                       @activate="handleResourceActivate(resource, $event)"
                     />
                   </div>
@@ -265,7 +297,7 @@
                         <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-android"></i>
+                        <i class="fas fa-mobile-alt"></i>
                         {{ $t('setup.android_client') }}
                       </div>
                     </div>
@@ -274,7 +306,7 @@
                         <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-apple"></i>
+                        <i class="fas fa-tablet-alt"></i>
                         {{ $t('setup.ios_client') }}
                       </div>
                     </div>
@@ -309,8 +341,8 @@
           <button class="btn btn-setup btn-setup-primary" 
                   @click="nextStep" 
                   v-if="currentStep < 5"
-                  :disabled="!canProceed || saving">
-            {{ currentStep === 4 ? $t('setup.finish') : $t('setup.next') }}
+                  :disabled="!canProceed || saving || vddInstalling || vddStatusLoading">
+            {{ nextButtonLabel }}
             <i class="fas fa-arrow-right"></i>
           </button>
 
@@ -390,6 +422,7 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
 import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
+import { useVddStatus } from '../composables/useVddStatus.js'
 import ResourceLink from './common/ResourceLink.vue'
 import ConfirmDialog from './common/ConfirmDialog.vue'
 import {
@@ -407,11 +440,45 @@ const SETUP_CLIENT_RESOURCE_ORDER = [
   'moonlight-desktop',
 ]
 
+const SETUP_CLIENT_ICON_OVERRIDES = Object.freeze({
+  'android-vplus': 'fas fa-mobile-alt',
+  voidlink: 'fas fa-tablet-alt',
+  'moonlight-macos': 'fas fa-laptop',
+})
+
+const COMPLETION_NOTICES = Object.freeze([
+  {
+    id: 'complete',
+    messageKey: 'setup.setup_complete',
+    icon: 'fas fa-check-circle',
+    tone: 'success',
+    emphasis: true,
+  },
+  {
+    id: 'ready',
+    messageKey: 'setup.setup_complete_desc',
+    icon: 'fas fa-moon',
+    tone: 'info',
+  },
+  {
+    id: 'saved',
+    messageKey: 'setup.config_saved',
+    icon: 'fas fa-save',
+    tone: 'success',
+  },
+])
+
+const COMPLETION_NOTICE_DURATION_MS = 5000
+
 // 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
 // 因此把系统语言探测结果折叠到这两者之一即可
 function detectInitialWizardLocale() {
   const sys = detectSystemLocale() // 已经过支持白名单过滤，未知语言落到 'en'
   return (sys === 'zh' || sys === 'zh_TW') ? 'zh' : 'en'
+}
+
+function isPhysicalDisplay(device) {
+  return !/^FRIENDLY NAME:\s*Zako HDR\s*$/im.test(device?.data || '')
 }
 
 function markLanguageSavedForReload() {
@@ -449,7 +516,6 @@ export default {
       selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
-      saveSuccess: false,
       saveError: null,
       saving: false,
       showSkipModal: false, // 跳过向导确认弹窗
@@ -457,13 +523,15 @@ export default {
       showRestartModal: false, // 重启倒计时弹窗
       restartCountdown: 8, // 倒计时秒数
       restartTimer: null, // 倒计时定时器
+      visibleCompletionNoticeIds: [],
+      completionNoticeTimer: null,
       // 客户端下载链接
       androidQrCode: 'https://assets.alkaidlab.com/androidQrCode.png',
       iosQrCode: 'https://assets.alkaidlab.com/iosQrCode.png',
     }
   },
   setup() {
-    return { FEATURED_RESOURCES }
+    return { FEATURED_RESOURCES, ...useVddStatus() }
   },
   mounted() {
     // 记录进入设置向导
@@ -485,14 +553,21 @@ export default {
     if (this.uniqueAdapters.length === 1) {
       this.selectedAdapter = this.uniqueAdapters[0].name
     }
+    this.refreshVddStatus()
   },
   beforeUnmount() {
     if (this.restartTimer) {
       clearInterval(this.restartTimer)
       this.restartTimer = null
     }
+    this.clearCompletionNoticeTimer()
   },
   computed: {
+    visibleCompletionNotices() {
+      return COMPLETION_NOTICES.filter((notice) =>
+        this.visibleCompletionNoticeIds.includes(notice.id)
+      )
+    },
     canProceed() {
       if (this.currentStep === 1) {
         return this.selectedLocale !== null
@@ -508,6 +583,17 @@ export default {
     isVirtualDisplay() {
       return this.selectedDisplay === 'ZakoHDR'
     },
+    nextButtonLabel() {
+      if (this.currentStep === 3 && this.isVirtualDisplay && !this.vddReady) {
+        return this.canManageVdd
+          ? this.$t('setup.vdd_install_continue')
+          : this.$t('setup.vdd_recheck_continue')
+      }
+      return this.currentStep === 4 ? this.$t('setup.finish') : this.$t('setup.next')
+    },
+    physicalDisplayDevices() {
+      return (this.displayDevices || []).filter(isPhysicalDisplay)
+    },
     // 按 name 去重，同一名称只保留一项（保持首次出现顺序）
     uniqueAdapters() {
       const list = this.adapters ?? []
@@ -521,10 +607,21 @@ export default {
     },
     setupClientResources() {
       const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
-      return SETUP_CLIENT_RESOURCE_ORDER.map((id) => resourcesById.get(id)).filter(Boolean)
+      return SETUP_CLIENT_RESOURCE_ORDER
+        .map((id) => resourcesById.get(id))
+        .filter(Boolean)
+        .map((resource) => ({
+          ...resource,
+          icon: SETUP_CLIENT_ICON_OVERRIDES[resource.id] || resource.icon,
+        }))
     }
   },
   methods: {
+    selectVirtualDisplay() {
+      if (this.vddReady) {
+        this.selectedDisplay = 'ZakoHDR'
+      }
+    },
     resourceTitle(resource) {
       return resolveResourceText(this.$t, resource, 'title')
     },
@@ -548,6 +645,18 @@ export default {
       } else if (this.currentStep === 2 && this.canProceed) {
         this.currentStep++
       } else if (this.currentStep === 3 && this.canProceed) {
+        if (this.isVirtualDisplay && !this.vddReady) {
+          try {
+            if (this.canManageVdd) {
+              await this.installVdd()
+            } else {
+              await this.refreshVddStatus()
+            }
+          } catch {
+            // The status panel keeps the selection and shows the actionable error.
+          }
+          if (!this.vddReady) return
+        }
         this.currentStep++
       } else if (this.currentStep === 4 && this.canProceed) {
         await this.saveConfiguration()
@@ -609,8 +718,8 @@ export default {
         })
 
         if (response.ok) {
-          this.saveSuccess = true
           this.currentStep = 5
+          this.showCompletionNotices()
           
           // 记录设置完成
           trackEvents.userAction('setup_wizard_completed', {
@@ -656,6 +765,28 @@ export default {
     },
     closeHarmonyModal() {
       this.showHarmonyModal = false
+    },
+    clearCompletionNoticeTimer() {
+      if (this.completionNoticeTimer) {
+        clearTimeout(this.completionNoticeTimer)
+        this.completionNoticeTimer = null
+      }
+    },
+    showCompletionNotices() {
+      this.clearCompletionNoticeTimer()
+      this.visibleCompletionNoticeIds = COMPLETION_NOTICES.map((notice) => notice.id)
+      this.completionNoticeTimer = setTimeout(() => {
+        this.visibleCompletionNoticeIds = []
+        this.completionNoticeTimer = null
+      }, COMPLETION_NOTICE_DURATION_MS)
+    },
+    dismissCompletionNotice(noticeId) {
+      this.visibleCompletionNoticeIds = this.visibleCompletionNoticeIds.filter(
+        (id) => id !== noticeId
+      )
+      if (this.visibleCompletionNoticeIds.length === 0) {
+        this.clearCompletionNoticeTimer()
+      }
     },
     async confirmHarmonyLink() {
       this.closeHarmonyModal()
@@ -929,9 +1060,12 @@ export default {
 
 .step-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 0.5em;
+  padding-bottom: 1em;
+  scrollbar-gutter: stable;
 }
 
 .step-content h3 {
@@ -960,6 +1094,18 @@ export default {
 .option-card.selected {
   border-color: var(--ui-accent);
   background: var(--ui-accent-soft);
+}
+
+.option-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.option-card.disabled:hover {
+  border-color: var(--ui-border);
+  transform: none;
+  box-shadow: none;
+  background: var(--ui-surface);
 }
 
 .option-card .option-icon {
@@ -1181,14 +1327,6 @@ export default {
   background: var(--ui-accent);
 }
 
-/* 完成页面标题 */
-.setup-complete-icon {
-  font-size: 1.2em;
-  color: var(--ui-success);
-  margin-right: 0.3em;
-  vertical-align: middle;
-}
-
 /* 完成页资源区样式 */
 .client-download-section,
 .promo-service-section {
@@ -1212,25 +1350,24 @@ export default {
 }
 
 .client-download-layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1.5em;
   align-items: flex-start;
 }
 
 .client-links {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5em;
-  min-width: 240px;
+  min-width: 0;
 }
 
 .client-qrcodes {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(2, 168px);
   gap: 1em;
   align-items: flex-start;
-  flex: 1;
   min-width: 0;
 }
 
@@ -1239,7 +1376,6 @@ export default {
   flex-direction: column;
   align-items: center;
   gap: 0.3em;
-  flex: 1;
 }
 
 .qr-code-box {
@@ -1264,6 +1400,92 @@ export default {
 
 .qr-code-label i {
   margin-right: 0.3em;
+}
+
+.setup-completion-toasts {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 1080;
+  display: grid;
+  width: min(480px, calc(100vw - 2rem));
+  gap: 0.6rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.setup-completion-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 48px;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  box-shadow: var(--ui-shadow-lg);
+  pointer-events: auto;
+}
+
+.setup-completion-toast-success {
+  border-color: color-mix(in srgb, var(--ui-success) 40%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-success) 10%, var(--ui-surface-strong));
+}
+
+.setup-completion-toast-success > i {
+  color: var(--ui-success);
+}
+
+.setup-completion-toast-info {
+  border-color: color-mix(in srgb, var(--ui-accent) 40%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface-strong));
+}
+
+.setup-completion-toast-info > i {
+  color: var(--ui-accent);
+}
+
+.setup-completion-toast-title {
+  font-weight: 700;
+}
+
+.setup-completion-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.setup-completion-toast-close:hover,
+.setup-completion-toast-close:focus-visible {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+}
+
+.setup-toast-enter-active,
+.setup-toast-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.setup-toast-enter-from,
+.setup-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-0.75rem);
+}
+
+.setup-toast-move {
+  transition: transform 0.2s ease;
 }
 
 /* 小图标样式 */
@@ -1373,17 +1595,21 @@ export default {
   }
 
   .client-download-layout {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     gap: 1rem;
   }
 
   .client-links {
     width: 100%;
     min-width: 0;
+    grid-template-columns: 1fr;
   }
 
   .client-qrcodes {
     width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .promo-service-links {

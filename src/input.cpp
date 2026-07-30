@@ -23,7 +23,9 @@ extern "C" {
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
+#include "display_device/vdd_utils.h"
 #include "thread_pool.h"
+#include "tray/tray_state.h"
 #include "utility.h"
 
 #include <boost/endian/buffers.hpp>
@@ -217,6 +219,14 @@ namespace input {
         display_cursor = !display_cursor;
         return 1;
       case 0x56 /* VKEY_V */:
+        if (!display_device::vdd_utils::get_vdd_status().is_usable()) {
+          tray_state::set_notification(
+            "Virtual display driver unavailable",
+            "ZakoVDD is missing or unhealthy. Click to open VDD settings and install or repair the bundled driver.",
+            "default",
+            "open_vdd_settings");
+          return 1;
+        }
         display_device::session_t::get().toggle_display_power();
         return 1;
     }
@@ -1410,10 +1420,10 @@ namespace input {
     short deltaX, deltaY;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
+    if (__builtin_add_overflow(util::endian::big(dest->deltaX), util::endian::big(src->deltaX), &deltaX)) {
       return batch_result_e::terminate_batch;
     }
-    if (!__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
+    if (__builtin_add_overflow(util::endian::big(dest->deltaY), util::endian::big(src->deltaY), &deltaY)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1452,7 +1462,7 @@ namespace input {
     short scrollAmt;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmt1), util::endian::big(src->scrollAmt1), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 
@@ -1473,7 +1483,7 @@ namespace input {
     short scrollAmt;
 
     // Batching is safe as long as the result doesn't overflow a 16-bit integer
-    if (!__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
+    if (__builtin_add_overflow(util::endian::big(dest->scrollAmount), util::endian::big(src->scrollAmount), &scrollAmt)) {
       return batch_result_e::terminate_batch;
     }
 

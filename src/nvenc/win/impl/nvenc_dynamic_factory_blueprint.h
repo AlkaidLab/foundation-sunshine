@@ -26,10 +26,10 @@ namespace nvenc {
       return std::make_shared<NVENC_FACTORY_CLASS>(dll);
     }
 
-    /// SDK version (major*100 + minor) this factory was compiled against.
-    /// Defined in the corresponding _XXXX.cpp where the SDK headers are included,
-    /// so the value is always derived from the actual SDK headers in use.
-    static const int sdk_version;
+    nvenc_sdk_version
+    sdk_version() const override {
+      return static_cast<nvenc_sdk_version>(NVENC_FACTORY_VERSION);
+    }
 
     std::unique_ptr<nvenc_d3d11>
     create_nvenc_d3d11_native(ID3D11Device *d3d_device) override;
@@ -53,14 +53,9 @@ namespace NVENC_NAMESPACE {
   #include NVENC_FACTORY_INCLUDE(nvEncodeAPI.h)
 }  // namespace NVENC_NAMESPACE
 
-// Derive the SDK version automatically from the headers we just included,
-// so the priority key in nvenc_dynamic_factory.cpp can never go out of sync
-// with the actual SDK this factory is built against (e.g. when the `1202`
-// submodule tracks master and bumps from SDK 12.2 to 13.0 to 14.0...).
-namespace nvenc {
-  const int NVENC_FACTORY_CLASS::sdk_version =
-    NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION;
-}
+static_assert(
+  NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION == NVENC_FACTORY_VERSION,
+  "NVENC factory version does not match the selected nv-codec-headers");
 
 using namespace nvenc;
 

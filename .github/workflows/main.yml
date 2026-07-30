@@ -145,6 +145,7 @@ jobs:
         shell: pwsh
         run: |
           npm ci
+          npm run lint:webui
           npm run test:webui
           New-Item -ItemType Directory -Force -Path build | Out-Null
           $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"

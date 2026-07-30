@@ -21,7 +21,7 @@ namespace nvhttp::pairing {
   load_state();
 
   std::string
-  client_uuid_for_cert(const std::string &cert);
+  client_uuid_for_cert(const X509 *cert);
 
   const char *
   verify_client_certificate(X509 *cert, bool close_verify_safe);

@@ -1,5 +1,5 @@
 /**
- * @file src/webhook_format.h
+ * @file src/webhook/webhook_format.h
  * @brief Webhook格式配置和模板定义
  */
 #pragma once
@@ -75,12 +75,6 @@ namespace webhook {
     void set_simplify_ip(bool simplify_ip);
 
     /**
-     * @brief 设置时间格式
-     * @param time_format 时间格式字符串
-     */
-    void set_time_format(const std::string& time_format);
-
-    /**
      * @brief 生成webhook内容
      * @param event 事件数据
      * @param is_chinese 是否使用中文
@@ -96,11 +90,17 @@ namespace webhook {
      */
     std::string generate_json_payload(const event_t& event, bool is_chinese) const;
 
+    /**
+     * @brief 生成与生产通知相同外层结构的测试 payload
+     * @param is_chinese 是否使用中文
+     * @return JSON字符串
+     */
+    std::string generate_test_json_payload(bool is_chinese) const;
+
   private:
     format_type_t format_type_;
     bool use_colors_;
     bool simplify_ip_;
-    std::string time_format_;
     std::map<event_type_t, std::string> custom_templates_;
 
     /**
@@ -112,7 +112,7 @@ namespace webhook {
 
     /**
      * @brief 格式化时间戳
-     * @param timestamp ISO 8601格式时间戳
+     * @param timestamp Sunshine 本地时间格式（YYYY-MM-DD HH:mm:ss.xxx）
      * @return 格式化后的时间字符串
      */
     std::string format_timestamp(const std::string& timestamp) const;
@@ -171,8 +171,8 @@ namespace webhook {
      * @param is_chinese 是否使用中文
      * @return 替换后的字符串
      */
-    std::string replace_template_variables(const std::string& template_str, 
-                                          const event_t& event, 
+    std::string replace_template_variables(const std::string& template_str,
+                                          const event_t& event,
                                           bool is_chinese) const;
   };
 
@@ -185,11 +185,6 @@ namespace webhook {
    * @brief 初始化webhook格式配置
    */
   void init_webhook_format();
-
-  /**
-   * @brief 从配置文件加载格式设置
-   */
-  void load_format_config();
 
   /**
    * @brief 配置格式

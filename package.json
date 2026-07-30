@@ -1,4 +1,6 @@
 {
+  "name": "alkaidlab-foundation-sunshine",
+  "private": true,
   "type": "module",
   "scripts": {
     "prebuild": "node ./src_assets/common/assets/web/scripts/extract-welcome-locales.js",
@@ -10,6 +12,7 @@
     "dev-full": "node dev-server.js",
     "preview": "vite preview",
     "preview:build": "npm run build && npm run preview",
+    "lint:webui": "eslint \"src_assets/common/assets/web/**/*.{js,vue}\" --max-warnings 0",
     "test:webui": "node --test \"src_assets/common/assets/web/tests/*.test.js\"",
     "i18n:validate": "node scripts/validate-i18n.js",
     "i18n:sync": "node scripts/validate-i18n.js --sync",
@@ -32,7 +35,10 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.7",
+    "eslint": "^10.8.0",
+    "eslint-plugin-vue": "~10.10.0",
     "express": "^4.18.2",
+    "globals": "^17.8.0",
     "less": "^4.6.7",
     "vite": "^8.1.0",
     "vite-plugin-ejs": "1.6.4",
