@@ -7,6 +7,12 @@
 #include "display.h"
 
 namespace platf::dxgi {
+  struct normalized_cursor_shape_t {
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO info {};
+    util::buffer_t<std::uint8_t> alpha;
+    util::buffer_t<std::uint8_t> xor_mask;
+  };
+
   util::buffer_t<std::uint8_t>
   make_cursor_xor_image(const util::buffer_t<std::uint8_t> &img_data,
                         DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info);
@@ -23,6 +29,15 @@ namespace platf::dxgi {
 
   bool
   local_cursor_mode_active();
+
+  /**
+   * Convert a VDD cursor snapshot into tightly packed DXGI cursor images.
+   * The XOR image is omitted when include_xor is false.
+   */
+  bool
+  normalize_cursor_shape(const vdd_capture_t::cursor_snapshot &cursor,
+                         bool include_xor,
+                         normalized_cursor_shape_t &normalized);
 
   /**
    * Publish visibility and, when present, a canonical BGRA cursor shape.

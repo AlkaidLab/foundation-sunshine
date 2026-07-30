@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -181,6 +182,87 @@ namespace platf::dxgi {
   }
 
   bool
+  normalize_cursor_shape(const vdd_capture_t::cursor_snapshot &cursor,
+                         bool include_xor,
+                         normalized_cursor_shape_t &normalized) {
+    normalized = {};
+    if (cursor.shape_buffer.empty() || cursor.width == 0 ||
+        cursor.height == 0 || cursor.pitch == 0) {
+      return false;
+    }
+
+    switch (cursor.shape_type) {
+      case 0:
+        if ((cursor.height & 1u) != 0) {
+          return false;
+        }
+        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+        break;
+      case 1:
+        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+        break;
+      case 2:
+        normalized.info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
+        break;
+      default:
+        return false;
+    }
+
+    normalized.info.Width = cursor.width;
+    normalized.info.Height = cursor.height;
+    normalized.info.Pitch = cursor.pitch;
+    normalized.info.HotSpot.x = cursor.xhot;
+    normalized.info.HotSpot.y = cursor.yhot;
+
+    const bool color_shape = cursor.shape_type != 0;
+    if (color_shape &&
+        cursor.width > std::numeric_limits<UINT32>::max() / 4u) {
+      return false;
+    }
+    const UINT32 packed_pitch = color_shape ? cursor.width * 4u : cursor.pitch;
+    if (color_shape && cursor.pitch < packed_pitch) {
+      return false;
+    }
+
+    const std::size_t source_size =
+      static_cast<std::size_t>(cursor.pitch) * cursor.height;
+    const std::size_t packed_size =
+      static_cast<std::size_t>(packed_pitch) * cursor.height;
+    if (cursor.shape_buffer.size() < source_size) {
+      return false;
+    }
+
+    util::buffer_t<std::uint8_t> img_data(packed_size);
+    if (color_shape && cursor.pitch != packed_pitch) {
+      for (UINT32 row = 0; row < cursor.height; ++row) {
+        std::memcpy(
+          std::begin(img_data) + static_cast<std::size_t>(row) * packed_pitch,
+          cursor.shape_buffer.data() + static_cast<std::size_t>(row) * cursor.pitch,
+          packed_pitch
+        );
+      }
+      normalized.info.Pitch = packed_pitch;
+    }
+    else {
+      std::memcpy(std::begin(img_data), cursor.shape_buffer.data(), packed_size);
+    }
+
+    normalized.alpha = make_cursor_alpha_image(img_data, normalized.info);
+    const UINT32 output_height =
+      normalized.info.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ?
+        normalized.info.Height / 2u : normalized.info.Height;
+    if (normalized.alpha.size() !=
+        static_cast<std::size_t>(normalized.info.Width) * output_height * 4u) {
+      return false;
+    }
+
+    if (include_xor) {
+      normalized.xor_mask = make_cursor_xor_image(img_data, normalized.info);
+    }
+    return true;
+  }
+
+  bool
   publish_local_cursor(const vdd_capture_t::cursor_snapshot &cursor) {
     cursor_channel::publish_visibility(cursor.visible, cursor.shape_id);
     if (!cursor.shape_updated) {
@@ -198,65 +280,34 @@ namespace platf::dxgi {
       return false;
     }
 
-    DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
-    switch (cursor.shape_type) {
-      case 0:
-        shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
-        break;
-      case 1:
-        shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
-        break;
-      case 2:
-      default:
-        shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
-        break;
+    normalized_cursor_shape_t normalized;
+    if (!normalize_cursor_shape(cursor, false, normalized)) {
+      return false;
     }
-    shape_info.Width = cursor.width;
-    shape_info.Height = cursor.height;
-    shape_info.Pitch = cursor.pitch;
-    shape_info.HotSpot.x = cursor.xhot;
-    shape_info.HotSpot.y = cursor.yhot;
-
-    const bool color_shape = cursor.shape_type != 0;
-    const UINT32 packed_pitch = color_shape ? cursor.width * 4u : cursor.pitch;
-    util::buffer_t<std::uint8_t> img_data(
-      static_cast<std::size_t>(packed_pitch) * cursor.height
-    );
-    if (color_shape && cursor.pitch != packed_pitch) {
-      for (UINT32 row = 0; row < cursor.height; ++row) {
-        std::memcpy(
-          std::begin(img_data) + static_cast<std::size_t>(row) * packed_pitch,
-          cursor.shape_buffer.data() + static_cast<std::size_t>(row) * cursor.pitch,
-          packed_pitch
-        );
-      }
-      shape_info.Pitch = packed_pitch;
-    }
-    else {
-      std::memcpy(std::begin(img_data), cursor.shape_buffer.data(), img_data.size());
-    }
-
-    auto alpha_img = make_cursor_alpha_image(img_data, shape_info);
     const UINT32 output_height =
-      shape_info.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ?
-        shape_info.Height / 2u : shape_info.Height;
-    const bool valid_hotspot = shape_info.HotSpot.x >= 0 &&
-                               shape_info.HotSpot.y >= 0 &&
-                               shape_info.HotSpot.x < static_cast<LONG>(shape_info.Width) &&
-                               shape_info.HotSpot.y < static_cast<LONG>(output_height);
+      normalized.info.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ?
+        normalized.info.Height / 2u : normalized.info.Height;
+    const bool valid_hotspot = normalized.info.HotSpot.x >= 0 &&
+                               normalized.info.HotSpot.y >= 0 &&
+                               normalized.info.HotSpot.x < static_cast<LONG>(normalized.info.Width) &&
+                               normalized.info.HotSpot.y < static_cast<LONG>(output_height);
     if (!valid_hotspot ||
-        alpha_img.size() != static_cast<std::size_t>(shape_info.Width) * output_height * 4u) {
+        normalized.info.Width > std::numeric_limits<std::uint16_t>::max() ||
+        output_height > std::numeric_limits<std::uint16_t>::max()) {
       return false;
     }
 
-    std::vector<std::uint8_t> bgra(std::begin(alpha_img), std::end(alpha_img));
+    std::vector<std::uint8_t> bgra(
+      std::begin(normalized.alpha),
+      std::end(normalized.alpha)
+    );
     cursor_channel::publish_shape(
       cursor.visible,
       cursor.shape_id,
-      static_cast<std::uint16_t>(shape_info.Width),
+      static_cast<std::uint16_t>(normalized.info.Width),
       static_cast<std::uint16_t>(output_height),
-      static_cast<std::int16_t>(shape_info.HotSpot.x),
-      static_cast<std::int16_t>(shape_info.HotSpot.y),
+      static_cast<std::int16_t>(normalized.info.HotSpot.x),
+      static_cast<std::int16_t>(normalized.info.HotSpot.y),
       std::move(bgra)
     );
     return true;
