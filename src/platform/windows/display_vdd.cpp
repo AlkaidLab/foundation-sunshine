@@ -940,7 +940,7 @@ namespace platf::dxgi {
         required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
       }
       else {
-        if (header.Pitch < static_cast<UINT64>(header.Width) * 4u) {
+        if (header.Pitch != static_cast<UINT64>(header.Width) * 4u) {
           return false;
         }
         required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
