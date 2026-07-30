@@ -9,6 +9,13 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
+const displayPreparationModes = [
+  { value: 'no_operation', icon: 'fa-pause' },
+  { value: 'ensure_active', icon: 'fa-play' },
+  { value: 'ensure_primary', icon: 'fa-star' },
+  { value: 'ensure_secondary', icon: 'fa-columns' },
+  { value: 'ensure_only_display', icon: 'fa-desktop' },
+]
 const hdrRuntimeStatus = ref(null)
 const hdrRuntimeStatusLoaded = ref(false)
 let hdrRuntimeStatusTimer
@@ -158,101 +165,140 @@ onUnmounted(() => {
             aria-labelledby="panelsStayOpen-headingOne"
           >
             <div class="accordion-body">
-              <div class="mb-3">
-                <label class="form-label">
-                  {{ $tp('config.display_device_options_note') }}
-                </label>
-                <div class="form-text">
-                  <p class="display-options-note pre-line">{{ $tp('config.display_device_options_note_desc') }}</p>
-                </div>
-              </div>
-
-              <!-- Display device preparation -->
-              <div class="mb-3">
-                <label for="display_device_prep" class="form-label">
+              <fieldset class="display-prep-group">
+                <legend class="form-label fw-semibold mb-2">
                   {{ $tp('config.display_device_prep') }}
-                </label>
-                <select id="display_device_prep" class="form-select" v-model="config.display_device_prep">
-                  <option value="no_operation">{{ $tp('config.display_device_prep_no_operation') }}</option>
-                  <option value="ensure_active">{{ $tp('config.display_device_prep_ensure_active') }}</option>
-                  <option value="ensure_primary">{{ $tp('config.display_device_prep_ensure_primary') }}</option>
-                  <option value="ensure_secondary">{{ $tp('config.display_device_prep_ensure_secondary') }}</option>
-                  <option value="ensure_only_display">
-                    {{ $tp('config.display_device_prep_ensure_only_display') }}
-                  </option>
-                </select>
-                <div class="form-text" v-if="config.display_device_prep">
-                  {{ $tp('config.display_device_prep_' + config.display_device_prep + '_desc') }}
+                </legend>
+                <div class="display-prep-options">
+                  <label
+                    v-for="mode in displayPreparationModes"
+                    :key="mode.value"
+                    class="display-prep-option"
+                    :class="{ 'is-selected': config.display_device_prep === mode.value }"
+                  >
+                    <input
+                      v-model="config.display_device_prep"
+                      class="visually-hidden"
+                      type="radio"
+                      name="display_device_prep"
+                      :value="mode.value"
+                    />
+                    <div class="display-prep-option-content">
+                      <div
+                        class="topology-preview"
+                        :class="`is-${mode.value}`"
+                        aria-hidden="true"
+                      >
+                        <div class="topology-screen topology-host">
+                          <i class="fas fa-desktop"></i>
+                          <span class="topology-off-mark"></span>
+                        </div>
+                        <span class="topology-link"></span>
+                        <div class="topology-screen topology-target">
+                          <i class="fas fa-desktop"></i>
+                          <span class="topology-primary-badge">
+                            <i class="fas fa-star"></i>
+                          </span>
+                        </div>
+                      </div>
+                      <div class="display-prep-copy">
+                        <span class="display-prep-title">
+                          <i class="fas me-1" :class="mode.icon" aria-hidden="true"></i>
+                          {{ $tp('config.display_device_prep_' + mode.value) }}
+                        </span>
+                        <span class="display-prep-description">
+                          {{ $tp('config.display_device_prep_' + mode.value + '_desc') }}
+                        </span>
+                      </div>
+                    </div>
+                  </label>
                 </div>
-              </div>
+              </fieldset>
 
-              <!-- Resolution change -->
-              <div class="mb-3">
-                <label for="resolution_change" class="form-label">
-                  {{ $tp('config.resolution_change') }}
-                </label>
-                <select id="resolution_change" class="form-select" v-model="config.resolution_change">
-                  <option value="no_operation">{{ $tp('config.resolution_change_no_operation') }}</option>
-                  <option value="automatic">{{ $tp('config.resolution_change_automatic') }}</option>
-                  <option value="manual">{{ $tp('config.resolution_change_manual') }}</option>
-                </select>
-                <div
-                  class="form-text"
-                  v-if="config.resolution_change === 'automatic' || config.resolution_change === 'manual'"
-                >
-                  {{ $tp('config.resolution_change_ogs_desc') }}
-                </div>
+              <details class="display-options-note">
+                <summary>
+                  <i class="fas fa-circle-info" aria-hidden="true"></i>
+                  {{ $tp('config.display_device_options_note') }}
+                </summary>
+                <p class="pre-line">{{ $tp('config.display_device_options_note_desc') }}</p>
+              </details>
 
-                <!-- Manual resolution -->
-                <div class="nested-setting mt-2" v-if="config.resolution_change === 'manual'">
-                  <div class="form-text">
-                    {{ $tp('config.resolution_change_manual_desc') }}
+              <div class="display-rule-grid">
+                <!-- Resolution change -->
+                <section class="display-rule-card">
+                  <div class="display-rule-heading">
+                    <i class="fas fa-expand-alt" aria-hidden="true"></i>
+                    <label for="resolution_change" class="form-label mb-0">
+                      {{ $tp('config.resolution_change') }}
+                    </label>
                   </div>
-                  <input
-                    type="text"
-                    class="form-control"
-                    id="manual_resolution"
-                    placeholder="2560x1440"
-                    v-model="config.manual_resolution"
-                  />
-                </div>
-              </div>
-
-              <!-- Refresh rate change -->
-              <div class="mb-3">
-                <label for="refresh_rate_change" class="form-label">
-                  {{ $tp('config.refresh_rate_change') }}
-                </label>
-                <select id="refresh_rate_change" class="form-select" v-model="config.refresh_rate_change">
-                  <option value="no_operation">{{ $tp('config.refresh_rate_change_no_operation') }}</option>
-                  <option value="automatic">{{ $tp('config.refresh_rate_change_automatic') }}</option>
-                  <option value="manual">{{ $tp('config.refresh_rate_change_manual_desc') }}</option>
-                </select>
-
-                <!-- Manual refresh rate -->
-                <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
-                  <div class="form-text">
-                    {{ $tp('config.refresh_rate_change_manual_desc') }}
+                  <select id="resolution_change" class="form-select" v-model="config.resolution_change">
+                    <option value="no_operation">{{ $tp('config.resolution_change_no_operation') }}</option>
+                    <option value="automatic">{{ $tp('config.resolution_change_automatic') }}</option>
+                    <option value="manual">{{ $tp('config.resolution_change_manual') }}</option>
+                  </select>
+                  <div
+                    class="form-text"
+                    v-if="config.resolution_change === 'automatic' || config.resolution_change === 'manual'"
+                  >
+                    {{ $tp('config.resolution_change_ogs_desc') }}
                   </div>
-                  <input
-                    type="text"
-                    class="form-control"
-                    id="manual_refresh_rate"
-                    placeholder="59.95"
-                    v-model="config.manual_refresh_rate"
-                  />
-                </div>
-              </div>
 
-              <!-- HDR preparation -->
-              <div class="mb-3">
-                <label for="hdr_prep" class="form-label">
-                  {{ $tp('config.hdr_prep') }}
-                </label>
-                <select id="hdr_prep" class="form-select" v-model="config.hdr_prep">
-                  <option value="no_operation">{{ $tp('config.hdr_prep_no_operation') }}</option>
-                  <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
-                </select>
+                  <div class="nested-setting mt-2" v-if="config.resolution_change === 'manual'">
+                    <div class="form-text">
+                      {{ $tp('config.resolution_change_manual_desc') }}
+                    </div>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="manual_resolution"
+                      placeholder="2560x1440"
+                      v-model="config.manual_resolution"
+                    />
+                  </div>
+                </section>
+
+                <!-- Refresh rate change -->
+                <section class="display-rule-card">
+                  <div class="display-rule-heading">
+                    <i class="fas fa-gauge-high" aria-hidden="true"></i>
+                    <label for="refresh_rate_change" class="form-label mb-0">
+                      {{ $tp('config.refresh_rate_change') }}
+                    </label>
+                  </div>
+                  <select id="refresh_rate_change" class="form-select" v-model="config.refresh_rate_change">
+                    <option value="no_operation">{{ $tp('config.refresh_rate_change_no_operation') }}</option>
+                    <option value="automatic">{{ $tp('config.refresh_rate_change_automatic') }}</option>
+                    <option value="manual">{{ $tp('config.refresh_rate_change_manual_desc') }}</option>
+                  </select>
+
+                  <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
+                    <div class="form-text">
+                      {{ $tp('config.refresh_rate_change_manual_desc') }}
+                    </div>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="manual_refresh_rate"
+                      placeholder="59.95"
+                      v-model="config.manual_refresh_rate"
+                    />
+                  </div>
+                </section>
+
+                <!-- HDR preparation -->
+                <section class="display-rule-card">
+                  <div class="display-rule-heading">
+                    <i class="fas fa-sun" aria-hidden="true"></i>
+                    <label for="hdr_prep" class="form-label mb-0">
+                      {{ $tp('config.hdr_prep') }}
+                    </label>
+                  </div>
+                  <select id="hdr_prep" class="form-select" v-model="config.hdr_prep">
+                    <option value="no_operation">{{ $tp('config.hdr_prep_no_operation') }}</option>
+                    <option value="automatic">{{ $tp('config.hdr_prep_automatic') }}</option>
+                  </select>
+                </section>
               </div>
 
               <div
@@ -315,21 +361,271 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.display-options-note {
+.display-prep-group {
+  min-width: 0;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.display-prep-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 0.75rem;
+}
+
+.display-prep-option {
+  min-width: 0;
   margin: 0;
-  padding: 0.75rem 0.9rem;
+  cursor: pointer;
+}
+
+.display-prep-option-content {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.85rem;
+  height: 100%;
+  padding: 0.85rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.display-prep-option:hover .display-prep-option-content {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface-hover);
+  transform: translateY(-1px);
+}
+
+.display-prep-option.is-selected .display-prep-option-content {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 28%, transparent);
+}
+
+.display-prep-option input:focus-visible + .display-prep-option-content {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.display-prep-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.display-prep-title {
+  color: var(--ui-text-primary);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.display-prep-title i {
+  color: var(--ui-accent);
+}
+
+.display-prep-description {
+  color: var(--ui-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.topology-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.5rem;
+}
+
+.topology-screen {
+  position: relative;
+  display: grid;
+  width: 2.65rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 2px solid var(--ui-border-strong);
+  border-radius: 0.3rem;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-muted);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.topology-screen::after {
+  position: absolute;
+  bottom: -0.38rem;
+  width: 1rem;
+  height: 0.25rem;
+  border-top: 2px solid currentColor;
+  content: '';
+}
+
+.topology-screen i {
+  font-size: 0.8rem;
+}
+
+.topology-link {
+  width: 0.75rem;
+  border-top: 2px solid var(--ui-border-strong);
+}
+
+.topology-primary-badge {
+  position: absolute;
+  top: -0.45rem;
+  right: -0.45rem;
+  display: none;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  color: var(--ui-on-accent, #fff);
+  font-size: 0.48rem;
+  box-shadow: 0 0 0 2px var(--ui-surface);
+}
+
+.topology-off-mark {
+  position: absolute;
+  display: none;
+  width: 2.8rem;
+  border-top: 2px solid var(--ui-warning-text);
+  transform: rotate(-34deg);
+}
+
+.topology-preview.is-no_operation .topology-link {
+  border-top-style: dashed;
+}
+
+.topology-preview.is-ensure_active .topology-target,
+.topology-preview.is-ensure_primary .topology-target,
+.topology-preview.is-ensure_only_display .topology-target {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.topology-preview.is-ensure_primary .topology-primary-badge {
+  display: flex;
+}
+
+.topology-preview.is-ensure_secondary .topology-screen {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+
+.topology-preview.is-ensure_secondary .topology-target {
+  background: var(--ui-accent-soft);
+}
+
+.topology-preview.is-ensure_only_display .topology-host {
+  opacity: 0.38;
+}
+
+.topology-preview.is-ensure_only_display .topology-off-mark {
+  display: block;
+}
+
+.topology-preview.is-ensure_only_display .topology-link {
+  border-top-style: dashed;
+  opacity: 0.45;
+}
+
+.display-options-note {
+  margin: 0 0 1rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   background: var(--ui-accent-soft);
   color: var(--ui-text-secondary);
 }
 
+.display-options-note summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  color: var(--ui-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.display-options-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.display-options-note summary i {
+  color: var(--ui-accent);
+}
+
+.display-options-note summary::after {
+  margin-left: auto;
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  content: '\f078';
+  transition: transform 0.2s ease;
+}
+
+.display-options-note[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.display-options-note p {
+  margin: 0;
+  padding: 0 0.85rem 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.display-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.display-rule-card {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.display-rule-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.display-rule-heading i {
+  width: 1rem;
+  color: var(--ui-accent);
+  text-align: center;
+}
+
+.display-rule-heading .form-label {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
 .nested-setting {
-  margin-left: 0.75rem;
   padding: 0.75rem;
   border-left: 3px solid var(--ui-border-strong);
   border-radius: 0 var(--ui-radius-sm) var(--ui-radius-sm) 0;
-  background: var(--ui-surface);
+  background: var(--ui-surface-strong);
 }
 
 .hdr-feature-card {
@@ -404,8 +700,12 @@ onUnmounted(() => {
     padding: 0.75rem;
   }
 
-  .nested-setting {
-    margin-left: 0;
+  .display-options-note {
+    padding: 0;
+  }
+
+  .display-prep-option-content {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
   }
 
   .feature-mode-select {
