@@ -303,6 +303,7 @@ namespace platf {
     constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
     constexpr caps_t touchpad = 0x10;  // Native precision touchpad events
     constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
+    constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
   };  // namespace platform_caps
 
   struct gamepad_state_t {

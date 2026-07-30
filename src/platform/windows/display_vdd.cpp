@@ -994,6 +994,11 @@ namespace platf::dxgi {
     m_lastSeenCursorShapeId = shape_id;
   }
 
+  void
+  vdd_capture_t::invalidate_cursor_shape() {
+    m_lastSeenCursorShapeId = 0xFFFFFFFFu;
+  }
+
   // ===========================================================================
   // display_vdd_vram_t
   // ===========================================================================
@@ -1416,8 +1421,8 @@ namespace platf::dxgi {
     return true;
   }
 
-  // NOTE: snapshot() and release_snapshot() are implemented in display_vram.cpp,
-  // alongside display_amd_vram_t / display_wgc_vram_t, because they need access
-  // to the file-local types `img_d3d_t` and `texture_lock_helper`.
+  // snapshot(), release_snapshot(), and borrowed-texture telemetry live in
+  // display_vdd_vram.cpp. Shared D3D11 image details are declared in the
+  // private display_vram_internal.h boundary.
 
 }  // namespace platf::dxgi

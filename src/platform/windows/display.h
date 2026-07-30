@@ -678,6 +678,12 @@ namespace platf::dxgi {
     acknowledge_cursor_shape(UINT32 shape_id);
 
     /**
+     * @brief Force the next poll to include the current cursor shape.
+     */
+    void
+    invalidate_cursor_shape();
+
+    /**
      * @brief Reported producer-side dimensions / format / HDR metadata.
      */
     UINT  width()      const { return m_width; }
@@ -803,6 +809,7 @@ namespace platf::dxgi {
     UINT64 vdd_last_dropped_consumer_held = 0;
     UINT64 vdd_last_dropped_acquire_failures = 0;
     std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
+    bool vdd_local_cursor_mode_active = false;
 
     void
     log_vdd_borrow_debug_telemetry();
