@@ -293,7 +293,9 @@ namespace platf::dxgi {
                                normalized.info.HotSpot.y < static_cast<LONG>(output_height);
     if (!valid_hotspot ||
         normalized.info.Width > std::numeric_limits<std::uint16_t>::max() ||
-        output_height > std::numeric_limits<std::uint16_t>::max()) {
+        output_height > std::numeric_limits<std::uint16_t>::max() ||
+        normalized.info.HotSpot.x > std::numeric_limits<std::int16_t>::max() ||
+        normalized.info.HotSpot.y > std::numeric_limits<std::int16_t>::max()) {
       return false;
     }
 
