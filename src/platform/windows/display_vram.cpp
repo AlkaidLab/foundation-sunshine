@@ -4490,7 +4490,16 @@ namespace platf::dxgi {
       set_cursor_sdr_white_level(cursor_state.sdr_white_level_x1000);
       if (cursor_state.shape_updated) {
         bool upload_succeeded = false;
-        if (!cursor_state.shape_buffer.empty() && cursor_state.width > 0 && cursor_state.height > 0) {
+        const bool empty_hidden_shape = !cursor_state.visible &&
+                                        cursor_state.shape_buffer.empty() &&
+                                        cursor_state.width == 0 &&
+                                        cursor_state.height == 0;
+        if (empty_hidden_shape) {
+          DXGI_OUTDUPL_POINTER_SHAPE_INFO empty_info {};
+          upload_succeeded = set_cursor_texture(device.get(), cursor_alpha, {}, empty_info) &&
+                             set_cursor_texture(device.get(), cursor_xor, {}, empty_info);
+        }
+        else if (!cursor_state.shape_buffer.empty() && cursor_state.width > 0 && cursor_state.height > 0) {
           DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
           switch (cursor_state.shape_type) {
             case 0:
@@ -4510,8 +4519,24 @@ namespace platf::dxgi {
           shape_info.HotSpot.x = cursor_state.xhot;
           shape_info.HotSpot.y = cursor_state.yhot;
 
-          util::buffer_t<std::uint8_t> img_data(cursor_state.shape_buffer.size());
-          std::memcpy(std::begin(img_data), cursor_state.shape_buffer.data(), cursor_state.shape_buffer.size());
+          const bool color_shape = cursor_state.shape_type != 0;
+          const UINT32 packed_pitch = color_shape ? cursor_state.width * 4u : cursor_state.pitch;
+          util::buffer_t<std::uint8_t> img_data(
+            static_cast<size_t>(packed_pitch) * cursor_state.height
+          );
+          if (color_shape && cursor_state.pitch != packed_pitch) {
+            for (UINT32 row = 0; row < cursor_state.height; ++row) {
+              std::memcpy(
+                std::begin(img_data) + static_cast<size_t>(row) * packed_pitch,
+                cursor_state.shape_buffer.data() + static_cast<size_t>(row) * cursor_state.pitch,
+                packed_pitch
+              );
+            }
+            shape_info.Pitch = packed_pitch;
+          }
+          else {
+            std::memcpy(std::begin(img_data), cursor_state.shape_buffer.data(), img_data.size());
+          }
           auto alpha_img = make_cursor_alpha_image(img_data, shape_info);
           auto xor_img = make_cursor_xor_image(img_data, shape_info);
           upload_succeeded = set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_img), shape_info) &&

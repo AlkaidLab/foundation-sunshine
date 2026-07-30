@@ -882,12 +882,13 @@ namespace platf::dxgi {
 
     auto *meta = static_cast<const CursorSharedMetadata *>(m_pCursorMeta);
     auto *publication_sequence = reinterpret_cast<volatile const UINT32 *>(&meta->PublicationSequence);
+    auto *published_position_id = reinterpret_cast<volatile const UINT32 *>(&meta->PositionId);
     auto *published_shape_id = reinterpret_cast<volatile const UINT32 *>(&meta->ShapeId);
 
     // The producer uses a seqlock: odd means a publication is in progress and
     // matching even values around the complete header+payload copy identify a
     // coherent snapshot. Sequence zero also supports the preview producer that
-    // used this field as Reserved0; ShapeId remains its commit marker.
+    // used this field as Reserved0; its shape and position IDs are commit markers.
     for (int attempt = 0; attempt < 4; ++attempt) {
       const UINT32 sequence_before = *publication_sequence;
       if ((sequence_before & 1u) != 0u) {
@@ -913,7 +914,8 @@ namespace platf::dxgi {
       if (sequence_before != sequence_after || (sequence_after & 1u) != 0u) {
         continue;
       }
-      if (sequence_after == 0 && *published_shape_id != header.ShapeId) {
+      if (sequence_after == 0 &&
+          (*published_shape_id != header.ShapeId || *published_position_id != header.PositionId)) {
         continue;
       }
 
@@ -927,26 +929,38 @@ namespace platf::dxgi {
       constexpr UINT32 kMaxCursorWidth = 256;
       constexpr UINT32 kMaxCursorHeight = 512;  // monochrome stores AND+XOR vertically
       const UINT32 max_height = header.ShapeType == 0 ? kMaxCursorHeight : 256;
-      if (header.Width == 0 || header.Width > kMaxCursorWidth ||
-          header.Height == 0 || header.Height > max_height) {
+      const bool empty_hidden_shape = header.IsVisible == 0 &&
+                                      header.Width == 0 &&
+                                      header.Height == 0 &&
+                                      header.Pitch == 0 &&
+                                      header.ShapeBufferSize == 0;
+      if (!empty_hidden_shape &&
+          (header.Width == 0 || header.Width > kMaxCursorWidth ||
+           header.Height == 0 || header.Height > max_height)) {
         return false;
       }
 
       UINT64 required_bytes = 0;
-      if (header.ShapeType == 0 /* MONOCHROME */) {
+      if (empty_hidden_shape) {
+        // A newly-attached producer can publish visibility before its first shape.
+      }
+      else if (header.ShapeType == 0 /* MONOCHROME */) {
         if ((header.Height & 1u) != 0u || header.Pitch < (header.Width + 7u) / 8u) {
           return false;
         }
         required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
       }
       else {
-        if (header.Pitch != static_cast<UINT64>(header.Width) * 4u) {
+        if (header.Pitch < static_cast<UINT64>(header.Width) * 4u) {
           return false;
         }
         required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
       }
       if (required_bytes > VDD_CURSOR_MAX_BYTES || header.ShapeBufferSize < required_bytes) {
         return false;  // header/payload mismatch; likely a torn read
+      }
+      if (shape_updated) {
+        shape_buffer.resize(static_cast<size_t>(required_bytes));
       }
 
       out.valid = true;
