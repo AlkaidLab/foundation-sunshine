@@ -4,7 +4,6 @@
  */
 #include "display_cursor.h"
 
-#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -16,10 +15,98 @@
 namespace platf::dxgi {
   using namespace std::literals;
 
+  namespace {
+    enum class monochrome_layer_e {
+      alpha,
+      xor_mask,
+    };
+
+    template<typename Transform>
+    bool
+    transform_cursor_pixels(util::buffer_t<std::uint8_t> &cursor_img,
+                            Transform transform) {
+      if (cursor_img.size() % sizeof(std::uint32_t) != 0) {
+        return false;
+      }
+
+      for (std::size_t offset = 0; offset < cursor_img.size(); offset += sizeof(std::uint32_t)) {
+        std::uint32_t pixel;
+        std::memcpy(&pixel, std::begin(cursor_img) + offset, sizeof(pixel));
+        transform(pixel);
+        std::memcpy(std::begin(cursor_img) + offset, &pixel, sizeof(pixel));
+      }
+      return true;
+    }
+
+    util::buffer_t<std::uint8_t>
+    make_monochrome_cursor_image(const util::buffer_t<std::uint8_t> &img_data,
+                                 DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info,
+                                 monochrome_layer_e layer) {
+      constexpr std::uint32_t black = 0xFF000000;
+      constexpr std::uint32_t white = 0xFFFFFFFF;
+      constexpr std::uint32_t transparent = 0;
+
+      if ((shape_info.Height & 1u) != 0) {
+        return {};
+      }
+      shape_info.Height /= 2;
+
+      const std::size_t mask_row_bytes =
+        (static_cast<std::size_t>(shape_info.Width) + 7u) / 8u;
+      if (shape_info.Pitch < mask_row_bytes) {
+        return {};
+      }
+
+      const std::size_t mask_bytes =
+        static_cast<std::size_t>(shape_info.Pitch) * shape_info.Height;
+      if (mask_bytes > img_data.size() ||
+          mask_bytes > img_data.size() - mask_bytes) {
+        return {};
+      }
+
+      util::buffer_t<std::uint8_t> cursor_img {
+        static_cast<std::size_t>(shape_info.Width) * shape_info.Height * 4u
+      };
+      for (std::size_t row = 0; row < shape_info.Height; ++row) {
+        const auto and_row = std::begin(img_data) + row * shape_info.Pitch;
+        const auto xor_row = std::begin(img_data) + mask_bytes + row * shape_info.Pitch;
+        for (std::size_t column = 0; column < shape_info.Width; ++column) {
+          const std::uint8_t bit = static_cast<std::uint8_t>(1u << (7u - column % 8u));
+          const std::size_t mask_offset = column / 8u;
+          const auto color_type =
+            ((and_row[mask_offset] & bit) ? 1 : 0) +
+            ((xor_row[mask_offset] & bit) ? 2 : 0);
+
+          std::uint32_t pixel;
+          if (layer == monochrome_layer_e::xor_mask) {
+            pixel = color_type == 3 ? white : transparent;
+          }
+          else {
+            switch (color_type) {
+              case 0:
+                pixel = black;
+                break;
+              case 2:
+                pixel = white;
+                break;
+              default:
+                pixel = transparent;
+                break;
+            }
+          }
+
+          const std::size_t pixel_offset =
+            (row * shape_info.Width + column) * sizeof(pixel);
+          std::memcpy(std::begin(cursor_img) + pixel_offset, &pixel, sizeof(pixel));
+        }
+      }
+      return cursor_img;
+    }
+  }  // namespace
+
   util::buffer_t<std::uint8_t>
   make_cursor_xor_image(const util::buffer_t<std::uint8_t> &img_data,
                         DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info) {
-    constexpr std::uint32_t inverted = 0xFFFFFFFF;
     constexpr std::uint32_t transparent = 0;
 
     switch (shape_info.Type) {
@@ -27,7 +114,7 @@ namespace platf::dxgi {
         return {};
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
         util::buffer_t<std::uint8_t> cursor_img = img_data;
-        std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
+        if (!transform_cursor_pixels(cursor_img, [=](std::uint32_t &pixel) {
           auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
           if (alpha == 0x00) {
             pixel = transparent;
@@ -35,47 +122,32 @@ namespace platf::dxgi {
           else if (alpha != 0xFF) {
             BOOST_LOG(warning) << "Illegal alpha value in masked color cursor: " << alpha;
           }
-        });
+        })) {
+          return {};
+        }
         return cursor_img;
       }
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
-        break;
+        return make_monochrome_cursor_image(
+          img_data,
+          shape_info,
+          monochrome_layer_e::xor_mask
+        );
       default:
         BOOST_LOG(error) << "Invalid cursor shape type: " << shape_info.Type;
         return {};
     }
-
-    shape_info.Height /= 2;
-    util::buffer_t<std::uint8_t> cursor_img {shape_info.Width * shape_info.Height * 4};
-    const auto bytes = shape_info.Pitch * shape_info.Height;
-    auto pixel_data = (std::uint32_t *) std::begin(cursor_img);
-    auto and_mask = std::begin(img_data);
-    auto xor_mask = std::begin(img_data) + bytes;
-
-    for (auto x = 0; x < bytes; ++x) {
-      for (auto c = 7; c >= 0 && ((std::uint8_t *) pixel_data) != std::end(cursor_img); --c) {
-        const auto bit = 1 << c;
-        const auto color_type = ((*and_mask & bit) ? 1 : 0) + ((*xor_mask & bit) ? 2 : 0);
-        *pixel_data++ = color_type == 3 ? inverted : transparent;
-      }
-      ++and_mask;
-      ++xor_mask;
-    }
-
-    return cursor_img;
   }
 
   util::buffer_t<std::uint8_t>
   make_cursor_alpha_image(const util::buffer_t<std::uint8_t> &img_data,
                           DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info) {
-    constexpr std::uint32_t black = 0xFF000000;
-    constexpr std::uint32_t white = 0xFFFFFFFF;
     constexpr std::uint32_t transparent = 0;
 
     switch (shape_info.Type) {
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
         util::buffer_t<std::uint8_t> cursor_img = img_data;
-        std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
+        if (!transform_cursor_pixels(cursor_img, [=](std::uint32_t &pixel) {
           auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
           if (alpha == 0xFF) {
             pixel = transparent;
@@ -86,47 +158,23 @@ namespace platf::dxgi {
           else {
             BOOST_LOG(warning) << "Illegal alpha value in masked color cursor: " << alpha;
           }
-        });
+        })) {
+          return {};
+        }
         return cursor_img;
       }
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR:
         return img_data;
       case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
-        break;
+        return make_monochrome_cursor_image(
+          img_data,
+          shape_info,
+          monochrome_layer_e::alpha
+        );
       default:
         BOOST_LOG(error) << "Invalid cursor shape type: " << shape_info.Type;
         return {};
     }
-
-    shape_info.Height /= 2;
-    util::buffer_t<std::uint8_t> cursor_img {shape_info.Width * shape_info.Height * 4};
-    const auto bytes = shape_info.Pitch * shape_info.Height;
-    auto pixel_data = (std::uint32_t *) std::begin(cursor_img);
-    auto and_mask = std::begin(img_data);
-    auto xor_mask = std::begin(img_data) + bytes;
-
-    for (auto x = 0; x < bytes; ++x) {
-      for (auto c = 7; c >= 0 && ((std::uint8_t *) pixel_data) != std::end(cursor_img); --c) {
-        const auto bit = 1 << c;
-        const auto color_type = ((*and_mask & bit) ? 1 : 0) + ((*xor_mask & bit) ? 2 : 0);
-        switch (color_type) {
-          case 0:
-            *pixel_data = black;
-            break;
-          case 2:
-            *pixel_data = white;
-            break;
-          default:
-            *pixel_data = transparent;
-            break;
-        }
-        ++pixel_data;
-      }
-      ++and_mask;
-      ++xor_mask;
-    }
-
-    return cursor_img;
   }
 
   bool
