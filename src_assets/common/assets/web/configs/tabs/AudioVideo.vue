@@ -12,7 +12,7 @@ import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
-const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'display_mode_remapping', 'min_fps_factor'])
+const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 
 const { t } = useI18n()
 const config = ref(props.config)
@@ -217,9 +217,7 @@ const testMicrophoneRoute = async () => {
       <div class="tab-content">
         <DisplayModesSettings
           v-if="currentSubTab === 'display-modes'"
-          :platform="platform"
           :config="config"
-          :min_fps_factor="min_fps_factor"
         />
         
         <!-- Virtual Display Tab Content -->
