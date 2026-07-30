@@ -178,7 +178,7 @@ onUnmounted(() => {
                   >
                     <input
                       v-model="config.display_device_prep"
-                      class="visually-hidden"
+                      class="form-check-input display-prep-radio"
                       type="radio"
                       name="display_device_prep"
                       :value="mode.value"
@@ -375,7 +375,17 @@ onUnmounted(() => {
 }
 
 .display-prep-option {
+  position: relative;
   min-width: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.display-prep-radio {
+  position: absolute;
+  z-index: 1;
+  top: 0.85rem;
+  right: 0.85rem;
   margin: 0;
   cursor: pointer;
 }
