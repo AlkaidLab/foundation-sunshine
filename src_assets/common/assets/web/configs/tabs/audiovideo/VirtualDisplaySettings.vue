@@ -160,6 +160,8 @@ function removeFps(index) {
               v-model="config.vdd_borrowed_texture"
               class="form-check-input"
               type="checkbox"
+              role="switch"
+              aria-describedby="vdd_borrowed_texture_desc"
               true-value="enabled"
               false-value="disabled"
             />
@@ -167,7 +169,9 @@ function removeFps(index) {
               {{ $t('config.vdd_borrowed_texture') }}
             </label>
           </div>
-          <div class="form-text">{{ $t('config.vdd_borrowed_texture_desc') }}</div>
+          <div id="vdd_borrowed_texture_desc" class="form-text">
+            {{ $t('config.vdd_borrowed_texture_desc') }}
+          </div>
 
           <VulkanHdrBridgeCard class="mt-3" :config="config" />
         </div>
