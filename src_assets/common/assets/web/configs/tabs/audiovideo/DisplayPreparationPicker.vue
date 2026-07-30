@@ -8,11 +8,11 @@ defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const modes = [
-  { value: 'no_operation', icon: 'fa-pause' },
-  { value: 'ensure_active', icon: 'fa-play' },
-  { value: 'ensure_primary', icon: 'fa-star' },
-  { value: 'ensure_secondary', icon: 'fa-columns' },
-  { value: 'ensure_only_display', icon: 'fa-desktop' },
+  'no_operation',
+  'ensure_active',
+  'ensure_primary',
+  'ensure_secondary',
+  'ensure_only_display',
 ]
 </script>
 
@@ -24,20 +24,20 @@ const modes = [
     <div class="display-prep-options">
       <label
         v-for="mode in modes"
-        :key="mode.value"
+        :key="mode"
         class="display-prep-option"
-        :class="{ 'is-selected': modelValue === mode.value }"
+        :class="{ 'is-selected': modelValue === mode }"
       >
         <input
           class="visually-hidden"
           type="radio"
           name="display_device_prep"
-          :value="mode.value"
-          :checked="modelValue === mode.value"
-          @change="emit('update:modelValue', mode.value)"
+          :value="mode"
+          :checked="modelValue === mode"
+          @change="emit('update:modelValue', mode)"
         />
         <div class="display-prep-option-content">
-          <div class="topology-preview" :class="`is-${mode.value}`" aria-hidden="true">
+          <div class="topology-preview" :class="`is-${mode}`" aria-hidden="true">
             <div class="topology-screen topology-host">
               <i class="fas fa-desktop"></i>
               <span class="topology-off-mark"></span>
@@ -52,11 +52,10 @@ const modes = [
           </div>
           <div class="display-prep-copy">
             <span class="display-prep-title">
-              <i class="fas me-1" :class="mode.icon" aria-hidden="true"></i>
-              {{ $tp('config.display_device_prep_' + mode.value) }}
+              {{ $tp('config.display_device_prep_' + mode) }}
             </span>
             <span class="display-prep-description">
-              {{ $tp('config.display_device_prep_' + mode.value + '_desc') }}
+              {{ $tp('config.display_device_prep_' + mode + '_desc') }}
             </span>
           </div>
         </div>
@@ -130,10 +129,6 @@ const modes = [
   color: var(--ui-text-primary);
   font-size: 0.9rem;
   font-weight: 650;
-}
-
-.display-prep-title i {
-  color: var(--ui-accent);
 }
 
 .display-prep-description {

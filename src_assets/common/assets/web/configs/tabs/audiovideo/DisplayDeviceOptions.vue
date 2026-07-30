@@ -177,7 +177,6 @@ onUnmounted(() => {
                   label-key="config.resolution_change"
                   option-key-prefix="config.resolution_change_"
                   :options="['no_operation', 'automatic', 'manual']"
-                  icon="fa-expand-alt"
                 >
                   <div
                     class="form-text"
@@ -206,7 +205,6 @@ onUnmounted(() => {
                   label-key="config.refresh_rate_change"
                   option-key-prefix="config.refresh_rate_change_"
                   :options="['no_operation', 'automatic', 'manual']"
-                  icon="fa-gauge-high"
                 >
                   <div class="nested-setting mt-2" v-if="config.refresh_rate_change === 'manual'">
                     <div class="form-text">
@@ -228,7 +226,6 @@ onUnmounted(() => {
                   label-key="config.hdr_prep"
                   option-key-prefix="config.hdr_prep_"
                   :options="['no_operation', 'automatic']"
-                  icon="fa-sun"
                 />
               </div>
 

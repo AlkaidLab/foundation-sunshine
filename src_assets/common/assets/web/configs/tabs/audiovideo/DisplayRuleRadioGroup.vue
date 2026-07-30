@@ -19,22 +19,17 @@ defineProps({
     type: Array,
     required: true,
   },
-  icon: {
-    type: String,
-    required: true,
-  },
 })
 
 const emit = defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <fieldset class="display-setting-card">
-    <legend class="display-setting-heading">
-      <i class="fas" :class="icon" aria-hidden="true"></i>
-      <span class="form-label mb-0">{{ $tp(labelKey) }}</span>
-    </legend>
-    <div class="display-rule-options">
+  <section class="display-setting-card">
+    <h3 :id="`${name}_label`" class="display-setting-title">
+      {{ $tp(labelKey) }}
+    </h3>
+    <div class="display-rule-options" role="radiogroup" :aria-labelledby="`${name}_label`">
       <label
         v-for="option in options"
         :key="option"
@@ -53,7 +48,7 @@ const emit = defineEmits(['update:modelValue'])
       </label>
     </div>
     <slot></slot>
-  </fieldset>
+  </section>
 </template>
 
 <style scoped>
@@ -65,23 +60,9 @@ const emit = defineEmits(['update:modelValue'])
   background: var(--ui-surface);
 }
 
-.display-setting-heading {
-  display: flex;
-  float: none;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  margin-bottom: 0.6rem;
-  padding: 0;
-}
-
-.display-setting-heading i {
-  width: 1rem;
-  color: var(--ui-accent);
-  text-align: center;
-}
-
-.display-setting-heading .form-label {
+.display-setting-title {
+  margin: 0 0 0.6rem;
+  color: var(--ui-text-primary);
   font-size: 0.88rem;
   font-weight: 650;
 }
