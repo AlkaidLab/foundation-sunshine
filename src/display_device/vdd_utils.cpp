@@ -255,10 +255,6 @@ namespace display_device {
       }
 
       BOOST_LOG(info) << "Enabling VDD hardware cursor export for direct capture";
-      if (!set_hardware_cursor_enabled(true)) {
-        return false;
-      }
-
       bool persisted = false;
       for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
         if (persist_hardware_cursor_setting(true)) {
@@ -270,7 +266,15 @@ namespace display_device {
       }
 
       if (!persisted) {
-        BOOST_LOG(error) << "VDD hardware cursor export enabled in driver, but failed to persist vdd_settings.xml";
+        BOOST_LOG(error) << "Failed to persist VDD hardware cursor export before reloading the driver";
+        return false;
+      }
+
+      // The VDD command reloads the driver synchronously and the driver reads
+      // HardwareCursor from this file during reload. Persist first so it cannot
+      // observe the old value and keep cursor export disabled in memory.
+      if (!set_hardware_cursor_enabled(true)) {
+        BOOST_LOG(error) << "VDD hardware cursor export is persisted, but the live driver reload failed";
         return false;
       }
 
