@@ -85,6 +85,20 @@ TEST(VddCursorExportSafety, ParsesPersistedEnabledValues) {
   EXPECT_FALSE(hardware_cursor_export_enabled(""));
 }
 
+TEST(VddCursorExportSafety, RetriesAfterPersistSucceedsButLiveEnableFails) {
+  using display_device::vdd_utils::hardware_cursor_export_needs_enable;
+
+  bool persisted_enabled = false;
+  bool live_enable_confirmed = false;
+  EXPECT_TRUE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+
+  persisted_enabled = true;
+  EXPECT_TRUE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+
+  live_enable_confirmed = true;
+  EXPECT_FALSE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+}
+
 TEST(VddFrameChannelSafety, AcceptsValidMetadataForAttach) {
   using namespace platf::dxgi::vdd_frame_channel;
 

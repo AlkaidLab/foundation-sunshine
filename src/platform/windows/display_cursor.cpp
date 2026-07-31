@@ -202,6 +202,78 @@ namespace platf::dxgi {
     }
   }
 
+  namespace {
+    std::vector<bool>
+    compute_invert_mask(const normalized_cursor_shape_t &normalized,
+                        util::buffer_t<std::uint8_t> &local,
+                        std::size_t pixel_count) {
+      std::vector<bool> invert_pixel(pixel_count, false);
+      constexpr std::uint32_t white = 0xFFFFFFFFu;
+      for (std::size_t index = 0; index < pixel_count; ++index) {
+        std::uint32_t xor_pixel;
+        std::memcpy(
+          &xor_pixel,
+          std::begin(normalized.xor_mask) + index * sizeof(xor_pixel),
+          sizeof(xor_pixel)
+        );
+        if ((xor_pixel & 0x00FFFFFFu) != 0) {
+          invert_pixel[index] = true;
+          std::memcpy(
+            std::begin(local) + index * sizeof(white),
+            &white,
+            sizeof(white)
+          );
+        }
+      }
+      return invert_pixel;
+    }
+
+    void
+    draw_invert_outline(const normalized_cursor_shape_t &normalized,
+                        util::buffer_t<std::uint8_t> &local,
+                        const std::vector<bool> &invert_pixel,
+                        std::size_t height) {
+      constexpr std::uint32_t black = 0xFF000000u;
+      for (std::size_t index = 0; index < invert_pixel.size(); ++index) {
+        if (!invert_pixel[index]) {
+          continue;
+        }
+        const std::size_t x = index % normalized.info.Width;
+        const std::size_t y = index / normalized.info.Width;
+        for (int dy = -1; dy <= 1; ++dy) {
+          for (int dx = -1; dx <= 1; ++dx) {
+            const auto nx = static_cast<std::int64_t>(x) + dx;
+            const auto ny = static_cast<std::int64_t>(y) + dy;
+            if (nx < 0 || ny < 0 ||
+                nx >= static_cast<std::int64_t>(normalized.info.Width) ||
+                ny >= static_cast<std::int64_t>(height)) {
+              continue;
+            }
+            const std::size_t neighbor =
+              static_cast<std::size_t>(ny) * normalized.info.Width +
+              static_cast<std::size_t>(nx);
+            if (invert_pixel[neighbor]) {
+              continue;
+            }
+            std::uint32_t alpha_pixel;
+            std::memcpy(
+              &alpha_pixel,
+              std::begin(normalized.alpha) + neighbor * sizeof(alpha_pixel),
+              sizeof(alpha_pixel)
+            );
+            if ((alpha_pixel & 0xFF000000u) == 0) {
+              std::memcpy(
+                std::begin(local) + neighbor * sizeof(black),
+                &black,
+                sizeof(black)
+              );
+            }
+          }
+        }
+      }
+    }
+  }  // namespace
+
   util::buffer_t<std::uint8_t>
   make_local_cursor_image(const normalized_cursor_shape_t &normalized) {
     if (normalized.xor_mask.size() == 0) {
@@ -218,66 +290,15 @@ namespace platf::dxgi {
     if (pixel_count % normalized.info.Width != 0) {
       return {};
     }
-    const std::size_t height = pixel_count / normalized.info.Width;
-    std::vector<bool> invert_pixel(pixel_count, false);
+
     util::buffer_t<std::uint8_t> local = normalized.alpha;
-
-    for (std::size_t index = 0; index < pixel_count; ++index) {
-      std::uint32_t xor_pixel;
-      std::memcpy(
-        &xor_pixel,
-        std::begin(normalized.xor_mask) + index * sizeof(xor_pixel),
-        sizeof(xor_pixel)
-      );
-      if ((xor_pixel & 0x00FFFFFFu) != 0) {
-        invert_pixel[index] = true;
-        constexpr std::uint32_t white = 0xFFFFFFFFu;
-        std::memcpy(
-          std::begin(local) + index * sizeof(white),
-          &white,
-          sizeof(white)
-        );
-      }
-    }
-
-    constexpr std::uint32_t black = 0xFF000000u;
-    for (std::size_t index = 0; index < pixel_count; ++index) {
-      if (!invert_pixel[index]) {
-        continue;
-      }
-      const std::size_t x = index % normalized.info.Width;
-      const std::size_t y = index / normalized.info.Width;
-      for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
-          const auto nx = static_cast<std::int64_t>(x) + dx;
-          const auto ny = static_cast<std::int64_t>(y) + dy;
-          if (nx < 0 || ny < 0 ||
-              nx >= static_cast<std::int64_t>(normalized.info.Width) ||
-              ny >= static_cast<std::int64_t>(height)) {
-            continue;
-          }
-          const std::size_t neighbor =
-            static_cast<std::size_t>(ny) * normalized.info.Width +
-            static_cast<std::size_t>(nx);
-          if (invert_pixel[neighbor]) {
-            continue;
-          }
-          std::uint32_t alpha_pixel;
-          std::memcpy(
-            &alpha_pixel,
-            std::begin(normalized.alpha) + neighbor * sizeof(alpha_pixel),
-            sizeof(alpha_pixel)
-          );
-          if ((alpha_pixel & 0xFF000000u) == 0) {
-            std::memcpy(
-              std::begin(local) + neighbor * sizeof(black),
-              &black,
-              sizeof(black)
-            );
-          }
-        }
-      }
-    }
+    const auto invert_pixel = compute_invert_mask(normalized, local, pixel_count);
+    draw_invert_outline(
+      normalized,
+      local,
+      invert_pixel,
+      pixel_count / normalized.info.Width
+    );
     return local;
   }
 

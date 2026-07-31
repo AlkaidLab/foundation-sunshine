@@ -154,6 +154,11 @@ namespace display_device::vdd_utils {
   bool
   hardware_cursor_export_enabled(std::string value);
 
+  constexpr bool
+  hardware_cursor_export_needs_enable(bool persisted_enabled, bool live_enable_confirmed) {
+    return !persisted_enabled || !live_enable_confirmed;
+  }
+
   /**
    * @brief Ensure ZakoVDD continuously exports its hardware cursor channel.
    * @details Direct VDD capture consumes this channel for both server-side
