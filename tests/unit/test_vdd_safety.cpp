@@ -74,6 +74,17 @@ TEST(VddBaselineSafety, DetectsVddOnlyTopology) {
   EXPECT_TRUE(is_vdd_only_topology({ { "vdd" } }, "vdd"));
 }
 
+TEST(VddCursorExportSafety, ParsesPersistedEnabledValues) {
+  using display_device::vdd_utils::hardware_cursor_export_enabled;
+
+  EXPECT_TRUE(hardware_cursor_export_enabled("true"));
+  EXPECT_TRUE(hardware_cursor_export_enabled(" TRUE "));
+  EXPECT_TRUE(hardware_cursor_export_enabled("1"));
+  EXPECT_FALSE(hardware_cursor_export_enabled("false"));
+  EXPECT_FALSE(hardware_cursor_export_enabled("0"));
+  EXPECT_FALSE(hardware_cursor_export_enabled(""));
+}
+
 TEST(VddFrameChannelSafety, AcceptsValidMetadataForAttach) {
   using namespace platf::dxgi::vdd_frame_channel;
 

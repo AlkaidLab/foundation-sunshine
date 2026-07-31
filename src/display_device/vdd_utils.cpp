@@ -221,13 +221,19 @@ namespace display_device {
     }
 
     bool
-    ensure_hardware_cursor_disabled_for_capture(bool *changed) {
+    hardware_cursor_export_enabled(std::string value) {
+      boost::algorithm::trim(value);
+      return boost::algorithm::iequals(value, "true") || value == "1";
+    }
+
+    bool
+    ensure_hardware_cursor_enabled_for_capture(bool *changed) {
       if (changed) {
         *changed = false;
       }
 
       const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
-      bool needs_disable = true;
+      bool needs_enable = true;
 
       try {
         if (std::filesystem::exists(settings_path)) {
@@ -235,29 +241,27 @@ namespace display_device {
           pt::read_xml(settings_path.string(), tree);
 
           if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
-            auto hardware_cursor = *value;
-            boost::algorithm::trim(hardware_cursor);
-            needs_disable = !(boost::algorithm::iequals(hardware_cursor, "false") || hardware_cursor == "0");
+            needs_enable = !hardware_cursor_export_enabled(*value);
           }
         }
       }
       catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request software cursor for direct capture: " << e.what();
+        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request cursor export for direct capture: " << e.what();
       }
 
-      if (!needs_disable) {
-        BOOST_LOG(debug) << "VDD HardwareCursor is already disabled for direct capture";
+      if (!needs_enable) {
+        BOOST_LOG(debug) << "VDD hardware cursor export is already enabled for direct capture";
         return true;
       }
 
-      BOOST_LOG(info) << "Disabling VDD HardwareCursor because direct VDD capture only receives the shared framebuffer texture";
-      if (!set_hardware_cursor_enabled(false)) {
+      BOOST_LOG(info) << "Enabling VDD hardware cursor export for direct capture";
+      if (!set_hardware_cursor_enabled(true)) {
         return false;
       }
 
       bool persisted = false;
       for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
-        if (persist_hardware_cursor_setting(false)) {
+        if (persist_hardware_cursor_setting(true)) {
           persisted = true;
           break;
         }
@@ -266,7 +270,7 @@ namespace display_device {
       }
 
       if (!persisted) {
-        BOOST_LOG(error) << "VDD HardwareCursor disabled in driver, but failed to persist vdd_settings.xml";
+        BOOST_LOG(error) << "VDD hardware cursor export enabled in driver, but failed to persist vdd_settings.xml";
         return false;
       }
 

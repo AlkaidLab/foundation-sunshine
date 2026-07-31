@@ -149,14 +149,22 @@ namespace display_device::vdd_utils {
   execute_vdd_command(const std::string &action);
 
   /**
-   * @brief Ensure ZakoVDD renders the cursor into the framebuffer instead of exposing a hardware cursor plane.
-   * @details Sunshine's direct VDD capture backend consumes only the shared frame texture exported by ZakoVDD.
-   *          Hardware cursor planes are not part of that texture, so they would be invisible to remote clients.
-   * @param changed Optional output set to true when this call had to update the driver setting.
-   * @return True when the setting is already safe or was updated successfully.
+   * @brief Parse the persisted VDD HardwareCursor value.
    */
   bool
-  ensure_hardware_cursor_disabled_for_capture(bool *changed = nullptr);
+  hardware_cursor_export_enabled(std::string value);
+
+  /**
+   * @brief Ensure ZakoVDD continuously exports its hardware cursor channel.
+   * @details Direct VDD capture consumes this channel for both server-side
+   *          composition and client-side local cursor synchronization. Once
+   *          enabled, switching cursor ownership is a session-only operation
+   *          and does not require another driver reload.
+   * @param changed Optional output set to true when this call had to update the driver setting.
+   * @return True when cursor export was already enabled or was updated successfully.
+   */
+  bool
+  ensure_hardware_cursor_enabled_for_capture(bool *changed = nullptr);
 
   /**
    * @brief Outcome of attempting a live SETMODES update.
