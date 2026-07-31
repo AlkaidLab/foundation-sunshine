@@ -89,14 +89,16 @@ TEST_F(TrayStateTest, SerializesPairingAndVddState) {
 
 TEST_F(TrayStateTest, PublishesActiveClientSessionSnapshots) {
   tray_state::add_session(12, "Living Room TV");
-  tray_state::add_session(7, "Handheld");
+  tray_state::add_session(7, "Handheld", true);
 
   auto sessions = tray_state::to_json().at("sessions");
   ASSERT_EQ(sessions.size(), 2);
   EXPECT_EQ(sessions.at(0).at("id"), 7);
   EXPECT_EQ(sessions.at(0).at("client_name"), "Handheld");
+  EXPECT_TRUE(sessions.at(0).at("highly_suspected_unknown_client"));
   EXPECT_EQ(sessions.at(1).at("id"), 12);
   EXPECT_EQ(sessions.at(1).at("client_name"), "Living Room TV");
+  EXPECT_FALSE(sessions.at(1).at("highly_suspected_unknown_client"));
 
   tray_state::add_session(12, "Living Room Moonlight");
   sessions = tray_state::to_json().at("sessions");

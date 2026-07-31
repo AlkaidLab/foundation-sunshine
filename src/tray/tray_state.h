@@ -48,6 +48,7 @@ namespace tray_state {
   struct client_session_t {
     std::uint32_t id = 0;
     std::string client_name;
+    bool highly_suspected_unknown_client = false;
   };
 
   struct state_t {
@@ -105,7 +106,11 @@ namespace tray_state {
   set_vdd_confirmation(bool awaiting_confirmation, std::uint64_t operation_id = 0);
 
   void
-  add_session(std::uint32_t session_id, const std::string &client_name);
+  add_session(
+    std::uint32_t session_id,
+    const std::string &client_name,
+    bool highly_suspected_unknown_client = false
+  );
 
   void
   remove_session(std::uint32_t session_id);

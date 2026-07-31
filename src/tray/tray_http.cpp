@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "src/client_fingerprint.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/session.h"
@@ -511,6 +512,54 @@ namespace tray_http {
     }
 
     void
+    get_client_fingerprint_rules_status(resp_https_t response, req_https_t request, const auth_fn &auth) {
+      if (!auth(response, request)) return;
+
+      const auto status = client_fingerprint::status();
+      send_json(std::move(response), {
+                                       { "status", true },
+                                       { "revision", status.revision },
+                                       { "source", status.source },
+                                       { "last_error", status.last_error },
+                                       { "remote_rules_enabled", status.remote_rules_enabled },
+                                     });
+    }
+
+    void
+    install_client_fingerprint_rules(resp_https_t response, req_https_t request, const auth_fn &auth) {
+      constexpr std::size_t max_request_bytes = 600 * 1024;
+      if (!check_json_content_type(response, request)) return;
+      if (!auth(response, request)) return;
+      if (request->content.size() == 0 || request->content.size() > max_request_bytes) {
+        send_bad_request(std::move(response), "Rule request exceeds the size limit");
+        return;
+      }
+
+      try {
+        const auto body = nlohmann::json::parse(request->content.string());
+        if (!body.is_object() || !body.contains("envelope") || !body.at("envelope").is_string()) {
+          throw std::invalid_argument("envelope must be a string");
+        }
+
+        const auto &envelope = body.at("envelope").get_ref<const std::string &>();
+        const auto result = client_fingerprint::install_signed_rules(envelope);
+        if (!result) {
+          send_bad_request(std::move(response), result.error);
+          return;
+        }
+        send_json(std::move(response), {
+                                         { "status", true },
+                                         { "installed", result.installed },
+                                         { "unchanged", result.unchanged },
+                                         { "revision", result.revision },
+                                       });
+      }
+      catch (const std::exception &e) {
+        send_bad_request(std::move(response), e.what());
+      }
+    }
+
+    void
     subscribe_tray_state(resp_https_t response, req_https_t request, const auth_fn &auth) {
       if (!auth(response, request)) return;
 
@@ -618,6 +667,12 @@ namespace tray_http {
     };
     server.resource["^/api/tray/action$"]["POST"] = [action_auth](resp_https_t response, req_https_t request) {
       tray_action(std::move(response), std::move(request), action_auth);
+    };
+    server.resource["^/api/tray/client-fingerprint-rules$"]["GET"] = [state_auth](resp_https_t response, req_https_t request) {
+      get_client_fingerprint_rules_status(std::move(response), std::move(request), state_auth);
+    };
+    server.resource["^/api/tray/client-fingerprint-rules$"]["POST"] = [action_auth](resp_https_t response, req_https_t request) {
+      install_client_fingerprint_rules(std::move(response), std::move(request), action_auth);
     };
   }
 

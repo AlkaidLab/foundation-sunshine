@@ -35,6 +35,7 @@ extern "C" {
   #define DATA_SHARDS_MAX 255
 #endif
 
+#include "client_fingerprint.h"
 #include "config.h"
 #include "display_device/session.h"
 #include "globals.h"
@@ -52,6 +53,7 @@ extern "C" {
 #include "webhook/webhook.h"
 
 #include "clipboard_bridge.h"
+#include "cursor_channel.h"
 #include "platform/common.h"
 
 #define IDX_START_A 0
@@ -74,6 +76,7 @@ extern "C" {
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
+#define IDX_CURSOR 21  // Local cursor mode/update (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -97,6 +100,7 @@ static const short packetTypes[] = {
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
   0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
+  0x5509,  // Local cursor mode/update (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -274,6 +278,27 @@ namespace stream {
     std::uint32_t width;
     std::uint32_t height;
   };
+
+  constexpr std::uint8_t cursor_protocol_version = 1;
+  constexpr std::uint8_t cursor_flag_shape = 0x01;
+  constexpr std::uint8_t cursor_flag_visible = 0x02;
+  constexpr std::size_t cursor_chunk_bytes = 60000;
+
+  struct cursor_update_header_t {
+    std::uint8_t version;
+    std::uint8_t flags;
+    std::uint16_t header_size;
+    std::uint32_t shape_id;
+    std::uint16_t width;
+    std::uint16_t height;
+    std::int16_t hotspot_x;
+    std::int16_t hotspot_y;
+    std::uint32_t total_size;
+    std::uint32_t offset;
+    std::uint16_t chunk_size;
+    std::uint16_t reserved;
+  };
+  static_assert(sizeof(cursor_update_header_t) == 28);
 
   typedef struct control_encrypted_t {
     std::uint16_t encryptedHeaderType;  // Always LE 0x0001
@@ -514,6 +539,7 @@ namespace stream {
     // 添加客户端名称字段
     std::string client_name;
     std::string client_cert_uuid;
+    bool highly_suspected_unknown_client {false};
     std::string app_name;
     int app_id = 0;
 
@@ -573,6 +599,15 @@ namespace stream {
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
+
+      bool local_cursor_mode = false;
+      std::uint64_t cursor_revision = 0;
+      bool cursor_shape_sent = false;
+      std::uint32_t cursor_shape_id = 0;
+      bool cursor_visibility_sent = false;
+      bool cursor_visible = false;
+      std::uint64_t cursor_failed_revision = 0;
+      std::uint32_t cursor_send_failures = 0;
     } control;
 
     std::uint32_t launch_session_id;
@@ -1377,6 +1412,103 @@ namespace stream {
     return 0;
   }
 
+  int
+  send_cursor_update(session_t *session,
+                     const cursor_channel::snapshot_t &cursor,
+                     bool include_shape) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
+      return -1;
+    }
+
+    const std::size_t total_size = include_shape ? cursor.bgra.size() : 0;
+    if (include_shape &&
+        (!cursor.has_shape || cursor.width == 0 || cursor.height == 0 ||
+         total_size != static_cast<std::size_t>(cursor.width) * cursor.height * 4u ||
+         total_size > std::numeric_limits<std::uint32_t>::max())) {
+      BOOST_LOG(warning) << "Refusing invalid local cursor shape"sv;
+      return -1;
+    }
+
+    std::size_t offset = 0;
+    do {
+      const std::size_t chunk_size =
+        include_shape ? std::min(cursor_chunk_bytes, total_size - offset) : 0;
+      const std::size_t cursor_payload_size = sizeof(cursor_update_header_t) + chunk_size;
+      const std::size_t plaintext_size = sizeof(control_header_v2) + cursor_payload_size;
+      const std::size_t encrypted_packet_length =
+        crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+        + crypto::cipher::tag_size
+        + sizeof(control_encrypted_t::seq);
+      if (cursor_payload_size > std::numeric_limits<std::uint16_t>::max() ||
+          encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+        BOOST_LOG(warning) << "Local cursor chunk exceeds control packet limit"sv;
+        return -1;
+      }
+
+      std::vector<std::uint8_t> plaintext(plaintext_size);
+      auto *control_header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control_header->type = util::endian::little<std::uint16_t>(packetTypes[IDX_CURSOR]);
+      control_header->payloadLength =
+        util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(cursor_payload_size));
+
+      auto *cursor_header = reinterpret_cast<cursor_update_header_t *>(
+        plaintext.data() + sizeof(control_header_v2)
+      );
+      cursor_header->version = cursor_protocol_version;
+      cursor_header->flags = (include_shape ? cursor_flag_shape : 0) |
+                             (cursor.visible ? cursor_flag_visible : 0);
+      cursor_header->header_size =
+        util::endian::little<std::uint16_t>(sizeof(cursor_update_header_t));
+      cursor_header->shape_id = util::endian::little(cursor.shape_id);
+      cursor_header->width =
+        util::endian::little<std::uint16_t>(include_shape ? cursor.width : 0);
+      cursor_header->height =
+        util::endian::little<std::uint16_t>(include_shape ? cursor.height : 0);
+      cursor_header->hotspot_x = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_x : 0
+      );
+      cursor_header->hotspot_y = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_y : 0
+      );
+      cursor_header->total_size =
+        util::endian::little<std::uint32_t>(static_cast<std::uint32_t>(total_size));
+      cursor_header->offset =
+        util::endian::little<std::uint32_t>(static_cast<std::uint32_t>(offset));
+      cursor_header->chunk_size =
+        util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(chunk_size));
+      cursor_header->reserved = 0;
+
+      if (chunk_size != 0) {
+        std::memcpy(
+          plaintext.data() + sizeof(control_header_v2) + sizeof(cursor_update_header_t),
+          cursor.bgra.data() + offset,
+          chunk_size
+        );
+      }
+
+      std::vector<std::uint8_t> encrypted(
+        sizeof(control_encrypted_t)
+        + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+        + crypto::cipher::tag_size
+      );
+      auto view = encode_control_buf(
+        session,
+        std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
+        encrypted.data(),
+        encrypted.size()
+      );
+      if (view.empty() ||
+          session->broadcast_ref->control_server.send(view, session->control.peer)) {
+        BOOST_LOG(warning) << "Couldn't send local cursor update"sv;
+        return -1;
+      }
+
+      offset += chunk_size;
+    } while (include_shape && offset < total_size);
+
+    return 0;
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
@@ -1658,6 +1790,44 @@ namespace stream {
       bridge.on_inbound(session->launch_session_id, std::move(bytes));
     });
 
+    server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
+      if (payload.size() != 4 ||
+          static_cast<std::uint8_t>(payload[0]) != cursor_protocol_version) {
+        BOOST_LOG(warning) << "Ignoring malformed local cursor mode request"sv;
+        return;
+      }
+
+      const auto requested_mode = static_cast<std::uint8_t>(payload[1]);
+      if (requested_mode > 1) {
+        BOOST_LOG(warning) << "Ignoring unknown local cursor mode "sv
+                           << static_cast<unsigned int>(requested_mode);
+        return;
+      }
+
+      const bool enable = requested_mode == 1;
+      if (enable && session->config.controlProtocolType != 13) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode on an unencrypted control stream"sv;
+        return;
+      }
+      if (enable && !cursor_channel::producer_available()) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode without an active cursor producer"sv;
+        return;
+      }
+      if (session->control.local_cursor_mode == enable) {
+        return;
+      }
+
+      session->control.local_cursor_mode = enable;
+      session->control.cursor_revision = 0;
+      session->control.cursor_shape_sent = false;
+      session->control.cursor_visibility_sent = false;
+      session->control.cursor_failed_revision = 0;
+      session->control.cursor_send_failures = 0;
+      cursor_channel::set_session_enabled(session->launch_session_id, enable);
+      BOOST_LOG(info) << "Local cursor mode "sv << (enable ? "enabled"sv : "disabled"sv)
+                      << " for session "sv << session->launch_session_id;
+    });
+
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
 
@@ -1784,6 +1954,7 @@ namespace stream {
 
           if (session->lifecycle.state() == session::state_e::STOPPING) {
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+            cursor_channel::remove_session(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
             if (session->control.peer) {
@@ -1828,6 +1999,58 @@ namespace stream {
                 send_resolution_change(session, resolution->first, resolution->second);
               }
             }
+
+            if (session->control.local_cursor_mode) {
+              cursor_channel::snapshot_t cursor;
+              if (cursor_channel::copy_latest(session->control.cursor_revision, cursor)) {
+                const bool include_shape =
+                  cursor.has_shape &&
+                  (!session->control.cursor_shape_sent ||
+                   session->control.cursor_shape_id != cursor.shape_id);
+                const bool visibility_changed =
+                  !session->control.cursor_visibility_sent ||
+                  session->control.cursor_visible != cursor.visible;
+                const bool waiting_for_shape =
+                  !cursor.has_shape &&
+                  session->control.cursor_shape_sent &&
+                  session->control.cursor_shape_id != cursor.shape_id;
+
+                if ((include_shape || visibility_changed) &&
+                    send_cursor_update(session, cursor, include_shape) == 0) {
+                  session->control.cursor_revision = cursor.revision;
+                  session->control.cursor_failed_revision = 0;
+                  session->control.cursor_send_failures = 0;
+                  session->control.cursor_visibility_sent = true;
+                  session->control.cursor_visible = cursor.visible;
+                  if (include_shape) {
+                    session->control.cursor_shape_sent = true;
+                    session->control.cursor_shape_id = cursor.shape_id;
+                  }
+                }
+                else if (!include_shape && !visibility_changed) {
+                  if (!waiting_for_shape) {
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
+                }
+                else {
+                  if (session->control.cursor_failed_revision != cursor.revision) {
+                    session->control.cursor_failed_revision = cursor.revision;
+                    session->control.cursor_send_failures = 0;
+                  }
+
+                  if (++session->control.cursor_send_failures >= 3) {
+                    BOOST_LOG(warning) << "Dropping local cursor revision "sv
+                                       << cursor.revision
+                                       << " after repeated send failures"sv;
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
+                }
+              }
+            }
           }
 
           ++pos;
@@ -1861,7 +2084,10 @@ namespace stream {
         break;
       }
 
-      server->iterate(150ms);
+      // Cursor shapes are low-frequency, but pointer role transitions should
+      // still feel immediate. Poll the latest-value bridge once per frame while
+      // local cursor mode is active without adding another control thread.
+      server->iterate(cursor_channel::local_mode_active() ? 16ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down
@@ -1886,6 +2112,7 @@ namespace stream {
       // final shutdown path instead, make the same paired lifecycle update here
       // so capability/session_count cannot retain stale launch IDs.
       clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+      cursor_channel::remove_session(session->launch_session_id);
 
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
@@ -3287,7 +3514,11 @@ namespace stream {
         ::config::video.capture.empty() ? "auto" : ::config::video.capture,
         session.control_only,
       });
-      tray_state::add_session(session.launch_session_id, session.client_name);
+      tray_state::add_session(
+        session.launch_session_id,
+        session.client_name,
+        session.highly_suspected_unknown_client
+      );
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
@@ -3327,6 +3558,16 @@ namespace stream {
       }
 
       try {
+        std::map<std::string, std::string> extra_data {
+          {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
+          {"fps", std::to_string(session.config.monitor.framerate)}
+        };
+        if (session.highly_suspected_unknown_client) {
+          extra_data.emplace(
+            "client_integrity_warning",
+            client_fingerprint::suspicious_client_code
+          );
+        }
         webhook::send_event_async(webhook::event_t {
           .type = webhook::event_type_t::NV_SESSION_START,
           .timestamp = webhook::get_current_timestamp(),
@@ -3335,10 +3576,7 @@ namespace stream {
           .app_name = session.app_name,
           .app_id = session.app_id,
           .session_id = std::to_string(session.launch_session_id),
-          .extra_data = {
-            {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
-            {"fps", std::to_string(session.config.monitor.framerate)}
-          }
+          .extra_data = std::move(extra_data)
         });
       }
       catch (...) {
@@ -3361,6 +3599,7 @@ namespace stream {
       // 设置客户端名称
       session->client_name = launch_session.client_name;
       session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);
 

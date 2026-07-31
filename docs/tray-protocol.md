@@ -91,6 +91,21 @@ Long-running actions return an `operation_id`; their current `running`,
 `succeeded`, or `failed` result is published in the state `operation` object.
 Operations execute serially and are joined during Core shutdown.
 
+## Signed client fingerprint rules
+
+The packaged GUI may act as a low-frequency transport for warning-only client
+fingerprint rules:
+
+- `GET /api/tray/client-fingerprint-rules` returns Core's active rule status.
+- `POST /api/tray/client-fingerprint-rules` accepts
+  `{ "envelope": "<signed envelope JSON>" }`.
+
+The endpoint is local and uses the same authentication policy as tray actions.
+Core treats the provider and request body as untrusted: it independently
+verifies the pinned X.509 signature, schema, expiry, monotonic revision, and
+size limits before persisting and activating the candidate. The provider must
+not interpret rules or make client classification decisions.
+
 ## Future providers
 
 Version 1 keeps runtime ownership intentionally simple: the packaged GUI is
