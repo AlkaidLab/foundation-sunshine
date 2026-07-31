@@ -5,6 +5,7 @@
 #include "vdd_ioctl.h"
 
 #include <algorithm>
+#include <atomic>
 #include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/process/v1.hpp>
@@ -52,6 +53,7 @@ namespace display_device {
       constexpr auto kModePublicationTimeout = 3s;
       constexpr auto kModePublicationInitialPoll = 50ms;
       constexpr auto kModePublicationMaxPoll = 500ms;
+      std::atomic_bool hardware_cursor_live_enable_confirmed { false };
 
       std::vector<std::string>
       collect_physical_devices_for_preservation() {
@@ -221,13 +223,19 @@ namespace display_device {
     }
 
     bool
-    ensure_hardware_cursor_disabled_for_capture(bool *changed) {
+    hardware_cursor_export_enabled(std::string value) {
+      boost::algorithm::trim(value);
+      return boost::algorithm::iequals(value, "true") || value == "1";
+    }
+
+    bool
+    ensure_hardware_cursor_enabled_for_capture(bool *changed) {
       if (changed) {
         *changed = false;
       }
 
       const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
-      bool needs_disable = true;
+      bool persisted_enabled = false;
 
       try {
         if (std::filesystem::exists(settings_path)) {
@@ -235,41 +243,49 @@ namespace display_device {
           pt::read_xml(settings_path.string(), tree);
 
           if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
-            auto hardware_cursor = *value;
-            boost::algorithm::trim(hardware_cursor);
-            needs_disable = !(boost::algorithm::iequals(hardware_cursor, "false") || hardware_cursor == "0");
+            persisted_enabled = hardware_cursor_export_enabled(*value);
           }
         }
       }
       catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request software cursor for direct capture: " << e.what();
+        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request cursor export for direct capture: " << e.what();
       }
 
-      if (!needs_disable) {
-        BOOST_LOG(debug) << "VDD HardwareCursor is already disabled for direct capture";
+      if (!hardware_cursor_export_needs_enable(
+            persisted_enabled,
+            hardware_cursor_live_enable_confirmed.load(std::memory_order_acquire))) {
+        BOOST_LOG(debug) << "VDD hardware cursor export is enabled in settings and confirmed by the live driver";
         return true;
       }
 
-      BOOST_LOG(info) << "Disabling VDD HardwareCursor because direct VDD capture only receives the shared framebuffer texture";
-      if (!set_hardware_cursor_enabled(false)) {
-        return false;
-      }
+      BOOST_LOG(info) << "Enabling VDD hardware cursor export for direct capture";
+      bool persisted = persisted_enabled;
+      if (!persisted) {
+        for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
+          if (persist_hardware_cursor_setting(true)) {
+            persisted = true;
+            break;
+          }
 
-      bool persisted = false;
-      for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
-        if (persist_hardware_cursor_setting(false)) {
-          persisted = true;
-          break;
+          std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
         }
-
-        std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
       }
 
       if (!persisted) {
-        BOOST_LOG(error) << "VDD HardwareCursor disabled in driver, but failed to persist vdd_settings.xml";
+        BOOST_LOG(error) << "Failed to persist VDD hardware cursor export before reloading the driver";
         return false;
       }
 
+      // The VDD command reloads the driver synchronously and the driver reads
+      // HardwareCursor from this file during reload. Persist first so it cannot
+      // observe the old value and keep cursor export disabled in memory.
+      if (!set_hardware_cursor_enabled(true)) {
+        hardware_cursor_live_enable_confirmed.store(false, std::memory_order_release);
+        BOOST_LOG(error) << "VDD hardware cursor export is persisted, but the live driver reload failed";
+        return false;
+      }
+
+      hardware_cursor_live_enable_confirmed.store(true, std::memory_order_release);
       if (changed) {
         *changed = true;
       }
