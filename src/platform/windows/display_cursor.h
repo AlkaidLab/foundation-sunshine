@@ -21,6 +21,14 @@ namespace platf::dxgi {
   make_cursor_alpha_image(const util::buffer_t<std::uint8_t> &img_data,
                           DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info);
 
+  /**
+   * Flatten alpha and XOR cursor layers into a system-cursor-safe image.
+   * XOR pixels use a white fill with a black outline because native client
+   * cursors cannot invert the remote framebuffer beneath them.
+   */
+  util::buffer_t<std::uint8_t>
+  make_local_cursor_image(const normalized_cursor_shape_t &normalized);
+
   bool
   set_cursor_texture(device_t::pointer device,
                      gpu_cursor_t &cursor,

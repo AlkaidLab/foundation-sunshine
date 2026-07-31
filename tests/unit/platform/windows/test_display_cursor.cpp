@@ -88,6 +88,29 @@ TEST(WindowsCursorImage, PreservesMaskedColorPixelConversion) {
   EXPECT_EQ(read_pixel(xor_mask, 1), 0xFF445566u);
 }
 
+TEST(WindowsCursorImage, MakesXorCursorVisibleOnLightAndDarkBackgrounds) {
+  platf::dxgi::normalized_cursor_shape_t normalized;
+  normalized.info.Width = 3;
+  normalized.info.Height = 3;
+  normalized.alpha = util::buffer_t<std::uint8_t>(9 * sizeof(std::uint32_t));
+  normalized.xor_mask = util::buffer_t<std::uint8_t>(9 * sizeof(std::uint32_t));
+  std::fill(normalized.alpha.begin(), normalized.alpha.end(), 0);
+  std::fill(normalized.xor_mask.begin(), normalized.xor_mask.end(), 0);
+  write_pixel(normalized.alpha, 0, 0xFF112233u);
+  write_pixel(normalized.xor_mask, 4, 0xFFFFFFFFu);
+
+  const auto local = platf::dxgi::make_local_cursor_image(normalized);
+
+  ASSERT_EQ(local.size(), normalized.alpha.size());
+  EXPECT_EQ(read_pixel(local, 0), 0xFF112233u);
+  EXPECT_EQ(read_pixel(local, 4), 0xFFFFFFFFu);
+  for (std::size_t index = 1; index < 9; ++index) {
+    if (index != 4) {
+      EXPECT_EQ(read_pixel(local, index), 0xFF000000u);
+    }
+  }
+}
+
 TEST(WindowsCursorImage, RejectsMalformedCursorShapes) {
   platf::dxgi::normalized_cursor_shape_t normalized;
 
