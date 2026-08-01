@@ -72,8 +72,24 @@ namespace platf::dxgi {
       current_frame = nullptr;
     }
 
+    const bool use_local_cursor = local_cursor_mode_active();
+    if (use_local_cursor != vdd_local_cursor_mode_active) {
+      // poll_cursor() normally omits an acknowledged shape. Force a refresh
+      // whenever ownership moves between the video overlay and the client.
+      dup.invalidate_cursor_shape();
+      vdd_local_cursor_mode_active = use_local_cursor;
+    }
+
+    const bool should_poll_cursor = cursor_visible || use_local_cursor;
     std::uint64_t frame_qpc = 0;
-    auto status = dup.next_frame(timeout, &current_frame, frame_qpc);
+    bool cursor_only = false;
+    auto status = dup.next_frame(
+      timeout,
+      &current_frame,
+      frame_qpc,
+      should_poll_cursor,
+      cursor_only
+    );
     if (status != capture_e::ok) {
       return status;
     }
@@ -89,33 +105,7 @@ namespace platf::dxgi {
       }
     });
 
-    const auto now = std::chrono::steady_clock::now();
-    auto frame_timestamp = now - qpc_time_difference(qpc_counter(), frame_qpc);
-
-    D3D11_TEXTURE2D_DESC desc {};
-    current_frame->GetDesc(&desc);
-
-    if (desc.Width != static_cast<UINT>(width_before_rotation) ||
-        desc.Height != static_cast<UINT>(height_before_rotation) ||
-        desc.Format != capture_format) {
-      BOOST_LOG(info) << "[vdd] producer reconfigured: "sv
-                      << width_before_rotation << "x"sv << height_before_rotation
-                      << " " << dxgi_format_to_string(capture_format)
-                      << " -> "sv << desc.Width << "x"sv << desc.Height
-                      << " " << dxgi_format_to_string(desc.Format);
-      return capture_e::reinit;
-    }
-
-    const bool use_local_cursor = local_cursor_mode_active();
-    if (use_local_cursor != vdd_local_cursor_mode_active) {
-      // poll_cursor() normally omits an acknowledged shape. Force a refresh
-      // whenever ownership moves between the video overlay and the client.
-      dup.invalidate_cursor_shape();
-      vdd_local_cursor_mode_active = use_local_cursor;
-    }
-
     vdd_capture_t::cursor_snapshot cursor_state;
-    const bool should_poll_cursor = cursor_visible || use_local_cursor;
     const bool has_cursor_state = should_poll_cursor &&
                                   (cursor_pipeline_ready || use_local_cursor) &&
                                   dup.poll_cursor(cursor_state) &&
@@ -128,6 +118,37 @@ namespace platf::dxgi {
     if (has_cursor_state && use_local_cursor &&
         publish_local_cursor(cursor_state)) {
       dup.acknowledge_cursor_shape(cursor_state.shape_id);
+    }
+
+    if (cursor_only && use_local_cursor) {
+      // The control channel publication above is the output for local cursor
+      // mode; avoid encoding a duplicate desktop frame.
+      return capture_e::timeout;
+    }
+    if (cursor_only && !has_cursor_state) {
+      return capture_e::timeout;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto timestamp_qpc = cursor_only && cursor_state.update_qpc ?
+                                 cursor_state.update_qpc : frame_qpc;
+    auto frame_timestamp = timestamp_qpc ?
+                             now - qpc_time_difference(qpc_counter(), timestamp_qpc) :
+                             now;
+
+    D3D11_TEXTURE2D_DESC desc {};
+    if (!cursor_only) {
+      current_frame->GetDesc(&desc);
+      if (desc.Width != static_cast<UINT>(width_before_rotation) ||
+          desc.Height != static_cast<UINT>(height_before_rotation) ||
+          desc.Format != capture_format) {
+        BOOST_LOG(info) << "[vdd] producer reconfigured: "sv
+                        << width_before_rotation << "x"sv << height_before_rotation
+                        << " " << dxgi_format_to_string(capture_format)
+                        << " -> "sv << desc.Width << "x"sv << desc.Height
+                        << " " << dxgi_format_to_string(desc.Format);
+        return capture_e::reinit;
+      }
     }
 
     auto composite_cursor = [&](ID3D11RenderTargetView *capture_rt) {
@@ -201,8 +222,9 @@ namespace platf::dxgi {
       }
     };
 
-    auto copy_current_frame_to = [&](std::shared_ptr<platf::img_t> candidate_img,
-                                     std::shared_ptr<img_d3d_t> candidate_d3d) -> capture_e {
+    auto copy_frame_to = [&](ID3D11Texture2D *source,
+                             std::shared_ptr<platf::img_t> candidate_img,
+                             std::shared_ptr<img_d3d_t> candidate_d3d) -> capture_e {
       if (!candidate_img || !candidate_d3d) {
         return capture_e::error;
       }
@@ -217,7 +239,7 @@ namespace platf::dxgi {
         BOOST_LOG(error) << "[vdd] failed to lock capture texture"sv;
         return capture_e::error;
       }
-      device_ctx->CopyResource(candidate_d3d->capture_texture.get(), current_frame);
+      device_ctx->CopyResource(candidate_d3d->capture_texture.get(), source);
       composite_cursor(candidate_d3d->capture_rt.get());
 
       img_out = std::move(candidate_img);
@@ -226,7 +248,8 @@ namespace platf::dxgi {
       return capture_e::ok;
     };
 
-    if (!vdd_borrow_enabled &&
+    if (!cursor_only &&
+        !vdd_borrow_enabled &&
         vdd_borrow_deferred_images.empty() &&
         vdd_borrow_inflight_frames->load(std::memory_order_relaxed) == 0) {
       std::shared_ptr<platf::img_t> img;
@@ -234,7 +257,7 @@ namespace platf::dxgi {
         return capture_e::interrupted;
       }
       auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-      return copy_current_frame_to(std::move(img), std::move(d3d_img));
+      return copy_frame_to(current_frame, std::move(img), std::move(d3d_img));
     }
 
     const auto producer_replaced_unread = dup.replaced_unread_frames();
@@ -330,6 +353,15 @@ namespace platf::dxgi {
     if (!pull_reusable_image()) {
       log_vdd_borrow_debug_telemetry();
       return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
+    }
+
+    if (cursor_only) {
+      log_vdd_borrow_debug_telemetry();
+      return copy_frame_to(
+        current_frame,
+        std::move(img),
+        std::move(d3d_img)
+      );
     }
 
     auto try_borrow_current_frame = [&]() -> bool {
@@ -450,7 +482,7 @@ namespace platf::dxgi {
       return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
     }
 
-    return copy_current_frame_to(std::move(img), std::move(d3d_img));
+    return copy_frame_to(current_frame, std::move(img), std::move(d3d_img));
   }
 
   capture_e

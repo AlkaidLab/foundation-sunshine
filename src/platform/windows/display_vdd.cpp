@@ -322,6 +322,7 @@ namespace platf::dxgi {
   static constexpr UINT32 VDD_CURSOR_MAGIC = 0x5A564355;  // 'ZVCU'
   static constexpr UINT32 VDD_CURSOR_VERSION = 1;
   static constexpr UINT32 VDD_CURSOR_MAX_BYTES = 256u * 256u * 4u;  // matches driver
+  static constexpr auto VDD_CURSOR_ATTACH_RETRY_DELAY = 250ms;
 
   vdd_capture_t::vdd_capture_t() = default;
 
@@ -350,6 +351,11 @@ namespace platf::dxgi {
       CloseHandle(m_hEvent);
       m_hEvent = nullptr;
     }
+    detach_cursor_channel();
+  }
+
+  void
+  vdd_capture_t::detach_cursor_channel() {
     if (m_pCursorMeta) {
       UnmapViewOfFile(m_pCursorMeta);
       m_pCursorMeta = nullptr;
@@ -364,37 +370,67 @@ namespace platf::dxgi {
     }
     m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     m_lastSeenCursorPositionId = 0xFFFFFFFFu;
+    m_cursorUpdatePending = false;
   }
 
-  void
-  vdd_capture_t::attach_cursor_channel(unsigned int monitor_idx) {
+  bool
+  vdd_capture_t::attach_cursor_channel() {
     // Optional: old driver builds do not export cursor mappings. Capture must
     // remain usable in that case, with the cursor overlay simply disabled.
-    std::wstring cursor_meta_name = L"Global\\ZakoVDD_CursorMeta_" + std::to_wstring(monitor_idx);
-    std::wstring cursor_event_name = L"Global\\ZakoVDD_CursorReady_" + std::to_wstring(monitor_idx);
+    std::wstring cursor_meta_name = L"Global\\ZakoVDD_CursorMeta_" + std::to_wstring(m_monitorIdx);
+    std::wstring cursor_event_name = L"Global\\ZakoVDD_CursorReady_" + std::to_wstring(m_monitorIdx);
 
-    m_hCursorMeta = OpenFileMappingW(FILE_MAP_READ, FALSE, cursor_meta_name.c_str());
-    if (!m_hCursorMeta) {
-      BOOST_LOG(info) << "[vdd_capture] cursor SHM not present for monitor "sv
-                      << monitor_idx << " (driver may predate cursor export); "sv
-                      << "clients will see no overlay cursor for this output."sv;
-      return;
+    HANDLE cursor_meta = OpenFileMappingW(FILE_MAP_READ, FALSE, cursor_meta_name.c_str());
+    if (!cursor_meta) {
+      return false;
     }
 
     const SIZE_T map_size = sizeof(CursorSharedMetadata) + VDD_CURSOR_MAX_BYTES;
-    m_pCursorMeta = MapViewOfFile(m_hCursorMeta, FILE_MAP_READ, 0, 0, map_size);
-    if (!m_pCursorMeta) {
-      BOOST_LOG(warning) << "[vdd_capture] cursor MapViewOfFile failed: "sv << GetLastError()
-                         << "; cursor overlay disabled."sv;
-      CloseHandle(m_hCursorMeta);
-      m_hCursorMeta = nullptr;
-      return;
+    void *cursor_mapping = MapViewOfFile(cursor_meta, FILE_MAP_READ, 0, 0, map_size);
+    if (!cursor_mapping) {
+      CloseHandle(cursor_meta);
+      return false;
     }
 
-    // The event is diagnostic/future-facing; polling reads the mapping directly.
-    m_hCursorEvent = OpenEventW(SYNCHRONIZE, FALSE, cursor_event_name.c_str());
-    BOOST_LOG(info) << "[vdd_capture] cursor SHM attached (event="sv
-                    << (m_hCursorEvent ? "yes"sv : "no"sv) << ")"sv;
+    HANDLE cursor_event = OpenEventW(SYNCHRONIZE, FALSE, cursor_event_name.c_str());
+    if (!cursor_event) {
+      UnmapViewOfFile(cursor_mapping);
+      CloseHandle(cursor_meta);
+      return false;
+    }
+
+    m_hCursorMeta = cursor_meta;
+    m_pCursorMeta = cursor_mapping;
+    m_hCursorEvent = cursor_event;
+    return true;
+  }
+
+  bool
+  vdd_capture_t::ensure_cursor_channel_attached() {
+    if (m_pCursorMeta && m_hCursorEvent) {
+      return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now < m_nextCursorAttachAttempt) {
+      return false;
+    }
+    m_nextCursorAttachAttempt = now + VDD_CURSOR_ATTACH_RETRY_DELAY;
+    detach_cursor_channel();
+
+    if (attach_cursor_channel()) {
+      BOOST_LOG(info) << "[vdd_capture] cursor channel attached for monitor "sv << m_monitorIdx
+                      << (m_cursorAttachFailures ? " after retry" : "") << "."sv;
+      m_cursorAttachFailures = 0;
+      return true;
+    }
+
+    ++m_cursorAttachFailures;
+    if (m_cursorAttachFailures == 1 || (m_cursorAttachFailures % 40) == 0) {
+      BOOST_LOG(info) << "[vdd_capture] cursor channel not ready for monitor "sv << m_monitorIdx
+                      << "; capture will retry without restarting the backend."sv;
+    }
+    return false;
   }
 
   void
@@ -699,6 +735,10 @@ namespace platf::dxgi {
     }
     device1_t dev1 {dev1_p};
 
+    m_monitorIdx = monitor_idx;
+    m_nextCursorAttachAttempt = {};
+    m_cursorAttachFailures = 0;
+
     m_frameChannelMode = vdd_frame_channel_mode_env_override().value_or(vdd_frame_channel::channel_mode::auto_probe);
     m_frameChannelSelection = vdd_frame_channel::channel_selection::unknown;
     display_device::vdd_ioctl::frame_channel_caps sealed_caps {};
@@ -715,7 +755,7 @@ namespace platf::dxgi {
 
     switch (try_open_sealed_channel(dev1_p, monitor_idx, *device_luid, sealed_caps)) {
       case sealed_channel_attempt::opened:
-        attach_cursor_channel(monitor_idx);
+        ensure_cursor_channel_attached();
         return 0;
       case sealed_channel_attempt::required_failed:
         return -1;
@@ -729,14 +769,19 @@ namespace platf::dxgi {
     if (!attach_legacy_named_channel(dev1_p, monitor_idx, *device_luid)) {
       return -1;
     }
-    attach_cursor_channel(monitor_idx);
+    ensure_cursor_channel_attached();
     return 0;
   }
 
   capture_e
-  vdd_capture_t::next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_frame_qpc) {
+  vdd_capture_t::next_frame(std::chrono::milliseconds timeout,
+                            ID3D11Texture2D **out,
+                            uint64_t &out_frame_qpc,
+                            bool wait_for_cursor,
+                            bool &out_cursor_only) {
     if (out) *out = nullptr;
     out_frame_qpc = 0;
+    out_cursor_only = false;
 
     if (!m_hEvent || m_keyedMutex.empty() || m_sharedTex.empty() || !m_pMeta) {
       return capture_e::error;
@@ -744,15 +789,99 @@ namespace platf::dxgi {
 
     auto *meta = static_cast<const SharedFrameMetadata *>(m_pMeta);
 
-    // Wait for the next frame-ready signal from the producer.
+    const bool cursor_channel_ready = wait_for_cursor && ensure_cursor_channel_attached();
+
+    // CursorExporter uses an auto-reset event. Waiting on it alongside the
+    // frame event lets pointer-only motion wake a static desktop capture.
     DWORD ms = static_cast<DWORD>(timeout.count() < 0 ? 0 : timeout.count());
-    DWORD wr = WaitForSingleObject(m_hEvent, ms);
+    if (!wait_for_cursor) {
+      m_cursorUpdatePending = false;
+    }
+
+    auto acquire_cursor_frame = [&]() -> capture_e {
+      // The last consumed producer slot is available as key 0 while the
+      // desktop is static. Reacquire it briefly so cursor-only updates retain
+      // the normal single-copy/zero-copy cost on actual desktop frames.
+      const UINT32 slot = m_slotIndex;
+      if (slot >= m_keyedMutex.size()) {
+        return capture_e::reinit;
+      }
+      const DWORD acquire_ms = vdd_frame_channel::bounded_consumer_acquire_timeout_ms(ms);
+      HRESULT hr = m_keyedMutex[slot]->AcquireSync(0, acquire_ms);
+      if (hr == static_cast<HRESULT>(WAIT_TIMEOUT)) {
+        return capture_e::timeout;
+      }
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "[vdd_capture] AcquireSync(0) failed for cursor-only slot "sv
+                         << slot << ": 0x"sv << util::hex(hr).to_string_view();
+        return capture_e::error;
+      }
+      m_holdsKey = true;
+      m_heldSlot = slot;
+      if (out) {
+        m_sharedTex[slot]->AddRef();
+        *out = m_sharedTex[slot].get();
+      }
+      m_cursorUpdatePending = false;
+      out_cursor_only = true;
+      return capture_e::ok;
+    };
+
+    // An auto-reset cursor event was already consumed, but the texture slot
+    // was temporarily busy. Probe key 1 without consuming FrameReady first:
+    // a newly-published desktop frame must win over retrying key 0, otherwise
+    // a pending cursor update could starve the frame that advances key 1.
+    if (m_cursorUpdatePending && wait_for_cursor) {
+      bool desktop_frame_ready = false;
+      SharedFrameMetadata pending_meta {};
+      if (vdd_frame_channel::read_stable_metadata(meta, pending_meta) &&
+          pending_meta.SlotIndex < m_keyedMutex.size()) {
+        const UINT32 pending_slot = pending_meta.SlotIndex;
+        HRESULT probe_hr = m_keyedMutex[pending_slot]->AcquireSync(1, 0);
+        if (probe_hr == S_OK) {
+          probe_hr = m_keyedMutex[pending_slot]->ReleaseSync(1);
+          if (FAILED(probe_hr)) {
+            BOOST_LOG(error) << "[vdd_capture] ReleaseSync(1) failed after pending cursor probe for slot "sv
+                             << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+            return capture_e::error;
+          }
+          desktop_frame_ready = true;
+        }
+        else if (probe_hr != static_cast<HRESULT>(WAIT_TIMEOUT)) {
+          BOOST_LOG(error) << "[vdd_capture] AcquireSync(1) probe failed for pending cursor slot "sv
+                           << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+          return capture_e::error;
+        }
+      }
+
+      if (vdd_frame_channel::select_pending_cursor_action(
+            true,
+            desktop_frame_ready
+          ) == vdd_frame_channel::pending_cursor_action::retry_cursor_frame) {
+        return acquire_cursor_frame();
+      }
+    }
+
+    HANDLE events[] = {m_hEvent, m_hCursorEvent};
+    const DWORD event_count = cursor_channel_ready ? 2 : 1;
+    DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
     if (wr == WAIT_TIMEOUT) {
       return capture_e::timeout;
     }
+    if (wr == WAIT_OBJECT_0 + 1) {
+      m_cursorUpdatePending = true;
+      return acquire_cursor_frame();
+    }
     if (wr != WAIT_OBJECT_0) {
-      BOOST_LOG(error) << "[vdd_capture] WaitForSingleObject: gle="sv << GetLastError();
+      BOOST_LOG(error) << "[vdd_capture] WaitForMultipleObjects: result="sv << wr
+                       << " gle="sv << GetLastError();
       return capture_e::error;
+    }
+
+    // Coalesce a cursor signal that arrived with the new desktop frame. The
+    // caller will read the latest cursor state while processing this frame.
+    if (cursor_channel_ready) {
+      WaitForSingleObject(m_hCursorEvent, 0);
     }
 
     // Producer released the latest slot as key 1; consumer acquires that slot.
@@ -796,6 +925,7 @@ namespace platf::dxgi {
     }
     m_holdsKey = true;
     m_heldSlot = slot;
+    m_cursorUpdatePending = false;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper
@@ -876,7 +1006,7 @@ namespace platf::dxgi {
   bool
   vdd_capture_t::poll_cursor(cursor_snapshot &out) {
     out = {};
-    if (!m_pCursorMeta) {
+    if (!m_pCursorMeta && !ensure_cursor_channel_attached()) {
       return false;
     }
 
@@ -976,6 +1106,7 @@ namespace platf::dxgi {
       out.xhot = header.XHot;
       out.yhot = header.YHot;
       out.sdr_white_level_x1000 = header.SdrWhiteLevelX1000;
+      out.update_qpc = header.LastUpdateQpc;
       out.position_updated = header.PositionId != m_lastSeenCursorPositionId;
       out.shape_updated = shape_updated;
       out.shape_buffer = std::move(shape_buffer);

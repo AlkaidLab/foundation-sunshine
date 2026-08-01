@@ -122,6 +122,19 @@ namespace platf::dxgi::vdd_frame_channel {
     producer_match match = producer_match::unavailable;
   };
 
+  enum class pending_cursor_action {
+    wait_for_events,
+    retry_cursor_frame,
+  };
+
+  inline pending_cursor_action
+  select_pending_cursor_action(bool cursor_update_pending,
+                               bool desktop_frame_ready) {
+    return cursor_update_pending && !desktop_frame_ready ?
+             pending_cursor_action::retry_cursor_frame :
+             pending_cursor_action::wait_for_events;
+  }
+
   inline producer_selection
   select_producer(int exact_index, int only_valid_index, unsigned int valid_count) {
     if (exact_index >= 0) {
