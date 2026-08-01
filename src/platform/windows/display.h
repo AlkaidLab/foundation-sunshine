@@ -625,9 +625,16 @@ namespace platf::dxgi {
      *                        The caller MUST call release_frame() before next_frame()
      *                        to release the keyed mutex.
      * @param out_frame_qpc   QPC value at producer-side push (for latency tracing).
+     * @param wait_for_cursor Include the optional cursor-ready event in the wait.
+     * @param out_cursor_only True when the wakeup contains cursor state but no
+     *                        newly-acquirable producer texture.
      */
     capture_e
-    next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_frame_qpc);
+    next_frame(std::chrono::milliseconds timeout,
+               ID3D11Texture2D **out,
+               uint64_t &out_frame_qpc,
+               bool wait_for_cursor,
+               bool &out_cursor_only);
 
     /**
      * @brief Hand the current keyed-mutex slot to a downstream D3D11 consumer.
@@ -665,6 +672,7 @@ namespace platf::dxgi {
       INT32    xhot = 0;
       INT32    yhot = 0;
       UINT32   sdr_white_level_x1000 = 0;
+      UINT64   update_qpc = 0;
       std::vector<uint8_t> shape_buffer;  ///< Empty if !shape_updated or shape is uninitialized.
     };
 
@@ -728,7 +736,9 @@ namespace platf::dxgi {
     };
 
     void close();
-    void attach_cursor_channel(unsigned int monitor_idx);
+    void detach_cursor_channel();
+    bool attach_cursor_channel();
+    bool ensure_cursor_channel_attached();
     void apply_metadata_snapshot(const vdd_frame_channel::shared_frame_metadata_t &meta);
     bool attach_texture_slot(ID3D11Device1 *device,
                              HANDLE shared_handle,
@@ -756,10 +766,14 @@ namespace platf::dxgi {
     bool m_holdsKey = false;
     UINT32 m_heldSlot = 0;
 
-    // Cursor SHM (optional; opened on a best-effort basis in init()).
+    // Cursor SHM is optional for compatibility with older driver builds. Newer
+    // drivers signal cursor-only updates through m_hCursorEvent.
     HANDLE m_hCursorMeta = nullptr;
     void  *m_pCursorMeta = nullptr;
-    HANDLE m_hCursorEvent = nullptr;  // For diagnostic use; poll_cursor() is event-free.
+    HANDLE m_hCursorEvent = nullptr;
+    unsigned int m_monitorIdx = 0;
+    std::chrono::steady_clock::time_point m_nextCursorAttachAttempt {};
+    UINT32 m_cursorAttachFailures = 0;
     UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 
@@ -816,6 +830,8 @@ namespace platf::dxgi {
     UINT64 vdd_last_dropped_acquire_failures = 0;
     std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
     bool vdd_local_cursor_mode_active = false;
+    texture2d_t vdd_cursor_base_texture;
+    bool vdd_cursor_base_valid = false;
 
     void
     log_vdd_borrow_debug_telemetry();
