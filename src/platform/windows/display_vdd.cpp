@@ -828,10 +828,38 @@ namespace platf::dxgi {
     };
 
     // An auto-reset cursor event was already consumed, but the texture slot
-    // was temporarily busy. Preserve and prioritize that update until the
-    // latest cursor-free desktop texture can be reacquired.
+    // was temporarily busy. Probe key 1 without consuming FrameReady first:
+    // a newly-published desktop frame must win over retrying key 0, otherwise
+    // a pending cursor update could starve the frame that advances key 1.
     if (m_cursorUpdatePending && wait_for_cursor) {
-      return acquire_cursor_frame();
+      bool desktop_frame_ready = false;
+      SharedFrameMetadata pending_meta {};
+      if (vdd_frame_channel::read_stable_metadata(meta, pending_meta) &&
+          pending_meta.SlotIndex < m_keyedMutex.size()) {
+        const UINT32 pending_slot = pending_meta.SlotIndex;
+        HRESULT probe_hr = m_keyedMutex[pending_slot]->AcquireSync(1, 0);
+        if (probe_hr == S_OK) {
+          probe_hr = m_keyedMutex[pending_slot]->ReleaseSync(1);
+          if (FAILED(probe_hr)) {
+            BOOST_LOG(error) << "[vdd_capture] ReleaseSync(1) failed after pending cursor probe for slot "sv
+                             << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+            return capture_e::error;
+          }
+          desktop_frame_ready = true;
+        }
+        else if (probe_hr != static_cast<HRESULT>(WAIT_TIMEOUT)) {
+          BOOST_LOG(error) << "[vdd_capture] AcquireSync(1) probe failed for pending cursor slot "sv
+                           << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+          return capture_e::error;
+        }
+      }
+
+      if (vdd_frame_channel::select_pending_cursor_action(
+            true,
+            desktop_frame_ready
+          ) == vdd_frame_channel::pending_cursor_action::retry_cursor_frame) {
+        return acquire_cursor_frame();
+      }
     }
 
     HANDLE events[] = {m_hEvent, m_hCursorEvent};
@@ -897,6 +925,7 @@ namespace platf::dxgi {
     }
     m_holdsKey = true;
     m_heldSlot = slot;
+    m_cursorUpdatePending = false;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper

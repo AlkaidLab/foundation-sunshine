@@ -197,6 +197,17 @@ TEST(VddFrameChannelSafety, BoundsPostEventAcquireWait) {
             consumer_acquire_wait_budget_ms);
 }
 
+TEST(VddFrameChannelSafety, PrioritizesDesktopFrameOverPendingCursorRetry) {
+  using namespace platf::dxgi::vdd_frame_channel;
+
+  EXPECT_EQ(select_pending_cursor_action(false, false),
+            pending_cursor_action::wait_for_events);
+  EXPECT_EQ(select_pending_cursor_action(true, false),
+            pending_cursor_action::retry_cursor_frame);
+  EXPECT_EQ(select_pending_cursor_action(true, true),
+            pending_cursor_action::wait_for_events);
+}
+
 TEST(VddModeRefreshSafety, MatchesAdvertisedModesWithRefreshTolerance) {
   using namespace display_device;
 
