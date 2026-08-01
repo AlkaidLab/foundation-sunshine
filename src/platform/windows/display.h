@@ -627,7 +627,8 @@ namespace platf::dxgi {
      * @param out_frame_qpc   QPC value at producer-side push (for latency tracing).
      * @param wait_for_cursor Include the optional cursor-ready event in the wait.
      * @param out_cursor_only True when the wakeup contains cursor state but no
-     *                        newly-acquirable producer texture.
+     *                        new desktop frame. `out` then references the most
+     *                        recent producer texture reacquired as key 0.
      */
     capture_e
     next_frame(std::chrono::milliseconds timeout,
@@ -830,8 +831,6 @@ namespace platf::dxgi {
     UINT64 vdd_last_dropped_acquire_failures = 0;
     std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
     bool vdd_local_cursor_mode_active = false;
-    texture2d_t vdd_cursor_base_texture;
-    bool vdd_cursor_base_valid = false;
 
     void
     log_vdd_borrow_debug_telemetry();

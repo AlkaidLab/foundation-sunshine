@@ -78,7 +78,6 @@ namespace platf::dxgi {
       // whenever ownership moves between the video overlay and the client.
       dup.invalidate_cursor_shape();
       vdd_local_cursor_mode_active = use_local_cursor;
-      vdd_cursor_base_valid = false;
     }
 
     const bool should_poll_cursor = cursor_visible || use_local_cursor;
@@ -126,7 +125,7 @@ namespace platf::dxgi {
       // mode; avoid encoding a duplicate desktop frame.
       return capture_e::timeout;
     }
-    if (cursor_only && (!has_cursor_state || !vdd_cursor_base_valid)) {
+    if (cursor_only && !has_cursor_state) {
       return capture_e::timeout;
     }
 
@@ -149,11 +148,6 @@ namespace platf::dxgi {
                         << " -> "sv << desc.Width << "x"sv << desc.Height
                         << " " << dxgi_format_to_string(desc.Format);
         return capture_e::reinit;
-      }
-
-      if (cursor_visible && !use_local_cursor) {
-        device_ctx->CopyResource(vdd_cursor_base_texture.get(), current_frame);
-        vdd_cursor_base_valid = true;
       }
     }
 
@@ -364,7 +358,7 @@ namespace platf::dxgi {
     if (cursor_only) {
       log_vdd_borrow_debug_telemetry();
       return copy_frame_to(
-        vdd_cursor_base_texture.get(),
+        current_frame,
         std::move(img),
         std::move(d3d_img)
       );

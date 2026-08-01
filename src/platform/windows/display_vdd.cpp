@@ -800,6 +800,29 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
     if (wr == WAIT_OBJECT_0 + 1) {
+      // The last consumed producer slot is available as key 0 while the
+      // desktop is static. Reacquire it briefly so cursor-only updates retain
+      // the normal single-copy/zero-copy cost on actual desktop frames.
+      const UINT32 slot = m_slotIndex;
+      if (slot >= m_keyedMutex.size()) {
+        return capture_e::reinit;
+      }
+      const DWORD acquire_ms = vdd_frame_channel::bounded_consumer_acquire_timeout_ms(ms);
+      HRESULT hr = m_keyedMutex[slot]->AcquireSync(0, acquire_ms);
+      if (hr == static_cast<HRESULT>(WAIT_TIMEOUT)) {
+        return capture_e::timeout;
+      }
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "[vdd_capture] AcquireSync(0) failed for cursor-only slot "sv
+                         << slot << ": 0x"sv << util::hex(hr).to_string_view();
+        return capture_e::error;
+      }
+      m_holdsKey = true;
+      m_heldSlot = slot;
+      if (out) {
+        m_sharedTex[slot]->AddRef();
+        *out = m_sharedTex[slot].get();
+      }
       out_cursor_only = true;
       return capture_e::ok;
     }
@@ -1412,30 +1435,6 @@ namespace platf::dxgi {
         return -1;
       }
     }
-
-    // Keep one cursor-free desktop frame for cursor-only wakeups. The driver
-    // publishes cursor state separately, so reusing the last producer texture
-    // directly would require reacquiring a keyed mutex that has not been
-    // released by a new desktop frame.
-    D3D11_TEXTURE2D_DESC cursor_base_desc {};
-    cursor_base_desc.Width = dup.width();
-    cursor_base_desc.Height = dup.height();
-    cursor_base_desc.MipLevels = 1;
-    cursor_base_desc.ArraySize = 1;
-    cursor_base_desc.Format = capture_format;
-    cursor_base_desc.SampleDesc.Count = 1;
-    cursor_base_desc.Usage = D3D11_USAGE_DEFAULT;
-    auto cursor_base_status = device->CreateTexture2D(
-      &cursor_base_desc,
-      nullptr,
-      &vdd_cursor_base_texture
-    );
-    if (FAILED(cursor_base_status)) {
-      BOOST_LOG(error) << "[vdd] failed to create cursor redraw base texture [0x"sv
-                       << util::hex(cursor_base_status).to_string_view() << ']';
-      return -1;
-    }
-    vdd_cursor_base_valid = false;
 
     BOOST_LOG(info) << "[vdd] backend ready: monitor="sv << monitor_idx
                     << " "sv << dup.width() << "x"sv << dup.height()
