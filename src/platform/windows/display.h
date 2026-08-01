@@ -775,6 +775,7 @@ namespace platf::dxgi {
     unsigned int m_monitorIdx = 0;
     std::chrono::steady_clock::time_point m_nextCursorAttachAttempt {};
     UINT32 m_cursorAttachFailures = 0;
+    bool m_cursorUpdatePending = false;
     UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 

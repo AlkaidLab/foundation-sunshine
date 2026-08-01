@@ -370,6 +370,7 @@ namespace platf::dxgi {
     }
     m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     m_lastSeenCursorPositionId = 0xFFFFFFFFu;
+    m_cursorUpdatePending = false;
   }
 
   bool
@@ -793,13 +794,11 @@ namespace platf::dxgi {
     // CursorExporter uses an auto-reset event. Waiting on it alongside the
     // frame event lets pointer-only motion wake a static desktop capture.
     DWORD ms = static_cast<DWORD>(timeout.count() < 0 ? 0 : timeout.count());
-    HANDLE events[] = {m_hEvent, m_hCursorEvent};
-    const DWORD event_count = cursor_channel_ready ? 2 : 1;
-    DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
-    if (wr == WAIT_TIMEOUT) {
-      return capture_e::timeout;
+    if (!wait_for_cursor) {
+      m_cursorUpdatePending = false;
     }
-    if (wr == WAIT_OBJECT_0 + 1) {
+
+    auto acquire_cursor_frame = [&]() -> capture_e {
       // The last consumed producer slot is available as key 0 while the
       // desktop is static. Reacquire it briefly so cursor-only updates retain
       // the normal single-copy/zero-copy cost on actual desktop frames.
@@ -823,8 +822,27 @@ namespace platf::dxgi {
         m_sharedTex[slot]->AddRef();
         *out = m_sharedTex[slot].get();
       }
+      m_cursorUpdatePending = false;
       out_cursor_only = true;
       return capture_e::ok;
+    };
+
+    // An auto-reset cursor event was already consumed, but the texture slot
+    // was temporarily busy. Preserve and prioritize that update until the
+    // latest cursor-free desktop texture can be reacquired.
+    if (m_cursorUpdatePending && wait_for_cursor) {
+      return acquire_cursor_frame();
+    }
+
+    HANDLE events[] = {m_hEvent, m_hCursorEvent};
+    const DWORD event_count = cursor_channel_ready ? 2 : 1;
+    DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
+    if (wr == WAIT_TIMEOUT) {
+      return capture_e::timeout;
+    }
+    if (wr == WAIT_OBJECT_0 + 1) {
+      m_cursorUpdatePending = true;
+      return acquire_cursor_frame();
     }
     if (wr != WAIT_OBJECT_0) {
       BOOST_LOG(error) << "[vdd_capture] WaitForMultipleObjects: result="sv << wr
