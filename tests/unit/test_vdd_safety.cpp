@@ -226,6 +226,32 @@ TEST(VddModeRefreshSafety, MatchesAdvertisedModesWithRefreshTolerance) {
   EXPECT_FALSE(vdd_utils::advertised_mode_matches(2340, 1080, 120, invalid));
 }
 
+TEST(VddModeRefreshSafety, MatchesRotatedModesOnlyWhenOrientationSwapsAxes) {
+  using namespace display_device;
+  using match_e = vdd_utils::advertised_mode_match_e;
+
+  const display_mode_t requested {
+    {2720, 1260},
+    {120, 1},
+  };
+
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(2720, 1260, 120, requested, false),
+    match_e::exact);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(2720, 1260, 120, requested, true),
+    match_e::exact);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 120, requested, false),
+    match_e::none);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 120, requested, true),
+    match_e::rotation_equivalent);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 60, requested, true),
+    match_e::none);
+}
+
 TEST(VddFrameChannelSafety, SelectsExactOrSoleProducerWithoutAmbiguity) {
   using namespace platf::dxgi::vdd_frame_channel;
 
