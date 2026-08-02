@@ -55,6 +55,26 @@ namespace display_device {
       constexpr auto kModePublicationMaxPoll = 500ms;
       std::atomic_bool hardware_cursor_live_enable_confirmed { false };
 
+      bool
+      orientation_swaps_axes(DWORD orientation) {
+        return orientation == DMDO_90 || orientation == DMDO_270;
+      }
+
+      unsigned int
+      orientation_degrees(DWORD orientation) {
+        switch (orientation) {
+          case DMDO_90:
+            return 90;
+          case DMDO_180:
+            return 180;
+          case DMDO_270:
+            return 270;
+          case DMDO_DEFAULT:
+          default:
+            return 0;
+        }
+      }
+
       std::vector<std::string>
       collect_physical_devices_for_preservation() {
         const auto topology = get_current_topology();
@@ -794,6 +814,13 @@ namespace display_device {
 
       const auto &display_name = device_it->second.display_name;
       const std::wstring wide_display_name(display_name.begin(), display_name.end());
+      DEVMODEW current_mode {};
+      current_mode.dmSize = sizeof(current_mode);
+      const bool orientation_known =
+        EnumDisplaySettingsW(wide_display_name.c_str(), ENUM_CURRENT_SETTINGS, &current_mode) &&
+        (current_mode.dmFields & DM_DISPLAYORIENTATION) != 0;
+      const bool swaps_axes = orientation_known && orientation_swaps_axes(current_mode.dmDisplayOrientation);
+
       for (DWORD index = 0; index < 4096; ++index) {
         DEVMODEW mode {};
         mode.dmSize = sizeof(mode);
@@ -801,11 +828,20 @@ namespace display_device {
           break;
         }
 
-        if (advertised_mode_matches(
-              mode.dmPelsWidth,
-              mode.dmPelsHeight,
-              mode.dmDisplayFrequency,
-              requested_mode)) {
+        const auto match = classify_advertised_mode(
+          mode.dmPelsWidth,
+          mode.dmPelsHeight,
+          mode.dmDisplayFrequency,
+          requested_mode,
+          swaps_axes);
+        if (match == advertised_mode_match_e::rotation_equivalent) {
+          BOOST_LOG(info) << "VDD mode "
+                          << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                          << " is available through the current "
+                          << orientation_degrees(current_mode.dmDisplayOrientation)
+                          << "-degree display orientation; reusing the existing monitor";
+        }
+        if (match != advertised_mode_match_e::none) {
           return true;
         }
       }

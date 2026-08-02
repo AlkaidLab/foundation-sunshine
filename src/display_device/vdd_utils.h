@@ -51,15 +51,26 @@ namespace display_device::vdd_utils {
     std::vector<unsigned int> refresh_rates_hz;
   };
 
-  constexpr bool
-  advertised_mode_matches(unsigned int width,
+  enum class advertised_mode_match_e {
+    none,
+    exact,
+    rotation_equivalent,
+  };
+
+  /**
+   * @brief Classify a Windows-advertised mode against a client-requested mode.
+   * @details Windows exposes logical width and height after display rotation.
+   *          A swapped match is valid only when the current orientation swaps
+   *          the display axes (90 or 270 degrees).
+   */
+  constexpr advertised_mode_match_e
+  classify_advertised_mode(unsigned int width,
     unsigned int height,
     unsigned int refresh_hz,
-    const display_mode_t &requested_mode) {
-    if (requested_mode.refresh_rate.denominator == 0 ||
-        width != requested_mode.resolution.width ||
-        height != requested_mode.resolution.height) {
-      return false;
+    const display_mode_t &requested_mode,
+    bool orientation_swaps_axes) {
+    if (requested_mode.refresh_rate.denominator == 0) {
+      return advertised_mode_match_e::none;
     }
 
     const auto advertised_scaled =
@@ -69,7 +80,31 @@ namespace display_device::vdd_utils {
     const auto difference = advertised_scaled > requested_scaled ?
                               advertised_scaled - requested_scaled :
                               requested_scaled - advertised_scaled;
-    return difference <= requested_mode.refresh_rate.denominator;
+    if (difference > requested_mode.refresh_rate.denominator) {
+      return advertised_mode_match_e::none;
+    }
+
+    if (width == requested_mode.resolution.width &&
+        height == requested_mode.resolution.height) {
+      return advertised_mode_match_e::exact;
+    }
+
+    if (orientation_swaps_axes &&
+        width == requested_mode.resolution.height &&
+        height == requested_mode.resolution.width) {
+      return advertised_mode_match_e::rotation_equivalent;
+    }
+
+    return advertised_mode_match_e::none;
+  }
+
+  constexpr bool
+  advertised_mode_matches(unsigned int width,
+    unsigned int height,
+    unsigned int refresh_hz,
+    const display_mode_t &requested_mode) {
+    return classify_advertised_mode(width, height, refresh_hz, requested_mode, false) !=
+           advertised_mode_match_e::none;
   }
 
   /**
