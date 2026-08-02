@@ -63,6 +63,11 @@ signed-in user's session after Core starts. Failed launches are retried while
 Core remains alive, and the GUI's single-instance guard absorbs duplicate
 logon and service-start attempts.
 
+The GUI keeps its tray during a short Core restart window. If Core remains
+unreachable for 15 seconds, the GUI removes the native tray icon so the tray
+does not imply that Sunshine is still running. The background GUI agent stays
+alive and recreates the tray when the local Core becomes available again.
+
 ## Actions and operations
 
 `POST /api/tray/action` accepts:
