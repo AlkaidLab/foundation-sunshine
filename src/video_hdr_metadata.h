@@ -214,6 +214,97 @@ namespace video::hdr_metadata {
     uint32_t maximum_sum_ = 0;
   };
 
+  /**
+   * Gates HDR Vivid at stream startup until several independent GPU readbacks
+   * describe a sane, stable HLG picture. The caller owns the wall-clock timeout
+   * because timeout policy is a streaming concern, not metadata validation.
+   */
+  class vivid_startup_guard_t {
+  public:
+    bool
+    observe(const platf::hdr_frame_luminance_stats_t &stats) {
+      const auto accepted_end = accepted_sequences_.begin() + consecutive_samples_;
+      if (ready_ || !stats.valid ||
+          std::find(accepted_sequences_.begin(), accepted_end, stats.sample_sequence) != accepted_end) {
+        return ready_;
+      }
+
+      if (!is_sane(stats)) {
+        consecutive_samples_ = 0;
+        previous_ = {};
+        return false;
+      }
+
+      if (previous_.valid && !is_stable(previous_, stats)) {
+        consecutive_samples_ = 1;
+        accepted_sequences_[0] = stats.sample_sequence;
+      }
+      else {
+        accepted_sequences_[consecutive_samples_] = stats.sample_sequence;
+        ++consecutive_samples_;
+      }
+      previous_ = stats;
+
+      if (consecutive_samples_ >= REQUIRED_SAMPLES) {
+        ready_ = true;
+      }
+      return ready_;
+    }
+
+    uint32_t
+    consecutive_samples() const {
+      return consecutive_samples_;
+    }
+
+    static constexpr uint32_t REQUIRED_SAMPLES = 3;
+
+  private:
+    static bool
+    is_sane(const platf::hdr_frame_luminance_stats_t &stats) {
+      const bool finite =
+        std::isfinite(stats.min_maxrgb) &&
+        std::isfinite(stats.avg_maxrgb) &&
+        std::isfinite(stats.max_maxrgb) &&
+        std::isfinite(stats.percentile_10_pq) &&
+        std::isfinite(stats.percentile_90_pq) &&
+        std::isfinite(stats.analysis_max_nits);
+      if (!finite || stats.analysis_max_nits <= 0.0f) {
+        return false;
+      }
+
+      const float luminance_slack = std::max(1.0f, stats.analysis_max_nits * 0.01f);
+      return stats.min_maxrgb >= 0.0f &&
+             stats.max_maxrgb > 1.0f &&
+             stats.avg_maxrgb + luminance_slack >= stats.min_maxrgb &&
+             stats.max_maxrgb + luminance_slack >= stats.avg_maxrgb &&
+             stats.max_maxrgb <= stats.analysis_max_nits + luminance_slack &&
+             stats.percentile_10_pq >= 0.0f &&
+             stats.percentile_90_pq <= 1.0f &&
+             stats.percentile_10_pq <= stats.percentile_90_pq;
+    }
+
+    static bool
+    scalar_is_stable(float previous, float current, float absolute_floor) {
+      const float scale = std::max({ std::abs(previous), std::abs(current), absolute_floor });
+      return std::abs(previous - current) <= scale * 0.5f;
+    }
+
+    static bool
+    is_stable(
+      const platf::hdr_frame_luminance_stats_t &previous,
+      const platf::hdr_frame_luminance_stats_t &current) {
+      return scalar_is_stable(previous.avg_maxrgb, current.avg_maxrgb, 20.0f) &&
+             scalar_is_stable(previous.max_maxrgb, current.max_maxrgb, 50.0f) &&
+             std::abs(previous.percentile_10_pq - current.percentile_10_pq) <= 0.15f &&
+             std::abs(previous.percentile_90_pq - current.percentile_90_pq) <= 0.15f;
+    }
+
+    platf::hdr_frame_luminance_stats_t previous_ {};
+    std::array<uint64_t, REQUIRED_SAMPLES> accepted_sequences_ {};
+    uint32_t consecutive_samples_ = 0;
+    bool ready_ = false;
+  };
+
   namespace detail {
 
     class bit_writer_t {

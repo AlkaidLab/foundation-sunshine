@@ -487,6 +487,8 @@ namespace platf {
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
     float percentile_95 = 0.0f;     ///< 95th percentile of maxRGB (nits), for HDR10+
     float percentile_99 = 0.0f;     ///< 99th percentile of maxRGB (nits), for HDR10+
+    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
     bool valid = false;         ///< Whether stats are available (false on first frame)
   };
 
@@ -558,6 +560,7 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     nvenc::nvenc_encoder *nvenc = nullptr;
+    bool hdr_luminance_analysis_available = false;
   };
 
   struct amf_encode_device_t: encode_device_t {

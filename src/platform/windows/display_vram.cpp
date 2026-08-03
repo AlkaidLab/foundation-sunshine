@@ -362,6 +362,11 @@ namespace platf::dxgi {
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
     }
 
+    bool
+    hdr_luminance_analysis_available() const {
+      return hdr_analysis_enabled;
+    }
+
     int
     convert(platf::img_t &img_base) {
       if (vram_timing_enabled) {
@@ -678,6 +683,7 @@ namespace platf::dxgi {
       hdr_luminance_stats_out = {};
       hdr_analysis_pending = false;
       hdr_analysis_frame_index = 0;
+      hdr_analysis_sample_sequence = 0;
 
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
@@ -1569,6 +1575,7 @@ namespace platf::dxgi {
     uint32_t hdr_analysis_height = 0;      // Analysis grid height (downsampled from source)
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
+    uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
@@ -1985,6 +1992,8 @@ namespace platf::dxgi {
           }
         }
 
+        hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
+        hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
         hdr_luminance_stats_out.valid = true;
       }
 
@@ -2600,10 +2609,16 @@ namespace platf::dxgi {
     init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) override {
       if (!nvenc_d3d) return false;
 
+      hdr_luminance_analysis_available = false;
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      return base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe) == 0;
+      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe)) {
+        return false;
+      }
+
+      hdr_luminance_analysis_available = base.hdr_luminance_analysis_available();
+      return true;
     }
 
     int
