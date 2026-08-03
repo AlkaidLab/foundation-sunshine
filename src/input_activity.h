@@ -10,9 +10,10 @@ namespace input::activity {
 
   /**
    * @brief Decides whether an incoming input packet represents meaningful user activity.
-   * @details Filters device management/telemetry packets, zero-delta no-ops and analog
-   *          jitter/drift so the video pipeline only boosts encode cadence for input
-   *          that can plausibly produce visible feedback.
+   * @details Tracks keyboard input, mouse buttons and scrolling. Pointer motion
+   *          only counts while local cursor rendering is active, because video
+   *          cursor motion already produces capture updates. Zero-delta motion
+   *          and scrolling packets are ignored.
    */
   class tracker_t {
   public:
