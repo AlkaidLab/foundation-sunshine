@@ -709,9 +709,12 @@ namespace video {
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
       if (use_hlg) {
-        vivid_metadata_mode = config::video.hdr_luminance_analysis == "off" ?
-                                vivid_metadata_mode_e::disabled :
-                                vivid_metadata_mode_e::preroll;
+        const bool analysis_available =
+          config::video.hdr_luminance_analysis != "off" &&
+          device->hdr_luminance_analysis_available;
+        vivid_metadata_mode = analysis_available ?
+                                vivid_metadata_mode_e::preroll :
+                                vivid_metadata_mode_e::disabled;
       }
       if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";

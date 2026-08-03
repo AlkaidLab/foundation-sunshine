@@ -362,6 +362,11 @@ namespace platf::dxgi {
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
     }
 
+    bool
+    hdr_luminance_analysis_available() const {
+      return hdr_analysis_enabled;
+    }
+
     int
     convert(platf::img_t &img_base) {
       if (vram_timing_enabled) {
@@ -2604,10 +2609,16 @@ namespace platf::dxgi {
     init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) override {
       if (!nvenc_d3d) return false;
 
+      hdr_luminance_analysis_available = false;
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      return base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe) == 0;
+      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe)) {
+        return false;
+      }
+
+      hdr_luminance_analysis_available = base.hdr_luminance_analysis_available();
+      return true;
     }
 
     int

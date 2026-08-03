@@ -560,6 +560,7 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     nvenc::nvenc_encoder *nvenc = nullptr;
+    bool hdr_luminance_analysis_available = false;
   };
 
   struct amf_encode_device_t: encode_device_t {

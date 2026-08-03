@@ -184,22 +184,27 @@ TEST(HdrDynamicMetadata, VividStartupGuardRejectsInvalidAndTransitionSamples) {
   EXPECT_FALSE(guard.observe(stable_hlg_stats(1)));
 
   auto invalid = stable_hlg_stats(2);
+  invalid.avg_maxrgb = std::numeric_limits<float>::quiet_NaN();
+  EXPECT_FALSE(guard.observe(invalid));
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  invalid = stable_hlg_stats(3);
   invalid.max_maxrgb = 1500.0f;
   EXPECT_FALSE(guard.observe(invalid));
   EXPECT_EQ(guard.consecutive_samples(), 0U);
 
-  auto black = stable_hlg_stats(3, 0.0f, 0.0f);
+  auto black = stable_hlg_stats(4, 0.0f, 0.0f);
   black.percentile_10_pq = 0.0f;
   black.percentile_90_pq = 0.0f;
   EXPECT_FALSE(guard.observe(black));
   EXPECT_EQ(guard.consecutive_samples(), 0U);
 
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(4)));
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(5)));
   // A large exposure transition restarts the consecutive run at the current sample.
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(5, 500.0f, 950.0f)));
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(6, 500.0f, 950.0f)));
   EXPECT_EQ(guard.consecutive_samples(), 1U);
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(6, 510.0f, 940.0f)));
-  EXPECT_TRUE(guard.observe(stable_hlg_stats(7, 500.0f, 930.0f)));
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(7, 510.0f, 940.0f)));
+  EXPECT_TRUE(guard.observe(stable_hlg_stats(8, 500.0f, 930.0f)));
 }
 
 // Regression guard for the representation of
