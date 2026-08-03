@@ -708,9 +708,12 @@ namespace video {
     nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
-      vivid_preroll_active = use_hlg && config::video.hdr_luminance_analysis != "off";
-      dynamic_metadata_allowed = !use_hlg || vivid_preroll_active;
-      if (vivid_preroll_active) {
+      if (use_hlg) {
+        vivid_metadata_mode = config::video.hdr_luminance_analysis == "off" ?
+                                vivid_metadata_mode_e::disabled :
+                                vivid_metadata_mode_e::preroll;
+      }
+      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
       }
     }
@@ -807,16 +810,14 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->nvenc) return {};
 
-      if (vivid_preroll_active) {
+      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         const auto now = std::chrono::steady_clock::now();
         if (!vivid_preroll_started) {
           vivid_preroll_started = now;
         }
 
-        const auto state = vivid_startup_guard.observe(device->hdr_luminance_stats);
-        if (state == hdr_metadata::vivid_startup_guard_t::state_e::ready) {
-          vivid_preroll_active = false;
-          dynamic_metadata_allowed = true;
+        if (vivid_startup_guard.observe(device->hdr_luminance_stats)) {
+          vivid_metadata_mode = vivid_metadata_mode_e::enabled;
           force_idr = true;
           const auto &stats = device->hdr_luminance_stats;
           BOOST_LOG(info) << "NVENC: HDR Vivid startup guard ready after "
@@ -828,9 +829,7 @@ namespace video {
                           << ", P90=" << stats.percentile_90_pq << ')';
         }
         else if (now - *vivid_preroll_started >= VIVID_PREROLL_TIMEOUT) {
-          vivid_startup_guard.disable();
-          vivid_preroll_active = false;
-          dynamic_metadata_allowed = false;
+          vivid_metadata_mode = vivid_metadata_mode_e::disabled;
           force_idr = true;
           BOOST_LOG(warning) << "NVENC: HDR Vivid startup guard timed out after 500 ms; "
                                 "starting this session as pure HLG without dynamic metadata";
@@ -844,7 +843,7 @@ namespace video {
       }
 
       // Pass per-frame HDR luminance stats to NVENC for dynamic metadata injection
-      if (dynamic_metadata_allowed && device->hdr_luminance_stats.valid) {
+      if (vivid_metadata_mode != vivid_metadata_mode_e::disabled && device->hdr_luminance_stats.valid) {
         device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
       }
 
@@ -874,12 +873,17 @@ namespace video {
   private:
     static constexpr auto VIVID_PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
 
+    enum class vivid_metadata_mode_e {
+      enabled,
+      preroll,
+      disabled,
+    };
+
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
     hdr_metadata::vivid_startup_guard_t vivid_startup_guard;
     std::optional<std::chrono::steady_clock::time_point> vivid_preroll_started;
-    bool vivid_preroll_active = false;
-    bool dynamic_metadata_allowed = true;
+    vivid_metadata_mode_e vivid_metadata_mode = vivid_metadata_mode_e::enabled;
     bool force_idr = false;
   };
 

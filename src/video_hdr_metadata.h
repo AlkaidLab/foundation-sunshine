@@ -221,17 +221,11 @@ namespace video::hdr_metadata {
    */
   class vivid_startup_guard_t {
   public:
-    enum class state_e {
-      waiting,
-      ready,
-      disabled,
-    };
-
-    state_e
+    bool
     observe(const platf::hdr_frame_luminance_stats_t &stats) {
-      if (state_ != state_e::waiting || !stats.valid ||
+      if (ready_ || !stats.valid ||
           (have_sequence_ && stats.sample_sequence == last_sequence_)) {
-        return state_;
+        return ready_;
       }
 
       have_sequence_ = true;
@@ -240,7 +234,7 @@ namespace video::hdr_metadata {
       if (!is_sane(stats)) {
         consecutive_samples_ = 0;
         previous_ = {};
-        return state_;
+        return false;
       }
 
       if (previous_.valid && !is_stable(previous_, stats)) {
@@ -252,21 +246,9 @@ namespace video::hdr_metadata {
       previous_ = stats;
 
       if (consecutive_samples_ >= REQUIRED_SAMPLES) {
-        state_ = state_e::ready;
+        ready_ = true;
       }
-      return state_;
-    }
-
-    void
-    disable() {
-      if (state_ == state_e::waiting) {
-        state_ = state_e::disabled;
-      }
-    }
-
-    state_e
-    state() const {
-      return state_;
+      return ready_;
     }
 
     uint32_t
@@ -317,11 +299,11 @@ namespace video::hdr_metadata {
              std::abs(previous.percentile_90_pq - current.percentile_90_pq) <= 0.15f;
     }
 
-    state_e state_ = state_e::waiting;
     platf::hdr_frame_luminance_stats_t previous_ {};
     uint64_t last_sequence_ = 0;
     uint32_t consecutive_samples_ = 0;
     bool have_sequence_ = false;
+    bool ready_ = false;
   };
 
   namespace detail {
