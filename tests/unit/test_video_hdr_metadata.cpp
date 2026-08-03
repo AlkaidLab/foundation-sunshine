@@ -136,6 +136,78 @@ TEST(HdrDynamicMetadata, AppliesAnnexA9ThirtyTwoFrameMean) {
   EXPECT_EQ(filter.update(dark).average_maxrgb_pq, 100);
 }
 
+namespace {
+
+  platf::hdr_frame_luminance_stats_t
+  stable_hlg_stats(uint64_t sequence, float average = 120.0f, float maximum = 600.0f) {
+    return {
+      .min_maxrgb = 0.0f,
+      .max_maxrgb = maximum,
+      .avg_maxrgb = average,
+      .percentile_10_pq = 0.20f,
+      .percentile_90_pq = 0.70f,
+      .percentile_95 = 500.0f,
+      .percentile_99 = 580.0f,
+      .analysis_max_nits = 1000.0f,
+      .sample_sequence = sequence,
+      .valid = true,
+    };
+  }
+
+}  // namespace
+
+TEST(HdrDynamicMetadata, VividStartupGuardRequiresThreeIndependentSamples) {
+  using guard_t = video::hdr_metadata::vivid_startup_guard_t;
+  guard_t guard;
+
+  const auto first = stable_hlg_stats(1);
+  EXPECT_EQ(guard.observe(first), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+
+  // Reusing an analyzer result on intervening encoded frames must not satisfy
+  // the startup guard.
+  EXPECT_EQ(guard.observe(first), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+
+  EXPECT_EQ(guard.observe(stable_hlg_stats(2, 125.0f, 620.0f)), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.observe(stable_hlg_stats(3, 130.0f, 610.0f)), guard_t::state_e::ready);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGuardRejectsInvalidAndTransitionSamples) {
+  using guard_t = video::hdr_metadata::vivid_startup_guard_t;
+  guard_t guard;
+
+  EXPECT_EQ(guard.observe(stable_hlg_stats(1)), guard_t::state_e::waiting);
+
+  auto invalid = stable_hlg_stats(2);
+  invalid.max_maxrgb = 1500.0f;
+  EXPECT_EQ(guard.observe(invalid), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  auto black = stable_hlg_stats(3, 0.0f, 0.0f);
+  black.percentile_10_pq = 0.0f;
+  black.percentile_90_pq = 0.0f;
+  EXPECT_EQ(guard.observe(black), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  EXPECT_EQ(guard.observe(stable_hlg_stats(4)), guard_t::state_e::waiting);
+  // A large exposure transition restarts the consecutive run at the current sample.
+  EXPECT_EQ(guard.observe(stable_hlg_stats(5, 500.0f, 950.0f)), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+  EXPECT_EQ(guard.observe(stable_hlg_stats(6, 510.0f, 940.0f)), guard_t::state_e::waiting);
+  EXPECT_EQ(guard.observe(stable_hlg_stats(7, 500.0f, 930.0f)), guard_t::state_e::ready);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGuardCanBePermanentlyDisabled) {
+  using guard_t = video::hdr_metadata::vivid_startup_guard_t;
+  guard_t guard;
+  guard.disable();
+
+  EXPECT_EQ(guard.observe(stable_hlg_stats(1)), guard_t::state_e::disabled);
+  EXPECT_EQ(guard.observe(stable_hlg_stats(2)), guard_t::state_e::disabled);
+  EXPECT_EQ(guard.observe(stable_hlg_stats(3)), guard_t::state_e::disabled);
+}
+
 // Regression guard for the representation of
 // AVHDRVividColorToneMappingParams::targeted_system_display_maximum_luminance.
 //
