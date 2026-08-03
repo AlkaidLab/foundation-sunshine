@@ -223,13 +223,11 @@ namespace video::hdr_metadata {
   public:
     bool
     observe(const platf::hdr_frame_luminance_stats_t &stats) {
+      const auto accepted_end = accepted_sequences_.begin() + consecutive_samples_;
       if (ready_ || !stats.valid ||
-          (have_sequence_ && stats.sample_sequence == last_sequence_)) {
+          std::find(accepted_sequences_.begin(), accepted_end, stats.sample_sequence) != accepted_end) {
         return ready_;
       }
-
-      have_sequence_ = true;
-      last_sequence_ = stats.sample_sequence;
 
       if (!is_sane(stats)) {
         consecutive_samples_ = 0;
@@ -239,8 +237,10 @@ namespace video::hdr_metadata {
 
       if (previous_.valid && !is_stable(previous_, stats)) {
         consecutive_samples_ = 1;
+        accepted_sequences_[0] = stats.sample_sequence;
       }
       else {
+        accepted_sequences_[consecutive_samples_] = stats.sample_sequence;
         ++consecutive_samples_;
       }
       previous_ = stats;
@@ -300,9 +300,8 @@ namespace video::hdr_metadata {
     }
 
     platf::hdr_frame_luminance_stats_t previous_ {};
-    uint64_t last_sequence_ = 0;
+    std::array<uint64_t, REQUIRED_SAMPLES> accepted_sequences_ {};
     uint32_t consecutive_samples_ = 0;
-    bool have_sequence_ = false;
     bool ready_ = false;
   };
 

@@ -169,6 +169,12 @@ TEST(HdrDynamicMetadata, VividStartupGuardRequiresThreeIndependentSamples) {
   EXPECT_EQ(guard.consecutive_samples(), 1U);
 
   EXPECT_FALSE(guard.observe(stable_hlg_stats(2, 125.0f, 620.0f)));
+  EXPECT_EQ(guard.consecutive_samples(), 2U);
+
+  // A non-adjacent replay is still the same GPU readback and must not count.
+  EXPECT_FALSE(guard.observe(first));
+  EXPECT_EQ(guard.consecutive_samples(), 2U);
+
   EXPECT_TRUE(guard.observe(stable_hlg_stats(3, 130.0f, 610.0f)));
 }
 
