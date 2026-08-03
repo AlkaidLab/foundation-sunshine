@@ -125,6 +125,20 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
+add_executable(input_activity_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
+        ${CMAKE_SOURCE_DIR}/src/input_activity.cpp
+        ${CMAKE_SOURCE_DIR}/src/cursor_channel.cpp)
+target_include_directories(input_activity_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(input_activity_unit_tests
+        gtest_main)
+target_compile_definitions(input_activity_unit_tests PRIVATE INPUT_ACTIVITY_STANDALONE_TEST)
+target_compile_options(input_activity_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(input_activity_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME input_activity_unit_tests COMMAND input_activity_unit_tests)
+
 add_executable(launch_session_manager_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
         ${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp

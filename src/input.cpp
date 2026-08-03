@@ -1817,11 +1817,20 @@ namespace input {
       payload = (PNV_INPUT_HEADER) entry.data();
       input->input_queue.pop_front();
 
+      if (!input->activity_tracker.evaluate(payload, entry.size()).has_value()) {
+        return;
+      }
+
       // Try to batch with remaining items on the queue
       auto i = input->input_queue.begin();
       while (i != input->input_queue.end()) {
         auto batchable_entry = *i;
         auto batchable_payload = (PNV_INPUT_HEADER) batchable_entry.data();
+
+        if (!input->activity_tracker.evaluate(batchable_payload, batchable_entry.size()).has_value()) {
+          i = input->input_queue.erase(i);
+          continue;
+        }
 
         auto batch_result = batch(payload, batchable_payload);
         if (batch_result == batch_result_e::terminate_batch) {
@@ -1842,9 +1851,9 @@ namespace input {
     // Print the final input packet
     input::print((void *) payload);
 
+    const auto activity = input->activity_tracker.evaluate(payload, entry.size());
     const bool should_raise_input_activity =
-      config::video.input_activity_boost &&
-      input->activity_tracker.evaluate(payload);
+      config::video.input_activity_boost && activity.value_or(false);
 
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
