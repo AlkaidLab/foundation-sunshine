@@ -36,6 +36,53 @@ if (-not (Test-Path -LiteralPath $HelperScript)) {
 
 . $HelperScript
 
+$nativeExitCode = Invoke-Nefcon $env:ComSpec @('/d', '/c', 'exit', '37')
+Assert-Equal 37 $nativeExitCode 'The native process wrapper must return the child exit code.'
+
+$missingExitCodeRejected = $false
+try {
+    [void] (Invoke-Nefcon 'Write-Output' @('simulated non-native command'))
+}
+catch {
+    $missingExitCodeRejected = $_.Exception.Message -like '*did not report an exit code*'
+}
+Assert-Equal $true $missingExitCodeRejected 'A missing native exit code must fail explicitly.'
+
+$originalInvokeNefcon = ${function:Invoke-Nefcon}
+$originalGetVddDevices = ${function:Get-VddDevices}
+$originalTestVddControlInterfaceAvailable = ${function:Test-VddControlInterfaceAvailable}
+try {
+    $script:installNefconCalls = 0
+    $script:readinessChecks = 0
+    function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
+        $script:installNefconCalls++
+        if ($Arguments[0] -eq '--install-driver') {
+            return 3010
+        }
+        return 0
+    }
+    function Get-VddDevices {
+        $script:readinessChecks++
+        return @(New-TestDevice '100.0.16.6')
+    }
+    function Test-VddControlInterfaceAvailable {
+        return $true
+    }
+
+    [void] (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6')
+    Assert-Equal 2 $script:installNefconCalls `
+        'A restart-suggested driver bind must continue to the readiness check.'
+    Assert-Equal $true ($script:readinessChecks -ge 1) `
+        'A restart-suggested driver bind must check device readiness.'
+}
+finally {
+    ${function:Invoke-Nefcon} = $originalInvokeNefcon
+    ${function:Get-VddDevices} = $originalGetVddDevices
+    ${function:Test-VddControlInterfaceAvailable} = $originalTestVddControlInterfaceAvailable
+    Remove-Variable -Name installNefconCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name readinessChecks -Scope Script -ErrorAction SilentlyContinue
+}
+
 Assert-Equal $false (Test-VddVersionAtLeast '100.0.16.5' '100.0.16.6') `
     'An older driver version must not satisfy the bundled minimum.'
 Assert-Equal $true (Test-VddVersionAtLeast '100.0.16.7' '100.0.16.6') `
@@ -356,6 +403,24 @@ try {
         'Removal must target both managed hardware IDs.'
     Assert-Equal 1 $script:targetedRemovalCalls 'A disconnected legacy node must receive targeted cleanup.'
 
+    $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'ERROR')
+    $script:removalCalls = 0
+    $script:targetedRemovalCalls = 0
+    function Get-VddDevices {
+        if ($script:targetedRemovalCalls -gt 0) {
+            return @()
+        }
+        return @($script:fakeDevices)
+    }
+    function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
+        $script:removalCalls++
+        return 0
+    }
+
+    [void] (Remove-AllVddDevices $HelperScript 2)
+    Assert-Equal 1 $script:removalCalls 'An error-state node must first receive the normal removal request.'
+    Assert-Equal 1 $script:targetedRemovalCalls 'An error-state node must receive targeted cleanup.'
+
     $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'MISSING')
     $script:removalCalls = 0
     function Get-VddDevices {
@@ -375,7 +440,9 @@ try {
     Assert-Equal $true $removalFailedClosed 'A failed nefcon request must abort immediately.'
     Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
 
+    $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'ERROR')
     $script:removalCalls = 0
+    $script:targetedRemovalCalls = 0
     function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId) {
         $script:removalCalls++
         return 0
@@ -389,6 +456,7 @@ try {
     }
     Assert-Equal $true $removalMadeNoProgress 'A successful request without PnP progress must fail with diagnostics.'
     Assert-Equal 1 $script:removalCalls 'A stalled removal must not repeatedly invoke nefcon.'
+    Assert-Equal 1 $script:targetedRemovalCalls 'A stalled error-state node must receive one targeted cleanup request.'
 
     $script:fakeDevices = @(New-TestDevice '100.0.16.6' 'OK')
     $script:removalCalls = 0
