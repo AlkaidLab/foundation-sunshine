@@ -134,8 +134,18 @@ namespace {
     ASSERT_TRUE(first);
     limiter.complete("client-a", first.id, start + 1ms);
 
-    EXPECT_EQ(limiter.admit("client-a", "probe-a", 64 * 1024, start + 3s).rejection, rejection_e::session_expired);
-    EXPECT_EQ(limiter.admit("client-a", "probe-a", 64 * 1024, start + 59s).rejection, rejection_e::session_expired);
+    const auto at_expiry = limiter.admit("client-a", "probe-a", 64 * 1024, start + 3s);
+    EXPECT_EQ(at_expiry.rejection, rejection_e::session_expired);
+    EXPECT_EQ(at_expiry.retry_after_ms, 60000U);
+
+    const auto near_boundary = limiter.admit("client-a", "probe-a", 64 * 1024, start + 59s);
+    EXPECT_EQ(near_boundary.rejection, rejection_e::session_expired);
+    EXPECT_EQ(near_boundary.retry_after_ms, 4000U);
+
+    const auto final_millisecond = limiter.admit("client-a", "probe-a", 64 * 1024, start + 62999ms);
+    EXPECT_EQ(final_millisecond.rejection, rejection_e::session_expired);
+    EXPECT_EQ(final_millisecond.retry_after_ms, 1U);
+
     EXPECT_TRUE(limiter.admit("client-a", "probe-a", 64 * 1024, start + 63s));
   }
 

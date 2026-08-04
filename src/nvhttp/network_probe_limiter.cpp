@@ -100,7 +100,10 @@ namespace nvhttp::network_probe {
     const auto retired = std::find_if(state.retired_nonces.begin(), state.retired_nonces.end(), [&](const auto &entry) {
       return entry.value == nonce;
     });
-    if (retired != state.retired_nonces.end()) return { rejection_e::session_expired, COOLDOWN_MS };
+    if (retired != state.retired_nonces.end()) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(retired->retired_at + QUOTA_WINDOW - now).count();
+      return { rejection_e::session_expired, static_cast<std::uint32_t>(std::max<std::int64_t>(1, remaining)) };
+    }
 
     const bool continuing = state.nonce == nonce;
     if (!continuing && state.nonce.empty() && now < state.cooldown_until) {
