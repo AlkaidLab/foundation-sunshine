@@ -53,6 +53,7 @@ $originalGetVddDevices = ${function:Get-VddDevices}
 $originalTestVddControlInterfaceAvailable = ${function:Test-VddControlInterfaceAvailable}
 try {
     $script:installNefconCalls = 0
+    $script:readinessChecks = 0
     function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
         $script:installNefconCalls++
         if ($Arguments[0] -eq '--install-driver') {
@@ -61,6 +62,7 @@ try {
         return 0
     }
     function Get-VddDevices {
+        $script:readinessChecks++
         return @(New-TestDevice '100.0.16.6')
     }
     function Test-VddControlInterfaceAvailable {
@@ -70,12 +72,15 @@ try {
     [void] (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6')
     Assert-Equal 2 $script:installNefconCalls `
         'A restart-suggested driver bind must continue to the readiness check.'
+    Assert-Equal $true ($script:readinessChecks -ge 1) `
+        'A restart-suggested driver bind must check device readiness.'
 }
 finally {
     ${function:Invoke-Nefcon} = $originalInvokeNefcon
     ${function:Get-VddDevices} = $originalGetVddDevices
     ${function:Test-VddControlInterfaceAvailable} = $originalTestVddControlInterfaceAvailable
     Remove-Variable -Name installNefconCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name readinessChecks -Scope Script -ErrorAction SilentlyContinue
 }
 
 Assert-Equal $false (Test-VddVersionAtLeast '100.0.16.5' '100.0.16.6') `
