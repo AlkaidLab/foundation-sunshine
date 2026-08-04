@@ -391,12 +391,25 @@ function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
     return $false
 }
 
+function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
+    # nefconw.exe uses the Windows GUI subsystem. PowerShell can launch GUI
+    # executables asynchronously and leave LASTEXITCODE unset unless their
+    # output is consumed. Out-Host keeps the existing console output while
+    # forcing PowerShell to wait for the process to finish.
+    $global:LASTEXITCODE = $null
+    & $Path @Arguments | Out-Host
+    $exitCode = $global:LASTEXITCODE
+    if ($null -eq $exitCode) {
+        throw 'nefcon did not report an exit code.'
+    }
+    return [int] $exitCode
+}
+
 function Invoke-NefconRemoval([string] $Path, [string] $TargetHardwareId = $hardwareId) {
-    & $Path `
-        --remove-device-node `
-        --hardware-id $TargetHardwareId `
-        --class-guid $displayClassGuid
-    return $LASTEXITCODE
+    return Invoke-Nefcon $Path @(
+        '--remove-device-node',
+        '--hardware-id', $TargetHardwareId,
+        '--class-guid', $displayClassGuid)
 }
 
 function Invoke-PnpUtilDeviceRemoval([string] $InstanceId) {
@@ -443,7 +456,7 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
     }
 
     # Nefcon removes every matching node in one call, but Windows can finish
-    # the PnP removal asynchronously after nefcon returns. Only disconnected
+    # the PnP removal asynchronously after nefcon returns. Remaining non-ready
     # nodes need a targeted fallback; issuing a second request for live nodes can
     # race the asynchronous nefcon removal.
     $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
@@ -456,7 +469,7 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
         }
 
         foreach ($device in $devices) {
-            if ($device.Status -ne 'MISSING' -or
+            if ($device.Status -notin @('MISSING', 'ERROR') -or
                 $targetedAttempts.ContainsKey($device.InstanceId)) {
                 continue
             }
@@ -473,7 +486,7 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
 
         $stalledTargetedDevices = @($devices | Where-Object {
             $attempt = $targetedAttempts[$_.InstanceId]
-            $_.Status -eq 'MISSING' -and
+            $_.Status -in @('MISSING', 'ERROR') -and
                 $null -ne $attempt -and
                 [DateTime]::UtcNow -ge $attempt.Deadline
         })
@@ -671,19 +684,23 @@ function Install-VddDeviceFromInf(
     }
 
     Write-Output 'Creating VDD adapter...'
-    & $NefconPath `
-        --create-device-node `
-        --hardware-id $hardwareId `
-        --service-name $serviceName `
-        --class-name Display `
-        --class-guid $displayClassGuid
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create the VDD device node (exit code $LASTEXITCODE)."
+    $nefconExitCode = Invoke-Nefcon $NefconPath @(
+        '--create-device-node',
+        '--hardware-id', $hardwareId,
+        '--service-name', $serviceName,
+        '--class-name', 'Display',
+        '--class-guid', $displayClassGuid)
+    if ($nefconExitCode -ne 0) {
+        throw "Failed to create the VDD device node (exit code $nefconExitCode)."
     }
 
-    & $NefconPath --install-driver --inf-path $InfPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to bind the VDD driver (exit code $LASTEXITCODE)."
+    $nefconExitCode = Invoke-Nefcon $NefconPath @('--install-driver', '--inf-path', $InfPath)
+    if ($nefconExitCode -notin @(0, 3010)) {
+        throw "Failed to bind the VDD driver (exit code $nefconExitCode)."
+    }
+    $restartSuggested = $nefconExitCode -eq 3010
+    if ($restartSuggested) {
+        Write-Output 'Windows suggested a restart after binding the VDD driver; checking whether the device is already ready...'
     }
 
     if (-not (Wait-Until {
@@ -695,6 +712,9 @@ function Install-VddDeviceFromInf(
     } $deviceTimeoutSeconds)) {
         $readiness = if ($RequireControlInterface) { ' with its control interface' } else { '' }
         throw "VDD did not become ready$readiness at version $ExpectedVersion."
+    }
+    if ($restartSuggested) {
+        Write-Output 'VDD is ready; continuing without a restart.'
     }
 }
 
