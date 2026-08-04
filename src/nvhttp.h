@@ -77,6 +77,12 @@ namespace nvhttp {
     }
   };
 
+  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+
+  /// Return the UUID authenticated by the paired client certificate on this
+  /// request's TLS connection. An empty value means no paired identity exists.
+  std::string get_client_cert_uuid_from_request(req_https_t request);
+
   enum class PAIR_PHASE {
     NONE,  ///< Sunshine is not in a pairing phase
     GETSERVERCERT,  ///< Sunshine is in the get server certificate phase
