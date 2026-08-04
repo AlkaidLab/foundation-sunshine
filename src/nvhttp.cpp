@@ -51,6 +51,7 @@
 #include "nvhttp/display_control.h"
 #include "nvhttp/display_scale.h"
 #include "nvhttp/dynamic_params.h"
+#include "nvhttp/network_probe.h"
 #include "nvhttp/pairing.h"
 #include "nvhttp/sessions.h"
 #include "nvhttp/tls_client_identity_store.h"
@@ -988,6 +989,7 @@ namespace nvhttp {
     file_mapping_config.authorize_client = is_file_mapping_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
 
+    network_probe::service_t network_probe_service;
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
 
@@ -1094,6 +1096,17 @@ namespace nvhttp {
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
     https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
     https_server.resource["^/api/abr/feedback$"]["POST"] = abr_api::feedback;
+
+    // Startup bandwidth probe API. These routes inherit nvhttp's paired-client
+    // mTLS authentication and are intentionally absent from the HTTP server.
+    https_server.resource["^/api/network/capabilities$"]["GET"] =
+      [&network_probe_service](resp_https_t resp, req_https_t req) {
+        network_probe_service.capabilities(std::move(resp), std::move(req));
+      };
+    https_server.resource["^/api/network/probe$"]["GET"] =
+      [&network_probe_service](resp_https_t resp, req_https_t req) {
+        network_probe_service.probe(std::move(resp), std::move(req));
+      };
 
     // AI LLM proxy route uses client cert auth from pairing.
     https_server.resource["^/ai/completions$"]["POST"] = ai_api::completions;
