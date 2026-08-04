@@ -61,15 +61,6 @@ if (NOT BUILD_TESTS)
     return()
 endif ()
 
-add_executable(network_probe_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/nvhttp/network_probe_limiter.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_probe.cpp)
-target_include_directories(network_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(network_probe_unit_tests gtest_main)
-target_compile_options(network_probe_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(network_probe_unit_tests PROPERTIES CXX_STANDARD 23)
-add_test(NAME network_probe_unit_tests COMMAND network_probe_unit_tests)
-
 # modify SUNSHINE_DEFINITIONS
 if (WIN32)
     list(APPEND
@@ -108,7 +99,9 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(${PROJECT_NAME} ${dep})  # compile these before sunshine
 endforeach()
 
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
+set_target_properties(${PROJECT_NAME} PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
 target_link_libraries(${PROJECT_NAME}
         ${SUNSHINE_EXTERNAL_LIBRARIES}
         gtest

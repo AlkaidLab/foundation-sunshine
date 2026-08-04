@@ -61,20 +61,46 @@ namespace nvhttp::network_probe {
 
   admission_t limiter_t::admit(const std::string &client, const std::string &nonce, std::size_t bytes, clock_t::time_point now) {
     std::lock_guard lock(mutex_);
+
+    // Retain replay protection for one quota window, then remove clients that
+    // no longer have an active session, cooldown, charge, or in-flight request.
+    for (auto it = clients_.begin(); it != clients_.end();) {
+      auto &candidate = it->second;
+      prune(candidate.charges, candidate.charged_bytes, now);
+
+      if (!candidate.in_flight && !candidate.nonce.empty() && now - candidate.session_started >= SESSION_LIFETIME) {
+        const auto expired_at = candidate.session_started + SESSION_LIFETIME;
+        candidate.retired_nonces.push_back({ std::move(candidate.nonce), expired_at });
+        candidate.nonce.clear();
+        candidate.session_bytes = 0;
+        candidate.cooldown_until = expired_at + COOLDOWN;
+      }
+      while (!candidate.retired_nonces.empty() && now - candidate.retired_nonces.front().retired_at >= QUOTA_WINDOW) {
+        candidate.retired_nonces.pop_front();
+      }
+
+      const bool idle = !candidate.in_flight && candidate.nonce.empty() &&
+                        candidate.retired_nonces.empty() && candidate.charges.empty() &&
+                        now >= candidate.cooldown_until &&
+                        now - candidate.last_activity >= QUOTA_WINDOW;
+      if (idle) {
+        it = clients_.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+
     auto &state = clients_[client];
-    prune(state.charges, state.charged_bytes, now);
     prune(global_charges_, global_charged_bytes_, now);
 
     if (state.in_flight) return { rejection_e::client_busy, COOLDOWN_MS };
     if (global_in_flight_ >= GLOBAL_CONCURRENCY) return { rejection_e::global_busy, COOLDOWN_MS };
 
-    if (!state.nonce.empty() && now - state.session_started >= SESSION_LIFETIME) {
-      state.retired_nonces.emplace(state.nonce);
-      state.cooldown_until = state.session_started + SESSION_LIFETIME + COOLDOWN;
-      state.nonce.clear();
-      state.session_bytes = 0;
-    }
-    if (state.retired_nonces.contains(nonce)) return { rejection_e::session_expired, COOLDOWN_MS };
+    const auto retired = std::find_if(state.retired_nonces.begin(), state.retired_nonces.end(), [&](const auto &entry) {
+      return entry.value == nonce;
+    });
+    if (retired != state.retired_nonces.end()) return { rejection_e::session_expired, COOLDOWN_MS };
 
     const bool continuing = state.nonce == nonce;
     if (!continuing && state.nonce.empty() && now < state.cooldown_until) {
@@ -93,7 +119,7 @@ namespace nvhttp::network_probe {
     if (global_charged_bytes_ + bytes > GLOBAL_QUOTA_BYTES) return { rejection_e::global_quota, quota_retry_ms(global_charges_, now) };
 
     if (!continuing) {
-      if (!state.nonce.empty()) state.retired_nonces.emplace(std::move(state.nonce));
+      if (!state.nonce.empty()) state.retired_nonces.push_back({ std::move(state.nonce), now });
       state.nonce = nonce;
       state.session_started = now;
       state.cooldown_until = {};

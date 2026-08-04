@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace nvhttp::network_probe {
   constexpr std::size_t MIN_BYTES = 64 * 1024;
@@ -16,6 +15,7 @@ namespace nvhttp::network_probe {
   constexpr std::size_t CHUNK_BYTES = 64 * 1024;
   constexpr std::size_t SESSION_MAX_BYTES = 6 * 1024 * 1024;
   constexpr std::uint32_t COOLDOWN_MS = 5000;
+  constexpr auto MAX_TRANSFER_DURATION = std::chrono::seconds(3);
 
   using clock_t = std::chrono::steady_clock;
 
@@ -55,6 +55,11 @@ namespace nvhttp::network_probe {
     };
 
     struct client_t {
+      struct retired_nonce_t {
+        std::string value;
+        clock_t::time_point retired_at;
+      };
+
       std::string nonce;
       clock_t::time_point session_started {};
       clock_t::time_point last_activity {};
@@ -64,7 +69,7 @@ namespace nvhttp::network_probe {
       bool in_flight = false;
       std::deque<charge_t> charges;
       std::size_t charged_bytes = 0;
-      std::unordered_set<std::string> retired_nonces;
+      std::deque<retired_nonce_t> retired_nonces;
     };
 
     static void prune(std::deque<charge_t> &charges, std::size_t &total, clock_t::time_point now);

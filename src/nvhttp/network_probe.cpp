@@ -101,6 +101,11 @@ namespace nvhttp::network_probe {
           finish("completed");
           return;
         }
+        if (clock_t::now() - started >= MAX_TRANSFER_DURATION) {
+          finish("timeout");
+          response->close_connection_after_response = true;
+          return;
+        }
 
         const auto count = std::min(remaining, owner->payload.size());
         response->write(owner->payload.data(), static_cast<std::streamsize>(count));

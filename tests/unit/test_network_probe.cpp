@@ -55,13 +55,21 @@ namespace {
   TEST(NetworkProbeLimiter, RejectsFifthGlobalConcurrentSample) {
     limiter_t limiter;
     const auto now = clock_t::time_point {};
+    nvhttp::network_probe::admission_t first;
     for (int i = 0; i < 4; ++i) {
-      ASSERT_TRUE(limiter.admit("client-" + std::to_string(i), "probe", 64 * 1024, now));
+      const auto admission = limiter.admit("client-" + std::to_string(i), "probe", 64 * 1024, now);
+      ASSERT_TRUE(admission);
+      if (i == 0) {
+        first = admission;
+      }
     }
     EXPECT_EQ(limiter.admit("client-4", "probe", 64 * 1024, now).rejection, rejection_e::global_busy);
+
+    limiter.complete("client-0", first.id, now + 1ms);
+    EXPECT_TRUE(limiter.admit("client-4", "probe", 64 * 1024, now + 2ms));
   }
 
-  TEST(NetworkProbeLimiter, ExpiresSessionsAndNeverReactivatesTheirNonce) {
+  TEST(NetworkProbeLimiter, RejectsExpiredNonceDuringReplayWindow) {
     limiter_t limiter;
     const auto start = clock_t::time_point {};
     const auto first = limiter.admit("client-a", "probe-a", 64 * 1024, start);
@@ -117,5 +125,26 @@ namespace {
       limiter.complete(name, admission.id, now + 1ms);
     }
     EXPECT_EQ(limiter.admit("client-16", "probe", 64 * 1024, now + 2ms).rejection, rejection_e::global_quota);
+  }
+
+  TEST(NetworkProbeLimiter, RetainsReplayProtectionForQuotaWindow) {
+    limiter_t limiter;
+    const auto start = clock_t::time_point {};
+    const auto first = limiter.admit("client-a", "probe-a", 64 * 1024, start);
+    ASSERT_TRUE(first);
+    limiter.complete("client-a", first.id, start + 1ms);
+
+    EXPECT_EQ(limiter.admit("client-a", "probe-a", 64 * 1024, start + 3s).rejection, rejection_e::session_expired);
+    EXPECT_EQ(limiter.admit("client-a", "probe-a", 64 * 1024, start + 59s).rejection, rejection_e::session_expired);
+    EXPECT_TRUE(limiter.admit("client-a", "probe-a", 64 * 1024, start + 63s));
+  }
+
+  TEST(NetworkProbeLimiter, CleanupNeverRemovesInflightClient) {
+    limiter_t limiter;
+    const auto start = clock_t::time_point {};
+    ASSERT_TRUE(limiter.admit("client-a", "probe-a", 64 * 1024, start));
+
+    ASSERT_TRUE(limiter.admit("client-b", "probe-b", 64 * 1024, start + 61s));
+    EXPECT_EQ(limiter.admit("client-a", "probe-a", 64 * 1024, start + 61s).rejection, rejection_e::client_busy);
   }
 }  // namespace
