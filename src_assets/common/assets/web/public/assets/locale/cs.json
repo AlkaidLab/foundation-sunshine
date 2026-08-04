@@ -353,6 +353,7 @@
     "high_resolution_scrolling_desc": "Pokud je povoleno, sunshine projde událostmi posunu s vysokým rozlišením od klientů Moonight. To může být užitečné pro vypnutí starších aplikací, které se posouvají příliš rychle při posunu s vysokým rozlišením.",
     "install_steam_audio_drivers": "Nainstalujte Steam Audio Drivers",
     "install_steam_audio_drivers_desc": "Pokud je Steam nainstalován, tak se automaticky nainstaluje ovladač Steam Streaming Speakers pro podporu 5.1/7.1 prostorového zvuku a ztlumení zvuku.",
+    "input_driver_management": "Správa vstupních ovladačů",
     "key_repeat_delay": "Zpoždění opakování klíče",
     "key_repeat_delay_desc": "Ovládejte, jak rychle se budou klíče opakovat. Počáteční zpoždění v milisekundách před opakováním klíčů.",
     "key_repeat_frequency": "Frekvence opakování klíče",

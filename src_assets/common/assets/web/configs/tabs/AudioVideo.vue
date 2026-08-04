@@ -9,10 +9,11 @@ import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
 import DisplayDeviceOptions from './audiovideo/DisplayDeviceOptions.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
+import AutomaticNumberSetting from './audiovideo/AutomaticNumberSetting.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
-const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
+const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'displayModeRemapping'])
 
 const { t } = useI18n()
 const config = ref(props.config)
@@ -184,9 +185,24 @@ const testMicrophoneRoute = async () => {
       </div>
     </div>
 
+    <section class="stream-encoding-limit mb-3">
+      <AutomaticNumberSetting
+        v-model="config.max_bitrate"
+        id="max_bitrate"
+        label-key="config.max_bitrate"
+        description-key="config.max_bitrate_desc"
+        icon="fa-gauge-high"
+        unit="Kbps"
+      />
+    </section>
+
     <NewDisplayOutputSelector :platform="platform" :config="config" />
 
-    <DisplayDeviceOptions :platform="platform" :config="config" />
+    <DisplayDeviceOptions
+      :platform="platform"
+      :config="config"
+      :display-mode-remapping="displayModeRemapping"
+    />
 
     <!-- Display Modes Tab Navigation -->
     <div class="mb-3">
@@ -282,6 +298,13 @@ const testMicrophoneRoute = async () => {
 
 .tab-content {
   padding-top: 0;
+}
+
+.stream-encoding-limit {
+  padding: 1rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
 }
 
 .stream-mic-helper {

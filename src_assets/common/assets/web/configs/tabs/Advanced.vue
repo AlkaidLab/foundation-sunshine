@@ -8,7 +8,7 @@ import CaptureCompatibilityOverrides from './advanced/CaptureCompatibilityOverri
 
 const { t } = useI18n()
 
-const props = defineProps(['platform', 'config', 'global_prep_cmd', 'display_mode_remapping'])
+const props = defineProps(['platform', 'config', 'global_prep_cmd'])
 
 const config = ref(props.config)
 
@@ -340,7 +340,6 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
     <CaptureCompatibilityOverrides
       :platform="platform"
       :config="config"
-      :display_mode_remapping="display_mode_remapping"
     />
   </div>
 </template>

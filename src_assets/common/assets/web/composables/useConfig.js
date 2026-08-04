@@ -196,7 +196,6 @@ const DEFAULT_TABS = [
         options: {
           sw_preset: 'superfast',
           sw_tune: 'zerolatency',
-          qp: 28,
           min_threads: 2,
         },
       },

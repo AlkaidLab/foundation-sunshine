@@ -353,6 +353,7 @@
     "high_resolution_scrolling_desc": "Wenn aktiviert, durchläuft Sunshine hochauflösende Scroll-Ereignisse von Moonlight-Clients. Dies kann nützlich sein, um ältere Anwendungen zu deaktivieren, die bei hochauflösenden Scroll-Ereignissen zu schnell scrollen.",
     "install_steam_audio_drivers": "Steam Audio Treiber installieren",
     "install_steam_audio_drivers_desc": "Wenn Steam installiert ist, wird der Steam Streaming Speakers Treiber automatisch installiert, um 5.1/7.1 Surround-Sound zu unterstützen und Host-Audio zu mutieren.",
+    "input_driver_management": "Eingabetreiber verwalten",
     "key_repeat_delay": "Schlüssel-Wiederholung Verzögerung",
     "key_repeat_delay_desc": "Legen Sie fest, wie schnell sich die Tasten wiederholen. Die anfängliche Verzögerung in Millisekunden bevor Sie die Tasten wiederholen.",
     "key_repeat_frequency": "Tastendruck-Frequenz",

@@ -44,7 +44,7 @@ const uniqueAdapters = computed(() => {
     <div class="form-text">
       <PlatformLayout :platform="platform">
         <template #windows>
-          {{ $t('config.adapter_name_desc_windows') }}<br>
+          <span v-html="$t('config.adapter_name_desc_windows')"></span><br>
         </template>
         <template #linux>
           {{ $t('config.adapter_name_desc_linux_1') }}<br>

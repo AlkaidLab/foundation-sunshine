@@ -40,13 +40,6 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.sw_tune_desc') }}</div>
     </div>
 
-    <!-- Quantization Parameter (QP) -->
-    <div class="mb-3">
-      <label for="qp" class="form-label">{{ $t('config.qp') }}</label>
-      <input type="number" class="form-control" id="qp" placeholder="28" v-model="config.qp" />
-      <div class="form-text">{{ $t('config.qp_desc') }}</div>
-    </div>
-
     <div class="mb-3">
       <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
       <input

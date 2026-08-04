@@ -35,15 +35,6 @@ const config = ref(props.config)
 
     <div class="stream-limit-grid">
       <AutomaticNumberSetting
-        v-model="config.max_bitrate"
-        class="stream-limit-field"
-        id="max_bitrate"
-        label-key="config.max_bitrate"
-        description-key="config.max_bitrate_desc"
-        icon="fa-gauge-high"
-        unit="Kbps"
-      />
-      <AutomaticNumberSetting
         v-model="config.minimum_fps_target"
         class="stream-limit-field"
         id="minimum_fps_target"
