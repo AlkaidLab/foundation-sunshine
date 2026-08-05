@@ -188,6 +188,7 @@ endif ()
 if (WIN32)
     add_executable(vmouse_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_virtual_mouse.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
     target_include_directories(vmouse_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(vmouse_unit_tests
@@ -208,6 +209,7 @@ if (WIN32)
 
     add_executable(vmouse_probe
             ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_probe.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
     target_include_directories(vmouse_probe PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(vmouse_probe
