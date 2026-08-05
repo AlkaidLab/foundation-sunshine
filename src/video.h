@@ -135,6 +135,12 @@ namespace video {
     }
   };
 
+  int
+  encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage);
+
+  int
+  cap_encoder_bitrate(int encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
+
   struct input_activity_boost_policy_t {
     bool configured {};
     bool useful {};

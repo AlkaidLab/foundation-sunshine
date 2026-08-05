@@ -154,6 +154,27 @@ namespace video {
     return statuses;
   }
 
+  int
+  encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage) {
+    if (fec_percentage > 0 && fec_percentage <= 80) {
+      return total_bitrate_kbps * (100 - fec_percentage) / 100;
+    }
+
+    return total_bitrate_kbps;
+  }
+
+  int
+  cap_encoder_bitrate(int encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
+    if (max_total_bitrate_kbps <= 0) {
+      return encoder_bitrate_kbps;
+    }
+
+    return std::min(
+      encoder_bitrate_kbps,
+      encoder_bitrate_from_total_bitrate(max_total_bitrate_kbps, fec_percentage)
+    );
+  }
+
   std::chrono::duration<double, std::milli>
   minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target) {
     if (minimum_fps_target > 0) {
@@ -618,12 +639,10 @@ namespace video {
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx) return;
 
-      // Adjust encoding bitrate considering FEC overhead
-      // When FEC percentage is X%, actual encoding bitrate should be (100-X)% of requested
-      auto adjusted_bitrate_kbps = bitrate_kbps;
-      if (config::stream.fec_percentage > 0 && config::stream.fec_percentage <= 80) {
-        adjusted_bitrate_kbps = bitrate_kbps * (100 - config::stream.fec_percentage) / 100;
-      }
+      const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+        bitrate_kbps,
+        config::stream.fec_percentage
+      );
 
       auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
 
@@ -751,10 +770,10 @@ namespace video {
       if (device && device->nvenc) {
         // 考虑FEC影响，调整编码码率
         // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
+        const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+          bitrate_kbps,
+          config::stream.fec_percentage
+        );
 
         device->nvenc->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
@@ -924,10 +943,10 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->amf) {
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
+        const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+          bitrate_kbps,
+          config::stream.fec_percentage
+        );
 
         device->amf->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
@@ -2513,7 +2532,7 @@ namespace video {
         }
       }
 
-      auto bitrate = ((config::video.max_bitrate > 0) ? std::min(config.bitrate, config::video.max_bitrate) : config.bitrate) * 1000;
+      auto bitrate = config.bitrate * 1000;
       BOOST_LOG(info) << "Streaming bitrate is " << bitrate;
       ctx->rc_max_rate = bitrate;
       ctx->bit_rate = bitrate;
@@ -2832,17 +2851,30 @@ namespace video {
 
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+    auto effective_config = config;
+    effective_config.bitrate = cap_encoder_bitrate(
+      config.bitrate,
+      config::video.max_bitrate,
+      config::stream.fec_percentage
+    );
+    if (!is_probe && effective_config.bitrate != config.bitrate) {
+      BOOST_LOG(info) << "Capping initial encoder bitrate from " << config.bitrate
+                      << " Kbps to " << effective_config.bitrate
+                      << " Kbps (host maximum total bitrate: " << config::video.max_bitrate
+                      << " Kbps, FEC: " << config::stream.fec_percentage << "%)";
+    }
+
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device));
+      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, config, std::move(nvenc_encode_device), is_probe);
+      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, config, std::move(amf_encode_device), is_probe);
+      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
     return nullptr;
