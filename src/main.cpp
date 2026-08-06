@@ -105,10 +105,12 @@ ConsoleCtrlHandler(DWORD type) {
 }
 #endif
 
+// Unused on Windows when the GUI agent owns the tray (SUNSHINE_TRAY=0): the
+// only remaining reader is the POSIX main-loop condition below.
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-constexpr bool tray_is_enabled = true;
+[[maybe_unused]] constexpr bool tray_is_enabled = true;
 #else
-constexpr bool tray_is_enabled = false;
+[[maybe_unused]] constexpr bool tray_is_enabled = false;
 #endif
 
 void
@@ -129,7 +131,14 @@ mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
 
   // Main thread event loop
   BOOST_LOG(info) << "Starting main loop"sv;
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   while (system_tray::process_tray_events() == 0);
+#else
+  // Only the in-process tray sets run_loop, so this build cannot reach here.
+  // Block on shutdown anyway: falling through would return to main() and tear
+  // the host down immediately if another main-thread feature is ever added.
+  shutdown_event->view();
+#endif
   BOOST_LOG(info) << "Main loop has exited"sv;
 }
 
@@ -477,19 +486,21 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
   if (tray_is_enabled && config::sunshine.system_tray) {
     BOOST_LOG(info) << "Starting system tray"sv;
-#ifdef _WIN32
+  #ifdef _WIN32
     // TODO: Windows has a weird bug where when running as a service and on the first Windows boot,
     // he tray icon would not appear even though Sunshine is running correctly otherwise.
     // Restarting the service would allow the icon to appear normally.
     // For now we will keep the Windows tray icon on a separate thread.
     // Ideally, we would run the system tray on the main thread for all platforms.
     system_tray::init_tray_threaded();
-#else
+  #else
     system_tray::init_tray();
-#endif
+  #endif
   }
+#endif
 
   mainThreadLoop(shutdown_event);
 

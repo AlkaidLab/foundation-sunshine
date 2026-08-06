@@ -14,6 +14,22 @@ list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 # can remove after https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120495 is available in mingw-w64
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-template-body)
 
+# Template-heavy translation units (confighttp.cpp in particular) exceed the
+# 32767-section COFF limit. Without big-obj the assembler silently writes a
+# corrupt symbol table whose COMDAT entries (typeinfo, inline members) then
+# resolve as undefined at link time.
+#
+# Gated on GNU unlike the -Wno-* flags above: clang only warns about an unknown
+# -Wno-*, but rejects an unknown -Wa, argument outright, so an unconditional
+# flag here would hard-fail a clang-based MinGW build (e.g. MSYS2 CLANG64).
+# A plain if() rather than a COMPILE_LANG_AND_ID genex, because
+# cmake/targets/common.cmake wraps every SUNSHINE_COMPILE_OPTIONS entry as
+# --compiler-options=<flag> for CUDA, and a genex there would degrade to a bare
+# --compiler-options= for CUDA translation units.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    list(APPEND SUNSHINE_COMPILE_OPTIONS -Wa,-mbig-obj)
+endif()
+
 # see gcc bug 98723
 add_definitions(-DUSE_BOOST_REGEX)
 
