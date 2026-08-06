@@ -31,6 +31,7 @@
 #include <openssl/ssl.h>
 
 // local includes
+#include "client_fingerprint.h"
 #include "config.h"
 #include "confighttp.h"
 #include "display_device/session.h"
@@ -50,6 +51,7 @@
 #include "nvhttp/display_control.h"
 #include "nvhttp/display_scale.h"
 #include "nvhttp/dynamic_params.h"
+#include "nvhttp/network_probe.h"
 #include "nvhttp/pairing.h"
 #include "nvhttp/sessions.h"
 #include "nvhttp/tls_client_identity_store.h"
@@ -607,12 +609,22 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    const auto fingerprint_match = client_fingerprint::match_client(args);
+    launch_session->highly_suspected_unknown_client = fingerprint_match.suspicious;
 
     // Store the stable client certificate UUID in the launch environment.
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    }
+    if (launch_session->highly_suspected_unknown_client) {
+      BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
+                         << " [client_uuid=" << client_cert_uuid
+                         << ", client_name=" << launch_session->client_name
+                         << ", rule_id=" << fingerprint_match.rule_id
+                         << ", rule_revision=" << fingerprint_match.revision
+                         << ", rule_source=" << fingerprint_match.source << ']';
     }
 
     if (rtsp_stream::session_count() == 0) {
@@ -667,6 +679,17 @@ namespace nvhttp {
     tree.put("root.gamesession", 1);
 
     try {
+      std::map<std::string, std::string> extra_data {
+        { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
+        { "fps", std::to_string(launch_session->fps) },
+        { "host_audio", launch_session->host_audio ? "true" : "false" }
+      };
+      if (launch_session->highly_suspected_unknown_client) {
+        extra_data.emplace(
+          "client_integrity_warning",
+          client_fingerprint::suspicious_client_code
+        );
+      }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_LAUNCH,
         .timestamp = webhook::get_current_timestamp(),
@@ -676,10 +699,7 @@ namespace nvhttp {
         .app_name = proc::proc.get_app_name(appid),
         .app_id = appid,
         .session_id = std::to_string(launch_session->id),
-        .extra_data = {
-          { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
-          { "fps", std::to_string(launch_session->fps) },
-          { "host_audio", launch_session->host_audio ? "true" : "false" } } });
+        .extra_data = std::move(extra_data) });
     }
     catch (...) {
       BOOST_LOG(error) << "Webhook launch event construction failed"sv;
@@ -756,12 +776,22 @@ namespace nvhttp {
     }
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    const auto fingerprint_match = client_fingerprint::match_client(args);
+    launch_session->highly_suspected_unknown_client = fingerprint_match.suspicious;
 
     // Get client certificate UUID (stable client identifier) and store it in env
     std::string client_cert_uuid = get_client_cert_uuid_from_request(request);
     if (!client_cert_uuid.empty()) {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    }
+    if (launch_session->highly_suspected_unknown_client) {
+      BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
+                         << " [client_uuid=" << client_cert_uuid
+                         << ", client_name=" << launch_session->client_name
+                         << ", rule_id=" << fingerprint_match.rule_id
+                         << ", rule_revision=" << fingerprint_match.revision
+                         << ", rule_source=" << fingerprint_match.source << ']';
     }
 
     if (no_active_sessions) {
@@ -798,6 +828,17 @@ namespace nvhttp {
 
     try {
       const auto app_id = proc::proc.running();
+      std::map<std::string, std::string> extra_data {
+        { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
+        { "fps", std::to_string(launch_session->fps) },
+        { "host_audio", launch_session->host_audio ? "true" : "false" }
+      };
+      if (launch_session->highly_suspected_unknown_client) {
+        extra_data.emplace(
+          "client_integrity_warning",
+          client_fingerprint::suspicious_client_code
+        );
+      }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_RESUME,
         .timestamp = webhook::get_current_timestamp(),
@@ -807,10 +848,7 @@ namespace nvhttp {
         .app_name = proc::proc.get_app_name(app_id),
         .app_id = app_id,
         .session_id = std::to_string(launch_session->id),
-        .extra_data = {
-          { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
-          { "fps", std::to_string(launch_session->fps) },
-          { "host_audio", launch_session->host_audio ? "true" : "false" } } });
+        .extra_data = std::move(extra_data) });
     }
     catch (...) {
       BOOST_LOG(error) << "Webhook resume event construction failed"sv;
@@ -951,6 +989,7 @@ namespace nvhttp {
     file_mapping_config.authorize_client = is_file_mapping_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
 
+    network_probe::service_t network_probe_service;
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
 
@@ -1057,6 +1096,17 @@ namespace nvhttp {
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
     https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
     https_server.resource["^/api/abr/feedback$"]["POST"] = abr_api::feedback;
+
+    // Startup bandwidth probe API. These routes inherit nvhttp's paired-client
+    // mTLS authentication and are intentionally absent from the HTTP server.
+    https_server.resource["^/api/network/capabilities$"]["GET"] =
+      [&network_probe_service](resp_https_t resp, req_https_t req) {
+        network_probe_service.capabilities(std::move(resp), std::move(req));
+      };
+    https_server.resource["^/api/network/probe$"]["GET"] =
+      [&network_probe_service](resp_https_t resp, req_https_t req) {
+        network_probe_service.probe(std::move(resp), std::move(req));
+      };
 
     // AI LLM proxy route uses client cert auth from pairing.
     https_server.resource["^/ai/completions$"]["POST"] = ai_api::completions;

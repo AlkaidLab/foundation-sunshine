@@ -125,6 +125,7 @@ namespace platf::dxgi {
     std::uint32_t analysis_height,
     std::uint32_t source_width,
     std::uint32_t source_height,
+    float max_analysis_nits,
     bool is_probe) {
     if (is_probe || !d3d12_video_device) {
       return nullptr;
@@ -145,6 +146,7 @@ namespace platf::dxgi {
       analysis_height,
       source_width,
       source_height,
+      max_analysis_nits,
       next_generation);
     if (!init_result.success) {
       video_backend_stage = init_result.stage;

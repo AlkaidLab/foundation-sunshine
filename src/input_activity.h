@@ -4,25 +4,32 @@
  */
 #pragma once
 
+#include <cstddef>
+#include <optional>
+
 struct _NV_INPUT_HEADER;
 
 namespace input::activity {
 
   /**
    * @brief Decides whether an incoming input packet represents meaningful user activity.
-   * @details Filters device management/telemetry packets, zero-delta no-ops and analog
-   *          jitter/drift so the video pipeline only boosts encode cadence for input
-   *          that can plausibly produce visible feedback.
+   * @details Tracks keyboard input, mouse buttons and scrolling. Pointer motion
+   *          only counts while local cursor rendering is active, because video
+   *          cursor motion already produces capture updates. Zero-delta motion
+   *          and zero-delta scrolling packets are ignored; non-zero vertical or
+   *          horizontal scrolling counts as activity.
    */
   class tracker_t {
   public:
     /**
      * @brief Evaluate an input packet.
      * @param payload The raw input packet header.
-     * @return true if the packet should count as user activity.
+     * @param payload_size The number of bytes available at payload.
+     * @return No value if the packet is truncated; otherwise whether it should
+     *         count as user activity.
      */
-    bool
-    evaluate(_NV_INPUT_HEADER *payload);
+    std::optional<bool>
+    evaluate(const _NV_INPUT_HEADER *payload, std::size_t payload_size);
   };
 
 }  // namespace input::activity

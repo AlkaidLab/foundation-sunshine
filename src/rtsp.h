@@ -32,6 +32,7 @@ namespace rtsp_stream {
     uint32_t control_connect_data;
     std::string client_cert_uuid;
     std::string rtsp_peer_address;
+    bool highly_suspected_unknown_client {false};
 
     boost::process::v1::environment env;
 

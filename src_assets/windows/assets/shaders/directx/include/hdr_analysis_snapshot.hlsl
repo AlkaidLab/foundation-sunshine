@@ -17,13 +17,17 @@ cbuffer hdr_analysis_snapshot_cbuffer : register(b2) {
     uint2 hdr_analysis_snapshot_size;
     uint2 hdr_analysis_snapshot_source_size;
     uint hdr_analysis_snapshot_has_cell_statistics;
-    uint3 hdr_analysis_snapshot_pad;
+    float hdr_analysis_snapshot_max_nits;
+    uint2 hdr_analysis_snapshot_pad;
 };
 
 float HdrAnalysisMaxRgbNits(float3 sc_rgb)
 {
     float3 rec2020_nits = max(Rec709toRec2020(sc_rgb) * 80.0, 0.0);
-    return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), 10000.0);
+    return min(
+        max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b),
+        hdr_analysis_snapshot_max_nits
+    );
 }
 
 bool GetHdrAnalysisCell(

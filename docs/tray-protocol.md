@@ -63,6 +63,11 @@ signed-in user's session after Core starts. Failed launches are retried while
 Core remains alive, and the GUI's single-instance guard absorbs duplicate
 logon and service-start attempts.
 
+The GUI keeps its tray during a short Core restart window. If Core remains
+unreachable for 15 seconds, the GUI removes the native tray icon so the tray
+does not imply that Sunshine is still running. The background GUI agent stays
+alive and recreates the tray when the local Core becomes available again.
+
 ## Actions and operations
 
 `POST /api/tray/action` accepts:
@@ -90,6 +95,21 @@ from closing a newer VDD.
 Long-running actions return an `operation_id`; their current `running`,
 `succeeded`, or `failed` result is published in the state `operation` object.
 Operations execute serially and are joined during Core shutdown.
+
+## Signed client fingerprint rules
+
+The packaged GUI may act as a low-frequency transport for warning-only client
+fingerprint rules:
+
+- `GET /api/tray/client-fingerprint-rules` returns Core's active rule status.
+- `POST /api/tray/client-fingerprint-rules` accepts
+  `{ "envelope": "<signed envelope JSON>" }`.
+
+The endpoint is local and uses the same authentication policy as tray actions.
+Core treats the provider and request body as untrusted: it independently
+verifies the pinned X.509 signature, schema, expiry, monotonic revision, and
+size limits before persisting and activating the candidate. The provider must
+not interpret rules or make client classification decisions.
 
 ## Future providers
 

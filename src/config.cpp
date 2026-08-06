@@ -475,8 +475,8 @@ namespace config {
     60,  // input_activity_boost_fps
     150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
-    false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
-    "auto"s,  // capture_compute_shader (default: auto -> off until validated)
+    "auto"s,  // hdr_luminance_analysis (automatic for HDR streams, inactive for SDR)
+    "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
   };
@@ -529,6 +529,11 @@ namespace config {
     SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
 
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
+
+    true,  // client_fingerprint_remote_rules
+    "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
+    {},  // client_fingerprint_rules_certificate (empty uses the pinned built-in certificate)
+    24,  // client_fingerprint_rules_refresh_hours
   };
 
   input_t input {
@@ -1321,7 +1326,31 @@ namespace config {
     bool_f(vars, "input_activity_boost", video.input_activity_boost);
     int_between_f(vars, "input_activity_boost_fps", video.input_activity_boost_fps, { 0, 1000 });
     int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
-    bool_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    string_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    if (video.hdr_luminance_analysis == "true" ||
+        video.hdr_luminance_analysis == "enabled" ||
+        video.hdr_luminance_analysis == "yes" ||
+        video.hdr_luminance_analysis == "enable" ||
+        video.hdr_luminance_analysis == "1") {
+      video.hdr_luminance_analysis = "on";
+    }
+    else if (video.hdr_luminance_analysis == "false" ||
+             video.hdr_luminance_analysis == "disabled" ||
+             video.hdr_luminance_analysis == "no" ||
+             video.hdr_luminance_analysis == "disable" ||
+             video.hdr_luminance_analysis == "0") {
+      video.hdr_luminance_analysis = "off";
+    }
+    if (video.hdr_luminance_analysis.empty()) {
+      video.hdr_luminance_analysis = "auto";
+    }
+    if (video.hdr_luminance_analysis != "auto" &&
+        video.hdr_luminance_analysis != "on" &&
+        video.hdr_luminance_analysis != "off") {
+      BOOST_LOG(warning) << "Invalid hdr_luminance_analysis: ["sv << video.hdr_luminance_analysis
+                         << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
+      video.hdr_luminance_analysis = "auto";
+    }
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
@@ -1394,6 +1423,22 @@ namespace config {
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
     int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
+    bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
+    string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
+    string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
+    if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
+      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      if (certificate_path.is_relative()) {
+        certificate_path = platf::appdata() / certificate_path;
+      }
+      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+    }
+    int_between_f(
+      vars,
+      "client_fingerprint_rules_refresh_hours",
+      nvhttp.client_fingerprint_rules_refresh_hours,
+      {1, 168}
+    );
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);

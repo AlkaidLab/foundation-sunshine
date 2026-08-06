@@ -597,16 +597,16 @@ namespace display_device {
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
 
-    if (config::video.capture == "vdd" && config::video.capture_cursor) {
+    if (config::video.capture == "vdd") {
       bool hardware_cursor_changed = false;
-      if (vdd_utils::ensure_hardware_cursor_disabled_for_capture(&hardware_cursor_changed)) {
+      if (vdd_utils::ensure_hardware_cursor_enabled_for_capture(&hardware_cursor_changed)) {
         if (hardware_cursor_changed) {
-          BOOST_LOG(info) << "VDD HardwareCursor disabled for direct capture; waiting for driver reload";
+          BOOST_LOG(info) << "VDD hardware cursor export enabled; waiting for one-time driver reload";
           std::this_thread::sleep_for(1200ms);
         }
       }
       else {
-        BOOST_LOG(warning) << "Failed to disable VDD HardwareCursor for direct capture; remote cursor may be invisible";
+        BOOST_LOG(warning) << "Failed to enable VDD hardware cursor export; cursor overlay and local synchronization may be unavailable";
       }
     }
 

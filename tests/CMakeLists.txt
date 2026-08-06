@@ -135,7 +135,9 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(${PROJECT_NAME} ${dep})  # compile these before sunshine
 endforeach()
 
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
+set_target_properties(${PROJECT_NAME} PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
 target_link_libraries(${PROJECT_NAME}
         ${SUNSHINE_EXTERNAL_LIBRARIES}
         gtest
@@ -161,6 +163,20 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
+add_executable(input_activity_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
+        ${CMAKE_SOURCE_DIR}/src/input_activity.cpp
+        ${CMAKE_SOURCE_DIR}/src/cursor_channel.cpp)
+target_include_directories(input_activity_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(input_activity_unit_tests
+        gtest_main)
+target_compile_definitions(input_activity_unit_tests PRIVATE INPUT_ACTIVITY_STANDALONE_TEST)
+target_compile_options(input_activity_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(input_activity_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME input_activity_unit_tests COMMAND input_activity_unit_tests)
+
 add_executable(launch_session_manager_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
         ${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp
@@ -178,16 +194,37 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(launch_session_manager_unit_tests ${dep})
 endforeach()
 
+add_executable(client_fingerprint_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_fingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(client_fingerprint_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_fingerprint_unit_tests
+        ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES})
+target_compile_definitions(client_fingerprint_unit_tests PRIVATE
+        ${SUNSHINE_DEFINITIONS}
+        CLIENT_FINGERPRINT_STANDALONE_TEST)
+target_compile_options(client_fingerprint_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(client_fingerprint_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_fingerprint_unit_tests COMMAND client_fingerprint_unit_tests)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(client_fingerprint_unit_tests ${dep})
+endforeach()
+
 if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(client_fingerprint_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 
 if (WIN32)
     add_executable(vmouse_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_virtual_mouse.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
     target_include_directories(vmouse_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(vmouse_unit_tests
@@ -208,6 +245,7 @@ if (WIN32)
 
     add_executable(vmouse_probe
             ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_probe.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
     target_include_directories(vmouse_probe PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(vmouse_probe

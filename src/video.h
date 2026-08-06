@@ -10,7 +10,9 @@
 #include "video_colorspace.h"
 
 #include <chrono>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -19,6 +21,36 @@ extern "C" {
 
 struct AVPacket;
 namespace video {
+
+  /**
+   * Runtime state for one active Windows frame-conversion pipeline.
+   *
+   * The Web UI uses this to report what Sunshine actually initialized, rather
+   * than inferring state from saved configuration alone.
+   */
+  struct hdr_pipeline_status_t {
+    std::uint64_t id {};
+    std::string hdr_mode { "sdr" };
+    std::string analysis_mode { "off" };
+    bool analysis_active {};
+    bool scene_metadata_active {};
+    std::vector<std::string> metadata_formats;
+    std::string conversion_path { "pixel_shader" };
+    std::string conversion_fallback_reason;
+    std::string analysis_failure_reason;
+  };
+
+  std::uint64_t
+  register_hdr_pipeline_status(const hdr_pipeline_status_t &status);
+
+  void
+  update_hdr_pipeline_status(std::uint64_t id, const hdr_pipeline_status_t &status);
+
+  void
+  unregister_hdr_pipeline_status(std::uint64_t id);
+
+  std::vector<hdr_pipeline_status_t>
+  get_hdr_pipeline_statuses();
 
   // 动态参数调节类型
   enum class dynamic_param_type_e : int {
@@ -102,6 +134,18 @@ namespace video {
       return static_cast<double>(framerate);
     }
   };
+
+  // Convert a total video transport budget (including FEC) to encoder bitrate.
+  int
+  encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage);
+
+  // Cap a dynamic total-bitrate request, then convert it to encoder bitrate.
+  int
+  encoder_bitrate_for_total_request(int requested_total_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
+
+  // Cap an initial bitrate that has already been converted to an encoder budget.
+  int
+  cap_initial_encoder_bitrate(int initial_encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
 
   struct input_activity_boost_policy_t {
     bool configured {};

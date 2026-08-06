@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "../tests_common.h"
+#include <src/client_fingerprint.h>
 #include <src/webhook/webhook.h>
 #include <src/webhook/webhook_format.h>
 
@@ -153,6 +154,41 @@ TEST_F(WebhookTest, ProductionPayloadIsValidJsonAndEscapesMarkup) {
   EXPECT_NE(content.find("Client \\*\\*admin\\*\\* &lt;admin&gt;"), std::string::npos);
   EXPECT_EQ(content.find("<script>"), std::string::npos);
   EXPECT_NE(content.find("127.0.0.20"), std::string::npos);
+}
+
+TEST_F(WebhookTest, SuspiciousClientWarningAppearsInMarkdownNotification) {
+  webhook::event_t event {
+    .type = webhook::event_type_t::NV_SESSION_START,
+    .timestamp = "2026-01-01 00:00:00.000",
+    .client_name = "Example-Android",
+    .extra_data = {
+      {"client_integrity_warning", std::string {client_fingerprint::suspicious_client_code}}
+    }
+  };
+
+  const auto payload = nlohmann::json::parse(webhook::generate_webhook_json(event, true));
+  const auto content = payload.at("markdown").at("content").get<std::string>();
+  EXPECT_NE(content.find("您很可能正在受到未知侵权客户端的侵害"), std::string::npos);
+  EXPECT_NE(content.find("可能存在误判"), std::string::npos);
+}
+
+TEST_F(WebhookTest, SuspiciousClientWarningIsStructuredInJsonNotification) {
+  webhook::event_t event {
+    .type = webhook::event_type_t::NV_APP_LAUNCH,
+    .timestamp = "2026-01-01 00:00:00.000",
+    .extra_data = {
+      {"client_integrity_warning", std::string {client_fingerprint::suspicious_client_code}}
+    }
+  };
+
+  webhook::g_webhook_format.set_format_type(webhook::format_type_t::JSON);
+  const auto payload = nlohmann::json::parse(webhook::generate_webhook_json(event, false));
+  const auto &extra_data = payload.at("extra_data");
+  EXPECT_EQ(extra_data.at("client_integrity_status"), client_fingerprint::suspicious_client_code);
+  EXPECT_NE(
+    extra_data.at("client_integrity_warning").get<std::string>().find("unknown infringing client"),
+    std::string::npos
+  );
 }
 
 TEST_F(WebhookTest, EnglishTestPayloadUsesTheProductionEnvelope) {

@@ -136,6 +136,77 @@ TEST(HdrDynamicMetadata, AppliesAnnexA9ThirtyTwoFrameMean) {
   EXPECT_EQ(filter.update(dark).average_maxrgb_pq, 100);
 }
 
+namespace {
+
+  platf::hdr_frame_luminance_stats_t
+  stable_hlg_stats(uint64_t sequence, float average = 120.0f, float maximum = 600.0f) {
+    return {
+      .min_maxrgb = 0.0f,
+      .max_maxrgb = maximum,
+      .avg_maxrgb = average,
+      .percentile_10_pq = 0.20f,
+      .percentile_90_pq = 0.70f,
+      .percentile_95 = 500.0f,
+      .percentile_99 = 580.0f,
+      .analysis_max_nits = 1000.0f,
+      .sample_sequence = sequence,
+      .valid = true,
+    };
+  }
+
+}  // namespace
+
+TEST(HdrDynamicMetadata, VividStartupGuardRequiresThreeIndependentSamples) {
+  video::hdr_metadata::vivid_startup_guard_t guard;
+
+  const auto first = stable_hlg_stats(1);
+  EXPECT_FALSE(guard.observe(first));
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+
+  // Reusing an analyzer result on intervening encoded frames must not satisfy
+  // the startup guard.
+  EXPECT_FALSE(guard.observe(first));
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(2, 125.0f, 620.0f)));
+  EXPECT_EQ(guard.consecutive_samples(), 2U);
+
+  // A non-adjacent replay is still the same GPU readback and must not count.
+  EXPECT_FALSE(guard.observe(first));
+  EXPECT_EQ(guard.consecutive_samples(), 2U);
+
+  EXPECT_TRUE(guard.observe(stable_hlg_stats(3, 130.0f, 610.0f)));
+}
+
+TEST(HdrDynamicMetadata, VividStartupGuardRejectsInvalidAndTransitionSamples) {
+  video::hdr_metadata::vivid_startup_guard_t guard;
+
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(1)));
+
+  auto invalid = stable_hlg_stats(2);
+  invalid.avg_maxrgb = std::numeric_limits<float>::quiet_NaN();
+  EXPECT_FALSE(guard.observe(invalid));
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  invalid = stable_hlg_stats(3);
+  invalid.max_maxrgb = 1500.0f;
+  EXPECT_FALSE(guard.observe(invalid));
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  auto black = stable_hlg_stats(4, 0.0f, 0.0f);
+  black.percentile_10_pq = 0.0f;
+  black.percentile_90_pq = 0.0f;
+  EXPECT_FALSE(guard.observe(black));
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(5)));
+  // A large exposure transition restarts the consecutive run at the current sample.
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(6, 500.0f, 950.0f)));
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(7, 510.0f, 940.0f)));
+  EXPECT_TRUE(guard.observe(stable_hlg_stats(8, 500.0f, 930.0f)));
+}
+
 // Regression guard for the representation of
 // AVHDRVividColorToneMappingParams::targeted_system_display_maximum_luminance.
 //

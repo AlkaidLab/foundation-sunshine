@@ -44,12 +44,7 @@ float3 scRGBTo2100PQ(float3 rgb)
     return NitsToPQ(rgb);
 }
 
-// HLG (Hybrid Log-Gamma) OETF as defined in ARIB STD-B67 / ITU-R BT.2100
-// Optimized: branchless vectorized implementation
-//
-// Note: HLG OETF is mathematically valid for L > 1, but output > 1 will be
-// clipped by the encoder (10-bit can only represent [0, 1]). We don't clip
-// in the shader to preserve precision; the encoder handles clipping.
+// HLG (Hybrid Log-Gamma) OETF as defined in ARIB STD-B67 / ITU-R BT.2100.
 float3 LinearToHLG(float3 L)
 {
     // HLG constants from ARIB STD-B67
@@ -58,7 +53,7 @@ float3 LinearToHLG(float3 L)
     static const float c = 0.55991073;  // 0.5 - a * ln(4 * a)
     static const float threshold = 1.0 / 12.0;
 
-    // Clamp negative values only (out of gamut), allow > 1 for HDR headroom
+    // Clamp negative values only. Production signals may retain headroom above 1.
     L = max(L, 0.0);
 
     // Compute both branches for all channels (branchless)
@@ -66,45 +61,46 @@ float3 LinearToHLG(float3 L)
     float3 lowRange = sqrt(3.0 * L);
 
     // High range: a * log(12 * L - b) + c
-    // For L > 1, this produces output > 1 which is fine (encoder clips later)
     float3 highRange = a * log(max(12.0 * L - b, 1e-6)) + c;
 
     // Branchless select using step function
     float3 selector = step(threshold, L);
 
-    // Return unclamped result - let encoder handle clipping
     return lerp(lowRange, highRange, selector);
 }
 
-float3 scRGBTo2100HLG(float3 rgb)
+// Convert display-linear Rec. 2020 light to scene-linear HLG light using the
+// inverse of the BT.2100 reference OOTF (Table 5, Note 5i).
+float3 DisplayLinearToHLGScene(float3 display_rgb_nits, float peak_nits, float system_gamma)
 {
-    // Convert from Rec 709 primaries (used by scRGB) to Rec 2020 primaries (used by Rec 2100)
-    rgb = Rec709toRec2020(rgb);
+    float3 normalized_rgb = max(display_rgb_nits, 0.0) / peak_nits;
+    float normalized_luminance = dot(
+        normalized_rgb,
+        float3(0.2627, 0.6780, 0.0593)
+    );
 
-    // scRGB luminance mapping to HLG:
-    // - scRGB 1.0 = 80 nits (SDR reference white)
-    // - HLG is scene-referred, OETF expects normalized scene light [0, 1]
-    // - For a 1000 nits peak display, HLG signal 1.0 maps to ~1000 nits
-    // - HLG reference white (75% signal) is ~203 nits
-    //
-    // Mapping strategy:
-    // - scRGB 1.0 (80 nits) should map to HLG ~0.5 (SDR-compatible level)
-    // - scRGB 12.5 (1000 nits) should map to HLG 1.0 (peak white)
-    //
-    // Scale factor: 80 nits / 1000 nits = 0.08
-    // This maps the full HDR range [0, 1000 nits] to HLG input [0, 1]
-    
-    static const float HDR_PEAK_NITS = 1000.0;
-    static const float SCRGB_NITS_PER_UNIT = 80.0;
-    static const float scaleToHLG = SCRGB_NITS_PER_UNIT / HDR_PEAK_NITS;  // 0.08
-    
-    // Convert scRGB to normalized scene light for HLG
-    // Negative values are clamped (out of gamut), but > 1.0 is preserved
-    // This allows content > 1000 nits to pass through (soft rolloff)
-    rgb = max(rgb, 0.0) * scaleToHLG;
+    // Avoid the 0 * infinity form when gamma > 1 and luminance is black.
+    if (normalized_luminance <= 0.0) {
+        return 0.0;
+    }
 
-    // Apply the HLG OETF
-    // For input > 1.0, output will exceed 1.0 and be clipped by encoder
-    // This provides a natural "soft knee" rolloff for super-bright content
-    return LinearToHLG(rgb);
+    float ootf_scale = pow(
+        max(normalized_luminance, 1e-6),
+        (1.0 - system_gamma) / system_gamma
+    );
+    return normalized_rgb * ootf_scale;
+}
+
+float3 scRGBTo2100HLG(float3 rgb, float peak_nits, float system_gamma)
+{
+    // Windows capture supplies display-linear scRGB: Rec. 709 primaries and
+    // 1.0 = 80 cd/m2. Convert primaries before applying the luminance-dependent
+    // inverse OOTF so its Y calculation is in Rec. 2020.
+    float3 display_rgb_nits = Rec709toRec2020(rgb) * 80.0;
+    float3 scene_rgb = DisplayLinearToHLGScene(
+        display_rgb_nits,
+        peak_nits,
+        system_gamma
+    );
+    return LinearToHLG(scene_rgb);
 }

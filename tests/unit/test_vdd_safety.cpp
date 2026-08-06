@@ -74,6 +74,31 @@ TEST(VddBaselineSafety, DetectsVddOnlyTopology) {
   EXPECT_TRUE(is_vdd_only_topology({ { "vdd" } }, "vdd"));
 }
 
+TEST(VddCursorExportSafety, ParsesPersistedEnabledValues) {
+  using display_device::vdd_utils::hardware_cursor_export_enabled;
+
+  EXPECT_TRUE(hardware_cursor_export_enabled("true"));
+  EXPECT_TRUE(hardware_cursor_export_enabled(" TRUE "));
+  EXPECT_TRUE(hardware_cursor_export_enabled("1"));
+  EXPECT_FALSE(hardware_cursor_export_enabled("false"));
+  EXPECT_FALSE(hardware_cursor_export_enabled("0"));
+  EXPECT_FALSE(hardware_cursor_export_enabled(""));
+}
+
+TEST(VddCursorExportSafety, RetriesAfterPersistSucceedsButLiveEnableFails) {
+  using display_device::vdd_utils::hardware_cursor_export_needs_enable;
+
+  bool persisted_enabled = false;
+  bool live_enable_confirmed = false;
+  EXPECT_TRUE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+
+  persisted_enabled = true;
+  EXPECT_TRUE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+
+  live_enable_confirmed = true;
+  EXPECT_FALSE(hardware_cursor_export_needs_enable(persisted_enabled, live_enable_confirmed));
+}
+
 TEST(VddFrameChannelSafety, AcceptsValidMetadataForAttach) {
   using namespace platf::dxgi::vdd_frame_channel;
 
@@ -172,6 +197,17 @@ TEST(VddFrameChannelSafety, BoundsPostEventAcquireWait) {
             consumer_acquire_wait_budget_ms);
 }
 
+TEST(VddFrameChannelSafety, PrioritizesDesktopFrameOverPendingCursorRetry) {
+  using namespace platf::dxgi::vdd_frame_channel;
+
+  EXPECT_EQ(select_pending_cursor_action(false, false),
+            pending_cursor_action::wait_for_events);
+  EXPECT_EQ(select_pending_cursor_action(true, false),
+            pending_cursor_action::retry_cursor_frame);
+  EXPECT_EQ(select_pending_cursor_action(true, true),
+            pending_cursor_action::wait_for_events);
+}
+
 TEST(VddModeRefreshSafety, MatchesAdvertisedModesWithRefreshTolerance) {
   using namespace display_device;
 
@@ -188,6 +224,32 @@ TEST(VddModeRefreshSafety, MatchesAdvertisedModesWithRefreshTolerance) {
   auto invalid = requested;
   invalid.refresh_rate.denominator = 0;
   EXPECT_FALSE(vdd_utils::advertised_mode_matches(2340, 1080, 120, invalid));
+}
+
+TEST(VddModeRefreshSafety, MatchesRotatedModesOnlyWhenOrientationSwapsAxes) {
+  using namespace display_device;
+  using match_e = vdd_utils::advertised_mode_match_e;
+
+  const display_mode_t requested {
+    {2720, 1260},
+    {120, 1},
+  };
+
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(2720, 1260, 120, requested, false),
+    match_e::exact);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(2720, 1260, 120, requested, true),
+    match_e::exact);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 120, requested, false),
+    match_e::none);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 120, requested, true),
+    match_e::rotation_equivalent);
+  EXPECT_EQ(
+    vdd_utils::classify_advertised_mode(1260, 2720, 60, requested, true),
+    match_e::none);
 }
 
 TEST(VddFrameChannelSafety, SelectsExactOrSoleProducerWithoutAmbiguity) {

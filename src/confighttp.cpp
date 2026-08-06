@@ -2064,6 +2064,59 @@ namespace confighttp {
   }
 
   void
+  getRuntimeHdrStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "getting runtime HDR status")) {
+      return;
+    }
+
+    try {
+      const auto statuses = video::get_hdr_pipeline_statuses();
+      json response_json {
+        { "success", true },
+        { "status_code", 200 },
+        { "status_message", "Success" },
+#ifdef _WIN32
+        { "available", true },
+#else
+        { "available", false },
+#endif
+        { "configured_analysis_mode", config::video.hdr_luminance_analysis },
+        { "configured_conversion_mode", config::video.capture_compute_shader },
+        { "pipelines", json::array() },
+      };
+
+      for (const auto &status : statuses) {
+        response_json["pipelines"].push_back({
+          { "id", status.id },
+          { "hdr_mode", status.hdr_mode },
+          { "analysis_mode", status.analysis_mode },
+          { "analysis_active", status.analysis_active },
+          { "scene_metadata_active", status.scene_metadata_active },
+          { "metadata_formats", status.metadata_formats },
+          { "conversion_path", status.conversion_path },
+          { "conversion_fallback_reason", status.conversion_fallback_reason },
+          { "analysis_failure_reason", status.analysis_failure_reason },
+        });
+      }
+
+      response->write(response_json.dump());
+      response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getRuntimeHdrStatus: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getRuntimeHdrStatus: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
   getPerfCurrent(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -3278,6 +3331,7 @@ namespace confighttp {
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
+    server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;

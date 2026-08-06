@@ -9,6 +9,8 @@
 #include "logging.h"
 #include "video.h"
 
+#include <cmath>
+
 extern "C" {
 #include <libswscale/swscale.h>
 }
@@ -29,6 +31,21 @@ namespace video {
   bool
   colorspace_is_pq(const sunshine_colorspace_t &colorspace) {
     return colorspace.colorspace == colorspace_e::bt2020;
+  }
+
+  float
+  hlg_system_gamma(float peak_luminance_nits) {
+    if (!std::isfinite(peak_luminance_nits) || peak_luminance_nits <= 0.0f) {
+      peak_luminance_nits = 1000.0f;
+    }
+
+    if (peak_luminance_nits >= 400.0f && peak_luminance_nits <= 2000.0f) {
+      return 1.2f + 0.42f * std::log10(peak_luminance_nits / 1000.0f);
+    }
+
+    // BT.2100-3 Note 5f extended-range formula:
+    // gamma = 1.2 * 1.111 ^ log2(Lw / 1000).
+    return 1.2f * std::pow(1.111f, std::log2(peak_luminance_nits / 1000.0f));
   }
 
   sunshine_colorspace_t

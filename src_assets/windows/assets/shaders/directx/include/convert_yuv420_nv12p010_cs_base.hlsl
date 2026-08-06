@@ -36,7 +36,7 @@ cbuffer cs_layout_cbuffer : register(b1) {
     int2  cs_layout_pad;
 };
 
-#include "hdr_analysis_snapshot.hlsl"
+#include "include/hdr_analysis_snapshot.hlsl"
 
 groupshared float3 s_rgb[16][16];
 

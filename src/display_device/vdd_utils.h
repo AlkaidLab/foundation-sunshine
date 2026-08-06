@@ -51,15 +51,26 @@ namespace display_device::vdd_utils {
     std::vector<unsigned int> refresh_rates_hz;
   };
 
-  constexpr bool
-  advertised_mode_matches(unsigned int width,
+  enum class advertised_mode_match_e {
+    none,
+    exact,
+    rotation_equivalent,
+  };
+
+  /**
+   * @brief Classify a Windows-advertised mode against a client-requested mode.
+   * @details Windows exposes logical width and height after display rotation.
+   *          A swapped match is valid only when the current orientation swaps
+   *          the display axes (90 or 270 degrees).
+   */
+  constexpr advertised_mode_match_e
+  classify_advertised_mode(unsigned int width,
     unsigned int height,
     unsigned int refresh_hz,
-    const display_mode_t &requested_mode) {
-    if (requested_mode.refresh_rate.denominator == 0 ||
-        width != requested_mode.resolution.width ||
-        height != requested_mode.resolution.height) {
-      return false;
+    const display_mode_t &requested_mode,
+    bool orientation_swaps_axes) {
+    if (requested_mode.refresh_rate.denominator == 0) {
+      return advertised_mode_match_e::none;
     }
 
     const auto advertised_scaled =
@@ -69,7 +80,31 @@ namespace display_device::vdd_utils {
     const auto difference = advertised_scaled > requested_scaled ?
                               advertised_scaled - requested_scaled :
                               requested_scaled - advertised_scaled;
-    return difference <= requested_mode.refresh_rate.denominator;
+    if (difference > requested_mode.refresh_rate.denominator) {
+      return advertised_mode_match_e::none;
+    }
+
+    if (width == requested_mode.resolution.width &&
+        height == requested_mode.resolution.height) {
+      return advertised_mode_match_e::exact;
+    }
+
+    if (orientation_swaps_axes &&
+        width == requested_mode.resolution.height &&
+        height == requested_mode.resolution.width) {
+      return advertised_mode_match_e::rotation_equivalent;
+    }
+
+    return advertised_mode_match_e::none;
+  }
+
+  constexpr bool
+  advertised_mode_matches(unsigned int width,
+    unsigned int height,
+    unsigned int refresh_hz,
+    const display_mode_t &requested_mode) {
+    return classify_advertised_mode(width, height, refresh_hz, requested_mode, false) !=
+           advertised_mode_match_e::none;
   }
 
   /**
@@ -149,14 +184,27 @@ namespace display_device::vdd_utils {
   execute_vdd_command(const std::string &action);
 
   /**
-   * @brief Ensure ZakoVDD renders the cursor into the framebuffer instead of exposing a hardware cursor plane.
-   * @details Sunshine's direct VDD capture backend consumes only the shared frame texture exported by ZakoVDD.
-   *          Hardware cursor planes are not part of that texture, so they would be invisible to remote clients.
-   * @param changed Optional output set to true when this call had to update the driver setting.
-   * @return True when the setting is already safe or was updated successfully.
+   * @brief Parse the persisted VDD HardwareCursor value.
    */
   bool
-  ensure_hardware_cursor_disabled_for_capture(bool *changed = nullptr);
+  hardware_cursor_export_enabled(std::string value);
+
+  constexpr bool
+  hardware_cursor_export_needs_enable(bool persisted_enabled, bool live_enable_confirmed) {
+    return !persisted_enabled || !live_enable_confirmed;
+  }
+
+  /**
+   * @brief Ensure ZakoVDD continuously exports its hardware cursor channel.
+   * @details Direct VDD capture consumes this channel for both server-side
+   *          composition and client-side local cursor synchronization. Once
+   *          enabled, switching cursor ownership is a session-only operation
+   *          and does not require another driver reload.
+   * @param changed Optional output set to true when this call had to update the driver setting.
+   * @return True when cursor export was already enabled or was updated successfully.
+   */
+  bool
+  ensure_hardware_cursor_enabled_for_capture(bool *changed = nullptr);
 
   /**
    * @brief Outcome of attempting a live SETMODES update.

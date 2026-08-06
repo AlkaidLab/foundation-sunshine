@@ -25,8 +25,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -289,6 +291,39 @@ namespace platf::dxgi {
     return false;
   }
 
+  // Mirror of CursorSharedMetadata in ZakoVDD/Driver.cpp. Layout is
+  // 4-byte aligned (#pragma pack(push, 4) on the producer side); the
+  // standard ABI on x64 already aligns the fields below identically.
+  struct CursorSharedMetadata {
+    UINT32 Magic;                // 'ZVCU' = 0x5A564355
+    UINT32 Version;              // 1
+    UINT32 IsVisible;            // 0/1
+    INT32  PositionX;            // top-left of cursor image (already hot-spot adjusted, DXGI semantics)
+    INT32  PositionY;
+    UINT32 PositionId;           // monotonic on position change
+    UINT32 ShapeId;              // monotonic on shape change
+    UINT32 ShapeType;            // IDDCX_CURSOR_SHAPE_TYPE value (0=mono, 1=color, 2=masked color)
+    UINT32 Width;
+    UINT32 Height;
+    UINT32 Pitch;
+    INT32  XHot;
+    INT32  YHot;
+    UINT32 SdrWhiteLevelX1000;
+    UINT32 ShapeBufferSize;
+    UINT32 PublicationSequence;  // odd while producer writes, even when stable
+    UINT64 LastUpdateQpc;
+    // Followed by up to 256 KiB of shape pixels.
+  };
+
+  static_assert(sizeof(CursorSharedMetadata) == 72, "Unexpected cursor metadata layout");
+  static_assert(offsetof(CursorSharedMetadata, PublicationSequence) == 60, "Unexpected cursor sequence offset");
+  static_assert(offsetof(CursorSharedMetadata, LastUpdateQpc) == 64, "Unexpected cursor QPC offset");
+
+  static constexpr UINT32 VDD_CURSOR_MAGIC = 0x5A564355;  // 'ZVCU'
+  static constexpr UINT32 VDD_CURSOR_VERSION = 1;
+  static constexpr UINT32 VDD_CURSOR_MAX_BYTES = 256u * 256u * 4u;  // matches driver
+  static constexpr auto VDD_CURSOR_ATTACH_RETRY_DELAY = 250ms;
+
   vdd_capture_t::vdd_capture_t() = default;
 
   vdd_capture_t::~vdd_capture_t() {
@@ -316,6 +351,86 @@ namespace platf::dxgi {
       CloseHandle(m_hEvent);
       m_hEvent = nullptr;
     }
+    detach_cursor_channel();
+  }
+
+  void
+  vdd_capture_t::detach_cursor_channel() {
+    if (m_pCursorMeta) {
+      UnmapViewOfFile(m_pCursorMeta);
+      m_pCursorMeta = nullptr;
+    }
+    if (m_hCursorMeta) {
+      CloseHandle(m_hCursorMeta);
+      m_hCursorMeta = nullptr;
+    }
+    if (m_hCursorEvent) {
+      CloseHandle(m_hCursorEvent);
+      m_hCursorEvent = nullptr;
+    }
+    m_lastSeenCursorShapeId = 0xFFFFFFFFu;
+    m_lastSeenCursorPositionId = 0xFFFFFFFFu;
+    m_cursorUpdatePending = false;
+  }
+
+  bool
+  vdd_capture_t::attach_cursor_channel() {
+    // Optional: old driver builds do not export cursor mappings. Capture must
+    // remain usable in that case, with the cursor overlay simply disabled.
+    std::wstring cursor_meta_name = L"Global\\ZakoVDD_CursorMeta_" + std::to_wstring(m_monitorIdx);
+    std::wstring cursor_event_name = L"Global\\ZakoVDD_CursorReady_" + std::to_wstring(m_monitorIdx);
+
+    HANDLE cursor_meta = OpenFileMappingW(FILE_MAP_READ, FALSE, cursor_meta_name.c_str());
+    if (!cursor_meta) {
+      return false;
+    }
+
+    const SIZE_T map_size = sizeof(CursorSharedMetadata) + VDD_CURSOR_MAX_BYTES;
+    void *cursor_mapping = MapViewOfFile(cursor_meta, FILE_MAP_READ, 0, 0, map_size);
+    if (!cursor_mapping) {
+      CloseHandle(cursor_meta);
+      return false;
+    }
+
+    HANDLE cursor_event = OpenEventW(SYNCHRONIZE, FALSE, cursor_event_name.c_str());
+    if (!cursor_event) {
+      UnmapViewOfFile(cursor_mapping);
+      CloseHandle(cursor_meta);
+      return false;
+    }
+
+    m_hCursorMeta = cursor_meta;
+    m_pCursorMeta = cursor_mapping;
+    m_hCursorEvent = cursor_event;
+    return true;
+  }
+
+  bool
+  vdd_capture_t::ensure_cursor_channel_attached() {
+    if (m_pCursorMeta && m_hCursorEvent) {
+      return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now < m_nextCursorAttachAttempt) {
+      return false;
+    }
+    m_nextCursorAttachAttempt = now + VDD_CURSOR_ATTACH_RETRY_DELAY;
+    detach_cursor_channel();
+
+    if (attach_cursor_channel()) {
+      BOOST_LOG(info) << "[vdd_capture] cursor channel attached for monitor "sv << m_monitorIdx
+                      << (m_cursorAttachFailures ? " after retry" : "") << "."sv;
+      m_cursorAttachFailures = 0;
+      return true;
+    }
+
+    ++m_cursorAttachFailures;
+    if (m_cursorAttachFailures == 1 || (m_cursorAttachFailures % 40) == 0) {
+      BOOST_LOG(info) << "[vdd_capture] cursor channel not ready for monitor "sv << m_monitorIdx
+                      << "; capture will retry without restarting the backend."sv;
+    }
+    return false;
   }
 
   void
@@ -620,6 +735,10 @@ namespace platf::dxgi {
     }
     device1_t dev1 {dev1_p};
 
+    m_monitorIdx = monitor_idx;
+    m_nextCursorAttachAttempt = {};
+    m_cursorAttachFailures = 0;
+
     m_frameChannelMode = vdd_frame_channel_mode_env_override().value_or(vdd_frame_channel::channel_mode::auto_probe);
     m_frameChannelSelection = vdd_frame_channel::channel_selection::unknown;
     display_device::vdd_ioctl::frame_channel_caps sealed_caps {};
@@ -636,6 +755,7 @@ namespace platf::dxgi {
 
     switch (try_open_sealed_channel(dev1_p, monitor_idx, *device_luid, sealed_caps)) {
       case sealed_channel_attempt::opened:
+        ensure_cursor_channel_attached();
         return 0;
       case sealed_channel_attempt::required_failed:
         return -1;
@@ -646,13 +766,22 @@ namespace platf::dxgi {
         break;
     }
 
-    return attach_legacy_named_channel(dev1_p, monitor_idx, *device_luid) ? 0 : -1;
+    if (!attach_legacy_named_channel(dev1_p, monitor_idx, *device_luid)) {
+      return -1;
+    }
+    ensure_cursor_channel_attached();
+    return 0;
   }
 
   capture_e
-  vdd_capture_t::next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_frame_qpc) {
+  vdd_capture_t::next_frame(std::chrono::milliseconds timeout,
+                            ID3D11Texture2D **out,
+                            uint64_t &out_frame_qpc,
+                            bool wait_for_cursor,
+                            bool &out_cursor_only) {
     if (out) *out = nullptr;
     out_frame_qpc = 0;
+    out_cursor_only = false;
 
     if (!m_hEvent || m_keyedMutex.empty() || m_sharedTex.empty() || !m_pMeta) {
       return capture_e::error;
@@ -660,15 +789,99 @@ namespace platf::dxgi {
 
     auto *meta = static_cast<const SharedFrameMetadata *>(m_pMeta);
 
-    // Wait for the next frame-ready signal from the producer.
+    const bool cursor_channel_ready = wait_for_cursor && ensure_cursor_channel_attached();
+
+    // CursorExporter uses an auto-reset event. Waiting on it alongside the
+    // frame event lets pointer-only motion wake a static desktop capture.
     DWORD ms = static_cast<DWORD>(timeout.count() < 0 ? 0 : timeout.count());
-    DWORD wr = WaitForSingleObject(m_hEvent, ms);
+    if (!wait_for_cursor) {
+      m_cursorUpdatePending = false;
+    }
+
+    auto acquire_cursor_frame = [&]() -> capture_e {
+      // The last consumed producer slot is available as key 0 while the
+      // desktop is static. Reacquire it briefly so cursor-only updates retain
+      // the normal single-copy/zero-copy cost on actual desktop frames.
+      const UINT32 slot = m_slotIndex;
+      if (slot >= m_keyedMutex.size()) {
+        return capture_e::reinit;
+      }
+      const DWORD acquire_ms = vdd_frame_channel::bounded_consumer_acquire_timeout_ms(ms);
+      HRESULT hr = m_keyedMutex[slot]->AcquireSync(0, acquire_ms);
+      if (hr == static_cast<HRESULT>(WAIT_TIMEOUT)) {
+        return capture_e::timeout;
+      }
+      if (FAILED(hr)) {
+        BOOST_LOG(error) << "[vdd_capture] AcquireSync(0) failed for cursor-only slot "sv
+                         << slot << ": 0x"sv << util::hex(hr).to_string_view();
+        return capture_e::error;
+      }
+      m_holdsKey = true;
+      m_heldSlot = slot;
+      if (out) {
+        m_sharedTex[slot]->AddRef();
+        *out = m_sharedTex[slot].get();
+      }
+      m_cursorUpdatePending = false;
+      out_cursor_only = true;
+      return capture_e::ok;
+    };
+
+    // An auto-reset cursor event was already consumed, but the texture slot
+    // was temporarily busy. Probe key 1 without consuming FrameReady first:
+    // a newly-published desktop frame must win over retrying key 0, otherwise
+    // a pending cursor update could starve the frame that advances key 1.
+    if (m_cursorUpdatePending && wait_for_cursor) {
+      bool desktop_frame_ready = false;
+      SharedFrameMetadata pending_meta {};
+      if (vdd_frame_channel::read_stable_metadata(meta, pending_meta) &&
+          pending_meta.SlotIndex < m_keyedMutex.size()) {
+        const UINT32 pending_slot = pending_meta.SlotIndex;
+        HRESULT probe_hr = m_keyedMutex[pending_slot]->AcquireSync(1, 0);
+        if (probe_hr == S_OK) {
+          probe_hr = m_keyedMutex[pending_slot]->ReleaseSync(1);
+          if (FAILED(probe_hr)) {
+            BOOST_LOG(error) << "[vdd_capture] ReleaseSync(1) failed after pending cursor probe for slot "sv
+                             << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+            return capture_e::error;
+          }
+          desktop_frame_ready = true;
+        }
+        else if (probe_hr != static_cast<HRESULT>(WAIT_TIMEOUT)) {
+          BOOST_LOG(error) << "[vdd_capture] AcquireSync(1) probe failed for pending cursor slot "sv
+                           << pending_slot << ": 0x"sv << util::hex(probe_hr).to_string_view();
+          return capture_e::error;
+        }
+      }
+
+      if (vdd_frame_channel::select_pending_cursor_action(
+            true,
+            desktop_frame_ready
+          ) == vdd_frame_channel::pending_cursor_action::retry_cursor_frame) {
+        return acquire_cursor_frame();
+      }
+    }
+
+    HANDLE events[] = {m_hEvent, m_hCursorEvent};
+    const DWORD event_count = cursor_channel_ready ? 2 : 1;
+    DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
     if (wr == WAIT_TIMEOUT) {
       return capture_e::timeout;
     }
+    if (wr == WAIT_OBJECT_0 + 1) {
+      m_cursorUpdatePending = true;
+      return acquire_cursor_frame();
+    }
     if (wr != WAIT_OBJECT_0) {
-      BOOST_LOG(error) << "[vdd_capture] WaitForSingleObject: gle="sv << GetLastError();
+      BOOST_LOG(error) << "[vdd_capture] WaitForMultipleObjects: result="sv << wr
+                       << " gle="sv << GetLastError();
       return capture_e::error;
+    }
+
+    // Coalesce a cursor signal that arrived with the new desktop frame. The
+    // caller will read the latest cursor state while processing this frame.
+    if (cursor_channel_ready) {
+      WaitForSingleObject(m_hCursorEvent, 0);
     }
 
     // Producer released the latest slot as key 1; consumer acquires that slot.
@@ -712,6 +925,7 @@ namespace platf::dxgi {
     }
     m_holdsKey = true;
     m_heldSlot = slot;
+    m_cursorUpdatePending = false;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper
@@ -787,6 +1001,133 @@ namespace platf::dxgi {
       m_heldSlot = 0;
     }
     return capture_e::ok;
+  }
+
+  bool
+  vdd_capture_t::poll_cursor(cursor_snapshot &out) {
+    out = {};
+    if (!m_pCursorMeta && !ensure_cursor_channel_attached()) {
+      return false;
+    }
+
+    auto *meta = static_cast<const CursorSharedMetadata *>(m_pCursorMeta);
+    auto *publication_sequence = reinterpret_cast<volatile const UINT32 *>(&meta->PublicationSequence);
+    auto *published_position_id = reinterpret_cast<volatile const UINT32 *>(&meta->PositionId);
+    auto *published_shape_id = reinterpret_cast<volatile const UINT32 *>(&meta->ShapeId);
+
+    // The producer uses a seqlock: odd means a publication is in progress and
+    // matching even values around the complete header+payload copy identify a
+    // coherent snapshot. Sequence zero also supports the preview producer that
+    // used this field as Reserved0; its shape and position IDs are commit markers.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      const UINT32 sequence_before = *publication_sequence;
+      if ((sequence_before & 1u) != 0u) {
+        continue;
+      }
+      MemoryBarrier();
+
+      CursorSharedMetadata header {};
+      std::memcpy(&header, meta, sizeof(header));
+      if (header.ShapeBufferSize > VDD_CURSOR_MAX_BYTES) {
+        continue;
+      }
+
+      const bool shape_updated = header.ShapeId != m_lastSeenCursorShapeId;
+      std::vector<uint8_t> shape_buffer;
+      if (shape_updated && header.ShapeBufferSize > 0) {
+        const auto *payload = reinterpret_cast<const uint8_t *>(meta + 1);
+        shape_buffer.assign(payload, payload + header.ShapeBufferSize);
+      }
+
+      MemoryBarrier();
+      const UINT32 sequence_after = *publication_sequence;
+      if (sequence_before != sequence_after || (sequence_after & 1u) != 0u) {
+        continue;
+      }
+      if (sequence_after == 0 &&
+          (*published_shape_id != header.ShapeId || *published_position_id != header.PositionId)) {
+        continue;
+      }
+
+      if (header.Magic != VDD_CURSOR_MAGIC || header.Version != VDD_CURSOR_VERSION) {
+        return false;
+      }
+      if (header.ShapeType > 2) {
+        return false;
+      }
+
+      constexpr UINT32 kMaxCursorWidth = 256;
+      constexpr UINT32 kMaxCursorHeight = 512;  // monochrome stores AND+XOR vertically
+      const UINT32 max_height = header.ShapeType == 0 ? kMaxCursorHeight : 256;
+      const bool empty_hidden_shape = header.IsVisible == 0 &&
+                                      header.Width == 0 &&
+                                      header.Height == 0 &&
+                                      header.Pitch == 0 &&
+                                      header.ShapeBufferSize == 0;
+      if (!empty_hidden_shape &&
+          (header.Width == 0 || header.Width > kMaxCursorWidth ||
+           header.Height == 0 || header.Height > max_height)) {
+        return false;
+      }
+
+      UINT64 required_bytes = 0;
+      if (empty_hidden_shape) {
+        // A newly-attached producer can publish visibility before its first shape.
+      }
+      else if (header.ShapeType == 0 /* MONOCHROME */) {
+        if ((header.Height & 1u) != 0u || header.Pitch < (header.Width + 7u) / 8u) {
+          return false;
+        }
+        required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
+      }
+      else {
+        if (header.Pitch < static_cast<UINT64>(header.Width) * 4u) {
+          return false;
+        }
+        required_bytes = static_cast<UINT64>(header.Pitch) * header.Height;
+      }
+      if (required_bytes > VDD_CURSOR_MAX_BYTES || header.ShapeBufferSize < required_bytes) {
+        return false;  // header/payload mismatch; likely a torn read
+      }
+      if (shape_updated) {
+        shape_buffer.resize(static_cast<size_t>(required_bytes));
+      }
+
+      out.valid = true;
+      out.visible = header.IsVisible != 0;
+      out.x = header.PositionX;
+      out.y = header.PositionY;
+      out.position_id = header.PositionId;
+      out.shape_id = header.ShapeId;
+      out.shape_type = header.ShapeType;
+      out.width = header.Width;
+      out.height = header.Height;
+      out.pitch = header.Pitch;
+      out.xhot = header.XHot;
+      out.yhot = header.YHot;
+      out.sdr_white_level_x1000 = header.SdrWhiteLevelX1000;
+      out.update_qpc = header.LastUpdateQpc;
+      out.position_updated = header.PositionId != m_lastSeenCursorPositionId;
+      out.shape_updated = shape_updated;
+      out.shape_buffer = std::move(shape_buffer);
+
+      if (out.position_updated) {
+        m_lastSeenCursorPositionId = header.PositionId;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  void
+  vdd_capture_t::acknowledge_cursor_shape(UINT32 shape_id) {
+    m_lastSeenCursorShapeId = shape_id;
+  }
+
+  void
+  vdd_capture_t::invalidate_cursor_shape() {
+    m_lastSeenCursorShapeId = 0xFFFFFFFFu;
   }
 
   // ===========================================================================
@@ -1154,6 +1495,13 @@ namespace platf::dxgi {
                     << " producer_slots="sv << dup.producer_slot_count()
                     << " generation="sv << dup.producer_channel_generation()
                     << " borrowed_texture="sv << vdd_borrow_enabled;
+
+    // Cursor export is optional and older drivers do not expose it. Likewise,
+    // a cursor-only shader failure must not take down otherwise valid capture.
+    if (init_cursor_pipeline(config) != 0) {
+      cursor_pipeline_ready = false;
+      BOOST_LOG(warning) << "[vdd] cursor pipeline init failed; continuing without cursor overlay"sv;
+    }
     return 0;
   }
 
@@ -1204,8 +1552,8 @@ namespace platf::dxgi {
     return true;
   }
 
-  // NOTE: snapshot() and release_snapshot() are implemented in display_vram.cpp,
-  // alongside display_amd_vram_t / display_wgc_vram_t, because they need access
-  // to the file-local types `img_d3d_t` and `texture_lock_helper`.
+  // snapshot(), release_snapshot(), and borrowed-texture telemetry live in
+  // display_vdd_vram.cpp. Shared D3D11 image details are declared in the
+  // private display_vram_internal.h boundary.
 
 }  // namespace platf::dxgi

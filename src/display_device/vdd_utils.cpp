@@ -5,6 +5,7 @@
 #include "vdd_ioctl.h"
 
 #include <algorithm>
+#include <atomic>
 #include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/process/v1.hpp>
@@ -52,6 +53,27 @@ namespace display_device {
       constexpr auto kModePublicationTimeout = 3s;
       constexpr auto kModePublicationInitialPoll = 50ms;
       constexpr auto kModePublicationMaxPoll = 500ms;
+      std::atomic_bool hardware_cursor_live_enable_confirmed { false };
+
+      bool
+      orientation_swaps_axes(DWORD orientation) {
+        return orientation == DMDO_90 || orientation == DMDO_270;
+      }
+
+      unsigned int
+      orientation_degrees(DWORD orientation) {
+        switch (orientation) {
+          case DMDO_90:
+            return 90;
+          case DMDO_180:
+            return 180;
+          case DMDO_270:
+            return 270;
+          case DMDO_DEFAULT:
+          default:
+            return 0;
+        }
+      }
 
       std::vector<std::string>
       collect_physical_devices_for_preservation() {
@@ -221,13 +243,19 @@ namespace display_device {
     }
 
     bool
-    ensure_hardware_cursor_disabled_for_capture(bool *changed) {
+    hardware_cursor_export_enabled(std::string value) {
+      boost::algorithm::trim(value);
+      return boost::algorithm::iequals(value, "true") || value == "1";
+    }
+
+    bool
+    ensure_hardware_cursor_enabled_for_capture(bool *changed) {
       if (changed) {
         *changed = false;
       }
 
       const auto settings_path = std::filesystem::path(platf::appdata()) / "vdd_settings.xml";
-      bool needs_disable = true;
+      bool persisted_enabled = false;
 
       try {
         if (std::filesystem::exists(settings_path)) {
@@ -235,41 +263,49 @@ namespace display_device {
           pt::read_xml(settings_path.string(), tree);
 
           if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
-            auto hardware_cursor = *value;
-            boost::algorithm::trim(hardware_cursor);
-            needs_disable = !(boost::algorithm::iequals(hardware_cursor, "false") || hardware_cursor == "0");
+            persisted_enabled = hardware_cursor_export_enabled(*value);
           }
         }
       }
       catch (const std::exception &e) {
-        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request software cursor for direct capture: " << e.what();
+        BOOST_LOG(warning) << "Unable to inspect VDD HardwareCursor setting; will request cursor export for direct capture: " << e.what();
       }
 
-      if (!needs_disable) {
-        BOOST_LOG(debug) << "VDD HardwareCursor is already disabled for direct capture";
+      if (!hardware_cursor_export_needs_enable(
+            persisted_enabled,
+            hardware_cursor_live_enable_confirmed.load(std::memory_order_acquire))) {
+        BOOST_LOG(debug) << "VDD hardware cursor export is enabled in settings and confirmed by the live driver";
         return true;
       }
 
-      BOOST_LOG(info) << "Disabling VDD HardwareCursor because direct VDD capture only receives the shared framebuffer texture";
-      if (!set_hardware_cursor_enabled(false)) {
-        return false;
-      }
+      BOOST_LOG(info) << "Enabling VDD hardware cursor export for direct capture";
+      bool persisted = persisted_enabled;
+      if (!persisted) {
+        for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
+          if (persist_hardware_cursor_setting(true)) {
+            persisted = true;
+            break;
+          }
 
-      bool persisted = false;
-      for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
-        if (persist_hardware_cursor_setting(false)) {
-          persisted = true;
-          break;
+          std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
         }
-
-        std::this_thread::sleep_for(calculate_exponential_backoff(attempt));
       }
 
       if (!persisted) {
-        BOOST_LOG(error) << "VDD HardwareCursor disabled in driver, but failed to persist vdd_settings.xml";
+        BOOST_LOG(error) << "Failed to persist VDD hardware cursor export before reloading the driver";
         return false;
       }
 
+      // The VDD command reloads the driver synchronously and the driver reads
+      // HardwareCursor from this file during reload. Persist first so it cannot
+      // observe the old value and keep cursor export disabled in memory.
+      if (!set_hardware_cursor_enabled(true)) {
+        hardware_cursor_live_enable_confirmed.store(false, std::memory_order_release);
+        BOOST_LOG(error) << "VDD hardware cursor export is persisted, but the live driver reload failed";
+        return false;
+      }
+
+      hardware_cursor_live_enable_confirmed.store(true, std::memory_order_release);
       if (changed) {
         *changed = true;
       }
@@ -778,6 +814,13 @@ namespace display_device {
 
       const auto &display_name = device_it->second.display_name;
       const std::wstring wide_display_name(display_name.begin(), display_name.end());
+      DEVMODEW current_mode {};
+      current_mode.dmSize = sizeof(current_mode);
+      const bool orientation_known =
+        EnumDisplaySettingsW(wide_display_name.c_str(), ENUM_CURRENT_SETTINGS, &current_mode) &&
+        (current_mode.dmFields & DM_DISPLAYORIENTATION) != 0;
+      const bool swaps_axes = orientation_known && orientation_swaps_axes(current_mode.dmDisplayOrientation);
+
       for (DWORD index = 0; index < 4096; ++index) {
         DEVMODEW mode {};
         mode.dmSize = sizeof(mode);
@@ -785,11 +828,20 @@ namespace display_device {
           break;
         }
 
-        if (advertised_mode_matches(
-              mode.dmPelsWidth,
-              mode.dmPelsHeight,
-              mode.dmDisplayFrequency,
-              requested_mode)) {
+        const auto match = classify_advertised_mode(
+          mode.dmPelsWidth,
+          mode.dmPelsHeight,
+          mode.dmDisplayFrequency,
+          requested_mode,
+          swaps_axes);
+        if (match == advertised_mode_match_e::rotation_equivalent) {
+          BOOST_LOG(info) << "VDD mode "
+                          << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                          << " is available through the current "
+                          << orientation_degrees(current_mode.dmDisplayOrientation)
+                          << "-degree display orientation; reusing the existing monitor";
+        }
+        if (match != advertised_mode_match_e::none) {
           return true;
         }
       }

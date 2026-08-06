@@ -34,7 +34,8 @@ namespace platf::dxgi::d3d12 {
       std::uint32_t source_width;
       std::uint32_t source_height;
       std::uint32_t input_has_cell_statistics;
-      std::uint32_t padding[3];
+      float max_analysis_nits;
+      std::uint32_t padding[2];
     };
     static_assert(sizeof(analysis_params_t) == 32);
 
@@ -110,6 +111,7 @@ namespace platf::dxgi::d3d12 {
     std::uint32_t source_width = 0;
     std::uint32_t source_height = 0;
     std::uint32_t num_groups = 0;
+    float max_analysis_nits = 10000.0f;
     UINT descriptor_increment = 0;
     HRESULT failure_hresult = S_OK;
     std::string_view failure_stage = "none";
@@ -359,6 +361,7 @@ namespace platf::dxgi::d3d12 {
         source_width,
         source_height,
         1,
+        max_analysis_nits,
         {},
       };
       const reduce_params_t reduce_params { num_groups, {} };
@@ -588,6 +591,7 @@ namespace platf::dxgi::d3d12 {
     std::uint32_t analysis_height,
     std::uint32_t source_width,
     std::uint32_t source_height,
+    float max_analysis_nits,
     std::uint64_t generation) {
     disable();
     impl_ = std::make_unique<impl_t>();
@@ -603,6 +607,7 @@ namespace platf::dxgi::d3d12 {
     impl_->analysis_height = analysis_height;
     impl_->source_width = source_width;
     impl_->source_height = source_height;
+    impl_->max_analysis_nits = max_analysis_nits;
     impl_->num_groups =
       ((analysis_width + 15) / 16) * ((analysis_height + 15) / 16);
     auto status = d3d11_context->QueryInterface(

@@ -51,6 +51,7 @@ namespace platf::dxgi::d3d12 {
       std::uint32_t analysis_height,
       std::uint32_t source_width,
       std::uint32_t source_height,
+      float max_analysis_nits,
       std::uint64_t generation);
 
     [[nodiscard]] bool

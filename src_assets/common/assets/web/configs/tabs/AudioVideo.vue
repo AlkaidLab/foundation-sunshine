@@ -5,17 +5,15 @@ import { $tp } from '../../platform-i18n'
 import { openExternalUrl } from '../../utils/helpers.js'
 import { apiPostJson } from '../../utils/apiFetch.js'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
-import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import NewDisplayOutputSelector from './audiovideo/NewDisplayOutputSelector.vue'
-import LegacyDisplayOutputSelector from './audiovideo/LegacyDisplayOutputSelector.vue'
 import DisplayDeviceOptions from './audiovideo/DisplayDeviceOptions.vue'
-import ExperimentalFeatures from './audiovideo/ExperimentalFeatures.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
+import AutomaticNumberSetting from './audiovideo/AutomaticNumberSetting.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
-const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'display_mode_remapping', 'min_fps_factor'])
+const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'displayModeRemapping'])
 
 const { t } = useI18n()
 const config = ref(props.config)
@@ -187,11 +185,24 @@ const testMicrophoneRoute = async () => {
       </div>
     </div>
 
-    <AdapterNameSelector :platform="platform" :config="config" />
+    <section class="stream-encoding-limit mb-3">
+      <AutomaticNumberSetting
+        v-model="config.max_bitrate"
+        id="max_bitrate"
+        label-key="config.max_bitrate"
+        description-key="config.max_bitrate_desc"
+        icon="fa-gauge-high"
+        unit="Kbps"
+      />
+    </section>
 
     <NewDisplayOutputSelector :platform="platform" :config="config" />
 
-    <DisplayDeviceOptions :platform="platform" :config="config" />
+    <DisplayDeviceOptions
+      :platform="platform"
+      :config="config"
+      :display-mode-remapping="displayModeRemapping"
+    />
 
     <!-- Display Modes Tab Navigation -->
     <div class="mb-3">
@@ -222,9 +233,7 @@ const testMicrophoneRoute = async () => {
       <div class="tab-content">
         <DisplayModesSettings
           v-if="currentSubTab === 'display-modes'"
-          :platform="platform"
           :config="config"
-          :min_fps_factor="min_fps_factor"
         />
         
         <!-- Virtual Display Tab Content -->
@@ -237,8 +246,6 @@ const testMicrophoneRoute = async () => {
         />
       </div>
     </div>
-
-    <ExperimentalFeatures :platform="platform" :config="config" :display_mode_remapping="display_mode_remapping" />
 
     <ConfirmDialog
       :show="showDownloadConfirm"
@@ -266,7 +273,7 @@ const testMicrophoneRoute = async () => {
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface);
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 
 .nav-tabs .nav-link {
@@ -290,7 +297,14 @@ const testMicrophoneRoute = async () => {
 }
 
 .tab-content {
-  padding-top: 1rem;
+  padding-top: 0;
+}
+
+.stream-encoding-limit {
+  padding: 1rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
 }
 
 .stream-mic-helper {

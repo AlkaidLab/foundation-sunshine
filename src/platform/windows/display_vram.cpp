@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <optional>
@@ -22,6 +23,8 @@ extern "C" {
 
 #include "display.h"
 #include "d3d12/d3d12_hdr_analysis.h"
+#include "display_cursor.h"
+#include "display_vram_internal.h"
 #include "misc.h"
 #include "video_pipeline_telemetry.h"
 #include "src/config.h"
@@ -56,11 +59,7 @@ namespace platf::dxgi {
   namespace {
     // AMF QUALITY_VBR is 4 for H.264, HEVC, and AV1 in the bundled SDK.
     constexpr auto quality_vbr_rate_control = 4;
-    constexpr UINT64 vdd_borrowed_encoder_key = 2;
-    constexpr UINT64 vdd_borrow_max_inflight_frames = 2;
     constexpr DWORD vdd_borrow_encoder_acquire_timeout_ms = 16;
-    constexpr auto vdd_borrow_drop_cooldown = std::chrono::seconds(2);
-    constexpr auto vdd_borrow_telemetry_interval = std::chrono::seconds(5);
     constexpr auto vram_timing_telemetry_interval = std::chrono::seconds(5);
     constexpr uint64_t vram_gpu_timing_sample_interval = 30;
     constexpr size_t vram_gpu_timing_max_pending = 8;
@@ -216,324 +215,6 @@ namespace platf::dxgi {
   blob_t convert_yuv420_nv12_cs_passthrough_scaled_hlsl;
   blob_t convert_yuv420_nv12_cs_linear_scaled_hlsl;
 
-  struct img_d3d_t: public platf::img_t {
-    // These objects are owned by the display_t's ID3D11Device
-    texture2d_t capture_texture;
-    render_target_t capture_rt;
-    keyed_mutex_t capture_mutex;
-
-    // This is the shared handle used by hwdevice_t to open capture_texture
-    HANDLE encoder_texture_handle = {};
-
-    // Set to true if the image corresponds to a dummy texture used prior to
-    // the first successful capture of a desktop frame
-    bool dummy = false;
-
-    // Set to true if the image is blank (contains no content at all, including a cursor)
-    bool blank = true;
-
-    // Unique identifier for this image
-    uint32_t id = 0;
-
-    // DXGI format of this image texture
-    DXGI_FORMAT format;
-
-    // Whether this image's pixel data is in linear gamma (scRGB G10).
-    // When true, the conversion shader must apply sRGB transfer function.
-    // When false, the data already has sRGB gamma and should be used as-is.
-    bool linear_gamma = false;
-
-    // Borrowed VDD frames use the producer's shared texture directly. The
-    // capture thread hands off key 2 to the encoder device. convert() reads the
-    // source once, then returns key 0 to the VDD producer immediately.
-    bool borrowed_vdd_texture = false;
-    bool borrowed_vdd_frame = false;
-    keyed_mutex_t borrowed_vdd_mutex;
-    std::shared_ptr<std::atomic<UINT64>> borrowed_vdd_inflight_counter;
-    UINT32 borrowed_vdd_slot = 0;
-    UINT64 encoder_acquire_key = 0;
-    UINT64 encoder_release_key = 0;
-    UINT64 producer_release_key = 0;
-
-    void
-    note_borrowed_vdd_frame_returned() {
-      auto counter = std::move(borrowed_vdd_inflight_counter);
-      if (counter) {
-        auto current = counter->load(std::memory_order_relaxed);
-        while (current > 0 &&
-               !counter->compare_exchange_weak(current, current - 1, std::memory_order_relaxed)) {}
-      }
-    }
-
-    void
-    mark_borrowed_vdd_consumed() {
-      borrowed_vdd_frame = false;
-      borrowed_vdd_mutex.reset();
-      borrowed_vdd_inflight_counter.reset();
-      borrowed_vdd_slot = 0;
-      encoder_acquire_key = 0;
-      encoder_release_key = 0;
-      producer_release_key = 0;
-    }
-
-    bool
-    release_borrowed_vdd_after_convert(IDXGIKeyedMutex *encoder_mutex) {
-      if (!borrowed_vdd_frame) {
-        return true;
-      }
-      if (!encoder_mutex) {
-        BOOST_LOG(warning) << "[vdd] failed to return borrowed slot "sv
-                           << borrowed_vdd_slot << ": missing encoder mutex"sv;
-        return false;
-      }
-
-      HRESULT status = encoder_mutex->ReleaseSync(producer_release_key);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "[vdd] failed to return borrowed slot "sv
-                           << borrowed_vdd_slot << " after convert [0x"sv
-                           << util::hex(status).to_string_view() << ']';
-        return false;
-      }
-
-      note_borrowed_vdd_frame_returned();
-      mark_borrowed_vdd_consumed();
-      return true;
-    }
-
-    bool
-    abandon_borrowed_vdd_frame(bool log_busy = true, DWORD timeout_ms = 0) {
-      if (borrowed_vdd_frame && borrowed_vdd_mutex) {
-        HRESULT status = borrowed_vdd_mutex->AcquireSync(encoder_acquire_key, timeout_ms);
-        if (status == S_OK) {
-          status = borrowed_vdd_mutex->ReleaseSync(producer_release_key);
-          if (FAILED(status)) {
-            BOOST_LOG(warning) << "[vdd] failed to return borrowed slot "sv
-                               << borrowed_vdd_slot << " [0x"sv
-                               << util::hex(status).to_string_view() << ']';
-            return false;
-          }
-          note_borrowed_vdd_frame_returned();
-        }
-        else {
-          if (log_busy || status != static_cast<HRESULT>(WAIT_TIMEOUT)) {
-            BOOST_LOG(warning) << "[vdd] failed to acquire borrowed slot "sv
-                               << borrowed_vdd_slot << " for return [0x"sv
-                               << util::hex(status).to_string_view() << ']';
-          }
-          return false;
-        }
-      }
-      mark_borrowed_vdd_consumed();
-      return true;
-    }
-
-    virtual ~img_d3d_t() override {
-      abandon_borrowed_vdd_frame(true, 16);
-      if (encoder_texture_handle) {
-        CloseHandle(encoder_texture_handle);
-      }
-    };
-  };
-
-  struct texture_lock_helper {
-    keyed_mutex_t _mutex;
-    bool _locked = false;
-
-    texture_lock_helper(const texture_lock_helper &) = delete;
-    texture_lock_helper &
-    operator=(const texture_lock_helper &) = delete;
-
-    texture_lock_helper(texture_lock_helper &&other) {
-      _mutex.reset(other._mutex.release());
-      _locked = other._locked;
-      other._locked = false;
-    }
-
-    texture_lock_helper &
-    operator=(texture_lock_helper &&other) {
-      if (this == &other) {
-        return *this;
-      }
-      if (_locked && _mutex) _mutex->ReleaseSync(0);
-      _mutex.reset(other._mutex.release());
-      _locked = other._locked;
-      other._locked = false;
-      return *this;
-    }
-
-    texture_lock_helper(IDXGIKeyedMutex *mutex):
-        _mutex(mutex) {
-      if (_mutex) _mutex->AddRef();
-    }
-
-    ~texture_lock_helper() {
-      if (_locked && _mutex) _mutex->ReleaseSync(0);
-    }
-
-    bool
-    lock() {
-      if (_locked) return true;
-      if (!_mutex) {
-        BOOST_LOG(error) << "Failed to acquire texture mutex: missing IDXGIKeyedMutex"sv;
-        return false;
-      }
-      HRESULT status = _mutex->AcquireSync(0, INFINITE);
-      if (status == S_OK) {
-        _locked = true;
-      }
-      else {
-        BOOST_LOG(error) << "Failed to acquire texture mutex [0x"sv << util::hex(status).to_string_view() << ']';
-      }
-      return _locked;
-    }
-  };
-
-  util::buffer_t<std::uint8_t>
-  make_cursor_xor_image(const util::buffer_t<std::uint8_t> &img_data, DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info) {
-    constexpr std::uint32_t inverted = 0xFFFFFFFF;
-    constexpr std::uint32_t transparent = 0;
-
-    switch (shape_info.Type) {
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR:
-        // This type doesn't require any XOR-blending
-        return {};
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
-        util::buffer_t<std::uint8_t> cursor_img = img_data;
-        std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
-          auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
-          if (alpha == 0xFF) {
-            // Pixels with 0xFF alpha will be XOR-blended as is.
-          }
-          else if (alpha == 0x00) {
-            // Pixels with 0x00 alpha will be blended by make_cursor_alpha_image().
-            // We make them transparent for the XOR-blended cursor image.
-            pixel = transparent;
-          }
-          else {
-            // Other alpha values are illegal in masked color cursors
-            BOOST_LOG(warning) << "Illegal alpha value in masked color cursor: " << alpha;
-          }
-        });
-        return cursor_img;
-      }
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
-        // Monochrome is handled below
-        break;
-      default:
-        BOOST_LOG(error) << "Invalid cursor shape type: " << shape_info.Type;
-        return {};
-    }
-
-    shape_info.Height /= 2;
-
-    util::buffer_t<std::uint8_t> cursor_img { shape_info.Width * shape_info.Height * 4 };
-
-    auto bytes = shape_info.Pitch * shape_info.Height;
-    auto pixel_begin = (std::uint32_t *) std::begin(cursor_img);
-    auto pixel_data = pixel_begin;
-    auto and_mask = std::begin(img_data);
-    auto xor_mask = std::begin(img_data) + bytes;
-
-    for (auto x = 0; x < bytes; ++x) {
-      for (auto c = 7; c >= 0 && ((std::uint8_t *) pixel_data) != std::end(cursor_img); --c) {
-        auto bit = 1 << c;
-        auto color_type = ((*and_mask & bit) ? 1 : 0) + ((*xor_mask & bit) ? 2 : 0);
-
-        switch (color_type) {
-          case 0:  // Opaque black (handled by alpha-blending)
-          case 2:  // Opaque white (handled by alpha-blending)
-          case 1:  // Color of screen (transparent)
-            *pixel_data = transparent;
-            break;
-          case 3:  // Inverse of screen
-            *pixel_data = inverted;
-            break;
-        }
-
-        ++pixel_data;
-      }
-      ++and_mask;
-      ++xor_mask;
-    }
-
-    return cursor_img;
-  }
-
-  util::buffer_t<std::uint8_t>
-  make_cursor_alpha_image(const util::buffer_t<std::uint8_t> &img_data, DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info) {
-    constexpr std::uint32_t black = 0xFF000000;
-    constexpr std::uint32_t white = 0xFFFFFFFF;
-    constexpr std::uint32_t transparent = 0;
-
-    switch (shape_info.Type) {
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR: {
-        util::buffer_t<std::uint8_t> cursor_img = img_data;
-        std::for_each((std::uint32_t *) std::begin(cursor_img), (std::uint32_t *) std::end(cursor_img), [](auto &pixel) {
-          auto alpha = (std::uint8_t) ((pixel >> 24) & 0xFF);
-          if (alpha == 0xFF) {
-            // Pixels with 0xFF alpha will be XOR-blended by make_cursor_xor_image().
-            // We make them transparent for the alpha-blended cursor image.
-            pixel = transparent;
-          }
-          else if (alpha == 0x00) {
-            // Pixels with 0x00 alpha will be blended as opaque with the alpha-blended image.
-            pixel |= 0xFF000000;
-          }
-          else {
-            // Other alpha values are illegal in masked color cursors
-            BOOST_LOG(warning) << "Illegal alpha value in masked color cursor: " << alpha;
-          }
-        });
-        return cursor_img;
-      }
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR:
-        // Color cursors are just an ARGB bitmap which requires no processing.
-        return img_data;
-      case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
-        // Monochrome cursors are handled below.
-        break;
-      default:
-        BOOST_LOG(error) << "Invalid cursor shape type: " << shape_info.Type;
-        return {};
-    }
-
-    shape_info.Height /= 2;
-
-    util::buffer_t<std::uint8_t> cursor_img { shape_info.Width * shape_info.Height * 4 };
-
-    auto bytes = shape_info.Pitch * shape_info.Height;
-    auto pixel_begin = (std::uint32_t *) std::begin(cursor_img);
-    auto pixel_data = pixel_begin;
-    auto and_mask = std::begin(img_data);
-    auto xor_mask = std::begin(img_data) + bytes;
-
-    for (auto x = 0; x < bytes; ++x) {
-      for (auto c = 7; c >= 0 && ((std::uint8_t *) pixel_data) != std::end(cursor_img); --c) {
-        auto bit = 1 << c;
-        auto color_type = ((*and_mask & bit) ? 1 : 0) + ((*xor_mask & bit) ? 2 : 0);
-
-        switch (color_type) {
-          case 0:  // Opaque black
-            *pixel_data = black;
-            break;
-          case 2:  // Opaque white
-            *pixel_data = white;
-            break;
-          case 3:  // Inverse of screen (handled by XOR blending)
-          case 1:  // Color of screen (transparent)
-            *pixel_data = transparent;
-            break;
-        }
-
-        ++pixel_data;
-      }
-      ++and_mask;
-      ++xor_mask;
-    }
-
-    return cursor_img;
-  }
-
   blob_t
   compile_shader(
     LPCSTR file,
@@ -581,6 +262,25 @@ namespace platf::dxgi {
   }
 
   class d3d_base_encode_device final {
+    struct alignas(16) HlgDisplayParams {
+      float peakNits;
+      float systemGamma;
+      float pad[2];
+    };
+    static_assert(sizeof(HlgDisplayParams) == 16);
+
+    // Must match the AnalysisParams constant buffer in both HDR analysis shaders.
+    struct AnalysisParams {
+      uint32_t analysisWidth;
+      uint32_t analysisHeight;
+      uint32_t sourceWidth;
+      uint32_t sourceHeight;
+      uint32_t inputHasCellStatistics;
+      float maxAnalysisNits;
+      uint32_t pad[2];
+    };
+    static_assert(sizeof(AnalysisParams) == 32);
+
     struct gpu_timing_sample_t {
       query_t disjoint;
       query_t start;
@@ -631,6 +331,15 @@ namespace platf::dxgi {
     };
 
   public:
+    ~d3d_base_encode_device() {
+      ::video::unregister_hdr_pipeline_status(runtime_status_id);
+    }
+
+    bool
+    hdr_luminance_analysis_available() const {
+      return hdr_analysis_enabled;
+    }
+
     int
     convert(platf::img_t &img_base) {
       if (vram_timing_enabled) {
@@ -661,9 +370,17 @@ namespace platf::dxgi {
         // Poll the previous analysis result before taking the capture mutex.
         if (d3d12_hdr_analysis && d3d12_hdr_analysis->available()) {
           read_d3d12_hdr_analysis_results(video_frame_index);
+          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+            runtime_status.scene_metadata_active = true;
+            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+          }
         }
         else if (hdr_analysis_pending) {
           read_hdr_analysis_results(video_frame_index);
+          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+            runtime_status.scene_metadata_active = true;
+            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+          }
         }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
@@ -944,7 +661,85 @@ namespace platf::dxgi {
     }
 
     int
+    configure_hlg_display(bool use_hlg_shader, bool is_probe) {
+      hlg_display_cbuf.reset();
+      ID3D11Buffer *null_cbuf = nullptr;
+      device_ctx->PSSetConstantBuffers(3, 1, &null_cbuf);
+
+      float analysis_max_nits = 10000.0f;
+      if (use_hlg_shader) {
+        SS_HDR_METADATA metadata {};
+        // Use the effective capture-display metadata as the single source of
+        // truth. VDD reports the client-mapped capabilities here; a physical
+        // output reports the values after Windows applies its HDR color profile.
+        const bool has_display_peak =
+          display->get_hdr_metadata(metadata) && metadata.maxDisplayLuminance > 0;
+        const float peak_nits = has_display_peak
+                                  ? static_cast<float>(metadata.maxDisplayLuminance)
+                                  : 1000.0f;
+        const float system_gamma = ::video::hlg_system_gamma(peak_nits);
+        const HlgDisplayParams params {
+          peak_nits,
+          system_gamma,
+          {},
+        };
+
+        auto hlg_params = make_buffer(device.get(), params);
+        if (!hlg_params) {
+          BOOST_LOG(error) << "Failed to create HLG display parameter buffer";
+          return -1;
+        }
+
+        ID3D11Buffer *hlg_params_p = hlg_params.get();
+        device_ctx->PSSetConstantBuffers(3, 1, &hlg_params_p);
+        hlg_display_cbuf = std::move(hlg_params);
+        // Vivid statistics must describe the encoded HLG range, not scRGB
+        // headroom that cannot be represented by the nominal HLG signal.
+        analysis_max_nits = std::min(peak_nits, 10000.0f);
+
+        BOOST_LOG(is_probe ? debug : info)
+          << "HLG conversion: BT.2100 inverse OOTF, nominal display peak "
+          << peak_nits << " nits, system gamma " << system_gamma
+          << (has_display_peak
+                ? " (capture display metadata)"
+                : " (1000-nit fallback)");
+      }
+
+      hdr_analysis_max_nits = analysis_max_nits;
+      if (hdr_analysis_enabled) {
+        const AnalysisParams analysis_params {
+          hdr_analysis_width,
+          hdr_analysis_height,
+          static_cast<uint32_t>(display->width),
+          static_cast<uint32_t>(display->height),
+          0,
+          hdr_analysis_max_nits,
+          {},
+        };
+        auto analysis_cbuf = make_buffer(device.get(), analysis_params);
+        if (!analysis_cbuf) {
+          BOOST_LOG(warning)
+            << "Failed to update HDR analysis luminance limit; disabling dynamic metadata";
+          hdr_analysis_enabled = false;
+          hdr_analysis_failure_reason = "analysis_setup_failed";
+        }
+        else {
+          hdr_analysis_cbuf = std::move(analysis_cbuf);
+        }
+      }
+
+      return 0;
+    }
+
+    int
     init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) {
+      ::video::unregister_hdr_pipeline_status(runtime_status_id);
+      runtime_status_id = 0;
+      hdr_luminance_stats_out = {};
+      hdr_analysis_pending = false;
+      hdr_analysis_frame_index = 0;
+      hdr_analysis_sample_sequence = 0;
+
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
       output_texture.reset(frame_texture);
@@ -965,6 +760,10 @@ namespace platf::dxgi {
       // Determine which HDR shader to use based on colorspace
       const bool use_pq_shader = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg_shader = ::video::colorspace_is_hlg(colorspace);
+
+      if (configure_hlg_display(use_hlg_shader, is_probe) != 0) {
+        return -1;
+      }
 
       const bool downscaling = display->width > width || display->height > height;
       // Determine downscaling quality based on config
@@ -1272,11 +1071,17 @@ namespace platf::dxgi {
           is_probe);
       }
 
+      publish_runtime_status(colorspace, is_probe);
       return 0;
     }
 
     int
-    init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+    init(
+      std::shared_ptr<platf::display_t> display,
+      adapter_t::pointer adapter_p,
+      pix_fmt_e pix_fmt,
+      bool supports_dynamic_metadata) {
+      dynamic_metadata_supported = supports_dynamic_metadata;
       switch (pix_fmt) {
         case pix_fmt_e::nv12:
           format = DXGI_FORMAT_NV12;
@@ -1396,9 +1201,15 @@ namespace platf::dxgi {
 
       // Initialize HDR luminance analyzer for HDR formats (P010, Y410, R16_UINT)
       // The analyzer is optional — if it fails, HDR will still work with static metadata only
-      if (config::video.hdr_luminance_analysis &&
-          (format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT)) {
-        if (init_hdr_luminance_analyzer() != 0) {
+      hdr_analysis_failure_reason.clear();
+      const bool hdr_format =
+        format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+      if (hdr_format && config::video.hdr_luminance_analysis != "off") {
+        if (!dynamic_metadata_supported) {
+          hdr_analysis_failure_reason = "encoder_unsupported";
+        }
+        else if (init_hdr_luminance_analyzer() != 0) {
+          hdr_analysis_failure_reason = "analysis_setup_failed";
           BOOST_LOG(warning) << "HDR luminance analyzer init failed, dynamic metadata will use defaults";
         }
       }
@@ -1725,10 +1536,54 @@ namespace platf::dxgi {
       return resource_view;
     }
 
+    void
+    publish_runtime_status(
+      const ::video::sunshine_colorspace_t &colorspace,
+      bool is_probe) {
+      if (is_probe) {
+        ::video::unregister_hdr_pipeline_status(runtime_status_id);
+        runtime_status_id = 0;
+        return;
+      }
+
+      const bool use_pq = ::video::colorspace_is_pq(colorspace);
+      const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
+      runtime_status.hdr_mode = use_pq ? "pq" : use_hlg ? "hlg" : "sdr";
+      runtime_status.analysis_mode = config::video.hdr_luminance_analysis;
+      runtime_status.analysis_active = (use_pq || use_hlg) && hdr_analysis_enabled;
+      runtime_status.scene_metadata_active = false;
+      runtime_status.metadata_formats.clear();
+      if (runtime_status.analysis_active) {
+        if (use_pq) {
+          runtime_status.metadata_formats.emplace_back("hdr10_plus");
+        }
+        runtime_status.metadata_formats.emplace_back("hdr_vivid");
+      }
+
+      runtime_status.conversion_path =
+        cs_path_active
+          ? (cs_writes_output_directly
+               ? "compute_shader_direct"
+               : "compute_shader_scratch")
+          : "pixel_shader";
+      runtime_status.conversion_fallback_reason =
+        cs_path_active ? std::string {} : cs_fallback_reason;
+      runtime_status.analysis_failure_reason =
+        runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
+
+      if (runtime_status_id == 0) {
+        runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
+      }
+      else {
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      }
+    }
+
     ::video::color_t *color_p;
 
     buf_t subsample_offset;
     buf_t color_matrix;
+    buf_t hlg_display_cbuf;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;
@@ -1805,9 +1660,12 @@ namespace platf::dxgi {
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_pending_source_frame = 0;
     std::optional<uint64_t> hdr_analysis_last_completed_frame;
+    uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
+    float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
+    std::string hdr_analysis_failure_reason;
     std::unique_ptr<d3d12::hdr_analysis_t> d3d12_hdr_analysis;
 
     // ===== Compute-shader RGB->P010/NV12 fast path =====
@@ -1835,6 +1693,11 @@ namespace platf::dxgi {
     bool cs_for_p010 = false;              // True for HDR P010 path, false for SDR NV12 path
     bool cs_is_scaled = false;             // True when active rect != source (use *_scaled variants)
     bool cs_writes_output_directly = false; // True when UAV is bound directly to output_texture (no scratch + CopyResource)
+    std::string cs_fallback_reason;
+
+    std::uint64_t runtime_status_id = 0;
+    ::video::hdr_pipeline_status_t runtime_status;
+    bool dynamic_metadata_supported = true;
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 256;
@@ -1853,17 +1716,6 @@ namespace platf::dxgi {
       float sumMaxRGB;
       uint32_t pixelCount;
     };
-
-    // Must match HLSL AnalysisParams layout exactly.
-    struct AnalysisParams {
-      uint32_t analysisWidth;
-      uint32_t analysisHeight;
-      uint32_t sourceWidth;
-      uint32_t sourceHeight;
-      uint32_t inputHasCellStatistics;
-      uint32_t pad[3];
-    };
-    static_assert(sizeof(AnalysisParams) == 32);
 
     // Must match HLSL FinalResult layout exactly. This one keeps the histogram because
     // it is what the CPU reads back.
@@ -1961,6 +1813,7 @@ namespace platf::dxgi {
         width,
         height,
         0,
+        hdr_analysis_max_nits,
         {},
       };
       hdr_analysis_cbuf = make_buffer(device.get(), analysis_cb_data);
@@ -2244,6 +2097,8 @@ namespace platf::dxgi {
           }
         }
 
+        hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
+        hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
         hdr_luminance_stats_out.valid = true;
         hdr_analysis_last_completed_frame =
           std::min(current_frame_index, hdr_analysis_pending_source_frame);
@@ -2289,6 +2144,8 @@ namespace platf::dxgi {
       hdr_luminance_stats_out.percentile_99 =
         ::video::hdr_metadata::pq_to_nits(
           summary.percentile_99_pq);
+      hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
+      hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
       hdr_luminance_stats_out.valid = true;
       hdr_analysis_last_completed_frame =
         std::min(current_frame_index, completed->source_frame);
@@ -2326,31 +2183,55 @@ namespace platf::dxgi {
       cs_y_uav.reset();
       cs_uv_uav.reset();
       cs_layout_cbuf.reset();
+      cs_fallback_reason.clear();
 
       // Phase 1/2: only NV12 (SDR) or P010 (HDR) supported.
       const bool is_p010 = (format == DXGI_FORMAT_P010);
       const bool is_nv12 = (format == DXGI_FORMAT_NV12);
-      if (!is_p010 && !is_nv12) return;
+      if (!is_p010 && !is_nv12) {
+        cs_fallback_reason = "unsupported_format";
+        return;
+      }
 
       // For HDR P010 we require PQ or HLG colorspace (linear-light source).
       const bool use_pq = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg = ::video::colorspace_is_hlg(colorspace);
-      if (is_p010 && !use_pq && !use_hlg) return;
+      if (is_p010 && !use_pq && !use_hlg) {
+        cs_fallback_reason = "unsupported_colorspace";
+        return;
+      }
       // For SDR NV12 we require a non-PQ/HLG colorspace.
-      if (is_nv12 && (use_pq || use_hlg)) return;
+      if (is_nv12 && (use_pq || use_hlg)) {
+        cs_fallback_reason = "unsupported_colorspace";
+        return;
+      }
 
       // Phase 2B: scaling supported via *_scaled variants. Rotation still TBD.
       const bool is_scaled = (active_w != display->width || active_h != display->height);
       if (display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
-          display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) return;
+          display->display_rotation != DXGI_MODE_ROTATION_IDENTITY) {
+        cs_fallback_reason = "rotation";
+        return;
+      }
 
-      // Config gate: "auto" defers to off for now; user must opt in with "on".
+      // Automatic mode uses the compute path where it has a clear payoff:
+      // scaling, or fusing HDR conversion with luminance-analysis sampling.
       const auto &cfg = config::video.capture_compute_shader;
-      if (cfg != "on") return;
+      if (cfg == "off") {
+        cs_fallback_reason = "disabled";
+        return;
+      }
+      if (cfg == "auto" && !is_scaled && !(is_p010 && hdr_analysis_enabled)) {
+        cs_fallback_reason = "not_beneficial";
+        return;
+      }
 
       // Output dimensions must be even (4:2:0 sub-sampling) and aligned for plane UAV.
-      if ((out_width & 1) != 0 || (out_height & 1) != 0) return;
-      if ((active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) return;
+      if ((out_width & 1) != 0 || (out_height & 1) != 0 ||
+          (active_offset_x & 1) != 0 || (active_offset_y & 1) != 0) {
+        cs_fallback_reason = "unaligned_output";
+        return;
+      }
 
       // Compile-time blobs present?
       if (is_p010) {
@@ -2360,6 +2241,7 @@ namespace platf::dxgi {
                        : (use_pq ? convert_yuv420_p010_cs_perceptual_quantizer_hlsl
                                  : convert_yuv420_p010_cs_hybrid_log_gamma_hlsl);
         if (!blob) {
+          cs_fallback_reason = "shader_unavailable";
           BOOST_LOG(info) << "CS path skipped: P010 compute shader blob unavailable";
           return;
         }
@@ -2371,6 +2253,7 @@ namespace platf::dxgi {
                                 : (convert_yuv420_nv12_cs_passthrough_hlsl ||
                                    convert_yuv420_nv12_cs_linear_hlsl);
         if (!any_blob) {
+          cs_fallback_reason = "shader_unavailable";
           BOOST_LOG(info) << "CS path skipped: NV12 compute shader blobs unavailable";
           return;
         }
@@ -2385,6 +2268,7 @@ namespace platf::dxgi {
       const DXGI_FORMAT y_fmt = is_p010 ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
       const DXGI_FORMAT uv_fmt = is_p010 ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
       if (!has_uav_typed_store(y_fmt) || !has_uav_typed_store(uv_fmt)) {
+        cs_fallback_reason = "device_capability";
         BOOST_LOG(info) << "CS path skipped: device lacks typed UAV store for plane formats";
         return;
       }
@@ -2393,6 +2277,7 @@ namespace platf::dxgi {
       D3D11_FEATURE_DATA_FORMAT_SUPPORT fs_yuv = { format };
       if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &fs_yuv, sizeof(fs_yuv))) ||
           !(fs_yuv.OutFormatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
+        cs_fallback_reason = "device_capability";
         BOOST_LOG(info) << "CS path skipped: device lacks typed UAV support for output format";
         return;
       }
@@ -2437,6 +2322,7 @@ namespace platf::dxgi {
         scratch_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
         auto status = device->CreateTexture2D(&scratch_desc, nullptr, &cs_scratch_tex);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create scratch with UAV bind: "
                           << util::log_hex(status);
           return;
@@ -2444,6 +2330,7 @@ namespace platf::dxgi {
 
         status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &y_uav_desc, &cs_y_uav);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create Y-plane UAV: " << util::log_hex(status);
           cs_scratch_tex.reset();
           return;
@@ -2451,6 +2338,7 @@ namespace platf::dxgi {
 
         status = device->CreateUnorderedAccessView(cs_scratch_tex.get(), &uv_uav_desc, &cs_uv_uav);
         if (FAILED(status)) {
+          cs_fallback_reason = "resource_creation";
           BOOST_LOG(info) << "CS path skipped: failed to create UV-plane UAV: " << util::log_hex(status);
           cs_scratch_tex.reset();
           cs_y_uav.reset();
@@ -2516,6 +2404,7 @@ namespace platf::dxgi {
         }
       }
       if (!any_cs_created) {
+        cs_fallback_reason = "shader_creation";
         cs_scratch_tex.reset();
         cs_y_uav.reset();
         cs_uv_uav.reset();
@@ -2536,6 +2425,7 @@ namespace platf::dxgi {
       };
       cs_layout_cbuf = make_buffer(device.get(), layout);
       if (!cs_layout_cbuf) {
+        cs_fallback_reason = "resource_creation";
         BOOST_LOG(info) << "CS path skipped: failed to create layout cbuffer";
         cs_p010.reset();
         cs_p010_hdr_analysis.reset();
@@ -2587,6 +2477,7 @@ namespace platf::dxgi {
           static_cast<uint32_t>(active_w),
           static_cast<uint32_t>(active_h),
           1,
+          hdr_analysis_max_nits,
           {},
         };
         if (SUCCEEDED(snapshot_status)) {
@@ -2612,6 +2503,7 @@ namespace platf::dxgi {
               hdr_analysis_height,
               static_cast<uint32_t>(active_w),
               static_cast<uint32_t>(active_h),
+              hdr_analysis_max_nits,
               is_probe);
           }
         } else {
@@ -2638,6 +2530,7 @@ namespace platf::dxgi {
       cs_copy_h = out_height;
 
       cs_path_active = true;
+      cs_fallback_reason.clear();
       cs_use_pq = use_pq;
       cs_for_p010 = is_p010;
       cs_is_scaled = is_scaled;
@@ -2709,6 +2602,10 @@ namespace platf::dxgi {
       };
       const UINT cbuf_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetConstantBuffers(0, cbuf_count, cbufs);
+      if (hlg_display_cbuf) {
+        ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
+        device_ctx->CSSetConstantBuffers(3, 1, &hlg_cbuf);
+      }
 
       // Dispatch covers only the active rect (precomputed in init_compute_path).
       device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
@@ -2725,6 +2622,8 @@ namespace platf::dxgi {
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, null_uavs, nullptr);
       ID3D11Buffer *null_cb[3] = { nullptr, nullptr, nullptr };
       device_ctx->CSSetConstantBuffers(0, cbuf_count, null_cb);
+      ID3D11Buffer *null_hlg_cbuf = nullptr;
+      device_ctx->CSSetConstantBuffers(3, 1, &null_hlg_cbuf);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
       if (timing) {
         device_ctx->End(timing->before_copy.get());
@@ -2753,7 +2652,7 @@ namespace platf::dxgi {
   public:
     int
     init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      int result = base.init(display, adapter_p, pix_fmt);
+      int result = base.init(display, adapter_p, pix_fmt, true);
       data = base.device.get();
       return result;
     }
@@ -2853,7 +2752,7 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt)) return false;
+      if (base.init(display, adapter_p, pix_fmt, true)) return false;
 
       auto factory = nvenc::nvenc_dynamic_factory::get();
       if (!factory) return false;
@@ -2877,10 +2776,16 @@ namespace platf::dxgi {
     init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) override {
       if (!nvenc_d3d) return false;
 
+      hdr_luminance_analysis_available = false;
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      return base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe) == 0;
+      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe)) {
+        return false;
+      }
+
+      hdr_luminance_analysis_available = base.hdr_luminance_analysis_available();
+      return true;
     }
 
     int
@@ -2901,7 +2806,7 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt)) return false;
+      if (base.init(display, adapter_p, pix_fmt, false)) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;
@@ -3002,55 +2907,12 @@ namespace platf::dxgi {
     platf::pix_fmt_e buffer_format = platf::pix_fmt_e::unknown;
   };
 
-  bool
-  set_cursor_texture(device_t::pointer device, gpu_cursor_t &cursor, util::buffer_t<std::uint8_t> &&cursor_img, DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info) {
-    // This cursor image may not be used
-    if (cursor_img.size() == 0) {
-      cursor.input_res.reset();
-      cursor.set_texture(0, 0, nullptr);
-      return true;
-    }
-
-    D3D11_SUBRESOURCE_DATA data {
-      std::begin(cursor_img),
-      4 * shape_info.Width,
-      0
-    };
-
-    // Create texture for cursor
-    D3D11_TEXTURE2D_DESC t {};
-    t.Width = shape_info.Width;
-    t.Height = cursor_img.size() / data.SysMemPitch;
-    t.MipLevels = 1;
-    t.ArraySize = 1;
-    t.SampleDesc.Count = 1;
-    t.Usage = D3D11_USAGE_IMMUTABLE;
-    t.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    t.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    texture2d_t texture;
-    auto status = device->CreateTexture2D(&t, &data, &texture);
-    if (FAILED(status)) {
-      BOOST_LOG(error) << "Failed to create mouse texture [0x"sv << util::hex(status).to_string_view() << ']';
-      return false;
-    }
-
-    // Free resources before allocating on the next line.
-    cursor.input_res.reset();
-    status = device->CreateShaderResourceView(texture.get(), nullptr, &cursor.input_res);
-    if (FAILED(status)) {
-      BOOST_LOG(error) << "Failed to create cursor shader resource view [0x"sv << util::hex(status).to_string_view() << ']';
-      return false;
-    }
-
-    cursor.set_texture(t.Width, t.Height, std::move(texture));
-    return true;
-  }
-
   capture_e
   display_ddup_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
     HRESULT status;
     DXGI_OUTDUPL_FRAME_INFO frame_info;
+
+    const bool use_local_cursor = sync_local_cursor_mode(dup);
 
     resource_t::pointer res_p {};
     auto capture_status = dup.next_frame(frame_info, timeout, &res_p);
@@ -3074,37 +2936,44 @@ namespace platf::dxgi {
       frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
-    if (frame_info.PointerShapeBufferSize > 0) {
-      DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+    bool shape_updated;
+    if (dup.update_cursor(frame_info, shape_updated) != capture_e::ok) {
+      return capture_e::error;
+    }
+    auto &cursor = dup.cursor;
+    if (use_local_cursor) {
+      publish_local_cursor(cursor, shape_updated);
+    }
 
-      util::buffer_t<std::uint8_t> img_data { frame_info.PointerShapeBufferSize };
-
-      UINT dummy;
-      status = dup.dup->GetFramePointerShape(img_data.size(), std::begin(img_data), &dummy, &shape_info);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv << util::hex(status).to_string_view() << ']';
-
+    if (shape_updated) {
+      normalized_cursor_shape_t normalized;
+      if (!normalize_cursor_shape(
+            cursor.img_data,
+            cursor.shape_info,
+            true,
+            normalized
+          )) {
         return capture_e::error;
       }
 
-      auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
-      auto xor_cursor_img = make_cursor_xor_image(img_data, shape_info);
-
-      if (!set_cursor_texture(device.get(), cursor_alpha, std::move(alpha_cursor_img), shape_info) ||
-          !set_cursor_texture(device.get(), cursor_xor, std::move(xor_cursor_img), shape_info)) {
+      if (!set_cursor_texture(device.get(), cursor_alpha, std::move(normalized.alpha), normalized.info) ||
+          !set_cursor_texture(device.get(), cursor_xor, std::move(normalized.xor_mask), normalized.info)) {
         return capture_e::error;
       }
     }
 
     if (frame_info.LastMouseUpdateTime.QuadPart) {
-      cursor_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
-        width, height, display_rotation, frame_info.PointerPosition.Visible);
+      cursor_alpha.set_pos(cursor.x, cursor.y,
+        width, height, display_rotation, cursor.visible);
 
-      cursor_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y,
-        width, height, display_rotation, frame_info.PointerPosition.Visible);
+      cursor_xor.set_pos(cursor.x, cursor.y,
+        width, height, display_rotation, cursor.visible);
     }
 
-    const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;
+    const bool blend_mouse_cursor_flag =
+      !use_local_cursor &&
+      (cursor_alpha.visible || cursor_xor.visible) &&
+      cursor_visible;
 
     texture2d_t src {};
     if (frame_update_flag) {
@@ -3336,38 +3205,6 @@ namespace platf::dxgi {
       }
     }
 
-    auto blend_cursor = [&](img_d3d_t &d3d_img) {
-      device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
-      device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
-      device_ctx->OMSetRenderTargets(1, &d3d_img.capture_rt, nullptr);
-
-      if (cursor_alpha.texture.get()) {
-        // Perform an alpha blending operation
-        device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
-        device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      if (cursor_xor.texture.get()) {
-        // Perform an invert blending without touching alpha values
-        device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
-
-        device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
-        device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
-        device_ctx->Draw(3, 0);
-      }
-
-      device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
-
-      ID3D11RenderTargetView *emptyRenderTarget = nullptr;
-      device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
-      device_ctx->RSSetViewports(0, nullptr);
-      ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
-      device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
-    };
-
     switch (out_frame_action) {
       case ofa::forward_last_img: {
         auto p_img = std::get_if<std::shared_ptr<platf::img_t>>(&last_frame_variant);
@@ -3396,7 +3233,7 @@ namespace platf::dxgi {
         if (!d3d_img) return capture_e::error;
 
         device_ctx->CopyResource(d3d_img->capture_texture.get(), p_surface->get());
-        blend_cursor(*d3d_img);
+        blend_cursor(d3d_img->capture_rt.get());
         break;
       }
 
@@ -3417,7 +3254,7 @@ namespace platf::dxgi {
         }
 
         if (blend_mouse_cursor_flag) {
-          blend_cursor(*d3d_img);
+          blend_cursor(d3d_img->capture_rt.get());
         }
 
         break;
@@ -3442,10 +3279,11 @@ namespace platf::dxgi {
   }
 
   int
-  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
-    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
-      return -1;
-    }
+  display_vram_t::init_cursor_pipeline(const ::video::config_t &config) {
+    cursor_pipeline_ready = false;
+    cursor_white_normalization_enabled = false;
+    cursor_white_multiplier.reset();
+    cursor_white_multiplier_value = 300.0f / 80.0f;
 
     D3D11_SAMPLER_DESC sampler_desc {};
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -3494,17 +3332,15 @@ namespace platf::dxgi {
         return -1;
       }
 
-      // Use a 300 nit target for the mouse cursor. We should really get
-      // the user's SDR white level in nits, but there is no API that
-      // provides that information to Win32 apps.
-      float white_multiplier_data[16 / sizeof(float)] { 300.0f / 80.f };  // aligned to 16-byte
-      auto white_multiplier = make_buffer(device.get(), white_multiplier_data);
-      if (!white_multiplier) {
+      // Keep the established 300-nit fallback for backends without producer
+      // white-level metadata. VDD replaces it with the driver's current value.
+      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value };  // aligned to 16-byte
+      cursor_white_multiplier = make_buffer(device.get(), white_multiplier_data);
+      if (!cursor_white_multiplier) {
         BOOST_LOG(warning) << "Failed to create cursor blending (normalized white) white multiplier constant buffer";
         return -1;
       }
-
-      device_ctx->PSSetConstantBuffers(1, 1, &white_multiplier);
+      cursor_white_normalization_enabled = true;
     }
     else {
       status = device->CreatePixelShader(cursor_ps_hlsl->GetBufferPointer(), cursor_ps_hlsl->GetBufferSize(), nullptr, &cursor_ps);
@@ -3526,6 +3362,84 @@ namespace platf::dxgi {
     ID3D11SamplerState *samplers[] = { sampler_linear.get(), sampler_point.get() };
     device_ctx->PSSetSamplers(0, 2, samplers);
     device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    cursor_pipeline_ready = true;
+    return 0;
+  }
+
+  void
+  display_vram_t::set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000) {
+    if (!cursor_white_normalization_enabled || sdr_white_level_x1000 == 0) {
+      return;
+    }
+
+    const float sdr_white_nits = static_cast<float>(sdr_white_level_x1000) / 1000.0f;
+    if (!std::isfinite(sdr_white_nits) || sdr_white_nits < 1.0f || sdr_white_nits > 10000.0f) {
+      return;
+    }
+
+    const float next_multiplier = sdr_white_nits / 80.0f;
+    if (std::abs(next_multiplier - cursor_white_multiplier_value) < 0.0001f) {
+      return;
+    }
+
+    float white_multiplier_data[16 / sizeof(float)] { next_multiplier };  // aligned to 16-byte
+    auto next_buffer = make_buffer(device.get(), white_multiplier_data);
+    if (!next_buffer) {
+      BOOST_LOG(warning) << "Failed to update cursor SDR white-level multiplier; retaining previous value"sv;
+      return;
+    }
+
+    cursor_white_multiplier = std::move(next_buffer);
+    cursor_white_multiplier_value = next_multiplier;
+  }
+
+  void
+  display_vram_t::blend_cursor(ID3D11RenderTargetView *capture_rt) {
+    device_ctx->VSSetShader(cursor_vs.get(), nullptr, 0);
+    device_ctx->PSSetShader(cursor_ps.get(), nullptr, 0);
+    if (cursor_white_normalization_enabled && cursor_white_multiplier) {
+      ID3D11Buffer *white_multiplier = cursor_white_multiplier.get();
+      device_ctx->PSSetConstantBuffers(1, 1, &white_multiplier);
+    }
+    device_ctx->OMSetRenderTargets(1, &capture_rt, nullptr);
+
+    if (cursor_alpha.texture.get()) {
+      // Perform an alpha blending operation
+      device_ctx->OMSetBlendState(blend_alpha.get(), nullptr, 0xFFFFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_alpha.input_res);
+      device_ctx->RSSetViewports(1, &cursor_alpha.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    if (cursor_xor.texture.get()) {
+      // Perform an invert blending without touching alpha values
+      device_ctx->OMSetBlendState(blend_invert.get(), nullptr, 0x00FFFFFFu);
+
+      device_ctx->PSSetShaderResources(0, 1, &cursor_xor.input_res);
+      device_ctx->RSSetViewports(1, &cursor_xor.cursor_view);
+      device_ctx->Draw(3, 0);
+    }
+
+    device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
+
+    ID3D11RenderTargetView *emptyRenderTarget = nullptr;
+    device_ctx->OMSetRenderTargets(1, &emptyRenderTarget, nullptr);
+    device_ctx->RSSetViewports(0, nullptr);
+    ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
+    device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
+  }
+
+  int
+  display_ddup_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
+    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
+      return -1;
+    }
+
+    if (init_cursor_pipeline(config) != 0) {
+      return -1;
+    }
 
     return 0;
   }
@@ -4302,332 +4216,4 @@ namespace platf::dxgi {
     return 0;
   }
 
-  // ===========================================================================
-  // display_vdd_vram_t snapshot/release_snapshot
-  // ===========================================================================
-  // Implemented here (rather than in display_vdd.cpp) because they need access
-  // to the file-local `img_d3d_t` and `texture_lock_helper` defined above.
-  // init() lives in display_vdd.cpp.
-
-  void
-  display_vdd_vram_t::log_vdd_borrow_debug_telemetry() {
-    if (config::sunshine.min_log_level > debug.default_severity()) {
-      return;
-    }
-
-    const auto log_now = std::chrono::steady_clock::now();
-    if (vdd_borrow_last_telemetry.time_since_epoch().count() != 0 &&
-        log_now - vdd_borrow_last_telemetry < vdd_borrow_telemetry_interval) {
-      return;
-    }
-    vdd_borrow_last_telemetry = log_now;
-
-    const auto cooldown_ms = log_now < vdd_borrow_cooldown_until ?
-                               std::chrono::duration_cast<std::chrono::milliseconds>(vdd_borrow_cooldown_until - log_now).count() :
-                               0LL;
-    BOOST_LOG(debug) << "[vdd] borrowed texture stats: attempts="sv << vdd_borrow_attempts
-                     << " successes="sv << vdd_borrow_successes
-                     << " fallbacks="sv << vdd_borrow_fallbacks
-                     << " disabled_frames="sv << vdd_borrow_disabled_frames
-                     << " cooldown_frames="sv << vdd_borrow_cooldown_frames
-                     << " cooldown_events="sv << vdd_borrow_cooldown_events
-                     << " cooldown_ms="sv << cooldown_ms
-                     << " producer_frame="sv << dup.frame_counter()
-                     << " slot="sv << dup.producer_slot_index() << "/"sv << dup.producer_slot_count()
-                     << " dirty_rects="sv << dup.last_dirty_rect_count()
-                     << " replaced_unread="sv << vdd_last_replaced_unread
-                     << " dropped_consumer_held="sv << vdd_last_dropped_consumer_held
-                     << " dropped_acquire_failures="sv << vdd_last_dropped_acquire_failures
-                     << " consumer_acquire_timeouts="sv << dup.consumer_acquire_timeouts()
-                     << " deferred="sv << vdd_borrow_deferred_images.size()
-                     << " deferred_frames="sv << vdd_borrow_deferred_frames
-                     << " returned_deferred="sv << vdd_borrow_returned_deferred_frames
-                     << " inflight="sv << vdd_borrow_inflight_frames->load(std::memory_order_relaxed) << "/"sv << vdd_borrow_max_inflight_frames
-                     << " inflight_limit_frames="sv << vdd_borrow_inflight_limit_frames;
-  }
-
-  capture_e
-  display_vdd_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb,
-                               std::shared_ptr<platf::img_t> &img_out,
-                               std::chrono::milliseconds timeout, bool /*cursor_visible*/) {
-    if (current_frame) {
-      // Defensive: caller forgot to call release_snapshot(). Drop the stale ref.
-      dup.release_frame();
-      current_frame->Release();
-      current_frame = nullptr;
-    }
-
-    uint64_t frame_qpc = 0;
-    auto status = dup.next_frame(timeout, &current_frame, frame_qpc);
-    if (status != capture_e::ok) {
-      return status;
-    }
-
-    // RAII: ensure the producer keyed-mutex hold and the borrowed COM ref are
-    // released on every early-return path below. Disarmed only on the success
-    // path so release_snapshot() (called by the caller) takes ownership.
-    bool armed = true;
-    auto cleanup = util::fail_guard([&]() {
-      if (armed && current_frame) {
-        dup.release_frame();
-        current_frame->Release();
-        current_frame = nullptr;
-      }
-    });
-
-    const auto now = std::chrono::steady_clock::now();
-    auto frame_timestamp = now - qpc_time_difference(qpc_counter(), frame_qpc);
-
-    D3D11_TEXTURE2D_DESC desc{};
-    current_frame->GetDesc(&desc);
-
-    if (desc.Width != static_cast<UINT>(width_before_rotation) ||
-        desc.Height != static_cast<UINT>(height_before_rotation) ||
-        desc.Format != capture_format) {
-      BOOST_LOG(info) << "[vdd] producer reconfigured: "sv
-                      << width_before_rotation << "x"sv << height_before_rotation
-                      << " " << dxgi_format_to_string(capture_format)
-                      << " -> "sv << desc.Width << "x"sv << desc.Height
-                      << " " << dxgi_format_to_string(desc.Format);
-      return capture_e::reinit;
-    }
-
-    auto copy_current_frame_to = [&](std::shared_ptr<platf::img_t> candidate_img,
-                                     std::shared_ptr<img_d3d_t> candidate_d3d) -> capture_e {
-      if (!candidate_img || !candidate_d3d) {
-        return capture_e::error;
-      }
-
-      candidate_d3d->blank = false;
-      if (complete_img(candidate_d3d.get(), false) != 0) {
-        return capture_e::error;
-      }
-
-      texture_lock_helper lock_helper(candidate_d3d->capture_mutex.get());
-      if (!lock_helper.lock()) {
-        BOOST_LOG(error) << "[vdd] failed to lock capture texture"sv;
-        return capture_e::error;
-      }
-      device_ctx->CopyResource(candidate_d3d->capture_texture.get(), current_frame);
-
-      img_out = std::move(candidate_img);
-      img_out->frame_timestamp = frame_timestamp;
-      armed = false;  // success: ownership of current_frame transfers to release_snapshot()
-      return capture_e::ok;
-    };
-
-    if (!vdd_borrow_enabled &&
-        vdd_borrow_deferred_images.empty() &&
-        vdd_borrow_inflight_frames->load(std::memory_order_relaxed) == 0) {
-      std::shared_ptr<platf::img_t> img;
-      if (!pull_free_image_cb(img)) {
-        return capture_e::interrupted;
-      }
-      auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-      return copy_current_frame_to(std::move(img), std::move(d3d_img));
-    }
-
-    const auto producer_replaced_unread = dup.replaced_unread_frames();
-    const auto producer_dropped_consumer_held = dup.dropped_consumer_held_frames();
-    const auto producer_dropped_acquire_failures = dup.dropped_acquire_failures();
-    if (producer_dropped_consumer_held > vdd_last_dropped_consumer_held) {
-      const auto delta = producer_dropped_consumer_held - vdd_last_dropped_consumer_held;
-      const bool was_in_cooldown = now < vdd_borrow_cooldown_until;
-      const auto next_cooldown_until = now + vdd_borrow_drop_cooldown;
-      if (vdd_borrow_cooldown_until < next_cooldown_until) {
-        vdd_borrow_cooldown_until = next_cooldown_until;
-      }
-      if (!was_in_cooldown) {
-        ++vdd_borrow_cooldown_events;
-        BOOST_LOG(info) << "[vdd] borrowed texture cooldown: producer held-drop +"sv
-                        << delta << ", falling back to copy path for "sv
-                        << std::chrono::duration_cast<std::chrono::milliseconds>(vdd_borrow_drop_cooldown).count()
-                        << "ms"sv;
-      }
-    }
-    vdd_last_replaced_unread = producer_replaced_unread;
-    vdd_last_dropped_consumer_held = producer_dropped_consumer_held;
-    vdd_last_dropped_acquire_failures = producer_dropped_acquire_failures;
-
-    auto enter_borrow_cooldown = [&](const char *reason) {
-      const auto cooldown_now = std::chrono::steady_clock::now();
-      const bool was_in_cooldown = cooldown_now < vdd_borrow_cooldown_until;
-      const auto next_cooldown_until = cooldown_now + vdd_borrow_drop_cooldown;
-      if (vdd_borrow_cooldown_until < next_cooldown_until) {
-        vdd_borrow_cooldown_until = next_cooldown_until;
-      }
-      if (!was_in_cooldown) {
-        ++vdd_borrow_cooldown_events;
-        BOOST_LOG(info) << "[vdd] borrowed texture cooldown: "sv << reason
-                        << ", falling back to copy path for "sv
-                        << std::chrono::duration_cast<std::chrono::milliseconds>(vdd_borrow_drop_cooldown).count()
-                        << "ms"sv;
-      }
-    };
-
-    auto retire_deferred_borrowed_images = [&]() {
-      for (auto it = vdd_borrow_deferred_images.begin(); it != vdd_borrow_deferred_images.end();) {
-        auto deferred = std::static_pointer_cast<img_d3d_t>(*it);
-        if (deferred->abandon_borrowed_vdd_frame(false)) {
-          ++vdd_borrow_returned_deferred_frames;
-          it = vdd_borrow_deferred_images.erase(it);
-        }
-        else {
-          ++it;
-        }
-      }
-    };
-    retire_deferred_borrowed_images();
-
-    auto defer_busy_borrowed_image = [&](std::shared_ptr<platf::img_t> busy_img) {
-      if (!busy_img) {
-        return;
-      }
-      vdd_borrow_deferred_images.emplace_back(std::move(busy_img));
-      ++vdd_borrow_deferred_frames;
-      enter_borrow_cooldown("previous borrowed slot is still busy");
-    };
-
-    std::shared_ptr<platf::img_t> img;
-    std::shared_ptr<img_d3d_t> d3d_img;
-    bool pull_interrupted = false;
-    auto pull_reusable_image = [&]() -> bool {
-      for (int attempt = 0; attempt < 4; ++attempt) {
-        if (!pull_free_image_cb(img)) {
-          pull_interrupted = true;
-          return false;
-        }
-
-        d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-        if (d3d_img->abandon_borrowed_vdd_frame(false)) {
-          d3d_img->blank = false;
-          return true;
-        }
-
-        BOOST_LOG(debug) << "[vdd] deferring busy borrowed image before reuse"sv;
-        defer_busy_borrowed_image(std::move(img));
-        d3d_img.reset();
-      }
-      return false;
-    };
-
-    if (!pull_reusable_image()) {
-      log_vdd_borrow_debug_telemetry();
-      return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
-    }
-
-    auto try_borrow_current_frame = [&]() -> bool {
-      ++vdd_borrow_attempts;
-      auto borrow_fallback = [&]() {
-        ++vdd_borrow_fallbacks;
-        return false;
-      };
-
-      if (!vdd_borrow_enabled) {
-        ++vdd_borrow_disabled_frames;
-        return borrow_fallback();
-      }
-
-      if (!vdd_borrow_deferred_images.empty()) {
-        ++vdd_borrow_cooldown_frames;
-        return borrow_fallback();
-      }
-
-      if (std::chrono::steady_clock::now() < vdd_borrow_cooldown_until) {
-        ++vdd_borrow_cooldown_frames;
-        return borrow_fallback();
-      }
-
-      if (vdd_borrow_inflight_frames->load(std::memory_order_relaxed) >= vdd_borrow_max_inflight_frames) {
-        ++vdd_borrow_inflight_limit_frames;
-        return borrow_fallback();
-      }
-
-      resource1_t resource;
-      auto hr = current_frame->QueryInterface(__uuidof(IDXGIResource1), (void **) &resource);
-      if (FAILED(hr) || !resource) {
-        BOOST_LOG(debug) << "[vdd] borrowed texture skipped: IDXGIResource1 unavailable [0x"sv
-                         << util::hex(hr).to_string_view() << ']';
-        return borrow_fallback();
-      }
-
-      HANDLE encoder_handle = nullptr;
-      hr = resource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &encoder_handle);
-      if (FAILED(hr) || !encoder_handle) {
-        BOOST_LOG(debug) << "[vdd] borrowed texture skipped: CreateSharedHandle failed [0x"sv
-                         << util::hex(hr).to_string_view() << ']';
-        return borrow_fallback();
-      }
-
-      if (!d3d_img->abandon_borrowed_vdd_frame(false)) {
-        CloseHandle(encoder_handle);
-        BOOST_LOG(debug) << "[vdd] borrowed texture skipped: previous borrowed slot is still busy"sv;
-        defer_busy_borrowed_image(std::move(img));
-        d3d_img.reset();
-        return borrow_fallback();
-      }
-
-      IDXGIKeyedMutex *handoff_mutex = nullptr;
-      UINT32 handoff_slot = 0;
-      auto handoff_status = dup.handoff_frame(vdd_borrowed_encoder_key, &handoff_mutex, handoff_slot);
-      if (handoff_status != capture_e::ok || !handoff_mutex) {
-        CloseHandle(encoder_handle);
-        BOOST_LOG(debug) << "[vdd] borrowed texture skipped: handoff failed"sv;
-        return borrow_fallback();
-      }
-
-      d3d_img->capture_texture.reset(current_frame);
-      current_frame = nullptr;
-      d3d_img->capture_rt.reset();
-      d3d_img->capture_mutex.reset();
-      d3d_img->data = nullptr;
-      if (d3d_img->encoder_texture_handle) {
-        CloseHandle(d3d_img->encoder_texture_handle);
-      }
-      d3d_img->encoder_texture_handle = encoder_handle;
-
-      d3d_img->pixel_pitch = get_pixel_pitch();
-      d3d_img->row_pitch = d3d_img->pixel_pitch * d3d_img->width;
-      d3d_img->dummy = false;
-      d3d_img->format = desc.Format;
-      d3d_img->linear_gamma = capture_linear_gamma;
-      d3d_img->borrowed_vdd_texture = true;
-      d3d_img->borrowed_vdd_frame = true;
-      d3d_img->borrowed_vdd_mutex.reset(handoff_mutex);
-      d3d_img->borrowed_vdd_slot = handoff_slot;
-      d3d_img->encoder_acquire_key = vdd_borrowed_encoder_key;
-      d3d_img->encoder_release_key = vdd_borrowed_encoder_key;
-      d3d_img->producer_release_key = 0;
-      d3d_img->data = (std::uint8_t *) d3d_img->capture_texture.get();
-      d3d_img->borrowed_vdd_inflight_counter = vdd_borrow_inflight_frames;
-      ++vdd_borrow_successes;
-      vdd_borrow_inflight_frames->fetch_add(1, std::memory_order_relaxed);
-      return true;
-    };
-
-    if (try_borrow_current_frame()) {
-      log_vdd_borrow_debug_telemetry();
-      img_out = img;
-      img_out->frame_timestamp = frame_timestamp;
-      armed = false;  // success: VDD slot ownership transferred to img/encoder
-      return capture_e::ok;
-    }
-    log_vdd_borrow_debug_telemetry();
-
-    if (!d3d_img && !pull_reusable_image()) {
-      log_vdd_borrow_debug_telemetry();
-      return pull_interrupted ? capture_e::interrupted : capture_e::timeout;
-    }
-
-    return copy_current_frame_to(std::move(img), std::move(d3d_img));
-  }
-
-  capture_e
-  display_vdd_vram_t::release_snapshot() {
-    if (current_frame) {
-      current_frame->Release();
-      current_frame = nullptr;
-    }
-    return dup.release_frame();
-  }
 }  // namespace platf::dxgi

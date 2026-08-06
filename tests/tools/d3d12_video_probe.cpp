@@ -68,6 +68,7 @@ namespace {
         64,
         64,
         64,
+        10000.0f,
         1);
       hdr_analysis_stage = hdr_init.stage;
       hdr_analysis_hresult = hdr_init.hresult;

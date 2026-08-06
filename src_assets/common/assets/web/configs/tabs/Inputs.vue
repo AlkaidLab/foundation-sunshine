@@ -180,7 +180,7 @@ onBeforeUnmount(() => {
       <div class="form-text">{{ $t('config.gamepad_desc') }}</div>
     </div>
 
-    <div class="accordion" v-if="config.gamepad === 'ds4'">
+    <div class="accordion mb-3" v-if="config.gamepad === 'ds4'">
       <div class="accordion-item">
         <h2 class="accordion-header">
           <button class="accordion-button" type="button" data-bs-toggle="collapse"
@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <div class="accordion" v-if="config.controller === 'enabled' && config.gamepad === 'auto' && platform === 'windows'">
+    <div class="accordion mb-3" v-if="config.controller === 'enabled' && config.gamepad === 'auto' && platform === 'windows'">
       <div class="accordion-item">
         <h2 class="accordion-header">
           <button class="accordion-button" type="button" data-bs-toggle="collapse"
@@ -400,12 +400,12 @@ onBeforeUnmount(() => {
             class="accordion-button collapsed"
             type="button"
             data-bs-toggle="collapse"
-            data-bs-target="#input-experimental-features-collapse"
+            data-bs-target="#input-driver-management-collapse"
           >
-            {{ $t('config.experimental_features') }}
+            {{ $t('config.input_driver_management') }}
           </button>
         </h2>
-        <div id="input-experimental-features-collapse" class="accordion-collapse collapse">
+        <div id="input-driver-management-collapse" class="accordion-collapse collapse">
           <div class="accordion-body">
             <!-- ViGEmBus virtual gamepad driver management (Windows + Tauri only) -->
             <div class="mb-3" v-if="config.controller === 'enabled' && vigem.available">

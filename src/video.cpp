@@ -10,6 +10,8 @@
 #include <functional>
 #include <list>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -49,6 +51,10 @@ using namespace std::literals;
 namespace video {
 
   namespace {
+    std::mutex hdr_pipeline_status_mutex;
+    std::map<std::uint64_t, hdr_pipeline_status_t> hdr_pipeline_statuses;
+    std::atomic<std::uint64_t> next_hdr_pipeline_status_id { 1 };
+
     std::optional<std::string>
     capture_override_for_encoder_probe() {
 #ifdef _WIN32
@@ -101,6 +107,83 @@ namespace video {
       return false;
     }
   }  // namespace
+
+  std::uint64_t
+  register_hdr_pipeline_status(const hdr_pipeline_status_t &status) {
+    const auto id = next_hdr_pipeline_status_id.fetch_add(1, std::memory_order_relaxed);
+    auto registered = status;
+    registered.id = id;
+
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    hdr_pipeline_statuses[id] = std::move(registered);
+    return id;
+  }
+
+  void
+  update_hdr_pipeline_status(std::uint64_t id, const hdr_pipeline_status_t &status) {
+    if (id == 0) {
+      return;
+    }
+
+    auto updated = status;
+    updated.id = id;
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    if (hdr_pipeline_statuses.contains(id)) {
+      hdr_pipeline_statuses[id] = std::move(updated);
+    }
+  }
+
+  void
+  unregister_hdr_pipeline_status(std::uint64_t id) {
+    if (id == 0) {
+      return;
+    }
+
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    hdr_pipeline_statuses.erase(id);
+  }
+
+  std::vector<hdr_pipeline_status_t>
+  get_hdr_pipeline_statuses() {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    std::vector<hdr_pipeline_status_t> statuses;
+    statuses.reserve(hdr_pipeline_statuses.size());
+    for (const auto &[id, status] : hdr_pipeline_statuses) {
+      statuses.push_back(status);
+    }
+    return statuses;
+  }
+
+  int
+  encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage) {
+    if (fec_percentage > 0 && fec_percentage <= 80) {
+      return total_bitrate_kbps * (100 - fec_percentage) / 100;
+    }
+
+    return total_bitrate_kbps;
+  }
+
+  int
+  encoder_bitrate_for_total_request(int requested_total_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
+    auto capped_total_bitrate_kbps = requested_total_bitrate_kbps;
+    if (max_total_bitrate_kbps > 0) {
+      capped_total_bitrate_kbps = std::min(capped_total_bitrate_kbps, max_total_bitrate_kbps);
+    }
+
+    return encoder_bitrate_from_total_bitrate(capped_total_bitrate_kbps, fec_percentage);
+  }
+
+  int
+  cap_initial_encoder_bitrate(int initial_encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
+    if (max_total_bitrate_kbps <= 0) {
+      return initial_encoder_bitrate_kbps;
+    }
+
+    return std::min(
+      initial_encoder_bitrate_kbps,
+      encoder_bitrate_from_total_bitrate(max_total_bitrate_kbps, fec_percentage)
+    );
+  }
 
   std::chrono::duration<double, std::milli>
   minimum_frame_time_for_vrr(int stream_fps, int minimum_fps_target) {
@@ -566,12 +649,11 @@ namespace video {
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx) return;
 
-      // Adjust encoding bitrate considering FEC overhead
-      // When FEC percentage is X%, actual encoding bitrate should be (100-X)% of requested
-      auto adjusted_bitrate_kbps = bitrate_kbps;
-      if (config::stream.fec_percentage > 0 && config::stream.fec_percentage <= 80) {
-        adjusted_bitrate_kbps = bitrate_kbps * (100 - config::stream.fec_percentage) / 100;
-      }
+      const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
+        bitrate_kbps,
+        config::video.max_bitrate,
+        config::stream.fec_percentage
+      );
 
       auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
 
@@ -655,6 +737,18 @@ namespace video {
   public:
     nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
         device(std::move(encode_device)) {
+      const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
+      if (use_hlg) {
+        const bool analysis_available =
+          config::video.hdr_luminance_analysis != "off" &&
+          device->hdr_luminance_analysis_available;
+        vivid_metadata_mode = analysis_available ?
+                                vivid_metadata_mode_e::preroll :
+                                vivid_metadata_mode_e::disabled;
+      }
+      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
+        BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
+      }
     }
 
     int
@@ -687,10 +781,11 @@ namespace video {
       if (device && device->nvenc) {
         // 考虑FEC影响，调整编码码率
         // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
+        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
+          bitrate_kbps,
+          config::video.max_bitrate,
+          config::stream.fec_percentage
+        );
 
         device->nvenc->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
@@ -749,8 +844,40 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->nvenc) return {};
 
+      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!vivid_preroll_started) {
+          vivid_preroll_started = now;
+        }
+
+        if (vivid_startup_guard.observe(device->hdr_luminance_stats)) {
+          vivid_metadata_mode = vivid_metadata_mode_e::enabled;
+          force_idr = true;
+          const auto &stats = device->hdr_luminance_stats;
+          BOOST_LOG(info) << "NVENC: HDR Vivid startup guard ready after "
+                          << vivid_startup_guard.consecutive_samples()
+                          << " independent samples; first encoded HLG frame will be IDR with Vivid"
+                          << " (avg=" << stats.avg_maxrgb
+                          << " nits, max=" << stats.max_maxrgb
+                          << " nits, P10=" << stats.percentile_10_pq
+                          << ", P90=" << stats.percentile_90_pq << ')';
+        }
+        else if (now - *vivid_preroll_started >= VIVID_PREROLL_TIMEOUT) {
+          vivid_metadata_mode = vivid_metadata_mode_e::disabled;
+          force_idr = true;
+          BOOST_LOG(warning) << "NVENC: HDR Vivid startup guard timed out after 500 ms; "
+                                "starting this session as pure HLG without dynamic metadata";
+        }
+        else {
+          // Keep converting capture frames so the asynchronous GPU analyzer can
+          // produce independent samples, but do not let the client see a plain-HLG
+          // IDR followed by a mid-stream transition into HDR Vivid.
+          return { {}, frame_index, false, false };
+        }
+      }
+
       // Pass per-frame HDR luminance stats to NVENC for dynamic metadata injection
-      if (device->hdr_luminance_stats.valid) {
+      if (vivid_metadata_mode != vivid_metadata_mode_e::disabled && device->hdr_luminance_stats.valid) {
         device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
       }
 
@@ -778,8 +905,19 @@ namespace video {
     }
 
   private:
+    static constexpr auto VIVID_PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
+
+    enum class vivid_metadata_mode_e {
+      enabled,
+      preroll,
+      disabled,
+    };
+
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
+    hdr_metadata::vivid_startup_guard_t vivid_startup_guard;
+    std::optional<std::chrono::steady_clock::time_point> vivid_preroll_started;
+    vivid_metadata_mode_e vivid_metadata_mode = vivid_metadata_mode_e::enabled;
     bool force_idr = false;
   };
 
@@ -817,10 +955,11 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->amf) {
-        auto adjusted_bitrate_kbps = bitrate_kbps;
-        if (config::stream.fec_percentage <= 80) {
-          adjusted_bitrate_kbps = (int) (bitrate_kbps * (100 - config::stream.fec_percentage) / 100.0f);
-        }
+        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
+          bitrate_kbps,
+          config::video.max_bitrate,
+          config::stream.fec_percentage
+        );
 
         device->amf->set_bitrate(adjusted_bitrate_kbps);
         BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
@@ -2406,7 +2545,7 @@ namespace video {
         }
       }
 
-      auto bitrate = ((config::video.max_bitrate > 0) ? std::min(config.bitrate, config::video.max_bitrate) : config.bitrate) * 1000;
+      auto bitrate = config.bitrate * 1000;
       BOOST_LOG(info) << "Streaming bitrate is " << bitrate;
       ctx->rc_max_rate = bitrate;
       ctx->bit_rate = bitrate;
@@ -2725,17 +2864,30 @@ namespace video {
 
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+    auto effective_config = config;
+    effective_config.bitrate = cap_initial_encoder_bitrate(
+      config.bitrate,
+      config::video.max_bitrate,
+      config::stream.fec_percentage
+    );
+    if (!is_probe && effective_config.bitrate != config.bitrate) {
+      BOOST_LOG(info) << "Capping initial encoder bitrate from " << config.bitrate
+                      << " Kbps to " << effective_config.bitrate
+                      << " Kbps (host maximum total bitrate: " << config::video.max_bitrate
+                      << " Kbps, FEC: " << config::stream.fec_percentage << "%)";
+    }
+
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device));
+      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, config, std::move(nvenc_encode_device), is_probe);
+      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, config, std::move(amf_encode_device), is_probe);
+      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
     return nullptr;
