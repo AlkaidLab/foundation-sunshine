@@ -125,6 +125,10 @@ namespace platf::dxgi::video_backend {
    *
    * PR2 deliberately passes d3d12_stage_available=false. Later stages may set it
    * only after all capability, topology, and performance gates have passed.
+   *
+   * This never returns `unavailable`: refusing to encode is a decision only a
+   * real, failed D3D12 initialization can justify. See
+   * apply_d3d12_initialization().
    */
   [[nodiscard]] inline selection_t
   resolve(
@@ -151,9 +155,34 @@ namespace platf::dxgi::video_backend {
     }
 
     result.fallback = fallback_reason_e::build_stage_unavailable;
-    if (result.strict) {
-      result.effective = effective_backend_e::unavailable;
-    }
     return result;
+  }
+
+  /**
+   * Fold the outcome of the real D3D12 initialization attempt into a selection.
+   *
+   * Strict mode means "tell me loudly when the D3D12 backend I asked for did not
+   * come up", not "refuse to stream". Only an actual failed attempt may take the
+   * pipeline down, and only when d3d12 was requested explicitly -- otherwise a
+   * strict flag left in the environment would kill every encoder on a build
+   * where the D3D12 stage is simply not wired up yet.
+   */
+  inline void
+  apply_d3d12_initialization(
+    selection_t &selection,
+    bool success,
+    fallback_reason_e reason) {
+    if (selection.requested != windows_video_backend_e::d3d12) {
+      return;
+    }
+    if (success) {
+      selection.fallback = fallback_reason_e::none;
+      return;
+    }
+
+    selection.fallback = reason;
+    if (selection.strict) {
+      selection.effective = effective_backend_e::unavailable;
+    }
   }
 }  // namespace platf::dxgi::video_backend

@@ -368,19 +368,19 @@ namespace platf::dxgi {
         }
 
         // Poll the previous analysis result before taking the capture mutex.
+        // Both readbacks are drained unconditionally: enabling the D3D12 path
+        // does not retire the D3D11 one, which still serves frames the compute
+        // converter could not snapshot, and an unread D3D11 staging buffer
+        // would otherwise stay pending forever.
         if (d3d12_hdr_analysis && d3d12_hdr_analysis->available()) {
           read_d3d12_hdr_analysis_results(video_frame_index);
-          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
-            runtime_status.scene_metadata_active = true;
-            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-          }
         }
-        else if (hdr_analysis_pending) {
+        if (hdr_analysis_pending) {
           read_hdr_analysis_results(video_frame_index);
-          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
-            runtime_status.scene_metadata_active = true;
-            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-          }
+        }
+        if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+          runtime_status.scene_metadata_active = true;
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
@@ -510,11 +510,16 @@ namespace platf::dxgi {
               cs_t &shader = write_hdr_analysis_snapshot ?
                                (cs_is_scaled ? cs_p010_scaled_hdr_analysis : cs_p010_hdr_analysis) :
                                (cs_is_scaled ? cs_p010_scaled : cs_p010);
+              // When a D3D12 slot was acquired, the converter writes the cell
+              // statistics straight into the shared snapshot texture. That keeps
+              // the hybrid path copy-free: the only extra work versus D3D11 is
+              // the fence signal in submit().
               cs_used = try_dispatch_cs_convert(
                 img_ctx.encoder_input_res.get(),
                 shader,
                 write_hdr_analysis_snapshot,
-                gpu_timing);
+                gpu_timing,
+                d3d12_snapshot ? d3d12_snapshot->uav : nullptr);
               hdr_analysis_snapshot_written =
                 cs_used && write_hdr_analysis_snapshot;
             }
@@ -536,18 +541,9 @@ namespace platf::dxgi {
         if (vram_timing_enabled) {
           gpu_timing_stats.m0.record_conversion_path(cs_used, cs_writes_output_directly);
         }
-        if (d3d12_snapshot && hdr_analysis_snapshot_written) {
-          if (gpu_timing) {
-            gpu_timing->m0.begin_capture_copy(device_ctx);
-          }
-          device_ctx->CopyResource(
-            d3d12_snapshot->texture,
-            hdr_analysis_snapshot_tex.get());
-          if (gpu_timing) {
-            gpu_timing->m0.end_capture_copy(device_ctx);
-          }
-        }
-        else if (d3d12_snapshot) {
+        if (d3d12_snapshot && !hdr_analysis_snapshot_written) {
+          // The converter never ran (pixel-shader path, or the CS variant was
+          // unavailable), so the shared snapshot holds nothing. Return the slot.
           (void) d3d12_hdr_analysis->cancel_snapshot(
             *d3d12_snapshot);
           d3d12_snapshot.reset();
@@ -561,15 +557,24 @@ namespace platf::dxgi {
         ID3D11Buffer *hdr_analysis_params = nullptr;
 
         if (hdr_analysis_due) {
-          if (d3d12_snapshot && hdr_analysis_snapshot_written) {
+          if (d3d12_snapshot) {
+            // The converter already wrote the cell statistics into the shared
+            // D3D12 texture. submit() below signals the fence and queues the
+            // compute passes; nothing to bind on the D3D11 side.
             dispatch_hdr_after_unlock = true;
           }
           else if (hdr_analysis_snapshot_written) {
             hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
             hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
-          } else {
-            // Fallback for the pixel-shader path and devices that cannot bind the
-            // low-resolution snapshot UAV.
+            dispatch_hdr_after_unlock = true;
+          }
+          // Fallback for the pixel-shader path and devices that cannot bind the
+          // low-resolution snapshot UAV. Only safe when no D3D11 readback is
+          // still outstanding: dispatching would overwrite the staging buffer
+          // that read_hdr_analysis_results() has yet to map. `hdr_analysis_due`
+          // already guarantees this for the pure-D3D11 cadence, but the D3D12
+          // path can land here after cancelling its slot.
+          else if (!hdr_analysis_pending) {
             if (gpu_timing) {
               gpu_timing->m0.begin_capture_copy(device_ctx);
             }
@@ -579,8 +584,6 @@ namespace platf::dxgi {
             }
             hdr_analysis_srv = hdr_analysis_input_srv.get();
             hdr_analysis_params = hdr_analysis_cbuf.get();
-          }
-          if (!d3d12_snapshot) {
             dispatch_hdr_after_unlock = true;
           }
         }
@@ -2566,7 +2569,8 @@ namespace platf::dxgi {
       ID3D11ShaderResourceView *input_srv,
       cs_t &shader,
       bool write_hdr_analysis_snapshot,
-      gpu_timing_sample_t *timing) {
+      gpu_timing_sample_t *timing,
+      ID3D11UnorderedAccessView *snapshot_uav_override = nullptr) {
       if (!cs_path_active) return false;
       if (!shader) return false;
       if (timing) {
@@ -2591,7 +2595,9 @@ namespace platf::dxgi {
       ID3D11UnorderedAccessView *uavs[3] = {
         cs_y_uav.get(),
         cs_uv_uav.get(),
-        write_hdr_analysis_snapshot ? hdr_analysis_snapshot_uav.get() : nullptr,
+        write_hdr_analysis_snapshot ?
+          (snapshot_uav_override ? snapshot_uav_override : hdr_analysis_snapshot_uav.get()) :
+          nullptr,
       };
       const UINT uav_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, uavs, nullptr);

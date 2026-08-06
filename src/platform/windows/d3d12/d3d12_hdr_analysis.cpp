@@ -87,6 +87,7 @@ namespace platf::dxgi::d3d12 {
     struct slot_t {
       ComPtr<ID3D12Resource> snapshot;
       ComPtr<ID3D11Texture2D> d3d11_snapshot;
+      ComPtr<ID3D11UnorderedAccessView> d3d11_snapshot_uav;
       ComPtr<ID3D12Resource> group_results;
       ComPtr<ID3D12Resource> histogram;
       ComPtr<ID3D12Resource> final_result;
@@ -127,6 +128,15 @@ namespace platf::dxgi::d3d12 {
 
     HRESULT
     create_pipeline() {
+      // embed_dxil.cmake emits zero-sized blobs when DXC was unavailable at
+      // configure time. Report that as an ordinary capability miss so the
+      // caller keeps the D3D11 analysis path instead of surfacing a driver
+      // error the user can do nothing about.
+      if (shaders::hdr_luminance_analysis_cs_dxil_size == 0 ||
+          shaders::hdr_luminance_reduce_cs_dxil_size == 0) {
+        return fail(E_NOTIMPL, "hdr_shader_unavailable");
+      }
+
       D3D12_DESCRIPTOR_RANGE ranges[2] {};
       ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
       ranges[0].NumDescriptors = 1;
@@ -243,8 +253,13 @@ namespace platf::dxgi::d3d12 {
       snapshot_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
       snapshot_desc.SampleDesc.Count = 1;
       snapshot_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+      // ALLOW_UNORDERED_ACCESS so the D3D11 conversion shader can write the
+      // cell-statistics snapshot directly into this shared resource.
+      // ALLOW_SIMULTANEOUS_ACCESS keeps it usable from both devices while it
+      // stays in the COMMON state; the shared fence orders the two accesses.
       snapshot_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(
         D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
         D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
       auto status = foundation->device()->CreateCommittedResource(
         &default_heap,
@@ -278,6 +293,17 @@ namespace platf::dxgi::d3d12 {
       }
       if (FAILED(status)) {
         return fail(status, "hdr_snapshot_open_d3d11");
+      }
+
+      D3D11_UNORDERED_ACCESS_VIEW_DESC snapshot_uav_desc {};
+      snapshot_uav_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      snapshot_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+      status = d3d11_device->CreateUnorderedAccessView(
+        slot.d3d11_snapshot.Get(),
+        &snapshot_uav_desc,
+        &slot.d3d11_snapshot_uav);
+      if (FAILED(status)) {
+        return fail(status, "hdr_snapshot_uav_create");
       }
 
       auto group_desc = buffer_desc(
@@ -690,6 +716,7 @@ namespace platf::dxgi::d3d12 {
       *index,
       slot.generation,
       slot.d3d11_snapshot.Get(),
+      slot.d3d11_snapshot_uav.Get(),
     };
   }
 

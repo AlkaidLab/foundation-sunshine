@@ -19,7 +19,12 @@ namespace platf::dxgi::d3d12 {
   struct writable_snapshot_t {
     std::size_t slot = 0;
     std::uint64_t generation = 0;
+
+    // D3D11 views onto the shared D3D12 snapshot texture. `uav` lets the
+    // D3D11 conversion shader write cell statistics straight into the shared
+    // resource, so no staging copy is needed before the D3D12 compute pass.
     ID3D11Texture2D *texture = nullptr;
+    ID3D11UnorderedAccessView *uav = nullptr;
   };
 
   struct completed_hdr_result_t {

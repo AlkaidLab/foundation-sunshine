@@ -81,14 +81,17 @@ namespace platf::dxgi {
           adapter.get(),
           device.get(),
           device_ctx.get());
+        video_backend::apply_d3d12_initialization(
+          *video_backend_selection,
+          init_result.success,
+          init_result.reason);
         if (!init_result.success) {
-          video_backend_selection->fallback = init_result.reason;
           video_backend_hresult = init_result.hresult;
           video_backend_stage = init_result.stage;
           d3d12_video_device.reset();
         }
         else {
-          video_backend_stage = "compute_stage_unavailable";
+          video_backend_stage = "d3d12_base_ready";
           const auto &capabilities = d3d12_video_device->capabilities();
           BOOST_LOG(debug) << "[video_backend] d3d12_base=ready slots="
                            << d3d12::resource_ring_t::slot_count
@@ -151,6 +154,12 @@ namespace platf::dxgi {
     if (!init_result.success) {
       video_backend_stage = init_result.stage;
       video_backend_hresult = init_result.hresult;
+      if (video_backend_selection) {
+        // The base device came up but the analysis pipeline did not, so the
+        // selection must not keep advertising a clean D3D12 setup.
+        video_backend_selection->fallback =
+          video_backend::fallback_reason_e::shared_resource_failed;
+      }
       BOOST_LOG(info) << "D3D12 HDR analysis unavailable at "
                       << init_result.stage << ": "
                       << util::log_hex(init_result.hresult)
@@ -206,6 +215,8 @@ namespace platf::dxgi {
         "not_requested" :
       d3d12_video_device ? "ready" :
                            "unavailable";
+    // Only the hybrid path moves analysis onto D3D12. Everything else, including
+    // an SDR stream that never analyses anything, keeps the D3D11 pipeline.
     const auto analysis_backend =
       selection.effective == video_backend::effective_backend_e::hybrid ?
         "d3d12" :

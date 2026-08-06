@@ -37,12 +37,50 @@ namespace {
     EXPECT_EQ(selection.fallback, backend::fallback_reason_e::build_stage_unavailable);
   }
 
-  TEST(WindowsVideoBackend, StrictD3D12FailsWhenBuildStageIsUnavailable) {
+  TEST(WindowsVideoBackend, StrictD3D12StillStreamsUntilAnAttemptFails) {
     const auto selection = backend::resolve("auto", "d3d12", true, false);
 
     EXPECT_TRUE(selection.strict);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    EXPECT_TRUE(selection.pipeline_available());
+  }
+
+  TEST(WindowsVideoBackend, StrictD3D12FailsOnlyAfterARealInitializationFailure) {
+    auto selection = backend::resolve("auto", "d3d12", true, false);
+    backend::apply_d3d12_initialization(
+      selection, false, backend::fallback_reason_e::d3d12_device_failed);
+
+    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::d3d12_device_failed);
     EXPECT_EQ(selection.effective, backend::effective_backend_e::unavailable);
     EXPECT_FALSE(selection.pipeline_available());
+  }
+
+  TEST(WindowsVideoBackend, SuccessfulD3D12InitializationClearsTheBuildStageFallback) {
+    auto selection = backend::resolve("d3d12", std::nullopt, true, false);
+    backend::apply_d3d12_initialization(
+      selection, true, backend::fallback_reason_e::none);
+
+    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::none);
+    EXPECT_TRUE(selection.pipeline_available());
+  }
+
+  TEST(WindowsVideoBackend, NonStrictD3D12FailureKeepsStreaming) {
+    auto selection = backend::resolve("d3d12", std::nullopt, false, false);
+    backend::apply_d3d12_initialization(
+      selection, false, backend::fallback_reason_e::d3d12_device_failed);
+
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    EXPECT_TRUE(selection.pipeline_available());
+  }
+
+  TEST(WindowsVideoBackend, AutoIsNeverTakenDownByAStrictFlag) {
+    auto selection = backend::resolve("auto", std::nullopt, true, false);
+    backend::apply_d3d12_initialization(
+      selection, false, backend::fallback_reason_e::d3d12_device_failed);
+
+    EXPECT_FALSE(selection.strict);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    EXPECT_TRUE(selection.pipeline_available());
   }
 
   TEST(WindowsVideoBackend, InvalidOverrideFallsBackToAuto) {
