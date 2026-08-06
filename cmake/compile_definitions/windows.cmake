@@ -14,6 +14,12 @@ list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 # can remove after https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120495 is available in mingw-w64
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-template-body)
 
+# Template-heavy translation units (confighttp.cpp in particular) exceed the
+# 32767-section COFF limit. Without big-obj the assembler silently writes a
+# corrupt symbol table whose COMDAT entries (typeinfo, inline members) then
+# resolve as undefined at link time.
+list(APPEND SUNSHINE_COMPILE_OPTIONS -Wa,-mbig-obj)
+
 # see gcc bug 98723
 add_definitions(-DUSE_BOOST_REGEX)
 
