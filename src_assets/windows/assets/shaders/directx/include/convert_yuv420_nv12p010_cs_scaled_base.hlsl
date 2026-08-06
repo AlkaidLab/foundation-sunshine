@@ -5,7 +5,9 @@
 // using:
 //   - Y plane: 5-tap Catmull-Rom via bilinear samples (matches PS bicubic
 //     quality with ~5 SampleLevel taps vs PS's 16 raw taps).
-//   - UV plane: hardware bilinear box filter at the 2x2 chroma center.
+//   - UV plane: 6 bilinear taps forming the type-0 sited chroma filter
+//     ([1,2,1]/4 horizontal x [1,1]/2 vertical), matching the
+//     LEFT_SUBSAMPLING_SCALE PS.
 //
 // Includer must `#define CONVERT_FUNCTION fn` before including this file.
 //
@@ -150,18 +152,32 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
 
     // ---- UV plane (one thread per 2x2 block) ----
     if ((GTid.x & 1u) == 0u && (GTid.y & 1u) == 0u) {
-        bool uv_inside_pair = (rect_pos.x + 1 < out_rect_size.x) && (rect_pos.y + 1 < out_rect_size.y);
-        if (!uv_inside_pair && !inside_rect) {
+        if (!inside_rect) {
             return;
         }
-        // Hardware bilinear box: sample at the center of the 2x2 output pixel
-        // group, mapped into source UV space. For non-edge UV pixels this is
-        // equivalent to averaging the 4 surrounding source taps weighted by
-        // the inverse-scale; cheaper than 4x Catmull-Rom and visually fine for
-        // chroma (already half-resolution).
-        float2 uv_pair_center_out = float2(rect_pos + 1);  // center of (rect_pos, rect_pos+1) box
-        float2 uv_norm = uv_pair_center_out / float2(out_rect_size);
-        float3 rgb_avg = source_image.SampleLevel(linear_sampler, uv_norm, 0).rgb;
+        // Type-0 chroma siting: horizontally co-sited with the left luma column,
+        // vertically centred between the two luma rows. Six bilinear taps at output
+        // pixel centres, weighted [1, 2, 1] / 8 per row across both rows -- the same
+        // tap layout and weights as the LEFT_SUBSAMPLING_SCALE pixel shader.
+        //
+        // A single tap at the 2x2 centre (what this used to do) is both mis-sited by
+        // half a luma pixel and far too narrow when downscaling: at 2x it reads one
+        // 2x2 source neighbourhood where the chroma pixel actually spans 4x4.
+        // The CLAMP sampler supplies edge replication at the rect borders.
+        float2 inv_out = 1.0 / float2(out_rect_size);
+        float xl = (float(rect_pos.x) - 0.5) * inv_out.x;
+        float xc = (float(rect_pos.x) + 0.5) * inv_out.x;
+        float xr = (float(rect_pos.x) + 1.5) * inv_out.x;
+        float yt = (float(rect_pos.y) + 0.5) * inv_out.y;
+        float yb = (float(rect_pos.y) + 1.5) * inv_out.y;
+
+        float3 rgb_avg =
+            (source_image.SampleLevel(linear_sampler, float2(xl, yt), 0).rgb +
+             source_image.SampleLevel(linear_sampler, float2(xl, yb), 0).rgb) * 0.125 +
+            (source_image.SampleLevel(linear_sampler, float2(xc, yt), 0).rgb +
+             source_image.SampleLevel(linear_sampler, float2(xc, yb), 0).rgb) * 0.25 +
+            (source_image.SampleLevel(linear_sampler, float2(xr, yt), 0).rgb +
+             source_image.SampleLevel(linear_sampler, float2(xr, yb), 0).rgb) * 0.125;
 
         float3 rgb_uv = CONVERT_FUNCTION(rgb_avg);
         float u = dot(color_vec_u.xyz, rgb_uv) + color_vec_u.w;
