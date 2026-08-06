@@ -135,11 +135,17 @@ namespace video {
     }
   };
 
+  // Convert a total video transport budget (including FEC) to encoder bitrate.
   int
   encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage);
 
+  // Cap a dynamic total-bitrate request, then convert it to encoder bitrate.
   int
-  cap_encoder_bitrate(int encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
+  encoder_bitrate_for_total_request(int requested_total_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
+
+  // Cap an initial bitrate that has already been converted to an encoder budget.
+  int
+  cap_initial_encoder_bitrate(int initial_encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage);
 
   struct input_activity_boost_policy_t {
     bool configured {};

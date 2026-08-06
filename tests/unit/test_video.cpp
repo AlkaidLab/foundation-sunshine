@@ -128,10 +128,16 @@ TEST(VideoBitrate, ConvertsTotalBitrateToEncoderBitrate) {
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 81), 50000);
 }
 
-TEST(VideoBitrate, CapsEncoderBitrateUsingTotalBitrateLimit) {
-  EXPECT_EQ(video::cap_encoder_bitrate(90000, 0, 10), 90000);
-  EXPECT_EQ(video::cap_encoder_bitrate(90000, 50000, 10), 45000);
-  EXPECT_EQ(video::cap_encoder_bitrate(40000, 50000, 10), 40000);
+TEST(VideoBitrate, ConvertsCappedTotalRequestToEncoderBitrate) {
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 0, 10), 81000);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 10), 45000);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(40000, 50000, 10), 36000);
+}
+
+TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 0, 10), 90000);
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 50000, 10), 45000);
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
 TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {

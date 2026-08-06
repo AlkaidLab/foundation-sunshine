@@ -164,13 +164,23 @@ namespace video {
   }
 
   int
-  cap_encoder_bitrate(int encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
+  encoder_bitrate_for_total_request(int requested_total_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
+    auto capped_total_bitrate_kbps = requested_total_bitrate_kbps;
+    if (max_total_bitrate_kbps > 0) {
+      capped_total_bitrate_kbps = std::min(capped_total_bitrate_kbps, max_total_bitrate_kbps);
+    }
+
+    return encoder_bitrate_from_total_bitrate(capped_total_bitrate_kbps, fec_percentage);
+  }
+
+  int
+  cap_initial_encoder_bitrate(int initial_encoder_bitrate_kbps, int max_total_bitrate_kbps, int fec_percentage) {
     if (max_total_bitrate_kbps <= 0) {
-      return encoder_bitrate_kbps;
+      return initial_encoder_bitrate_kbps;
     }
 
     return std::min(
-      encoder_bitrate_kbps,
+      initial_encoder_bitrate_kbps,
       encoder_bitrate_from_total_bitrate(max_total_bitrate_kbps, fec_percentage)
     );
   }
@@ -639,7 +649,7 @@ namespace video {
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx) return;
 
-      const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
+      const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
         bitrate_kbps,
         config::video.max_bitrate,
         config::stream.fec_percentage
@@ -771,7 +781,7 @@ namespace video {
       if (device && device->nvenc) {
         // 考虑FEC影响，调整编码码率
         // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
+        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
           bitrate_kbps,
           config::video.max_bitrate,
           config::stream.fec_percentage
@@ -945,7 +955,7 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->amf) {
-        const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
+        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
           bitrate_kbps,
           config::video.max_bitrate,
           config::stream.fec_percentage
@@ -2855,7 +2865,7 @@ namespace video {
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
     auto effective_config = config;
-    effective_config.bitrate = cap_encoder_bitrate(
+    effective_config.bitrate = cap_initial_encoder_bitrate(
       config.bitrate,
       config::video.max_bitrate,
       config::stream.fec_percentage
