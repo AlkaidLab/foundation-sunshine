@@ -2,7 +2,8 @@
 //
 // Each threadgroup writes a 16x16 block of Y plane + 8x8 block of UV plane.
 // One source RGB sample per thread is cached in groupshared memory, then reused
-// for both Y (per pixel) and UV (2x2 box filter, matching LEFT_SUBSAMPLING PS).
+// for both Y (per pixel) and UV (type-0 sited chroma tent, matching the
+// LEFT_SUBSAMPLING PS).
 //
 // Includer must `#define CONVERT_FUNCTION fn` before including this file.
 //
@@ -38,9 +39,12 @@ cbuffer cs_layout_cbuffer : register(b1) {
 
 #include "include/hdr_analysis_snapshot.hlsl"
 
-groupshared float3 s_rgb[16][16];
-
 #define CS_TILE 16
+
+// Column 0 is a left halo: s_rgb[y][k] holds the pixel at tile column (k - 1).
+// The type-0 chroma tent reaches one pixel to the left of each 2x2 block, which
+// for GTid.x == 0 lives in the previous threadgroup.
+groupshared float3 s_rgb[CS_TILE][CS_TILE + 1];
 
 [numthreads(CS_TILE, CS_TILE, 1)]
 void main_cs(uint3 DTid : SV_DispatchThreadID,
@@ -58,7 +62,19 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     if (inside_rect && src_pos.x < src_size.x && src_pos.y < src_size.y) {
         src_rgb = source_image.Load(int3(src_pos, 0)).rgb;
     }
-    s_rgb[GTid.y][GTid.x] = src_rgb;
+    s_rgb[GTid.y][GTid.x + 1] = src_rgb;
+
+    // Left halo column, needed by the chroma tent of the leftmost 2x2 block.
+    // At the rect's left edge we replicate the first column, which is exactly what
+    // the pixel shader's CLAMP sampler does.
+    if (GTid.x == 0u) {
+        float3 halo_rgb = src_rgb;
+        int halo_x = rect_pos.x - 1;
+        if (halo_x >= 0 && halo_x < src_size.x && inside_rect && src_pos.y < src_size.y) {
+            halo_rgb = source_image.Load(int3(halo_x, src_pos.y, 0)).rgb;
+        }
+        s_rgb[GTid.y][0] = halo_rgb;
+    }
 
     GroupMemoryBarrierWithGroupSync();
 
@@ -112,25 +128,26 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     // ---- UV plane (one thread per 2x2 block) ----
     // Only threads at even (gx, gy) within the tile emit a UV pixel.
     if ((GTid.x & 1u) == 0u && (GTid.y & 1u) == 0u) {
-        // Bounds check on the UV pixel: we need 2x2 source coverage.
-        bool uv_inside = (rect_pos.x + 1 < out_rect_size.x) && (rect_pos.y + 1 < out_rect_size.y);
-        // Allow edge UV pixels even when the second column/row is out-of-rect: just clamp the average.
-        // Initialize to silence fxc X4000 (the else-branch returns, so the read is safe at runtime,
-        // but the compiler's flow analysis cannot prove it through the early `return`).
-        float3 rgb_avg = float3(0, 0, 0);
-        if (uv_inside) {
-            rgb_avg = (s_rgb[GTid.y    ][GTid.x    ] +
-                       s_rgb[GTid.y    ][GTid.x + 1] +
-                       s_rgb[GTid.y + 1][GTid.x    ] +
-                       s_rgb[GTid.y + 1][GTid.x + 1]) * 0.25;
-        }
-        else if (rect_pos.x < out_rect_size.x && rect_pos.y < out_rect_size.y) {
-            // Edge: fall back to a single sample.
-            rgb_avg = s_rgb[GTid.y][GTid.x];
-        }
-        else {
+        if (rect_pos.x >= out_rect_size.x || rect_pos.y >= out_rect_size.y) {
             return;
         }
+
+        // Type-0 chroma siting (the H.264/HEVC default when chroma_sample_loc is
+        // unspecified): horizontally co-sited with the left luma column, vertically
+        // centred between the two luma rows. That is a [1/4, 1/2, 1/4] horizontal
+        // tent times a [1/2, 1/2] vertical average -- the same effective filter the
+        // LEFT_SUBSAMPLING pixel shader gets from its two bilinear taps. A plain 2x2
+        // box would instead sit half a luma pixel to the right.
+        uint lx = GTid.x;       // pixel at rect_pos.x - 1 (halo column when GTid.x == 0)
+        uint cx = GTid.x + 1u;  // pixel at rect_pos.x
+        // Replicate at the right/bottom edges, matching the clamped sampler.
+        uint rx = (rect_pos.x + 1 < out_rect_size.x) ? (GTid.x + 2u) : cx;
+        uint ty = GTid.y;
+        uint by = (rect_pos.y + 1 < out_rect_size.y) ? (GTid.y + 1u) : ty;
+
+        float3 rgb_avg = (s_rgb[ty][lx] + s_rgb[by][lx]) * 0.125 +
+                         (s_rgb[ty][cx] + s_rgb[by][cx]) * 0.25 +
+                         (s_rgb[ty][rx] + s_rgb[by][rx]) * 0.125;
 
         float3 rgb_uv = CONVERT_FUNCTION(rgb_avg);
         float u = dot(color_vec_u.xyz, rgb_uv) + color_vec_u.w;
