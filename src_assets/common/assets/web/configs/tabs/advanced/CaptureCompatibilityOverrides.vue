@@ -84,6 +84,26 @@ const config = ref(props.config)
                 </div>
               </div>
 
+              <!-- Video pipeline backend -->
+              <div class="mb-3">
+                <label for="windows_video_backend" class="form-label">
+                  {{ $t('config.windows_video_backend') }}
+                </label>
+                <select
+                  id="windows_video_backend"
+                  class="form-select"
+                  v-model="config.windows_video_backend"
+                  aria-describedby="windows_video_backend_desc"
+                >
+                  <option value="auto">{{ $t('config.windows_video_backend_auto') }}</option>
+                  <option value="d3d11">{{ $t('config.windows_video_backend_d3d11') }}</option>
+                  <option value="d3d12">{{ $t('config.windows_video_backend_d3d12') }}</option>
+                </select>
+                <div id="windows_video_backend_desc" class="form-text">
+                  {{ $t('config.windows_video_backend_desc') }}
+                </div>
+              </div>
+
             </div>
           </div>
         </div>

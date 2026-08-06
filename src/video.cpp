@@ -3235,8 +3235,13 @@ namespace video {
   }
 
   std::unique_ptr<platf::encode_device_t>
-  make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
+  make_encode_device(
+    platf::display_t &disp,
+    const encoder_t &encoder,
+    const config_t &config,
+    bool is_probe = false) {
     std::unique_ptr<platf::encode_device_t> result;
+    std::string_view encoder_backend;
 
     auto colorspace = colorspace_from_client_config(config, disp.is_hdr());
 
@@ -3275,17 +3280,23 @@ namespace video {
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
+      encoder_backend = "avcodec_d3d11";
       result = disp.make_avcodec_encode_device(pix_fmt);
     }
     else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
+      encoder_backend = "nvenc_d3d11";
       result = disp.make_nvenc_encode_device(pix_fmt);
     }
     else if (dynamic_cast<const encoder_platform_formats_amf *>(encoder.platform_formats.get())) {
+      encoder_backend = "amf_d3d11";
       result = disp.make_amf_encode_device(pix_fmt);
     }
 
     if (result) {
       result->colorspace = colorspace;
+      if (!is_probe) {
+        disp.report_video_backend_selection(encoder_backend);
+      }
     }
 
     return result;
@@ -3786,7 +3797,7 @@ namespace video {
 
   int
   validate_config(std::shared_ptr<platf::display_t> disp, const encoder_t &encoder, const config_t &config) {
-    auto encode_device = make_encode_device(*disp, encoder, config);
+    auto encode_device = make_encode_device(*disp, encoder, config, true);
     if (!encode_device) {
       return -1;
     }

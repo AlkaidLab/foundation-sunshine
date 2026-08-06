@@ -141,6 +141,120 @@ else()
     set(SUNSHINE_GUI_TRAY 0)
 endif()
 
+# DXC compiles the SM6 DXIL used by the experimental D3D12 HDR analysis
+# backend. It ships with the Windows SDK but is absent from a bare MSYS2 /
+# mingw toolchain, so a missing DXC downgrades the feature instead of failing
+# the build: embed_dxil.cmake emits zero-sized blobs and the backend reports
+# `hdr_shader_unavailable` at runtime, leaving the D3D11 analysis path active.
+if (NOT SUNSHINE_DXC_EXECUTABLE)
+    find_program(SUNSHINE_DXC_EXECUTABLE NAMES dxc.exe dxc)
+endif ()
+if (NOT SUNSHINE_DXC_EXECUTABLE)
+    file(GLOB sunshine_windows_dxc_candidates
+            "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/dxc.exe")
+    list(SORT sunshine_windows_dxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    if (sunshine_windows_dxc_candidates)
+        list(GET sunshine_windows_dxc_candidates 0 SUNSHINE_DXC_EXECUTABLE)
+    endif ()
+endif ()
+
+# FXC only cross-validates that the same HLSL still compiles as SM5 for the
+# D3D11 path. It is a developer guard rail, never a build requirement.
+if (NOT SUNSHINE_FXC_EXECUTABLE)
+    find_program(SUNSHINE_FXC_EXECUTABLE NAMES fxc.exe fxc)
+endif ()
+if (NOT SUNSHINE_FXC_EXECUTABLE)
+    file(GLOB sunshine_windows_fxc_candidates
+            "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/fxc.exe")
+    list(SORT sunshine_windows_fxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    if (sunshine_windows_fxc_candidates)
+        list(GET sunshine_windows_fxc_candidates 0 SUNSHINE_FXC_EXECUTABLE)
+    endif ()
+endif ()
+
+set(D3D12_SHADER_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/windows/d3d12")
+set(D3D12_HDR_ANALYSIS_DXIL "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_analysis_cs.dxil")
+set(D3D12_HDR_REDUCE_DXIL "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_reduce_cs.dxil")
+set(D3D11_HDR_ANALYSIS_DXBC "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_analysis_cs.dxbc")
+set(D3D11_HDR_REDUCE_DXBC "${D3D12_SHADER_GENERATED_DIR}/hdr_luminance_reduce_cs.dxbc")
+set(D3D12_HDR_SHADER_HEADER "${D3D12_SHADER_GENERATED_DIR}/d3d12_hdr_shaders.h")
+
+set(D3D12_HDR_SHADER_SOURCES
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl")
+set(D3D12_HDR_SHADER_INCLUDE_DIR
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx")
+
+set(D3D12_HDR_SHADER_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${D3D12_SHADER_GENERATED_DIR}")
+set(D3D12_HDR_SHADER_BYPRODUCTS "")
+
+if (EXISTS "${SUNSHINE_DXC_EXECUTABLE}")
+    list(APPEND D3D12_HDR_SHADER_BYPRODUCTS
+            "${D3D12_HDR_ANALYSIS_DXIL}"
+            "${D3D12_HDR_REDUCE_DXIL}")
+    list(APPEND D3D12_HDR_SHADER_COMMANDS
+            COMMAND "${SUNSHINE_DXC_EXECUTABLE}"
+                    -T cs_6_0 -E main_cs
+                    -I "${D3D12_HDR_SHADER_INCLUDE_DIR}"
+                    -Fo "${D3D12_HDR_ANALYSIS_DXIL}"
+                    "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+            COMMAND "${SUNSHINE_DXC_EXECUTABLE}"
+                    -T cs_6_0 -E main_cs
+                    -I "${D3D12_HDR_SHADER_INCLUDE_DIR}"
+                    -Fo "${D3D12_HDR_REDUCE_DXIL}"
+                    "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl")
+else ()
+    message(WARNING
+            "DXC not found; the experimental D3D12 HDR analysis backend will be "
+            "disabled at runtime (windows_video_backend=d3d12 falls back to D3D11). "
+            "Install the Windows SDK or set SUNSHINE_DXC_EXECUTABLE to enable it.")
+endif ()
+
+if (EXISTS "${SUNSHINE_FXC_EXECUTABLE}")
+    list(APPEND D3D12_HDR_SHADER_BYPRODUCTS
+            "${D3D11_HDR_ANALYSIS_DXBC}"
+            "${D3D11_HDR_REDUCE_DXBC}")
+    list(APPEND D3D12_HDR_SHADER_COMMANDS
+            COMMAND "${SUNSHINE_FXC_EXECUTABLE}"
+                    /nologo /T cs_5_0 /E main_cs
+                    /I "${D3D12_HDR_SHADER_INCLUDE_DIR}"
+                    /Fo "${D3D11_HDR_ANALYSIS_DXBC}"
+                    "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_analysis_cs.hlsl"
+            COMMAND "${SUNSHINE_FXC_EXECUTABLE}"
+                    /nologo /T cs_5_0 /E main_cs
+                    /I "${D3D12_HDR_SHADER_INCLUDE_DIR}"
+                    /Fo "${D3D11_HDR_REDUCE_DXBC}"
+                    "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/hdr_luminance_reduce_cs.hlsl")
+else ()
+    message(STATUS "FXC not found; skipping the SM5 cross-validation of the HDR analysis shaders")
+endif ()
+
+if (EXISTS "${SUNSHINE_DXC_EXECUTABLE}")
+    list(APPEND D3D12_HDR_SHADER_COMMANDS
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DANALYSIS_DXIL=${D3D12_HDR_ANALYSIS_DXIL}"
+                    "-DREDUCE_DXIL=${D3D12_HDR_REDUCE_DXIL}"
+                    "-DOUTPUT_HEADER=${D3D12_HDR_SHADER_HEADER}"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake")
+else ()
+    list(APPEND D3D12_HDR_SHADER_COMMANDS
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DSTUB=ON"
+                    "-DOUTPUT_HEADER=${D3D12_HDR_SHADER_HEADER}"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake")
+endif ()
+
+add_custom_command(
+        OUTPUT "${D3D12_HDR_SHADER_HEADER}"
+        BYPRODUCTS ${D3D12_HDR_SHADER_BYPRODUCTS}
+        ${D3D12_HDR_SHADER_COMMANDS}
+        DEPENDS
+                "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake"
+                ${D3D12_HDR_SHADER_SOURCES}
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/include/common.hlsl"
+        VERBATIM)
+
 set(PLATFORM_TARGET_FILES
         "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
@@ -161,6 +275,18 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_internal.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_base.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_backend.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_backend.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/video_pipeline_telemetry.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp"
+        "${D3D12_HDR_SHADER_HEADER}"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_ram.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_wgc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_amd.cpp"
@@ -199,6 +325,7 @@ list(PREPEND PLATFORM_LIBRARIES
         avrt
         crypt32
         d3d11
+        d3d12
         D3DCompiler
         dwmapi
         dxgi

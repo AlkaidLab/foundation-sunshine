@@ -22,9 +22,11 @@ extern "C" {
 }
 
 #include "display.h"
+#include "d3d12/d3d12_hdr_analysis.h"
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
+#include "video_pipeline_telemetry.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
@@ -62,39 +64,7 @@ namespace platf::dxgi {
     constexpr uint64_t vram_gpu_timing_sample_interval = 30;
     constexpr size_t vram_gpu_timing_max_pending = 8;
 
-    struct timing_bucket_t {
-      uint64_t samples = 0;
-      double total_ms = 0.0;
-      double min_ms = 0.0;
-      double max_ms = 0.0;
-
-      void
-      add(double ms) {
-        if (samples == 0) {
-          min_ms = ms;
-          max_ms = ms;
-        }
-        else {
-          min_ms = std::min(min_ms, ms);
-          max_ms = std::max(max_ms, ms);
-        }
-        total_ms += ms;
-        ++samples;
-      }
-
-      double
-      avg_ms() const {
-        return samples ? total_ms / static_cast<double>(samples) : 0.0;
-      }
-
-      void
-      reset() {
-        samples = 0;
-        total_ms = 0.0;
-        min_ms = 0.0;
-        max_ms = 0.0;
-      }
-    };
+    using timing_bucket_t = telemetry::sample_window_t;
 
     double
     gpu_delta_ms(UINT64 begin, UINT64 end, UINT64 frequency) {
@@ -317,6 +287,7 @@ namespace platf::dxgi {
       query_t after_dispatch;
       query_t before_copy;
       query_t after_copy;
+      telemetry::d3d11_stage_sample_t<query_t> m0;
       query_t end;
       bool cs_used = false;
       bool scratch_copy = false;
@@ -331,6 +302,7 @@ namespace platf::dxgi {
       timing_bucket_t dispatch;
       timing_bucket_t unbind;
       timing_bucket_t scratch_copy;
+      telemetry::m0_pipeline_metrics_t m0;
       uint64_t cs_samples = 0;
       uint64_t draw_samples = 0;
       uint64_t direct_uav_samples = 0;
@@ -346,6 +318,7 @@ namespace platf::dxgi {
         dispatch.reset();
         unbind.reset();
         scratch_copy.reset();
+        m0.reset();
         cs_samples = 0;
         draw_samples = 0;
         direct_uav_samples = 0;
@@ -385,6 +358,7 @@ namespace platf::dxgi {
 
       auto &img = (img_d3d_t &) img_base;
       if (!img.blank) {
+        const auto video_frame_index = video_frame_counter++;
         auto &img_ctx = img_ctx_map[img.id];
         const bool can_analyze_hdr_frame = hdr_analysis_enabled && img.linear_gamma && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 
@@ -394,12 +368,19 @@ namespace platf::dxgi {
         }
 
         // Poll the previous analysis result before taking the capture mutex.
+        // Both readbacks are drained unconditionally: enabling the D3D12 path
+        // does not retire the D3D11 one, which still serves frames the compute
+        // converter could not snapshot, and an unread D3D11 staging buffer
+        // would otherwise stay pending forever.
+        if (d3d12_hdr_analysis && d3d12_hdr_analysis->available()) {
+          read_d3d12_hdr_analysis_results(video_frame_index);
+        }
         if (hdr_analysis_pending) {
-          read_hdr_analysis_results();
-          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
-            runtime_status.scene_metadata_active = true;
-            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-          }
+          read_hdr_analysis_results(video_frame_index);
+        }
+        if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+          runtime_status.scene_metadata_active = true;
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
@@ -499,8 +480,25 @@ namespace platf::dxgi {
         // Try compute-shader fast path first (HDR PQ/HLG -> P010, or SDR -> NV12;
         // type0, no rotation; scaling supported via *_scaled variants).
         const bool input_is_linear_fp16 = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
-        const bool hdr_analysis_due =
+        const bool hdr_analysis_cadence_due =
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
+        const bool use_d3d12_hdr_analysis =
+          d3d12_hdr_analysis && d3d12_hdr_analysis->available();
+        std::optional<d3d12::writable_snapshot_t> d3d12_snapshot;
+        if (hdr_analysis_cadence_due && use_d3d12_hdr_analysis) {
+          d3d12_snapshot =
+            d3d12_hdr_analysis->try_acquire_snapshot();
+        }
+        const bool hdr_analysis_due =
+          hdr_analysis_cadence_due &&
+          (use_d3d12_hdr_analysis ?
+             d3d12_snapshot.has_value() :
+             !hdr_analysis_pending);
+        if (vram_timing_enabled) {
+          gpu_timing_stats.m0.analysis_due += hdr_analysis_cadence_due;
+          analysis_skipped_busy +=
+            hdr_analysis_cadence_due && !hdr_analysis_due;
+        }
         bool cs_used = false;
         bool hdr_analysis_snapshot_written = false;
         if (cs_path_active) {
@@ -512,11 +510,16 @@ namespace platf::dxgi {
               cs_t &shader = write_hdr_analysis_snapshot ?
                                (cs_is_scaled ? cs_p010_scaled_hdr_analysis : cs_p010_hdr_analysis) :
                                (cs_is_scaled ? cs_p010_scaled : cs_p010);
+              // When a D3D12 slot was acquired, the converter writes the cell
+              // statistics straight into the shared snapshot texture. That keeps
+              // the hybrid path copy-free: the only extra work versus D3D11 is
+              // the fence signal in submit().
               cs_used = try_dispatch_cs_convert(
                 img_ctx.encoder_input_res.get(),
                 shader,
                 write_hdr_analysis_snapshot,
-                gpu_timing);
+                gpu_timing,
+                d3d12_snapshot ? d3d12_snapshot->uav : nullptr);
               hdr_analysis_snapshot_written =
                 cs_used && write_hdr_analysis_snapshot;
             }
@@ -535,6 +538,16 @@ namespace platf::dxgi {
           draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
           mark_draw_gpu_timing(gpu_timing);
         }
+        if (vram_timing_enabled) {
+          gpu_timing_stats.m0.record_conversion_path(cs_used, cs_writes_output_directly);
+        }
+        if (d3d12_snapshot && !hdr_analysis_snapshot_written) {
+          // The converter never ran (pixel-shader path, or the CS variant was
+          // unavailable), so the shared snapshot holds nothing. Return the slot.
+          (void) d3d12_hdr_analysis->cancel_snapshot(
+            *d3d12_snapshot);
+          d3d12_snapshot.reset();
+        }
 
         ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
         device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
@@ -544,36 +557,81 @@ namespace platf::dxgi {
         ID3D11Buffer *hdr_analysis_params = nullptr;
 
         if (hdr_analysis_due) {
-          if (hdr_analysis_snapshot_written) {
+          if (d3d12_snapshot) {
+            // The converter already wrote the cell statistics into the shared
+            // D3D12 texture. submit() below signals the fence and queues the
+            // compute passes; nothing to bind on the D3D11 side.
+            dispatch_hdr_after_unlock = true;
+          }
+          else if (hdr_analysis_snapshot_written) {
             hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
             hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
-          } else {
-            // Fallback for the pixel-shader path and devices that cannot bind the
-            // low-resolution snapshot UAV.
+            dispatch_hdr_after_unlock = true;
+          }
+          // Fallback for the pixel-shader path and devices that cannot bind the
+          // low-resolution snapshot UAV. Only safe when no D3D11 readback is
+          // still outstanding: dispatching would overwrite the staging buffer
+          // that read_hdr_analysis_results() has yet to map. `hdr_analysis_due`
+          // already guarantees this for the pure-D3D11 cadence, but the D3D12
+          // path can land here after cancelling its slot.
+          else if (!hdr_analysis_pending) {
+            if (gpu_timing) {
+              gpu_timing->m0.begin_capture_copy(device_ctx);
+            }
             device_ctx->CopyResource(hdr_analysis_input_tex.get(), img_ctx.encoder_texture.get());
+            if (gpu_timing) {
+              gpu_timing->m0.end_capture_copy(device_ctx);
+            }
             hdr_analysis_srv = hdr_analysis_input_srv.get();
             hdr_analysis_params = hdr_analysis_cbuf.get();
+            dispatch_hdr_after_unlock = true;
           }
-          dispatch_hdr_after_unlock = true;
         }
 
         // Release encoder mutex to allow capture code to reuse this image.
-        finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
         if (borrowed_vdd_frame) {
           if (!img.release_borrowed_vdd_after_convert(img_ctx.encoder_mutex.get())) {
+            finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
             return -1;
           }
         }
         else {
           img_ctx.encoder_mutex->ReleaseSync(encoder_release_key);
         }
+        if (dispatch_hdr_after_unlock) {
+          if (vram_timing_enabled) {
+            ++gpu_timing_stats.m0.analysis_dispatched;
+          }
+          if (d3d12_snapshot) {
+            if (!d3d12_hdr_analysis->submit(
+                  *d3d12_snapshot,
+                  video_frame_index)) {
+              if (auto display_vram =
+                    std::dynamic_pointer_cast<display_vram_t>(
+                      display)) {
+                display_vram->disable_d3d12_analysis(
+                  d3d12_hdr_analysis->failure_stage(),
+                  d3d12_hdr_analysis->failure_hresult());
+              }
+              d3d12_hdr_analysis->disable();
+            }
+          }
+          else {
+            dispatch_hdr_analysis(
+              hdr_analysis_srv,
+              hdr_analysis_params,
+              video_frame_index,
+              gpu_timing);
+          }
+        }
+        finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
         if (vram_timing_enabled) {
           cpu_submit_timing.add(elapsed_ms(std::chrono::steady_clock::now() - submit_start));
+          if (can_analyze_hdr_frame && hdr_analysis_last_completed_frame) {
+            analysis_result_age_timing.add(static_cast<double>(
+              video_frame_index - *hdr_analysis_last_completed_frame));
+          }
           log_cpu_timing();
-        }
-
-        if (dispatch_hdr_after_unlock) {
-          dispatch_hdr_analysis(hdr_analysis_srv, hdr_analysis_params);
         }
       }
 
@@ -1005,7 +1063,15 @@ namespace platf::dxgi {
         int active_h = static_cast<int>(std::lround(out_height_f));
         int active_off_x = static_cast<int>(std::lround(offsetX));
         int active_off_y = static_cast<int>(std::lround(offsetY));
-        init_compute_path(out_width, out_height, active_w, active_h, active_off_x, active_off_y, colorspace);
+        init_compute_path(
+          out_width,
+          out_height,
+          active_w,
+          active_h,
+          active_off_x,
+          active_off_y,
+          colorspace,
+          is_probe);
       }
 
       publish_runtime_status(colorspace, is_probe);
@@ -1255,7 +1321,11 @@ namespace platf::dxgi {
       sample.after_copy = make_query(D3D11_QUERY_TIMESTAMP);
       sample.end = make_query(D3D11_QUERY_TIMESTAMP);
       if (!sample.disjoint || !sample.start || !sample.after_dispatch ||
-          !sample.before_copy || !sample.after_copy || !sample.end) {
+          !sample.before_copy || !sample.after_copy ||
+          !sample.m0.initialize([&]() {
+            return make_query(D3D11_QUERY_TIMESTAMP);
+          }) ||
+          !sample.end) {
         gpu_timing_disabled = true;
         return false;
       }
@@ -1305,19 +1375,29 @@ namespace platf::dxgi {
         UINT64 after_dispatch = 0;
         UINT64 before_copy = 0;
         UINT64 after_copy = 0;
+        telemetry::d3d11_stage_values_t m0_values {};
         UINT64 end = 0;
-        const bool ready =
+        bool ready =
           device_ctx->GetData(sample.start.get(), &start, sizeof(start), 0) == S_OK &&
           device_ctx->GetData(sample.after_dispatch.get(), &after_dispatch, sizeof(after_dispatch), 0) == S_OK &&
           device_ctx->GetData(sample.before_copy.get(), &before_copy, sizeof(before_copy), 0) == S_OK &&
           device_ctx->GetData(sample.after_copy.get(), &after_copy, sizeof(after_copy), 0) == S_OK &&
-          device_ctx->GetData(sample.end.get(), &end, sizeof(end), 0) == S_OK;
+          device_ctx->GetData(sample.end.get(), &end, sizeof(end), 0) == S_OK &&
+          sample.m0.read(device_ctx, m0_values);
         if (!ready) {
           break;
         }
 
         if (!disjoint.Disjoint && disjoint.Frequency != 0) {
           gpu_timing_stats.total.add(gpu_delta_ms(start, end, disjoint.Frequency));
+          sample.m0.accumulate(
+            gpu_timing_stats.m0,
+            m0_values,
+            disjoint.Frequency,
+            start,
+            before_copy,
+            after_copy,
+            sample.scratch_copy);
           if (sample.cs_used) {
             ++gpu_timing_stats.cs_samples;
             if (sample.direct_uav) {
@@ -1365,11 +1445,17 @@ namespace platf::dxgi {
       if (now - gpu_timing_last_log < vram_timing_telemetry_interval) {
         return;
       }
-      if (gpu_timing_stats.total.samples == 0 && gpu_timing_stats.disjoint_samples == 0) {
+      if (gpu_timing_stats.total.empty() &&
+          gpu_timing_stats.disjoint_samples == 0 &&
+          gpu_timing_stats.m0.empty()) {
         return;
       }
 
-      BOOST_LOG(info) << "[vram] GPU timing: samples="sv << gpu_timing_stats.total.samples
+      const auto total = gpu_timing_stats.total.summary();
+      const auto dispatch = gpu_timing_stats.dispatch.summary();
+      const auto unbind = gpu_timing_stats.unbind.summary();
+      const auto scratch_copy = gpu_timing_stats.scratch_copy.summary();
+      BOOST_LOG(info) << "[vram] gpu_metrics samples="sv << total.samples
                       << " cs="sv << gpu_timing_stats.cs_samples
                       << " draw="sv << gpu_timing_stats.draw_samples
                       << " direct_uav="sv << gpu_timing_stats.direct_uav_samples
@@ -1379,18 +1465,11 @@ namespace platf::dxgi {
                       << " borrowed_vdd="sv << gpu_timing_stats.borrowed_vdd_samples
                       << " pending="sv << gpu_timing_pending.size()
                       << " disjoint="sv << gpu_timing_stats.disjoint_samples
-                      << " total_ms="sv << gpu_timing_stats.total.min_ms
-                      << "/"sv << gpu_timing_stats.total.avg_ms()
-                      << "/"sv << gpu_timing_stats.total.max_ms
-                      << " dispatch_ms="sv << gpu_timing_stats.dispatch.min_ms
-                      << "/"sv << gpu_timing_stats.dispatch.avg_ms()
-                      << "/"sv << gpu_timing_stats.dispatch.max_ms
-                      << " unbind_ms="sv << gpu_timing_stats.unbind.min_ms
-                      << "/"sv << gpu_timing_stats.unbind.avg_ms()
-                      << "/"sv << gpu_timing_stats.unbind.max_ms
-                      << " scratch_copy_ms="sv << gpu_timing_stats.scratch_copy.min_ms
-                      << "/"sv << gpu_timing_stats.scratch_copy.avg_ms()
-                      << "/"sv << gpu_timing_stats.scratch_copy.max_ms;
+                      << telemetry::metric_fields("total_gpu_ms", total)
+                      << telemetry::metric_fields("dispatch_gpu_ms", dispatch)
+                      << telemetry::metric_fields("unbind_gpu_ms", unbind)
+                      << telemetry::metric_fields("scratch_copy_gpu_ms", scratch_copy)
+                      << telemetry::m0_metric_fields(gpu_timing_stats.m0);
       gpu_timing_stats.reset();
       gpu_timing_last_log = now;
     }
@@ -1405,19 +1484,23 @@ namespace platf::dxgi {
       if (now - cpu_timing_last_log < vram_timing_telemetry_interval) {
         return;
       }
-      if (cpu_acquire_timing.samples == 0 && cpu_submit_timing.samples == 0) {
+      if (cpu_acquire_timing.empty() && cpu_submit_timing.empty()) {
         return;
       }
 
-      BOOST_LOG(info) << "[vram] CPU timing: samples="sv << cpu_submit_timing.samples
-                      << " encoder_mutex_wait_ms="sv << cpu_acquire_timing.min_ms
-                      << "/"sv << cpu_acquire_timing.avg_ms()
-                      << "/"sv << cpu_acquire_timing.max_ms
-                      << " command_submit_ms="sv << cpu_submit_timing.min_ms
-                      << "/"sv << cpu_submit_timing.avg_ms()
-                      << "/"sv << cpu_submit_timing.max_ms;
+      const auto acquire = cpu_acquire_timing.summary();
+      const auto submit = cpu_submit_timing.summary();
+      const auto result_age = analysis_result_age_timing.summary();
+      BOOST_LOG(info) << "[vram] cpu_metrics"sv
+                      << telemetry::m0_cpu_metric_fields(
+                           acquire,
+                           submit,
+                           result_age,
+                           analysis_skipped_busy);
       cpu_acquire_timing.reset();
       cpu_submit_timing.reset();
+      analysis_result_age_timing.reset();
+      analysis_skipped_busy = 0;
       cpu_timing_last_log = now;
     }
 
@@ -1543,9 +1626,12 @@ namespace platf::dxgi {
     gpu_timing_stats_t gpu_timing_stats;
     timing_bucket_t cpu_acquire_timing;
     timing_bucket_t cpu_submit_timing;
+    timing_bucket_t analysis_result_age_timing;
     std::chrono::steady_clock::time_point gpu_timing_last_log {};
     std::chrono::steady_clock::time_point cpu_timing_last_log {};
     uint64_t gpu_timing_frame_counter = 0;
+    uint64_t video_frame_counter = 0;
+    uint64_t analysis_skipped_busy = 0;
     bool vram_timing_enabled = env_flag_enabled("SUNSHINE_VRAM_TIMING");
     bool gpu_timing_disabled = false;
 
@@ -1575,12 +1661,15 @@ namespace platf::dxgi {
     uint32_t hdr_analysis_height = 0;      // Analysis grid height (downsampled from source)
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
+    uint64_t hdr_analysis_pending_source_frame = 0;
+    std::optional<uint64_t> hdr_analysis_last_completed_frame;
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
     bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
     float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
     std::string hdr_analysis_failure_reason;
+    std::unique_ptr<d3d12::hdr_analysis_t> d3d12_hdr_analysis;
 
     // ===== Compute-shader RGB->P010/NV12 fast path =====
     // Phase 1: HDR PQ/HLG -> P010. Phase 2A: SDR sRGB/scRGB -> NV12.
@@ -1876,8 +1965,14 @@ namespace platf::dxgi {
     void
     dispatch_hdr_analysis(
       ID3D11ShaderResourceView *input_srv,
-      ID3D11Buffer *analysis_params) {
+      ID3D11Buffer *analysis_params,
+      uint64_t source_frame_index,
+      gpu_timing_sample_t *timing) {
       if (!hdr_analysis_enabled || !input_srv || !analysis_params) return;
+
+      if (timing) {
+        timing->m0.begin_analysis(device_ctx);
+      }
 
       // Unbind render targets to avoid resource hazard (SRV vs RTV conflict)
       ID3D11RenderTargetView *null_rtv = nullptr;
@@ -1897,6 +1992,9 @@ namespace platf::dxgi {
       uint32_t groups_x = (hdr_analysis_width + 15) / 16;
       uint32_t groups_y = (hdr_analysis_height + 15) / 16;
       device_ctx->Dispatch(groups_x, groups_y, 1);
+      if (timing) {
+        timing->m0.end_analysis_pass1(device_ctx);
+      }
 
       // Unbind pass 1 resources
       ID3D11ShaderResourceView *null_srv = nullptr;
@@ -1914,6 +2012,9 @@ namespace platf::dxgi {
       device_ctx->CSSetConstantBuffers(0, 1, &cbuf);
 
       device_ctx->Dispatch(1, 1, 1);  // Single group of 256 threads
+      if (timing) {
+        timing->m0.end_analysis_pass2(device_ctx);
+      }
 
       // Unbind all CS resources
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
@@ -1924,7 +2025,11 @@ namespace platf::dxgi {
 
       // Copy final result to staging buffer for CPU readback next frame
       device_ctx->CopyResource(hdr_staging_buf.get(), hdr_final_result_buf.get());
+      if (timing) {
+        timing->m0.end_analysis_readback(device_ctx);
+      }
 
+      hdr_analysis_pending_source_frame = source_frame_index;
       hdr_analysis_pending = true;
     }
 
@@ -1934,11 +2039,14 @@ namespace platf::dxgi {
      * and computes PQ-domain percentiles from the histogram.
      */
     void
-    read_hdr_analysis_results() {
+    read_hdr_analysis_results(uint64_t current_frame_index) {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       HRESULT status = device_ctx->Map(hdr_staging_buf.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
 
       if (status == DXGI_ERROR_WAS_STILL_DRAWING) {
+        if (vram_timing_enabled) {
+          ++gpu_timing_stats.m0.analysis_readback_not_ready;
+        }
         // GPU hasn't finished yet — skip this readback, try next frame
         return;
       }
@@ -1995,10 +2103,55 @@ namespace platf::dxgi {
         hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
         hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
         hdr_luminance_stats_out.valid = true;
+        hdr_analysis_last_completed_frame =
+          std::min(current_frame_index, hdr_analysis_pending_source_frame);
       }
 
       device_ctx->Unmap(hdr_staging_buf.get(), 0);
       hdr_analysis_pending = false;
+    }
+
+    void
+    read_d3d12_hdr_analysis_results(uint64_t current_frame_index) {
+      if (!d3d12_hdr_analysis || !d3d12_hdr_analysis->available()) {
+        return;
+      }
+      const auto completed = d3d12_hdr_analysis->poll();
+      if (!completed) {
+        if (!d3d12_hdr_analysis->available()) {
+          if (auto display_vram =
+                std::dynamic_pointer_cast<display_vram_t>(
+                  display)) {
+            display_vram->disable_d3d12_analysis(
+              d3d12_hdr_analysis->failure_stage(),
+              d3d12_hdr_analysis->failure_hresult());
+          }
+        }
+        return;
+      }
+      const auto summary =
+        d3d12::summarize_hdr_result(completed->result);
+      if (!summary.valid) {
+        return;
+      }
+      hdr_luminance_stats_out.min_maxrgb = summary.min_maxrgb;
+      hdr_luminance_stats_out.max_maxrgb = summary.max_maxrgb;
+      hdr_luminance_stats_out.avg_maxrgb = summary.avg_maxrgb;
+      hdr_luminance_stats_out.percentile_10_pq =
+        summary.percentile_10_pq;
+      hdr_luminance_stats_out.percentile_90_pq =
+        summary.percentile_90_pq;
+      hdr_luminance_stats_out.percentile_95 =
+        ::video::hdr_metadata::pq_to_nits(
+          summary.percentile_95_pq);
+      hdr_luminance_stats_out.percentile_99 =
+        ::video::hdr_metadata::pq_to_nits(
+          summary.percentile_99_pq);
+      hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
+      hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
+      hdr_luminance_stats_out.valid = true;
+      hdr_analysis_last_completed_frame =
+        std::min(current_frame_index, completed->source_frame);
     }
 
     // ===== Compute-shader RGB->P010 fast path (Phase 1) =====
@@ -2009,7 +2162,8 @@ namespace platf::dxgi {
     init_compute_path(int out_width, int out_height,
                       int active_w, int active_h,
                       int active_offset_x, int active_offset_y,
-                      const ::video::sunshine_colorspace_t &colorspace) {
+                      const ::video::sunshine_colorspace_t &colorspace,
+                      bool is_probe) {
       cs_path_active = false;
       cs_writes_output_directly = false;
       cs_for_p010 = false;
@@ -2027,6 +2181,7 @@ namespace platf::dxgi {
       hdr_analysis_snapshot_uav.reset();
       hdr_analysis_snapshot_cbuf.reset();
       hdr_analysis_snapshot_enabled = false;
+      d3d12_hdr_analysis.reset();
       cs_scratch_tex.reset();
       cs_y_uav.reset();
       cs_uv_uav.reset();
@@ -2339,6 +2494,21 @@ namespace platf::dxgi {
           hdr_analysis_snapshot_enabled = true;
           BOOST_LOG(info) << "HDR analysis cell statistics fused into P010 conversion at "
                           << hdr_analysis_width << "x" << hdr_analysis_height;
+
+          auto display_vram =
+            std::dynamic_pointer_cast<display_vram_t>(display);
+          if (display_vram) {
+            d3d12_hdr_analysis =
+              display_vram->make_d3d12_hdr_analysis(
+              device.get(),
+              device_ctx.get(),
+              hdr_analysis_width,
+              hdr_analysis_height,
+              static_cast<uint32_t>(active_w),
+              static_cast<uint32_t>(active_h),
+              hdr_analysis_max_nits,
+              is_probe);
+          }
         } else {
           hdr_analysis_snapshot_tex.reset();
           hdr_analysis_snapshot_srv.reset();
@@ -2399,7 +2569,8 @@ namespace platf::dxgi {
       ID3D11ShaderResourceView *input_srv,
       cs_t &shader,
       bool write_hdr_analysis_snapshot,
-      gpu_timing_sample_t *timing) {
+      gpu_timing_sample_t *timing,
+      ID3D11UnorderedAccessView *snapshot_uav_override = nullptr) {
       if (!cs_path_active) return false;
       if (!shader) return false;
       if (timing) {
@@ -2424,7 +2595,9 @@ namespace platf::dxgi {
       ID3D11UnorderedAccessView *uavs[3] = {
         cs_y_uav.get(),
         cs_uv_uav.get(),
-        write_hdr_analysis_snapshot ? hdr_analysis_snapshot_uav.get() : nullptr,
+        write_hdr_analysis_snapshot ?
+          (snapshot_uav_override ? snapshot_uav_override : hdr_analysis_snapshot_uav.get()) :
+          nullptr,
       };
       const UINT uav_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, uavs, nullptr);
@@ -3797,6 +3970,7 @@ namespace platf::dxgi {
 
   std::unique_ptr<avcodec_encode_device_t>
   display_vram_t::make_avcodec_encode_device(pix_fmt_e pix_fmt) {
+    if (!prepare_video_backend()) return nullptr;
     auto device = std::make_unique<d3d_avcodec_encode_device_t>();
     if (device->init(shared_from_this(), adapter.get(), pix_fmt) != 0) {
       return nullptr;
@@ -3806,6 +3980,7 @@ namespace platf::dxgi {
 
   std::unique_ptr<nvenc_encode_device_t>
   display_vram_t::make_nvenc_encode_device(pix_fmt_e pix_fmt) {
+    if (!prepare_video_backend()) return nullptr;
     // For hybrid graphics laptops, NVENC encoder requires NVIDIA GPU,
     // but display capture may use integrated graphics (built-in screen).
     // We need to find the NVIDIA adapter for encoding, not the capture adapter.
@@ -3861,6 +4036,7 @@ namespace platf::dxgi {
 
   std::unique_ptr<amf_encode_device_t>
   display_vram_t::make_amf_encode_device(pix_fmt_e pix_fmt) {
+    if (!prepare_video_backend()) return nullptr;
     // Find AMD adapter for AMF encoding
     adapter_t::pointer amf_adapter_p = nullptr;
     adapter_t amf_adapter;

@@ -116,6 +116,7 @@ const DEFAULT_TABS = [
       adapter_name: '',
       capture_target: 'display',
       capture_compute_shader: 'auto',
+      windows_video_backend: 'auto',
       window_title: '',
       display_mode_remapping: '[]',
       hevc_mode: 0,

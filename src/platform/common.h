@@ -639,6 +639,10 @@ namespace platf {
       return nullptr;
     }
 
+    virtual void
+    report_video_backend_selection(std::string_view) {
+    }
+
     virtual bool
     is_hdr() {
       return false;
