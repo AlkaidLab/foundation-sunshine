@@ -122,7 +122,9 @@ TEST(HlgSystemGamma, FallsBackToReferencePeakForInvalidValues) {
 
 TEST(VideoBitrate, ConvertsTotalBitrateToEncoderBitrate) {
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 10), 45000);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 80), 10000);
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 0), 50000);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, -1), 50000);
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 81), 50000);
 }
 

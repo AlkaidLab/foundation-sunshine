@@ -639,8 +639,9 @@ namespace video {
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx) return;
 
-      const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+      const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
         bitrate_kbps,
+        config::video.max_bitrate,
         config::stream.fec_percentage
       );
 
@@ -770,8 +771,9 @@ namespace video {
       if (device && device->nvenc) {
         // 考虑FEC影响，调整编码码率
         // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+        const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
           bitrate_kbps,
+          config::video.max_bitrate,
           config::stream.fec_percentage
         );
 
@@ -943,8 +945,9 @@ namespace video {
     void
     set_bitrate(int bitrate_kbps) override {
       if (device && device->amf) {
-        const auto adjusted_bitrate_kbps = encoder_bitrate_from_total_bitrate(
+        const auto adjusted_bitrate_kbps = cap_encoder_bitrate(
           bitrate_kbps,
+          config::video.max_bitrate,
           config::stream.fec_percentage
         );
 
