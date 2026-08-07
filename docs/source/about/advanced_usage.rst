@@ -1461,6 +1461,36 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 
       nvenc_h264_cavlc = disabled
 
+`nvenc_cuda_array_input <https://localhost:47990/config/#nvenc_cuda_array_input>`__
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Description**
+   Feed 10-bit 4:4:4 frames to NVENC through a block-linear CUDA array instead of the pitch-linear device pointer.
+
+   .. note:: Windows only. Requires a driver exposing NVENC 13.1 or newer; on older drivers Sunshine logs a message and keeps using the device pointer.
+
+   .. warning:: Experimental. Some drivers produce ghosted output, and some stall while Sunshine probes encoders at startup — which happens before the web UI binds, so the UI never becomes reachable and you cannot turn this back off from there. Recover by stopping the Sunshine service, setting ``nvenc_cuda_array_input = disabled`` in ``sunshine.conf``, and starting the service again. Leave it disabled unless you are helping test the 4:4:4 path.
+
+**Choices**
+
+.. table::
+   :widths: auto
+
+   ========== ===========
+   Value      Description
+   ========== ===========
+   disabled   Pitch-linear CUDA device pointer
+   enabled    Block-linear CUDA array
+   ========== ===========
+
+**Default**
+   ``disabled``
+
+**Example**
+   .. code-block:: text
+
+      nvenc_cuda_array_input = disabled
+
 `Intel QuickSync Encoder <https://localhost:47990/config/#intel-quicksync-encoder>`__
 -------------------------------------------------------------------------------------
 

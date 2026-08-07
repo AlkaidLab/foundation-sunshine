@@ -148,6 +148,7 @@ const DEFAULT_TABS = [
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
           nvenc_h264_cavlc: 'disabled',
+          nvenc_cuda_array_input: 'disabled',
         },
       },
       {
