@@ -119,6 +119,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/main.h"
         "${CMAKE_SOURCE_DIR}/src/crypto.cpp"
         "${CMAKE_SOURCE_DIR}/src/crypto.h"
+        "${CMAKE_SOURCE_DIR}/src/ai/credential_store.cpp"
+        "${CMAKE_SOURCE_DIR}/src/ai/credential_store.h"
         "${CMAKE_SOURCE_DIR}/src/webhook/webhook_auth.cpp"
         "${CMAKE_SOURCE_DIR}/src/webhook/webhook_auth.h"
         "${CMAKE_SOURCE_DIR}/src/webhook/webhook_api.cpp"

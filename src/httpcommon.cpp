@@ -316,6 +316,38 @@ namespace http {
     return true;
   }
 
+  bool get_json(const std::string &url, const std::map<std::string, std::string> &headers, std::string &response_body, long &http_code, long timeout_seconds) {
+    BOOST_LOG(info) << "GET JSON from: " << url;
+    CURL *curl = curl_easy_init();
+    if (!curl) return false;
+
+    response_body.clear();
+    response_body.reserve(4096);
+    struct curl_slist *header_list = nullptr;
+    header_list = curl_slist_append(header_list, "Accept: application/json");
+    for (const auto &[key, value] : headers) {
+      const std::string header_line = key + ": " + value;
+      header_list = curl_slist_append(header_list, header_line.c_str());
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(10 * 1024 * 1024));
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+
+    const CURLcode result = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_slist_free_all(header_list);
+    curl_easy_cleanup(curl);
+    return result == CURLE_OK;
+  }
+
   bool post_json(const std::string &url, const std::string &body, const std::map<std::string, std::string> &headers, std::string &response_body, long &http_code, long timeout_seconds) {
     BOOST_LOG(info) << "POST JSON to: " << url;
     CURL *curl = curl_easy_init();

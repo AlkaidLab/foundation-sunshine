@@ -42,6 +42,7 @@
 #include "config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
+#include "ai/credential_store.h"
 #include "crypto.h"
 #include "display_device/session.h"
 #include "file_mapping/file_mapping_store.h"
@@ -2381,6 +2382,48 @@ namespace confighttp {
     return (config_dir / "ai_config.json").string();
   }
 
+  static fs::path
+  getAiCredentialPath() {
+    auto config_dir = fs::path(config::sunshine.config_file).parent_path();
+    return config_dir / "ai_llm_credential.bin";
+  }
+
+  static bool
+  writeAiConfigFile(const nlohmann::json &cfg) {
+    const fs::path path = getAiConfigPath();
+    auto temp = path;
+    temp += ".tmp";
+    try {
+      {
+        std::ofstream file(temp, std::ios::trunc);
+        if (!file.is_open()) return false;
+        file << cfg.dump(2);
+        file.flush();
+        if (!file.good()) throw std::runtime_error("Failed to flush AI config");
+      }
+#ifdef _WIN32
+      if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        return false;
+      }
+#else
+      std::error_code ec;
+      fs::rename(temp, path, ec);
+      if (ec) {
+        fs::remove(temp, ec);
+        return false;
+      }
+#endif
+      return true;
+    } catch (const std::exception &e) {
+      std::error_code ignored;
+      fs::remove(temp, ignored);
+      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
+      return false;
+    }
+  }
+
   /**
    * @brief 从文件或缓存读取 AI 配置（调用方需持有 ai_config_mutex）
    */
@@ -2394,7 +2437,40 @@ namespace confighttp {
     try {
       std::string content = file_handler::read_file(path.c_str());
       if (!content.empty()) {
-        ai_config_cache = nlohmann::json::parse(content);
+        auto persisted = nlohmann::json::parse(content);
+        ai_config_cache = persisted;
+
+        // Migrate legacy plaintext credentials before exposing the runtime
+        // configuration. Never remove the old value until both secure storage
+        // and the sanitized config rewrite have succeeded.
+        const std::string legacy_key = persisted.value("apiKey", "");
+        if (!legacy_key.empty()) {
+          auto migration = credential_store::write_llm_api_key(getAiCredentialPath(), legacy_key);
+          if (migration.success) {
+            auto sanitized = persisted;
+            sanitized.erase("apiKey");
+            if (writeAiConfigFile(sanitized)) {
+              ai_config_cache = std::move(sanitized);
+              BOOST_LOG(info) << "Migrated the LLM API key out of ai_config.json";
+            } else {
+              BOOST_LOG(error) << "The LLM API key was secured, but ai_config.json could not be sanitized; migration will retry";
+            }
+          } else {
+            BOOST_LOG(error) << "Could not migrate the plaintext LLM API key: " << migration.error;
+          }
+          ai_config_cache["apiKey"] = legacy_key;
+        } else {
+          auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
+          if (credential.status == credential_store::read_status_e::success) {
+            ai_config_cache["apiKey"] = std::move(credential.secret);
+          } else {
+            ai_config_cache["apiKey"] = "";
+            if (credential.status == credential_store::read_status_e::error) {
+              BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
+            }
+          }
+        }
+        ai_config_cache["apiKeyConfigured"] = !ai_config_cache.value("apiKey", "").empty();
         ai_config_loaded = true;
         return ai_config_cache;
       }
@@ -2405,11 +2481,19 @@ namespace confighttp {
       {"provider", "openai"},
       {"apiBase", "https://api.openai.com/v1"},
       {"apiKey", ""},
+      {"apiKeyConfigured", false},
       {"model", "gpt-4.1-mini"},
       {"compatibility", "openai-chat"},
       {"temperature", 0.3},
       {"max_tokens", 2048}
     };
+    auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
+    if (credential.status == credential_store::read_status_e::success) {
+      ai_config_cache["apiKey"] = std::move(credential.secret);
+      ai_config_cache["apiKeyConfigured"] = true;
+    } else if (credential.status == credential_store::read_status_e::error) {
+      BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
+    }
     ai_config_loaded = true;
     return ai_config_cache;
   }
@@ -2428,19 +2512,14 @@ namespace confighttp {
    */
   static bool
   saveAiConfigLocked(const nlohmann::json &cfg) {
-    auto path = getAiConfigPath();
-    try {
-      std::ofstream file(path);
-      if (file.is_open()) {
-        file << cfg.dump(2);
-        ai_config_cache = cfg;
-        ai_config_loaded = true;
-        return true;
-      }
-    } catch (const std::exception &e) {
-      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
-    }
-    return false;
+    auto persisted = cfg;
+    persisted.erase("apiKey");
+    persisted.erase("apiKeyConfigured");
+    persisted.erase("apiKeyHint");
+    if (!writeAiConfigFile(persisted)) return false;
+    ai_config_cache = cfg;
+    ai_config_loaded = true;
+    return true;
   }
 
   /**
@@ -2740,14 +2819,9 @@ namespace confighttp {
     auto cfg = loadAiConfig();
 
     // 掩码 API key：仅显示前4+后4字符
-    if (cfg.contains("apiKey") && cfg["apiKey"].is_string()) {
-      std::string key = cfg["apiKey"].get<std::string>();
-      if (key.length() > 8) {
-        cfg["apiKey"] = key.substr(0, 4) + "****" + key.substr(key.length() - 4);
-      } else if (!key.empty()) {
-        cfg["apiKey"] = "****";
-      }
-    }
+    const std::string key = cfg.value("apiKey", "");
+    cfg.erase("apiKey");
+    cfg["apiKeyConfigured"] = !key.empty();
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
@@ -2780,28 +2854,95 @@ namespace confighttp {
       if (input.contains("system_prompt")) current["system_prompt"] = input["system_prompt"].get<std::string>();
       if (input.contains("temperature")) current["temperature"] = input["temperature"].get<double>();
       if (input.contains("max_tokens")) current["max_tokens"] = input["max_tokens"].get<int>();
-      if (input.contains("apiKey")) {
-        std::string key = input["apiKey"].get<std::string>();
-        // 如果前端发来的是掩码（包含****），不覆盖
-        if (key.find("****") == std::string::npos) {
-          current["apiKey"] = key;
+      std::string key_action = input.value("apiKeyAction", "keep");
+      // Backward compatibility for older clients that only send apiKey.
+      if (input.contains("apiKey") && key_action == "keep") {
+        const std::string candidate = input["apiKey"].get<std::string>();
+        if (candidate.find("****") == std::string::npos) {
+          key_action = candidate.empty() ? "clear" : "replace";
         }
       }
 
+      if (key_action == "replace") {
+        if (!input.contains("apiKey") || !input["apiKey"].is_string() || input["apiKey"].get_ref<const std::string &>().empty()) {
+          throw std::invalid_argument("apiKeyAction=replace requires a non-empty apiKey");
+        }
+        const std::string key = input["apiKey"].get<std::string>();
+        auto stored = credential_store::write_llm_api_key(getAiCredentialPath(), key);
+        if (!stored.success) throw std::runtime_error("Failed to secure API key: " + stored.error);
+        current["apiKey"] = key;
+      } else if (key_action == "clear") {
+        auto erased = credential_store::erase_llm_api_key(getAiCredentialPath());
+        if (!erased.success) throw std::runtime_error("Failed to clear API key: " + erased.error);
+        current["apiKey"] = "";
+      } else if (key_action != "keep") {
+        throw std::invalid_argument("apiKeyAction must be keep, replace, or clear");
+      }
+      current["apiKeyConfigured"] = !current.value("apiKey", "").empty();
+
       if (saveAiConfigLocked(current)) {
         output["status"] = "ok";
+        output["apiKeyConfigured"] = current["apiKeyConfigured"];
       } else {
         output["status"] = "error";
         output["error"] = "Failed to write config file";
+        // Credential mutations have already completed. Keep runtime behavior
+        // consistent with secure storage even if the non-secret JSON write
+        // failed; the caller still receives an error and can retry.
+        ai_config_cache = current;
+        ai_config_loaded = true;
       }
     } catch (const std::exception &e) {
       output["status"] = "error";
-      output["error"] = std::string("Invalid JSON: ") + e.what();
+      output["error"] = e.what();
     }
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
     response->write(SimpleWeb::StatusCode::success_ok, output.dump(), headers);
+  }
+
+  void
+  proxyAiModels(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto cfg = loadAiConfig();
+    const std::string api_key = cfg.value("apiKey", "");
+    std::string api_base = cfg.value("apiBase", "");
+    if (api_base.empty() || (api_key.empty() && isApiKeyRequired(cfg))) {
+      response->write(
+        SimpleWeb::StatusCode::client_error_bad_request,
+        R"({"error":{"message":"AI proxy not configured","type":"invalid_request_error"}})",
+        json_headers());
+      return;
+    }
+    if (isAnthropicProvider(cfg)) {
+      response->write(SimpleWeb::StatusCode::success_ok, R"({"data":[]})", json_headers());
+      return;
+    }
+
+    while (!api_base.empty() && api_base.back() == '/') api_base.pop_back();
+    if (hasSuffix(api_base, "/chat/completions")) {
+      api_base.resize(api_base.size() - std::string_view { "/chat/completions" }.size());
+    }
+    const std::string target_url = api_base + "/models";
+    std::map<std::string, std::string> headers;
+    if (!api_key.empty()) headers["Authorization"] = "Bearer " + api_key;
+
+    std::string body;
+    long http_code = 0;
+    if (!http::get_json(target_url, headers, body, http_code)) {
+      response->write(
+        SimpleWeb::StatusCode::server_error_bad_gateway,
+        R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})",
+        json_headers());
+      return;
+    }
+    const auto status = http_code >= 200 && http_code < 300
+                          ? SimpleWeb::StatusCode::success_ok
+                          : SimpleWeb::StatusCode::server_error_bad_gateway;
+    response->write(status, body, json_headers());
   }
 
   /**
@@ -3338,6 +3479,7 @@ namespace confighttp {
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;
     server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
+    server.resource["^/api/ai/models$"]["GET"] = proxyAiModels;
     server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
     server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
     server.resource["^/api/v1/file-mapping/mappings$"]["GET"] = listFileMappings;
