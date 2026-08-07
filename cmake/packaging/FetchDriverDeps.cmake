@@ -163,10 +163,8 @@ endfunction()
 # forwarded auth headers. We must use the GitHub REST API asset endpoint
 # with Accept: application/octet-stream.
 # ---------------------------------------------------------------------------
-function(_fetch_vmouse)
+function(_fetch_vmouse_impl _files)
   message(STATUS "Fetching ZakoVirtualMouse ${VMOUSE_DRIVER_VERSION} ...")
-
-  set(_files ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer)
 
   # Check if all files already cached
   set(_all_cached TRUE)
@@ -280,6 +278,44 @@ function(_fetch_vmouse)
   endforeach()
 
   file(REMOVE "${_json}")
+endfunction()
+
+# The vmouse assets are downloaded as bare filenames with no version in them, so
+# a cache populated by an older VMOUSE_DRIVER_VERSION looks complete forever and
+# a pin bump silently ships the old driver on any tree that was configured
+# before. Stamp the tag next to the files and wipe the cache when it changes.
+function(_fetch_vmouse)
+  set(_files ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer)
+  set(_marker "${VMOUSE_DRIVER_DIR}/.release-version")
+
+  set(_stamp_ok FALSE)
+  if(EXISTS "${_marker}")
+    file(READ "${_marker}" _current)
+    string(STRIP "${_current}" _current)
+    if("${_current}" STREQUAL "${VMOUSE_DRIVER_VERSION}")
+      set(_stamp_ok TRUE)
+    endif()
+  endif()
+
+  if(NOT _stamp_ok AND EXISTS "${VMOUSE_DRIVER_DIR}")
+    message(STATUS "  vmouse cache is not ${VMOUSE_DRIVER_VERSION}; clearing ${VMOUSE_DRIVER_DIR}")
+    file(REMOVE_RECURSE "${VMOUSE_DRIVER_DIR}")
+  endif()
+
+  _fetch_vmouse_impl("${_files}")
+
+  # Only stamp a complete set — a partial download must retry on the next
+  # configure instead of being treated as a good cache.
+  set(_all_ok TRUE)
+  foreach(_f ${_files})
+    if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
+      set(_all_ok FALSE)
+      break()
+    endif()
+  endforeach()
+  if(_all_ok)
+    file(WRITE "${_marker}" "${VMOUSE_DRIVER_VERSION}\n")
+  endif()
 endfunction()
 
 # ---------------------------------------------------------------------------

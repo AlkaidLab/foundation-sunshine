@@ -110,7 +110,7 @@ english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nI
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
-english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run scripts\install-service.bat as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -151,7 +151,7 @@ chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
-chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 scripts\install-service.bat，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -305,7 +305,9 @@ Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; 
 ; "无法执行文件 ... 错误代码 740" box on the finish page, which reads like the
 ; whole install failed. cmd.exe never requires elevation, and `start` uses
 ; ShellExecute, so a layered GUI just gets a normal UAC prompt instead.
-Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait runhidden skipifsilent runasoriginaluser; Components: gui
+; WorkingDir has to be spelled out now: Inno derives it from Filename when it
+; is blank, which would hand the GUI {sys} instead of its own directory.
+Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeName}"""; WorkingDir: "{app}\assets\gui"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait runhidden skipifsilent runasoriginaluser; Components: gui
 
 [UninstallRun]
 ; Remove the per-user GUI startup entry before terminating the agent.
@@ -357,6 +359,11 @@ var
   BrandSubtitle: TNewStaticText;
   AccentBar: TBevel;
   ExistingInnoInstall: Boolean;
+  // Set when VerifyServiceInstalled() could not confirm the SunshineService
+  // registration. Surfaced through GetCustomSetupExitCode() so unattended
+  // callers still see a failure — the GUI updater runs us with /VERYSILENT
+  // and treats exit code 0 as "update installed successfully".
+  ServiceVerifyFailed: Boolean;
 
 procedure InitializeWizard();
 var
@@ -734,7 +741,29 @@ begin
   // The files are fine; only the service registration needs another attempt,
   // which scripts\install-service.bat, the GUI's repair action, or a reboot
   // can all do. Keep the install and tell the user how to retry.
-  MsgBox(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK);
+  //
+  // The exit code still reports the failure — see GetCustomSetupExitCode().
+  ServiceVerifyFailed := True;
+  Log('Service verification failed. ' + Detail);
+  // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
+  // unattended install without that switch would sit here forever now that we
+  // no longer abort. The log line above carries the same information.
+  // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
+  if not WizardSilent then
+    MsgBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK);
+end;
+
+// Report a nonzero exit code when the service could not be verified. Inno
+// returns 0 on a completed install, and callers such as the GUI's auto-updater
+// (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, success := code = 0) would
+// otherwise report a broken install as a successful update. 100 is outside the
+// range Inno itself uses (1-8).
+function GetCustomSetupExitCode(): Integer;
+begin
+  if ServiceVerifyFailed then
+    Result := 100
+  else
+    Result := 0;
 end;
 
 // Initialization: handle old NSIS upgrade
