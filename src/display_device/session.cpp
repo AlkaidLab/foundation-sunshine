@@ -184,8 +184,15 @@ namespace display_device {
   }
 
   void
-  session_t::stop_timer_and_clear_vdd_state() {
+  session_t::cancel_pending_display_retry() {
+    pending_restore_ = false;
+    SessionEventListener::clear_unlock_task();
     timer->setup_timer(nullptr);
+  }
+
+  void
+  session_t::stop_timer_and_clear_vdd_state() {
+    cancel_pending_display_retry();
     clear_vdd_state();
   }
 
@@ -392,9 +399,7 @@ namespace display_device {
         !current_vdd_client_id.empty() && !new_client_id.empty() &&
         current_vdd_client_id != new_client_id) {
         BOOST_LOG(info) << "New client is resuming the app; preserving the current VDD while checking the requested mode";
-        pending_restore_ = false;
-        SessionEventListener::clear_unlock_task();
-        timer->setup_timer(nullptr);
+        cancel_pending_display_retry();
       }
     }
 
@@ -453,9 +458,7 @@ namespace display_device {
         BOOST_LOG(info) << (vdd_already_exists ?
                               "有待恢复的设置且 VDD 仍存在，保留原有初始拓扑" :
                               "有待恢复的设置，保留原有初始拓扑");
-        pending_restore_ = false;
-        SessionEventListener::clear_unlock_task();
-        timer->setup_timer(nullptr);
+        cancel_pending_display_retry();
       }
       else if (vdd_already_exists) {
         BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
@@ -572,7 +575,7 @@ namespace display_device {
 
     // 延迟任务尚未执行时可能收到新的重配置。本次调用已经接管立即应用，
     // 因此必须取消旧回调，避免它随后使用过期配置再次修改显示状态。
-    timer->setup_timer(nullptr);
+    cancel_pending_display_retry();
 
     if (should_prepare_vdd) {
       const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices);
@@ -832,8 +835,6 @@ namespace display_device {
   session_t::reset_persistence() {
     std::lock_guard lock { mutex };
     settings.reset_persistence();
-    pending_restore_ = false;
-    SessionEventListener::clear_unlock_task();
     stop_timer_and_clear_vdd_state();
     current_vdd_client_id.clear();
   }

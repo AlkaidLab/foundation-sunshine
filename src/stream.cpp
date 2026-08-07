@@ -1740,7 +1740,10 @@ namespace stream {
       
       if (active_display_resolved) {
         const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
-          display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+          const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+          if (!result) {
+            BOOST_LOG(warning) << "Dynamic display reconfiguration failed: " << result.message;
+          }
         });
         if (!display_reconfigured) {
           BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
@@ -1757,7 +1760,7 @@ namespace stream {
       // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
       // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
       // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
-      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height 
+      BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
 

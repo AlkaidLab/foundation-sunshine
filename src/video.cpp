@@ -1769,6 +1769,22 @@ namespace video {
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
 
+    auto append_pending_capture_contexts = [&]() -> bool {
+      while (capture_ctx_queue->peek()) {
+        auto capture_ctx = capture_ctx_queue->pop();
+        if (!capture_ctx) {
+          return false;
+        }
+
+        // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
+        // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
+        capture_ctx->config.display_name = target_display_name;
+        capture_ctxs.emplace_back(std::move(*capture_ctx));
+      }
+
+      return true;
+    };
+
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
     auto trim_imgs = [&]() {
@@ -1888,18 +1904,8 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          auto capture_ctx = capture_ctx_queue->pop();
-          if (!capture_ctx) {
-            return false;
-          }
-
-          // All sessions in this capture thread share one display. A session
-          // joining after a manual switch must inherit the active target so a
-          // later capture reinitialization cannot jump back to its launch-time
-          // display selection.
-          capture_ctx->config.display_name = target_display_name;
-          capture_ctxs.emplace_back(std::move(*capture_ctx));
+        if (!append_pending_capture_contexts()) {
+          return false;
         }
 
         if (switch_display_event->peek()) {
@@ -1949,6 +1955,12 @@ namespace video {
             });
 
             std::this_thread::sleep_for(20ms);
+          }
+
+          // 等待旧显示器释放期间，最后一个旧会话可能退出，同时新会话已经加入队列。
+          // 先接入新上下文；若仍无会话则安全结束捕获线程，不能访问空容器的 front()。
+          if (!append_pending_capture_contexts() || capture_ctxs.empty()) {
+            return;
           }
 
           while (capture_ctx_queue->running()) {

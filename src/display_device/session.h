@@ -321,6 +321,13 @@ namespace display_device {
     clear_vdd_state();
 
     /**
+     * @brief 取消旧的延迟配置或恢复任务，并清除对应的待处理状态。
+     * @note 调用方必须已经持有 mutex。
+     */
+    void
+    cancel_pending_display_retry();
+
+    /**
      * @brief Stop timer and clear VDD state
      * @note This method does NOT acquire the mutex! It is intended to be used from places
      *       where the mutex has already been locked.
