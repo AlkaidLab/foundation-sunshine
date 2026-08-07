@@ -56,6 +56,7 @@
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"
+#include "secure_store.h"
 #include "src/display_device/to_string.h"
 #include "src/tray/tray_http.h"
 #include "stream.h"
@@ -2382,7 +2383,45 @@ namespace confighttp {
   }
 
   /**
+   * @brief 将 AI 配置写入磁盘，apiKey 字段加密存储（调用方需持有 ai_config_mutex）
+   *
+   * 内存缓存始终保存明文（运行时直接可用），只有落盘时对 apiKey 加密。
+   * 已加密的密文（enc:v1: 前缀）原样写回，避免重复加密。
+   */
+  static bool
+  writeAiConfigFileLocked(const nlohmann::json &cfg) {
+    auto path = getAiConfigPath();
+    nlohmann::json to_disk = cfg;
+
+    if (to_disk.contains("apiKey") && to_disk["apiKey"].is_string()) {
+      std::string key = to_disk["apiKey"].get<std::string>();
+      if (!key.empty() && !secure_store::is_encrypted(key)) {
+        std::string enc, err;
+        if (secure_store::encrypt(key, enc, err)) {
+          to_disk["apiKey"] = enc;
+        } else {
+          BOOST_LOG(error) << "Failed to encrypt AI apiKey: " << err;
+        }
+      }
+    }
+
+    try {
+      std::ofstream file(path);
+      if (file.is_open()) {
+        file << to_disk.dump(2);
+        return true;
+      }
+    } catch (const std::exception &e) {
+      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
+    }
+    return false;
+  }
+
+  /**
    * @brief 从文件或缓存读取 AI 配置（调用方需持有 ai_config_mutex）
+   *
+   * 磁盘上的 apiKey 为 enc:v1: 密文，读到后解密为内存明文；
+   * 兼容旧版本的明文 apiKey —— 首次读到明文时自动加密写回迁移。
    */
   static nlohmann::json
   loadAiConfigLocked() {
@@ -2396,6 +2435,24 @@ namespace confighttp {
       if (!content.empty()) {
         ai_config_cache = nlohmann::json::parse(content);
         ai_config_loaded = true;
+
+        // apiKey 落盘加密：解密为内存明文；旧明文则自动迁移为加密存储
+        if (ai_config_cache.contains("apiKey") && ai_config_cache["apiKey"].is_string()) {
+          std::string key = ai_config_cache["apiKey"].get<std::string>();
+          if (secure_store::is_encrypted(key)) {
+            std::string plain, err;
+            if (secure_store::decrypt(key, plain, err)) {
+              ai_config_cache["apiKey"] = plain;
+            } else {
+              // 解不开（换机器/换用户/文件损坏）：清空，避免把密文当 key 用
+              BOOST_LOG(error) << "Failed to decrypt AI apiKey, clearing it: " << err;
+              ai_config_cache["apiKey"] = "";
+            }
+          } else if (!key.empty()) {
+            BOOST_LOG(info) << "Migrating plaintext AI apiKey to encrypted storage";
+            writeAiConfigFileLocked(ai_config_cache);
+          }
+        }
         return ai_config_cache;
       }
     } catch (...) {}
@@ -2425,22 +2482,17 @@ namespace confighttp {
 
   /**
    * @brief 保存 AI 配置并刷新缓存（调用方需持有 ai_config_mutex）
+   *
+   * 磁盘上 apiKey 加密存储，内存缓存保持明文。
    */
   static bool
   saveAiConfigLocked(const nlohmann::json &cfg) {
-    auto path = getAiConfigPath();
-    try {
-      std::ofstream file(path);
-      if (file.is_open()) {
-        file << cfg.dump(2);
-        ai_config_cache = cfg;
-        ai_config_loaded = true;
-        return true;
-      }
-    } catch (const std::exception &e) {
-      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
+    if (!writeAiConfigFileLocked(cfg)) {
+      return false;
     }
-    return false;
+    ai_config_cache = cfg;
+    ai_config_loaded = true;
+    return true;
   }
 
   /**
@@ -2784,7 +2836,18 @@ namespace confighttp {
         std::string key = input["apiKey"].get<std::string>();
         // 如果前端发来的是掩码（包含****），不覆盖
         if (key.find("****") == std::string::npos) {
-          current["apiKey"] = key;
+          // 防御：收到加密格式（enc:v1:）的 key 时还原为明文再缓存，
+          // 避免内存缓存被密文污染导致代理请求携带密文
+          if (secure_store::is_encrypted(key)) {
+            std::string plain, err;
+            if (secure_store::decrypt(key, plain, err)) {
+              current["apiKey"] = plain;
+            } else {
+              BOOST_LOG(error) << "Rejected un-decryptable encrypted apiKey from save request: " << err;
+            }
+          } else {
+            current["apiKey"] = key;
+          }
         }
       }
 
