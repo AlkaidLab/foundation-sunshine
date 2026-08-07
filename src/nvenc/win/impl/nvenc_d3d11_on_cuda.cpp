@@ -206,6 +206,18 @@ namespace nvenc {
 
       BOOST_LOG(info) << "NvEnc: falling back to pitch-linear CUDA device pointer input";
     }
+
+    // synchronize_input_buffer() picks its copy destination by testing whether
+    // cuda_array_surface is set, and destroy_encoder() does not clear it. Today
+    // every session gets a fresh encoder object so it is always null here, but
+    // leaving a stale array behind while NVENC reads the device pointer would
+    // silently feed the encoder untouched memory. Drop it explicitly.
+    if (cuda_array_surface) {
+      auto autopop_context = push_context();
+      if (autopop_context) {
+        destroy_cuda_array_input();
+      }
+    }
 #endif
 
     return create_and_register_cuda_device_pointer_input();
