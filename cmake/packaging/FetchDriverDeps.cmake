@@ -39,7 +39,7 @@ option(FETCH_DRIVER_DEPS "Download driver dependencies from GitHub Releases" ON)
 option(DRIVER_DEPS_REQUIRED "Treat missing driver dependencies as a fatal error" ON)
 
 # Version pins
-set(VMOUSE_DRIVER_VERSION "v1.2.0" CACHE STRING "ZakoVirtualMouse driver version tag")
+set(VMOUSE_DRIVER_VERSION "v1.3.2" CACHE STRING "ZakoVirtualMouse driver version tag")
 set(VDD_DRIVER_VERSION "v0.17.2" CACHE STRING "ZakoVDD driver version tag")
 set(VDD_WIN10_DRIVER_VERSION "v0.15.3" CACHE STRING "Win10-pinned ZakoVDD driver version tag")
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
