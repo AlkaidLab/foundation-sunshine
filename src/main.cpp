@@ -4,10 +4,13 @@
  */
 // standard includes
 #include <atomic>
+#include <chrono>
 #include <codecvt>
 #include <csignal>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <thread>
 #include <utility>
 
 // lib includes
@@ -140,6 +143,53 @@ mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
   shutdown_event->view();
 #endif
   BOOST_LOG(info) << "Main loop has exited"sv;
+}
+
+/**
+ * @brief Run the encoder probe, reporting progress so a stall is diagnosable.
+ *
+ * The probe talks to the graphics driver and cannot be safely interrupted from
+ * the outside — a hung driver call owns its thread until it returns. So the
+ * watchdog does not try to cancel anything; it only keeps writing to the log
+ * while the probe is outstanding. That turns "Sunshine started but streaming
+ * never works and nobody knows why" into a timestamped line naming the phase
+ * that is stuck.
+ */
+void
+probe_encoders_with_watchdog() {
+  constexpr auto report_interval = 30s;
+
+  std::promise<void> probe_finished;
+  auto probe_finished_future = probe_finished.get_future();
+
+  BOOST_LOG(info) << "Probing for supported encoders..."sv;
+  const auto probe_started_at = std::chrono::steady_clock::now();
+
+  std::thread watchdog([&probe_finished_future, report_interval, probe_started_at]() {
+    while (probe_finished_future.wait_for(report_interval) == std::future_status::timeout) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - probe_started_at);
+      BOOST_LOG(warning) << "Encoder probe has been running for "sv << elapsed.count()
+                         << "s and has not returned. This usually means a graphics driver call "
+                            "is stuck. Streaming will not work until it completes; the web UI is "
+                            "already available so the configuration can be changed."sv;
+    }
+  });
+
+  const bool probe_failed = video::probe_encoders();
+
+  probe_finished.set_value();
+  watchdog.join();
+
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - probe_started_at);
+
+  if (probe_failed) {
+    BOOST_LOG(error) << "Video failed to find working encoder (probe took "sv << elapsed.count() << "ms)"sv;
+  }
+  else {
+    BOOST_LOG(info) << "Encoder probe completed in "sv << elapsed.count() << "ms"sv;
+  }
 }
 
 int
@@ -394,10 +444,6 @@ main(int argc, char *argv[]) {
     BOOST_LOG(warning) << "No gamepad input is available"sv;
   }
 
-  if (video::probe_encoders()) {
-    BOOST_LOG(error) << "Video failed to find working encoder"sv;
-  }
-
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
@@ -461,8 +507,24 @@ main(int argc, char *argv[]) {
     BOOST_LOG(warning) << "Webhook runtime is unavailable; Sunshine will continue without Webhook delivery"sv;
   }
 
-  std::thread httpThread { nvhttp::start };
+  // Start the configuration web UI before probing encoders.
+  //
+  // probe_encoders() drives the graphics driver directly, and a bad driver or a
+  // bad encoder option can make it block for a very long time or forever. When
+  // the probe ran on the main thread ahead of every server, such a stall meant
+  // the web UI never bound its port: the service looked healthy, but the user
+  // had no way to read the logs or undo the option that caused the stall.
+  //
+  // confighttp does not consume probe results. It reads the active encoder name
+  // through an atomic (empty until the probe lands) and HDR pipeline status
+  // under its own mutex, so bringing it up early races with nothing. nvhttp and
+  // rtsp_stream do depend on the probe (codec support flags, YUV444 support),
+  // so they stay behind it.
   std::thread configThread { confighttp::start };
+
+  probe_encoders_with_watchdog();
+
+  std::thread httpThread { nvhttp::start };
   std::thread rtspThread { rtsp_stream::start };
 
 #if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
