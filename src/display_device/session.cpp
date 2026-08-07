@@ -3,6 +3,7 @@
 #include <boost/process/v1.hpp>
 #include <future>
 #include <thread>
+#include <utility>
 
 // local includes
 #include "parsed_config.h"
@@ -173,6 +174,7 @@ namespace display_device {
     current_device_prep.reset();
     current_vdd_prep.reset();
     current_use_vdd.reset();
+    pending_vdd_.reset();
     // 恢复原始的 output_name，避免下一个会话使用已销毁的 VDD 设备 ID
     if (!original_output_name.empty()) {
       config::video.output_name = original_output_name;
@@ -196,6 +198,11 @@ namespace display_device {
      */
     std::string
     get_client_id_from_session(const rtsp_stream::launch_session_t &session) {
+      if (!session.client_cert_uuid.empty()) {
+        return session.client_cert_uuid;
+      }
+
+      // 兼容尚未通过独立字段传递 client_cert_uuid、只写入启动环境的内部调用方。
       if (auto cert_uuid_it = session.env.find("SUNSHINE_CLIENT_CERT_UUID");
         cert_uuid_it != session.env.end()) {
         if (std::string cert_uuid = cert_uuid_it->to_string(); !cert_uuid.empty()) {
@@ -339,7 +346,38 @@ namespace display_device {
 
       return { result, apply_result.get_error_message(), hint };
     }
+
   }  // namespace
+
+  session_t::vdd_stage_result_e
+  session_t::apply_vdd_display_stage(const parsed_config_t &config,
+    const boost::optional<device_info_map_t> &pre_vdd_devices) {
+    if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation &&
+        !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_devices)) {
+      return vdd_stage_result_e::topology_failed;
+    }
+
+    // 仅在 VDD 预期已经激活后检查 Windows 是否已发布目标模式。
+    // 锁屏场景会在解锁后执行本阶段；SYSTEM+RDP 不进入本阶段。
+    if (config.resolution && config.refresh_rate) {
+      const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
+      if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
+        BOOST_LOG(error) << "VDD monitor did not publish "
+                         << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
+        return vdd_stage_result_e::modes_failed;
+      }
+    }
+
+    // 在 settings_t 应用目标 HDR 状态前先重置新准备的显示器。
+    // 此处失败不作为最终错误，实际 HDR 操作及结果仍以 settings_t 为准。
+    if (config.change_hdr_state && !vdd_utils::set_hdr_state(false)) {
+      BOOST_LOG(debug) << "首次设置HDR状态失败，等待设备稳定后重试";
+      std::this_thread::sleep_for(500ms);
+      vdd_utils::set_hdr_state(false);
+    }
+
+    return vdd_stage_result_e::ready;
+  }
 
   session_t::configure_result_t
   session_t::configure_display(const config::video_t &config,
@@ -347,16 +385,16 @@ namespace display_device {
     bool is_reconfigure) {
     std::lock_guard lock { mutex };
 
-    // Clean up VDD state if this is a new session with a different client
+    // 恢复运行中的应用时可能换成另一个客户端。取消旧的延迟恢复任务，
+    // 但在完成模式兼容性判断前保留当前 VDD；仅客户端身份变化不要求重建。
     if (!is_reconfigure) {
       if (const std::string new_client_id = get_client_id_from_session(session);
         !current_vdd_client_id.empty() && !new_client_id.empty() &&
         current_vdd_client_id != new_client_id) {
-        BOOST_LOG(info) << "New session detected with different client ID, cleaning up VDD state";
-        // Cancel any pending restore from the old session before it can interfere
+        BOOST_LOG(info) << "New client is resuming the app; preserving the current VDD while checking the requested mode";
         pending_restore_ = false;
         SessionEventListener::clear_unlock_task();
-        stop_timer_and_clear_vdd_state();
+        timer->setup_timer(nullptr);
       }
     }
 
@@ -373,9 +411,11 @@ namespace display_device {
 
     // Parsing is side-effect free. From this point on, parsed_config is the
     // single source of truth for whether this session needs VDD preparation.
-    const bool is_rdp_blocking_vdd = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+    const bool rdp_session_active = display_device::w_utils::is_any_rdp_session_active();
+    const bool is_rdp_blocking_vdd = !is_running_as_system_user && rdp_session_active;
     const bool use_vdd = parsed_config->use_vdd.value_or(false);
     const bool should_prepare_vdd = use_vdd && !is_rdp_blocking_vdd;
+    const bool is_system_rdp_vdd_session = should_prepare_vdd && is_running_as_system_user && rdp_session_active;
     if (use_vdd && is_rdp_blocking_vdd) {
       BOOST_LOG(info) << "[Display] RDP环境：强制使用RDP虚拟显示器，跳过VDD准备";
     }
@@ -396,13 +436,13 @@ namespace display_device {
     }
 
     const bool vulkan_hdr_bridge_requested =
-      should_prepare_vdd && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+      should_prepare_vdd && !is_system_rdp_vdd_session && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
     const bool will_disable_physical_displays =
-      should_prepare_vdd && parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;
+      should_prepare_vdd && !is_system_rdp_vdd_session &&
+      parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;
 
-    // Preserve the pre-VDD topology before prepare_vdd can create a monitor
-    // and switch Windows into extended mode.
-    boost::optional<active_topology_t> pre_saved_initial_topology;
+    // 在创建 VDD 可能使 Windows 自动激活显示器、Sunshine 应用目标布局之前保存拓扑。
+    boost::optional<active_topology_t> pre_saved_initial_topology = pending_vdd_.initial_topology;
     if (should_prepare_vdd) {
       const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
       if (will_disable_physical_displays) {
@@ -420,24 +460,40 @@ namespace display_device {
       else if (vdd_already_exists) {
         BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
       }
-      else {
-        pre_saved_initial_topology = get_current_topology();
+      else if (!is_system_rdp_vdd_session) {
+        pending_vdd_.initial_topology = get_current_topology();
+        pre_saved_initial_topology = pending_vdd_.initial_topology;
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
       }
 
-      if (!prepare_vdd(*parsed_config, session)) {
+      boost::optional<device_info_map_t> captured_pre_vdd_devices;
+      const auto prepare_result = prepare_vdd(*parsed_config, session, captured_pre_vdd_devices);
+      if (captured_pre_vdd_devices) {
+        pending_vdd_.pre_vdd_devices = std::move(*captured_pre_vdd_devices);
+      }
+
+      if (prepare_result != vdd_stage_result_e::ready) {
         if (will_disable_physical_displays) {
           settings.release_audio_sink();
         }
 
-        BOOST_LOG(error) << "Failed to prepare the VDD device";
+        const bool modes_failed = prepare_result == vdd_stage_result_e::modes_failed;
+        BOOST_LOG(error) << (modes_failed ?
+                              "Failed to update the VDD mode list" :
+                              "Failed to prepare the VDD device");
         restore_state_impl(revert_reason_e::config_cleanup);
         return {
-          configure_result_t::result_e::vdd_create_failed,
-          "Sunshine could not create the virtual display.",
-          "Repair the virtual display driver in Sunshine settings, then try again."
+          modes_failed ? configure_result_t::result_e::modes_fail : configure_result_t::result_e::vdd_create_failed,
+          modes_failed ? "Sunshine could not configure the requested virtual display mode." : "Sunshine could not create the virtual display.",
+          modes_failed ?
+            "Choose a resolution and refresh rate supported by the virtual display, or set resolution and FPS to Auto." :
+            "Repair the virtual display driver in Sunshine settings, then try again."
         };
       }
+
+      // NVHTTP 的短间隔重试可能在 VDD 已创建后再次进入 configure_display。
+      // 在 settings_t 持久化状态或会话完成清理前，始终保留第一次创建前的快照。
+      pre_saved_initial_topology = pending_vdd_.initial_topology;
     }
 
     // 保存当前会话的配置模式（可能包含客户端的override）
@@ -445,12 +501,42 @@ namespace display_device {
     current_vdd_prep = parsed_config->vdd_prep;
     current_use_vdd = parsed_config->use_vdd;
 
-    if (settings.is_changing_settings_going_to_fail()) {
+    if (is_system_rdp_vdd_session) {
+      // SYSTEM 服务可以在 RDP 会话中创建 VDD，但此时 Windows 无法提供
+      // 可靠的交互式 CCD 拓扑。因此这里不修改拓扑和显示设置，最终由编码器探测
+      // 确认 VDD 是否可捕获，避免在持有会话锁时等待一个不会改变处理结果的条件。
+      BOOST_LOG(info) << "[Display] SYSTEM RDP session: VDD is ready; skipping topology and display-setting changes";
+      pending_vdd_.reset();
+      timer->setup_timer(nullptr);
+      return {
+        configure_result_t::result_e::success,
+        {},
+        {}
+      };
+    }
+
+    const bool should_defer_display_settings = settings.is_changing_settings_going_to_fail();
+    if (should_defer_display_settings) {
       timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name,
-                           pre_saved_initial_topology, vulkan_hdr_bridge_requested]() {
+                           pre_saved_initial_topology,
+                           pre_vdd_devices = pending_vdd_.pre_vdd_devices,
+                           should_prepare_vdd,
+                           vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
           return false;
+        }
+
+        if (should_prepare_vdd) {
+          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
+          if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
+            BOOST_LOG(warning) << "The rebuilt VDD has not published the requested mode yet; retrying the deferred display configuration";
+            return false;
+          }
+          if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
+            BOOST_LOG(warning) << "The deferred VDD topology change is still unavailable; retrying without tearing down the active monitor";
+            return false;
+          }
         }
 
         auto retry_session = rtsp_stream::launch_session_t {};
@@ -460,6 +546,7 @@ namespace display_device {
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
+          return true;
         }
 #ifdef _WIN32
         else if (vulkan_hdr_bridge_requested) {
@@ -471,6 +558,7 @@ namespace display_device {
           platf::vulkan_hdr_bridge::disable();
         }
 #endif
+        pending_vdd_.reset();
         return true;
       });
 
@@ -482,9 +570,35 @@ namespace display_device {
       };
     }
 
+    // 延迟任务尚未执行时可能收到新的重配置。本次调用已经接管立即应用，
+    // 因此必须取消旧回调，避免它随后使用过期配置再次修改显示状态。
+    timer->setup_timer(nullptr);
+
+    if (should_prepare_vdd) {
+      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices);
+      if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
+        restore_state_impl(revert_reason_e::config_cleanup);
+        return {
+          configure_result_t::result_e::topology_fail,
+          "Sunshine could not apply the requested virtual display topology.",
+          "Unlock the desktop, make sure Windows display settings are available, and try again."
+        };
+      }
+      if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
+        BOOST_LOG(warning) << "VDD mode publication failed; cleaning up the prepared VDD state";
+        restore_state_impl(revert_reason_e::config_cleanup);
+        return {
+          configure_result_t::result_e::modes_fail,
+          "The virtual display did not publish the requested mode.",
+          "Choose a resolution and refresh rate supported by the virtual display, or set resolution and FPS to Auto."
+        };
+      }
+    }
+
     const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology);
     if (apply_result) {
       timer->setup_timer(nullptr);
+      pending_vdd_.reset();
 #ifdef _WIN32
       if (vulkan_hdr_bridge_requested) {
         if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {
@@ -591,8 +705,10 @@ namespace display_device {
     return vdd_mode_update_e::failed;
   }
 
-  bool
-  session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session) {
+  session_t::vdd_stage_result_e
+  session_t::prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session, boost::optional<device_info_map_t> &pre_vdd_devices) {
+    pre_vdd_devices.reset();
+
     const std::string current_client_id = get_client_id_from_session(session);
     const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
@@ -612,62 +728,20 @@ namespace display_device {
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
-    // pre_vdd_devices: 在 VDD 创建前一刻保存的物理显示器快照
-    // 延迟到 VDD 创建前才捕获，确保无论是新建还是重建都能拿到正确状态
-    device_info_map_t pre_vdd_devices;
-
-    // Rebuild VDD device on client switch
-    if (!device_zako.empty() && !current_vdd_client_id.empty() &&
-        !current_client_id.empty() && current_vdd_client_id != current_client_id) {
-      
-      // 是否复用VDD（由独立配置项控制）
-      const bool reuse_vdd = config::video.vdd_reuse;
-
-      if (reuse_vdd) {
-        // 复用VDD：所有客户端共享同一VDD，只更新客户端ID
-        BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
-        current_vdd_client_id = current_client_id;
-      }
-      else {
-        // 不复用：销毁并重建VDD（每个客户端独立VDD）
-        BOOST_LOG(info) << "独立VDD模式，重建VDD设备（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
-        
-        const auto old_vdd_id = device_zako;
-        destroy_vdd_monitor();
-        clear_vdd_state();
-        device_zako.clear();
-        
-        // Handle VDD ID in persistent_data
-        if (config::video.vdd_keep_enabled) {
-          // 常驻模式：需要替换ID（保留VDD在persistent_data中）
-          should_replace_vdd_id_ = true;
-          old_vdd_id_ = old_vdd_id;
-          BOOST_LOG(debug) << "标记需要替换VDD ID: " << old_vdd_id;
-        }
-        else {
-          // 非常驻模式：从initial中移除VDD
-          BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
-          settings.remove_vdd_from_initial_topology(old_vdd_id);
-        }
-        
-        std::this_thread::sleep_for(500ms);
-      }
-    }
-
     std::string mode_rebuild_old_vdd_id;
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution && config.refresh_rate) {
       const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako);
       if (mode_update == vdd_mode_update_e::failed) {
-        return false;
+        return vdd_stage_result_e::modes_failed;
       }
 
       if (mode_update == vdd_mode_update_e::recreate_monitor) {
         mode_rebuild_old_vdd_id = device_zako;
         if (!vdd_utils::destroy_vdd_monitor()) {
           BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
-          return false;
+          return vdd_stage_result_e::create_failed;
         }
         if (!wait_for_vdd_device_departure(5, 100ms, 1000ms)) {
           // The driver has already removed its monitor object synchronously.
@@ -684,16 +758,14 @@ namespace display_device {
       // 在创建 VDD 之前捕获物理显示器快照
       // 此时无 VDD 存在（新建 or 重建后已销毁），物理屏应处于正常状态
       pre_vdd_devices = display_device::enum_available_devices();
-      BOOST_LOG(info) << "已保存pre-VDD设备列表: " << display_device::to_string(pre_vdd_devices);
+      BOOST_LOG(info) << "已保存pre-VDD设备列表: " << display_device::to_string(*pre_vdd_devices);
 
       BOOST_LOG(info) << "创建虚拟显示器...";
-      // 复用模式使用固定标识符，否则使用客户端ID生成唯一GUID
-      const std::string vdd_identifier = config::video.vdd_reuse
-        ? "shared_vdd"  // 固定标识符，所有客户端共用同一GUID
-        : current_client_id;  // 为每个客户端生成不同GUID
+      // 共享模式使用固定标识符；独立模式则使用当前客户端标识符创建显示器。
+      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
-        return false;
+        return vdd_stage_result_e::create_failed;
       }
       std::this_thread::sleep_for(200ms);
     }
@@ -722,51 +794,12 @@ namespace display_device {
         else {
           BOOST_LOG(warning) << "VDD IOCTL 仍可用，跳过 disable/enable，避免制造 phantom monitor";
         }
-        return false;
+        return vdd_stage_result_e::create_failed;
       }
     }
 
     if (device_zako.empty()) {
-      return false;
-    }
-
-    // Apply topology before mode verification so a cold-created monitor
-    // receives the GDI display name consumed by EnumDisplaySettingsW.
-    if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation) {
-      if (!vdd_utils::apply_vdd_prep(device_zako, config.vdd_prep, pre_vdd_devices)) {
-        BOOST_LOG(error) << "Failed to apply the requested VDD topology";
-        return false;
-      }
-      BOOST_LOG(info) << "已应用VDD屏幕布局设置";
-    }
-    else {
-      std::vector<std::string> physical_devices_to_preserve;
-      const auto append_physical_devices = [&](device_state_e state) {
-        for (const auto &[device_id, info] : pre_vdd_devices) {
-          if (info.friendly_name != ZAKO_NAME && info.device_state == state) {
-            physical_devices_to_preserve.push_back(device_id);
-          }
-        }
-      };
-      append_physical_devices(device_state_e::primary);
-      append_physical_devices(device_state_e::active);
-
-      if (!vdd_utils::ensure_vdd_extended_mode(device_zako, physical_devices_to_preserve)) {
-        BOOST_LOG(error) << "Failed to ensure the default VDD extended topology";
-        return false;
-      }
-      BOOST_LOG(info) << "VDD extended topology is ready";
-    }
-
-    // Wait for the OS-facing mode contract using the utility's bounded
-    // deadline policy rather than driver-specific timing assumptions.
-    if (config.resolution && config.refresh_rate) {
-      const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
-      if (!vdd_utils::wait_for_mode_publication(device_zako, requested_mode)) {
-        BOOST_LOG(error) << "VDD monitor did not publish "
-                         << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
-        return false;
-      }
+      return vdd_stage_result_e::create_failed;
     }
 
     if (!mode_rebuild_old_vdd_id.empty() && mode_rebuild_old_vdd_id != device_zako) {
@@ -780,27 +813,13 @@ namespace display_device {
       BOOST_LOG(debug) << "保存原始 output_name: " << original_output_name;
     }
 
-    // Replace VDD ID if needed (after client switch in keep_enabled mode)
-    if (should_replace_vdd_id_ && !old_vdd_id_.empty()) {
-      BOOST_LOG(info) << "替换persistent_data中的VDD ID: " << old_vdd_id_ << " -> " << device_zako;
-      settings.replace_vdd_id(old_vdd_id_, device_zako);
-      should_replace_vdd_id_ = false;
-      old_vdd_id_.clear();
-    }
-    
     // Update configuration and state
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
-    // Set HDR state with retry
-    if (!vdd_utils::set_hdr_state(false)) {
-      BOOST_LOG(debug) << "首次设置HDR状态失败，等待设备稳定后重试";
-      std::this_thread::sleep_for(500ms);
-      vdd_utils::set_hdr_state(false);
-    }
-    return true;
+    return vdd_stage_result_e::ready;
   }
 
   void

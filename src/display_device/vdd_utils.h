@@ -11,6 +11,8 @@
 #include <vector>
 #include <windows.h>
 
+#include <boost/optional.hpp>
+
 #include "parsed_config.h"
 
 namespace display_device::vdd_utils {
@@ -175,14 +177,6 @@ namespace display_device::vdd_utils {
   vdd_status_t
   get_vdd_status();
 
-  // 指数退避计算
-  std::chrono::milliseconds
-  calculate_exponential_backoff(int attempt);
-
-  // VDD命令执行
-  bool
-  execute_vdd_command(const std::string &action);
-
   /**
    * @brief Parse the persisted VDD HardwareCursor value.
    */
@@ -274,12 +268,6 @@ namespace display_device::vdd_utils {
   destroy_vdd_monitor_nolog();
 
   void
-  enable_vdd();
-
-  void
-  disable_vdd();
-
-  void
   disable_enable_vdd();
 
   bool
@@ -298,16 +286,16 @@ namespace display_device::vdd_utils {
    * @brief Apply VDD prep settings to handle physical displays.
    * @param vdd_device_id The VDD device ID.
    * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
-   * @param pre_vdd_devices Physical device info captured BEFORE VDD creation.
-   *        Used to reliably identify physical displays even if VDD creation
-   *        caused them to become inactive. If empty, falls back to current device enumeration.
+   * @param pre_vdd_devices Physical device info captured before VDD creation.
+   *        An engaged empty map represents a headless host. An unengaged value
+   *        falls back to current device enumeration.
    * @returns True if the operation succeeded.
    * @note This operation modifies topology without saving/restoring state,
    *       as Windows automatically handles topology memory when displays change.
    */
   bool
   apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
-    const device_info_map_t &pre_vdd_devices = {});
+    const boost::optional<device_info_map_t> &pre_vdd_devices);
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
