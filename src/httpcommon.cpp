@@ -331,6 +331,11 @@ namespace http {
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+#else
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_write_callback);

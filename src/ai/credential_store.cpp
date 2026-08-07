@@ -29,25 +29,26 @@ namespace credential_store {
     }
 
     std::string
-    windows_error(const char *operation) {
-      return std::string { operation } + " failed (Windows error " + std::to_string(GetLastError()) + ")";
+    windows_error(const char *operation, DWORD error) {
+      return std::string { operation } + " failed (Windows error " + std::to_string(error) + ")";
     }
 
-    bool
+    DWORD
     restrict_file_acl(const std::filesystem::path &path) {
       PSECURITY_DESCRIPTOR descriptor = nullptr;
       constexpr auto sddl = L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
       if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl, SDDL_REVISION_1, &descriptor, nullptr)) {
-        return false;
+        return GetLastError();
       }
 
       const BOOL ok = SetFileSecurityW(
         path.c_str(),
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
         descriptor);
+      const DWORD error = ok ? ERROR_SUCCESS : GetLastError();
       LocalFree(descriptor);
-      return ok != FALSE;
+      return error;
     }
 
     mutation_result_t
@@ -69,15 +70,16 @@ namespace credential_store {
         }
       }
 
-      if (!restrict_file_acl(temp)) {
+      if (const DWORD error = restrict_file_acl(temp); error != ERROR_SUCCESS) {
         std::error_code ignored;
         std::filesystem::remove(temp, ignored);
-        return { false, windows_error("Restricting credential file access") };
+        return { false, windows_error("Restricting credential file access", error) };
       }
       if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD error = GetLastError();
         std::error_code ignored;
         std::filesystem::remove(temp, ignored);
-        return { false, windows_error("Replacing credential file") };
+        return { false, windows_error("Replacing credential file", error) };
       }
       return { true, {} };
     }
@@ -109,7 +111,7 @@ namespace credential_store {
     DATA_BLOB output {};
     auto entropy = entropy_blob();
     if (!CryptUnprotectData(&input, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-      return { read_status_e::error, {}, windows_error("Decrypting LLM credential") };
+      return { read_status_e::error, {}, windows_error("Decrypting LLM credential", GetLastError()) };
     }
     std::string secret(reinterpret_cast<const char *>(output.pbData), output.cbData);
     SecureZeroMemory(output.pbData, output.cbData);
@@ -138,7 +140,7 @@ namespace credential_store {
           &input, L"Sunshine LLM API key", &entropy, nullptr, nullptr,
           CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN,
           &output)) {
-      return { false, windows_error("Encrypting LLM credential") };
+      return { false, windows_error("Encrypting LLM credential", GetLastError()) };
     }
     auto result = write_blob_atomically(path, output.pbData, output.cbData);
     SecureZeroMemory(output.pbData, output.cbData);

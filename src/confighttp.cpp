@@ -2388,6 +2388,20 @@ namespace confighttp {
     return config_dir / "ai_llm_credential.bin";
   }
 
+  static void
+  applyStoredCredentialLocked(nlohmann::json &cfg) {
+    auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
+    if (credential.status == credential_store::read_status_e::success) {
+      cfg["apiKey"] = std::move(credential.secret);
+    } else {
+      cfg["apiKey"] = "";
+      if (credential.status == credential_store::read_status_e::error) {
+        BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
+      }
+    }
+    cfg["apiKeyConfigured"] = !cfg.value("apiKey", "").empty();
+  }
+
   static bool
   writeAiConfigFile(const nlohmann::json &cfg) {
     const fs::path path = getAiConfigPath();
@@ -2460,15 +2474,7 @@ namespace confighttp {
           }
           ai_config_cache["apiKey"] = legacy_key;
         } else {
-          auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
-          if (credential.status == credential_store::read_status_e::success) {
-            ai_config_cache["apiKey"] = std::move(credential.secret);
-          } else {
-            ai_config_cache["apiKey"] = "";
-            if (credential.status == credential_store::read_status_e::error) {
-              BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
-            }
-          }
+          applyStoredCredentialLocked(ai_config_cache);
         }
         ai_config_cache["apiKeyConfigured"] = !ai_config_cache.value("apiKey", "").empty();
         ai_config_loaded = true;
@@ -2487,13 +2493,7 @@ namespace confighttp {
       {"temperature", 0.3},
       {"max_tokens", 2048}
     };
-    auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
-    if (credential.status == credential_store::read_status_e::success) {
-      ai_config_cache["apiKey"] = std::move(credential.secret);
-      ai_config_cache["apiKeyConfigured"] = true;
-    } else if (credential.status == credential_store::read_status_e::error) {
-      BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
-    }
+    applyStoredCredentialLocked(ai_config_cache);
     ai_config_loaded = true;
     return ai_config_cache;
   }
@@ -2818,7 +2818,7 @@ namespace confighttp {
 
     auto cfg = loadAiConfig();
 
-    // 掩码 API key：仅显示前4+后4字符
+    // Never expose the key; only report whether one is configured.
     const std::string key = cfg.value("apiKey", "");
     cfg.erase("apiKey");
     cfg["apiKeyConfigured"] = !key.empty();
@@ -2833,6 +2833,7 @@ namespace confighttp {
    */
   void
   saveAiConfigEndpoint(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
 
@@ -2858,8 +2859,8 @@ namespace confighttp {
       // Backward compatibility for older clients that only send apiKey.
       if (input.contains("apiKey") && key_action == "keep") {
         const std::string candidate = input["apiKey"].get<std::string>();
-        if (candidate.find("****") == std::string::npos) {
-          key_action = candidate.empty() ? "clear" : "replace";
+        if (!candidate.empty() && candidate.find("****") == std::string::npos) {
+          key_action = "replace";
         }
       }
 
@@ -2908,6 +2909,13 @@ namespace confighttp {
     print_req(request);
 
     const auto cfg = loadAiConfig();
+    if (!cfg.value("enabled", false)) {
+      response->write(
+        SimpleWeb::StatusCode::client_error_forbidden,
+        R"({"error":{"message":"AI proxy is not enabled","type":"invalid_request_error"}})",
+        json_headers());
+      return;
+    }
     const std::string api_key = cfg.value("apiKey", "");
     std::string api_base = cfg.value("apiBase", "");
     if (api_base.empty() || (api_key.empty() && isApiKeyRequired(cfg))) {
