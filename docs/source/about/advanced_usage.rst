@@ -1461,6 +1461,34 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 
       nvenc_h264_cavlc = disabled
 
+`nvenc_cuda_array_input <https://localhost:47990/config/#nvenc_cuda_array_input>`__
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Description**
+   Feed 10-bit 4:4:4 frames to NVENC through a block-linear CUDA array instead of the pitch-linear device pointer.
+
+   .. warning:: Experimental. Some drivers produce ghosted output or stall the encoder with this enabled. Leave it disabled unless you are helping test the 4:4:4 path.
+
+**Choices**
+
+.. table::
+   :widths: auto
+
+   ========== ===========
+   Value      Description
+   ========== ===========
+   disabled   Pitch-linear CUDA device pointer
+   enabled    Block-linear CUDA array
+   ========== ===========
+
+**Default**
+   ``disabled``
+
+**Example**
+   .. code-block:: text
+
+      nvenc_cuda_array_input = disabled
+
 `Intel QuickSync Encoder <https://localhost:47990/config/#intel-quicksync-encoder>`__
 -------------------------------------------------------------------------------------
 

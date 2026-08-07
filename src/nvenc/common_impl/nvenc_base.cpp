@@ -113,6 +113,7 @@ namespace nvenc {
     encoder_params.width = client_config.width;
     encoder_params.height = client_config.height;
     encoder_params.buffer_format = buffer_format;
+    encoder_params.cuda_array_input = config.cuda_array_input;
 
     // YUV 4:2:0 formats (NV12/P010) require even dimensions because
     // the chroma plane is half the size of the luma plane in both dimensions.

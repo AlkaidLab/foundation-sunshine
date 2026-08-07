@@ -471,6 +471,8 @@
     "no_resolutions": "未添加分辨率",
     "notify_pre_releases": "预发布版本通知",
     "notify_pre_releases_desc": "是否接收 Sunshine 新预发布版本的通知",
+    "nvenc_cuda_array_input": "10-bit 4:4:4 使用 CUDA array 输入",
+    "nvenc_cuda_array_input_desc": "将 10-bit 4:4:4 画面通过块线性（block-linear）CUDA array 送给 NVENC，而不是使用线性显存指针。实验功能：部分驱动开启后会出现重影或编码器卡死。除非你正在协助测试，否则请保持关闭。",
     "nvenc_h264_cavlc": "在 H.264 中优先使用 CAVLC 而非 CABAC",
     "nvenc_h264_cavlc_desc": "一种更简单的熵编码形式。相同质量下，CAVLC 需要增加约 10% 的比特率。仅适用于非常老旧的解码设备。",
     "nvenc_latency_over_power": "优先降低编码延迟而非省电",

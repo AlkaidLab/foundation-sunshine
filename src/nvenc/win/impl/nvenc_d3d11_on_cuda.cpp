@@ -195,12 +195,17 @@ namespace nvenc {
     }
 
 #if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
-    if (create_and_register_cuda_array_input()) {
-      BOOST_LOG(info) << "NvEnc: using block-linear CUDA array input";
-      return true;
-    }
+    // Opt-in only. The array path has shipped ghosted output and has been seen to
+    // stall during encoder probing on some drivers, so the pitch-linear device
+    // pointer stays the default until it is confirmed good on real hardware.
+    if (encoder_params.cuda_array_input) {
+      if (create_and_register_cuda_array_input()) {
+        BOOST_LOG(info) << "NvEnc: using block-linear CUDA array input";
+        return true;
+      }
 
-    BOOST_LOG(info) << "NvEnc: falling back to pitch-linear CUDA device pointer input";
+      BOOST_LOG(info) << "NvEnc: falling back to pitch-linear CUDA device pointer input";
+    }
 #endif
 
     return create_and_register_cuda_device_pointer_input();
@@ -243,10 +248,14 @@ namespace nvenc {
       }
     }
 
+    // NVENC wants the byte width of the whole allocation. The header spells this
+    // as `CUDA_ARRAY3D_DESCRIPTOR::Width * NumChannels`, which only works out to
+    // bytes for 8-bit formats; UINT16_PLANAR_444 is 2 bytes per sample across 3
+    // planes, so the row stride is width * 3 * 2.
     if (!register_cuda_input(
           NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY,
           cuda_array_surface,
-          encoder_params.width * planar_yuv_bytes_per_sample)) {
+          encoder_params.width * planar_yuv_plane_count * planar_yuv_bytes_per_sample)) {
       BOOST_LOG(warning) << "NvEnc: CUDA array registration failed: " << last_nvenc_error_string;
       destroy_cuda_array_input();
       return false;

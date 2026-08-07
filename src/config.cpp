@@ -1167,6 +1167,7 @@ namespace config {
     generic_f(vars, "nvenc_temporal_filter", video.nv.temporal_filter_level, nv::temporal_filter_level_from_view);
     generic_f(vars, "nvenc_rate_control", video.nv.rate_control_mode, nv::rate_control_mode_from_view);
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
+    bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
