@@ -61,6 +61,7 @@ namespace mail {
   MAIL(video_packets);
   MAIL(audio_packets);
   MAIL(switch_display);
+  MAIL(active_display);
 
   // Local mail
   MAIL(touch_port);

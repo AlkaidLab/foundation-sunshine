@@ -9,6 +9,7 @@
 #include "src/utility.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #define NVENC_INT_VERSION (NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION)
@@ -599,7 +600,7 @@ namespace nvenc {
   #else
           format_config.inputPixelBitDepthMinus8 = 2;
           format_config.pixelBitDepthMinus8 = 2;
-  #endif
+#endif
         }
         format_config.colorPrimaries = colorspace.primaries;
         format_config.transferCharacteristics = colorspace.tranfer_function;
@@ -838,47 +839,52 @@ namespace nvenc {
         pic_params.codecPicParams.av1PicParams.pMasteringDisplay = &mastering_display;
         pic_params.codecPicParams.av1PicParams.pMaxCll = &content_light_level;
       }
-#endif
+  #endif
     }
 #endif
 
     // Inject HDR10+ and/or Vivid dynamic metadata as custom SEI/OBU payloads
-    std::vector<uint8_t> hdr10plus_payload;
+    std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> hdr10plus_payload {};
     std::vector<uint8_t> vivid_payload;
-    NV_ENC_SEI_PAYLOAD sei_payloads[2] = {};
-    uint32_t sei_count = 0;
+    NV_ENC_SEI_PAYLOAD dynamic_payloads[2] = {};
+    uint32_t dynamic_payload_count = 0;
 
     if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
       uint16_t max_lum = hdr_metadata->maxDisplayLuminance;
       const auto vivid_metadata = vivid_filter.update(luminance_stats);
 
       // HDR10+ (PQ only — HDR10+ requires absolute luminance)
-      if (dynamic_hdr_formats.hdr10plus &&
-          serialize_hdr10plus_sei(luminance_stats, max_lum, hdr10plus_payload) > 0) {
-        sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(hdr10plus_payload.size());
-        sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
-        sei_payloads[sei_count].payload = hdr10plus_payload.data();
-        sei_count++;
+      size_t hdr10plus_payload_size = 0;
+      if (dynamic_hdr_formats.hdr10plus) {
+        hdr10plus_payload_size = video::hdr_metadata::serialize_hdr10plus_t35(
+          luminance_stats, max_lum, hdr10plus_payload);
+      }
+      if (hdr10plus_payload_size > 0) {
+        dynamic_payloads[dynamic_payload_count].payloadSize =
+          static_cast<uint32_t>(hdr10plus_payload_size);
+        dynamic_payloads[dynamic_payload_count].payloadType = 4;  // registered ITU-T T.35
+        dynamic_payloads[dynamic_payload_count].payload = hdr10plus_payload.data();
+        dynamic_payload_count++;
       }
 
       // HDR Vivid (both PQ and HLG)
       if (dynamic_hdr_formats.vivid &&
           video::hdr_metadata::serialize_vivid_t35(vivid_metadata, vivid_payload) > 0) {
-        sei_payloads[sei_count].payloadSize = static_cast<uint32_t>(vivid_payload.size());
-        sei_payloads[sei_count].payloadType = 4;  // user_data_registered_itu_t_t35
-        sei_payloads[sei_count].payload = vivid_payload.data();
-        sei_count++;
+        dynamic_payloads[dynamic_payload_count].payloadSize = static_cast<uint32_t>(vivid_payload.size());
+        dynamic_payloads[dynamic_payload_count].payloadType = 4;  // registered ITU-T T.35
+        dynamic_payloads[dynamic_payload_count].payload = vivid_payload.data();
+        dynamic_payload_count++;
       }
 
-      if (sei_count > 0) {
+      if (dynamic_payload_count > 0) {
         if (video_format == 1) {
-          pic_params.codecPicParams.hevcPicParams.seiPayloadArrayCnt = sei_count;
-          pic_params.codecPicParams.hevcPicParams.seiPayloadArray = sei_payloads;
+          pic_params.codecPicParams.hevcPicParams.seiPayloadArrayCnt = dynamic_payload_count;
+          pic_params.codecPicParams.hevcPicParams.seiPayloadArray = dynamic_payloads;
         }
 #if NVENCAPI_MAJOR_VERSION >= 12
         else if (video_format == 2) {
-          pic_params.codecPicParams.av1PicParams.obuPayloadArrayCnt = sei_count;
-          pic_params.codecPicParams.av1PicParams.obuPayloadArray = sei_payloads;
+          pic_params.codecPicParams.av1PicParams.obuPayloadArrayCnt = dynamic_payload_count;
+          pic_params.codecPicParams.av1PicParams.obuPayloadArray = dynamic_payloads;
         }
 #endif
       }
@@ -1066,127 +1072,6 @@ namespace nvenc {
   void
   nvenc_base::set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) {
     luminance_stats = stats;
-  }
-
-  size_t
-  nvenc_base::serialize_hdr10plus_sei(const platf::hdr_frame_luminance_stats_t &stats,
-    uint16_t max_display_luminance,
-    std::vector<uint8_t> &payload) {
-    // HDR10+ (ST 2094-40) ITU-T T.35 registered SEI payload structure:
-    //   country_code:          0xB5 (USA)
-    //   terminal_provider_code: 0x003C (Samsung)
-    //   terminal_provider_oriented_code: 0x0001 (HDR10+)
-    //   application_identifier: 4
-    //   application_version:    1
-    //   num_windows:            1
-    //   Then per-window: maxscl[3], average_maxrgb, distribution percentiles
-    //   targeted_system_display_maximum_luminance
-    //
-    // Simplified profile: no tone mapping curve, no bezier anchors, no percentile distribution
-
-    float peak_nits = max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-
-    // Use P95 as effective peak (same logic as update_hdr_dynamic_metadata in video.cpp)
-    float effective_max = stats.percentile_95;
-
-    // Normalize to [0, 1] relative to peak_nits, expressed as 27-bit values (maxscl precision)
-    // HDR10+ maxscl is in 0.00001 cd/m² units
-    auto to_maxscl = [&](float nits) -> uint32_t {
-      return static_cast<uint32_t>(std::clamp(nits, 0.0f, 100000.0f) * 10.0f);  // 0.00001 cd/m² unit → stored as integer
-    };
-
-    payload.clear();
-    payload.reserve(64);
-
-    // ITU-T T.35 header
-    payload.push_back(0xB5);        // country_code (USA)
-    payload.push_back(0x00);        // terminal_provider_code (Samsung) high byte
-    payload.push_back(0x3C);        // terminal_provider_code low byte
-    payload.push_back(0x00);        // terminal_provider_oriented_code high byte
-    payload.push_back(0x01);        // terminal_provider_oriented_code low byte
-
-    // application_identifier (4) + application_version (1) — packed as 8+8 bits
-    payload.push_back(4);           // application_identifier
-    payload.push_back(1);           // application_version
-
-    // Bitstream-packed fields follow. We pack into a bit buffer.
-    // For simplicity, we'll use byte-aligned approximation where possible.
-
-    // num_windows (2 bits) = 1 (only 1-1=0 written for extra windows, but the spec says
-    // num_windows is 2 bits and actual count; with 1 window, no extra window data needed)
-    // Then for each window i (1..num_windows-1): window geometry (skipped for window 0)
-
-    // The bitstream layout is complex. Let's use a simple bitstream writer.
-    struct bitwriter {
-      std::vector<uint8_t> &buf;
-      uint32_t accumulator = 0;
-      int bits_pending = 0;
-
-      void write(uint32_t value, int num_bits) {
-        for (int i = num_bits - 1; i >= 0; --i) {
-          accumulator = (accumulator << 1) | ((value >> i) & 1);
-          bits_pending++;
-          if (bits_pending == 8) {
-            buf.push_back(static_cast<uint8_t>(accumulator));
-            accumulator = 0;
-            bits_pending = 0;
-          }
-        }
-      }
-
-      void flush() {
-        if (bits_pending > 0) {
-          accumulator <<= (8 - bits_pending);
-          buf.push_back(static_cast<uint8_t>(accumulator));
-          accumulator = 0;
-          bits_pending = 0;
-        }
-      }
-    };
-
-    bitwriter bw { payload };
-
-    // num_windows: 2 bits (value = 1)
-    bw.write(1, 2);
-
-    // For window 0 (always present, no geometry needed):
-    // maxscl[0..2]: 17 bits each (in 0.00001 cd/m² unit)
-    uint32_t maxscl_val = to_maxscl(effective_max);
-    bw.write(maxscl_val, 17);  // maxscl[0] (R)
-    bw.write(maxscl_val, 17);  // maxscl[1] (G)
-    bw.write(maxscl_val, 17);  // maxscl[2] (B)
-
-    // average_maxrgb: 17 bits
-    uint32_t avg_val = to_maxscl(stats.avg_maxrgb);
-    bw.write(avg_val, 17);
-
-    // num_distribution_maxrgb_percentiles: 4 bits (= 0, no percentile data)
-    bw.write(0, 4);
-
-    // fraction_bright_pixels: 10 bits (= 0)
-    bw.write(0, 10);
-
-    // mastering_display_actual_peak_luminance_flag: 1 bit (= 0)
-    bw.write(0, 1);
-
-    // For each window (window 0):
-    // tone_mapping_flag: 1 bit (= 0, no tone mapping)
-    bw.write(0, 1);
-
-    // color_saturation_mapping_flag: 1 bit (= 0)
-    bw.write(0, 1);
-
-    // targeted_system_display_actual_peak_luminance_flag: 1 bit (= 0)
-    bw.write(0, 1);
-
-    // targeted_system_display_maximum_luminance: 27 bits
-    // In 0.0001 cd/m² units
-    uint32_t target_lum = static_cast<uint32_t>(peak_nits * 10000);
-    bw.write(target_lum, 27);
-
-    bw.flush();
-
-    return payload.size();
   }
 
   bool

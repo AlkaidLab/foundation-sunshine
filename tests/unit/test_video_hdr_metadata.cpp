@@ -6,6 +6,11 @@
 
 #include <limits>
 
+extern "C" {
+#include <libavutil/hdr_dynamic_metadata.h>
+#include <libavutil/rational.h>
+}
+
 #include "../tests_common.h"
 
 namespace {
@@ -40,6 +45,99 @@ TEST(HdrDynamicMetadata, RoutesFormatsByTransferFunction) {
   const auto sdr = formats_for(sunshine_colorspace_t { colorspace_e::rec709, false, 8 });
   EXPECT_FALSE(sdr.hdr10plus);
   EXPECT_FALSE(sdr.vivid);
+}
+
+TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.percentile_95 = 500.0f;
+  stats.avg_maxrgb = 100.0f;
+  stats.valid = true;
+
+  std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> payload {};
+  const size_t payload_size = video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, payload);
+  ASSERT_GT(payload_size, video::hdr_metadata::hdr10plus_t35_prefix_size);
+
+  const std::vector<uint8_t> expected_prefix { 0xB5, 0x00, 0x3C, 0x00, 0x01, 0x04 };
+  ASSERT_TRUE(std::equal(expected_prefix.begin(), expected_prefix.end(), payload.begin()));
+
+  AVDynamicHDRPlus decoded {};
+  ASSERT_GE(av_dynamic_hdr_plus_from_t35(
+              &decoded, payload.data() + expected_prefix.size(),
+              payload_size - expected_prefix.size()),
+    0);
+  EXPECT_EQ(decoded.application_version, video::hdr_metadata::hdr10plus_application_version);
+  EXPECT_EQ(decoded.num_windows, 1);
+  EXPECT_EQ(av_cmp_q(decoded.targeted_system_display_maximum_luminance, av_make_q(1000, 1)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[0], av_make_q(50000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[1], av_make_q(50000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[2], av_make_q(50000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].average_maxrgb, av_make_q(10000, 100000)), 0);
+  EXPECT_EQ(decoded.params[0].tone_mapping_flag, 0);
+  EXPECT_EQ(decoded.params[0].color_saturation_mapping_flag, 0);
+}
+
+TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.percentile_95 = 400.0f;
+  stats.avg_maxrgb = 80.0f;
+  stats.valid = false;
+
+  std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> payload {};
+  EXPECT_EQ(video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, payload), 0U);
+
+  stats.valid = true;
+  std::array<uint8_t, 16> undersized_payload {};
+  EXPECT_EQ(video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, undersized_payload), 0U);
+
+  const auto rejected = [&](float percentile_95, float average_maxrgb) {
+    stats.percentile_95 = percentile_95;
+    stats.avg_maxrgb = average_maxrgb;
+    return video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, payload) == 0;
+  };
+  EXPECT_TRUE(rejected(std::numeric_limits<float>::quiet_NaN(), 80.0f));
+  EXPECT_TRUE(rejected(-1.0f, 80.0f));
+  EXPECT_TRUE(rejected(400.0f, std::numeric_limits<float>::quiet_NaN()));
+  EXPECT_TRUE(rejected(400.0f, -1.0f));
+}
+
+TEST(HdrDynamicMetadata, AppliesHdr10PlusTargetLuminanceFallbackAndClamp) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.percentile_95 = 400.0f;
+  stats.avg_maxrgb = 80.0f;
+  stats.valid = true;
+
+  std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> payload {};
+  size_t payload_size = video::hdr_metadata::serialize_hdr10plus_t35(stats, 0, payload);
+  ASSERT_GT(payload_size, video::hdr_metadata::hdr10plus_t35_prefix_size);
+  AVDynamicHDRPlus decoded {};
+  ASSERT_GE(av_dynamic_hdr_plus_from_t35(
+              &decoded,
+              payload.data() + video::hdr_metadata::hdr10plus_t35_prefix_size,
+              payload_size - video::hdr_metadata::hdr10plus_t35_prefix_size),
+    0);
+  EXPECT_EQ(av_cmp_q(decoded.targeted_system_display_maximum_luminance, av_make_q(1000, 1)), 0);
+
+  payload_size = video::hdr_metadata::serialize_hdr10plus_t35(stats, 60000, payload);
+  ASSERT_GT(payload_size, video::hdr_metadata::hdr10plus_t35_prefix_size);
+  decoded = {};
+  ASSERT_GE(av_dynamic_hdr_plus_from_t35(
+              &decoded,
+              payload.data() + video::hdr_metadata::hdr10plus_t35_prefix_size,
+              payload_size - video::hdr_metadata::hdr10plus_t35_prefix_size),
+    0);
+  EXPECT_EQ(av_cmp_q(decoded.targeted_system_display_maximum_luminance, av_make_q(10000, 1)), 0);
+}
+
+TEST(HdrDynamicMetadata, SharesHdr10PlusNormalizationAcrossEncoderPaths) {
+  const auto metadata = video::hdr_metadata::hdr10plus_from_luminance(500.0f, 100.0f, 1000);
+  ASSERT_TRUE(metadata.valid);
+  EXPECT_EQ(metadata.maxscl, 50000);
+  EXPECT_EQ(metadata.average_maxrgb, 10000);
+  EXPECT_EQ(metadata.targeted_system_display_maximum_luminance, 1000);
+
+  const auto fallback = video::hdr_metadata::hdr10plus_from_luminance(400.0f, 80.0f, 0);
+  ASSERT_TRUE(fallback.valid);
+  EXPECT_EQ(fallback.targeted_system_display_maximum_luminance, 1000);
 }
 
 TEST(HdrDynamicMetadata, GeneratesVividFieldsInPqContentDomain) {

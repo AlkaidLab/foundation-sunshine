@@ -143,62 +143,35 @@ namespace display_device {
       return std::min(delay, kMaxRetryDelay);
     }
 
-    /**
-     * @brief Allowed DevManView actions for VDD driver management.
-     */
-    enum class vdd_action_e {
-      enable,
-      disable,
-      disable_enable
-    };
-
-    /**
-     * @brief Get the command-line argument string for a VDD action.
-     */
-    const char *
-    vdd_action_to_string(vdd_action_e action) {
-      switch (action) {
-        case vdd_action_e::enable: return "enable";
-        case vdd_action_e::disable: return "disable";
-        case vdd_action_e::disable_enable: return "disable_enable";
-        default: return nullptr;
-      }
-    }
-
     bool
-    execute_vdd_command(vdd_action_e action) {
+    execute_vdd_disable_enable_command() {
       static const std::string kDevManPath = (std::filesystem::path(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe").string();
       static const std::string kDriverName = "Zako Display Adapter";
-
-      const char *action_str = vdd_action_to_string(action);
-      if (!action_str) {
-        BOOST_LOG(error) << "未知的VDD命令操作";
-        return false;
-      }
+      static constexpr auto kAction = "disable_enable";
 
       boost::process::v1::environment _env = boost::this_process::environment();
       auto working_dir = boost::filesystem::path();
       std::error_code ec;
 
-      std::string cmd = kDevManPath + " /" + action_str + " \"" + kDriverName + "\"";
+      std::string cmd = kDevManPath + " /" + kAction + " \"" + kDriverName + "\"";
 
       for (int attempt = 0; attempt < kMaxRetryCount; ++attempt) {
         auto child = platf::run_command(true, true, cmd, working_dir, _env, nullptr, ec, nullptr);
         if (!ec) {
-          BOOST_LOG(info) << "成功执行VDD " << action_str << " 命令";
+          BOOST_LOG(info) << "成功执行VDD " << kAction << " 命令";
           child.detach();
           return true;
         }
 
         auto delay = calculate_exponential_backoff(attempt);
-        BOOST_LOG(warning) << "执行VDD " << action_str << " 命令失败 (尝试 "
+        BOOST_LOG(warning) << "执行VDD " << kAction << " 命令失败 (尝试 "
                            << (attempt + 1) << "/" << kMaxRetryCount
                            << "): " << ec.message() << ". 将在 "
                            << delay.count() << "ms 后重试";
         std::this_thread::sleep_for(delay);
       }
 
-      BOOST_LOG(error) << "执行VDD " << action_str << " 命令失败，已达到最大重试次数";
+      BOOST_LOG(error) << "执行VDD " << kAction << " 命令失败，已达到最大重试次数";
       return false;
     }
 
@@ -636,18 +609,8 @@ namespace display_device {
     }
 
     void
-    enable_vdd() {
-      execute_vdd_command(vdd_action_e::enable);
-    }
-
-    void
-    disable_vdd() {
-      execute_vdd_command(vdd_action_e::disable);
-    }
-
-    void
     disable_enable_vdd() {
-      execute_vdd_command(vdd_action_e::disable_enable);
+      execute_vdd_disable_enable_command();
     }
 
     bool
@@ -1005,7 +968,7 @@ namespace display_device {
 
     bool
     apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
-      const device_info_map_t &pre_vdd_devices) {
+      const boost::optional<device_info_map_t> &pre_vdd_devices) {
       if (vdd_device_id.empty()) {
         BOOST_LOG(info) << "VDD设备ID为空，跳过vdd_prep处理";
         return true;
@@ -1026,9 +989,9 @@ namespace display_device {
                 info.device_state == device_state_e::primary);
       };
 
-      if (!pre_vdd_devices.empty()) {
+      if (pre_vdd_devices) {
         // 使用 VDD 创建前保存的设备信息（可靠）
-        for (const auto &[device_id, info] : pre_vdd_devices) {
+        for (const auto &[device_id, info] : *pre_vdd_devices) {
           if (is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
@@ -1111,12 +1074,16 @@ namespace display_device {
         return false;
       }
 
-      if (!set_topology(new_topology)) {
+      BOOST_LOG(info) << "vdd_prep 目标拓扑: " << to_string(new_topology);
+
+      const bool topology_applied = set_topology(new_topology);
+      if (!topology_applied) {
         BOOST_LOG(error) << "设置拓扑失败";
         return false;
       }
 
       BOOST_LOG(info) << "成功应用vdd_prep设置";
+      BOOST_LOG(debug) << "vdd_prep 执行后显示设备: " << to_string(enum_available_devices());
       return true;
     }
   }  // namespace vdd_utils

@@ -5,11 +5,13 @@
 #include "process.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <future>
 #include <iomanip>
 #include <optional>
 #include <queue>
 #include <unordered_map>
+#include <utility>
 
 #include <fstream>
 #include <openssl/err.h>
@@ -20,8 +22,8 @@
 #include <boost/endian/arithmetic.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/shared_ptr.hpp>
-#include <boost/thread/mutex.hpp>
 #include <boost/thread/lock_guard.hpp>
+#include <boost/thread/mutex.hpp>
 
 #include "abr.h"
 
@@ -37,6 +39,7 @@ extern "C" {
 
 #include "client_fingerprint.h"
 #include "config.h"
+#include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "globals.h"
 #include "rtsp.h"
@@ -539,6 +542,8 @@ namespace stream {
     // 添加客户端名称字段
     std::string client_name;
     std::string client_cert_uuid;
+    bool use_vdd {false};
+    int custom_screen_mode {-1};
     bool highly_suspected_unknown_client {false};
     std::string app_name;
     int app_id = 0;
@@ -629,6 +634,101 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  namespace session {
+    // 高位表示显示设备正在重配置，低 31 位记录已登记的视频会话数。
+    // 两者共用一个原子状态，确保“确认单会话”和“取得重配置权”由同一次 CAS 完成。
+    constexpr std::uint32_t VIDEO_SESSION_RECONFIGURING = std::uint32_t {1} << 31;
+    constexpr std::uint32_t VIDEO_SESSION_COUNT_MASK = ~VIDEO_SESSION_RECONFIGURING;
+
+    std::atomic_uint running_sessions;
+    boost::atomic<std::uint32_t> video_session_state {0};
+
+    // 在创建音视频线程前登记会话。显示设备重配置期间，新会话在此等待占用位释放，
+    // 避免会话启动和 VDD 重建同时进行。返回值表示它是否是首个视频会话。
+    std::optional<bool>
+    register_video_session() {
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        if ((state & VIDEO_SESSION_RECONFIGURING) != 0) {
+          state = video_session_state.wait(state, boost::memory_order_acquire);
+          continue;
+        }
+
+        const auto count = state & VIDEO_SESSION_COUNT_MASK;
+        if (count == VIDEO_SESSION_COUNT_MASK) {
+          BOOST_LOG(error) << "Cannot register another video session because the session counter is exhausted"sv;
+          return std::nullopt;
+        }
+
+        if (video_session_state.compare_exchange_weak(
+              state,
+              state + 1,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          return count == 0;
+        }
+      }
+    }
+
+    // 只递减低位的会话计数，保留可能并发存在的重配置占用位。
+    // 返回注销后的会话数，由最后一个会话负责执行平台停止和显示恢复逻辑。
+    std::uint32_t
+    unregister_video_session() {
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        const auto count = state & VIDEO_SESSION_COUNT_MASK;
+        if (count == 0) {
+          BOOST_LOG(error) << "Cannot unregister a video session because the session counter is already zero"sv;
+          return 0;
+        }
+
+        const auto desired = (state & VIDEO_SESSION_RECONFIGURING) | (count - 1);
+        if (video_session_state.compare_exchange_weak(
+              state,
+              desired,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          return count - 1;
+        }
+      }
+    }
+
+    std::uint32_t
+    video_session_count() {
+      return video_session_state.load(boost::memory_order_acquire) & VIDEO_SESSION_COUNT_MASK;
+    }
+
+    template <class F>
+    bool
+    run_display_reconfiguration_if_single_video_session(F &&operation) {
+      // 只有恰好一个视频会话时才允许重配置。CAS 成功设置占用位后，
+      // 后续视频会话会在 register_video_session() 中等待，不会进入重建窗口。
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        if ((state & VIDEO_SESSION_RECONFIGURING) != 0 ||
+            (state & VIDEO_SESSION_COUNT_MASK) != 1) {
+          return false;
+        }
+
+        if (video_session_state.compare_exchange_weak(
+              state,
+              state | VIDEO_SESSION_RECONFIGURING,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          break;
+        }
+      }
+
+      // 无论重配置正常返回还是抛出异常，都必须清除占用位并唤醒等待的新会话。
+      auto reconfiguration_guard = util::fail_guard([]() {
+        video_session_state.fetch_and(VIDEO_SESSION_COUNT_MASK, boost::memory_order_release);
+        video_session_state.notify_all();
+      });
+      std::forward<F>(operation)();
+      return true;
+    }
+  }  // namespace session
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -1586,15 +1686,46 @@ namespace stream {
       // 注意：必须按照结构体声明顺序初始化字段
       rtsp_stream::launch_session_t temp_launch_session {};
       temp_launch_session.id = session->launch_session_id;
+      temp_launch_session.client_cert_uuid = session->client_cert_uuid;
       temp_launch_session.client_name = session->client_name;
       temp_launch_session.width = new_width;
       temp_launch_session.height = new_height;
       temp_launch_session.fps = session->config.monitor.framerate;
       temp_launch_session.enable_hdr = session->enable_hdr;
       temp_launch_session.enable_sops = session->enable_sops;
+      temp_launch_session.use_vdd = session->use_vdd;
+      temp_launch_session.custom_screen_mode = session->custom_screen_mode;
       temp_launch_session.max_nits = session->max_nits;
       temp_launch_session.min_nits = session->min_nits;
       temp_launch_session.max_full_nits = session->max_full_nits;
+
+      bool active_display_resolved = true;
+      const auto active_display_event = mail::man->event<std::string>(mail::active_display);
+      const auto active_display = active_display_event->view(std::chrono::milliseconds {0});
+      const bool has_active_display = active_display && !active_display->empty();
+      const std::string target_display = has_active_display ?
+                                           *active_display :
+                                           session->config.monitor.display_name;
+      if (!target_display.empty()) {
+        const auto devices = display_device::enum_available_devices();
+        const auto device_it = std::find_if(devices.begin(), devices.end(), [&](const auto &entry) {
+          return entry.first == target_display ||
+                 entry.second.display_name == target_display ||
+                 entry.second.friendly_name == target_display;
+        });
+        if (device_it != devices.end()) {
+          temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = device_it->first;
+          temp_launch_session.use_vdd = device_it->second.friendly_name == ZAKO_NAME;
+        }
+        else if (has_active_display) {
+          active_display_resolved = false;
+          BOOST_LOG(warning) << "Current capture display [" << target_display
+                             << "] is no longer available; skipping display device reconfiguration";
+        }
+        else {
+          temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = target_display;
+        }
+      }
 
       // 更新显示设备配置（重新配置模式）
       // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
@@ -1607,7 +1738,20 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
       
-      display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+      if (active_display_resolved) {
+        const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
+          const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+          if (!result) {
+            BOOST_LOG(warning) << "Dynamic display reconfiguration failed: " << result.message;
+          }
+        });
+        if (!display_reconfigured) {
+          BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
+        }
+      }
+      else {
+        BOOST_LOG(info) << "Dynamic stream resolution updated without changing the unavailable capture display";
+      }
 
       // 请求 IDR 帧以确保客户端能正确显示新分辨率
       // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
@@ -1616,7 +1760,7 @@ namespace stream {
       // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
       // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
       // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
-      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height 
+      BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
 
@@ -3258,9 +3402,6 @@ namespace stream {
   }
 
   namespace session {
-    std::atomic_uint running_sessions;
-    std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
-
     const char *
     stop_reason_name(stop_reason_e reason) {
       switch (reason) {
@@ -3290,7 +3431,7 @@ namespace stream {
 
     bool
     has_active_video_sessions() {
-      return running_non_control_only_sessions.load(std::memory_order_relaxed) > 0;
+      return video_session_count() > 0;
     }
 
     void
@@ -3306,16 +3447,6 @@ namespace stream {
 
       perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
-    }
-
-    bool
-    stop_client_session(session_t &session, std::string_view client_cert_uuid) {
-      if (client_cert_uuid.empty() || session.client_cert_uuid != client_cert_uuid) {
-        return false;
-      }
-
-      stop(session, stop_reason_e::client_cancel);
-      return session.lifecycle.state() == state_e::STOPPING;
     }
 
     void
@@ -3361,7 +3492,7 @@ namespace stream {
         // 非仅控制流会话：减少两个计数器
         --running_sessions;
         // If this is the last non-control-only session, invoke the platform callbacks
-        if (--running_non_control_only_sessions == 0) {
+        if (unregister_video_session() == 0) {
           // 最后一个会话结束时，确保麦克风socket已关闭
           if (session.broadcast_ref->mic_socket_enabled.load()) {
             session.broadcast_ref->mic_socket_enabled.store(false);
@@ -3464,7 +3595,38 @@ namespace stream {
         return -1;
       }
 
+      bool first_video_session {false};
+      bool video_session_registered {false};
+      if (!session.control_only) {
+        const auto registration = register_video_session();
+        if (!registration) {
+          return -1;
+        }
+
+        first_video_session = *registration;
+        video_session_registered = true;
+      }
+      // 登记后的启动失败由 guard 回退计数；正常进入 RUNNING 后转交 join() 注销。
+      auto video_session_registration_guard = util::fail_guard([&]() {
+        if (video_session_registered) {
+          unregister_video_session();
+        }
+      });
+
       session.control.expected_peer_address = addr_string;
+      auto addr = boost::asio::ip::make_address(addr_string);
+      session.video.peer.address(addr);
+      session.video.peer.port(0);
+      session.audio.peer.address(addr);
+      session.audio.peer.port(0);
+
+      // 会话加入 _sessions 后，控制线程可能立即读取它。因此必须先初始化
+      // 控制线程依赖的所有字段，否则默认构造的超时时间会被误判为已经过期。
+      session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      session.lifecycle.set_state(state_e::STARTING);
+      auto starting_guard = util::fail_guard([&]() {
+        session.lifecycle.set_state(state_e::RUNNING);
+      });
       if (session.control_only) {
         BOOST_LOG(info) << "Starting control-only session from ["sv << addr_string << "] - will only handle input control"sv;
       }
@@ -3472,25 +3634,12 @@ namespace stream {
         BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
       }
 
-      // Insert this session into the session list
+      // 将完成初始化的会话加入共享列表。
       {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
-
-      auto addr = boost::asio::ip::make_address(addr_string);
-      session.video.peer.address(addr);
-      session.video.peer.port(0);
-
-      session.audio.peer.address(addr);
-      session.audio.peer.port(0);
-
-      session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
-      session.lifecycle.set_state(state_e::STARTING);
-      auto starting_guard = util::fail_guard([&]() {
-        session.lifecycle.set_state(state_e::RUNNING);
-      });
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {
@@ -3503,6 +3652,10 @@ namespace stream {
 
       session.lifecycle.set_state(state_e::RUNNING);
       starting_guard.disable();
+
+      ++running_sessions;
+      video_session_registration_guard.disable();
+
       perf::begin_session({
         session.launch_session_id,
         session.client_name,
@@ -3523,15 +3676,11 @@ namespace stream {
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
       if (session.control_only) {
-        // 仅控制流会话：只增加总会话计数，不调用平台回调
-        ++running_sessions;
         BOOST_LOG(debug) << "Control-only session started (total sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
-        // 非仅控制流会话：增加两个计数器
-        ++running_sessions;
         // If this is the first non-control-only session, invoke the platform callbacks
-        if (++running_non_control_only_sessions == 1) {
+        if (first_video_session) {
           // 根据会话的麦克风启用标志管理麦克风socket
           if (session.audio.enable_mic) {
             setup_mic_for_session(session);
@@ -3599,6 +3748,8 @@ namespace stream {
       // 设置客户端名称
       session->client_name = launch_session.client_name;
       session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->use_vdd = launch_session.use_vdd;
+      session->custom_screen_mode = launch_session.custom_screen_mode;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);

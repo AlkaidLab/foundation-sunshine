@@ -6,8 +6,10 @@ include_guard(GLOBAL)
 set(BOOST_VERSION "1.91.0")
 set(BOOST_RELEASE_VERSION "1.91.0-1")
 set(BOOST_COMPONENTS
+        atomic
         beast
         filesystem
+        function
         locale
         log
         program_options

@@ -1035,8 +1035,15 @@ namespace video {
   using encode_session_ctx_queue_t = safe::queue_t<sync_session_ctx_t>;
   using encode_e = platf::capture_e;
 
+  struct captured_frame_t {
+    std::shared_ptr<platf::img_t> image;
+    bool is_replay {false};
+  };
+
+  using captured_frame_event_t = std::shared_ptr<safe::event_t<captured_frame_t>>;
+
   struct capture_ctx_t {
-    img_event_t images;
+    captured_frame_event_t images;
     config_t config;
   };
 
@@ -1712,6 +1719,7 @@ namespace video {
     });
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
 
     // Wait for the initial capture context or a request to stop the queue
     auto initial_capture_ctx = capture_ctx_queue->pop();
@@ -1762,10 +1770,38 @@ namespace video {
     if (!disp) {
       return;
     }
+    active_display_event->raise(target_display_name);
     display_wp = disp;
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+    std::shared_ptr<platf::img_t> latest_captured_img;
+
+    auto append_pending_capture_contexts = [&](const std::shared_ptr<platf::img_t> &initial_img = {}) -> bool {
+      while (capture_ctx_queue->peek()) {
+        auto capture_ctx = capture_ctx_queue->pop();
+        if (!capture_ctx) {
+          return false;
+        }
+
+        // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
+        // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
+        capture_ctx->config.display_name = target_display_name;
+        if (initial_img) {
+          // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
+          // 新会话必须先取得当前画面，不能一直编码初始化用的黑色占位帧。
+          capture_ctx->images->raise(captured_frame_t {
+            .image = initial_img,
+            .is_replay = true,
+          });
+        }
+        BOOST_LOG(debug) << "Attached streaming session to shared capture display ["sv << target_display_name
+                         << "], reused latest frame: "sv << (initial_img ? "yes"sv : "no"sv);
+        capture_ctxs.emplace_back(std::move(*capture_ctx));
+      }
+
+      return true;
+    };
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
@@ -1874,11 +1910,6 @@ namespace video {
 
             continue;
           }
-
-          if (frame_captured) {
-            capture_ctx->images->raise(img);
-          }
-
           ++capture_ctx;
         })
 
@@ -1886,8 +1917,19 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+        // 先接入新会话，再分发本次真实画面。若本次只是捕获超时，则给新会话
+        // 补发上一张真实画面，保证它与现有会话看到同一个活动显示器内容。
+        if (!append_pending_capture_contexts(frame_captured ? std::shared_ptr<platf::img_t> {} : latest_captured_img)) {
+          return false;
+        }
+
+        if (frame_captured) {
+          latest_captured_img = img;
+          for (auto &capture_ctx : capture_ctxs) {
+            capture_ctx.images->raise(captured_frame_t {
+              .image = img,
+            });
+          }
         }
 
         if (switch_display_event->peek()) {
@@ -1911,6 +1953,7 @@ namespace video {
           reinit_event.raise(true);
 
           // Some classes of images contain references to the display --> display won't delete unless img is deleted
+          latest_captured_img.reset();
           for (auto &img : imgs) {
             img.reset();
           }
@@ -1939,6 +1982,12 @@ namespace video {
             std::this_thread::sleep_for(20ms);
           }
 
+          // 等待旧显示器释放期间，最后一个旧会话可能退出，同时新会话已经加入队列。
+          // 先接入新上下文；若仍无会话则安全结束捕获线程，不能访问空容器的 front()。
+          if (!append_pending_capture_contexts() || capture_ctxs.empty()) {
+            return;
+          }
+
           while (capture_ctx_queue->running()) {
             // Release the display before reenumerating displays, since some capture backends
             // only support a single display session per device/application.
@@ -1955,8 +2004,8 @@ namespace video {
             }
 
             // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-            const auto &config = capture_ctxs.front().config;
-            std::string target_display_name = display_names[display_p];
+            auto &config = capture_ctxs.front().config;
+            target_display_name = display_names[display_p];
             if (!user_switched && !config.display_name.empty()) {
               // config.display_name may be a device ID - convert to display name
               std::string resolved_display_name = display_device::get_display_name(config.display_name);
@@ -1979,9 +2028,16 @@ namespace video {
               }
             }
 
+            if (user_switched) {
+              for (auto &capture_ctx : capture_ctxs) {
+                capture_ctx.config.display_name = target_display_name;
+              }
+            }
+
             // reset_display() will sleep between retries
             reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
+              active_display_event->raise(target_display_name);
               break;
             }
           }
@@ -2051,21 +2107,20 @@ namespace video {
     if (hdr10plus_sd && ema.initialized) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
-        auto &params = hdr10plus->params[0];
-        const float peak_nits =
-          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-        const float effective_max = ema.percentile_95;
-
-        // HDR10+ maxscl: use P95 for stability
-        float max_norm = std::clamp(effective_max / peak_nits, 0.0f, 1.0f);
-        float avg_norm = std::clamp(ema.avg_maxrgb / peak_nits, 0.0f, 1.0f);
-
-        params.maxscl[0] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[1] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[2] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.average_maxrgb = av_make_q(static_cast<int>(avg_norm * 100000), 100000);
-
-        hdr10plus->targeted_system_display_maximum_luminance = av_make_q(max_display_luminance, 1);
+        const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
+          ema.percentile_95, ema.avg_maxrgb, max_display_luminance);
+        if (frame_metadata.valid) {
+          auto &params = hdr10plus->params[0];
+          const auto maxscl = av_make_q(
+            frame_metadata.maxscl, hdr_metadata::hdr10plus_normalized_scale);
+          params.maxscl[0] = maxscl;
+          params.maxscl[1] = maxscl;
+          params.maxscl[2] = maxscl;
+          params.average_maxrgb = av_make_q(
+            frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
+          hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+            frame_metadata.targeted_system_display_maximum_luminance, 1);
+        }
       }
     }
   }
@@ -2668,7 +2723,7 @@ namespace video {
           if (hdr10plus) {
             // Set default values for HDR10+
             hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
-            hdr10plus->application_version = 0;
+            hdr10plus->application_version = hdr_metadata::hdr10plus_application_version;
             hdr10plus->num_windows = 1;  // Single processing window covering entire frame
 
             // Initialize the first (and only) processing window
@@ -2990,7 +3045,7 @@ namespace video {
   encode_run(
     int &frame_nr,  // Store progress of the frame number
     safe::mail_t mail,
-    img_event_t images,
+    captured_frame_event_t images,
     config_t config,
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
@@ -3153,19 +3208,24 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
-          frame_timestamp = img->frame_timestamp;
-          pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
-          if (!pipeline_trace->capture_ready) {
-            pipeline_trace->capture_ready = frame_timestamp;
+        if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
+          auto &img = frame->image;
+          if (!frame->is_replay) {
+            frame_timestamp = img->frame_timestamp;
+            pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+            if (!pipeline_trace->capture_ready) {
+              pipeline_trace->capture_ready = frame_timestamp;
+            }
+            pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           }
-          pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
-          pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          if (pipeline_trace) {
+            pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          }
           has_new_frame = true;
         }
         else if (!images->running()) {
@@ -3351,6 +3411,8 @@ namespace video {
     std::shared_ptr<platf::display_t> disp;
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
+    std::string active_display_name;
 
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
@@ -3373,7 +3435,7 @@ namespace video {
       }
 
       // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-      const auto &config = synced_session_ctxs.front()->config;
+      auto &config = synced_session_ctxs.front()->config;
       std::string target_display_name = display_names[display_p];
       if (!user_switched && !config.display_name.empty()) {
         // config.display_name may be a device ID - convert to display name
@@ -3397,9 +3459,17 @@ namespace video {
         }
       }
 
+      if (user_switched) {
+        for (auto &ctx : synced_session_ctxs) {
+          ctx->config.display_name = target_display_name;
+        }
+      }
+
       // reset_display() will sleep between retries
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
+        active_display_name = target_display_name;
+        active_display_event->raise(target_display_name);
         break;
       }
     }
@@ -3432,6 +3502,10 @@ namespace video {
             return false;
           }
 
+          // Synchronous sessions share the display opened above. Keep the
+          // active target in newly joined contexts so the next reinit does not
+          // restore their stale launch-time display selection.
+          encode_session_ctx->config.display_name = active_display_name;
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
@@ -3569,7 +3643,7 @@ namespace video {
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
-    auto images = std::make_shared<img_event_t::element_type>();
+    auto images = std::make_shared<captured_frame_event_t::element_type>();
     auto lg = util::fail_guard([&]() {
       images->stop();
       shutdown_event->raise(true);

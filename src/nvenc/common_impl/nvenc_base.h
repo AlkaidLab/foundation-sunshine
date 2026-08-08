@@ -143,18 +143,5 @@ namespace nvenc {
     video::hdr_metadata::formats_t dynamic_hdr_formats;
     video::hdr_metadata::vivid_temporal_filter_t vivid_filter;
 
-    /**
-     * @brief Serialize HDR10+ dynamic metadata into ITU-T T.35 SEI payload.
-     *        Format follows ST 2094-40 (Samsung HDR10+).
-     * @param stats Per-frame luminance statistics.
-     * @param max_display_luminance Display peak luminance in nits.
-     * @param[out] payload Output buffer for serialized payload.
-     * @return Size of serialized payload in bytes, or 0 on failure.
-     */
-    size_t
-    serialize_hdr10plus_sei(const platf::hdr_frame_luminance_stats_t &stats,
-      uint16_t max_display_luminance,
-      std::vector<uint8_t> &payload);
-
   };
 }

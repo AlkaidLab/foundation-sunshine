@@ -21,6 +21,7 @@
 
 // lib includes
 #include <Simple-Web-Server/server_http.hpp>
+#include <boost/atomic.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
@@ -81,7 +82,8 @@ namespace nvhttp {
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
 
-  std::atomic<uint32_t> session_id_counter;
+  boost::atomic<uint32_t> session_id_counter {0};
+  static boost::atomic_flag global_cancel_pending = BOOST_ATOMIC_FLAG_INIT;
 
   static tls_client_identity_store_t tls_client_identities;
 
@@ -878,21 +880,45 @@ namespace nvhttp {
       return;
     }
 
-    const auto result = rtsp_stream::cancel_client_sessions(client_cert_uuid);
-    BOOST_LOG(info) << "Client-scoped cancel [client_uuid="sv << client_cert_uuid
-                    << ", cancelled="sv << result.cancelled_sessions
-                    << ", remaining="sv << result.remaining_sessions << ']';
-
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
-    if (result.remaining_sessions == 0) {
-      if (proc::proc.running() > 0) {
-        proc::proc.terminate();
-      }
+    // GameStream 的 /cancel 表示退出当前应用，而普通断开由 RTSP/控制通道处理。
+    // 清理可能需要等待编码器和应用退出，不能阻塞 NVHTTP 工作线程。
+    if (!global_cancel_pending.test_and_set(boost::memory_order_acq_rel)) {
+      BOOST_LOG(info) << "Global app cancel accepted; stopping all streaming sessions asynchronously"sv;
+      rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, []() {
+        auto clear_pending = util::fail_guard([]() {
+          global_cancel_pending.clear(boost::memory_order_release);
+        });
 
-      // Preserve the legacy single-client behavior once no other session is using the host.
-      display_device::session_t::get().restore_state();
+        try {
+          if (proc::proc.running() > 0) {
+            proc::proc.terminate();
+          }
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to terminate the running application during app cancel: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
+        }
+
+        try {
+          display_device::session_t::get().restore_state();
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+        }
+
+        BOOST_LOG(info) << "Global app cancel cleanup finished"sv;
+      });
+    }
+    else {
+      BOOST_LOG(debug) << "Global app cancel is already in progress"sv;
     }
   }
 
