@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace video::hdr_metadata {
@@ -28,6 +29,60 @@ namespace video::hdr_metadata {
     bool hdr10plus = false;
     bool vivid = false;
   };
+
+  constexpr int hdr10plus_normalized_scale = 100000;
+  constexpr uint8_t hdr10plus_application_version = 1;
+  constexpr size_t hdr10plus_t35_prefix_size = 6;
+  // Large enough for FFmpeg's maximum ST 2094-40 body plus the T.35 prefix,
+  // without exposing FFmpeg headers to this shared, unit-testable header.
+  constexpr size_t hdr10plus_t35_max_payload_size = 1024;
+
+  struct hdr10plus_frame_metadata_t {
+    int maxscl = 0;
+    int average_maxrgb = 0;
+    uint16_t targeted_system_display_maximum_luminance = 1000;
+    bool valid = false;
+  };
+
+  /**
+   * Convert analyzer luminance values into the normalized ST 2094-40 fields
+   * shared by the AVCodec side-data and native NVENC paths.
+   */
+  inline hdr10plus_frame_metadata_t
+  hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
+    uint16_t max_display_luminance) {
+    if (!std::isfinite(percentile_95) || !std::isfinite(average_maxrgb) ||
+        percentile_95 < 0.0f || average_maxrgb < 0.0f) {
+      return {};
+    }
+
+    const uint16_t target_nits = std::clamp<uint16_t>(
+      max_display_luminance > 0 ? max_display_luminance : 1000,
+      1,
+      10000);
+    const auto normalize = [target_nits](float nits) {
+      const float normalized = std::clamp(nits / target_nits, 0.0f, 1.0f);
+      return static_cast<int>(std::lround(normalized * hdr10plus_normalized_scale));
+    };
+
+    return {
+      .maxscl = normalize(percentile_95),
+      .average_maxrgb = normalize(average_maxrgb),
+      .targeted_system_display_maximum_luminance = target_nits,
+      .valid = true,
+    };
+  }
+
+  /**
+   * Serialize one frame of HDR10+ metadata as a complete registered ITU-T T.35
+   * payload, ready for an HEVC SEI message or an AV1 metadata OBU.
+   * Invalid input, insufficient output space, or a failed FFmpeg round trip
+   * returns zero.
+   */
+  size_t
+  serialize_hdr10plus_t35(const platf::hdr_frame_luminance_stats_t &stats,
+    uint16_t max_display_luminance,
+    std::span<uint8_t> payload);
 
   /**
    * HDR10+ is defined for PQ content. HDR Vivid can accompany either PQ or HLG.
