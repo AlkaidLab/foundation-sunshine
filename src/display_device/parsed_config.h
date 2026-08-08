@@ -167,23 +167,6 @@ namespace display_device {
   };
 
   /**
-   * @brief Display device requested by either the global config or the current client session.
-   */
-  struct display_request_t {
-    enum class source_e {
-      config,
-      client
-    };
-
-    std::string device_id;
-    source_e source;
-    bool use_vdd;
-  };
-
-  display_request_t
-  resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session);
-
-  /**
    * @brief What a launch is actually aiming at, resolved once against the displays that exist.
    *
    * Both the display configuration and the stream startup recovery need to know

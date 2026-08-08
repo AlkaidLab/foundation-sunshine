@@ -6,6 +6,7 @@
 // standard includes
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <string>
 #include <thread>
 #include <utility>
@@ -428,12 +429,13 @@ namespace nvhttp::stream_start {
 
     /**
      * @brief Probe whatever the displays are showing right now, without configuring anything.
+     * @param after_vdd_attempt A VDD fallback was already tried and did not work out.
      */
     bool
     try_current_display(
       const display_device::session_t::configure_result_t &display_result,
+      bool after_vdd_attempt,
       auto_recovery_result_t &recovery_result) {
-      const bool after_failed_fallback = recovery_result.attempted;
       recovery_result = {
         true,
         false,
@@ -444,7 +446,7 @@ namespace nvhttp::stream_start {
       BOOST_LOG(warning) << "Display configuration failed; continuing with current display settings if encoder probing succeeds";
       if (!video::probe_encoders()) {
         recovery_result.succeeded = true;
-        recovery_result.detail = after_failed_fallback ?
+        recovery_result.detail = after_vdd_attempt ?
                                    "The VDD fallback was unavailable or failed; streaming with the current display settings instead." :
                                    "Encoder probing succeeded with the current display settings.";
         return true;
@@ -618,10 +620,12 @@ namespace nvhttp::stream_start {
       configuration_is_live && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
 
     const auto fallbacks = plan_fallbacks(intent, outcome, no_display_to_capture);
-    for (const auto fallback : fallbacks) {
-      const bool recovered = fallback == fallback_e::vdd ?
+    for (std::size_t i = 0; i < fallbacks.size(); ++i) {
+      // Only a VDD attempt can precede another fallback, so anything after the
+      // first entry is running because that attempt did not work out.
+      const bool recovered = fallbacks[i] == fallback_e::vdd ?
                                try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result) :
-                               try_current_display(display_result, recovery_result);
+                               try_current_display(display_result, i > 0, recovery_result);
       if (recovered) {
         set_auto_recovery_status(tree, recovery_result);
         return true;

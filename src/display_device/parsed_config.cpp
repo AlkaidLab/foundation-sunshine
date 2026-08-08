@@ -534,46 +534,33 @@ namespace display_device {
     }
   }  // namespace
 
-  display_request_t
-  resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
-    display_request_t request {
-      config.output_name,
-      display_request_t::source_e::config,
-      session.use_vdd
-    };
-
-    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-      const std::string client_display_name = it->to_string();
-      if (!client_display_name.empty()) {
-        request.device_id = client_display_name;
-        request.source = display_request_t::source_e::client;
-      }
-    }
-
-    return request;
-  }
-
   display_intent_t
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
-    const auto request = resolve_display_request(config, session);
-    if (request.source == display_request_t::source_e::client) {
-      BOOST_LOG(debug) << "使用客户端指定的显示器: "sv << request.device_id;
+    // The client may pick a display for its own stream; otherwise the host config decides.
+    std::string device_id = config.output_name;
+    bool client_named_it = false;
+    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+      if (std::string client_display_name = it->to_string(); !client_display_name.empty()) {
+        device_id = std::move(client_display_name);
+        client_named_it = true;
+        BOOST_LOG(debug) << "使用客户端指定的显示器: "sv << device_id;
+      }
     }
 
     display_intent_t intent {
       display_intent_t::target_e::physical,
-      request.device_id,
-      !request.device_id.empty(),
+      device_id,
+      !device_id.empty(),
       resolve_device_prep(config, session)
     };
 
-    if (request.use_vdd || get_display_friendly_name(request.device_id) == ZAKO_NAME) {
+    if (session.use_vdd || get_display_friendly_name(intent.device_id) == ZAKO_NAME) {
       intent.target = display_intent_t::target_e::vdd;
       return intent;
     }
 
     if (!intent.device_id.empty() && find_one_of_the_available_devices(intent.device_id).empty()) {
-      if (request.source == display_request_t::source_e::client) {
+      if (client_named_it) {
         // The client picked this display for this stream, so quietly streaming a
         // different one is worse than telling it the display is gone.
         BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到其他显示器: "sv << intent.device_id;
