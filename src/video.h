@@ -192,8 +192,6 @@ namespace video {
   using avcodec_frame_t = util::safe_ptr<AVFrame, free_frame>;
   using avcodec_buffer_t = util::safe_ptr<AVBufferRef, free_buffer>;
   using sws_t = util::safe_ptr<SwsContext, sws_freeContext>;
-  using img_event_t = std::shared_ptr<safe::event_t<std::shared_ptr<platf::img_t>>>;
-
   struct encoder_platform_formats_t {
     virtual ~encoder_platform_formats_t() = default;
     platf::mem_type_e dev_type;

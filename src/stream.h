@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -158,8 +157,6 @@ namespace stream {
     start(session_t &session, const std::string &addr_string);
     void
     stop(session_t &session, stop_reason_e reason = stop_reason_e::none);
-    bool
-    stop_client_session(session_t &session, std::string_view client_cert_uuid);
     void
     join(session_t &session);
     state_e
