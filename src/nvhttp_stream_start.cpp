@@ -461,8 +461,8 @@ namespace nvhttp::stream_start {
 
     /**
      * @brief Bring up a VDD-backed display and stream that instead.
-     * @note On failure the display state and @p display_result are left exactly as
-     *       they were, so a later fallback still sees the real reason the launch failed.
+     * @note On failure the VDD switch is undone and @p display_result is restored,
+     *       so a later fallback still sees the real reason the launch failed.
      */
     bool
     try_vdd_display(
@@ -483,6 +483,13 @@ namespace nvhttp::stream_start {
 
       display_result = display_device::session_t::get().configure_display(config::video, recovery_session, is_reconfigure);
       if (display_result.result != display_device::session_t::configure_result_t::result_e::success) {
+        // configure_display reverts its own partial work except for mode/HDR
+        // failures, which it hands to the caller. This attempt was ours, so there
+        // is no caller to hand it to - drop the half-configured VDD here.
+        if (display_result.cleanup_on_failure) {
+          display_device::session_t::get().restore_state();
+        }
+
         // Keep the failure the caller has to report: the VDD attempt was ours, not
         // the user's, so its error code would hide why the launch actually failed.
         display_result = original_display_result;
@@ -593,7 +600,7 @@ namespace nvhttp::stream_start {
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
-    const auto outcome = classify_configure_result(display_result.result);
+    auto outcome = classify_configure_result(display_result.result);
     auto_recovery_result_t recovery_result;
 
     if (outcome == configure_outcome_e::fatal) {
@@ -613,6 +620,16 @@ namespace nvhttp::stream_start {
       if (retry_deferred_display_config(launch_session, is_reconfigure, display_result, recovery_result)) {
         set_auto_recovery_status(tree, recovery_result);
         return true;
+      }
+
+      // Every retry reconfigures the display, so display_result now describes the
+      // last attempt instead of the deferral. Re-classify, or the plan below and
+      // the error we report would still be answering the original question.
+      outcome = classify_configure_result(display_result.result);
+      if (outcome == configure_outcome_e::fatal) {
+        set_auto_recovery_status(tree, recovery_result);
+        set_display_config_error(tree, display_result);
+        return false;
       }
     }
 
