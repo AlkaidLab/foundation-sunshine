@@ -63,6 +63,19 @@ jobs:
           echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
           echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
 
+  vdd_smoke:
+    name: VDD helper smoke tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run VDD helper smoke tests
+        shell: pwsh
+        run: |
+          & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
+          & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
+
   build_win:
     name: Windows
     needs: setup_release

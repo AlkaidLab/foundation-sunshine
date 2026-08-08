@@ -89,6 +89,14 @@ Assert-Equal $true (Test-VddVersionAtLeast '100.0.16.7' '100.0.16.6') `
     'A newer driver version must satisfy the bundled minimum.'
 Assert-Equal $true (Test-VddVersionAtLeast 'custom-build' '100.0.16.6') `
     'An incomparable healthy custom driver must be preserved.'
+Assert-Equal $false (Test-VddVersionAtLeast '100.0.15.6' '15.0.15.7') `
+    'A legacy 100.x Win10 driver must migrate to the safe 15.x version line.'
+Assert-Equal $false (Test-VddVersionAtLeast '99.8.8.1123' '15.0.15.7') `
+    'A legacy 99.x Win10 driver must migrate to the safe 15.x version line.'
+Assert-Equal $true (Test-VddVersionAtLeast '15.0.15.8' '15.0.15.7') `
+    'A newer safe Win10 driver must still be preserved.'
+Assert-Equal $true (Test-VddVersionAtLeast '100.0.17.2' '100.0.17.2') `
+    'The Win11 100.x version policy must remain unchanged.'
 
 $cases = @(
     @{

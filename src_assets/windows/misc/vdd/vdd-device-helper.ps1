@@ -243,7 +243,18 @@ function Test-VddDeviceReady([object] $Device, [string] $ExpectedVersion = '') {
 
 function Test-VddVersionAtLeast([string] $InstalledVersion, [string] $BundledVersion) {
     try {
-        return [version] $InstalledVersion -ge [version] $BundledVersion
+        $installed = [version] $InstalledVersion
+        $bundled = [version] $BundledVersion
+
+        # Win10 packages moved away from the legacy 99.x/100.x DriverVer
+        # range because those versions prevent monitor enumeration on 22H2.
+        # Treat an installed legacy package as an explicit migration target;
+        # a plain numeric comparison would otherwise preserve it forever.
+        if ($bundled.Major -eq 15 -and $installed.Major -ge 99) {
+            return $false
+        }
+
+        return $installed -ge $bundled
     }
     catch {
         # Never silently replace a healthy custom driver whose version cannot
