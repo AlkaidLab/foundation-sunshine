@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 // local includes
 #include "nvhttp_stream_start.h"
@@ -17,7 +18,6 @@
 #include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
-#include "globals.h"
 #include "logging.h"
 #include "video.h"
 
@@ -198,66 +198,138 @@ namespace nvhttp::stream_start {
       return false;
     }
 
-    bool
-    should_try_vdd_for_display_config(display_device::session_t::configure_result_t::result_e result) {
+    /**
+     * @brief What a display configuration attempt leaves behind for the rest of the launch.
+     *
+     * configure_result_t has one value per failing step, but stream startup only
+     * needs to know how much of the display stack is still usable.
+     */
+    enum class configure_outcome_e {
+      ok, /**< The requested configuration is live. */
+      retry_later, /**< Not applied yet; the session keeps retrying on its own. */
+      mode_refused, /**< The display rejected the requested resolution/refresh rate/HDR state. */
+      degraded, /**< The change failed and was reverted, so the displays are usable as they are. */
+      fatal /**< Nothing usable came out of it. */
+    };
+
+    configure_outcome_e
+    classify_configure_result(display_device::session_t::configure_result_t::result_e result) {
       using result_e = display_device::session_t::configure_result_t::result_e;
 
       switch (result) {
-        case result_e::topology_fail:
-        case result_e::primary_display_fail:
+        case result_e::success:
+          return configure_outcome_e::ok;
+        case result_e::deferred_retry:
+          return configure_outcome_e::retry_later;
         case result_e::modes_fail:
         case result_e::hdr_states_fail:
-          return true;
-        case result_e::success:
-        case result_e::deferred_retry:
+          return configure_outcome_e::mode_refused;
+        case result_e::topology_fail:
+        case result_e::primary_display_fail:
+        case result_e::file_save_fail:
+        case result_e::revert_fail:
+          return configure_outcome_e::degraded;
+        case result_e::parse_fail:
         case result_e::vdd_not_installed:
         case result_e::vdd_unavailable:
         case result_e::vdd_create_failed:
-        case result_e::parse_fail:
-        case result_e::file_save_fail:
-        case result_e::revert_fail:
         default:
-          return false;
+          return configure_outcome_e::fatal;
       }
     }
 
-    display_device::parsed_config_t::device_prep_e
-    effective_device_prep_for_launch(const rtsp_stream::launch_session_t &launch_session) {
-      using device_prep_e = display_device::parsed_config_t::device_prep_e;
+    /**
+     * @brief A display target to fall back to when the launch cannot go ahead as requested.
+     */
+    enum class fallback_e {
+      current_display, /**< Change nothing and capture the displays as they are now. */
+      vdd /**< Create a virtual display and stream that instead. */
+    };
 
-      const auto configured_device_prep = static_cast<device_prep_e>(config::video.display_device_prep);
-      if (launch_session.custom_screen_mode < 0) {
-        return configured_device_prep;
+    /**
+     * @brief Whether a virtual display may be brought in for something the user did not ask for.
+     *
+     * Hosts without a working driver must never see a VDD error for an automatic
+     * decision, so the fallback is dropped from the plan rather than failing inside it.
+     */
+    bool
+    vdd_fallback_allowed(const display_device::display_intent_t &intent) {
+      if (intent.target == display_device::display_intent_t::target_e::vdd) {
+        BOOST_LOG(debug) << "Not planning a VDD fallback: the requested VDD is what just failed";
+        return false;
       }
 
-      const auto custom_screen_mode = static_cast<device_prep_e>(launch_session.custom_screen_mode);
-      switch (custom_screen_mode) {
-        case device_prep_e::no_operation:
-        case device_prep_e::ensure_active:
-        case device_prep_e::ensure_primary:
-        case device_prep_e::ensure_only_display:
-        case device_prep_e::ensure_secondary:
-          return custom_screen_mode;
-        default:
-          return configured_device_prep;
+      if (intent.device_prep == display_device::parsed_config_t::device_prep_e::no_operation) {
+        BOOST_LOG(info) << "Not planning a VDD fallback: display preparation is no_operation";
+        return false;
       }
+
+      const auto state = display_device::vdd_capability::query_state();
+      if (state != display_device::vdd_capability::state_e::ready) {
+        BOOST_LOG(info) << "Not planning a VDD fallback, driver state: "
+                        << display_device::vdd_capability::to_string(state);
+        return false;
+      }
+
+      return true;
+    }
+
+    /**
+     * @brief The display targets to try, in order, when the launch cannot go ahead as requested.
+     *
+     * This is the whole automatic-VDD policy in one place: a virtual display is
+     * only worth switching to when the user did not name a display of their own,
+     * or when there is nothing left on screen to capture.
+     *
+     * @param intent What the launch is aiming at.
+     * @param outcome How the requested configuration ended.
+     * @param no_display_to_capture Encoder probing already ran and found no active display.
+     * @returns Ordered fallbacks, empty when there is nothing cheaper left to try.
+     */
+    std::vector<fallback_e>
+    plan_fallbacks(const display_device::display_intent_t &intent, configure_outcome_e outcome, bool no_display_to_capture) {
+      std::vector<fallback_e> plan;
+      if (outcome == configure_outcome_e::fatal) {
+        return plan;
+      }
+
+      const auto add_vdd = [&] {
+        if (vdd_fallback_allowed(intent)) {
+          plan.push_back(fallback_e::vdd);
+        }
+      };
+
+      if (no_display_to_capture) {
+        // Keeping the current displays is not an option when there are none, so
+        // only a virtual display can carry this stream.
+        add_vdd();
+      }
+      else if (outcome == configure_outcome_e::mode_refused) {
+        if (intent.user_named_display || intent.target == display_device::display_intent_t::target_e::vdd) {
+          // The user picked this display on purpose. Streaming it at a mode it
+          // does support beats moving the stream somewhere else behind their back.
+          plan.push_back(fallback_e::current_display);
+        }
+        else {
+          // Nobody named a display, so a virtual one that can actually deliver the
+          // requested mode is the better answer.
+          add_vdd();
+          plan.push_back(fallback_e::current_display);
+        }
+      }
+      else if (outcome == configure_outcome_e::degraded) {
+        // The displays are back in their pre-launch state, which is usually
+        // capturable, so try that before rearranging anything.
+        plan.push_back(fallback_e::current_display);
+        add_vdd();
+      }
+
+      return plan;
     }
 
     bool
-    display_no_operation_requested(const rtsp_stream::launch_session_t &launch_session) {
-      return effective_device_prep_for_launch(launch_session) == display_device::parsed_config_t::device_prep_e::no_operation;
-    }
-
-    bool
-    explicit_vdd_requested_for_launch(const rtsp_stream::launch_session_t &launch_session) {
-      const auto display_request = display_device::resolve_display_request(config::video, launch_session);
-      const bool is_vdd_device = display_device::get_display_friendly_name(display_request.device_id) == ZAKO_NAME;
-      return display_request.use_vdd || is_vdd_device;
-    }
-
-    bool
-    validate_explicit_vdd_request(pt::ptree &tree, const rtsp_stream::launch_session_t &launch_session) {
-      if (!explicit_vdd_requested_for_launch(launch_session)) {
+    validate_explicit_vdd_request(pt::ptree &tree, const display_device::display_intent_t &intent) {
+      if (intent.target != display_device::display_intent_t::target_e::vdd) {
         return true;
       }
 
@@ -307,33 +379,6 @@ namespace nvhttp::stream_start {
       return false;
     }
 
-    bool
-    no_operation_blocks_automatic_vdd_recovery(const rtsp_stream::launch_session_t &launch_session) {
-      return display_no_operation_requested(launch_session) && !explicit_vdd_requested_for_launch(launch_session);
-    }
-
-    bool
-    display_config_failure_can_continue_with_current_display(display_device::session_t::configure_result_t::result_e result) {
-      using result_e = display_device::session_t::configure_result_t::result_e;
-      switch (result) {
-        case result_e::modes_fail:
-        case result_e::hdr_states_fail:
-        case result_e::file_save_fail:
-        case result_e::revert_fail:
-          return true;
-        case result_e::topology_fail:
-        case result_e::primary_display_fail:
-        case result_e::success:
-        case result_e::deferred_retry:
-        case result_e::vdd_not_installed:
-        case result_e::vdd_unavailable:
-        case result_e::vdd_create_failed:
-        case result_e::parse_fail:
-        default:
-          return false;
-      }
-    }
-
     void
     fill_vdd_recovery_session(rtsp_stream::launch_session_t &recovery_session,
       const rtsp_stream::launch_session_t &launch_session) {
@@ -381,36 +426,53 @@ namespace nvhttp::stream_start {
       launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = config::video.output_name;
     }
 
+    /**
+     * @brief Probe whatever the displays are showing right now, without configuring anything.
+     */
     bool
-    recover_display_with_vdd(
+    try_current_display(
+      const display_device::session_t::configure_result_t &display_result,
+      auto_recovery_result_t &recovery_result) {
+      const bool after_failed_fallback = recovery_result.attempted;
+      recovery_result = {
+        true,
+        false,
+        "current_display_settings_fallback",
+        "Display configuration failed; probing the current display state before using fallback recovery."
+      };
+
+      BOOST_LOG(warning) << "Display configuration failed; continuing with current display settings if encoder probing succeeds";
+      if (!video::probe_encoders()) {
+        recovery_result.succeeded = true;
+        recovery_result.detail = after_failed_fallback ?
+                                   "The VDD fallback was unavailable or failed; streaming with the current display settings instead." :
+                                   "Encoder probing succeeded with the current display settings.";
+        return true;
+      }
+
+      recovery_result.detail = "The current display settings were kept, but encoder probing still failed.";
+      if (display_result.cleanup_on_failure) {
+        display_device::session_t::get().restore_state();
+      }
+      return false;
+    }
+
+    /**
+     * @brief Bring up a VDD-backed display and stream that instead.
+     * @note On failure the display state and @p display_result are left exactly as
+     *       they were, so a later fallback still sees the real reason the launch failed.
+     */
+    bool
+    try_vdd_display(
       rtsp_stream::launch_session_t &launch_session,
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
       auto_recovery_result_t &recovery_result) {
-      const bool no_active_display = video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
-      const bool display_config_mismatch = should_try_vdd_for_display_config(display_result.result);
-      if (!no_active_display && !display_config_mismatch) {
-        return false;
-      }
-
-      if (no_operation_blocks_automatic_vdd_recovery(launch_session)) {
-        recovery_result = {
-          true,
-          false,
-          "vdd_display_recovery_skipped",
-          "Display preparation is no_operation; skipping automatic VDD recovery to avoid switching display targets."
-        };
-        BOOST_LOG(info) << "Skipping automatic VDD recovery because display preparation is no_operation";
-        return false;
-      }
-
       recovery_result = {
         true,
         false,
         "vdd_display_recovery",
-        display_config_mismatch ?
-          "The physical display could not satisfy the requested stream display settings; trying a VDD-backed display." :
-          "No active display was available; trying a VDD-backed display recovery."
+        "The requested display could not carry this stream; trying a VDD-backed display."
       };
 
       const auto original_display_result = display_result;
@@ -419,6 +481,9 @@ namespace nvhttp::stream_start {
 
       display_result = display_device::session_t::get().configure_display(config::video, recovery_session, is_reconfigure);
       if (display_result.result != display_device::session_t::configure_result_t::result_e::success) {
+        // Keep the failure the caller has to report: the VDD attempt was ours, not
+        // the user's, so its error code would hide why the launch actually failed.
+        display_result = original_display_result;
         recovery_result.detail = "VDD-backed display recovery was attempted, but the VDD display configuration failed.";
         return false;
       }
@@ -432,6 +497,9 @@ namespace nvhttp::stream_start {
       }
 
       display_result = original_display_result;
+      // The VDD is live at this point but useless, and a later fallback may still
+      // want the physical display, so undo the switch we made.
+      display_device::session_t::get().restore_state();
       recovery_result.detail = "VDD-backed display recovery was attempted, but encoder probing still failed.";
       return false;
     }
@@ -515,81 +583,67 @@ namespace nvhttp::stream_start {
     pt::ptree &tree,
     rtsp_stream::launch_session_t &launch_session,
     bool is_reconfigure) {
-    if (!validate_explicit_vdd_request(tree, launch_session)) {
+    const auto intent = display_device::resolve_display_intent(config::video, launch_session);
+    if (!validate_explicit_vdd_request(tree, intent)) {
       return false;
     }
 
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
+    const auto outcome = classify_configure_result(display_result.result);
     auto_recovery_result_t recovery_result;
-    const auto should_try_vdd = should_try_vdd_for_display_config(display_result.result);
-    const auto can_continue_with_current_display =
-      display_config_failure_can_continue_with_current_display(display_result.result);
 
-    if (!display_result && !should_try_vdd && !can_continue_with_current_display) {
+    if (outcome == configure_outcome_e::fatal) {
       set_display_config_error(tree, display_result);
       return false;
     }
 
-    if (should_try_vdd && can_continue_with_current_display) {
-      recovery_result = {
-        true,
-        false,
-        "current_display_settings_fallback",
-        "Display mode or HDR configuration failed; probing the current display state before using fallback recovery."
-      };
-
-      BOOST_LOG(warning) << "Display mode/HDR configuration failed; continuing with current display settings if encoder probing succeeds";
+    // Whenever the requested configuration is actually live, that is what the
+    // stream should run on. The fallbacks below only exist for when it is not.
+    const bool configuration_is_live =
+      outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
+    if (configuration_is_live) {
       if (!video::probe_encoders()) {
-        recovery_result.succeeded = true;
-        recovery_result.detail = "Encoder probing succeeded with the current display settings.";
-        set_auto_recovery_status(tree, recovery_result);
         return true;
       }
 
-      recovery_result.detail = "The current display settings were kept, but encoder probing still failed.";
-      if (display_result.cleanup_on_failure) {
-        display_device::session_t::get().restore_state();
+      if (retry_deferred_display_config(launch_session, is_reconfigure, display_result, recovery_result)) {
+        set_auto_recovery_status(tree, recovery_result);
+        return true;
       }
     }
 
-    if (should_try_vdd &&
-        recover_display_with_vdd(launch_session, is_reconfigure, display_result, recovery_result)) {
-      set_auto_recovery_status(tree, recovery_result);
-      return true;
+    const bool no_display_to_capture =
+      configuration_is_live && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
+
+    const auto fallbacks = plan_fallbacks(intent, outcome, no_display_to_capture);
+    for (const auto fallback : fallbacks) {
+      const bool recovered = fallback == fallback_e::vdd ?
+                               try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result) :
+                               try_current_display(display_result, recovery_result);
+      if (recovered) {
+        set_auto_recovery_status(tree, recovery_result);
+        return true;
+      }
     }
 
-    if (should_try_vdd) {
-      set_auto_recovery_status(tree, recovery_result);
-      set_display_config_error(tree, display_result);
-      return false;
-    }
-
-    if (!video::probe_encoders()) {
-      set_auto_recovery_status(tree, recovery_result);
-      return true;
-    }
-
-    if (recovery_result.attempted) {
-      // A failed display-level recovery already tried the strongest display
-      // fallback. Keep that result instead of masking it with encoder-only fixes.
-      set_auto_recovery_status(tree, recovery_result);
-    }
-    else if (retry_deferred_display_config(launch_session, is_reconfigure, display_result, recovery_result) ||
-        recover_display_with_vdd(launch_session, is_reconfigure, display_result, recovery_result) ||
-        recover_with_temporary_encoder_config(recovery_result)) {
+    // Encoder-level fixes only get a turn when no display fallback ran: a failed
+    // display recovery already tried the stronger option, and reporting an
+    // encoder workaround instead would mask why the launch actually failed.
+    if (fallbacks.empty() && recover_with_temporary_encoder_config(recovery_result)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
     }
 
     set_auto_recovery_status(tree, recovery_result);
 
-    const bool deferred_display_likely_caused_probe_failure =
-      display_result.result == display_device::session_t::configure_result_t::result_e::deferred_retry &&
-      video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
+    const bool display_is_the_cause =
+      outcome == configure_outcome_e::mode_refused ||
+      outcome == configure_outcome_e::degraded ||
+      (outcome == configure_outcome_e::retry_later && no_display_to_capture);
 
-    if (!display_result || deferred_display_likely_caused_probe_failure) {
+    if (display_is_the_cause) {
       set_display_config_error(tree, display_result);
     }
     else {
