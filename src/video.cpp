@@ -2082,21 +2082,20 @@ namespace video {
     if (hdr10plus_sd && ema.initialized) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
-        auto &params = hdr10plus->params[0];
-        const float peak_nits =
-          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-        const float effective_max = ema.percentile_95;
-
-        // HDR10+ maxscl: use P95 for stability
-        float max_norm = std::clamp(effective_max / peak_nits, 0.0f, 1.0f);
-        float avg_norm = std::clamp(ema.avg_maxrgb / peak_nits, 0.0f, 1.0f);
-
-        params.maxscl[0] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[1] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[2] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.average_maxrgb = av_make_q(static_cast<int>(avg_norm * 100000), 100000);
-
-        hdr10plus->targeted_system_display_maximum_luminance = av_make_q(max_display_luminance, 1);
+        const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
+          ema.percentile_95, ema.avg_maxrgb, max_display_luminance);
+        if (frame_metadata.valid) {
+          auto &params = hdr10plus->params[0];
+          const auto maxscl = av_make_q(
+            frame_metadata.maxscl, hdr_metadata::hdr10plus_normalized_scale);
+          params.maxscl[0] = maxscl;
+          params.maxscl[1] = maxscl;
+          params.maxscl[2] = maxscl;
+          params.average_maxrgb = av_make_q(
+            frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
+          hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+            frame_metadata.targeted_system_display_maximum_luminance, 1);
+        }
       }
     }
   }
@@ -2699,7 +2698,7 @@ namespace video {
           if (hdr10plus) {
             // Set default values for HDR10+
             hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
-            hdr10plus->application_version = 0;
+            hdr10plus->application_version = hdr_metadata::hdr10plus_application_version;
             hdr10plus->num_windows = 1;  // Single processing window covering entire frame
 
             // Initialize the first (and only) processing window
