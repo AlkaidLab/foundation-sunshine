@@ -6,11 +6,9 @@
 // standard includes
 #include <array>
 #include <chrono>
-#include <cstddef>
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 
 // local includes
 #include "nvhttp_stream_start.h"
@@ -209,7 +207,8 @@ namespace nvhttp::stream_start {
       ok, /**< The requested configuration is live. */
       retry_later, /**< Not applied yet; the session keeps retrying on its own. */
       mode_refused, /**< The display rejected the requested resolution/refresh rate/HDR state. */
-      degraded, /**< The change failed and was reverted, so the displays are usable as they are. */
+      topology_refused, /**< The requested topology or primary display change failed and was reverted. */
+      current_only, /**< The current displays may still be usable, but changing targets cannot fix the failure. */
       fatal /**< Nothing usable came out of it. */
     };
 
@@ -227,9 +226,10 @@ namespace nvhttp::stream_start {
           return configure_outcome_e::mode_refused;
         case result_e::topology_fail:
         case result_e::primary_display_fail:
+          return configure_outcome_e::topology_refused;
         case result_e::file_save_fail:
+          return configure_outcome_e::current_only;
         case result_e::revert_fail:
-          return configure_outcome_e::degraded;
         case result_e::parse_fail:
         case result_e::vdd_not_installed:
         case result_e::vdd_unavailable:
@@ -240,92 +240,31 @@ namespace nvhttp::stream_start {
     }
 
     /**
-     * @brief A display target to fall back to when the launch cannot go ahead as requested.
-     */
-    enum class fallback_e {
-      current_display, /**< Change nothing and capture the displays as they are now. */
-      vdd /**< Create a virtual display and stream that instead. */
-    };
-
-    /**
      * @brief Whether a virtual display may be brought in for something the user did not ask for.
      *
      * Hosts without a working driver must never see a VDD error for an automatic
-     * decision, so the fallback is dropped from the plan rather than failing inside it.
+     * decision, so the fallback is skipped before display configuration starts.
      */
     bool
     vdd_fallback_allowed(const display_device::display_intent_t &intent) {
       if (intent.target == display_device::display_intent_t::target_e::vdd) {
-        BOOST_LOG(debug) << "Not planning a VDD fallback: the requested VDD is what just failed";
+        BOOST_LOG(debug) << "Skipping automatic VDD fallback: the requested VDD is what just failed";
         return false;
       }
 
       if (intent.device_prep == display_device::parsed_config_t::device_prep_e::no_operation) {
-        BOOST_LOG(info) << "Not planning a VDD fallback: display preparation is no_operation";
+        BOOST_LOG(info) << "Skipping automatic VDD fallback: display preparation is no_operation";
         return false;
       }
 
       const auto state = display_device::vdd_capability::query_state();
       if (state != display_device::vdd_capability::state_e::ready) {
-        BOOST_LOG(info) << "Not planning a VDD fallback, driver state: "
+        BOOST_LOG(info) << "Skipping automatic VDD fallback, driver state: "
                         << display_device::vdd_capability::to_string(state);
         return false;
       }
 
       return true;
-    }
-
-    /**
-     * @brief The display targets to try, in order, when the launch cannot go ahead as requested.
-     *
-     * This is the whole automatic-VDD policy in one place: a virtual display is
-     * only worth switching to when the user did not name a display of their own,
-     * or when there is nothing left on screen to capture.
-     *
-     * @param intent What the launch is aiming at.
-     * @param outcome How the requested configuration ended.
-     * @param no_display_to_capture Encoder probing already ran and found no active display.
-     * @returns Ordered fallbacks, empty when there is nothing cheaper left to try.
-     */
-    std::vector<fallback_e>
-    plan_fallbacks(const display_device::display_intent_t &intent, configure_outcome_e outcome, bool no_display_to_capture) {
-      std::vector<fallback_e> plan;
-      if (outcome == configure_outcome_e::fatal) {
-        return plan;
-      }
-
-      const auto add_vdd = [&] {
-        if (vdd_fallback_allowed(intent)) {
-          plan.push_back(fallback_e::vdd);
-        }
-      };
-
-      if (no_display_to_capture) {
-        // Keeping the current displays is not an option when there are none, so
-        // only a virtual display can carry this stream.
-        add_vdd();
-      }
-      else if (outcome == configure_outcome_e::mode_refused) {
-        if (intent.user_named_display || intent.target == display_device::display_intent_t::target_e::vdd) {
-          // The user picked this display on purpose. Streaming it at a mode it
-          // does support beats moving the stream somewhere else behind their back.
-          plan.push_back(fallback_e::current_display);
-        }
-        else {
-          // Nobody named a display, so a virtual one that can actually deliver the
-          // requested mode is the better answer.
-          add_vdd();
-          plan.push_back(fallback_e::current_display);
-        }
-      }
-      else if (outcome == configure_outcome_e::degraded) {
-        // The displays are back in their pre-launch state, which is usually
-        // capturable, so try that before rearranging anything.
-        plan.push_back(fallback_e::current_display);
-        add_vdd();
-      }
-
-      return plan;
     }
 
     bool
@@ -429,12 +368,10 @@ namespace nvhttp::stream_start {
 
     /**
      * @brief Probe whatever the displays are showing right now, without configuring anything.
-     * @param after_vdd_attempt A VDD fallback was already tried and did not work out.
      */
     bool
     try_current_display(
       const display_device::session_t::configure_result_t &display_result,
-      bool after_vdd_attempt,
       auto_recovery_result_t &recovery_result) {
       recovery_result = {
         true,
@@ -446,9 +383,7 @@ namespace nvhttp::stream_start {
       BOOST_LOG(warning) << "Display configuration failed; continuing with current display settings if encoder probing succeeds";
       if (!video::probe_encoders()) {
         recovery_result.succeeded = true;
-        recovery_result.detail = after_vdd_attempt ?
-                                   "The VDD fallback was unavailable or failed; streaming with the current display settings instead." :
-                                   "Encoder probing succeeded with the current display settings.";
+        recovery_result.detail = "Encoder probing succeeded with the current display settings.";
         return true;
       }
 
@@ -511,6 +446,48 @@ namespace nvhttp::stream_start {
       display_device::session_t::get().restore_state();
       recovery_result.detail = "VDD-backed display recovery was attempted, but encoder probing still failed.";
       return false;
+    }
+
+    /**
+     * @brief Try only the display fallbacks that can address the observed configuration failure.
+     */
+    bool
+    recover_display(
+      const display_device::display_intent_t &intent,
+      configure_outcome_e outcome,
+      bool no_display_to_capture,
+      rtsp_stream::launch_session_t &launch_session,
+      bool is_reconfigure,
+      display_device::session_t::configure_result_t &display_result,
+      auto_recovery_result_t &recovery_result) {
+      const auto try_current = [&] {
+        return try_current_display(display_result, recovery_result);
+      };
+      const auto try_vdd = [&] {
+        return vdd_fallback_allowed(intent) &&
+               try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result);
+      };
+
+      if (no_display_to_capture) {
+        return try_vdd();
+      }
+
+      switch (outcome) {
+        case configure_outcome_e::mode_refused:
+          if (intent.user_named_display || intent.target == display_device::display_intent_t::target_e::vdd) {
+            return try_current();
+          }
+          return try_vdd() || try_current();
+        case configure_outcome_e::topology_refused:
+          return try_current() || try_vdd();
+        case configure_outcome_e::current_only:
+          return try_current();
+        case configure_outcome_e::ok:
+        case configure_outcome_e::retry_later:
+        case configure_outcome_e::fatal:
+        default:
+          return false;
+      }
     }
 
     bool
@@ -623,7 +600,7 @@ namespace nvhttp::stream_start {
       }
 
       // Every retry reconfigures the display, so display_result now describes the
-      // last attempt instead of the deferral. Re-classify, or the plan below and
+      // last attempt instead of the deferral. Re-classify, or the fallback below and
       // the error we report would still be answering the original question.
       outcome = classify_configure_result(display_result.result);
       if (outcome == configure_outcome_e::fatal) {
@@ -636,32 +613,33 @@ namespace nvhttp::stream_start {
     const bool no_display_to_capture =
       configuration_is_live && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
 
-    const auto fallbacks = plan_fallbacks(intent, outcome, no_display_to_capture);
-    for (std::size_t i = 0; i < fallbacks.size(); ++i) {
-      // Only a VDD attempt can precede another fallback, so anything after the
-      // first entry is running because that attempt did not work out.
-      const bool recovered = fallbacks[i] == fallback_e::vdd ?
-                               try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result) :
-                               try_current_display(display_result, i > 0, recovery_result);
-      if (recovered) {
-        set_auto_recovery_status(tree, recovery_result);
-        return true;
-      }
-    }
-
-    // Encoder-level fixes only get a turn when no display fallback ran: a failed
-    // display recovery already tried the stronger option, and reporting an
-    // encoder workaround instead would mask why the launch actually failed.
-    if (fallbacks.empty() && recover_with_temporary_encoder_config(recovery_result)) {
+    if (recover_display(
+          intent,
+          outcome,
+          no_display_to_capture,
+          launch_session,
+          is_reconfigure,
+          display_result,
+          recovery_result)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
+    }
+
+    auto_recovery_result_t encoder_recovery_result;
+    if (recover_with_temporary_encoder_config(encoder_recovery_result)) {
+      set_auto_recovery_status(tree, encoder_recovery_result);
+      return true;
+    }
+    if (!recovery_result.attempted && encoder_recovery_result.attempted) {
+      recovery_result = std::move(encoder_recovery_result);
     }
 
     set_auto_recovery_status(tree, recovery_result);
 
     const bool display_is_the_cause =
       outcome == configure_outcome_e::mode_refused ||
-      outcome == configure_outcome_e::degraded ||
+      outcome == configure_outcome_e::topology_refused ||
+      outcome == configure_outcome_e::current_only ||
       (outcome == configure_outcome_e::retry_later && no_display_to_capture);
 
     if (display_is_the_cause) {
