@@ -895,9 +895,9 @@ namespace display_device {
       bool failed_while_reverting_settings { false };
 
       if (is_vdd_mode) {
-        // VDD模式：拓扑由 vdd_prep 控制（在 prepare_vdd 中已处理），这里只获取 metadata
+        // VDD模式：拓扑由 session_t 的 VDD 显示阶段控制，这里只获取 metadata
         // 这里不修改拓扑，分辨率、刷新率、HDR 等设置仍然会应用
-        BOOST_LOG(info) << "VDD mode: topology controlled by vdd_prep in prepare_vdd, only getting current topology metadata";
+        BOOST_LOG(info) << "VDD mode: topology controlled by the session VDD display stage, only getting current topology metadata";
         topology_result = get_current_topology_metadata(config.device_id);
 
         // 如果有预保存的初始拓扑（在 VDD 创建前保存的物理显示器拓扑），

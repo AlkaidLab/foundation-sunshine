@@ -1712,6 +1712,7 @@ namespace video {
     });
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
 
     // Wait for the initial capture context or a request to stop the queue
     auto initial_capture_ctx = capture_ctx_queue->pop();
@@ -1762,10 +1763,27 @@ namespace video {
     if (!disp) {
       return;
     }
+    active_display_event->raise(target_display_name);
     display_wp = disp;
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+
+    auto append_pending_capture_contexts = [&]() -> bool {
+      while (capture_ctx_queue->peek()) {
+        auto capture_ctx = capture_ctx_queue->pop();
+        if (!capture_ctx) {
+          return false;
+        }
+
+        // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
+        // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
+        capture_ctx->config.display_name = target_display_name;
+        capture_ctxs.emplace_back(std::move(*capture_ctx));
+      }
+
+      return true;
+    };
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
@@ -1886,8 +1904,8 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+        if (!append_pending_capture_contexts()) {
+          return false;
         }
 
         if (switch_display_event->peek()) {
@@ -1939,6 +1957,12 @@ namespace video {
             std::this_thread::sleep_for(20ms);
           }
 
+          // 等待旧显示器释放期间，最后一个旧会话可能退出，同时新会话已经加入队列。
+          // 先接入新上下文；若仍无会话则安全结束捕获线程，不能访问空容器的 front()。
+          if (!append_pending_capture_contexts() || capture_ctxs.empty()) {
+            return;
+          }
+
           while (capture_ctx_queue->running()) {
             // Release the display before reenumerating displays, since some capture backends
             // only support a single display session per device/application.
@@ -1955,8 +1979,8 @@ namespace video {
             }
 
             // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-            const auto &config = capture_ctxs.front().config;
-            std::string target_display_name = display_names[display_p];
+            auto &config = capture_ctxs.front().config;
+            target_display_name = display_names[display_p];
             if (!user_switched && !config.display_name.empty()) {
               // config.display_name may be a device ID - convert to display name
               std::string resolved_display_name = display_device::get_display_name(config.display_name);
@@ -1979,9 +2003,16 @@ namespace video {
               }
             }
 
+            if (user_switched) {
+              for (auto &capture_ctx : capture_ctxs) {
+                capture_ctx.config.display_name = target_display_name;
+              }
+            }
+
             // reset_display() will sleep between retries
             reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
+              active_display_event->raise(target_display_name);
               break;
             }
           }
@@ -3351,6 +3382,8 @@ namespace video {
     std::shared_ptr<platf::display_t> disp;
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
+    std::string active_display_name;
 
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
@@ -3373,7 +3406,7 @@ namespace video {
       }
 
       // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-      const auto &config = synced_session_ctxs.front()->config;
+      auto &config = synced_session_ctxs.front()->config;
       std::string target_display_name = display_names[display_p];
       if (!user_switched && !config.display_name.empty()) {
         // config.display_name may be a device ID - convert to display name
@@ -3397,9 +3430,17 @@ namespace video {
         }
       }
 
+      if (user_switched) {
+        for (auto &ctx : synced_session_ctxs) {
+          ctx->config.display_name = target_display_name;
+        }
+      }
+
       // reset_display() will sleep between retries
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
+        active_display_name = target_display_name;
+        active_display_event->raise(target_display_name);
         break;
       }
     }
@@ -3432,6 +3473,10 @@ namespace video {
             return false;
           }
 
+          // Synchronous sessions share the display opened above. Keep the
+          // active target in newly joined contexts so the next reinit does not
+          // restore their stale launch-time display selection.
+          encode_session_ctx->config.display_name = active_display_name;
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
