@@ -1035,8 +1035,15 @@ namespace video {
   using encode_session_ctx_queue_t = safe::queue_t<sync_session_ctx_t>;
   using encode_e = platf::capture_e;
 
+  struct captured_frame_t {
+    std::shared_ptr<platf::img_t> image;
+    bool is_replay {false};
+  };
+
+  using captured_frame_event_t = std::shared_ptr<safe::event_t<captured_frame_t>>;
+
   struct capture_ctx_t {
-    img_event_t images;
+    captured_frame_event_t images;
     config_t config;
   };
 
@@ -1768,8 +1775,9 @@ namespace video {
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+    std::shared_ptr<platf::img_t> latest_captured_img;
 
-    auto append_pending_capture_contexts = [&]() -> bool {
+    auto append_pending_capture_contexts = [&](const std::shared_ptr<platf::img_t> &initial_img = {}) -> bool {
       while (capture_ctx_queue->peek()) {
         auto capture_ctx = capture_ctx_queue->pop();
         if (!capture_ctx) {
@@ -1779,6 +1787,16 @@ namespace video {
         // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
         // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
         capture_ctx->config.display_name = target_display_name;
+        if (initial_img) {
+          // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
+          // 新会话必须先取得当前画面，不能一直编码初始化用的黑色占位帧。
+          capture_ctx->images->raise(captured_frame_t {
+            .image = initial_img,
+            .is_replay = true,
+          });
+        }
+        BOOST_LOG(debug) << "Attached streaming session to shared capture display ["sv << target_display_name
+                         << "], reused latest frame: "sv << (initial_img ? "yes"sv : "no"sv);
         capture_ctxs.emplace_back(std::move(*capture_ctx));
       }
 
@@ -1892,11 +1910,6 @@ namespace video {
 
             continue;
           }
-
-          if (frame_captured) {
-            capture_ctx->images->raise(img);
-          }
-
           ++capture_ctx;
         })
 
@@ -1904,8 +1917,19 @@ namespace video {
           return false;
         }
 
-        if (!append_pending_capture_contexts()) {
+        // 先接入新会话，再分发本次真实画面。若本次只是捕获超时，则给新会话
+        // 补发上一张真实画面，保证它与现有会话看到同一个活动显示器内容。
+        if (!append_pending_capture_contexts(frame_captured ? std::shared_ptr<platf::img_t> {} : latest_captured_img)) {
           return false;
+        }
+
+        if (frame_captured) {
+          latest_captured_img = img;
+          for (auto &capture_ctx : capture_ctxs) {
+            capture_ctx.images->raise(captured_frame_t {
+              .image = img,
+            });
+          }
         }
 
         if (switch_display_event->peek()) {
@@ -1929,6 +1953,7 @@ namespace video {
           reinit_event.raise(true);
 
           // Some classes of images contain references to the display --> display won't delete unless img is deleted
+          latest_captured_img.reset();
           for (auto &img : imgs) {
             img.reset();
           }
@@ -3020,7 +3045,7 @@ namespace video {
   encode_run(
     int &frame_nr,  // Store progress of the frame number
     safe::mail_t mail,
-    img_event_t images,
+    captured_frame_event_t images,
     config_t config,
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
@@ -3183,19 +3208,24 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
-          frame_timestamp = img->frame_timestamp;
-          pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
-          if (!pipeline_trace->capture_ready) {
-            pipeline_trace->capture_ready = frame_timestamp;
+        if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
+          auto &img = frame->image;
+          if (!frame->is_replay) {
+            frame_timestamp = img->frame_timestamp;
+            pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+            if (!pipeline_trace->capture_ready) {
+              pipeline_trace->capture_ready = frame_timestamp;
+            }
+            pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           }
-          pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
-          pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          if (pipeline_trace) {
+            pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          }
           has_new_frame = true;
         }
         else if (!images->running()) {
@@ -3613,7 +3643,7 @@ namespace video {
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
-    auto images = std::make_shared<img_event_t::element_type>();
+    auto images = std::make_shared<captured_frame_event_t::element_type>();
     auto lg = util::fail_guard([&]() {
       images->stop();
       shutdown_event->raise(true);

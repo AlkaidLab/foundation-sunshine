@@ -3449,16 +3449,6 @@ namespace stream {
       session.shutdown_event->raise(true);
     }
 
-    bool
-    stop_client_session(session_t &session, std::string_view client_cert_uuid) {
-      if (client_cert_uuid.empty() || session.client_cert_uuid != client_cert_uuid) {
-        return false;
-      }
-
-      stop(session, stop_reason_e::client_cancel);
-      return session.lifecycle.state() == state_e::STOPPING;
-    }
-
     void
     join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated

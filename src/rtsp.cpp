@@ -786,38 +786,6 @@ namespace rtsp_stream {
       return static_cast<int>(_launch_sessions.size());
     }
 
-    client_session_cancel_result_t
-    cancel_client_sessions(std::string_view client_cert_uuid) {
-      client_session_cancel_result_t result;
-      result.cancelled_sessions = _launch_sessions.erase_client_sessions(client_cert_uuid);
-      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
-
-      {
-        auto lg = _session_slots.lock();
-        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-          auto &slot = *(*i);
-          if (stream::session::stop_client_session(slot, client_cert_uuid)) {
-            sessions_to_join.push_back(*i);
-            i = _session_slots->erase(i);
-            ++result.cancelled_sessions;
-          }
-          else {
-            if (stream::session::state(slot) != stream::session::state_e::STOPPING) {
-              ++result.remaining_sessions;
-            }
-            ++i;
-          }
-        }
-      }
-
-      for (const auto &session : sessions_to_join) {
-        stream::session::join(*session);
-      }
-
-      result.remaining_sessions += _launch_sessions.size();
-      return result;
-    }
-
     bool
     activate_launch_session(std::uint32_t launch_session_id) {
       return _launch_sessions.activate(launch_session_id);
@@ -851,7 +819,7 @@ namespace rtsp_stream {
      * @examples_end
      */
     void
-    clear(bool all = true) {
+    clear(bool all = true, stream::session::stop_reason_e reason = stream::session::stop_reason_e::host_terminate) {
       if (all) {
         _launch_sessions.clear();
       }
@@ -859,20 +827,55 @@ namespace rtsp_stream {
         _launch_sessions.prune();
       }
 
-      auto lg = _session_slots.lock();
+      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
+      {
+        auto lg = _session_slots.lock();
 
-      for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-        auto &slot = *(*i);
-        if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
-          stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
-          stream::session::join(slot);
-
-          i = _session_slots->erase(i);
-        }
-        else {
-          i++;
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          auto &slot = *(*i);
+          if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
+            stream::session::stop(slot, reason);
+            sessions_to_join.push_back(*i);
+            i = _session_slots->erase(i);
+          }
+          else {
+            i++;
+          }
         }
       }
+
+      // join 可能等待编码和网络线程，等待期间不能持有会话表锁，
+      // 否则其他 RTSP/NVHTTP 请求也会被一起堵住。
+      for (const auto &session : sessions_to_join) {
+        stream::session::join(*session);
+      }
+    }
+
+    void
+    terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
+      boost::asio::post(io_context, [this, reason, completion = std::move(completion)]() mutable {
+        try {
+          clear(true, reason);
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously"sv;
+        }
+
+        try {
+          if (completion) {
+            completion();
+          }
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Streaming session termination callback failed: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Streaming session termination callback failed"sv;
+        }
+      });
     }
 
     /**
@@ -959,13 +962,8 @@ namespace rtsp_stream {
   }
 
   void
-  terminate_sessions() {
-    server.clear(true);
-  }
-
-  client_session_cancel_result_t
-  cancel_client_sessions(std::string_view client_cert_uuid) {
-    return server.cancel_client_sessions(client_cert_uuid);
+  terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
+    server.terminate_sessions_async(reason, std::move(completion));
   }
 
   int

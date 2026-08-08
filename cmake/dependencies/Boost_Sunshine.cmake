@@ -9,6 +9,7 @@ set(BOOST_COMPONENTS
         atomic
         beast
         filesystem
+        function
         locale
         log
         program_options

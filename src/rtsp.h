@@ -4,23 +4,23 @@
  */
 #pragma once
 
-#include <atomic>
-#include <cstddef>
-#include <string_view>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
 
+#include <boost/function.hpp>
 #include <boost/process/v1.hpp>
 
 #include "crypto.h"
 #include "launch_session_manager.h"
-#include "thread_safe.h"
+
+namespace stream::session {
+  enum class stop_reason_e : int;
+}
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
-
-  struct client_session_cancel_result_t {
-    std::size_t cancelled_sessions {};
-    std::size_t remaining_sessions {};
-  };
 
   struct launch_session_t {
     uint32_t id;
@@ -92,16 +92,12 @@ namespace rtsp_stream {
   pending_session_count();
 
   /**
-   * @brief Terminates all running streaming sessions.
+   * @brief Terminates all streaming sessions on the RTSP execution context.
+   * @param reason Reason recorded for sessions that are still running.
+   * @param completion Called after the termination attempt finishes.
    */
   void
-  terminate_sessions();
-
-  /**
-   * @brief Terminates sessions owned by one authenticated client.
-   */
-  client_session_cancel_result_t
-  cancel_client_sessions(std::string_view client_cert_uuid);
+  terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion);
 
   /**
    * @brief Runs the RTSP server loop.
