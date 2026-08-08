@@ -268,7 +268,21 @@ namespace nvhttp::stream_start {
     }
 
     bool
-    validate_explicit_vdd_request(pt::ptree &tree, const display_device::display_intent_t &intent) {
+    validate_display_intent(pt::ptree &tree, const display_device::display_intent_t &intent) {
+      if (intent.target == display_device::display_intent_t::target_e::unavailable) {
+        set_sunshine_error(
+          tree,
+          503,
+          "The display selected by the client is not connected.",
+          "DISPLAY_NOT_CONNECTED",
+          "Connect the selected display, or choose another display in the client.",
+          "select_available_display",
+          "display",
+          "display_preflight",
+          true);
+        return false;
+      }
+
       if (intent.target != display_device::display_intent_t::target_e::vdd) {
         return true;
       }
@@ -570,7 +584,7 @@ namespace nvhttp::stream_start {
     rtsp_stream::launch_session_t &launch_session,
     bool is_reconfigure) {
     const auto intent = display_device::resolve_display_intent(config::video, launch_session);
-    if (!validate_explicit_vdd_request(tree, intent)) {
+    if (!validate_display_intent(tree, intent)) {
       return false;
     }
 
@@ -585,11 +599,11 @@ namespace nvhttp::stream_start {
       return false;
     }
 
-    // Whenever the requested configuration is actually live, that is what the
-    // stream should run on. The fallbacks below only exist for when it is not.
-    const bool configuration_is_live =
+    // Track whether the configured display was actually passed to the encoder
+    // probe. Deferred configurations are reclassified after their final retry.
+    const bool encoders_were_probed =
       outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
-    if (configuration_is_live) {
+    if (encoders_were_probed) {
       if (!video::probe_encoders()) {
         return true;
       }
@@ -611,7 +625,7 @@ namespace nvhttp::stream_start {
     }
 
     const bool no_display_to_capture =
-      configuration_is_live && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
+      encoders_were_probed && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
 
     if (recover_display(
           intent,
