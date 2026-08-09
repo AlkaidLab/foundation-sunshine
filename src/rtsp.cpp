@@ -1241,9 +1241,17 @@ namespace rtsp_stream {
       port = net::map_port(stream::CONTROL_PORT);
     }
     else if (type == "mic"sv) {
-      session.enable_mic = true;
-      session.setup_mic = true;
       port = net::map_port(stream::MIC_STREAM_PORT);
+      if (config::audio.stream_mic) {
+        session.enable_mic = true;
+        session.setup_mic = true;
+      }
+      else {
+        // 兼容未检查 SDP 仍请求麦克风的客户端，但不授权接收麦克风数据。
+        session.enable_mic = false;
+        session.setup_mic = false;
+        BOOST_LOG(info) << "Ignoring microphone SETUP while microphone streaming is disabled"sv;
+      }
     }
     else {
       cmd_not_found(sock, session, std::move(req));
@@ -1291,6 +1299,21 @@ namespace rtsp_stream {
     option.content = const_cast<char *>(seqn_str.c_str());
 
     std::string_view payload { req->payload, (size_t) req->payloadLength };
+
+    // GameStream 的 DESCRIBE、SETUP、ANNOUNCE 和 PLAY 会使用不同连接，
+    // 因此启动票据需要在握手期间保持可认领。重复 ANNOUNCE 只作为幂等重试，
+    // 不能再次创建媒体会话。RTSP 命令由服务器 io_context 串行处理。
+    if (session.stream_session_started) {
+      if (payload == session.stream_announce_payload) {
+        BOOST_LOG(debug) << "Ignoring duplicate ANNOUNCE for launch session "sv << session.id;
+        respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
+      }
+      else {
+        BOOST_LOG(warning) << "Rejecting ANNOUNCE reconfiguration for active launch session "sv << session.id;
+        respond(sock, session, &option, 455, "Method Not Valid in This State", req->sequenceNumber, {});
+      }
+      return;
+    }
 
     std::vector<std::string_view> lines;
 
@@ -1587,6 +1610,7 @@ namespace rtsp_stream {
       }
     }
 
+    std::string announce_payload { payload };
     auto stream_session = stream::session::alloc(config, session);
     server->insert(stream_session);
 
@@ -1597,6 +1621,9 @@ namespace rtsp_stream {
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
+
+    session.stream_announce_payload = std::move(announce_payload);
+    session.stream_session_started = true;
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

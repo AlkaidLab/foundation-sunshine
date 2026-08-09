@@ -49,7 +49,7 @@ namespace rtsp_stream {
     bool continuous_audio;
     bool enable_hdr;
     bool enable_sops;
-    bool enable_mic;
+    bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
     float max_nits;
@@ -66,6 +66,11 @@ namespace rtsp_stream {
     bool setup_control { false };
     bool setup_mic { false };
     bool control_only { false };
+
+    // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
+    // 但一个启动票据最多只能创建一个串流会话。
+    bool stream_session_started { false };
+    std::string stream_announce_payload;
   };
 
   launch_ticket_register_e
