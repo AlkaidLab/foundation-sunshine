@@ -487,8 +487,9 @@ namespace stream {
 
     control_server_t control_server;
 
+    boost::mutex mic_socket_mutex;
     boost::atomic<bool> mic_socket_enabled { false };
-    boost::atomic<int> mic_sessions_count { 0 };  // 需要麦克风的会话数
+    int mic_sessions_count { 0 };  // Protected by mic_socket_mutex.
 
     // Per-client 麦克风加密上下文（以客户端 IP 为 key）
     struct mic_cipher_ctx_t {
@@ -587,6 +588,8 @@ namespace stream {
       std::unique_ptr<platf::deinit_t> qos;
 
       bool enable_mic;
+      // Pairs a successful shared socket acquisition with session teardown.
+      boost::atomic<bool> mic_socket_registered { false };
     } audio;
 
     struct {
@@ -788,17 +791,14 @@ namespace stream {
     return std::string_view { (char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq) };
   }
 
-  /**
-   * @brief 确保麦克风 socket 处于打开状态。
-   * 如果 socket 已关闭（上次会话结束时被关闭），则重新 open + bind。
-   * @param ctx broadcast 上下文
-   * @return true 如果 socket 已打开或成功重新打开
-   */
   bool
-  ensure_mic_sock_open(broadcast_ctx_t &ctx) {
+  open_mic_socket_locked(broadcast_ctx_t &ctx) {
     if (ctx.mic_sock.is_open()) {
+      ctx.mic_socket_enabled.store(true);
       return true;
     }
+
+    ctx.mic_socket_enabled.store(false);
 
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
     auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
@@ -814,12 +814,29 @@ namespace stream {
     ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
     if (ec) {
       BOOST_LOG(error) << "Couldn't re-bind Microphone socket to port ["sv << mic_port << "]: "sv << ec.message();
-      ctx.mic_sock.close();
+      boost::system::error_code close_ec;
+      ctx.mic_sock.close(close_ec);
       return false;
     }
 
+    ctx.mic_socket_enabled.store(true);
     BOOST_LOG(info) << "Microphone socket re-opened on port " << mic_port;
     return true;
+  }
+
+  void
+  close_mic_socket_locked(broadcast_ctx_t &ctx) {
+    ctx.mic_socket_enabled.store(false);
+
+    if (!ctx.mic_sock.is_open()) {
+      return;
+    }
+
+    boost::system::error_code ec;
+    ctx.mic_sock.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor) {
+      BOOST_LOG(warning) << "Couldn't close Microphone socket: "sv << ec.message();
+    }
   }
 
   /**
@@ -830,6 +847,75 @@ namespace stream {
   reset_mic_encryption(broadcast_ctx_t &ctx) {
     boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
     ctx.mic_ciphers.clear();
+  }
+
+  /**
+   * @brief Acquire the shared microphone socket for one streaming session.
+   * @param ctx The shared broadcast context.
+   * @return true if the socket is ready and the session was registered.
+   */
+  bool
+  acquire_mic_socket(broadcast_ctx_t &ctx) {
+    boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+    if (!open_mic_socket_locked(ctx)) {
+      return false;
+    }
+
+    ++ctx.mic_sessions_count;
+    return true;
+  }
+
+  /**
+   * @brief Release one streaming session's reference to the microphone socket.
+   * @param ctx The shared broadcast context.
+   * @return The number of microphone sessions that remain.
+   */
+  int
+  release_mic_socket(broadcast_ctx_t &ctx) {
+    boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+    if (ctx.mic_sessions_count <= 0) {
+      return 0;
+    }
+
+    const auto remaining_count = --ctx.mic_sessions_count;
+    if (remaining_count == 0) {
+      close_mic_socket_locked(ctx);
+      reset_mic_encryption(ctx);
+    }
+    return remaining_count;
+  }
+
+  /**
+   * @brief Close the microphone socket when no session currently uses it.
+   * @param ctx The shared broadcast context.
+   * @return true if an open socket was closed.
+   */
+  bool
+  disable_mic_socket_if_unused(broadcast_ctx_t &ctx) {
+    boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+    if (ctx.mic_sessions_count != 0) {
+      return false;
+    }
+
+    const auto was_open = ctx.mic_sock.is_open();
+    close_mic_socket_locked(ctx);
+    reset_mic_encryption(ctx);
+    return was_open;
+  }
+
+  /**
+   * @brief Stop all microphone reception during broadcast shutdown.
+   * @param ctx The shared broadcast context.
+   * @return true if an open socket was closed.
+   */
+  bool
+  disable_mic_socket(broadcast_ctx_t &ctx) {
+    boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+    const auto was_open = ctx.mic_sock.is_open();
+    ctx.mic_sessions_count = 0;
+    close_mic_socket_locked(ctx);
+    reset_mic_encryption(ctx);
+    return was_open;
   }
 
   /**
@@ -847,25 +933,19 @@ namespace stream {
   /**
    * @brief 为会话设置麦克风接收。
    * 统一处理 mic_sessions_count 递增、socket 打开、加密上下文注册。
-   * 如果 socket 打开失败，回滚计数并跳过麦克风启用。
+   * 如果 socket 打开失败，不注册该会话的麦克风接收。
    * @param session 当前会话
-   * @return true 如果麦克风设置成功
    */
-  bool
+  void
   setup_mic_for_session(session_t &session) {
     auto &ctx = *session.broadcast_ref.get();
 
-    ctx.mic_sessions_count.fetch_add(1);
-
     // 确保 mic socket 处于打开状态（上次会话结束时可能已关闭）
-    if (!ensure_mic_sock_open(ctx)) {
+    if (!acquire_mic_socket(ctx)) {
       BOOST_LOG(error) << "Failed to ensure mic socket is open, microphone will be unavailable for " << session.client_name;
-      // 回滚计数 — socket 未打开不应算有效 mic 会话
-      ctx.mic_sessions_count.fetch_sub(1);
-      return false;
+      return;
     }
-
-    ctx.mic_socket_enabled.store(true);
+    session.audio.mic_socket_registered.store(true);
 
     // 注册客户端 IP → 名称映射（用于麦克风统计日志）
     std::string client_ip = session.audio.peer.address().to_string();
@@ -890,7 +970,6 @@ namespace stream {
       BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED";
     }
 
-    return true;
   }
 
   int
@@ -2275,6 +2354,23 @@ namespace stream {
     server->flush();
   }
 
+  namespace {
+    bool
+    is_terminal_udp_receive_error(const boost::system::error_code &ec) noexcept {
+      return ec == boost::asio::error::operation_aborted ||
+             ec == boost::asio::error::bad_descriptor ||
+             ec == boost::system::errc::bad_file_descriptor ||
+             ec == boost::system::errc::not_a_socket;
+    }
+
+    bool
+    is_recoverable_udp_receive_error(const boost::system::error_code &ec) noexcept {
+      return ec == boost::system::errc::connection_refused ||
+             ec == boost::system::errc::connection_reset ||
+             ec == boost::asio::error::message_size;
+    }
+  }  // namespace
+
   void
   micRecvThread(broadcast_ctx_t &ctx) {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
@@ -2388,36 +2484,42 @@ namespace stream {
     };
 
     std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    auto schedule_receive = [&]() -> bool {
+      boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+      if (broadcast_shutdown_event->peek() ||
+          !ctx.mic_socket_enabled.load() ||
+          !ctx.mic_sock.is_open()) {
+        return false;
+      }
+
+      try {
+        ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
+        return true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to restart microphone receive: "sv << e.what();
+        return false;
+      }
+    };
+
     mic_recv_func = [&](const boost::system::error_code &ec, size_t received_bytes) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
 
-      // 致命错误（socket 已关闭/无效）：不重新注册接收，让 mic_io.run() 自然退出
-      if (ec) {
-        if (ec == boost::asio::error::operation_aborted ||
-            ec == boost::asio::error::bad_descriptor ||
-            ec == boost::system::errc::bad_file_descriptor ||
-            ec == boost::system::errc::not_a_socket) {
-          BOOST_LOG(debug) << "Mic socket closed: "sv << ec.message();
-          return;
-        }
+      if (is_terminal_udp_receive_error(ec)) {
+        BOOST_LOG(debug) << "Mic socket closed: "sv << ec.message();
+        return;
       }
 
-      // fail_guard：在此之后的任何 return 都会重新注册 async_receive_from
-      // 包括瞬态错误（connection_refused/reset）和数据处理
+      // Keep the receiver alive after packet processing and non-terminal errors.
       auto fg = util::fail_guard([&]() {
-        if (ctx.mic_socket_enabled.load()) {
-          ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
-        }
+        schedule_receive();
       });
 
-      // 瞬态错误（connection_refused/reset）：记录但继续接收
-      // 这些通常是 ICMP 错误（客户端断开、端口不可达等），不应停止整个接收
       if (ec) {
-        if (ec == boost::system::errc::connection_refused ||
-            ec == boost::system::errc::connection_reset) {
-          BOOST_LOG(debug) << "Mic socket transient error (ignored): "sv << ec.message();
+        if (is_recoverable_udp_receive_error(ec)) {
+          BOOST_LOG(debug) << "Mic socket recoverable receive error: "sv << ec.message();
         }
         else {
           BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
@@ -2513,12 +2615,17 @@ namespace stream {
         mic_device_initialized = true;
       }
 
-      ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
-
-      while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
-        mic_io.run();
+      if (mic_io.stopped()) {
+        mic_io.restart();
       }
-      mic_io.restart();  // 重置 io_context，以便下次会话可以重新进入 mic_io.run()
+      if (!schedule_receive()) {
+        if (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
+          std::this_thread::sleep_for(100ms);
+        }
+        continue;
+      }
+
+      mic_io.run();
     }
 
     if (mic_device_initialized) {
@@ -2604,10 +2711,7 @@ namespace stream {
         auto &peer = peers[buf_idx];
 
         // A closed broadcast socket must not be rearmed during shutdown.
-        if (ec == boost::asio::error::operation_aborted ||
-            ec == boost::asio::error::bad_descriptor ||
-            ec == boost::system::errc::bad_file_descriptor ||
-            ec == boost::system::errc::not_a_socket) {
+        if (is_terminal_udp_receive_error(ec)) {
           BOOST_LOG(debug) << type_str << " socket closed: "sv << ec.message();
           return;
         }
@@ -2629,9 +2733,8 @@ namespace stream {
         });
 
         if (ec) {
-          if (ec == boost::system::errc::connection_refused ||
-              ec == boost::system::errc::connection_reset) {
-            BOOST_LOG(debug) << type_str << " socket transient error: "sv << ec.message();
+          if (is_recoverable_udp_receive_error(ec)) {
+            BOOST_LOG(debug) << type_str << " socket recoverable receive error: "sv << ec.message();
           }
           else {
             BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
@@ -3278,13 +3381,7 @@ namespace stream {
     ctx.video_sock.close();
     ctx.audio_sock.close();
 
-    if (ctx.mic_socket_enabled.load()) {
-      ctx.mic_socket_enabled.store(false);
-      ctx.mic_sock.close();
-      ctx.mic_sessions_count.store(0);
-      
-      reset_mic_encryption(ctx);
-      
+    if (disable_mic_socket(ctx)) {
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }
 
@@ -3504,17 +3601,21 @@ namespace stream {
       else {
         // 非仅控制流会话：减少两个计数器
         --running_sessions;
+
+        if (session.audio.mic_socket_registered.exchange(false)) {
+          const auto remaining_count = release_mic_socket(*session.broadcast_ref.get());
+          if (remaining_count == 0) {
+            BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
+          }
+          else {
+            std::string client_ip = session.audio.peer.address().to_string();
+            remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
+            BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
+          }
+        }
+
         // If this is the last non-control-only session, invoke the platform callbacks
         if (unregister_video_session() == 0) {
-          // 最后一个会话结束时，确保麦克风socket已关闭
-          if (session.broadcast_ref->mic_socket_enabled.load()) {
-            session.broadcast_ref->mic_socket_enabled.store(false);
-            session.broadcast_ref->mic_sessions_count.store(0);
-            session.broadcast_ref->mic_sock.close();
-            reset_mic_encryption(*session.broadcast_ref.get());
-            BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
-          }
-
           bool restore_display_state { true };
           if (proc::proc.running()) {
             tray_state::set_paused(proc::proc.get_last_run_app_name());
@@ -3537,25 +3638,6 @@ namespace stream {
           }
 
           platf::streaming_will_stop();
-        }
-        else {
-          // 非最后一个会话：如果当前会话启用了麦克风，减少计数
-          if (session.audio.enable_mic) {
-            int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
-            if (remaining_count == 0) {
-              // 没有会话需要麦克风了，关闭socket并清除所有加密上下文
-              session.broadcast_ref->mic_socket_enabled.store(false);
-              session.broadcast_ref->mic_sock.close();
-              reset_mic_encryption(*session.broadcast_ref.get());
-              BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
-            }
-            else {
-              // 只移除当前客户端的加密上下文，保留其他客户端的
-              std::string client_ip = session.audio.peer.address().to_string();
-              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
-              BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
-            }
-          }
         }
       }
 
@@ -3700,9 +3782,9 @@ namespace stream {
           }
           else {
             // 如果第一个会话不需要麦克风，关闭麦克风socket
-            session.broadcast_ref->mic_socket_enabled.store(false);
-            session.broadcast_ref->mic_sock.close();
-            BOOST_LOG(info) << "Client " << session.client_name << ": Microphone socket closed (session doesn't require it)";
+            if (disable_mic_socket_if_unused(*session.broadcast_ref.get())) {
+              BOOST_LOG(info) << "Client " << session.client_name << ": Microphone socket closed (session doesn't require it)";
+            }
           }
 
           platf::streaming_will_start();
