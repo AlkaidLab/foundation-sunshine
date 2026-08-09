@@ -2554,7 +2554,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     auto &io = ctx.io_context;
 
-    udp::endpoint peer;
+    std::array<udp::endpoint, 2> peers;
     std::array<std::array<char, 2048>, 2> buffers;
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
@@ -2601,22 +2601,43 @@ namespace stream {
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
-        // 静默处理正常关闭错误
+        auto &peer = peers[buf_idx];
+
+        // A closed broadcast socket must not be rearmed during shutdown.
         if (ec == boost::asio::error::operation_aborted ||
-            ec == boost::asio::error::bad_descriptor) {
-          return;  // Socket已关闭，不重新调度
+            ec == boost::asio::error::bad_descriptor ||
+            ec == boost::system::errc::bad_file_descriptor ||
+            ec == boost::system::errc::not_a_socket) {
+          BOOST_LOG(debug) << type_str << " socket closed: "sv << ec.message();
+          return;
         }
 
-        // 静默处理网络连接错误
-        if (ec == boost::system::errc::connection_refused ||
-            ec == boost::system::errc::connection_reset) {
-          return;  // 连接错误，不重新调度
-        }
+        // Keep the shared UDP receiver armed after transient errors. On
+        // Windows, an ICMP port-unreachable response from a disconnected peer
+        // may complete async_receive_from() with connection_reset.
+        auto receive_again = util::fail_guard([&]() {
+          if (broadcast_shutdown_event->peek() || !sock.is_open()) {
+            return;
+          }
 
-        // 如果有其他错误，记录并返回
+          try {
+            sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Failed to restart async receive for "sv << type_str << ": "sv << e.what();
+          }
+        });
+
         if (ec) {
-          BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
-          return;  // 有错误，不重新调度
+          if (ec == boost::system::errc::connection_refused ||
+              ec == boost::system::errc::connection_reset) {
+            BOOST_LOG(debug) << type_str << " socket transient error: "sv << ec.message();
+          }
+          else {
+            BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
+            receive_again.disable();
+          }
+          return;
         }
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
@@ -2629,14 +2650,6 @@ namespace stream {
         else {
           handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
         }
-
-        // 只有在成功接收数据后才重新调度
-        try {
-          sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to restart async receive: " << e.what();
-        }
       };
     };
 
@@ -2644,8 +2657,8 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
       init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
 
-      video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
-      audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
+      video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
+      audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
 
       while (!broadcast_shutdown_event->peek()) {
         io.run();
