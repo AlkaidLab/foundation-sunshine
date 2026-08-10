@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <opus/opus.h>
@@ -71,6 +72,30 @@ namespace {
     EXPECT_TRUE(decoded.has_value());
     return decoded.value_or(std::vector<std::int16_t> {});
   }
+
+  std::vector<std::vector<std::int16_t>>
+  decode_frames_in_sequence(const std::vector<std::vector<std::uint8_t>> &packets) {
+    mic_mixer::mixer_t mixer;
+    EXPECT_TRUE(mixer.add_source(1));
+
+    std::vector<std::vector<std::int16_t>> decoded_frames;
+    decoded_frames.reserve(packets.size());
+    for (std::size_t packet_index = 0; packet_index < packets.size(); ++packet_index) {
+      const auto &packet = packets[packet_index];
+      EXPECT_TRUE(mixer.push_packet(
+        1,
+        packet.data(),
+        packet.size(),
+        static_cast<std::uint16_t>(packet_index + 1)));
+      auto decoded = mixer.mix_next_frame();
+      EXPECT_TRUE(decoded.has_value());
+      if (!decoded) {
+        return {};
+      }
+      decoded_frames.emplace_back(std::move(*decoded));
+    }
+    return decoded_frames;
+  }
 }  // namespace
 
 TEST(MicMixerTest, AcceptsOnlyTwentyMillisecondOpusFrames) {
@@ -118,18 +143,33 @@ TEST(MicMixerTest, MixesIndependentSourcesIntoOneFrame) {
 
 TEST(MicMixerTest, KeepsOnlyThreeNewestQueuedFrames) {
   auto encoder = make_encoder();
-  const auto packet = encode_frame(encoder.get(), mic_mixer::frame_samples, 1000);
-  ASSERT_FALSE(packet.empty());
+  std::vector<std::vector<std::uint8_t>> packets;
+  for (const auto sample_value : {1000, 2000, 3000, 4000}) {
+    packets.emplace_back(encode_frame(encoder.get(), mic_mixer::frame_samples, sample_value));
+    ASSERT_FALSE(packets.back().empty());
+  }
+  const auto expected_frames = decode_frames_in_sequence(packets);
+  ASSERT_EQ(expected_frames.size(), packets.size());
+  for (std::size_t frame_index = 1; frame_index < expected_frames.size(); ++frame_index) {
+    EXPECT_NE(expected_frames[frame_index - 1], expected_frames[frame_index]);
+  }
 
   mic_mixer::mixer_t mixer;
   ASSERT_TRUE(mixer.add_source(1));
-  for (std::uint16_t sequence = 1; sequence <= 4; ++sequence) {
-    ASSERT_TRUE(mixer.push_packet(1, packet.data(), packet.size(), sequence));
+  for (std::size_t packet_index = 0; packet_index < packets.size(); ++packet_index) {
+    const auto &packet = packets[packet_index];
+    ASSERT_TRUE(mixer.push_packet(
+      1,
+      packet.data(),
+      packet.size(),
+      static_cast<std::uint16_t>(packet_index + 1)));
   }
 
-  EXPECT_TRUE(mixer.mix_next_frame().has_value());
-  EXPECT_TRUE(mixer.mix_next_frame().has_value());
-  EXPECT_TRUE(mixer.mix_next_frame().has_value());
+  for (std::size_t expected_index = 1; expected_index < expected_frames.size(); ++expected_index) {
+    const auto mixed = mixer.mix_next_frame();
+    ASSERT_TRUE(mixed.has_value());
+    EXPECT_EQ(*mixed, expected_frames[expected_index]);
+  }
   EXPECT_FALSE(mixer.mix_next_frame().has_value());
 }
 
@@ -179,7 +219,9 @@ TEST(MicMixerTest, ConsecutiveRollbackPacketsRestartTheSource) {
   EXPECT_FALSE(mixer.push_packet(1, restart_packet.data(), restart_packet.size(), 10));
   EXPECT_TRUE(mixer.push_packet(1, restart_packet.data(), restart_packet.size(), 11));
 
-  EXPECT_TRUE(mixer.mix_next_frame().has_value());
+  const auto mixed = mixer.mix_next_frame();
+  ASSERT_TRUE(mixed.has_value());
+  EXPECT_EQ(*mixed, decode_single_frame(restart_packet));
   EXPECT_FALSE(mixer.mix_next_frame().has_value());
 }
 
