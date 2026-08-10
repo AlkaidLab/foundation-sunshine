@@ -76,7 +76,7 @@ namespace platf::audio {
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual audio device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
-     * @return Number of bytes written, or -1 on error
+     * @return Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
      */
     int
     write_pcm(const std::int16_t *samples, std::size_t frame_count);

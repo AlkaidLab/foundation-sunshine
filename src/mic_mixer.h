@@ -14,6 +14,7 @@ namespace mic_mixer {
   using source_id_t = std::uint32_t;
 
   constexpr std::uint32_t sample_rate = 48000;
+  constexpr std::size_t frame_samples = sample_rate / 50;
 
   /**
    * @brief Validate that a payload contains a decodable Opus packet shape.
@@ -23,6 +24,7 @@ namespace mic_mixer {
 
   class mixer_t {
   public:
+    // 该类型不提供内部同步，所有成员函数都必须由麦克风接收线程串行调用。
     mixer_t();
     ~mixer_t();
 

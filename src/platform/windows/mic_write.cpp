@@ -205,12 +205,8 @@ namespace platf::audio {
     std::vector<WAVEFORMATEX> formats_to_try = {
       // 16位单声道，48kHz
       { WAVE_FORMAT_PCM, 1, 48000, 96000, 2, 16, 0 },
-      // 16位单声道，44.1kHz
-      { WAVE_FORMAT_PCM, 1, 44100, 88200, 2, 16, 0 },
       // 16位立体声，48kHz
       { WAVE_FORMAT_PCM, 2, 48000, 192000, 4, 16, 0 },
-      // 16位立体声，44.1kHz
-      { WAVE_FORMAT_PCM, 2, 44100, 176400, 4, 16, 0 },
     };
 
     HRESULT init_status = E_FAIL;
@@ -222,7 +218,7 @@ namespace platf::audio {
 
       init_status = audio_client->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        0,  // 不使用特殊标志
+        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
         1000000,  // 100ms buffer (10000000 was 10 seconds)
         0,
         &format,

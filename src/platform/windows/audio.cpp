@@ -1246,7 +1246,7 @@ namespace platf::audio {
     std::mutex last_virtual_sink_notification_mutex;
 
     int
-    init_mic_redirect_device() {
+    init_mic_redirect_device() override {
       if (!mic_redirect_device) {
         mic_redirect_device = std::make_unique<mic_write_wasapi_t>();
       }
@@ -1263,7 +1263,7 @@ namespace platf::audio {
     }
 
     void
-    release_mic_redirect_device() {
+    release_mic_redirect_device() override {
       if (mic_redirect_device) {
         mic_redirect_device->restore_audio_devices();
         mic_redirect_device.reset();
@@ -1271,7 +1271,7 @@ namespace platf::audio {
     }
 
     int
-    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) {
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
       if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
         BOOST_LOG(warning) << "Mic redirect device not available or cleaning up";
         return -1;

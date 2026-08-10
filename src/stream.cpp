@@ -2551,7 +2551,16 @@ namespace stream {
     boost::function<void(const boost::system::error_code, size_t)> mic_recv_func;
     boost::function<void()> schedule_mix;
     bool retry_receive_after_error = false;
+    bool reset_mic_io_cycle = false;
     asio::steady_timer mix_timer {mic_io};
+    auto cancel_mix_timer = [&]() {
+      try {
+        mix_timer.cancel();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to cancel microphone mix timer: "sv << e.what();
+      }
+    };
     auto schedule_receive = [&]() -> bool {
       boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
       if (broadcast_shutdown_event->peek() ||
@@ -2590,9 +2599,14 @@ namespace stream {
           }
           else {
             retry_receive_after_error = true;
-            boost::system::error_code timer_ec;
-            mix_timer.cancel(timer_ec);
+            cancel_mix_timer();
           }
+        }
+        else {
+          // 没有活动会话时同时终止旧混音链，让 io_context 回到外层重新判断状态。
+          // cancel() 无法撤回已经排队的成功回调，因此还要用周期标记阻止旧回调自重挂。
+          reset_mic_io_cycle = true;
+          cancel_mix_timer();
         }
         return;
       }
@@ -2610,8 +2624,7 @@ namespace stream {
           BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
           retry_receive_after_error = true;
           fg.disable();
-          boost::system::error_code timer_ec;
-          mix_timer.cancel(timer_ec);
+          cancel_mix_timer();
         }
         return;
       }
@@ -2673,6 +2686,7 @@ namespace stream {
         if (ec == boost::asio::error::operation_aborted ||
             broadcast_shutdown_event->peek() ||
             retry_receive_after_error ||
+            reset_mic_io_cycle ||
             ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
           return;
         }
@@ -2697,7 +2711,15 @@ namespace stream {
         }
 
         if (auto mixed = mixer.mix_next_frame()) {
-          audio::write_mic_pcm(mixed->data(), mixed->size());
+          if (audio::write_mic_pcm(mixed->data(), mixed->size()) == -2) {
+            BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+            release_mic_device();
+            retry_receive_after_error = true;
+
+            boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+            cancel_mic_receive_locked(ctx);
+            return;
+          }
         }
         schedule_mix();
       });
@@ -2750,6 +2772,7 @@ namespace stream {
         mic_io.restart();
       }
       retry_receive_after_error = false;
+      reset_mic_io_cycle = false;
       if (!schedule_receive()) {
         if (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
           std::this_thread::sleep_for(100ms);

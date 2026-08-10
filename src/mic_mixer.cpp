@@ -18,7 +18,6 @@
 namespace mic_mixer {
   namespace {
     constexpr int channels = 1;
-    constexpr int max_opus_frame_samples = 5760;
     constexpr std::size_t max_queued_frames = 3;
 
     struct opus_decoder_deleter_t {
@@ -52,7 +51,7 @@ namespace mic_mixer {
         source.decoder.get(),
         data,
         static_cast<opus_int32>(size));
-      if (frame_size <= 0 || frame_size > max_opus_frame_samples) {
+      if (frame_size != static_cast<int>(frame_samples)) {
         return false;
       }
 
@@ -89,7 +88,7 @@ namespace mic_mixer {
       return false;
     }
     const auto samples = opus_packet_get_nb_samples(data, static_cast<opus_int32>(size), sample_rate);
-    return samples > 0 && samples <= max_opus_frame_samples;
+    return samples == static_cast<int>(frame_samples);
   }
 
   bool
@@ -145,22 +144,19 @@ namespace mic_mixer {
 
   std::optional<std::vector<std::int16_t>>
   mixer_t::mix_next_frame() {
-    std::size_t output_samples = 0;
     std::size_t source_count = 0;
     for (const auto &[source_id, source] : impl_->sources) {
       (void) source_id;
       if (!source.frames.empty()) {
-        output_samples = std::max(output_samples, source.frames.front().size());
         ++source_count;
       }
     }
 
-    if (source_count == 0 || output_samples == 0) {
+    if (source_count == 0) {
       return std::nullopt;
     }
 
-    std::vector<std::int64_t> sums(output_samples, 0);
-    std::vector<std::size_t> contributors(output_samples, 0);
+    std::vector<std::int64_t> sums(frame_samples, 0);
     for (auto &[source_id, source] : impl_->sources) {
       (void) source_id;
       if (source.frames.empty()) {
@@ -171,17 +167,12 @@ namespace mic_mixer {
       source.frames.pop_front();
       for (std::size_t sample_index = 0; sample_index < frame.size(); ++sample_index) {
         sums[sample_index] += frame[sample_index];
-        ++contributors[sample_index];
       }
     }
 
-    std::vector<std::int16_t> mixed(output_samples, 0);
-    for (std::size_t sample_index = 0; sample_index < output_samples; ++sample_index) {
-      if (contributors[sample_index] == 0) {
-        continue;
-      }
-
-      const auto averaged = sums[sample_index] / static_cast<std::int64_t>(contributors[sample_index]);
+    std::vector<std::int16_t> mixed(frame_samples, 0);
+    for (std::size_t sample_index = 0; sample_index < frame_samples; ++sample_index) {
+      const auto averaged = sums[sample_index] / static_cast<std::int64_t>(source_count);
       mixed[sample_index] = static_cast<std::int16_t>(std::clamp<std::int64_t>(
         averaged,
         std::numeric_limits<std::int16_t>::min(),
