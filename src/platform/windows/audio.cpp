@@ -253,13 +253,30 @@ namespace platf::audio {
 
   class co_init_t: public deinit_t {
   public:
-    co_init_t() {
-      CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY);
+    co_init_t():
+        status {CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY)} {
     }
 
     ~co_init_t() override {
-      CoUninitialize();
+      if (SUCCEEDED(status)) {
+        CoUninitialize();
+      }
     }
+
+    [[nodiscard]] bool
+    initialized() const noexcept {
+      // RPC_E_CHANGED_MODE 表示当前线程已经属于另一种 COM 单元模型。
+      // 此时 COM 仍可使用，但当前守卫不能负责反初始化已有单元。
+      return SUCCEEDED(status) || status == RPC_E_CHANGED_MODE;
+    }
+
+    [[nodiscard]] HRESULT
+    result() const noexcept {
+      return status;
+    }
+
+  private:
+    HRESULT status;
   };
 
   class prop_var_t {
@@ -1306,6 +1323,18 @@ namespace platf {
     }
 
     return control;
+  }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    auto guard = std::make_unique<audio::co_init_t>();
+    if (!guard->initialized()) {
+      BOOST_LOG(error) << "Failed to initialize COM for the audio thread: [0x"sv
+                       << util::hex(guard->result()).to_string_view() << ']';
+      return nullptr;
+    }
+
+    return guard;
   }
 
   std::unique_ptr<deinit_t>

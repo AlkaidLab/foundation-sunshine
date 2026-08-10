@@ -118,4 +118,9 @@ namespace platf {
   audio_control() {
     return std::make_unique<macos_audio_control_t>();
   }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    return std::make_unique<deinit_t>();
+  }
 }  // namespace platf

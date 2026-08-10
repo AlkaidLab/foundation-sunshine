@@ -2358,6 +2358,7 @@ namespace stream {
     udp::endpoint peer;
     std::array<char, 2048> mic_recv_buffer;
     bool mic_device_initialized = false;
+    std::unique_ptr<platf::deinit_t> audio_thread_guard;
     audio::audio_ctx_ref_t mic_audio_ref;
     mic_mixer::mixer_t mixer;
     std::unordered_set<mic_mixer::source_id_t> mixer_sources;
@@ -2552,8 +2553,12 @@ namespace stream {
     boost::function<void()> schedule_mix;
     bool retry_receive_after_error = false;
     bool reset_mic_io_cycle = false;
+    bool mix_timer_armed = false;
+    std::uint64_t mix_timer_generation = 0;
     asio::steady_timer mix_timer {mic_io};
     auto cancel_mix_timer = [&]() {
+      mix_timer_armed = false;
+      ++mix_timer_generation;
       try {
         mix_timer.cancel();
       }
@@ -2613,7 +2618,11 @@ namespace stream {
 
       // 正常处理数据包或遇到可恢复错误后继续挂接接收。
       auto fg = util::fail_guard([&]() {
-        schedule_receive();
+        if (schedule_receive()) {
+          // 新会话可能在旧混音回调因会话数为零退出后接入。
+          // 接收恢复时同时保证混音定时器仍在运行。
+          schedule_mix();
+        }
       });
 
       if (ec) {
@@ -2681,8 +2690,19 @@ namespace stream {
     };
 
     schedule_mix = [&]() {
+      if (mix_timer_armed) {
+        return;
+      }
+
+      mix_timer_armed = true;
+      const auto generation = ++mix_timer_generation;
       mix_timer.expires_after(20ms);
-      mix_timer.async_wait([&](const boost::system::error_code &ec) {
+      mix_timer.async_wait([&, generation](const boost::system::error_code &ec) {
+        if (generation != mix_timer_generation) {
+          return;
+        }
+        mix_timer_armed = false;
+
         if (ec == boost::asio::error::operation_aborted ||
             broadcast_shutdown_event->peek() ||
             retry_receive_after_error ||
@@ -2738,9 +2758,17 @@ namespace stream {
         continue;
       }
 
-      // 在麦克风设备的完整生命周期内持有现有音频上下文，确保音频采集退出后仍能恢复设备。
-      // 接收线程不能自行创建新的音频上下文。
+      // 在麦克风设备的完整生命周期内持有音频上下文，确保音频采集退出后仍能恢复设备。
       if (!mic_device_initialized) {
+        if (!audio_thread_guard) {
+          audio_thread_guard = platf::init_audio_thread();
+          if (!audio_thread_guard) {
+            std::this_thread::sleep_for(retry_delay);
+            retry_delay = std::min(retry_delay * 2, 5000ms);
+            continue;
+          }
+        }
+
         // 客户端麦克风可以在主机音频串流关闭时独立工作，因此活动的麦克风
         // 会话需要能够创建并持有自己的音频控制上下文。
         mic_audio_ref = audio::get_audio_ctx_ref();

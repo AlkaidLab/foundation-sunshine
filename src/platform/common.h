@@ -747,6 +747,13 @@ namespace platf {
   audio_control();
 
   /**
+   * @brief Initialize platform audio services required by the calling thread.
+   * @return A lifetime guard, or nullptr when thread initialization fails.
+   */
+  [[nodiscard]] std::unique_ptr<deinit_t>
+  init_audio_thread();
+
+  /**
    * @brief Get the display_t instance for the given hwdevice_type.
    * If display_name is empty, use the first monitor that's compatible you can find
    * If you require to use this parameter in a separate thread, make a copy of it.
