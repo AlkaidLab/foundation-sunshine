@@ -150,6 +150,7 @@ namespace audio {
 
   /**
    * @brief Start the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    * @returns 0 on success, -1 on error.
    */
   int
@@ -157,12 +158,14 @@ namespace audio {
 
   /**
    * @brief Release the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    */
   void
   release_mic_redirect_device();
 
   /**
    * @brief Write microphone data to the virtual audio device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    * @param data Pointer to the audio data.
    * @param size Size of the audio data in bytes.
    * @param seq Sequence number for FEC recovery (0 = unknown)

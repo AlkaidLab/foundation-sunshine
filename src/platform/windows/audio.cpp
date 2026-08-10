@@ -734,6 +734,7 @@ namespace platf::audio {
     HANDLE mmcss_task_handle = NULL;
   };
 
+  // 初始化、写入和释放操作都由麦克风接收线程串行执行。
   std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
 
   class audio_control_t: public ::platf::audio_control_t {
@@ -1246,9 +1247,6 @@ namespace platf::audio {
 
     int
     init_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
       if (!mic_redirect_device) {
         mic_redirect_device = std::make_unique<mic_write_wasapi_t>();
       }
@@ -1266,19 +1264,14 @@ namespace platf::audio {
 
     void
     release_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
       if (mic_redirect_device) {
         mic_redirect_device->restore_audio_devices();
+        mic_redirect_device.reset();
       }
     }
 
     int
     write_mic_data(const char *data, size_t len, uint16_t seq = 0) {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
       if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
         BOOST_LOG(warning) << "Mic redirect device not available or cleaning up";
         return -1;
