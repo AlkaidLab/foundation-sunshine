@@ -97,6 +97,10 @@ Assert-Equal $true (Test-VddVersionAtLeast '15.0.15.8' '15.0.15.7') `
     'A newer safe Win10 driver must still be preserved.'
 Assert-Equal $true (Test-VddVersionAtLeast '100.0.17.2' '100.0.17.2') `
     'The Win11 100.x version policy must remain unchanged.'
+Assert-Equal $true (Test-VddDeviceBound (New-TestDevice '15.0.15.8' 'ERROR') '15.0.15.8') `
+    'A non-started device with the expected published package must be eligible for reboot recovery.'
+Assert-Equal $false (Test-VddDeviceBound (New-TestDevice '15.0.15.7') '15.0.15.8') `
+    'A device bound to the wrong package must not be treated as a reboot-only result.'
 
 $cases = @(
     @{
@@ -598,6 +602,9 @@ try {
     function Set-VddConfiguration { $script:workflowCalls += 'Configure' }
     function Install-VddDevice {
         $script:workflowCalls += 'Install'
+        if ($script:workflowRequestsRestart) {
+            $script:vddRestartRequired = $true
+        }
         if ($script:failWorkflowInstall) {
             throw 'simulated install failure'
         }
@@ -610,6 +617,7 @@ try {
     $script:workflowDevices = @(New-TestDevice '100.0.16.6')
     $script:failWorkflowInstall = $false
     $script:failWorkflowPackage = $false
+    $script:workflowRequestsRestart = $false
     $script:workflowDecision = [pscustomobject]@{
         DeviceCount = 1
         CleanupRequired = 0
@@ -639,6 +647,16 @@ try {
     Invoke-VddInstall $PSScriptRoot 'Run'
     Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Clear,Cleanup:100.0.16.6' ($script:workflowCalls -join ',') `
         'An upgrade must stage the replacement before removing the working device and prune only after verification.'
+
+    $script:workflowCalls = @()
+    $script:workflowRequestsRestart = $true
+    Invoke-VddInstall $PSScriptRoot 'Run'
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install' ($script:workflowCalls -join ',') `
+        'A reboot-pending upgrade must preserve its rollback journal and previous driver package.'
+    Assert-Equal $true $script:vddRestartRequired `
+        'A reboot-pending upgrade must propagate the restart requirement to the caller.'
+    $script:workflowRequestsRestart = $false
+    $script:vddRestartRequired = $false
 
     $script:workflowCalls = @()
     Invoke-VddInstall $PSScriptRoot 'Run' -PreserveHealthyExisting
@@ -742,6 +760,8 @@ finally {
     Remove-Variable -Name workflowDevices -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name failWorkflowInstall -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name failWorkflowPackage -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowRequestsRestart -Scope Script -ErrorAction SilentlyContinue
+    $script:vddRestartRequired = $false
 }
 
 $results | Format-Table -AutoSize

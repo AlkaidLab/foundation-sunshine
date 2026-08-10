@@ -28,6 +28,7 @@ $crBufferSmall = 0x0000001A
 $deviceTimeoutSeconds = 120
 $targetedRemovalTimeoutSeconds = 10
 $win32ErrorTimeout = 1460
+$script:vddRestartRequired = $false
 $vddControlInterfaceGuid = 'DA9F8C2B-7E4F-49A1-9D4E-6F2B0E1A0C4D'
 $requiredDriverFiles = @('ZakoVDD.inf', 'ZakoVDD.dll', 'zakovdd.cat', 'ZakoVDD.cer')
 
@@ -239,6 +240,12 @@ function Test-VddDeviceReady([object] $Device, [string] $ExpectedVersion = '') {
         $Device.Status -eq 'OK' -and
         $Device.InfName -match '(?i)^oem\d+\.inf$' -and
         (-not $ExpectedVersion -or $Device.Version -eq $ExpectedVersion))
+}
+
+function Test-VddDeviceBound([object] $Device, [string] $ExpectedVersion) {
+    return [bool]($Device -and
+        $Device.InfName -match '(?i)^oem\d+\.inf$' -and
+        $Device.Version -eq $ExpectedVersion)
 }
 
 function Test-VddVersionAtLeast([string] $InstalledVersion, [string] $BundledVersion) {
@@ -714,15 +721,25 @@ function Install-VddDeviceFromInf(
         Write-Output 'Windows suggested a restart after binding the VDD driver; checking whether the device is already ready...'
     }
 
-    if (-not (Wait-Until {
+    $isReady = Wait-Until {
         $devices = @(Get-VddDevices)
         $devices.Count -eq 1 -and
             (Test-VddDeviceReady $devices[0] $ExpectedVersion) -and
             (-not $RequireControlInterface -or
                 (Test-VddControlInterfaceAvailable 1 0))
-    } $deviceTimeoutSeconds)) {
+    } $deviceTimeoutSeconds
+
+    if (-not $isReady) {
+        $devices = @(Get-VddDevices)
+        if ($devices.Count -eq 1 -and
+            (Test-VddDeviceBound $devices[0] $ExpectedVersion)) {
+            $script:vddRestartRequired = $true
+            Write-Warning 'The expected VDD package is bound, but the device or control interface is not ready. A Windows restart is required.'
+            return
+        }
+
         $readiness = if ($RequireControlInterface) { ' with its control interface' } else { '' }
-        throw "VDD did not become ready$readiness at version $ExpectedVersion."
+        throw "VDD did not bind and become ready$readiness at version $ExpectedVersion."
     }
     if ($restartSuggested) {
         Write-Output 'VDD is ready; continuing without a restart.'
@@ -911,7 +928,7 @@ function Invoke-VddInstall(
                 Remove-AllVddDevices $payload.Paths.Nefcon
             }
             Install-VddDevice $payload $state.BundledVersion
-            if ($previousDevice) {
+            if ($previousDevice -and -not $script:vddRestartRequired) {
                 Clear-VddTransaction $payload
             }
         }
@@ -928,6 +945,11 @@ function Invoke-VddInstall(
                 }
             }
             throw $installFailure
+        }
+
+        if ($script:vddRestartRequired) {
+            Write-Output 'VDD installation is pending a Windows restart; preserving the previous package and update transaction.'
+            return
         }
 
         try {
@@ -996,6 +1018,10 @@ function Invoke-VddDeviceHelper {
 if ($MyInvocation.InvocationName -ne '.') {
     try {
         Invoke-VddDeviceHelper
+        if ($script:vddRestartRequired) {
+            Write-Output 'VDD_RESTART_REQUIRED=1'
+            exit 3010
+        }
         exit 0
     }
     catch {
