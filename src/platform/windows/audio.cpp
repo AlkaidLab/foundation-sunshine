@@ -1271,13 +1271,13 @@ namespace platf::audio {
     }
 
     int
-    write_mic_data(const char *data, size_t len, uint16_t seq = 0) {
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) {
       if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
         BOOST_LOG(warning) << "Mic redirect device not available or cleaning up";
         return -1;
       }
 
-      return mic_redirect_device->write_data(data, len, seq);
+      return mic_redirect_device->write_pcm(samples, frame_count);
     }
   };
 }  // namespace platf::audio

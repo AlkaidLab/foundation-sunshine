@@ -8,6 +8,7 @@
 #include <array>
 #include <bitset>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -702,14 +703,13 @@ namespace platf {
     sink_info() = 0;
 
     /**
-     * @brief Write microphone data to the virtual audio device.
-     * @param data Pointer to the audio data.
-     * @param size Size of the audio data in bytes.
-     * @param seq Sequence number for FEC recovery (0 = unknown)
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
      * @returns Number of bytes written, or -1 on error.
      */
     virtual int
-    write_mic_data(const char *data, size_t size, uint16_t seq = 0) = 0;
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;
 
     /**
      * @brief Initialize the microphone redirect device.
