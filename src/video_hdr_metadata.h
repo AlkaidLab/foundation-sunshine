@@ -85,115 +85,50 @@ namespace video::hdr_metadata {
     std::span<uint8_t> payload);
 
   /**
-   * Video codecs that can carry dynamic HDR metadata, using the same numbering as
-   * video::config_t::videoFormat.
-   */
-  enum class codec_e {
-    h264 = 0,
-    hevc = 1,
-    av1 = 2,
-  };
-
-  inline codec_e
-  codec_from_video_format(int video_format) {
-    switch (video_format) {
-      case 1:
-        return codec_e::hevc;
-      case 2:
-        return codec_e::av1;
-      default:
-        return codec_e::h264;
-    }
-  }
-
-  /**
-   * Which dynamic formats the transfer function allows to describe the content.
+   * Which dynamic metadata formats may be emitted for this stream.
    *
-   * HDR10+ (SMPTE ST 2094-40) expresses absolute luminance, so it is defined for PQ
-   * only. HDR Vivid covers both: T/UWA 005.1-2024 clause 7 gives the syntax for PQ
-   * and HLG dynamic metadata, and annex A the extraction method for each.
+   * Two independent gates. The transfer function decides what may describe the
+   * content: HDR10+ carries absolute luminance so it is PQ-only, while HDR Vivid
+   * covers both PQ and HLG (T/UWA 005.1-2024 clause 7).
    *
-   * This answers "may this metadata describe the picture", not "may it be written to
-   * the bitstream" — see carriage_for().
+   * The codec decides what may be written. HDR Vivid defines a carriage only for
+   * AVS2 (clause 8) and HEVC/VVC (annex B) — the standard never mentions AV1 or
+   * OBUs, so emitting it there invents a mapping no decoder is obliged to accept.
+   * HDR10+ does have one, from AOMedia's HDR10+ AV1 Metadata Handling
+   * Specification, so it is not codec-gated here.
+   *
+   * video_format follows the config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
    */
   inline formats_t
-  content_formats_for(const sunshine_colorspace_t &colorspace) {
+  formats_for(const sunshine_colorspace_t &colorspace, int video_format) {
+    const bool vivid_carriable = (video_format == 1);
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
-        return { .hdr10plus = true, .vivid = true };
+        return { .hdr10plus = true, .vivid = vivid_carriable };
       case colorspace_e::bt2020hlg:
-        return { .hdr10plus = false, .vivid = true };
+        return { .hdr10plus = false, .vivid = vivid_carriable };
       default:
         return {};
     }
   }
 
   /**
-   * Which dynamic formats have a standardized carriage in a codec's bitstream.
+   * Whether stream startup should hold frames back until the HDR Vivid startup
+   * guard reports stable analyzer output.
    *
-   * HDR10+ rides in the registered ITU-T T.35 SEI for HEVC, and in an AV1 metadata
-   * OBU with metadata_type = METADATA_TYPE_ITUT_T35 per the AOMedia "HDR10+ AV1
-   * Metadata Handling Specification".
-   *
-   * HDR Vivid defines carriage only for AVS2 (T/UWA 005.1-2024 clause 8) and
-   * HEVC/VVC (annex B). The standard never mentions AV1 or OBUs, so writing a CUVA
-   * T.35 payload into an AV1 metadata OBU invents a mapping that no decoder is
-   * obliged to accept — and strict AV1 decoders reject the stream over it.
-   *
-   * H.264 is never used for HDR here, so it claims no carriage at all rather than
-   * asserting something unverified about AVC.
-   */
-  inline formats_t
-  carriage_for(codec_e codec) {
-    switch (codec) {
-      case codec_e::hevc:
-        return { .hdr10plus = true, .vivid = true };
-      case codec_e::av1:
-        return { .hdr10plus = true, .vivid = false };
-      default:
-        return {};
-    }
-  }
-
-  /**
-   * Dynamic metadata formats that both describe this content and have a defined
-   * carriage in this codec. Metadata must clear both gates to be emitted.
-   */
-  inline formats_t
-  formats_for(const sunshine_colorspace_t &colorspace, codec_e codec) {
-    const auto content = content_formats_for(colorspace);
-    const auto carriage = carriage_for(codec);
-    return {
-      .hdr10plus = content.hdr10plus && carriage.hdr10plus,
-      .vivid = content.vivid && carriage.vivid,
-    };
-  }
-
-  /**
-   * Whether stream startup should hold frames back until the HDR Vivid startup guard
-   * reports stable analyzer output.
-   *
-   * Only HLG needs the wait: a plain-HLG IDR followed by a mid-stream switch into
-   * Vivid is visible to the client, so the session prefers to start with metadata
-   * already stable. PQ has no such transition and starts immediately.
-   *
-   * The wait is pointless when Vivid will never be emitted for this codec — AV1 has
-   * no Vivid carriage — and would only delay the first frame by up to the guard's
-   * sample count or its timeout, for metadata that is never sent.
-   *
-   * The colorspace is compared directly rather than through colorspace_is_hlg() to
-   * keep this header link-free, matching content_formats_for() above.
+   * Only HLG needs it: a plain-HLG IDR followed by a mid-stream switch into Vivid
+   * is visible to the client. The wait is pointless when Vivid is never emitted
+   * for this codec, and would only delay the first frame.
    */
   inline bool
   needs_vivid_startup_preroll(
     const sunshine_colorspace_t &colorspace,
-    codec_e codec,
+    int video_format,
     bool analysis_available) {
     return analysis_available &&
            colorspace.colorspace == colorspace_e::bt2020hlg &&
-           formats_for(colorspace, codec).vivid;
+           formats_for(colorspace, video_format).vivid;
   }
-
   /**
    * Convert absolute display luminance to the normalized SMPTE ST 2084 signal
    * used by GB/T 46269.1-2025 (equivalent to T/UWA 005.1-2024).

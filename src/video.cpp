@@ -735,7 +735,7 @@ namespace video {
 
   class nvenc_encode_session_t: public encode_session_t {
   public:
-    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, hdr_metadata::codec_e codec):
+    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, int video_format):
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
       if (use_hlg) {
@@ -743,7 +743,7 @@ namespace video {
           config::video.hdr_luminance_analysis != "off" &&
           device->hdr_luminance_analysis_available;
         vivid_metadata_mode =
-          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, codec, analysis_available) ?
+          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, video_format, analysis_available) ?
             vivid_metadata_mode_e::preroll :
             vivid_metadata_mode_e::disabled;
       }
@@ -2687,8 +2687,7 @@ namespace video {
       // Single source of truth for which dynamic formats this transfer function allows
       // and this codec can actually carry, shared with the native NVENC path so the two
       // cannot drift apart.
-      const auto dynamic_hdr_formats = hdr_metadata::formats_for(
-        colorspace, hdr_metadata::codec_from_video_format(config.videoFormat));
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace, config.videoFormat);
 
       SS_HDR_METADATA hdr_metadata;
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
@@ -2888,9 +2887,7 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(
-      std::move(encode_device),
-      hdr_metadata::codec_from_video_format(client_config.videoFormat));
+    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
   }
 
   std::unique_ptr<amf_encode_session_t>

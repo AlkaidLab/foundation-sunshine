@@ -106,9 +106,7 @@ namespace nvenc {
 
     if (encoder) destroy_encoder();
     auto fail_guard = util::fail_guard([this] { destroy_encoder(); });
-    dynamic_hdr_formats = video::hdr_metadata::formats_for(
-      sunshine_colorspace,
-      video::hdr_metadata::codec_from_video_format(client_config.videoFormat));
+    dynamic_hdr_formats = video::hdr_metadata::formats_for(sunshine_colorspace, client_config.videoFormat);
 
     auto colorspace = nvenc_colorspace_from_sunshine_colorspace(sunshine_colorspace);
     auto buffer_format = nvenc_format_from_sunshine_format(sunshine_buffer_format);
