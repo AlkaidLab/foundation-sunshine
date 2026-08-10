@@ -541,11 +541,10 @@ namespace platf {
       }
 
       int
-      write_mic_data(const char *data, size_t size, uint16_t seq = 0) override {
+      write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
         // Microphone redirect to the host is not implemented on Linux yet.
-        (void) data;
-        (void) size;
-        (void) seq;
+        (void) samples;
+        (void) frame_count;
         return -1;
       }
 
@@ -589,5 +588,10 @@ namespace platf {
     }
 
     return audio;
+  }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    return std::make_unique<deinit_t>();
   }
 }  // namespace platf

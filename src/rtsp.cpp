@@ -1161,7 +1161,9 @@ namespace rtsp_stream {
     if (config::audio.stream_mic) {
       ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
       ss << "a=rtpmap:96 opus/48000/2" << std::endl;
-      ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
+      ss << "a=fmtp:96 minptime=20;useinbandfec=1" << std::endl;
+      ss << "a=ptime:20" << std::endl;
+      ss << "a=maxptime:20" << std::endl;
     }
 
     for (int x = 0; x < audio::MAX_STREAM_CONFIG; ++x) {

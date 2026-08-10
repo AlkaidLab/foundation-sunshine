@@ -11,6 +11,7 @@
 #include <optional>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <fstream>
@@ -19,6 +20,7 @@
 
 #include <boost/atomic.hpp>
 #include <boost/endian/arithmetic.hpp>
+#include <boost/function.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/lock_guard.hpp>
@@ -44,6 +46,7 @@ extern "C" {
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
+#include "mic_mixer.h"
 #include "network.h"
 #include "perf_recorder.h"
 #include "stream.h"
@@ -489,21 +492,12 @@ namespace stream {
     boost::mutex mic_socket_mutex;
     boost::atomic<bool> mic_socket_enabled { false };
 
-    // 单个客户端的麦克风加密上下文。
+    // 单个会话的麦克风加密上下文。
     struct mic_cipher_ctx_t {
       crypto::cipher::cbc_t cipher;
-      crypto::aes_t iv;
 
-      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding, std::uint32_t avRiKeyId)
-          : cipher(key, padding), iv(16) {
-        // 初始化 IV：前 4 字节存储 baseIv（大端序）
-        // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
-        // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
-        const auto base_iv_be = util::endian::big<std::uint32_t>(avRiKeyId);
-        std::memcpy(iv.data(), &base_iv_be, sizeof(base_iv_be));
-        // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
-        std::memset(iv.data() + 4, 0, 12);
-      }
+      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding):
+          cipher(key, padding) {}
 
       mic_cipher_ctx_t(mic_cipher_ctx_t &&) noexcept = default;
       mic_cipher_ctx_t &operator=(mic_cipher_ctx_t &&) noexcept = default;
@@ -511,30 +505,28 @@ namespace stream {
 
     struct mic_session_ctx_t {
       std::uint32_t session_id;
-      std::string client_ip;
-      std::string client_name;
+      std::uint32_t key_id;
+      boost::asio::ip::address client_address;
+      std::optional<udp::endpoint> source_endpoint;
       std::optional<mic_cipher_ctx_t> cipher;
 
       mic_session_ctx_t(
         std::uint32_t session_id,
-        std::string client_ip,
-        std::string client_name,
+        std::uint32_t key_id,
+        boost::asio::ip::address client_address,
         std::optional<mic_cipher_ctx_t> cipher
       ):
           session_id {session_id},
-          client_ip {std::move(client_ip)},
-          client_name {std::move(client_name)},
+          key_id {key_id},
+          client_address {net::normalize_address(std::move(client_address))},
           cipher {std::move(cipher)} {}
     };
 
-    // 主机只有一个虚拟麦克风和一个有状态的 Opus 解码器，因此同一时间
-    // 只能由一个会话发送麦克风数据。新会话会接管所有权，但不会停止旧会话的音视频串流。
-    boost::shared_ptr<mic_session_ctx_t> active_mic_session;
+    // 每个会话保留独立的加密与 Opus 解码状态，麦克风线程将所有活动源混合后
+    // 写入同一个虚拟麦克风设备。会话 ID 是主身份，IP 和 UDP endpoint 只用于路由。
+    std::unordered_map<std::uint32_t, boost::shared_ptr<mic_session_ctx_t>> mic_sessions;
     boost::mutex mic_session_mutex;
-    boost::atomic<std::uint32_t> mic_owner_session_id { 0 };
-
-    // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
-    boost::atomic<bool> mic_reject_plaintext { false };
+    boost::atomic<std::uint32_t> mic_session_count { 0 };
   };
 
   struct session_t {
@@ -878,8 +870,8 @@ namespace stream {
   bool
   disable_mic_socket(broadcast_ctx_t &ctx) {
     boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
-    ctx.active_mic_session.reset();
-    ctx.mic_owner_session_id.store(0, boost::memory_order_release);
+    ctx.mic_sessions.clear();
+    ctx.mic_session_count.store(0, boost::memory_order_release);
 
     boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
     const auto was_open = ctx.mic_sock.is_open();
@@ -888,32 +880,36 @@ namespace stream {
   }
 
   /**
-   * @brief Release the microphone registration owned by the ending session.
+   * @brief Release the microphone source registered by the ending session.
    * @param ctx The shared broadcast context.
    * @param session_id The ID of the ending session.
-   * @return true if the ending session was still the active microphone owner.
+   * @return true if a source registration was removed.
    */
   bool
   release_mic_session(broadcast_ctx_t &ctx, std::uint32_t session_id) {
     boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
-    if (!ctx.active_mic_session || ctx.active_mic_session->session_id != session_id) {
+    if (ctx.mic_sessions.erase(session_id) == 0) {
       return false;
     }
 
-    ctx.active_mic_session.reset();
-    ctx.mic_owner_session_id.store(0, boost::memory_order_release);
+    const auto remaining_sessions = static_cast<std::uint32_t>(ctx.mic_sessions.size());
+    ctx.mic_session_count.store(remaining_sessions, boost::memory_order_release);
+    if (remaining_sessions != 0) {
+      return true;
+    }
 
     boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
-    close_mic_socket_locked(ctx);
+    cancel_mic_receive_locked(ctx);
     return true;
   }
 
   /**
-   * @brief Make this session the active microphone owner.
+   * @brief Register an independently decoded microphone source.
    * @param session The session that completed microphone SETUP.
+   * @param client_address The authenticated RTSP peer address.
    */
   void
-  setup_mic_for_session(session_t &session) {
+  setup_mic_for_session(session_t &session, const boost::asio::ip::address &client_address) {
     auto &ctx = *session.broadcast_ref.get();
 
     const auto should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
@@ -921,21 +917,20 @@ namespace stream {
     if (should_enable_mic_encryption) {
       cipher.emplace(
         session.audio.cipher.key,
-        session.audio.cipher.padding,
-        session.audio.avRiKeyId
+        session.audio.cipher.padding
       );
     }
 
     auto registration = boost::make_shared<broadcast_ctx_t::mic_session_ctx_t>(
       session.launch_session_id,
-      session.audio.peer.address().to_string(),
-      session.client_name,
+      session.audio.avRiKeyId,
+      client_address,
       std::move(cipher)
     );
 
-    boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> previous_owner;
     {
-      // 统一所有权和套接字生命周期的加锁顺序，避免旧会话退出时关闭新所有者的套接字。
+      // 统一会话表和套接字生命周期的加锁顺序，避免最后一个旧会话退出时
+      // 关闭刚为新会话打开的套接字。
       boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
       boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
       if (!open_mic_socket_locked(ctx)) {
@@ -944,24 +939,16 @@ namespace stream {
       }
 
       session.audio.mic_registered = true;
-      previous_owner = std::exchange(ctx.active_mic_session, registration);
-      ctx.mic_owner_session_id.store(session.launch_session_id, boost::memory_order_release);
-
-      // 取消旧所有者挂起的接收，让麦克风线程先重置有状态解码器，再接收新会话的数据。
-      if (previous_owner) {
-        cancel_mic_receive_locked(ctx);
-      }
-    }
-
-    if (previous_owner) {
-      BOOST_LOG(info) << "Microphone ownership moved from client " << previous_owner->client_name
-                      << " to " << session.client_name;
+      ctx.mic_sessions[session.launch_session_id] = registration;
+      ctx.mic_session_count.store(
+        static_cast<std::uint32_t>(ctx.mic_sessions.size()),
+        boost::memory_order_release);
     }
 
     BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption "
                     << (should_enable_mic_encryption ? "ENABLED" : "DISABLED")
                     << " (session " << session.launch_session_id
-                    << " registered for " << registration->client_ip << ')';
+                    << " registered for multi-client mixing)";
   }
 
   int
@@ -2371,16 +2358,18 @@ namespace stream {
     udp::endpoint peer;
     std::array<char, 2048> mic_recv_buffer;
     bool mic_device_initialized = false;
-    std::uint32_t mic_device_session_id = 0;
+    std::unique_ptr<platf::deinit_t> audio_thread_guard;
     audio::audio_ctx_ref_t mic_audio_ref;
+    mic_mixer::mixer_t mixer;
+    std::unordered_set<mic_mixer::source_id_t> mixer_sources;
 
     struct MicStats {
       uint64_t total_packets = 0;
-      uint64_t decrypt_success = 0;
-      uint64_t decrypt_failed = 0;
+      uint64_t accepted_packets = 0;
+      uint64_t decode_failed = 0;
       uint64_t invalid_data = 0;
       uint64_t unregistered = 0;
-      uint64_t owner_not_ready = 0;
+      uint64_t route_ambiguous = 0;
     };
     MicStats stats;
 
@@ -2390,137 +2379,201 @@ namespace stream {
         BOOST_LOG(debug) << "Microphone device released"sv;
       }
       mic_device_initialized = false;
-      mic_device_session_id = 0;
       mic_audio_ref = {};
+      mixer.clear();
+      mixer_sources.clear();
     };
 
-    // // SSRC验证辅助函数
-    // auto validate_mic_ssrc = [](uint32_t ssrc, const std::string &client_id) -> bool {
-    //   if (ssrc != MIC_PACKET_MAGIC) {
-    //     BOOST_LOG(warning) << "Client " << client_id << " received invalid microphone packet type (SSRC: 0x" 
-    //                       << std::hex << ssrc << std::dec << ")";
-    //     return false;
-    //   }
-    //   return true;
-    // };
+    auto decode_candidate_payload = [](const boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> &mic_session,
+                                      const std::uint8_t *audio_data,
+                                      std::size_t data_size,
+                                      std::uint16_t sequence_number,
+                                      std::vector<std::uint8_t> &decoded_payload) -> bool {
+      decoded_payload.clear();
+      if (!mic_session->cipher) {
+        if (!mic_mixer::is_valid_opus_packet(audio_data, data_size)) {
+          return false;
+        }
+        decoded_payload.assign(audio_data, audio_data + data_size);
+        return true;
+      }
 
-    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &client_ip) {
+      auto &cipher_ctx = *mic_session->cipher;
+      // 麦克风 CBC IV 的前 4 字节为会话 key ID 与 16 位包序号之和，其余字节为 0。
+      crypto::aes_t current_iv(16);
+      const auto iv_sequence = mic_session->key_id + sequence_number;
+      const auto iv_sequence_be = util::endian::big<std::uint32_t>(iv_sequence);
+      std::memcpy(current_iv.data(), &iv_sequence_be, sizeof(iv_sequence_be));
+      std::memset(current_iv.data() + sizeof(iv_sequence_be), 0, current_iv.size() - sizeof(iv_sequence_be));
+
+      const std::string_view ciphertext {
+        reinterpret_cast<const char *>(audio_data),
+        data_size,
+      };
+      return cipher_ctx.cipher.decrypt(ciphertext, decoded_payload, &current_iv) == 0 &&
+             mic_mixer::is_valid_opus_packet(decoded_payload.data(), decoded_payload.size());
+    };
+
+    auto process_audio_data = [&](const std::uint8_t *audio_data,
+                                  std::size_t data_size,
+                                  std::uint16_t sequence_number,
+                                  std::uint32_t source_key_id,
+                                  const udp::endpoint &source_endpoint) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
 
       ++stats.total_packets;
 
-      // 在锁内复制当前所有者。解密和设备 I/O 在临界区外执行，
-      // shared_ptr 可保证并发切换所有者时旧上下文仍存活到本次处理结束。
-      boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> mic_session;
+      const auto source_address = net::normalize_address(source_endpoint.address());
+      std::vector<boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t>> candidates;
       {
         boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
-        mic_session = ctx.active_mic_session;
+        for (const auto &[session_id, session] : ctx.mic_sessions) {
+          (void) session_id;
+          if (session->client_address == source_address) {
+            candidates.emplace_back(session);
+          }
+        }
       }
 
-      if (!mic_session || mic_session->client_ip != client_ip) {
+      if (candidates.empty()) {
         ++stats.unregistered;
         return;
       }
-      if (!mic_device_initialized || mic_device_session_id != mic_session->session_id) {
-        ++stats.owner_not_ready;
-        return;
+
+      std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
+        return left->session_id < right->session_id;
+      });
+
+      // 现有客户端在线路上使用固定 SSRC，因此 endpoint 和密钥试解仍是兼容路径。
+      // 若后续客户端把会话 key ID 放入 SSRC，则可在首次数据包上直接定位会话。
+      std::vector<boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t>> ordered_candidates;
+      ordered_candidates.reserve(candidates.size());
+      auto append_candidates = [&](const auto &predicate) {
+        for (const auto &candidate : candidates) {
+          if (predicate(*candidate) &&
+              std::find(ordered_candidates.begin(), ordered_candidates.end(), candidate) == ordered_candidates.end()) {
+            ordered_candidates.emplace_back(candidate);
+          }
+        }
+      };
+
+      append_candidates([&](const auto &candidate) {
+        return candidate.source_endpoint == source_endpoint;
+      });
+      if (source_key_id != MIC_PACKET_MAGIC) {
+        append_candidates([&](const auto &candidate) {
+          return candidate.key_id == source_key_id;
+        });
+      }
+      if (candidates.size() == 1) {
+        append_candidates([](const auto &) {
+          return true;
+        });
+      }
+      append_candidates([](const auto &candidate) {
+        return !candidate.source_endpoint && candidate.cipher.has_value();
+      });
+      append_candidates([](const auto &candidate) {
+        return !candidate.source_endpoint;
+      });
+      // 加密载荷可以在源端口变化后重新通过密钥定位。明文载荷没有足够身份信息，
+      // 多会话下不能安全接管另一个 endpoint 的绑定。
+      append_candidates([](const auto &candidate) {
+        return candidate.cipher.has_value();
+      });
+
+      boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> mic_session;
+      std::vector<std::uint8_t> decoded_payload;
+      for (const auto &candidate : ordered_candidates) {
+        if (decode_candidate_payload(candidate, audio_data, data_size, sequence_number, decoded_payload)) {
+          mic_session = candidate;
+          break;
+        }
       }
 
-      if (mic_session->cipher) {
-        auto &cipher_ctx = *mic_session->cipher;
-        // 根据 sequenceNumber 更新 IV
-        // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
-        // 这与音频加密不同，音频加密使用: avRiKeyId + sequenceNumber
-        // cipher_ctx.iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
-        crypto::aes_t current_iv(16);  // 确保是 16 字节
-        std::uint32_t base_iv_be;
-        std::memcpy(&base_iv_be, cipher_ctx.iv.data(), sizeof(base_iv_be));
-        const auto base_iv_value = util::endian::big(base_iv_be);
-        // 服务端收到的 sequence_number 就是包里的实际值，直接使用即可（不需要减1），客户端减1是因为它的 sequenceNumber 变量在写入包后就递增了
-        const auto iv_sequence = base_iv_value + (sequence_number & 0xFFFF);
-        const auto iv_sequence_be = util::endian::big<std::uint32_t>(iv_sequence);
-        std::memcpy(current_iv.data(), &iv_sequence_be, sizeof(iv_sequence_be));
-        // 确保后 12 字节为 0（客户端构建 IV 时后 12 字节也是 0）
-        std::memset(current_iv.data() + 4, 0, 12);
-        std::vector<std::uint8_t> plaintext;
-        std::string_view cipher_view((const char *) audio_data, data_size);
-        if (cipher_ctx.cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
-          // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
-          stats.decrypt_failed++;
-          return;  // 丢弃数据包
+      if (!mic_session) {
+        if (ordered_candidates.empty()) {
+          ++stats.route_ambiguous;
         }
-
-        stats.decrypt_success++;
-
-        if (plaintext.size() > 0) {
-          // 简单的有效性检查：Opus 数据不应该全是 0 或全是 0xFF
-          bool looks_valid = true;
-          if (plaintext.size() >= 4) {
-            uint8_t first_byte = plaintext[0];
-            uint8_t second_byte = plaintext[1];
-            uint8_t third_byte = plaintext[2];
-            uint8_t fourth_byte = plaintext[3];
-            bool all_zero = (first_byte == 0 && second_byte == 0 && third_byte == 0 && fourth_byte == 0);
-            bool all_ff = (first_byte == 0xFF && second_byte == 0xFF && third_byte == 0xFF && fourth_byte == 0xFF);
-            if (all_zero || all_ff) {
-              looks_valid = false;
-              stats.invalid_data++;
-            }
-          }
-          // 注意：如果 plaintext.size() < 4，无法验证，假设有效并继续处理
-
-          if (!looks_valid) {
-            return;  // 丢弃数据包
-          }
-        }
-
-        {
-          // 将最终所有权校验与所有权切换串行化，避免新所有者生效后旧会话继续写入。
-          boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
-          if (ctx.active_mic_session != mic_session) {
-            ++stats.owner_not_ready;
-            return;
-          }
-
-          // 解密成功且数据看起来有效
-          audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
+        else {
+          ++stats.decode_failed;
         }
         return;
       }
 
-      // 已注册但没有加密上下文，表示该会话明确协商使用明文。
-
-      // 安全模式：拒绝明文数据
-      if (ctx.mic_reject_plaintext.load()) {
-        BOOST_LOG(warning) << "Rejected plaintext microphone data (mic_reject_plaintext enabled)";
-        stats.decrypt_failed++;
+      if (!mic_device_initialized) {
         return;
       }
 
-      // 未加密数据或加密未启用，直接处理
-      // 也要统计未加密数据
+      if (!mixer.add_source(mic_session->session_id)) {
+        ++stats.invalid_data;
+        return;
+      }
+      mixer_sources.insert(mic_session->session_id);
+      if (!mixer.push_packet(
+            mic_session->session_id,
+            decoded_payload.data(),
+            decoded_payload.size(),
+            sequence_number)) {
+        ++stats.invalid_data;
+        return;
+      }
+
+      std::vector<std::uint32_t> displaced_sources;
       {
         boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
-        if (ctx.active_mic_session != mic_session) {
-          ++stats.owner_not_ready;
+        const auto registered = ctx.mic_sessions.find(mic_session->session_id);
+        if (registered == ctx.mic_sessions.end() || registered->second != mic_session) {
+          ++stats.unregistered;
           return;
         }
-        stats.decrypt_success++;  // 明文数据算作"成功"
-        audio::write_mic_data(audio_data, data_size, sequence_number);
+
+        // 一个 UDP endpoint 在同一时刻只属于一个已验证音源。重新绑定时清理旧映射，
+        // 避免同 IP 多会话在首次试解阶段留下重复 endpoint。
+        for (auto &[session_id, registered_session] : ctx.mic_sessions) {
+          (void) session_id;
+          if (registered_session != mic_session && registered_session->source_endpoint == source_endpoint) {
+            registered_session->source_endpoint.reset();
+            displaced_sources.emplace_back(registered_session->session_id);
+          }
+        }
+        mic_session->source_endpoint = source_endpoint;
       }
+
+      for (const auto displaced_source : displaced_sources) {
+        mixer.remove_source(displaced_source);
+        mixer_sources.erase(displaced_source);
+      }
+
+      ++stats.accepted_packets;
     };
 
-    std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    boost::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    boost::function<void()> schedule_mix;
     bool retry_receive_after_error = false;
+    bool reset_mic_io_cycle = false;
+    bool mix_timer_armed = false;
+    std::uint64_t mix_timer_generation = 0;
+    asio::steady_timer mix_timer {mic_io};
+    auto cancel_mix_timer = [&]() {
+      mix_timer_armed = false;
+      ++mix_timer_generation;
+      try {
+        mix_timer.cancel();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to cancel microphone mix timer: "sv << e.what();
+      }
+    };
     auto schedule_receive = [&]() -> bool {
       boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
       if (broadcast_shutdown_event->peek() ||
           !ctx.mic_socket_enabled.load() ||
           !ctx.mic_sock.is_open() ||
-          mic_device_session_id == 0 ||
-          ctx.mic_owner_session_id.load(boost::memory_order_acquire) != mic_device_session_id) {
+          !mic_device_initialized ||
+          ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         return false;
       }
 
@@ -2540,13 +2593,37 @@ namespace stream {
       }
 
       if (is_terminal_udp_receive_error(ec)) {
-        BOOST_LOG(debug) << "Mic socket closed: "sv << ec.message();
+        BOOST_LOG(debug) << "Microphone receive stopped: "sv << ec.message();
+        // 最后一个会话退出会取消挂起的接收。如果新会话在取消回调执行前完成注册，
+        // 需要在同一个 io_context 周期内恢复接收和混音，不能把新会话留在空转状态。
+        if (!broadcast_shutdown_event->peek() &&
+            ctx.mic_socket_enabled.load() &&
+            ctx.mic_session_count.load(boost::memory_order_acquire) != 0 &&
+            mic_device_initialized) {
+          if (schedule_receive()) {
+            schedule_mix();
+          }
+          else {
+            retry_receive_after_error = true;
+            cancel_mix_timer();
+          }
+        }
+        else {
+          // 没有活动会话时同时终止旧混音链，让 io_context 回到外层重新判断状态。
+          // cancel() 无法撤回已经排队的成功回调，因此还要用周期标记阻止旧回调自重挂。
+          reset_mic_io_cycle = true;
+          cancel_mix_timer();
+        }
         return;
       }
 
       // 正常处理数据包或遇到可恢复错误后继续挂接接收。
       auto fg = util::fail_guard([&]() {
-        schedule_receive();
+        if (schedule_receive()) {
+          // 新会话可能在旧混音回调因会话数为零退出后接入。
+          // 接收恢复时同时保证混音定时器仍在运行。
+          schedule_mix();
+        }
       });
 
       if (ec) {
@@ -2557,6 +2634,7 @@ namespace stream {
           BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
           retry_receive_after_error = true;
           fg.disable();
+          cancel_mix_timer();
         }
         return;
       }
@@ -2567,8 +2645,6 @@ namespace stream {
         return;
       }
 
-      std::string client_ip = peer.address().to_string();
-
       // 尝试16位扩展包类型
       if (received_bytes >= sizeof(rtp_packet_ext_t)) {
         auto *header_ext = (rtp_packet_ext_t *) mic_recv_buffer.data();
@@ -2576,11 +2652,13 @@ namespace stream {
           size_t header_size = sizeof(rtp_packet_ext_t);
           if (received_bytes > header_size) {
             uint16_t sequence_number = util::endian::little(header_ext->sequenceNumber);
-            // uint32_t ssrc = util::endian::little(header_ext->ssrc);  // 小端序
-            // if (!validate_mic_ssrc(ssrc, client_ip)) {
-            //   return;
-            // }
-            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_ip);
+            const auto source_key_id = util::endian::little(header_ext->ssrc);
+            process_audio_data(
+              reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+              received_bytes - header_size,
+              sequence_number,
+              source_key_id,
+              peer);
           }
           return;
         }
@@ -2594,10 +2672,7 @@ namespace stream {
           // 客户端按小端序发送序列号（MicrophoneStream.java 使用 LITTLE_ENDIAN）
           // 服务端必须按小端序读取，否则会读错（比如 1 会读成 256）
           uint16_t sequence_number = util::endian::little(header->rtp.sequenceNumber);
-          // uint32_t ssrc = util::endian::little(header->rtp.ssrc);  // 小端序
-          // if (!validate_mic_ssrc(ssrc, client_ip)) {
-          //   return;
-          // }
+          const auto source_key_id = util::endian::little(header->rtp.ssrc);
           size_t data_size = received_bytes - header_size;
           
           // BOOST_LOG(verbose) << "Received MIC packet: total=" << received_bytes 
@@ -2605,9 +2680,70 @@ namespace stream {
           //                 << " bytes, data=" << data_size 
           //                 << " bytes, sequenceNumber=" << sequence_number << " (little-endian)"
           //                 << " from " << client_ip;
-          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_ip);
+          process_audio_data(
+            reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+            data_size,
+            sequence_number,
+            source_key_id,
+            peer);
         }
       }
+    };
+
+    schedule_mix = [&]() {
+      if (mix_timer_armed) {
+        return;
+      }
+
+      mix_timer_armed = true;
+      const auto generation = ++mix_timer_generation;
+      mix_timer.expires_after(20ms);
+      mix_timer.async_wait([&, generation](const boost::system::error_code &ec) {
+        if (generation != mix_timer_generation) {
+          return;
+        }
+        mix_timer_armed = false;
+
+        if (ec == boost::asio::error::operation_aborted ||
+            broadcast_shutdown_event->peek() ||
+            retry_receive_after_error ||
+            reset_mic_io_cycle ||
+            ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+          return;
+        }
+
+        std::unordered_set<mic_mixer::source_id_t> registered_sources;
+        {
+          boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
+          for (const auto &[session_id, session] : ctx.mic_sessions) {
+            (void) session;
+            registered_sources.insert(session_id);
+          }
+        }
+
+        for (auto source_it = mixer_sources.begin(); source_it != mixer_sources.end();) {
+          if (!registered_sources.contains(*source_it)) {
+            mixer.remove_source(*source_it);
+            source_it = mixer_sources.erase(source_it);
+          }
+          else {
+            ++source_it;
+          }
+        }
+
+        if (auto mixed = mixer.mix_next_frame()) {
+          if (audio::write_mic_pcm(mixed->data(), mixed->size()) == -2) {
+            BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+            release_mic_device();
+            retry_receive_after_error = true;
+
+            boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+            cancel_mic_receive_locked(ctx);
+            return;
+          }
+        }
+        schedule_mix();
+      });
     };
 
     BOOST_LOG(debug) << "Starting microphone receive thread";
@@ -2615,23 +2751,28 @@ namespace stream {
     auto retry_delay = 300ms;  // 初始重试延迟，指数退避到最大5秒
 
     while (!broadcast_shutdown_event->peek()) {
-      const auto owner_session_id = ctx.mic_owner_session_id.load(boost::memory_order_acquire);
-      if (!ctx.mic_socket_enabled.load() || owner_session_id == 0) {
+      if (!ctx.mic_socket_enabled.load() ||
+          ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         retry_delay = 300ms;  // 会话结束时重置延迟
         release_mic_device();
         std::this_thread::sleep_for(100ms);
         continue;
       }
 
-      if (mic_device_initialized && mic_device_session_id != owner_session_id) {
-        BOOST_LOG(debug) << "Resetting microphone device for owner session "sv << owner_session_id;
-        release_mic_device();
-      }
-
-      // 在麦克风设备的完整生命周期内持有现有音频上下文，确保音频采集退出后仍能恢复设备。
-      // 接收线程不能自行创建新的音频上下文。
+      // 在麦克风设备的完整生命周期内持有音频上下文，确保音频采集退出后仍能恢复设备。
       if (!mic_device_initialized) {
-        mic_audio_ref = audio::try_get_audio_ctx_ref();
+        if (!audio_thread_guard) {
+          audio_thread_guard = platf::init_audio_thread();
+          if (!audio_thread_guard) {
+            std::this_thread::sleep_for(retry_delay);
+            retry_delay = std::min(retry_delay * 2, 5000ms);
+            continue;
+          }
+        }
+
+        // 客户端麦克风可以在主机音频串流关闭时独立工作，因此活动的麦克风
+        // 会话需要能够创建并持有自己的音频控制上下文。
+        mic_audio_ref = audio::get_audio_ctx_ref();
         if (!mic_audio_ref) {
           std::this_thread::sleep_for(retry_delay);
           retry_delay = std::min(retry_delay * 2, 5000ms);
@@ -2646,14 +2787,13 @@ namespace stream {
         }
 
         if (!ctx.mic_socket_enabled.load() ||
-            ctx.mic_owner_session_id.load(boost::memory_order_acquire) != owner_session_id) {
+            ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
           audio::release_mic_redirect_device();
           mic_audio_ref = {};
           continue;
         }
 
         mic_device_initialized = true;
-        mic_device_session_id = owner_session_id;
         retry_delay = 300ms;
       }
 
@@ -2661,12 +2801,14 @@ namespace stream {
         mic_io.restart();
       }
       retry_receive_after_error = false;
+      reset_mic_io_cycle = false;
       if (!schedule_receive()) {
         if (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
           std::this_thread::sleep_for(100ms);
         }
         continue;
       }
+      schedule_mix();
 
       mic_io.run();
       if (retry_receive_after_error &&
@@ -2680,14 +2822,14 @@ namespace stream {
     release_mic_device();
 
     if (stats.total_packets > 0) {
-      BOOST_LOG(info) << "=== Microphone Decryption Stats Summary ===";
-      const auto success_rate = (double) stats.decrypt_success / stats.total_packets * 100.0;
+      BOOST_LOG(info) << "=== Microphone Packet Stats Summary ===";
+      const auto success_rate = (double) stats.accepted_packets / stats.total_packets * 100.0;
       BOOST_LOG(info) << "total=" << stats.total_packets
-                      << ", success=" << stats.decrypt_success << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
-                      << ", failed=" << stats.decrypt_failed
+                      << ", accepted=" << stats.accepted_packets << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
+                      << ", decode_failed=" << stats.decode_failed
                       << ", invalid=" << stats.invalid_data
                       << ", unregistered=" << stats.unregistered
-                      << ", owner_not_ready=" << stats.owner_not_ready;
+                      << ", route_ambiguous=" << stats.route_ambiguous;
     }
 
     BOOST_LOG(debug) << "Microphone receive thread ended";
@@ -3648,10 +3790,10 @@ namespace stream {
         --running_sessions;
 
         if (session.audio.mic_registered) {
-          const auto was_active = release_mic_session(*session.broadcast_ref.get(), session.launch_session_id);
+          const auto was_registered = release_mic_session(*session.broadcast_ref.get(), session.launch_session_id);
           session.audio.mic_registered = false;
           BOOST_LOG(debug) << "Microphone registration for session " << session.launch_session_id
-                           << (was_active ? " released as active owner"sv : " was already superseded"sv);
+                           << (was_registered ? " released"sv : " was already absent"sv);
         }
 
         // If this is the last non-control-only session, invoke the platform callbacks
@@ -3789,7 +3931,7 @@ namespace stream {
       // 避免 join() 在套接字引用和路由信息配对前释放会话。
       if (!session.control_only) {
         if (session.audio.enable_mic) {
-          setup_mic_for_session(session);
+          setup_mic_for_session(session, addr);
         }
       }
 

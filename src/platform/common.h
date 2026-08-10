@@ -8,6 +8,7 @@
 #include <array>
 #include <bitset>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -702,14 +703,13 @@ namespace platf {
     sink_info() = 0;
 
     /**
-     * @brief Write microphone data to the virtual audio device.
-     * @param data Pointer to the audio data.
-     * @param size Size of the audio data in bytes.
-     * @param seq Sequence number for FEC recovery (0 = unknown)
-     * @returns Number of bytes written, or -1 on error.
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
+     * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
      */
     virtual int
-    write_mic_data(const char *data, size_t size, uint16_t seq = 0) = 0;
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;
 
     /**
      * @brief Initialize the microphone redirect device.
@@ -745,6 +745,13 @@ namespace platf {
 
   std::unique_ptr<audio_control_t>
   audio_control();
+
+  /**
+   * @brief Initialize platform audio services required by the calling thread.
+   * @return A lifetime guard, or nullptr when thread initialization fails.
+   */
+  [[nodiscard]] std::unique_ptr<deinit_t>
+  init_audio_thread();
 
   /**
    * @brief Get the display_t instance for the given hwdevice_type.
