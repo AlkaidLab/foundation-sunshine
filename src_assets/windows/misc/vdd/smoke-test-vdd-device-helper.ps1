@@ -51,9 +51,12 @@ Assert-Equal $true $missingExitCodeRejected 'A missing native exit code must fai
 $originalInvokeNefcon = ${function:Invoke-Nefcon}
 $originalGetVddDevices = ${function:Get-VddDevices}
 $originalTestVddControlInterfaceAvailable = ${function:Test-VddControlInterfaceAvailable}
+$originalWaitUntil = ${function:Wait-Until}
 try {
     $script:installNefconCalls = 0
     $script:readinessChecks = 0
+    $script:forceWaitTimeout = $false
+    $script:installTestDevice = New-TestDevice '100.0.16.6'
     function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
         $script:installNefconCalls++
         if ($Arguments[0] -eq '--install-driver') {
@@ -63,10 +66,16 @@ try {
     }
     function Get-VddDevices {
         $script:readinessChecks++
-        return @(New-TestDevice '100.0.16.6')
+        return @($script:installTestDevice)
     }
     function Test-VddControlInterfaceAvailable {
         return $true
+    }
+    function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
+        if ($script:forceWaitTimeout) {
+            return $false
+        }
+        return [bool] (& $Condition)
     }
 
     [void] (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6')
@@ -74,13 +83,35 @@ try {
         'A restart-suggested driver bind must continue to the readiness check.'
     Assert-Equal $true ($script:readinessChecks -ge 1) `
         'A restart-suggested driver bind must check device readiness.'
+
+    $script:forceWaitTimeout = $true
+    $script:installTestDevice = New-TestDevice '100.0.16.6' 'ERROR'
+    $timeoutResult = Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6'
+    Assert-Equal $vddDeviceRestartRequired $timeoutResult `
+        'A timed-out device bound to the expected version must require a restart.'
+
+    $script:vddRestartRequired = $false
+    $script:installTestDevice = New-TestDevice '100.0.16.5' 'ERROR'
+    $wrongVersionRejected = $false
+    try {
+        [void] (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6')
+    }
+    catch {
+        $wrongVersionRejected = $_.Exception.Message -like '*did not bind and become ready*version 100.0.16.6*'
+    }
+    Assert-Equal $true $wrongVersionRejected `
+        'A timed-out device bound to a different version must fail instead of requesting a restart.'
 }
 finally {
     ${function:Invoke-Nefcon} = $originalInvokeNefcon
     ${function:Get-VddDevices} = $originalGetVddDevices
     ${function:Test-VddControlInterfaceAvailable} = $originalTestVddControlInterfaceAvailable
+    ${function:Wait-Until} = $originalWaitUntil
     Remove-Variable -Name installNefconCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name readinessChecks -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name forceWaitTimeout -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name installTestDevice -Scope Script -ErrorAction SilentlyContinue
+    $script:vddRestartRequired = $false
 }
 
 Assert-Equal $false (Test-VddVersionAtLeast '100.0.16.5' '100.0.16.6') `
