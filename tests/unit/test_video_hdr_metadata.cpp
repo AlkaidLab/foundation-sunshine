@@ -75,9 +75,12 @@ TEST(HdrDynamicMetadata, WithholdsVividFromCodecsWithoutACarriage) {
   EXPECT_FALSE(av1_hlg.hdr10plus);
   EXPECT_FALSE(av1_hlg.vivid);
 
-  // H.264 is never used for HDR here, and claims no carriage rather than asserting
-  // unverified AVC support.
-  EXPECT_FALSE(formats_for(pq, H264).vivid);
+  // H.264 loses HDR Vivid like AV1 does. HDR10+ is not codec-gated, so its verdict
+  // is unchanged there, matching the behaviour before this change — and nothing is
+  // emitted either way, because the encoder paths only inject for HEVC and AV1.
+  const auto h264_pq = formats_for(pq, H264);
+  EXPECT_TRUE(h264_pq.hdr10plus);
+  EXPECT_FALSE(h264_pq.vivid);
 
   // HEVC is unchanged on every axis.
   EXPECT_TRUE(formats_for(pq, HEVC).vivid);
