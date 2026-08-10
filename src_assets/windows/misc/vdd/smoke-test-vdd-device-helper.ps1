@@ -510,8 +510,15 @@ $originalRestoreVddDevice = ${function:Restore-VddDevice}
 try {
     $script:transactionDevices = @()
     $script:transactionRestoreCalls = 0
+    $script:transactionRestoreResult = $vddDeviceReady
     function Get-VddDevices { return @($script:transactionDevices) }
-    function Restore-VddDevice { $script:transactionRestoreCalls++ }
+    function Restore-VddDevice {
+        $script:transactionRestoreCalls++
+        if ($script:transactionRestoreResult -eq $vddDeviceRestartRequired) {
+            $script:vddRestartRequired = $true
+        }
+        return $script:transactionRestoreResult
+    }
 
     Save-VddTransaction $transactionPayload $transactionPreviousDevice
     Recover-VddTransaction $transactionPayload '100.0.16.6'
@@ -521,9 +528,22 @@ try {
         'A recovered VDD transaction must be cleared.'
 
     Save-VddTransaction $transactionPayload $transactionPreviousDevice
+    $script:transactionRestoreResult = $vddDeviceRestartRequired
+    $recoveryResult = Recover-VddTransaction $transactionPayload '100.0.16.6'
+    Assert-Equal $vddDeviceRestartRequired $recoveryResult `
+        'A rollback that binds but is not ready must propagate the restart requirement.'
+    Assert-Equal $true (Test-Path -LiteralPath (Get-VddTransactionPath $transactionPayload)) `
+        'A reboot-pending rollback must preserve its update transaction.'
+    Assert-Equal $true $script:vddRestartRequired `
+        'A reboot-pending rollback must cause the helper to return 3010.'
+    Clear-VddTransaction $transactionPayload
+    $script:transactionRestoreResult = $vddDeviceReady
+    $script:vddRestartRequired = $false
+
+    Save-VddTransaction $transactionPayload $transactionPreviousDevice
     $script:transactionDevices = @(New-TestDevice '100.0.16.6')
     Recover-VddTransaction $transactionPayload '100.0.16.6'
-    Assert-Equal 1 $script:transactionRestoreCalls `
+    Assert-Equal 2 $script:transactionRestoreCalls `
         'A completed replacement must not roll back the new ready VDD.'
 
     Save-VddTransaction $transactionPayload $transactionPreviousDevice
@@ -546,6 +566,7 @@ finally {
     }
     Remove-Variable -Name transactionDevices -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name transactionRestoreCalls -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name transactionRestoreResult -Scope Script -ErrorAction SilentlyContinue
 }
 
 $originalResolveVddPayload = ${function:Resolve-VddPayload}
@@ -602,14 +623,23 @@ try {
     function Set-VddConfiguration { $script:workflowCalls += 'Configure' }
     function Install-VddDevice {
         $script:workflowCalls += 'Install'
-        if ($script:workflowRequestsRestart) {
-            $script:vddRestartRequired = $true
-        }
         if ($script:failWorkflowInstall) {
             throw 'simulated install failure'
         }
+        if ($script:workflowRequestsRestart) {
+            $script:vddRestartRequired = $true
+            return $vddDeviceRestartRequired
+        }
+        return $vddDeviceReady
     }
-    function Restore-VddDevice { $script:workflowCalls += 'Restore' }
+    function Restore-VddDevice {
+        $script:workflowCalls += 'Restore'
+        if ($script:workflowRestoreRequestsRestart) {
+            $script:vddRestartRequired = $true
+            return $vddDeviceRestartRequired
+        }
+        return $vddDeviceReady
+    }
     function Save-VddTransaction { $script:workflowCalls += 'Journal' }
     function Clear-VddTransaction { $script:workflowCalls += 'Clear' }
 
@@ -618,6 +648,7 @@ try {
     $script:failWorkflowInstall = $false
     $script:failWorkflowPackage = $false
     $script:workflowRequestsRestart = $false
+    $script:workflowRestoreRequestsRestart = $false
     $script:workflowDecision = [pscustomobject]@{
         DeviceCount = 1
         CleanupRequired = 0
@@ -734,7 +765,26 @@ try {
     Assert-Equal $true $installFailed 'A failed driver replacement must report the original failure.'
     Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Restore,Clear' ($script:workflowCalls -join ',') `
         'A failed driver replacement must restore the previous healthy driver.'
+
+    $script:workflowCalls = @()
+    $script:workflowRestoreRequestsRestart = $true
+    $script:vddRestartRequired = $false
+    $rollbackPendingThrew = $false
+    try {
+        Invoke-VddInstall $PSScriptRoot 'Run'
+    }
+    catch {
+        $rollbackPendingThrew = $true
+    }
+    Assert-Equal $false $rollbackPendingThrew `
+        'A reboot-pending rollback must propagate 3010 instead of the original install failure.'
+    Assert-Equal 'Stage,Configure,Package,Journal,Remove,Install,Restore' ($script:workflowCalls -join ',') `
+        'A reboot-pending rollback must stop before clearing the update transaction.'
+    Assert-Equal $true $script:vddRestartRequired `
+        'A reboot-pending rollback must propagate the restart requirement to the caller.'
     $script:failWorkflowInstall = $false
+    $script:workflowRestoreRequestsRestart = $false
+    $script:vddRestartRequired = $false
 
     $script:workflowCalls = @()
     Invoke-VddUninstall $PSScriptRoot
@@ -761,6 +811,7 @@ finally {
     Remove-Variable -Name failWorkflowInstall -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name failWorkflowPackage -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowRequestsRestart -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowRestoreRequestsRestart -Scope Script -ErrorAction SilentlyContinue
     $script:vddRestartRequired = $false
 }
 
