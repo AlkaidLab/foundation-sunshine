@@ -735,7 +735,6 @@ function Install-VddDeviceFromInf(
         $devices = @(Get-VddDevices)
         if ($devices.Count -eq 1 -and
             (Test-VddDeviceBound $devices[0] $ExpectedVersion)) {
-            $script:vddRestartRequired = $true
             Write-Warning 'The expected VDD package is bound, but the device or control interface is not ready. A Windows restart is required.'
             return $vddDeviceRestartRequired
         }
@@ -885,6 +884,7 @@ function Invoke-VddInstall(
         (Test-Path -LiteralPath (Get-VddTransactionPath $payload))) {
         $recoveryResult = Recover-VddTransaction $payload $state.BundledVersion
         if ($recoveryResult -eq $vddDeviceRestartRequired) {
+            $script:vddRestartRequired = $true
             Write-Output 'VDD rollback is pending a Windows restart; preserving the update transaction.'
             return
         }
@@ -945,6 +945,7 @@ function Invoke-VddInstall(
             }
             $installResult = Install-VddDevice $payload $state.BundledVersion
             if ($installResult -eq $vddDeviceRestartRequired) {
+                $script:vddRestartRequired = $true
                 Write-Output 'VDD installation is pending a Windows restart; preserving the previous package and update transaction.'
                 return
             }
@@ -958,6 +959,7 @@ function Invoke-VddInstall(
                 try {
                     $restoreResult = Restore-VddDevice $payload $previousDevice
                     if ($restoreResult -eq $vddDeviceRestartRequired) {
+                        $script:vddRestartRequired = $true
                         Write-Warning 'The VDD update failed; restoring the previous driver requires a Windows restart. Preserving the update transaction.'
                         return
                     }

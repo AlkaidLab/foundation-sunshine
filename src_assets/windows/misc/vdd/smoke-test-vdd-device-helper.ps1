@@ -55,6 +55,8 @@ $originalWaitUntil = ${function:Wait-Until}
 try {
     $script:installNefconCalls = 0
     $script:readinessChecks = 0
+    $script:controlInterfaceChecks = 0
+    $script:receivedWaitSeconds = 0
     $script:forceWaitTimeout = $false
     $script:installTestDevice = New-TestDevice '100.0.16.6'
     function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
@@ -69,9 +71,11 @@ try {
         return @($script:installTestDevice)
     }
     function Test-VddControlInterfaceAvailable {
+        $script:controlInterfaceChecks++
         return $true
     }
     function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
+        $script:receivedWaitSeconds = $WaitSeconds
         if ($script:forceWaitTimeout) {
             return $false
         }
@@ -83,6 +87,10 @@ try {
         'A restart-suggested driver bind must continue to the readiness check.'
     Assert-Equal $true ($script:readinessChecks -ge 1) `
         'A restart-suggested driver bind must check device readiness.'
+    Assert-Equal 120 $script:receivedWaitSeconds `
+        'VDD readiness checks must retain the 120-second timeout.'
+    Assert-Equal $true ($script:controlInterfaceChecks -ge 1) `
+        'A ready VDD must verify that its control interface is available.'
 
     $script:forceWaitTimeout = $true
     $script:installTestDevice = New-TestDevice '100.0.16.6' 'ERROR'
@@ -101,6 +109,8 @@ try {
     }
     Assert-Equal $true $wrongVersionRejected `
         'A timed-out device bound to a different version must fail instead of requesting a restart.'
+    Assert-Equal $false $script:vddRestartRequired `
+        'A wrong-version timeout must not request a restart.'
 }
 finally {
     ${function:Invoke-Nefcon} = $originalInvokeNefcon
@@ -109,6 +119,8 @@ finally {
     ${function:Wait-Until} = $originalWaitUntil
     Remove-Variable -Name installNefconCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name readinessChecks -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name controlInterfaceChecks -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name receivedWaitSeconds -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name forceWaitTimeout -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name installTestDevice -Scope Script -ErrorAction SilentlyContinue
     $script:vddRestartRequired = $false
@@ -545,9 +557,6 @@ try {
     function Get-VddDevices { return @($script:transactionDevices) }
     function Restore-VddDevice {
         $script:transactionRestoreCalls++
-        if ($script:transactionRestoreResult -eq $vddDeviceRestartRequired) {
-            $script:vddRestartRequired = $true
-        }
         return $script:transactionRestoreResult
     }
 
@@ -565,8 +574,8 @@ try {
         'A rollback that binds but is not ready must propagate the restart requirement.'
     Assert-Equal $true (Test-Path -LiteralPath (Get-VddTransactionPath $transactionPayload)) `
         'A reboot-pending rollback must preserve its update transaction.'
-    Assert-Equal $true $script:vddRestartRequired `
-        'A reboot-pending rollback must cause the helper to return 3010.'
+    Assert-Equal $false $script:vddRestartRequired `
+        'Transaction recovery must propagate the internal result without relying on a test-double side effect.'
     Clear-VddTransaction $transactionPayload
     $script:transactionRestoreResult = $vddDeviceReady
     $script:vddRestartRequired = $false
@@ -658,7 +667,6 @@ try {
             throw 'simulated install failure'
         }
         if ($script:workflowRequestsRestart) {
-            $script:vddRestartRequired = $true
             return $vddDeviceRestartRequired
         }
         return $vddDeviceReady
@@ -666,7 +674,6 @@ try {
     function Restore-VddDevice {
         $script:workflowCalls += 'Restore'
         if ($script:workflowRestoreRequestsRestart) {
-            $script:vddRestartRequired = $true
             return $vddDeviceRestartRequired
         }
         return $vddDeviceReady
