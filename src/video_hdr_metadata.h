@@ -170,6 +170,31 @@ namespace video::hdr_metadata {
   }
 
   /**
+   * Whether stream startup should hold frames back until the HDR Vivid startup guard
+   * reports stable analyzer output.
+   *
+   * Only HLG needs the wait: a plain-HLG IDR followed by a mid-stream switch into
+   * Vivid is visible to the client, so the session prefers to start with metadata
+   * already stable. PQ has no such transition and starts immediately.
+   *
+   * The wait is pointless when Vivid will never be emitted for this codec — AV1 has
+   * no Vivid carriage — and would only delay the first frame by up to the guard's
+   * sample count or its timeout, for metadata that is never sent.
+   *
+   * The colorspace is compared directly rather than through colorspace_is_hlg() to
+   * keep this header link-free, matching content_formats_for() above.
+   */
+  inline bool
+  needs_vivid_startup_preroll(
+    const sunshine_colorspace_t &colorspace,
+    codec_e codec,
+    bool analysis_available) {
+    return analysis_available &&
+           colorspace.colorspace == colorspace_e::bt2020hlg &&
+           formats_for(colorspace, codec).vivid;
+  }
+
+  /**
    * Convert absolute display luminance to the normalized SMPTE ST 2084 signal
    * used by GB/T 46269.1-2025 (equivalent to T/UWA 005.1-2024).
    */

@@ -735,16 +735,17 @@ namespace video {
 
   class nvenc_encode_session_t: public encode_session_t {
   public:
-    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
+    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, hdr_metadata::codec_e codec):
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
       if (use_hlg) {
         const bool analysis_available =
           config::video.hdr_luminance_analysis != "off" &&
           device->hdr_luminance_analysis_available;
-        vivid_metadata_mode = analysis_available ?
-                                vivid_metadata_mode_e::preroll :
-                                vivid_metadata_mode_e::disabled;
+        vivid_metadata_mode =
+          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, codec, analysis_available) ?
+            vivid_metadata_mode_e::preroll :
+            vivid_metadata_mode_e::disabled;
       }
       if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
@@ -2887,7 +2888,9 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
+    return std::make_unique<nvenc_encode_session_t>(
+      std::move(encode_device),
+      hdr_metadata::codec_from_video_format(client_config.videoFormat));
   }
 
   std::unique_ptr<amf_encode_session_t>

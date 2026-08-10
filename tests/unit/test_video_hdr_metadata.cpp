@@ -112,6 +112,32 @@ TEST(HdrDynamicMetadata, RequiresBothContentAndCarriage) {
   EXPECT_TRUE(hevc_hlg.vivid);
 }
 
+TEST(HdrDynamicMetadata, SkipsVividPrerollWhenCodecCannotCarryIt) {
+  using video::colorspace_e;
+  using video::hdr_metadata::codec_e;
+  using video::hdr_metadata::needs_vivid_startup_preroll;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+
+  // HLG over HEVC still waits for the startup guard, because Vivid really is sent
+  // and a plain-HLG IDR followed by a mid-stream switch would be visible.
+  EXPECT_TRUE(needs_vivid_startup_preroll(hlg, codec_e::hevc, true));
+
+  // The regression this guards: AV1 has no Vivid carriage, so holding the first
+  // frame for the guard's samples or its timeout would delay startup waiting on
+  // metadata that is never emitted.
+  EXPECT_FALSE(needs_vivid_startup_preroll(hlg, codec_e::av1, true));
+
+  // PQ never prerolls on any codec: it has no HLG-to-Vivid startup transition.
+  EXPECT_FALSE(needs_vivid_startup_preroll(pq, codec_e::hevc, true));
+  EXPECT_FALSE(needs_vivid_startup_preroll(pq, codec_e::av1, true));
+
+  // Without the analyzer there is nothing to stabilize, so no wait either.
+  EXPECT_FALSE(needs_vivid_startup_preroll(hlg, codec_e::hevc, false));
+}
+
 TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
   platf::hdr_frame_luminance_stats_t stats {};
   stats.percentile_95 = 500.0f;
