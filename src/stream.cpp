@@ -2753,17 +2753,30 @@ namespace stream {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
         auto &peer = peers[buf_idx];
 
-        // A closed broadcast socket must not be rearmed during shutdown.
+        // 广播关闭时，已关闭的套接字不能再次挂接接收；其他终止错误说明共享接收链已经失效。
         if (is_terminal_udp_receive_error(ec)) {
-          BOOST_LOG(debug) << type_str << " socket closed: "sv << ec.message();
+          if (broadcast_shutdown_event->peek()) {
+            BOOST_LOG(debug) << type_str << " socket closed: "sv << ec.message();
+          }
+          else {
+            BOOST_LOG(error) << type_str << " socket closed unexpectedly: "sv << ec.message();
+            broadcast_shutdown_event->raise(true);
+          }
           return;
         }
 
-        // Keep the shared UDP receiver armed after transient errors. On
-        // Windows, an ICMP port-unreachable response from a disconnected peer
-        // may complete async_receive_from() with connection_reset.
+        // 瞬态错误后继续挂接共享 UDP 接收。在 Windows 上，客户端断开产生的
+        // ICMP Port Unreachable 可能让 async_receive_from() 返回 connection_reset。
         auto receive_again = util::fail_guard([&]() {
-          if (broadcast_shutdown_event->peek() || !sock.is_open()) {
+          if (broadcast_shutdown_event->peek()) {
+            return;
+          }
+
+          if (!sock.is_open()) {
+            if (!broadcast_shutdown_event->peek()) {
+              BOOST_LOG(error) << type_str << " socket closed before receive could be restarted"sv;
+              broadcast_shutdown_event->raise(true);
+            }
             return;
           }
 
@@ -2771,7 +2784,10 @@ namespace stream {
             sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
           }
           catch (const std::exception &e) {
-            BOOST_LOG(error) << "Failed to restart async receive for "sv << type_str << ": "sv << e.what();
+            if (!broadcast_shutdown_event->peek()) {
+              BOOST_LOG(error) << "Failed to restart async receive for "sv << type_str << ": "sv << e.what();
+              broadcast_shutdown_event->raise(true);
+            }
           }
         });
 
@@ -2782,6 +2798,8 @@ namespace stream {
           else {
             BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
             receive_again.disable();
+            // 未分类错误不能继续复用半失效的共享接收链，关闭当前广播后由下一次会话重建。
+            broadcast_shutdown_event->raise(true);
           }
           return;
         }
@@ -2809,10 +2827,12 @@ namespace stream {
       io.run();
       if (!broadcast_shutdown_event->peek()) {
         BOOST_LOG(error) << "Shared UDP receive loop stopped unexpectedly"sv;
+        broadcast_shutdown_event->raise(true);
       }
     }
     catch (const std::exception &e) {
       BOOST_LOG(fatal) << "recvThread exception: " << e.what();
+      broadcast_shutdown_event->raise(true);
     }
   }
 
