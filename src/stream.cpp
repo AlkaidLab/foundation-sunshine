@@ -518,7 +518,7 @@ namespace stream {
       ):
           session_id {session_id},
           key_id {key_id},
-          client_address {std::move(client_address)},
+          client_address {net::normalize_address(std::move(client_address))},
           cipher {std::move(cipher)} {}
     };
 
@@ -2425,12 +2425,13 @@ namespace stream {
 
       ++stats.total_packets;
 
+      const auto source_address = net::normalize_address(source_endpoint.address());
       std::vector<boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t>> candidates;
       {
         boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
         for (const auto &[session_id, session] : ctx.mic_sessions) {
           (void) session_id;
-          if (session->client_address == source_endpoint.address()) {
+          if (session->client_address == source_address) {
             candidates.emplace_back(session);
           }
         }

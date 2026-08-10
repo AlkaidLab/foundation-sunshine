@@ -34,6 +34,7 @@ namespace mic_mixer {
     struct source_t {
       opus_decoder_t decoder;
       std::optional<std::uint16_t> last_sequence;
+      std::optional<std::uint16_t> expected_restart_sequence;
       std::deque<std::vector<std::int16_t>> frames;
     };
 
@@ -103,7 +104,7 @@ namespace mic_mixer {
       return false;
     }
 
-    impl_->sources.emplace(source_id, source_t {std::move(decoder), std::nullopt, {}});
+    impl_->sources.emplace(source_id, source_t {std::move(decoder), std::nullopt, std::nullopt, {}});
     return true;
   }
 
@@ -127,8 +128,25 @@ namespace mic_mixer {
     auto &source = source_it->second;
     if (source.last_sequence) {
       const auto distance = static_cast<std::uint16_t>(sequence_number - *source.last_sequence);
-      if (distance == 0 || distance >= 0x8000) {
+      if (distance == 0) {
         return false;
+      }
+
+      if (distance >= 0x8000) {
+        // 参考 RFC 3550 的 source restart 检测：第一次异常回退只记录下一序列号，
+        // 只有随后收到连续包才确认发送端已重启，避免单个迟到包重置解码状态。
+        if (!source.expected_restart_sequence || sequence_number != *source.expected_restart_sequence) {
+          source.expected_restart_sequence = static_cast<std::uint16_t>(sequence_number + 1);
+          return false;
+        }
+
+        if (opus_decoder_ctl(source.decoder.get(), OPUS_RESET_STATE) != OPUS_OK) {
+          source.expected_restart_sequence.reset();
+          return false;
+        }
+
+        source.frames.clear();
+        source.last_sequence.reset();
       }
     }
 
@@ -139,6 +157,7 @@ namespace mic_mixer {
     }
 
     source.last_sequence = sequence_number;
+    source.expected_restart_sequence.reset();
     return true;
   }
 
