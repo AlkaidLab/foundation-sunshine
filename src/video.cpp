@@ -2680,11 +2680,14 @@ namespace video {
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
     // HLG uses scene-referred relative luminance but benefits from HDR Vivid (CUVA)
-    // dynamic metadata for enhanced tone mapping on capable displays.
+    // dynamic metadata for enhanced tone mapping on capable displays, where the
+    // codec defines a carriage for it.
     if (colorspace_is_hdr(colorspace)) {
-      // Single source of truth for which dynamic formats this transfer function allows,
-      // shared with the native NVENC path so the two cannot drift apart.
-      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace);
+      // Single source of truth for which dynamic formats this transfer function allows
+      // and this codec can actually carry, shared with the native NVENC path so the two
+      // cannot drift apart.
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(
+        colorspace, hdr_metadata::codec_from_video_format(config.videoFormat));
 
       SS_HDR_METADATA hdr_metadata;
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);

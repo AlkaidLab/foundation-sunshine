@@ -29,22 +29,87 @@ namespace {
 
 }  // namespace
 
-TEST(HdrDynamicMetadata, RoutesFormatsByTransferFunction) {
+TEST(HdrDynamicMetadata, RoutesContentFormatsByTransferFunction) {
   using video::colorspace_e;
-  using video::hdr_metadata::formats_for;
+  using video::hdr_metadata::content_formats_for;
   using video::sunshine_colorspace_t;
 
-  const auto pq = formats_for(sunshine_colorspace_t { colorspace_e::bt2020, false, 10 });
+  // HDR10+ carries absolute luminance, so it only describes PQ. HDR Vivid covers
+  // both PQ and HLG (T/UWA 005.1-2024 clause 7, annex A).
+  const auto pq = content_formats_for(sunshine_colorspace_t { colorspace_e::bt2020, false, 10 });
   EXPECT_TRUE(pq.hdr10plus);
   EXPECT_TRUE(pq.vivid);
 
-  const auto hlg = formats_for(sunshine_colorspace_t { colorspace_e::bt2020hlg, true, 10 });
+  const auto hlg = content_formats_for(sunshine_colorspace_t { colorspace_e::bt2020hlg, true, 10 });
   EXPECT_FALSE(hlg.hdr10plus);
   EXPECT_TRUE(hlg.vivid);
 
-  const auto sdr = formats_for(sunshine_colorspace_t { colorspace_e::rec709, false, 8 });
+  const auto sdr = content_formats_for(sunshine_colorspace_t { colorspace_e::rec709, false, 8 });
   EXPECT_FALSE(sdr.hdr10plus);
   EXPECT_FALSE(sdr.vivid);
+}
+
+TEST(HdrDynamicMetadata, RoutesCarriageByCodec) {
+  using video::hdr_metadata::carriage_for;
+  using video::hdr_metadata::codec_e;
+
+  // HEVC carries both: registered ITU-T T.35 SEI for HDR10+, and T/UWA 005.1-2024
+  // annex B for HDR Vivid.
+  const auto hevc = carriage_for(codec_e::hevc);
+  EXPECT_TRUE(hevc.hdr10plus);
+  EXPECT_TRUE(hevc.vivid);
+
+  // AV1 has an AOMedia-defined metadata OBU mapping for HDR10+, but T/UWA 005.1-2024
+  // never defines an AV1 carriage for HDR Vivid.
+  const auto av1 = carriage_for(codec_e::av1);
+  EXPECT_TRUE(av1.hdr10plus);
+  EXPECT_FALSE(av1.vivid);
+
+  const auto h264 = carriage_for(codec_e::h264);
+  EXPECT_FALSE(h264.hdr10plus);
+  EXPECT_FALSE(h264.vivid);
+}
+
+TEST(HdrDynamicMetadata, MapsVideoFormatToCodec) {
+  using video::hdr_metadata::codec_e;
+  using video::hdr_metadata::codec_from_video_format;
+
+  EXPECT_EQ(codec_from_video_format(0), codec_e::h264);
+  EXPECT_EQ(codec_from_video_format(1), codec_e::hevc);
+  EXPECT_EQ(codec_from_video_format(2), codec_e::av1);
+  // Unknown formats must not be mistaken for a codec that carries metadata.
+  EXPECT_EQ(codec_from_video_format(7), codec_e::h264);
+  EXPECT_EQ(codec_from_video_format(-1), codec_e::h264);
+}
+
+TEST(HdrDynamicMetadata, RequiresBothContentAndCarriage) {
+  using video::colorspace_e;
+  using video::hdr_metadata::codec_e;
+  using video::hdr_metadata::formats_for;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+
+  const auto hevc_pq = formats_for(pq, codec_e::hevc);
+  EXPECT_TRUE(hevc_pq.hdr10plus);
+  EXPECT_TRUE(hevc_pq.vivid);
+
+  // The regression this guards: HDR Vivid must never reach an AV1 metadata OBU,
+  // even though PQ content is eligible for it.
+  const auto av1_pq = formats_for(pq, codec_e::av1);
+  EXPECT_TRUE(av1_pq.hdr10plus);
+  EXPECT_FALSE(av1_pq.vivid);
+
+  // HLG over AV1 therefore carries no dynamic metadata at all: HDR10+ is PQ-only
+  // and HDR Vivid has no AV1 carriage.
+  const auto av1_hlg = formats_for(hlg, codec_e::av1);
+  EXPECT_FALSE(av1_hlg.hdr10plus);
+  EXPECT_FALSE(av1_hlg.vivid);
+
+  const auto hevc_hlg = formats_for(hlg, codec_e::hevc);
+  EXPECT_FALSE(hevc_hlg.hdr10plus);
+  EXPECT_TRUE(hevc_hlg.vivid);
 }
 
 TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {

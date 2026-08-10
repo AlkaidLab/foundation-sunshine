@@ -85,10 +85,39 @@ namespace video::hdr_metadata {
     std::span<uint8_t> payload);
 
   /**
-   * HDR10+ is defined for PQ content. HDR Vivid can accompany either PQ or HLG.
+   * Video codecs that can carry dynamic HDR metadata, using the same numbering as
+   * video::config_t::videoFormat.
+   */
+  enum class codec_e {
+    h264 = 0,
+    hevc = 1,
+    av1 = 2,
+  };
+
+  inline codec_e
+  codec_from_video_format(int video_format) {
+    switch (video_format) {
+      case 1:
+        return codec_e::hevc;
+      case 2:
+        return codec_e::av1;
+      default:
+        return codec_e::h264;
+    }
+  }
+
+  /**
+   * Which dynamic formats the transfer function allows to describe the content.
+   *
+   * HDR10+ (SMPTE ST 2094-40) expresses absolute luminance, so it is defined for PQ
+   * only. HDR Vivid covers both: T/UWA 005.1-2024 clause 7 gives the syntax for PQ
+   * and HLG dynamic metadata, and annex A the extraction method for each.
+   *
+   * This answers "may this metadata describe the picture", not "may it be written to
+   * the bitstream" — see carriage_for().
    */
   inline formats_t
-  formats_for(const sunshine_colorspace_t &colorspace) {
+  content_formats_for(const sunshine_colorspace_t &colorspace) {
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
         return { .hdr10plus = true, .vivid = true };
@@ -97,6 +126,47 @@ namespace video::hdr_metadata {
       default:
         return {};
     }
+  }
+
+  /**
+   * Which dynamic formats have a standardized carriage in a codec's bitstream.
+   *
+   * HDR10+ rides in the registered ITU-T T.35 SEI for HEVC, and in an AV1 metadata
+   * OBU with metadata_type = METADATA_TYPE_ITUT_T35 per the AOMedia "HDR10+ AV1
+   * Metadata Handling Specification".
+   *
+   * HDR Vivid defines carriage only for AVS2 (T/UWA 005.1-2024 clause 8) and
+   * HEVC/VVC (annex B). The standard never mentions AV1 or OBUs, so writing a CUVA
+   * T.35 payload into an AV1 metadata OBU invents a mapping that no decoder is
+   * obliged to accept — and strict AV1 decoders reject the stream over it.
+   *
+   * H.264 is never used for HDR here, so it claims no carriage at all rather than
+   * asserting something unverified about AVC.
+   */
+  inline formats_t
+  carriage_for(codec_e codec) {
+    switch (codec) {
+      case codec_e::hevc:
+        return { .hdr10plus = true, .vivid = true };
+      case codec_e::av1:
+        return { .hdr10plus = true, .vivid = false };
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Dynamic metadata formats that both describe this content and have a defined
+   * carriage in this codec. Metadata must clear both gates to be emitted.
+   */
+  inline formats_t
+  formats_for(const sunshine_colorspace_t &colorspace, codec_e codec) {
+    const auto content = content_formats_for(colorspace);
+    const auto carriage = carriage_for(codec);
+    return {
+      .hdr10plus = content.hdr10plus && carriage.hdr10plus,
+      .vivid = content.vivid && carriage.vivid,
+    };
   }
 
   /**
