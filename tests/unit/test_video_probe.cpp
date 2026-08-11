@@ -5,53 +5,24 @@
 #include <src/video_probe.h>
 
 #include <array>
-#include <iostream>
+#include <gtest/gtest.h>
 
-namespace {
+TEST(VideoProbe, PreservesCaptureReadyConfiguredDisplay) {
+  const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
+  EXPECT_EQ(video::select_encoder_probe_display(R"(\\.\DISPLAY9)", displays), R"(\\.\DISPLAY9)");
+}
 
-  bool
-  preserves_capture_ready_configured_display() {
-    const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
-    return video::select_encoder_probe_display(R"(\\.\DISPLAY9)", displays, "Configured GPU") == R"(\\.\DISPLAY9)";
-  }
+TEST(VideoProbe, MissingConfiguredDisplayUsesBackendAutoselection) {
+  const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
+  EXPECT_TRUE(video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays).empty());
+}
 
-  bool
-  configured_adapter_uses_backend_autoselection() {
-    const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
-    return video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays, "Configured GPU").empty();
-  }
+TEST(VideoProbe, EmptyConfiguredDisplayPreservesBackendAutoselection) {
+  const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
+  EXPECT_TRUE(video::select_encoder_probe_display({}, displays).empty());
+}
 
-  bool
-  unfiltered_probe_uses_first_capture_ready_display() {
-    const std::array displays { std::string { R"(\\.\DISPLAY7)" }, std::string { R"(\\.\DISPLAY9)" } };
-    return video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays, {}) == R"(\\.\DISPLAY7)";
-  }
-
-  bool
-  empty_capture_ready_list_returns_no_display() {
-    const std::array<std::string, 0> displays {};
-    return video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays, {}).empty();
-  }
-
-}  // namespace
-
-int
-main() {
-  if (!preserves_capture_ready_configured_display()) {
-    std::cerr << "configured display preservation test failed\n";
-    return 1;
-  }
-  if (!configured_adapter_uses_backend_autoselection()) {
-    std::cerr << "configured adapter selection test failed\n";
-    return 1;
-  }
-  if (!unfiltered_probe_uses_first_capture_ready_display()) {
-    std::cerr << "unfiltered display fallback test failed\n";
-    return 1;
-  }
-  if (!empty_capture_ready_list_returns_no_display()) {
-    std::cerr << "empty display fallback test failed\n";
-    return 1;
-  }
-  return 0;
+TEST(VideoProbe, EmptyCaptureReadyListUsesBackendAutoselection) {
+  const std::array<std::string, 0> displays {};
+  EXPECT_TRUE(video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays).empty());
 }

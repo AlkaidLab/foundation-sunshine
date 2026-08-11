@@ -3963,10 +3963,13 @@ namespace video {
   }
 
   bool
-  validate_encoder(encoder_t &encoder, bool expect_failure) {
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name) {
     std::shared_ptr<platf::display_t> disp;
     const auto configured_capture_backend = config::video.capture;
-    auto probe_capture_override = capture_override_for_encoder_probe();
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
@@ -4008,20 +4011,7 @@ namespace video {
     }
 
     // If the encoder isn't supported at all (not even H.264), bail early
-    // A temporary capture backend must select a display that it can enumerate.
-    // In particular, a VDD output can have a valid DisplayConfig/GDI name while
-    // being intentionally absent from DXGI. Passing that name to a DDX-backed
-    // encoder probe makes the probe target a display the temporary backend
-    // cannot open. Select from the temporary backend's capture-ready outputs.
-    auto output_display_name = display_device::get_display_name(config::video.output_name);
-    if (probe_capture_override) {
-      const auto probe_display_names = platf::display_names(encoder.platform_formats->dev_type);
-      output_display_name = select_encoder_probe_display(
-        output_display_name,
-        probe_display_names,
-        config::video.adapter_name);
-    }
-    reset_display(disp, encoder.platform_formats->dev_type, output_display_name, config_autoselect);
+    reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, config_autoselect);
     if (!disp) {
       return false;
     }
@@ -4148,7 +4138,7 @@ namespace video {
         }
 
         // Reset the display since we're switching from SDR to HDR
-        reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
+        reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, generic_hdr_config);
         if (!disp) {
           return false;
         }
@@ -4223,6 +4213,24 @@ namespace video {
       return 0;
     }
 
+    const auto probe_capture_override = capture_override_for_encoder_probe();
+    const auto configured_display_name = display_device::get_display_name(config::video.output_name);
+    auto probe_display_name = configured_display_name;
+    if (probe_capture_override) {
+      // The Windows implementation enumerates all DXGI capture-ready outputs
+      // regardless of memory type, so one pass serves every encoder candidate.
+      const auto capture_ready_displays = encoder_list.empty() ?
+                                            std::vector<std::string> {} :
+                                            platf::display_names(encoder_list.front()->platform_formats->dev_type);
+      probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
+      if (!configured_display_name.empty() && probe_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
+                           << "] is unavailable to temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+    }
+
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;
     chosen_encoder = nullptr;
@@ -4259,7 +4267,11 @@ namespace video {
 
         if (encoder->name == config::video.encoder) {
           // Remove the encoder from the list entirely if it fails validation
-          if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+          if (!validate_encoder(
+                *encoder,
+                previous_encoder && previous_encoder != encoder,
+                probe_capture_override,
+                probe_display_name)) {
             pos = encoder_list.erase(pos);
             break;
           }
@@ -4287,7 +4299,11 @@ namespace video {
         auto encoder = *pos;
 
         // Remove the encoder from the list entirely if it fails validation
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4324,7 +4340,11 @@ namespace video {
         // If we've used a previous encoder and it's not this one, we expect this encoder to
         // fail to validate. It will use a slightly different order of checks to more quickly
         // eliminate failing encoders.
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }
