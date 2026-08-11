@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Silme işlemini onayla",
     "delete_client": "İstemciyi sil",
-    "delete_confirm_message": "<strong>{name}</strong> öğesini silmek istediğinizden emin misiniz?",
+    "delete_confirm_message": "{name} öğesini silmek istediğinizden emin misiniz?",
     "delete_warning": "Bu işlem geri alınamaz.",
     "device_name": "Cihaz Adı",
     "device_size": "Cihaz boyutu",

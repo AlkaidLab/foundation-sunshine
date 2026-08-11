@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Confirmar eliminación",
     "delete_client": "Eliminar cliente",
-    "delete_confirm_message": "¿Está seguro de que desea eliminar <strong>{name}</strong>?",
+    "delete_confirm_message": "¿Está seguro de que desea eliminar {name}?",
     "delete_warning": "Esta acción no se puede deshacer.",
     "device_name": "Nombre del dispositivo",
     "device_size": "Tamaño del dispositivo",

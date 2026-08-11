@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Підтвердити видалення",
     "delete_client": "Видалити клієнта",
-    "delete_confirm_message": "Ви впевнені, що хочете видалити <strong>{name}</strong>?",
+    "delete_confirm_message": "Ви впевнені, що хочете видалити {name}?",
     "delete_warning": "Цю дію неможливо скасувати.",
     "device_name": "Назва пристрою",
     "device_size": "Розмір пристрою",

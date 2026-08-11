@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "삭제 확인",
     "delete_client": "클라이언트 삭제",
-    "delete_confirm_message": "<strong>{name}</strong>을(를) 삭제하시겠습니까?",
+    "delete_confirm_message": "{name}을(를) 삭제하시겠습니까?",
     "delete_warning": "이 작업은 실행 취소할 수 없습니다.",
     "device_name": "기기 이름",
     "device_size": "기기 크기",

@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Потвърди изтриване",
     "delete_client": "Изтриване на клиент",
-    "delete_confirm_message": "Наистина ли искате да изтриете <strong>{name}</strong>?",
+    "delete_confirm_message": "Наистина ли искате да изтриете {name}?",
     "delete_warning": "Това действие не може да бъде отменено.",
     "device_name": "Име на устройството",
     "device_size": "Размер на устройството",

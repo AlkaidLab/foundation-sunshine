@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Confirmer la suppression",
     "delete_client": "Supprimer le client",
-    "delete_confirm_message": "Êtes-vous sûr de vouloir supprimer <strong>{name}</strong> ?",
+    "delete_confirm_message": "Êtes-vous sûr de vouloir supprimer {name} ?",
     "delete_warning": "Cette action ne peut pas être annulée.",
     "device_name": "Nom de l'appareil",
     "device_size": "Taille de l'appareil",

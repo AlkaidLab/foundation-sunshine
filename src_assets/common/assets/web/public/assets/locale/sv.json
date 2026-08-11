@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Bekräfta radering",
     "delete_client": "Radera klient",
-    "delete_confirm_message": "Är du säker på att du vill radera <strong>{name}</strong>?",
+    "delete_confirm_message": "Är du säker på att du vill radera {name}?",
     "delete_warning": "Denna åtgärd kan inte ångras.",
     "device_name": "Enhetens namn",
     "device_size": "Enhetsstorlek",

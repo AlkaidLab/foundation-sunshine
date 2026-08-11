@@ -740,7 +740,7 @@
     "client_settings_info": "提示：",
     "confirm_delete": "確認刪除",
     "delete_client": "刪除用戶端",
-    "delete_confirm_message": "您確定要刪除 <strong>{name}</strong> 嗎？",
+    "delete_confirm_message": "您確定要刪除 {name} 嗎？",
     "delete_warning": "此操作無法復原。",
     "device_name": "裝置名稱",
     "device_size": "裝置尺寸",

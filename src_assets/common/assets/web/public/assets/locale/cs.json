@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Potvrdit smazání",
     "delete_client": "Smazat klienta",
-    "delete_confirm_message": "Opravdu chcete smazat <strong>{name}</strong>?",
+    "delete_confirm_message": "Opravdu chcete smazat {name}?",
     "delete_warning": "Tuto akci nelze vrátit zpět.",
     "device_name": "Název zařízení",
     "device_size": "Velikost zařízení",

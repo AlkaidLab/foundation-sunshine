@@ -715,7 +715,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "削除を確認",
     "delete_client": "クライアントを削除",
-    "delete_confirm_message": "<strong>{name}</strong>を削除してもよろしいですか？",
+    "delete_confirm_message": "{name}を削除してもよろしいですか？",
     "delete_warning": "この操作は元に戻せません。",
     "device_name": "端末名",
     "device_size": "デバイスサイズ",

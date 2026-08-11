@@ -727,7 +727,7 @@
     "client_settings_info": "Tip:",
     "confirm_delete": "Confirm Delete",
     "delete_client": "Delete client",
-    "delete_confirm_message": "Are you sure you want to delete <strong>{name}</strong>?",
+    "delete_confirm_message": "Are you sure you want to delete {name}?",
     "delete_warning": "This action cannot be undone.",
     "device_name": "Device Name",
     "device_size": "Device Size",

@@ -894,7 +894,7 @@
     "client_settings_info": "提示：",
     "confirm_delete": "确认删除",
     "delete_client": "删除客户端",
-    "delete_confirm_message": "您确定要删除 <strong>{name}</strong> 吗？",
+    "delete_confirm_message": "您确定要删除 {name} 吗？",
     "delete_warning": "此操作无法撤销。",
     "device_name": "设备名称",
     "device_size": "设备尺寸",
