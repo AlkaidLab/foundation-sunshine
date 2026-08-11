@@ -298,7 +298,10 @@ AcquireGuiAgent(DWORD console_session_id, GuiAgentProcess &agent, bool &attached
     gui_directory.c_str(),
     &startup_info,
     &process_info);
-  const auto launch_error = launched ? ERROR_SUCCESS : GetLastError();
+  auto launch_error = launched ? ERROR_SUCCESS : GetLastError();
+  if (!launched && launch_error == ERROR_SUCCESS) {
+    launch_error = ERROR_GEN_FAILURE;
+  }
 
   if (launched) {
     CloseHandle(process_info.hThread);
@@ -483,16 +486,21 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   DWORD gui_agent_last_error = ERROR_SUCCESS;
   ULONGLONG gui_agent_retry_at_ms = 0;
   sunshinesvc::GuiRestartBackoff gui_agent_backoff;
+  sunshinesvc::GuiAgentRestartPolicy gui_agent_restart_policy;
+  sunshinesvc::GuiAgentCrashLogLimiter gui_agent_log_limiter;
 
   const auto acquire_gui_agent = [&]() {
     bool attached_to_existing = false;
     const auto error = AcquireGuiAgent(gui_agent_session_id, gui_agent, attached_to_existing);
     if (error == ERROR_SUCCESS) {
+      const bool recovered_from_error = gui_agent_last_error != ERROR_SUCCESS;
       const auto recovery = gui_agent_last_error == ERROR_SUCCESS ? "acquired" : "recovered";
-      WriteServiceLog(log_file_handle,
-        "GUI agent " + std::string(recovery) + " for session " + std::to_string(gui_agent_session_id) +
-          " (PID " + std::to_string(gui_agent.process_id) +
-          (attached_to_existing ? ", existing process)" : ", launched process)"));
+      if (gui_agent_log_limiter.should_log_acquisition(recovered_from_error)) {
+        WriteServiceLog(log_file_handle,
+          "GUI agent " + std::string(recovery) + " for session " + std::to_string(gui_agent_session_id) +
+            " (PID " + std::to_string(gui_agent.process_id) +
+            (attached_to_existing ? ", existing process)" : ", launched process)"));
+      }
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_retry_at_ms = 0;
       return;
@@ -523,6 +531,8 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_retry_at_ms = 0;
       gui_agent_backoff.reset();
+      gui_agent_restart_policy.begin_core_lifecycle();
+      gui_agent_log_limiter.reset();
     }
 
     auto console_token = DuplicateTokenForSession(console_session_id);
@@ -563,10 +573,20 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
+    if (!gui_agent_restart_policy.restart_allowed()) {
+      gui_agent_restart_policy.begin_core_lifecycle();
+      gui_agent_last_error = ERROR_SUCCESS;
+      gui_agent_retry_at_ms = 0;
+      gui_agent_backoff.reset();
+      gui_agent_log_limiter.reset();
+    }
+
     // Keep the tray agent in the signed-in user's session so HKCU settings and
     // single-instance ownership remain scoped to that user. Preserve the
     // handle across Core restarts in the same session.
-    if (gui_agent.handle == NULL && RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
+    if (gui_agent.handle == NULL &&
+        gui_agent_restart_policy.restart_allowed() &&
+        RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
       acquire_gui_agent();
     }
 
@@ -576,10 +596,20 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       // process rather than polling by executable name.
       const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event, gui_agent.handle };
       const DWORD wait_object_count = gui_agent.handle == NULL ? 3 : 4;
-      const DWORD wait_timeout = gui_agent.handle == NULL ? RetryWaitTimeout(gui_agent_retry_at_ms) : INFINITE;
+      const DWORD wait_timeout = gui_agent.handle == NULL && gui_agent_restart_policy.restart_allowed() ?
+                                   RetryWaitTimeout(gui_agent_retry_at_ms) :
+                                   INFINITE;
       const auto wait_result = WaitForMultipleObjects(wait_object_count, wait_objects, FALSE, wait_timeout);
       switch (wait_result) {
         case WAIT_TIMEOUT:
+          // The stop/Core handles may have become signaled after the wait timed
+          // out but before process acquisition. Let the next wait dispatch the
+          // lifecycle event instead of reviving the GUI during shutdown.
+          if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0 ||
+              WaitForSingleObject(process_info.hProcess, 0) == WAIT_OBJECT_0) {
+            still_running = true;
+            break;
+          }
           acquire_gui_agent();
           still_running = true;
           break;
@@ -622,14 +652,29 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           const auto exited_process_id = gui_agent.process_id;
           CloseGuiAgentHandle(gui_agent);
 
+          if (exit_code == ERROR_SUCCESS) {
+            gui_agent_restart_policy.suppress_until_core_restart();
+            gui_agent_retry_at_ms = 0;
+            gui_agent_last_error = ERROR_SUCCESS;
+            gui_agent_backoff.reset();
+            WriteServiceLog(log_file_handle,
+              "GUI agent exited cleanly in session " + std::to_string(console_session_id) +
+                " (PID " + std::to_string(exited_process_id) +
+                "); restart suppressed until the next Core lifecycle");
+            still_running = true;
+            break;
+          }
+
           const auto retry_delay_ms = gui_agent_backoff.next_delay(runtime_ms);
           gui_agent_retry_at_ms = GetTickCount64() + retry_delay_ms;
           gui_agent_last_error = ERROR_SUCCESS;
-          WriteServiceLog(log_file_handle,
-            "GUI agent exited in session " + std::to_string(console_session_id) +
-              " (PID " + std::to_string(exited_process_id) + ", exit code " +
-              std::to_string(exit_code) + ", runtime " + std::to_string(runtime_ms) +
-              " ms); restarting in " + std::to_string(retry_delay_ms) + " ms");
+          if (gui_agent_log_limiter.should_log_exit(exit_code, retry_delay_ms)) {
+            WriteServiceLog(log_file_handle,
+              "GUI agent exited in session " + std::to_string(console_session_id) +
+                " (PID " + std::to_string(exited_process_id) + ", exit code " +
+                std::to_string(exit_code) + ", runtime " + std::to_string(runtime_ms) +
+                " ms); restarting in " + std::to_string(retry_delay_ms) + " ms");
+          }
           still_running = true;
           break;
         }

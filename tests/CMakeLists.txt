@@ -46,6 +46,7 @@ add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
 target_include_directories(sunshinesvc_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(sunshinesvc_state_unit_tests gtest_main)
 target_compile_options(sunshinesvc_state_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(sunshinesvc_state_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
