@@ -3,12 +3,19 @@
  * @brief Handles launching Sunshine.exe into user sessions as SYSTEM
  */
 #define WIN32_LEAN_AND_MEAN
+// MinGW's ToolHelp header depends on the Windows base types.
+// clang-format off
 #include <Windows.h>
+#include <TlHelp32.h>
+// clang-format on
 #include <userenv.h>
 #include <wtsapi32.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
+
+#include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
 #ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
@@ -122,8 +129,22 @@ DuplicateTokenForSession(DWORD console_session_id) {
   return new_token;
 }
 
+struct GuiAgentProcess {
+  HANDLE handle = NULL;
+  DWORD process_id = 0;
+  ULONGLONG acquired_at_ms = 0;
+};
+
+void
+CloseGuiAgentHandle(GuiAgentProcess &process) {
+  if (process.handle != NULL) {
+    CloseHandle(process.handle);
+  }
+  process = {};
+}
+
 DWORD
-LaunchGuiAgent(DWORD console_session_id) {
+ResolveGuiAgentPath(std::wstring &gui_directory, std::wstring &gui_path) {
   std::wstring service_path(32768, L'\0');
   const auto service_path_length =
     GetModuleFileNameW(NULL, service_path.data(), static_cast<DWORD>(service_path.size()));
@@ -146,14 +167,79 @@ LaunchGuiAgent(DWORD console_session_id) {
   }
 
   const auto install_directory = service_path.substr(0, install_separator);
-  const auto gui_directory = install_directory + L"\\assets\\gui";
-  const auto gui_path = gui_directory + L"\\sunshine-gui.exe";
+  gui_directory = install_directory + L"\\assets\\gui";
+  gui_path = gui_directory + L"\\sunshine-gui.exe";
   const auto gui_attributes = GetFileAttributesW(gui_path.c_str());
   if (gui_attributes == INVALID_FILE_ATTRIBUTES) {
     return GetLastError();
   }
   if (gui_attributes & FILE_ATTRIBUTE_DIRECTORY) {
     return ERROR_FILE_NOT_FOUND;
+  }
+  return ERROR_SUCCESS;
+}
+
+HANDLE
+OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path, DWORD &process_id) {
+  const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return NULL;
+  }
+
+  PROCESSENTRY32W entry = {};
+  entry.dwSize = sizeof(entry);
+  auto found_process = (HANDLE) NULL;
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      if (_wcsicmp(entry.szExeFile, L"sunshine-gui.exe") != 0) {
+        continue;
+      }
+
+      DWORD session_id = 0;
+      if (!ProcessIdToSessionId(entry.th32ProcessID, &session_id) || session_id != console_session_id) {
+        continue;
+      }
+
+      const auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+      if (candidate == NULL) {
+        continue;
+      }
+
+      std::wstring candidate_path(32768, L'\0');
+      DWORD candidate_path_length = static_cast<DWORD>(candidate_path.size());
+      if (QueryFullProcessImageNameW(candidate, 0, candidate_path.data(), &candidate_path_length)) {
+        candidate_path.resize(candidate_path_length);
+        if (_wcsicmp(candidate_path.c_str(), gui_path.c_str()) == 0) {
+          found_process = candidate;
+          process_id = entry.th32ProcessID;
+          break;
+        }
+      }
+      CloseHandle(candidate);
+    } while (Process32NextW(snapshot, &entry));
+  }
+
+  CloseHandle(snapshot);
+  return found_process;
+}
+
+DWORD
+AcquireGuiAgent(DWORD console_session_id, GuiAgentProcess &agent, bool &attached_to_existing) {
+  std::wstring gui_directory;
+  std::wstring gui_path;
+  const auto path_error = ResolveGuiAgentPath(gui_directory, gui_path);
+  if (path_error != ERROR_SUCCESS) {
+    return path_error;
+  }
+
+  DWORD existing_process_id = 0;
+  const auto existing_process = OpenExistingGuiAgent(console_session_id, gui_path, existing_process_id);
+  if (existing_process != NULL) {
+    agent.handle = existing_process;
+    agent.process_id = existing_process_id;
+    agent.acquired_at_ms = GetTickCount64();
+    attached_to_existing = true;
+    return ERROR_SUCCESS;
   }
 
   HANDLE user_token = NULL;
@@ -192,7 +278,10 @@ LaunchGuiAgent(DWORD console_session_id) {
 
   if (launched) {
     CloseHandle(process_info.hThread);
-    CloseHandle(process_info.hProcess);
+    agent.handle = process_info.hProcess;
+    agent.process_id = process_info.dwProcessId;
+    agent.acquired_at_ms = GetTickCount64();
+    attached_to_existing = false;
   }
   DestroyEnvironmentBlock(environment);
   CloseHandle(user_token);
@@ -206,21 +295,14 @@ WriteServiceLog(HANDLE log_file, const std::string &message) {
   WriteFile(log_file, line.data(), static_cast<DWORD>(line.size()), &bytes_written, NULL);
 }
 
-bool
-ReconcileGuiAgent(HANDLE log_file, DWORD console_session_id, DWORD &last_error) {
-  const auto error = LaunchGuiAgent(console_session_id);
-  if (error == ERROR_SUCCESS) {
-    if (last_error != ERROR_SUCCESS) {
-      WriteServiceLog(log_file, "GUI agent launch recovered for session " + std::to_string(console_session_id));
-    }
+DWORD
+RetryWaitTimeout(ULONGLONG retry_at_ms) {
+  const auto now = GetTickCount64();
+  if (retry_at_ms <= now) {
+    return 0;
   }
-  else if (error != last_error) {
-    WriteServiceLog(log_file,
-      "GUI agent launch failed for session " + std::to_string(console_session_id) +
-        " (Win32 error " + std::to_string(error) + "); retrying");
-  }
-  last_error = error;
-  return error == ERROR_SUCCESS;
+
+  return static_cast<DWORD>(std::min<ULONGLONG>(retry_at_ms - now, MAXDWORD - 1));
 }
 
 HANDLE
@@ -372,12 +454,51 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   service_status.dwCurrentState = SERVICE_RUNNING;
   SetServiceStatus(service_status_handle, &service_status);
 
+  GuiAgentProcess gui_agent;
+  DWORD gui_agent_session_id = 0xFFFFFFFF;
+  DWORD gui_agent_last_error = ERROR_SUCCESS;
+  ULONGLONG gui_agent_retry_at_ms = 0;
+  sunshinesvc::GuiRestartBackoff gui_agent_backoff;
+
+  const auto acquire_gui_agent = [&]() {
+    bool attached_to_existing = false;
+    const auto error = AcquireGuiAgent(gui_agent_session_id, gui_agent, attached_to_existing);
+    if (error == ERROR_SUCCESS) {
+      const auto recovery = gui_agent_last_error == ERROR_SUCCESS ? "acquired" : "recovered";
+      WriteServiceLog(log_file_handle,
+        "GUI agent " + std::string(recovery) + " for session " + std::to_string(gui_agent_session_id) +
+          " (PID " + std::to_string(gui_agent.process_id) +
+          (attached_to_existing ? ", existing process)" : ", launched process)"));
+      gui_agent_last_error = ERROR_SUCCESS;
+      gui_agent_retry_at_ms = 0;
+      return;
+    }
+
+    const auto retry_delay_ms = gui_agent_backoff.next_delay();
+    gui_agent_retry_at_ms = GetTickCount64() + retry_delay_ms;
+    if (error != gui_agent_last_error) {
+      WriteServiceLog(log_file_handle,
+        "GUI agent acquisition failed for session " + std::to_string(gui_agent_session_id) +
+          " (Win32 error " + std::to_string(error) + "); retrying in " +
+          std::to_string(retry_delay_ms) + " ms");
+    }
+    gui_agent_last_error = error;
+  };
+
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running
   while (WaitForSingleObject(stop_event, 3000) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
     if (console_session_id == 0xFFFFFFFF) {
       // No console session yet
       continue;
+    }
+
+    if (gui_agent_session_id != console_session_id) {
+      CloseGuiAgentHandle(gui_agent);
+      gui_agent_session_id = console_session_id;
+      gui_agent_last_error = ERROR_SUCCESS;
+      gui_agent_retry_at_ms = 0;
+      gui_agent_backoff.reset();
     }
 
     auto console_token = DuplicateTokenForSession(console_session_id);
@@ -418,20 +539,24 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
-    // Launch the tray in the signed-in user's session so HKCU settings and
-    // single-instance ownership remain scoped to that user.
-    DWORD gui_agent_error = ERROR_SUCCESS;
-    bool gui_agent_started = ReconcileGuiAgent(log_file_handle, console_session_id, gui_agent_error);
+    // Keep the tray agent in the signed-in user's session so HKCU settings and
+    // single-instance ownership remain scoped to that user. Preserve the
+    // handle across Core restarts in the same session.
+    if (gui_agent.handle == NULL && RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
+      acquire_gui_agent();
+    }
 
     bool still_running;
     do {
-      // Wait for the stop event to be set, Sunshine.exe to terminate, or the console session to change
-      const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event };
-      const auto wait_result =
-        WaitForMultipleObjects(_countof(wait_objects), wait_objects, FALSE, gui_agent_started ? INFINITE : 3000);
+      // Wait for service/Core/session events and supervise the exact GUI agent
+      // process rather than polling by executable name.
+      const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event, gui_agent.handle };
+      const DWORD wait_object_count = gui_agent.handle == NULL ? 3 : 4;
+      const DWORD wait_timeout = gui_agent.handle == NULL ? RetryWaitTimeout(gui_agent_retry_at_ms) : INFINITE;
+      const auto wait_result = WaitForMultipleObjects(wait_object_count, wait_objects, FALSE, wait_timeout);
       switch (wait_result) {
         case WAIT_TIMEOUT:
-          gui_agent_started = ReconcileGuiAgent(log_file_handle, console_session_id, gui_agent_error);
+          acquire_gui_agent();
           still_running = true;
           break;
 
@@ -442,6 +567,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             continue;
           }
           // Fall-through to terminate Sunshine.exe and start it again.
+          [[fallthrough]];
         case WAIT_OBJECT_0:
           // The service is shutting down, so try to gracefully terminate Sunshine.exe.
           // If it doesn't terminate in 20 seconds, we will forcefully terminate it.
@@ -465,6 +591,25 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           break;
         }
 
+        case WAIT_OBJECT_0 + 3: {
+          DWORD exit_code = ERROR_PROCESS_ABORTED;
+          GetExitCodeProcess(gui_agent.handle, &exit_code);
+          const auto runtime_ms = GetTickCount64() - gui_agent.acquired_at_ms;
+          const auto exited_process_id = gui_agent.process_id;
+          CloseGuiAgentHandle(gui_agent);
+
+          const auto retry_delay_ms = gui_agent_backoff.next_delay(runtime_ms);
+          gui_agent_retry_at_ms = GetTickCount64() + retry_delay_ms;
+          gui_agent_last_error = ERROR_SUCCESS;
+          WriteServiceLog(log_file_handle,
+            "GUI agent exited in session " + std::to_string(console_session_id) +
+              " (PID " + std::to_string(exited_process_id) + ", exit code " +
+              std::to_string(exit_code) + ", runtime " + std::to_string(runtime_ms) +
+              " ms); restarting in " + std::to_string(retry_delay_ms) + " ms");
+          still_running = true;
+          break;
+        }
+
         default:
           SetEvent(stop_event);
           still_running = false;
@@ -477,6 +622,8 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     CloseHandle(console_token);
     CloseHandle(job_handle);
   }
+
+  CloseGuiAgentHandle(gui_agent);
 
   // Let SCM know we've stopped
   service_status.dwCurrentState = SERVICE_STOPPED;

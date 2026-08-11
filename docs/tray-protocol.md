@@ -63,10 +63,13 @@ signed-in user's session after Core starts. Failed launches are retried while
 Core remains alive, and the GUI's single-instance guard absorbs duplicate
 logon and service-start attempts.
 
-The GUI keeps its tray during a short Core restart window. If Core remains
-unreachable for 15 seconds, the GUI removes the native tray icon so the tray
-does not imply that Sunshine is still running. The background GUI agent stays
-alive and recreates the tray when the local Core becomes available again.
+The GUI keeps its tray while Core is unavailable. It switches to a distinct
+disconnected presentation, disables Core-dependent commands, and keeps local
+recovery and diagnostic commands available. On Windows, the disconnected menu
+can restart the Sunshine service. Recovery remains pending until the GUI
+receives an actual Core state response; it times out after 30 seconds so the
+user can retry. The background GUI agent reconnects and restores the live state
+when the local Core becomes available again.
 
 ## Actions and operations
 

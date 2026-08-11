@@ -43,6 +43,16 @@ if (WIN32)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
 
+add_executable(sunshinesvc_state_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
+target_include_directories(sunshinesvc_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_options(sunshinesvc_state_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(sunshinesvc_state_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(sunshinesvc_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME sunshinesvc_state_unit_tests COMMAND sunshinesvc_state_unit_tests)
+
 if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
