@@ -557,6 +557,38 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         " (PID " + std::to_string(gui_agent.process_id) + ", existing process)");
   };
 
+  const auto handle_gui_agent_exit = [&]() {
+    DWORD exit_code = ERROR_PROCESS_ABORTED;
+    GetExitCodeProcess(gui_agent.handle, &exit_code);
+    const auto exit_at_ms = GetTickCount64();
+    const auto runtime_ms = exit_at_ms - gui_agent.acquired_at_ms;
+    const auto exited_process_id = gui_agent.process_id;
+    CloseGuiAgentHandle(gui_agent);
+
+    if (exit_code == ERROR_SUCCESS) {
+      gui_agent_restart_policy.suppress_launch();
+      gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
+      gui_agent_last_error = ERROR_SUCCESS;
+      gui_agent_backoff.reset();
+      WriteServiceLog(log_file_handle,
+        "GUI agent exited cleanly in session " + std::to_string(gui_agent_session_id) +
+          " (PID " + std::to_string(exited_process_id) +
+          "); automatic launch suppressed while existing-process reattach remains active");
+      return;
+    }
+
+    const auto retry_delay_ms = gui_agent_backoff.next_delay(runtime_ms);
+    gui_agent_retry_at_ms = exit_at_ms + retry_delay_ms;
+    gui_agent_last_error = ERROR_SUCCESS;
+    if (gui_agent_log_limiter.should_log_exit(exit_code, retry_delay_ms, exit_at_ms)) {
+      WriteServiceLog(log_file_handle,
+        "GUI agent exited in session " + std::to_string(gui_agent_session_id) +
+          " (PID " + std::to_string(exited_process_id) + ", exit code " +
+          std::to_string(exit_code) + ", runtime " + std::to_string(runtime_ms) +
+          " ms); restarting in " + std::to_string(retry_delay_ms) + " ms");
+    }
+  };
+
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running
   while (WaitForSingleObject(stop_event, 3000) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
@@ -611,6 +643,14 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       CloseHandle(console_token);
       CloseHandle(job_handle);
       continue;
+    }
+
+    // The GUI may have exited after the previous Core stopped, while no inner
+    // wait loop was active. Reap that lifecycle's process before a new Core
+    // lifecycle restores launch permission or decides whether acquisition is
+    // needed.
+    if (gui_agent.handle != NULL && WaitForSingleObject(gui_agent.handle, 0) == WAIT_OBJECT_0) {
+      handle_gui_agent_exit();
     }
 
     if (!gui_agent_restart_policy.launch_allowed()) {
@@ -690,36 +730,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         }
 
         case WAIT_OBJECT_0 + 3: {
-          DWORD exit_code = ERROR_PROCESS_ABORTED;
-          GetExitCodeProcess(gui_agent.handle, &exit_code);
-          const auto exit_at_ms = GetTickCount64();
-          const auto runtime_ms = exit_at_ms - gui_agent.acquired_at_ms;
-          const auto exited_process_id = gui_agent.process_id;
-          CloseGuiAgentHandle(gui_agent);
-
-          if (exit_code == ERROR_SUCCESS) {
-            gui_agent_restart_policy.suppress_launch();
-            gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
-            gui_agent_last_error = ERROR_SUCCESS;
-            gui_agent_backoff.reset();
-            WriteServiceLog(log_file_handle,
-              "GUI agent exited cleanly in session " + std::to_string(console_session_id) +
-                " (PID " + std::to_string(exited_process_id) +
-                "); automatic launch suppressed while existing-process reattach remains active");
-            still_running = true;
-            break;
-          }
-
-          const auto retry_delay_ms = gui_agent_backoff.next_delay(runtime_ms);
-          gui_agent_retry_at_ms = exit_at_ms + retry_delay_ms;
-          gui_agent_last_error = ERROR_SUCCESS;
-          if (gui_agent_log_limiter.should_log_exit(exit_code, retry_delay_ms, exit_at_ms)) {
-            WriteServiceLog(log_file_handle,
-              "GUI agent exited in session " + std::to_string(console_session_id) +
-                " (PID " + std::to_string(exited_process_id) + ", exit code " +
-                std::to_string(exit_code) + ", runtime " + std::to_string(runtime_ms) +
-                " ms); restarting in " + std::to_string(retry_delay_ms) + " ms");
-          }
+          handle_gui_agent_exit();
           still_running = true;
           break;
         }
